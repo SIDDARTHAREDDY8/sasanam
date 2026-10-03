@@ -56,7 +56,7 @@ else:
 # probe reports the state in both modes (stub mode pre-build
 # legitimately BREAKs).
 if IMPL == "module":
-    assert len(decision_codes.TAXONOMY) == 1753, "taxonomy pin 1588"  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
+    assert len(decision_codes.TAXONOMY) == 1769, "taxonomy pin 1588"  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
 
 PROBES = []
 
@@ -606,7 +606,7 @@ def taxonomy_pin():
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "gov", "decision_codes.py")).read()
     lits = re.findall(r'"code": \'(federation-[a-z-]+)\'', src)
-    if len(decision_codes.TAXONOMY) != 1753:  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
+    if len(decision_codes.TAXONOMY) != 1769:  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
         return "BREAK(pin %d)" % len(decision_codes.TAXONOMY)
     new = [c for c in set(lits)
            if c.startswith("federation-attestation-")

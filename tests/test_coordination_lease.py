@@ -284,7 +284,7 @@ class CoordinationLeaseTest(unittest.TestCase):
                              "coord-lease")
 
     def test_pin(self):
-        self.assertEqual(len(decision_codes.TAXONOMY), 1753)  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
+        self.assertEqual(len(decision_codes.TAXONOMY), 1769)  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
 
 
 if __name__ == "__main__":

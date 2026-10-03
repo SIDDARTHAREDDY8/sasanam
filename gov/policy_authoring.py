@@ -477,13 +477,23 @@ class CompiledPolicy:
         return [p["rule_id"] for p in self.plans]
 
 
-def compile_authoring(text, source_label="<authored text>"):
+def compile_authoring(text, source_label="<authored text>", *, artifact=None):
     """Compile authored filters/actions YAML to a native policy.
 
     Returns a CompiledPolicy. Fail-closed: any unknown construct,
     malformed shape, or engine round-trip refusal raises
     AuthoringError with a policy-authoring-* code.
+
+    Wave-297 (policy CI): when ``artifact`` is given, the derived artifact
+    is verified against this source at load time -- a hand-edited or stale
+    artifact raises coded ``policy-ci-derived-tampered`` (gov.policy_ci).
+    Default ``None`` leaves existing callers untouched.
     """
+    if artifact is not None:
+        # Lazy import: policy_ci imports this module at top level; an
+        # eager import here would cycle.
+        from .policy_ci import verify_artifact_for_source as _verify_ci
+        _verify_ci(artifact, text)
     if not isinstance(text, str):
         raise AuthoringError(
             MALFORMED_CODE,

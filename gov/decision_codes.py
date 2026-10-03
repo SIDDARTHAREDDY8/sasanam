@@ -983,6 +983,47 @@ TAXONOMY = {
         "evidence_kinds_required": ['approval-record'],
         "reverify_steps": ['recompute'],
     },
+    'approval-quorum-invalid': {
+        "domain": 'approval',
+        "code": 'approval-quorum-invalid',
+        "human": 'approval quorum: malformed request, malformed vote, '
+                 'bad signature, unknown voter, duplicate voter, '
+                 'non-role veto, or registry over the predicate bound; '
+                 'a bad ballot poisons the whole tally, refused '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['approval-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-quorum-self-vote': {
+        "domain": 'approval',
+        "code": 'approval-quorum-self-vote',
+        "human": 'approval quorum: the requester voted on their own '
+                 'request; the requester approves by re-proposing, never '
+                 'by voting',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-quorum-unmet': {
+        "domain": 'approval',
+        "code": 'approval-quorum-unmet',
+        "human": 'approval quorum: fewer distinct verified approves than '
+                 'the predicate minimum; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['approval-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-quorum-vetoed': {
+        "domain": 'approval',
+        "code": 'approval-quorum-vetoed',
+        "human": 'approval quorum: a blocking veto role cast a veto; '
+                 'one veto is un-outvotable, no number of approves '
+                 'overrides it',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-record'],
+        "reverify_steps": ['recompute'],
+    },
     'approval-rebinding': {
         "domain": 'approval',
         "code": 'approval-rebinding',
@@ -1015,6 +1056,47 @@ TAXONOMY = {
         "human": 'capability assessment: the approval record cannot be resolved',
         "severity": 'medium',
         "evidence_kinds_required": ['assessment', 'pack', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-request-digest-missing': {
+        "domain": 'approval',
+        "code": 'approval-request-digest-missing',
+        "human": 'approval request: the request does not completely bind '
+                 'its subject -- missing or malformed digests, or the '
+                 'presented action digest is not the one this request '
+                 'authorizes (re-plan => re-request)',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-request', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-request-expired': {
+        "domain": 'approval',
+        "code": 'approval-request-expired',
+        "human": 'approval request: the request time box elapsed; silence '
+                 'refuses -- the agent must re-issue, a late decision can '
+                 'never resurrect it; an expired request cannot complete '
+                 'a quorum',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-request', 'approval-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-request-forgery': {
+        "domain": 'approval',
+        "code": 'approval-request-forgery',
+        "human": 'approval request: the signature does not verify against '
+                 'the request body (mutated post-issue, wrong key, or '
+                 'requester-pubkey pin mismatch)',
+        "severity": 'critical',
+        "evidence_kinds_required": ['approval-request', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-request-invalid': {
+        "domain": 'approval',
+        "code": 'approval-request-invalid',
+        "human": 'approval request: malformed shape, bad approver schema, '
+                 'or a request from the future',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-request'],
         "reverify_steps": ['recompute'],
     },
     'approval-route-mismatch': {
@@ -10582,6 +10664,46 @@ TAXONOMY = {
         "evidence_kinds_required": ['policy'],
         "reverify_steps": ['recompute'],
     },
+    'policy-ci-companion-missing': {
+        "domain": 'policy',
+        "code": 'policy-ci-companion-missing',
+        "human": 'policy CI: a policy change ships without its mandatory '
+                 'companions (author, change note, declared probe battery); '
+                 'refused fail-closed, never a bare policy change',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-ci-derived-tampered': {
+        "domain": 'policy',
+        "code": 'policy-ci-derived-tampered',
+        "human": 'policy CI: a derived artifact was hand-edited or is stale '
+                 'for the source (digest mismatch); refused fail-closed, '
+                 'never served',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-ci-dryrun-skipped': {
+        "domain": 'policy',
+        "code": 'policy-ci-dryrun-skipped',
+        "human": 'policy CI: enforcement attempted without a completed '
+                 'dryrun observation window (no dryrun state, no signed '
+                 'dryrun report, or window not elapsed); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-ci-invalid': {
+        "domain": 'policy',
+        "code": 'policy-ci-invalid',
+        "human": 'policy CI: malformed policy source, artifact, or rollout '
+                 'record (or forged dryrun report); refused fail-closed, '
+                 'never a vacuous pass',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
     'policy-compile-refused': {
         "domain": 'policy',
         "code": 'policy-compile-refused',
@@ -14483,6 +14605,38 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['credential', 'signature', 'digest'],
         "reverify_steps": ['verify-signature'],
+    },
+    'supervision-crash-loop': {
+        "domain": 'supervision',
+        "code": 'supervision-crash-loop',
+        "human": 'supervision: the child crashed with the identical reason digest repeatedly -- restart refused as a crash-loop, escalated',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest', 'signature'],
+        "reverify_steps": ['verify-signature'],
+    },
+    'supervision-intensity-exceeded': {
+        "domain": 'supervision',
+        "code": 'supervision-intensity-exceeded',
+        "human": 'supervision: the child exceeded its declared restart intensity bound -- restart refused, escalated to the parent supervisor',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'supervision-invalid': {
+        "domain": 'supervision',
+        "code": 'supervision-invalid',
+        "human": 'supervision: malformed supervisor declaration, crash report, or escalation -- refused',
+        "severity": 'low',
+        "evidence_kinds_required": ['message'],
+        "reverify_steps": ['recompute'],
+    },
+    'supervision-undeclared-child': {
+        "domain": 'supervision',
+        "code": 'supervision-undeclared-child',
+        "human": 'supervision: the child is not declared in the supervisor inventory -- the inventory is closed; undeclared children cannot be supervised',
+        "severity": 'medium',
+        "evidence_kinds_required": ['message'],
+        "reverify_steps": ['recompute'],
     },
     'supplychain-delegation-path-unauthorized': {
         "domain": 'supplychain',

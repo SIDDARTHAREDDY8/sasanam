@@ -35,7 +35,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1753  # Wave-296 lane 1: unchanged (F367 fix reuses existing
+TAXONOMY_PIN = 1769  # Wave-296 lane 1: unchanged (F367 fix reuses existing
                      # codes; no new decision codes minted).
 
 _results = []
@@ -72,7 +72,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate code literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "code literals not sorted")
-    _record("pin-taxonomy", "HELD", "1753 raw literals, unique, sorted")
+    _record("pin-taxonomy", "HELD", "1769 raw literals, unique, sorted")
 
 
 def _import_cl():

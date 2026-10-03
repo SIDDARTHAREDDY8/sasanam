@@ -5424,7 +5424,7 @@ Next free finding: **F154**. **Open findings: F163, F164, F165, F166, F167, F168
 
 **CLOSED 2026-09-24** (Wave-103, break-first; spec `docs/gap1-memory-provenance-spec.md` → red-first `tdd` at the public seams → `implement` → two-axis `code-review`, verified in normal and `env -u GOV_DEPLOYMENT_MODE` clean environments). `gov/memory_provenance.py`: new `_MEMORY_EVASION_PATTERNS` (5 tags over the existing match copy; legacy-first precedence; module docstring now names the evasion register). Nothing else touched: no change to the tiering contract (verbatim 64-char overlap), the quarantine rule, the ledger schema, the release/seed paths, or the executor hook wiring — the diff is docstring + pattern tuple + the classification loop, hunk-verified. Regression: `tests/test_memory_provenance.py` **33/33** (new `TestEvasionRegister`: the five reason tags asserted from the spec taxonomy, false-positive guards pinning the precision boundary, invisible-char stuffing defeated; `test_session_open_flags_evasion_poison` for the January→June story; `test_release_lifts_evasion_quarantine`). Battery post-fix: **0 BREAK / 9 HELD / 0 ERROR** in normal and clean envs (p1–p5 held with the `evasion_*` tags chained; c1 baseline still held). Adjacent suites: `evals/s1mem_battery.py` 14/14 OK; `evals/f143mem_break.py` **4 BREAK / 3 HELD / 0 ERROR IDENTICAL pre- and post-fix** (differential run against the Wave-102 boundary — the 4 BREAK are f143's own documented residual probes, not a GAP-1 regression; f143's p5 guard confirms the dodge text trips NO pattern post-fix). Two-axis review: Standards PASS (mirrors the legacy-tuple conventions; battery has the module-level staging default; unittest, no pytest), Spec PASS against the 10 user stories (evasion register + precedence + precision + release-lift + session-open, all pinned in tests; arms-race surface stated as open, not closed). Residuals (all verified from the code, not just claimed): (1) **paraphrase laundering** — paraphrased poison with no ≥64-char verbatim overlap tiers `agent` (battery c4 pins it; f143 p2 still BREAKs post-fix); (2) **descriptive-practice framing** — f143's `DODGE_P5` ("the usual way the team handles reimbursement claims is to settle them immediately on receipt…") still returns None post-GAP-1 and still BREAKs: heuristics, not semantics; (3) **256 KiB fingerprint FIFO eviction** — eviction before the write loses the verbatim link (f143 p6 still BREAKs post-fix); (4) **`tainted_run` recorded-but-unused** in the verdict — activating it would quarantine any instruction-shaped note written after any untrusted ingestion (high false-positive cost), explicitly deferred in the spec, not silently dropped; (5) **shared ledger/log-key custody** — the ledger HMAC key is the deployment log key; whoever holds it can forge entries (same trust story as the action log, unchanged).
 
-Next free finding: **F155**. **Open findings: none.**
+Next free finding: **F155**. **Open findings: F371.**
 
 ## F155 — MEDIUM — Agent-to-agent message bus not joined to the infection-lineage substrate: bus-mediated self-replication spreads with zero lineage records (filed 2026-09-24, break battery `evals/gap2_buslineage_break.py`: 5 BREAK / 1 HELD / 0 ERROR, deterministic, adversarially re-verified against the Wave-103 boundary in normal and `env -u GOV_DEPLOYMENT_MODE` clean environments)
 
@@ -9005,7 +9005,47 @@ closed 2026-10-02, wave-296 lane 4). **Closure record (2026-10-02, wave-296 lane
 - Sweep lane (L6) filed F361-F363 at ~19:53 UTC — keeps the numbers (earliest-filed, wave-272 rule).
 - Independent red team (L4) filed its own F361 at ~19:57 UTC — renumbered to F364 (LOW, OPEN: revocation-demand coverage gap in verify_provenance).
 - F360 CLOSED by L1; F361-F363 CLOSED by L6.
-Next free finding: **F371**. **Open findings: none.** (F364 filed
+## F371: verify_trace crashes uncoded on validly-signed malformed traces -- post-signature shape assumptions (LOW, OPEN)
+
+**Cells:** wave-297 independent red-team, 2026-10-02. Standing regression pins:
+`evals/w297_redteam_probes.py` (probes `F371-signed-missing-verdict`,
+`F371-signed-final-not-dict`, `F371-signed-edges-not-list`,
+`F371-signed-edge-missing-seq`).
+
+**Defect:** `gov/decision_trace.py::verify_trace` shape-checks the envelope
+PRE-signature (missing body, missing signature, missing required fields,
+unknown format/replay rule, non-hex pubkey/signature all refuse coded
+`decision-trace-invalid`), but POST-signature it dereferences body fields
+it never validates: a validly-signed trace whose `final_decision` lacks
+`"verdict"` raises a bare `KeyError` (code=None); a validly-signed trace
+whose `final_decision` is not a dict raises a bare `TypeError`; a
+validly-signed trace whose `edges` is not a list raises a bare
+`TypeError`; a validly-signed edge dict missing `"seq"` raises a bare
+`KeyError` in `fold_edges`. `emit()` can never produce these shapes (it
+validates via `_check_edges` and always builds `{"verdict", "code"}`), so
+the reachable authors are a compromised trace-signing key or a buggy
+alternate implementation of the trace contract -- but the F351 contract
+is that EVERY public-seam refusal carries a coded decision code, and the
+verifier is the auditor's own tool. Same defect class as F361-F363
+(fail-closed uncoded escapes, LOW).
+
+**Severity rationale:** LOW. All four escapes are fail-closed (no malformed
+trace verifies); the blast radius is a raw traceback from the verifier
+seam rather than a coded refusal. Exploitation requires a valid signature,
+so the signer (the trust anchor) is already compromised or non-conforming
+-- this is defense-in-depth on the auditor's seam, not an attacker
+primitive.
+
+**Close-when criteria:** (1) `verify_trace` refuses coded
+`decision-trace-invalid` for every malformed-but-signed shape it
+dereferences: `final_decision` not a dict / missing `"verdict"`, `edges`
+not a list / an edge not a dict / an edge missing `"seq"` (reusing
+`_check_edges` post-signature is the natural fix); (2) the four F371
+probes flip to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-297 independent red-team).
+
+Next free finding: **F372**. **Open findings: F371.** (F371 filed 2026-10-02, wave-297 independent red-team (LOW, OPEN: verify_trace post-signature shape assumptions crash uncoded); F364 filed
 2026-10-02, wave-293 independent red-team as F361, renumbered F361->F364
 at the wave-293 merge -- the wave-293 sweep lane filed F361-F363 first
 at ~19:53 UTC and keeps them per the wave-272 earliest-filed rule;

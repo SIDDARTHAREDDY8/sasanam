@@ -93,7 +93,7 @@ def green_check():
 # Taxonomy pin (closure lane: gov/decision_codes.py untouched, pin 1750)
 # ---------------------------------------------------------------------------
 
-TAXONOMY_PIN = 1753  # Wave-295 merge; F370 closure reuses toolcall-schema-secret-field -- no new codes.
+TAXONOMY_PIN = 1769  # Wave-295 merge; F370 closure reuses toolcall-schema-secret-field -- no new codes.
 
 
 def p_taxonomy_pin():

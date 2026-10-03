@@ -366,7 +366,7 @@ class VerdictShapeTests(unittest.TestCase):
 class RegistryTests(unittest.TestCase):
     def test_lane_pin(self):
         # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*); merge coordinator composes.
-        self.assertEqual(len(dc.TAXONOMY), 1753)  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
+        self.assertEqual(len(dc.TAXONOMY), 1769)  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
 
     def test_authz_codes_present(self):
         expected = ["authz-allow", "authz-audit-hit",

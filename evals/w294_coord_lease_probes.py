@@ -42,7 +42,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1753  # Wave-294 lane 2: pin 1730 -> 1734 (+4 coord-lease-*); Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
+TAXONOMY_PIN = 1769  # Wave-294 lane 2: pin 1730 -> 1734 (+4 coord-lease-*); Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
 
 _results = []
 
@@ -83,7 +83,7 @@ def p_taxonomy_pin():
         if want not in lits:
             return _record("pin-taxonomy", "BREAK",
                            "missing expected code %r" % want)
-    _record("pin-taxonomy", "HELD", "1753 raw literals, unique, sorted")
+    _record("pin-taxonomy", "HELD", "1769 raw literals, unique, sorted")
 
 
 def _import_cl():

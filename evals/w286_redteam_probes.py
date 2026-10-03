@@ -51,7 +51,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-285 merge: pin 1621 -> 1641 (+1 campaign-produces-suppressed,
 # +1 inventory-identity-collision, +7 anchor-*, +11 exception-*).
-TAXONOMY_PIN = 1753  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
+TAXONOMY_PIN = 1769  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
 
 _results = []
 

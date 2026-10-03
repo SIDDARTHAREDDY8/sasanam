@@ -131,8 +131,8 @@ class EmitVerifyTest(unittest.TestCase):
             src = f.read()
         literals = re.findall(
             r'"code":\s*[\'"]([a-z][a-z0-9-_.]*)[\'"]', src)
-        self.assertEqual(len(literals), 1753)  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
-        self.assertEqual(len(set(literals)), 1753)  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
+        self.assertEqual(len(literals), 1769)  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
+        self.assertEqual(len(set(literals)), 1769)  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
 
     def test_schema_shape(self):
         schema = be.envelope_schema()

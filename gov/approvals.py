@@ -59,6 +59,7 @@ from .log import (ActionLog, _active_key, _approval_record_mac,
 from .egress_ledger import _ledger_keyring
 from . import approver_shield as _approver_shield
 from . import delegation_tokens as _delegation_tokens
+from . import approval_request as _approval_request  # wave-297 request schema
 from . import ceremony_integrity as _ceremony_integrity
 from . import packet_display as _packet_display  # F192: one shared carrier-display schema
 from .target_match import (DEFAULT_THRESHOLD, typed_scope_similarity,
@@ -433,6 +434,18 @@ _SECURITY_PAYLOAD_FIELDS = (
     # -- queued items must be decided or drained before upgrading.
     "stakes_tier", "human_outcome",
     "request_expired", "request_expired_at",
+    # Wave-297 (approval-request schema): the signed approval request
+    # envelope (gov.approval_request.issue) is integrity-bound from
+    # birth. Stripping it after queueing would let a tampered record
+    # dodge the decide()-time request re-verification (expiry,
+    # signature, action binding); swapping it would launder a
+    # different requester's declaration onto the human's decision
+    # record. FAIL-CLOSED UPGRADE (same precedent as F34/F38/R11/D1/
+    # wave-24/F101/F103/H3): records queued BEFORE this change do not
+    # carry this field, so their digests fail verification
+    # automatically after the upgrade -- queued items must be decided
+    # or drained before upgrading.
+    "approval_request",
 )
 
 
@@ -3413,8 +3426,21 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
               capability_verdict=None, intent_slice_verdict=None,
               skill_id=None, skill_attested_digest=None,
               delegation_receipt=None, instruction_provenance=None,
-              stakes_tier=None):
+              stakes_tier=None, approval_request=None):
         """Store a pending approval; returns the approval id.
+
+        ``approval_request`` (wave-297, opt-in): a signed approval
+        request envelope from ``gov.approval_request.issue``. When
+        provided it is verified at queue time (shape, signature, and
+        binding of the envelope's action digest to the queued action;
+        the requester's agent_id must match the authenticated caller)
+        and stamped on the record MAC-bound (see
+        ``_SECURITY_PAYLOAD_FIELDS``); ``decide()`` re-verifies it --
+        signature, action binding, and expiry at every use -- and
+        refuses coded (``approval-request-expired`` /
+        ``-invalid`` / ``-digest-missing`` / ``-forgery``). Absent
+        (None) for records queued without a request schema; the queue
+        never derives verdict semantics from it.
 
         ``action`` carries tool, redacted args, the agent's
         justification (unverified), and the redaction list.
@@ -3762,6 +3788,34 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # GAP-3: the executor may pass capability_verdict (the
         # requester's capability signal); absent -> the brief reports
         # explicit "unknown".
+        # Wave-297: stamp the signed approval request (opt-in). Verified
+        # at queue time -- shape, signature, and binding of the
+        # envelope's action digest to the exact queued action -- so a
+        # request for a different plan can never be queued against this
+        # record (Gerrit version-reset at the queue boundary). The
+        # requester's agent_id must match the authenticated caller:
+        # an agent cannot queue another agent's request. Expiry is NOT
+        # checked here -- it is checked at every use (decide()), where
+        # silence refuses. The envelope is deep-copied (JSON round
+        # trip) so caller-side mutation after queue() cannot reach
+        # the MAC-bound record.
+        if approval_request is not None:
+            _ar_action_digest = _approval_request.action_digest_for(action)
+            _ar_body = _approval_request.verify_request(
+                approval_request,
+                expected_action_digest=_ar_action_digest)
+            if _ar_body["requester"]["agent_id"] != record["agent_id"]:
+                raise _approval_request.ApprovalRequestError(
+                    "approval request names requester %r, but the "
+                    "authenticated caller is %r" % (
+                        _ar_body["requester"]["agent_id"],
+                        record["agent_id"]),
+                    code=_approval_request.INVALID)
+            record["approval_request"] = json.loads(
+                json.dumps(approval_request, ensure_ascii=True,
+                           default=str))
+        else:
+            record["approval_request"] = None
         self._stamp_approval_integrity(
             record, preview, action.get("agent_justification"), args,
             capability_verdict=capability_verdict,
@@ -4211,6 +4265,29 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 "approval %r failed integrity verification: the queued "
                 "record was tampered with after queueing — decision "
                 "refused" % approval_id)
+        # Wave-297: re-verify the stamped approval request at every
+        # use -- signature, action binding against the record's
+        # current tool/args (a re-planned action no longer matches),
+        # and expiry (pre-decay fail-closed: silence refuses). The
+        # coded ApprovalRequestError propagates (it carries .code);
+        # the attempt is audit-logged like every other refused
+        # decision attempt.
+        if target.get("approval_request"):
+            try:
+                _approval_request.verify_request(
+                    target["approval_request"],
+                    expected_action_digest=(
+                        _approval_request.action_digest_for(
+                            {"tool": target.get("tool"),
+                             "args": target.get("args") or {}})))
+            except _approval_request.ApprovalRequestError as e:
+                _log_attempt(
+                    "rejected_attempt",
+                    "decision refused: the stamped approval request "
+                    "failed re-verification (%s: %s)" % (e.code, e),
+                    agent_id=target.get("agent_id"), role=target.get("role"),
+                    tool=target.get("tool"))
+                raise
         # D1-core T9: the M-of-N gate cannot be bypassed by the
         # single-decider path. A quorum-collecting record is decided
         # ONLY by cast_vote()'s internal finalize (T7/T8) — decide()
