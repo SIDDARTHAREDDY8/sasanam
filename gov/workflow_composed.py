@@ -134,10 +134,11 @@ DECISIONS (each resolves a documented seam hazard):
    the latest slip so the caller can resume from the outstanding leg.
    The receipt digest is bound into the step outputs (Decision 4).
 
-New decision codes (4): ``workflow-composed-divergent`` (critical),
+New decision codes (5): ``workflow-composed-divergent`` (critical),
 ``workflow-composed-definition-invalid`` (high),
 ``workflow-composed-authority-mismatch`` (high),
-``workflow-composed-replay-foreign`` (critical).
+``workflow-composed-replay-foreign`` (critical),
+``workflow-composed-plan-mismatch`` (critical).
 
 Threat model / honest residuals:
 
@@ -161,6 +162,7 @@ Threat model / honest residuals:
 import hashlib
 import json
 import secrets
+import types
 
 from gov import workflow as _wf
 from gov import workflow_saga as _saga
@@ -175,6 +177,7 @@ WC_DIVERGENT = "workflow-composed-divergent"
 WC_DEFINITION_INVALID = "workflow-composed-definition-invalid"
 WC_AUTHORITY_MISMATCH = "workflow-composed-authority-mismatch"
 WC_REPLAY_FOREIGN = "workflow-composed-replay-foreign"
+WC_PLAN_MISMATCH = "workflow-composed-plan-mismatch"
 
 # Reused (not minted): the submodules' own coded refusals propagate with
 # their codes -- workflow-*, workflow-saga-*, workflow-routing-*,
@@ -187,6 +190,7 @@ __all__ = [
     "WC_DEFINITION_INVALID",
     "WC_AUTHORITY_MISMATCH",
     "WC_REPLAY_FOREIGN",
+    "WC_PLAN_MISMATCH",
     "UNIT_FN",
     "UNIT_SAGA",
     "UNIT_SLIP",
@@ -247,6 +251,132 @@ def _digest(value):
 
 def _is_int(v):
     return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _const_fingerprint(value):
+    """Recursive fingerprint for a code object's constants (F393).
+
+    Nested code objects (comprehensions, nested functions) are
+    fingerprinted recursively; bytes are hex-encoded; tuples, lists
+    and frozensets recurse (frozensets in canonical order). Anything
+    else is left for ``_canon`` (str/int/float/bool/None are stable;
+    exotic objects fall back to ``repr`` via ``default=str`` -- the
+    same treatment ``_digest`` already gives them).
+    """
+    if isinstance(value, types.CodeType):
+        return {"#code": _code_fingerprint_inner(value)}
+    if isinstance(value, bytes):
+        return {"#bytes": value.hex()}
+    if isinstance(value, tuple):
+        return ["#tuple"] + [_const_fingerprint(v) for v in value]
+    if isinstance(value, list):
+        return ["#list"] + [_const_fingerprint(v) for v in value]
+    if isinstance(value, frozenset):
+        return ["#frozenset"] + sorted(
+            _canon(_const_fingerprint(v)) for v in value)
+    return value
+
+
+def _code_fingerprint_inner(code):
+    """Fingerprint the behaviorally-relevant fields of a code object.
+
+    Line numbers (``co_firstlineno``, ``co_linetable``) and the
+    filename are deliberately excluded: they vary without behavior
+    change, and binding them would break crash-recovery re-execution
+    of the same plan rebuilt from the same source.
+    """
+    return {
+        "bytes": code.co_code.hex(),
+        "consts": _const_fingerprint(code.co_consts),
+        "names": list(code.co_names),
+        "varnames": list(code.co_varnames),
+        "freevars": list(code.co_freevars),
+        "cellvars": list(code.co_cellvars),
+        "argcount": code.co_argcount,
+        "posonly": code.co_posonlyargcount,
+        "kwonly": code.co_kwonlyargcount,
+        "flags": code.co_flags,
+    }
+
+
+def _closure_fingerprint(fn):
+    """Fingerprint closed-over values, JSON-native only (F393).
+
+    A substituted closure with identical bytecode but different
+    captured values (``lambda i: evil_val`` vs ``lambda i: real_val``)
+    must not collide. Values of JSON-native types are bound by value
+    -- they are stable across reconstruction from the same source, so
+    crash-recovery re-execution keeps the same digest. Anything else
+    binds only its type name (stable, but a documented residual: two
+    exotic objects of the same type with different state collide).
+    """
+    freevars = fn.__code__.co_freevars
+    cells = fn.__closure__ or ()
+    bound = []
+    for name, cell in zip(freevars, cells):
+        try:
+            value = cell.cell_contents
+        except ValueError:
+            bound.append([name, {"#unbound": "empty-cell"}])
+            continue
+        if isinstance(value, (dict, list, tuple, str, int, float,
+                              bool)) or value is None:
+            bound.append([name, value])
+        else:
+            bound.append([name, {"#unbound": type(value).__name__}])
+    return bound
+
+
+def _code_fingerprint(fn):
+    """F393: bind a plan digest to the code of the unit's callable.
+
+    ``ComposedPlan.digest`` used to cover kind/name/idem_key/inputs --
+    a bare descriptor that does not identify the code which runs. A
+    descriptor-identical plan with a different ``fn`` yielded a
+    bit-identical digest, so the victim's ``_begin_unit`` replayed the
+    attacker's record and every ``_resolve_replay`` check passed
+    (run, caller, digest, F390 name, F392 binding). The fingerprint
+    binds the code object's bytecode, constants (recursively),
+    referenced names and calling convention, plus JSON-native
+    closed-over values: stable across reconstruction from the same
+    source (crash-recovery re-execution of the same plan keeps its
+    digest), different for a different function body. Callables
+    without an introspectable code object (builtins,
+    functools.partial, C extensions) refuse ``WC_DEFINITION_INVALID``:
+    the digest must bind code, and uninspectable code cannot be bound
+    (fail closed).
+    """
+    code = getattr(fn, "__code__", None)
+    if code is None:
+        _fail(WC_DEFINITION_INVALID,
+              "composed plan fn %r has no introspectable code object: "
+              "the plan digest must bind the unit's code (fail closed)"
+              % (getattr(fn, "__name__", fn),))
+    inner = _code_fingerprint_inner(code)
+    inner["closure"] = _closure_fingerprint(fn)
+    return inner
+
+
+def _unit_code_digest(unit):
+    """F393: per-kind code fingerprint for the plan digest."""
+    kind = unit["kind"]
+    if kind == UNIT_FN:
+        return _code_fingerprint(unit["fn"])
+    if kind == UNIT_SAGA:
+        return {
+            "action": {str(sid): _code_fingerprint(fn)
+                       for sid, fn in sorted(
+                           unit["action_fns"].items(),
+                           key=lambda kv: str(kv[0]))},
+            "comp": {str(sid): _code_fingerprint(fn)
+                     for sid, fn in sorted(
+                         unit["comp_fns"].items(),
+                         key=lambda kv: str(kv[0]))},
+        }
+    # UNIT_SLIP: leg_fns maps leg index -> (seed, fn).
+    return {str(idx): _code_fingerprint(pair[1])
+            for idx, pair in sorted(unit["leg_fns"].items(),
+                                    key=lambda kv: str(kv[0]))}
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +471,12 @@ class ComposedPlan:
         self.digest = _digest([
             {"kind": u["kind"], "name": u["name"],
              "idem_key": u["idem_key"],
-             "inputs_digest": _digest(u.get("inputs", {}))}
+             "inputs_digest": _digest(u.get("inputs", {})),
+             # F393: the digest binds the unit's code, not just its
+             # descriptor. A descriptor-identical plan with a different
+             # fn/action_fn must not yield the same digest, or the
+             # run->plan binding below cannot distinguish them.
+             "code_digest": _unit_code_digest(u)}
             for u in normed
         ])
 
@@ -933,6 +1068,25 @@ class WorkflowComposer:
             _fail(WC_DEFINITION_INVALID,
                   "now < at: time may not run backwards within a "
                   "composed execution")
+
+        # F393: the run binds to the first plan digest executed under
+        # it. The plan digest binds the units' code (see
+        # ``_code_fingerprint``), so a descriptor-identical plan with
+        # different code presents a different digest and refuses coded
+        # ``workflow-composed-plan-mismatch`` -- a different plan
+        # cannot share the run. Crash-recovery re-execution of the
+        # SAME plan presents the identical digest and still replays.
+        # The binding is recorded in the workflow store's journal, so
+        # it survives crash-recovery and store reload; a refused
+        # execute never clobbers an existing binding.
+        bound = self._wstore.bind_plan_digest(run_id, plan.digest,
+                                              authority=authority, at=at)
+        if bound != plan.digest:
+            _fail(WC_PLAN_MISMATCH,
+                  "run %r is bound to plan digest %s, but execute "
+                  "presents plan digest %s: a different plan cannot "
+                  "share the run (fail closed)"
+                  % (run_id, bound[:12], plan.digest[:12]))
 
         ctx = {"plan_digest": plan.digest, "run_id": run_id,
                "run": run, "authority": authority, "actor": actor,

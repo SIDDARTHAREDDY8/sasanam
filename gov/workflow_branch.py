@@ -13,9 +13,10 @@ THREAT MODEL: the coordinator seed is the trust anchor (compromised-host
 class if stolen). Instants are caller-supplied freshness markers, not a
 trusted clock. XIDs are 64-hex random ids -- uniqueness rests on the
 standard os.urandom assumption. The lease manager is deployment-owned;
-the coordinator binds the manager object at the first successful park
-(F391) and this module never mints leases. A caller-supplied substitute
-manager is not an oracle -- it refuses coded
+the coordinator binds the manager object at begin() time (F391) --
+before any park can happen, so the first-park race is eliminated by
+construction -- and this module never mints leases. A caller-supplied
+substitute manager is not an oracle -- it refuses coded
 ``coord-lease-manager-mismatch``.
 
 DECISION CODES (3 new, domain ``workflow-branch``; +1 ``coord-lease``
@@ -32,7 +33,7 @@ for suspension resume refusals; ``decision-code-malformed`` for shape
 errors; ``coord-lease-denied`` for duplicate branch registration.
 Minted for F391: ``coord-lease-manager-mismatch`` -- the manager
 presented to suspend/resume is not the manager bound to the transaction
-at the first park.
+at begin().
 """
 
 import hashlib
@@ -57,10 +58,12 @@ LEASE_FENCING = "coord-lease-fencing"
 MALFORMED = "decision-code-malformed"
 LEASE_DENIED = "coord-lease-denied"
 
-# F391: minted -- a substituted lease manager refuses coded. The first
-# successful park binds the manager object to the transaction; later
-# suspend/resume calls must present the identical object (identity
-# check), never a caller-supplied substitute.
+# F391: minted -- a substituted lease manager refuses coded. begin()
+# binds the manager object to the transaction; later suspend/resume
+# calls must present the identical object (identity check), never a
+# caller-supplied substitute. A transaction begun without a manager
+# refuses parks/resumes coded -- binding can never be won by racing
+# the first park.
 LEASE_MISMATCH = "coord-lease-manager-mismatch"
 
 __all__ = [
@@ -146,9 +149,19 @@ class BranchCoordinator:
 
     # -- transaction lifecycle --------------------------------------
 
-    def begin(self, coordinator_seed, xid=None):
+    def begin(self, coordinator_seed, xid=None, lease_manager=None):
         """Open a transaction. Returns the XID. The coordinator's
-        public key is pinned to the transaction at begin time."""
+        public key is pinned to the transaction at begin time.
+
+        F391 (begin-time binding): the lease manager that will attest
+        suspend-time holdership and resume-time liveness is bound here
+        -- before any park can happen, never supplied per-call at park
+        time. The binding is by object identity. If no manager is
+        bound (lease_manager=None), suspend_lease/resume_lease refuse
+        coded ``coord-lease-manager-mismatch``: parking without a
+        bound oracle is fail-closed, and the binding can never be won
+        by racing the first park. Crash recovery re-binds by calling
+        begin() again on the fresh coordinator."""
         if not isinstance(coordinator_seed, bytes) or \
                 len(coordinator_seed) != 32:
             _fail(MALFORMED, "coordinator_seed must be 32 raw bytes")
@@ -157,6 +170,9 @@ class BranchCoordinator:
         _check_xid(xid)
         if xid in self._txns:
             _fail(MALFORMED, "xid %s already begun" % xid[:12])
+        if lease_manager is not None and \
+                not hasattr(lease_manager, "check_write"):
+            _fail(MALFORMED, "lease_manager must expose check_write")
         pubkey = ed25519.publickey(coordinator_seed).hex()
         self._txns[xid] = {
             "xid": xid,
@@ -164,6 +180,8 @@ class BranchCoordinator:
             "state": "open",
             "branches": {},   # branch_id -> record
             "decision": None,
+            # F391: the oracle is bound at begin, before any park.
+            "lease_manager": lease_manager,
         }
         return xid
 
@@ -175,25 +193,34 @@ class BranchCoordinator:
         return txn
 
     def _check_manager_binding(self, txn, lease_manager):
-        """F391: the lease manager is coordinator-bound, not
-        caller-supplied per call. The first successful park binds the
-        manager object to the transaction (identity, not equality);
-        every later suspend/resume must present the identical object.
-        A substituted manager refuses coded
-        ``coord-lease-manager-mismatch`` -- the F389 holdership proof
-        and the resume-time liveness check are only meaningful against
-        the deployment's own oracle, never a caller-supplied
-        rubber stamp.
+        """F391: the lease manager is coordinator-bound at begin()
+        time, not caller-supplied per call. begin() binds the manager
+        object to the transaction (identity, not equality) before any
+        park can happen, so the first-park race is eliminated by
+        construction -- there is no unbound window for an attacker to
+        win. Every suspend/resume must present the identical object.
+        A substituted manager -- or any suspend/resume on a
+        transaction begun without a bound manager -- refuses coded
+        ``coord-lease-manager-mismatch`` before any oracle call. The
+        F389 holdership proof and the resume-time liveness check are
+        only meaningful against the deployment's own oracle, never a
+        caller-supplied rubber stamp.
 
         The binding lives in the transaction's in-memory record. This
         module has no journal/reload path; if one is ever added, the
         binding must be persisted with the transaction -- otherwise a
-        reload would silently drop it and re-open per-call supply."""
+        reload would silently drop it and re-open per-call supply.
+        Crash recovery re-binds by calling begin() again."""
         bound = txn.get("lease_manager")
-        if bound is not None and bound is not lease_manager:
+        if bound is None:
+            _fail(LEASE_MISMATCH,
+                  "no lease manager bound to xid %s at begin() -- "
+                  "suspend/resume refuse without a bound oracle"
+                  % txn["xid"][:12])
+        if bound is not lease_manager:
             _fail(LEASE_MISMATCH,
                   "lease manager is not the manager bound to xid %s "
-                  "at first park -- a substituted manager cannot "
+                  "at begin() -- a substituted manager cannot "
                   "attest liveness" % txn["xid"][:12])
 
     # -- branch registration (BEFORE commit) -------------------------
@@ -378,13 +405,15 @@ class BranchCoordinator:
         Re-suspending with the current token (the documented re-park
         semantics) still works: the latest park wins.
 
-        F391: the lease manager is bound by the coordinator, not
-        supplied per-call. The first successful park binds the manager
-        object to the transaction (identity check); a later suspend
-        presenting a different manager refuses coded
+        F391: the lease manager is bound by the coordinator at begin()
+        time, not supplied per-call. The binding is by object identity:
+        a suspend presenting a different manager -- or a suspend on a
+        transaction begun without a bound manager -- refuses coded
         ``coord-lease-manager-mismatch`` before any oracle call. The
-        binding happens only after the F389 holdership proof passes,
-        so a refused park binds nothing."""
+        first-park race is eliminated by construction: the binding
+        exists before any park can occur, so there is no window for an
+        attacker to win. The F389 holdership proof still runs at
+        suspend time and still gates the park."""
         txn = self._txn(xid)
         _check_ts(suspended_at, "suspended_at")
         if not isinstance(lease_manager, object) or \
@@ -399,10 +428,6 @@ class BranchCoordinator:
         # coord-lease-expired on a dead lease.
         lease_manager.check_write(scope, fencing_token, holder_id,
                                   checked_at=suspended_at)
-        # F391: bind on first successful park -- after the holdership
-        # proof, so a refused park binds nothing.
-        if "lease_manager" not in txn:
-            txn["lease_manager"] = lease_manager
         record = {
             "xid": xid,
             "scope": scope,
@@ -437,9 +462,10 @@ class BranchCoordinator:
         ``workflow-branch-xid-mismatch``.
 
         F391: the lease manager presented must be the manager bound to
-        the transaction at the first park (identity check) -- a
-        substituted manager refuses ``coord-lease-manager-mismatch``
-        before the liveness check runs.
+        the transaction at begin() (identity check) -- a substituted
+        manager, or a resume on a transaction begun without a bound
+        manager, refuses ``coord-lease-manager-mismatch`` before the
+        liveness check runs.
         """
         if not isinstance(suspension, dict):
             _fail(MALFORMED, "suspension must be a dict")

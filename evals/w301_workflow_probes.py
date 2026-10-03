@@ -40,13 +40,15 @@ import traceback
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 for _p in (REPO, os.path.join(REPO, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1828  # Wave-300 merge pin 1802; wave-301 lane 3: pin 1802 -> 1805 (+3 workflow-*); wave-301 merge: 1812 (+10 workflow-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
+TAXONOMY_PIN = 1829  # Wave-300 merge pin 1802; wave-301 lane 3: pin 1802 -> 1805 (+3 workflow-*); wave-301 merge: 1812 (+10 workflow-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
 
@@ -437,9 +439,11 @@ def main():
     n_err = sum(1 for _, v, _ in _results if v == "ERROR")
     print("w301_workflow: %d BREAK / %d HELD / %d ERROR"
           % (n_break, n_held, n_err))
-    for pid, v, note in _results:
-        if v != "HELD":
-            print("  [%s] %s: %s" % (v, pid, note.splitlines()[0]))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        _results, n_break, n_held, n_err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    probe_lines.emit(_results)
     sys.exit(1 if (n_break or n_err) else 0)
 
 

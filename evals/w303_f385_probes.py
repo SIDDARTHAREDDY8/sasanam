@@ -54,7 +54,7 @@ from gov import ed25519
 from gov import coordination_lease as cl
 from gov import workflow_branch as wb
 
-TAXONOMY_PIN = 1828  # Wave-303 merge pin; this lane mints no new codes (reuses workflow-branch-xid-mismatch).
+TAXONOMY_PIN = 1829  # Wave-303 merge pin; this lane mints no new codes (reuses workflow-branch-xid-mismatch).
 
 _results = []
 
@@ -80,7 +80,7 @@ def _setup():
                        authority_seed=_seed(), issued_at=1000)
     tok = lease["fencing_token"]
     c = wb.BranchCoordinator()
-    xid_a = c.begin(_seed())
+    xid_a = c.begin(_seed(), lease_manager=lm)
     xid_b = c.begin(_seed())
     susp = c.suspend_lease(xid_a, lm, "scope-x", tok, "holder-1",
                            suspended_at=1050)
@@ -120,7 +120,7 @@ class F385Probes(unittest.TestCase):
         lease = lm.acquire("scope-x", 100, "holder-1",
                            authority_seed=_seed(), issued_at=1000)
         c = wb.BranchCoordinator()
-        xid_a = c.begin(seed)
+        xid_a = c.begin(seed, lease_manager=lm)
         xid_b = c.begin(seed)
         susp = c.suspend_lease(xid_a, lm, "scope-x",
                                lease["fencing_token"], "holder-1",
@@ -143,7 +143,7 @@ class F385Probes(unittest.TestCase):
         lease = lm.acquire("scope-x", 100, "holder-1",
                            authority_seed=_seed(), issued_at=1000)
         c = wb.BranchCoordinator()
-        xid = c.begin(seed)
+        xid = c.begin(seed, lease_manager=lm)
         susp = c.suspend_lease(xid, lm, "scope-x",
                                lease["fencing_token"], "holder-1",
                                suspended_at=1050)
@@ -210,7 +210,7 @@ class F385Probes(unittest.TestCase):
         lease = lm2.acquire("scope-y", 100, "holder-2",
                             authority_seed=_seed(), issued_at=1000)
         c = wb.BranchCoordinator()
-        xid = c.begin(_seed())
+        xid = c.begin(_seed(), lease_manager=lm2)
         susp = c.suspend_lease(xid, lm2, "scope-y",
                                lease["fencing_token"], "holder-2",
                                suspended_at=1050)
@@ -228,7 +228,7 @@ class F385Probes(unittest.TestCase):
         lease = lm2.acquire("scope-z", 100, "holder-3",
                             authority_seed=_seed(), issued_at=1000)
         c = wb.BranchCoordinator()
-        xid = c.begin(_seed())
+        xid = c.begin(_seed(), lease_manager=lm2)
         susp = c.suspend_lease(xid, lm2, "scope-z",
                                lease["fencing_token"], "holder-3",
                                suspended_at=1050)
@@ -260,10 +260,10 @@ class RepinTest(unittest.TestCase):
             src = _f.read()
         lits = re.findall(r'"code":\s*\'([a-z][a-z0-9-_.]*)\'', src)
         self.assertTrue(_expect_held(
-            "repin-pin-1828",
-            len(lits) == 1828 and len(set(lits)) == 1828
+            "repin-pin-1829",
+            len(lits) == 1829 and len(set(lits)) == 1829
             and lits == sorted(lits),
-            "1828 unique sorted literals") == "HELD")
+            "1829 unique sorted literals") == "HELD")
 
 
 class FooterStateTest(unittest.TestCase):
@@ -274,7 +274,7 @@ class FooterStateTest(unittest.TestCase):
         # Anchor to the LAST matches: the footer, not historical entries.
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-        want_open, want_next = "F393", "F394"
+        want_open, want_next = "F394", "F395"  # wave-309: F393 CLOSED
         self.assertTrue(_expect_held(
             "footer-state",
             m_open and m_open[-1].strip() == want_open

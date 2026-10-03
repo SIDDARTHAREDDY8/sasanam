@@ -24,7 +24,7 @@ class F389SuspendHoldershipTests(unittest.TestCase):
         lease = lm.acquire("scope-x", ttl, "holder-1",
                            authority_seed=_seed(), issued_at=issued_at)
         c = wb.BranchCoordinator()
-        xid = c.begin(_seed())
+        xid = c.begin(_seed(), lease_manager=lm)
         return lm, lease["fencing_token"], c, xid
 
     def test_attacker_repark_with_bogus_token_refuses(self):

@@ -48,7 +48,7 @@ if os.path.join(REPO, "evals") not in sys.path:
     sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check
 
-TAXONOMY_PIN = 1828  # Wave-302 merge pin 1820; this lane: +2 workflow-saga-* (operator-unauthorized, resolution-invalid).; Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
+TAXONOMY_PIN = 1829  # Wave-302 merge pin 1820; this lane: +2 workflow-saga-* (operator-unauthorized, resolution-invalid).; Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
 
@@ -348,10 +348,10 @@ class RepinTest(unittest.TestCase):
             src = _f.read()
         lits = re.findall(r'"code":\s*\'([a-z][a-z0-9-_.]*)\'', src)
         self.assertTrue(_expect_held(
-            "repin-pin-1828",
-            len(lits) == 1828 and len(set(lits)) == 1828
+            "repin-pin-1829",
+            len(lits) == 1829 and len(set(lits)) == 1829
             and lits == sorted(lits),
-            "1828 unique sorted literals") == "HELD")
+            "1829 unique sorted literals") == "HELD")
 
 
 class FooterStateTest(unittest.TestCase):
@@ -362,7 +362,7 @@ class FooterStateTest(unittest.TestCase):
         # Anchor to the LAST matches: the footer, not historical entries.
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-        want_open, want_next = "F393", "F394"
+        want_open, want_next = "F394", "F395"  # wave-309: F393 CLOSED
         self.assertTrue(_expect_held(
             "footer-state",
             m_open and m_open[-1].strip() == want_open

@@ -33,7 +33,7 @@ battery was written -- diagnosing-bugs loop):
 
 New findings filed by this lane: F393 (MEDIUM, OPEN), claim
 2026-10-03T11:19:50Z. Wave-308 merge: F391 CLOSED (lane A), F393 OPEN;
-pin 1828; footer open F393 / next F394.
+pin 1829; footer open F394 / next F395 (wave-309: F393 CLOSED).
 
 Run:
   mkdir -p /var/tmp/g308-rt && TMPDIR=/var/tmp/g308-rt \
@@ -66,7 +66,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-307 merge pin 1827; this lane mints no codes (red team only), so
 # the pin stays 1827. The merge-time sweep repoints to the wave-308 pin.
-TAXONOMY_PIN = 1828
+TAXONOMY_PIN = 1829
 
 AT = 1000000
 
@@ -104,7 +104,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1828/1828/0 sorted")
+    _record("pin-taxonomy", "HELD", "1829/1829/0 sorted")
 
 
 def p_footer_state():
@@ -117,12 +117,12 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    # Wave-308 lane D footer: F393 filed OPEN by this lane.
-    if nxt != 394 or open_s != "F393":
+    # Wave-309 lane A footer: F393 CLOSED; open F394 / next F395.
+    if nxt != 395 or open_s != "F394":
         return _record("footer-state", "BREAK",
-                       "footer pins next F%d open '%s', want next F394 "
-                       "open 'F391, F393'" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open F393 / next F394")
+                       "footer pins next F%d open '%s', want next F395 "
+                       "open 'F394'" % (nxt, open_s))
+    _record("footer-state", "HELD", "footer pins open F394 / next F395")
 
 
 # ------------------------------------------------------------------
@@ -142,7 +142,7 @@ def _branch_fx():
                        authority_seed=ed25519.generate_seed(),
                        issued_at=1000)
     c = wb.BranchCoordinator()
-    xid = c.begin(ed25519.generate_seed())
+    xid = c.begin(ed25519.generate_seed(), lease_manager=lm)
     return lm, lease["fencing_token"], c, xid, ed25519
 
 
@@ -305,12 +305,10 @@ def p_f391_fake_manager_resume_real_park():
 # ------------------------------------------------------------------
 
 def p_f393_fn_code_confusion():
-    # The plan digest covers kind/name/idem_key/inputs_digest but NOT
-    # the fn callable, so a descriptor-identical evil plan yields a
-    # bit-identical op_digest. The victim's begin returns REPLAY on the
-    # attacker's record; every _resolve_replay check passes (run,
-    # caller, digest, F390 name, F392 binding); the victim's fn never
-    # runs and the attacker's outputs return as native.
+    # F393 CLOSED (wave-309 lane A): the plan digest now binds the
+    # unit's code, so a descriptor-identical evil plan yields a
+    # DIFFERENT digest; the run binds to the first plan digest and the
+    # victim's plan refuses coded workflow-composed-plan-mismatch.
     wc, wf, saga, idem, comp, ws, sm, im, auth = _composed_scaffold("f393fn")
     evil = wc.ComposedPlan([
         {"kind": "fn", "name": "u2", "fn": lambda i: {"evil": 1},
@@ -324,31 +322,35 @@ def p_f393_fn_code_confusion():
     victim = wc.ComposedPlan([
         {"kind": "fn", "name": "u2", "fn": victim_fn,
          "inputs": {}, "idem_key": "k2"}])
-    if evil.digest != victim.digest:
-        return _record("F393-fn-code-confusion", "ERROR",
-                       "descriptors did not collide; probe void")
+    if evil.digest == victim.digest:
+        return _record("F393-fn-code-confusion", "BREAK",
+                       "F393 OPEN: descriptor-identical plans still "
+                       "collide (code not bound)")
     comp.execute(evil, run_id="R", authority=auth, at=AT)
     try:
         res = comp.execute(victim, run_id="R", authority=auth, at=AT)
     except Exception as e:  # noqa: BLE001
+        if getattr(e, "code", None) != "workflow-composed-plan-mismatch":
+            return _record("F393-fn-code-confusion", "ERROR",
+                           "wrong refusal code: %r"
+                           % (getattr(e, "code", e),))
+        if executed:
+            return _record("F393-fn-code-confusion", "ERROR",
+                           "victim fn ran before the refusal")
         return _record("F393-fn-code-confusion", "HELD",
-                       "descriptor-identical plan refused coded %r "
-                       "(F393 closed)" % (getattr(e, "code", e),))
-    if res["units"]["u2"]["outputs"] == {"evil": 1} and not executed:
-        return _record("F393-fn-code-confusion", "BREAK",
-                       "F393: victim fn never executed; attacker's "
-                       "outputs returned as native (op_digest does not "
-                       "bind code)")
-    return _record("F393-fn-code-confusion", "ERROR",
-                   "unexpected: outputs=%r executed=%r"
+                       "descriptor-identical plan refused coded "
+                       "workflow-composed-plan-mismatch (F393 closed)")
+    return _record("F393-fn-code-confusion", "BREAK",
+                   "F393 OPEN: victim plan executed under the attacker's "
+                   "run (outputs=%r executed=%r)"
                    % (res["units"]["u2"]["outputs"], bool(executed)))
 
 
 def p_f393_saga_code_confusion():
-    # Same defect class through the saga action path: the saga op
-    # digest covers plan/op/unit/step/params digests but not the
-    # action_fn. The victim saga "succeeds" with the attacker's step
-    # outputs; the victim action never runs.
+    # F393 CLOSED (wave-309 lane A): same defect class through the saga
+    # action path. The saga action fns are fingerprinted into the plan
+    # digest, so the victim's descriptor-identical saga refuses coded
+    # workflow-composed-plan-mismatch; the victim action never runs.
     wc, wf, saga, idem, comp, ws, sm, im, auth = _composed_scaffold("f393saga")
 
     def evil_action(p):
@@ -370,26 +372,27 @@ def p_f393_saga_code_confusion():
         {"kind": "saga", "name": "su", "definition": victim_saga,
          "action_fns": {"s1": victim_action},
          "comp_fns": {"s1": lambda p: None}, "idem_key": "sk2"}])
-    if evil_plan.digest != victim_plan.digest:
-        return _record("F393-saga-code-confusion", "ERROR",
-                       "descriptors did not collide; probe void")
+    if evil_plan.digest == victim_plan.digest:
+        return _record("F393-saga-code-confusion", "BREAK",
+                       "F393 OPEN: descriptor-identical sagas still "
+                       "collide (action code not bound)")
     comp.execute(evil_plan, run_id="R", authority=auth, at=AT)
     try:
         res = comp.execute(victim_plan, run_id="R", authority=auth, at=AT)
     except Exception as e:  # noqa: BLE001
+        if getattr(e, "code", None) != "workflow-composed-plan-mismatch":
+            return _record("F393-saga-code-confusion", "ERROR",
+                           "wrong refusal code: %r"
+                           % (getattr(e, "code", e),))
+        if executed:
+            return _record("F393-saga-code-confusion", "ERROR",
+                           "victim action ran before the refusal")
         return _record("F393-saga-code-confusion", "HELD",
-                       "descriptor-identical saga refused coded %r "
-                       "(F393 closed)" % (getattr(e, "code", e),))
-    got = res["units"]["su"]
-    if not executed and got.get("status") == "succeeded":
-        step = ws.get_step("R", 1)
-        if step.get("outputs", {}).get("result") == {"evil": 1}:
-            return _record("F393-saga-code-confusion", "BREAK",
-                           "F393: victim saga action never executed; "
-                           "saga succeeded with the attacker's outputs")
-    return _record("F393-saga-code-confusion", "ERROR",
-                   "unexpected: status=%r executed=%r"
-                   % (got.get("status"), bool(executed)))
+                       "descriptor-identical saga refused coded "
+                       "workflow-composed-plan-mismatch (F393 closed)")
+    return _record("F393-saga-code-confusion", "BREAK",
+                   "F393 OPEN: victim saga executed under the attacker's "
+                   "run (executed=%r)" % (bool(executed),))
 
 
 # ------------------------------------------------------------------
@@ -399,7 +402,11 @@ def p_f393_saga_code_confusion():
 def p_f392_same_run_same_name():
     # F392 regression (the filed attack): two plans under one run, same
     # unit name, DIFFERENT idem_keys; the plant names the attacker's
-    # step. Must refuse coded workflow-composed-replay-foreign.
+    # step. F393 (wave-309) stops this shape EARLIER: the run binds to
+    # the first plan digest, so the victim's plan refuses coded
+    # workflow-composed-plan-mismatch at the gate -- the pair never
+    # reaches _resolve_replay. The F392 binding check itself is still
+    # covered by w307_step_collision_probes and test_workflow_f392.
     wc, wf, saga, idem, comp, ws, sm, im, auth = _composed_scaffold("f392a")
     evil = wc.ComposedPlan([
         {"kind": "fn", "name": "u2", "fn": lambda i: {"evil": 1},
@@ -425,16 +432,21 @@ def p_f392_same_run_same_name():
     try:
         res = comp.execute(victim, run_id="R", authority=auth, at=AT)
     except Exception as e:  # noqa: BLE001
-        if getattr(e, "code", None) == FOREIGN_CODE:
+        if getattr(e, "code", None) == "workflow-composed-plan-mismatch":
+            if executed:
+                return _record("F392-same-run-same-name", "ERROR",
+                               "victim fn ran before the gate refusal")
             return _record("F392-same-run-same-name", "HELD",
-                           "same-run same-name pair refused coded "
-                           "(F392 holds)")
+                           "same-run same-name attack refused coded "
+                           "workflow-composed-plan-mismatch at the "
+                           "run->plan gate (F392 attack path closed "
+                           "earlier)")
         return _record("F392-same-run-same-name", "ERROR",
                        "wrong refusal: %r" % (getattr(e, "code", e),))
     if res["units"]["u2"]["outputs"] == {"evil": 1} and not executed:
         return _record("F392-same-run-same-name", "BREAK",
-                       "F392 REGRESSION: poisoned pair returned evil "
-                       "outputs")
+                       "F392/F393 REGRESSION: poisoned pair returned "
+                       "evil outputs")
     return _record("F392-same-run-same-name", "ERROR",
                    "unexpected: %r" % (res["units"]["u2"],))
 
@@ -504,7 +516,10 @@ def p_f392_cross_kind_isolated():
 
 def p_f390_wrong_step_refused():
     # F390 (MEDIUM, CLOSED): same run, different step -- the ref's step
-    # name must match the replaying unit's expected name.
+    # name must match the replaying unit's expected name. F393
+    # (wave-309) stops this two-plan shape EARLIER at the run->plan
+    # gate; the name check itself is still covered end-to-end by
+    # tests/test_workflow_f390.py (plant-before-execution, same plan).
     wc, wf, saga, idem, comp, ws, sm, im, auth = _composed_scaffold("f390w")
     plan_a = wc.ComposedPlan([
         {"kind": "fn", "name": "ua", "fn": lambda i: {"a": 1},
@@ -527,13 +542,19 @@ def p_f390_wrong_step_refused():
     try:
         comp.execute(plan_b, run_id="R", authority=auth, at=AT)
     except Exception as e:  # noqa: BLE001
-        if getattr(e, "code", None) == FOREIGN_CODE:
+        if getattr(e, "code", None) == "workflow-composed-plan-mismatch":
+            if executed:
+                return _record("F390-wrong-step-refused", "ERROR",
+                               "victim fn ran before the gate refusal")
             return _record("F390-wrong-step-refused", "HELD",
-                           "wrong-step pair refused coded (F390 holds)")
+                           "wrong-step attack refused coded "
+                           "workflow-composed-plan-mismatch at the "
+                           "run->plan gate (F390 attack path closed "
+                           "earlier)")
         return _record("F390-wrong-step-refused", "ERROR",
                        "wrong refusal: %r" % (getattr(e, "code", e),))
     return _record("F390-wrong-step-refused", "BREAK",
-                   "F390 REGRESSION: wrong-step pair resolved")
+                   "F390/F393 REGRESSION: wrong-step pair resolved")
 
 
 def p_f389_real_manager_refusal():
@@ -628,6 +649,13 @@ def _synthetic_child(path, body):
 
 
 def p_greencheck_vacuous_child_errors():
+    # Wave-309: honor GOV_SKIP_GREEN=1 (wave-134 lesson). As a
+    # green-check child, check_battery_result short-circuits to
+    # HELD/skipped without spawning, which would spuriously BREAK
+    # these self-tests.
+    if SKIP_GREEN:
+        return _record("GREENCHECK-vacuous-child-errors", "HELD",
+                       "skipped under GOV_SKIP_GREEN=1")
     # Wave-307 lane C: a child reporting 0 BREAK / 0 HELD / 0 ERROR is
     # evidence of nothing -- the parent must record ERROR, not HELD.
     child = os.path.join(tempfile.gettempdir(),
@@ -649,6 +677,13 @@ def p_greencheck_vacuous_child_errors():
 
 
 def p_greencheck_probe_errors_error():
+    # Wave-309: honor GOV_SKIP_GREEN=1 (wave-134 lesson). As a
+    # green-check child, check_battery_result short-circuits to
+    # HELD/skipped without spawning, which would spuriously BREAK
+    # these self-tests.
+    if SKIP_GREEN:
+        return _record("GREENCHECK-probe-errors-error", "HELD",
+                       "skipped under GOV_SKIP_GREEN=1")
     # Wave-307 lane C: a child reporting probe ERRORs (crashed probes,
     # surviving process) must record ERROR, not HELD.
     child = os.path.join(tempfile.gettempdir(),
@@ -671,6 +706,13 @@ def p_greencheck_probe_errors_error():
 
 
 def p_greencheck_broken_child_fails_closed():
+    # Wave-309: honor GOV_SKIP_GREEN=1 (wave-134 lesson). As a
+    # green-check child, check_battery_result short-circuits to
+    # HELD/skipped without spawning, which would spuriously BREAK
+    # these self-tests.
+    if SKIP_GREEN:
+        return _record("GREENCHECK-broken-child-fails-closed", "HELD",
+                       "skipped under GOV_SKIP_GREEN=1")
     # The shared helper must ERROR (not HELD) on a child that raises
     # before emitting a summary.
     broken = os.path.join(tempfile.gettempdir(),

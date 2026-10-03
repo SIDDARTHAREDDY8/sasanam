@@ -102,6 +102,7 @@ class WorkflowStore:
         self._path = path
         self._runs = {}        # run_id -> run record
         self._run_status = {}  # run_id -> latest status
+        self._run_plans = {}   # run_id -> bound plan digest (F393)
         self._steps = {}       # (run_id, seq) -> step record
         self._run_idem = {}    # idempotency_key -> run_id
         self._step_idem = {}   # (run_id, idempotency_key) -> (run_id, seq)
@@ -130,6 +131,10 @@ class WorkflowStore:
                 self._run_idem[record["idempotency_key"]] = record["run_id"]
         elif rtype == "run_status":
             self._run_status[record["run_id"]] = record["status"]
+        elif rtype == "run_plan":
+            # F393: the run's bound composed-plan digest. Journaled so
+            # the binding survives crash-recovery and store reload.
+            self._run_plans[record["run_id"]] = record["plan_digest"]
         elif rtype == "step":
             self._steps[(record["run_id"], record["seq"])] = record
             if record.get("idempotency_key"):
@@ -278,6 +283,35 @@ class WorkflowStore:
         self._append({"type": "run_status", "schema": SCHEMA,
                       "run_id": run_id, "status": "failed", "at": at,
                       "reason": reason})
+
+    def bind_plan_digest(self, run_id, plan_digest, *, authority, at):
+        """F393: bind a run to the first composed plan digest executed
+        under it.
+
+        The first call records the digest in the journal (so the
+        binding survives crash-recovery and store reload) and returns
+        it; later calls return the already-bound digest without
+        modifying it. The caller (the composed-workflow layer) compares
+        the returned digest with the plan being executed and refuses
+        coded when they differ -- a different plan cannot share the
+        run, while crash-recovery re-execution of the same plan
+        presents the identical digest and still replays. Authority is
+        re-proved on every call, including the binding call (never
+        trust a prior entry).
+        """
+        run = self._get_run(run_id)
+        self._verify_authority(authority, run, at)
+        bound = self._run_plans.get(run_id)
+        if bound is not None:
+            return bound
+        if not isinstance(plan_digest, str) or not plan_digest:
+            raise ValueError("plan_digest must be a non-empty string")
+        if not _is_int(at) or at < 0:
+            raise ValueError("at must be a non-negative int instant")
+        self._append({"type": "run_plan", "schema": SCHEMA,
+                      "run_id": run_id, "plan_digest": plan_digest,
+                      "at": at})
+        return plan_digest
 
     def _get_run(self, run_id):
         try:

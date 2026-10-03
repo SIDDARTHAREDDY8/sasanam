@@ -15,6 +15,13 @@ its idempotency_key (via _step_binding), and _resolve_replay refuses
 coded workflow-composed-replay-foreign when the resolved step's binding
 does not match the replaying record's key. No new decision codes
 (pin 1827+0).
+
+F393 interaction (wave-309): the run is now bound to the first plan
+digest executed under it, so the original two-plan attack shape is
+refused earlier at the plan gate (coded
+workflow-composed-plan-mismatch). The binding check itself is still
+covered end-to-end via a directly-written step carrying a foreign
+binding under the same plan.
 """
 import hashlib
 import os
@@ -67,12 +74,12 @@ def _fn_op_digest(plan, unit_name, inputs):
 
 
 class F392StepBindingTest(unittest.TestCase):
-    def test_same_name_different_plan_refused_coded(self):
-        # A1 (the F392 attack): two plans under one run, both with a
-        # unit named "u2". The attacker's plan records fn:u2 at seq 1;
-        # the victim's key is then planted with (digest, "wfstep:R:1").
-        # Every F388/F390 check passes (run, caller, completion, digest,
-        # name) -- only the binding check refuses, coded.
+    def test_same_name_different_plan_refused_at_gate(self):
+        # F393: the two-plan shape of the original F392 attack (the
+        # attacker's plan records fn:u2 at seq 1, then the victim's
+        # plan replays it) is now refused earlier, at the run->plan
+        # binding gate, coded workflow-composed-plan-mismatch -- the
+        # victim's plan can no longer execute under the attacker's run.
         comp, ws, im, auth = _scaffold()
         ws.start_run("probe", run_id="R", authority=auth, at=AT)
         evil = wc.ComposedPlan([
@@ -84,14 +91,35 @@ class F392StepBindingTest(unittest.TestCase):
             {"kind": "fn", "name": "u2",
              "fn": lambda i: {"real": 2},
              "inputs": {}, "idem_key": "k2"}])
+        with self.assertRaises(wc.ComposedError) as cm:
+            comp.execute(victim, run_id="R", authority=auth, at=AT)
+        self.assertEqual(cm.exception.code, "workflow-composed-plan-mismatch")
+
+    def test_foreign_binding_refused_coded(self):
+        # The F392 binding check itself, end-to-end under the F393
+        # regime: the attacker (as the legitimate plan actor) writes a
+        # step directly naming fn:u2 but recorded under a FOREIGN
+        # idempotency binding, then plants the victim's key pointing at
+        # it. The same plan's execute replays the plant; run, caller,
+        # completion, digest and name all pass -- only the binding
+        # check refuses, coded.
+        comp, ws, im, auth = _scaffold()
+        ws.start_run("probe", run_id="R", authority=auth, at=AT)
+        plan = wc.ComposedPlan([
+            {"kind": "fn", "name": "u2",
+             "fn": lambda i: {"real": 2},
+             "inputs": {}, "idem_key": "k2"}])
+        ws.run_step("R", 1, "fn:u2", lambda i: {"evil": 1}, {},
+                    idempotency_key="attacker-binding",
+                    authority=auth, at=AT)
         plant = im.begin("composed", "composed-unit", "k2",
-                         _fn_op_digest(victim, "u2", {}),
+                         _fn_op_digest(plan, "u2", {}),
                          caller="agent-b",
                          authority_verifier=lambda **k: True, at=AT)
         self.assertEqual(plant.status, "new")
         plant.complete(wc._digest({"evil": 1}), "wfstep:R:1", at=AT)
         with self.assertRaises(wc.ComposedError) as cm:
-            comp.execute(victim, run_id="R", authority=auth, at=AT)
+            comp.execute(plan, run_id="R", authority=auth, at=AT)
         self.assertEqual(cm.exception.code, FOREIGN_CODE)
         self.assertIn("binding", str(cm.exception))
 

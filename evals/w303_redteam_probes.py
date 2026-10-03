@@ -72,7 +72,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 
-TAXONOMY_PIN = 1828  # Wave-302 merge pin (1812 + 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
+TAXONOMY_PIN = 1829  # Wave-302 merge pin (1812 + 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
 
@@ -108,7 +108,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1828/1828/0 sorted")
+    _record("pin-taxonomy", "HELD", "1829/1829/0 sorted")
 
 
 def p_footer_state():
@@ -121,13 +121,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
-    want_open = "F393"  # wave-304 lane A: F385 CLOSED
-    if nxt != 394 or open_s != want_open:
+    want_open = "F394"  # wave-304 lane A: F385 CLOSED
+    if nxt != 395 or open_s != want_open:
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F393 open %r)"
+                       "footer drift: next F%d open %r (want next F394 open %r)"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open none / next F393")
+            "footer pins open F394 / next F395")
 
 
 AT = 1_700_000_000
@@ -173,7 +173,7 @@ def p_f385_resume_xid_unenforced():
                        issued_at=1000)
     tok = lease["fencing_token"]
     c = wb.BranchCoordinator()
-    xid_a = c.begin(ed25519.generate_seed())
+    xid_a = c.begin(ed25519.generate_seed(), lease_manager=lm)
     xid_b = c.begin(ed25519.generate_seed())
     susp = c.suspend_lease(xid_a, lm, "scope-x", tok, "holder-1",
                           suspended_at=1050)

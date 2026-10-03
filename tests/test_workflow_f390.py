@@ -6,6 +6,13 @@ ref's step to the replaying unit. A plant under the victim's key naming
 a different completed step of the same run returned the wrong unit's
 outputs. The fix passes the expected step name into _resolve_replay and
 refuses coded workflow-composed-replay-foreign on mismatch.
+
+F393 interaction (wave-309): the run is now bound to the first plan
+digest executed under it, so the old two-plan attack shape is refused
+earlier at the plan gate (coded workflow-composed-plan-mismatch). The
+end-to-end name-check test plants BEFORE the plan executes (the
+attacker's advance knowledge of a deterministic fn's outputs), keeping
+the same plan -- and the name check is what refuses.
 """
 import hashlib
 import os
@@ -60,7 +67,36 @@ def _fn_op_digest(plan, unit_name, inputs):
 class F390StepNameBindingTest(unittest.TestCase):
     def test_wrong_step_ref_refused_coded(self):
         # A plant under u2's key naming u1's completed step (same run,
-        # same caller, valid digest) must refuse coded.
+        # same caller, valid digest) must refuse coded. The plant is
+        # made BEFORE the plan executes (u1's fn is deterministic, so
+        # the attacker knows its outputs); the F393 run->plan binding
+        # means the attack must use the same plan, so the name check
+        # -- not the plan gate -- is what refuses.
+        comp, ws, im, auth = _scaffold()
+        ws.start_run("probe", run_id="R", authority=auth, at=AT)
+        plan = wc.ComposedPlan([
+            {"kind": "fn", "name": "u1",
+             "fn": lambda i: {"one": 1},
+             "inputs": {}, "idem_key": "k1"},
+            {"kind": "fn", "name": "u2",
+             "fn": lambda i: {"two": 2},
+             "inputs": {}, "idem_key": "k2"}])
+        plant = im.begin("composed", "composed-unit", "k2",
+                         _fn_op_digest(plan, "u2", {}),
+                         caller="agent-b",
+                         authority_verifier=lambda **k: True, at=AT)
+        self.assertEqual(plant.status, "new")
+        plant.complete(wc._digest({"one": 1}), "wfstep:R:1", at=AT)
+        with self.assertRaises(Exception) as cm:
+            comp.execute(plan, run_id="R", authority=auth, at=AT)
+        self.assertEqual(getattr(cm.exception, "code", None), FOREIGN_CODE)
+
+    def test_different_plan_under_same_run_refused_at_gate(self):
+        # F393: the two-plan shape this test used before the F393
+        # closure (plan1 then a different plan2 under the same run) is
+        # now refused earlier, at the run->plan binding gate, coded
+        # workflow-composed-plan-mismatch -- the attack never reaches
+        # _resolve_replay.
         comp, ws, im, auth = _scaffold()
         ws.start_run("probe", run_id="R", authority=auth, at=AT)
         plan1 = wc.ComposedPlan([
@@ -70,15 +106,10 @@ class F390StepNameBindingTest(unittest.TestCase):
         plan2 = wc.ComposedPlan([
             {"kind": "fn", "name": "u2", "fn": lambda i: {"two": 2},
              "inputs": {}, "idem_key": "k2"}])
-        plant = im.begin("composed", "composed-unit", "k2",
-                         _fn_op_digest(plan2, "u2", {}),
-                         caller="agent-b",
-                         authority_verifier=lambda **k: True, at=AT)
-        self.assertEqual(plant.status, "new")
-        plant.complete(wc._digest({"one": 1}), "wfstep:R:1", at=AT)
         with self.assertRaises(Exception) as cm:
             comp.execute(plan2, run_id="R", authority=auth, at=AT)
-        self.assertEqual(getattr(cm.exception, "code", None), FOREIGN_CODE)
+        self.assertEqual(getattr(cm.exception, "code", None),
+                         "workflow-composed-plan-mismatch")
 
     def test_legitimate_replay_still_works(self):
         # The same plan re-executed under the same run must replay the

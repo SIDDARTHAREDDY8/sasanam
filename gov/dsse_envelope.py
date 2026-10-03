@@ -66,6 +66,7 @@ __all__ = [
     "pae",
     "seal",
     "parse_envelope",
+    "verify_threshold",
     "open_envelope",
     "seal_statement",
     "open_statement",
@@ -209,6 +210,50 @@ def _verifier_for(keyid, verifiers):
     return None
 
 
+def verify_threshold(payload, payload_type, sig_entries, verifiers,
+                     threshold=1):
+    """Verify ``threshold`` distinct-key signatures over the DSSE PAE.
+
+    ``sig_entries`` is the parsed ``[(keyid_or_None, sig_bytes)]`` list
+    from :func:`parse_envelope`. This operates on already-parsed
+    components: it does not parse, re-serialize, or re-derive anything.
+    The signature is computed over ``pae(payload_type, payload)`` — the
+    exact bytes handed in.
+
+    Returns the sorted list of key ids whose signatures verified. Raises
+    :class:`EnvelopeError` when fewer than ``threshold`` distinct keys
+    verify. Extracted verbatim from :func:`open_envelope` (wave-309 lane
+    E) so the threshold policy lives in exactly one place; behavior is
+    unchanged.
+    """
+    verifiers = list(verifiers)
+    if not verifiers:
+        raise EnvelopeError("verify_threshold requires at least one verifier")
+    if not isinstance(threshold, int) or threshold < 1:
+        raise EnvelopeError("threshold must be a positive int")
+    pae_bytes = pae(payload_type, payload)
+    good_key_ids = set()
+    for keyid, sig in sig_entries:
+        if keyid is None:
+            # keyid-less signature: try every verifier, attribute to the
+            # one whose key actually verifies (fail-closed: unverifiable
+            # against all verifiers contributes nothing).
+            matches = [v for v in verifiers
+                       if isinstance(v, Verifier) and v.verify(pae_bytes, sig)]
+        else:
+            verifier = _verifier_for(keyid, verifiers)
+            if verifier is None or not isinstance(verifier, Verifier):
+                continue
+            matches = [verifier] if verifier.verify(pae_bytes, sig) else []
+        for match in matches:
+            good_key_ids.add(match.key_id)
+    if len(good_key_ids) < threshold:
+        raise EnvelopeError("signature threshold not met: %d of %d "
+                            "distinct key(s) verified"
+                            % (len(good_key_ids), threshold))
+    return sorted(good_key_ids)
+
+
 def open_envelope(envelope, expected_payload, payload_type, verifiers,
                   threshold=1, allowed_payload_types=None):
     """Open and verify a DSSE envelope. Raises loudly on any violation.
@@ -240,31 +285,13 @@ def open_envelope(envelope, expected_payload, payload_type, verifiers,
             got_type not in allowed_payload_types:
         raise EnvelopeError("payloadType %r not in allowlist" % got_type)
 
-    pae_bytes = pae(payload_type, payload)
-    good_key_ids = set()
-    for keyid, sig in sig_entries:
-        if keyid is None:
-            # keyid-less signature: try every verifier, attribute to the
-            # one whose key actually verifies (fail-closed: unverifiable
-            # against all verifiers contributes nothing).
-            matches = [v for v in verifiers
-                       if isinstance(v, Verifier) and v.verify(pae_bytes, sig)]
-        else:
-            verifier = _verifier_for(keyid, verifiers)
-            if verifier is None or not isinstance(verifier, Verifier):
-                continue
-            matches = [verifier] if verifier.verify(pae_bytes, sig) else []
-        for match in matches:
-            good_key_ids.add(match.key_id)
-    if len(good_key_ids) < threshold:
-        raise EnvelopeError("signature threshold not met: %d of %d "
-                            "distinct key(s) verified"
-                            % (len(good_key_ids), threshold))
+    key_ids = verify_threshold(payload, got_type, sig_entries, verifiers,
+                               threshold)
     if payload != bytes(expected_payload):
         raise EnvelopeError("payload binding mismatch: envelope payload "
                             "does not equal the expected payload bytes")
     return {
-        "key_ids": sorted(good_key_ids),
+        "key_ids": key_ids,
         "payload_type": got_type,
         "payload_sha256": hashlib.sha256(payload).hexdigest(),
     }

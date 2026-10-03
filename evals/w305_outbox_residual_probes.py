@@ -67,6 +67,8 @@ import traceback
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 for _p in (REPO, os.path.join(REPO, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -75,7 +77,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # No new codes in this lane (negative result): pin stays at the
 # wave-304 merge pin.
-TAXONOMY_PIN = 1828
+TAXONOMY_PIN = 1829
 
 CONFLICT_CODE = "permit-idempotency-conflict"
 
@@ -127,13 +129,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    want_open = "F393"
-    if nxt != 394 or open_s != want_open:
+    want_open = "F394"
+    if nxt != 395 or open_s != want_open:
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F393 open %r)"
+                       "footer drift: next F%d open %r (want next F394 open %r)"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open none / next F393")
+            "footer pins open F394 / next F395")
 
 
 AT = 1_700_000_000
@@ -371,10 +373,13 @@ def main():
             h += 1
         else:
             e += 1
-    for pid, verdict, note in _results:
-        print("%-34s %-6s %s" % (pid, verdict, note))
+    probe_lines.emit(_results)
     print("----")
     print("%d BREAK / %d HELD / %d ERROR" % (b, h, e))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        _results, b, h, e)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
     return 1 if (b or e) else 0
 
 

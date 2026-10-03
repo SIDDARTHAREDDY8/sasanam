@@ -11,22 +11,23 @@ attacker's own resume_lease with the fake manager returned True (fake
 liveness attestation).
 
 Closed: the coordinator binds the manager object to the transaction at
-the first successful park (identity check, never per-call). A later
-suspend/resume presenting a different manager object refuses coded
-``coord-lease-manager-mismatch`` before any oracle call -- at BOTH
-ends: the suspend-time holdership proof consults the bound manager,
-and the resume-time liveness check consults the bound manager (third
-limb, wave-308 red-team lane D: a legitimate park resumed with a
-substituted fake manager must refuse coded, never self-attest). The
-binding happens only after the F389 holdership proof passes, so a
-refused park binds nothing. +1 decision code (pin 1827 -> 1828).
+begin() time (identity check, never per-call) -- before any park can
+happen, so the first-park race is eliminated by construction. A later
+suspend/resume presenting a different manager object -- or any
+suspend/resume on a transaction begun without a bound manager --
+refuses coded ``coord-lease-manager-mismatch`` before any oracle call
+-- at BOTH ends: the suspend-time holdership proof consults the bound
+manager, and the resume-time liveness check consults the bound manager
+(third limb, wave-308 red-team lane D: a legitimate park resumed with a
+substituted fake manager must refuse coded, never self-attest). +1
+decision code (pin 1827 -> 1828).
 
 Probes (all through the public BranchCoordinator API):
   F391-suspend-substitute-refused: holder parks with the real manager;
      attacker's re-park with a rubber-stamp manager refuses coded
      coord-lease-manager-mismatch; the holder's resume still works.
-  F391-resume-substitute-refused: park with fake1 (first park binds
-     it); resume with a DIFFERENT fake2 refuses coded
+  F391-resume-substitute-refused: begin with fake1 bound, park with
+     fake1; resume with a DIFFERENT fake2 refuses coded
      coord-lease-manager-mismatch (no self-attested liveness).
   F391-legit-suspend-resume: legitimate park + resume with the bound
      manager still works (no regression).
@@ -34,17 +35,15 @@ Probes (all through the public BranchCoordinator API):
      keeps the documented latest-wins semantics.
   F391-bogus-token-still-fencing: real manager + bogus token still
      refuses coord-lease-fencing (F389 intact).
-  F391-bind-after-proof: a refused park (bogus token) binds nothing --
-     the legitimate park afterwards still binds the real manager and
-     works.
-
-Documented residual (pinned by F391-first-park-race-documented, not
-probed as BREAK): an attacker who wins the race to the FIRST park on
-a fresh xid binds their own manager. That requires beating the holder
-to the first park AND getting the deployment to resume from the
-attacker's record; the holder's own park attempt fails LOUDLY (coded),
-so it is a DoS residual, not the filed silent integrity violation.
-The deployment eliminates it by parking promptly at lease acquisition.
+  F391-bind-after-proof: a refused park (bogus token) disturbs
+     nothing -- the legitimate park afterwards still works against
+     the begin-bound manager.
+  F391-first-park-race-eliminated (wave-309 lane B): the attacker's
+     first park now refuses coded at park time -- the race is
+     eliminated by begin-time binding, no longer a residual.
+  F391-park-without-begin-binding-refuses (wave-309 lane B):
+     a transaction begun without a bound manager refuses parks coded
+     (fail-closed; no silent first-park binding).
 
 Run:
   mkdir -p /var/tmp/g308-f391 && TMPDIR=/var/tmp/g308-f391 \\
@@ -71,7 +70,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 
 # Wave-307 merge pin 1827; this lane mints +1 coord-lease-manager-mismatch.
-TAXONOMY_PIN = 1828
+TAXONOMY_PIN = 1829
 LEASE_MISMATCH = "coord-lease-manager-mismatch"
 
 _results = []
@@ -108,7 +107,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1828/1828/0 sorted")
+    _record("pin-taxonomy", "HELD", "1829/1829/0 sorted")
 
 
 def p_footer_state():
@@ -121,12 +120,12 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    # Wave-308 merge: F391 CLOSED, F393 OPEN; footer open F393 / next F394.
-    if nxt != 394 or open_s != "F393":
+    # Wave-309 lane A: F393 CLOSED; footer open F394 / next F395.
+    if nxt != 395 or open_s != "F394":
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F394 "
                        "open 'F393')" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open F393 / next F394")
+    _record("footer-state", "HELD", "footer pins open F394 / next F395")
 
 
 class _RubberStampManager:
@@ -136,7 +135,7 @@ class _RubberStampManager:
         return True
 
 
-def _branch_fx():
+def _branch_fx(bound=None):
     from gov import workflow_branch as wb
     from gov import coordination_lease as cl
     from gov import ed25519
@@ -145,7 +144,11 @@ def _branch_fx():
                        authority_seed=ed25519.generate_seed(),
                        issued_at=1000)
     c = wb.BranchCoordinator()
-    xid = c.begin(ed25519.generate_seed())
+    # Wave-309 lane B: the manager is bound at begin() time, before
+    # any park. `bound` overrides the default real manager (probes
+    # that need a different oracle bound, e.g. the resume-side probe).
+    xid = c.begin(ed25519.generate_seed(),
+                  lease_manager=lm if bound is None else bound)
     return lm, lease["fencing_token"], c, xid
 
 
@@ -188,11 +191,14 @@ def p_f391_suspend_substitute_refused():
 
 def p_f391_resume_substitute_refused():
     # The resume side: the liveness oracle must be the bound manager.
-    # Park with fake1 (first park binds it), then resume with a
-    # DIFFERENT substitute fake2 -- must refuse coded, never let fake2
-    # self-attest liveness.
-    _lm, _tok, c, xid = _branch_fx()
+    # Begin with fake1 BOUND (begin-time binding), park with fake1,
+    # then resume with a DIFFERENT substitute fake2 -- must refuse
+    # coded, never let fake2 self-attest liveness.
+    from gov import workflow_branch as wb
+    from gov import ed25519 as _ed
+    c = wb.BranchCoordinator()
     fake1 = _RubberStampManager()
+    xid = c.begin(_ed.generate_seed(), lease_manager=fake1)
     evil = c.suspend_lease(xid, fake1, "scope-x", 999999, "mallory",
                            suspended_at=1060)
     code = _code_of(lambda: c.resume_lease(evil, _RubberStampManager(),
@@ -240,39 +246,64 @@ def p_f391_resume_substitute_after_legit_park():
             "%s; legitimate resume intact" % LEASE_MISMATCH)
 
 
-def p_f391_first_park_race_documented():
-    # DOCUMENTED RESIDUAL (not a BREAK): an attacker who wins the race
-    # to the FIRST park on a fresh xid binds their own manager, and
-    # their own resume with that same manager returns True. This probe
-    # pins the behavior so any change is deliberate. Why it is an
-    # accepted residual rather than the filed defect: (a) the filed
-    # attack clobbered an EXISTING legitimate park (integrity
-    # violation); here there is no legitimate state yet -- the
-    # attacker builds a self-consistent fantasy no victim trusts;
-    # (b) the legitimate holder's park attempt fails LOUDLY with coded
-    # coord-lease-manager-mismatch (DoS, not silent corruption);
-    # (c) exploiting it needs winning the race AND a victim who
-    # resumes the attacker's record. The close-when explicitly blesses
-    # first-park binding ("e.g."); the deployment eliminates the race
-    # by parking promptly at lease acquisition.
-    _lm, _tok, c, xid = _branch_fx()
-    fake = _RubberStampManager()
+def p_f391_first_park_race_eliminated():
+    # Wave-309 lane B: the first-park race is ELIMINATED by
+    # begin-time binding. The deployment binds the real manager at
+    # begin(); the attacker's first park with a substitute manager now
+    # refuses coded coord-lease-manager-mismatch at park time -- there
+    # is no unbound window to win. The holder's legitimate park
+    # afterwards still works. (Replaces the wave-308 documented
+    # residual probe: the residual is closed, not merely documented.)
+    lm, tok, c, xid = _branch_fx()
+    code = _code_of(lambda: c.suspend_lease(
+        xid, _RubberStampManager(), "scope-x", 999999, "mallory",
+        suspended_at=1060))
+    if code != LEASE_MISMATCH:
+        return _record("F391-first-park-race-eliminated", "BREAK",
+                       "attacker's first park not refused coded: %r "
+                       "(race still winnable)" % (code,))
     try:
-        evil = c.suspend_lease(xid, fake, "scope-x", 999999, "mallory",
-                               suspended_at=1060)
-        ok = c.resume_lease(evil, fake, checked_at=1090)
+        rec = c.suspend_lease(xid, lm, "scope-x", tok, "holder-1",
+                              suspended_at=1070)
+        ok = c.resume_lease(rec, lm, checked_at=1090)
     except Exception as e:  # noqa: BLE001
-        return _record("F391-first-park-race-documented", "HELD",
-                       "race behavior changed (now refuses %r); "
-                       "residual may be closed -- update probe"
-                       % (getattr(e, "code", e),))
+        return _record("F391-first-park-race-eliminated", "ERROR",
+                       "holder park/resume after refused race failed: "
+                       "%r" % (getattr(e, "code", e),))
     if ok is not True:
-        return _record("F391-first-park-race-documented", "ERROR",
-                       "race resume returned %r (neither True nor "
-                       "refused)" % (ok,))
-    _record("F391-first-park-race-documented", "HELD",
-            "first-park race documented: same-manager resume after a "
-            "race win returns True (accepted residual, see note)")
+        return _record("F391-first-park-race-eliminated", "ERROR",
+                       "holder resume returned %r" % (ok,))
+    _record("F391-first-park-race-eliminated", "HELD",
+            "attacker's first park refused coded %s at park time; "
+            "holder park/resume intact (race eliminated)"
+            % LEASE_MISMATCH)
+
+
+def p_f391_park_without_begin_binding_refuses():
+    # Fail-closed: a transaction begun WITHOUT a bound manager refuses
+    # parks coded -- binding can never be won by racing the first
+    # park, and a deployment that forgets to bind fails loudly at
+    # suspend time instead of silently binding the first presenter.
+    from gov import workflow_branch as wb
+    from gov import coordination_lease as cl
+    from gov import ed25519
+    lm = cl.LeaseManager()
+    lease = lm.acquire("scope-x", 100, "holder-1",
+                       authority_seed=ed25519.generate_seed(),
+                       issued_at=1000)
+    c = wb.BranchCoordinator()
+    xid = c.begin(ed25519.generate_seed())  # no manager bound
+    code = _code_of(lambda: c.suspend_lease(
+        xid, lm, "scope-x", lease["fencing_token"], "holder-1",
+        suspended_at=1050))
+    if code != LEASE_MISMATCH:
+        return _record("F391-park-without-begin-binding-refuses",
+                       "BREAK",
+                       "park on unbound transaction not refused "
+                       "coded: %r" % (code,))
+    _record("F391-park-without-begin-binding-refuses", "HELD",
+            "park on a transaction begun without a bound manager "
+            "refuses coded %s (fail-closed)" % LEASE_MISMATCH)
 
 
 def p_f391_legit_suspend_resume():
@@ -336,9 +367,10 @@ def p_f391_bogus_token_still_fencing():
 
 
 def p_f391_bind_after_proof():
-    # The binding happens only after the F389 holdership proof passes:
-    # a refused park (bogus token) binds nothing -- the legitimate
-    # park afterwards still binds the real manager and works.
+    # The begin-time binding is independent of the F389 holdership
+    # proof: a refused park (bogus token) disturbs nothing -- the
+    # legitimate park afterwards still works against the bound
+    # manager.
     lm, tok, c, xid = _branch_fx()
     code = _code_of(lambda: c.suspend_lease(
         xid, lm, "scope-x", 999999, "mallory", suspended_at=1050))
@@ -358,8 +390,8 @@ def p_f391_bind_after_proof():
         return _record("F391-bind-after-proof", "BREAK",
                        "resume returned %r" % (ok,))
     _record("F391-bind-after-proof", "HELD",
-            "refused park binds nothing; later legitimate park binds "
-            "the real manager")
+            "refused park disturbs nothing; later legitimate park "
+            "works against the begin-bound manager")
 
 
 def _green_checks():
@@ -396,8 +428,10 @@ def main():
            p_f391_resume_substitute_refused)
     _safe("F391-resume-substitute-after-legit-park",
            p_f391_resume_substitute_after_legit_park)
-    _safe("F391-first-park-race-documented",
-           p_f391_first_park_race_documented)
+    _safe("F391-first-park-race-eliminated",
+           p_f391_first_park_race_eliminated)
+    _safe("F391-park-without-begin-binding-refuses",
+           p_f391_park_without_begin_binding_refuses)
     _safe("F391-legit-suspend-resume", p_f391_legit_suspend_resume)
     _safe("F391-repark-same-manager", p_f391_repark_same_manager)
     _safe("F391-bogus-token-still-fencing",

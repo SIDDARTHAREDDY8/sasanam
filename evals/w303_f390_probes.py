@@ -55,8 +55,9 @@ for _p in (REPO, os.path.join(REPO, "tests")):
         sys.path.insert(0, _p)
 sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
-TAXONOMY_PIN = 1828  # Wave-303 merge pin; Wave-304 lane C: pin 1827 -> 1827 (+1 workflow-composed-replay-foreign); Wave-306 lane B: F390 reuses that code, pin unchanged
+TAXONOMY_PIN = 1829  # Wave-303 merge pin; Wave-304 lane C: pin 1827 -> 1827 (+1 workflow-composed-replay-foreign); Wave-306 lane B: F390 reuses that code, pin unchanged
 
 FOREIGN_CODE = "workflow-composed-replay-foreign"
 
@@ -107,13 +108,14 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    want_open = "F393"
-    if nxt != 394 or open_s != want_open:
+    # Wave-309 lane A: F393 CLOSED; footer open F394 / next F395.
+    want_open = "F394"
+    if nxt != 395 or open_s != want_open:
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F393 open %r)"
+                       "footer drift: next F%d open %r (want next F394 open %r)"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open none / next F393")
+            "footer pins open F394 / next F395")
 
 
 AT = 1_700_000_000
@@ -162,7 +164,11 @@ def _refused_foreign(e):
 
 def p_f390_same_run_wrong_step():
     # A1: the composed unit returns a DIFFERENT unit's completed step
-    # outputs from the SAME run without executing its fn.
+    # outputs from the SAME run without executing its fn. F393
+    # (wave-309) stops this two-plan shape EARLIER at the run->plan
+    # gate (coded workflow-composed-plan-mismatch); the name check
+    # itself is covered end-to-end by tests/test_workflow_f390.py
+    # (plant-before-execution, same plan).
     wc, wf, saga, idem, comp, ws, sm, im, auth = _scaffold()
     actor = "agent-b"  # the plan actor: the F388 "begins AND completes
     # as one caller" threat model, now with legitimate credentials.
@@ -195,10 +201,15 @@ def p_f390_same_run_wrong_step():
     try:
         res = comp.execute(plan2b, run_id="R", authority=auth, at=AT)
     except Exception as e:  # noqa: BLE001
-        if _refused_foreign(e):
+        if getattr(e, "code", None) == "workflow-composed-plan-mismatch":
+            if executed:
+                return _record("F390-same-run-wrong-step", "ERROR",
+                               "victim fn ran before the gate refusal")
             return _record("F390-same-run-wrong-step", "HELD",
-                           "wrong-step pair refused coded "
-                           "workflow-composed-replay-foreign")
+                           "wrong-step attack refused coded "
+                           "workflow-composed-plan-mismatch at the "
+                           "run->plan gate (F390 attack path closed "
+                           "earlier)")
         return _record("F390-same-run-wrong-step", "ERROR",
                        "unexpected refusal: %r" % (getattr(e, "code", e),))
     outputs = res["units"]["u2"]["outputs"]
@@ -214,6 +225,8 @@ def p_f390_saga_action_step_bound():
     # A2: same defect class through the saga action replay path. A
     # saga action's replay must resolve to the step its own unit
     # created, not another unit's completed step of the same run.
+    # F393 (wave-309) stops this two-plan shape EARLIER at the
+    # run->plan gate (coded workflow-composed-plan-mismatch).
     wc, wf, saga, idem, comp, ws, sm, im, auth = _scaffold()
     actor = "agent-b"
     ws.start_run("probe", run_id="R", authority=auth, at=AT)
@@ -254,9 +267,15 @@ def p_f390_saga_action_step_bound():
     try:
         res = comp.execute(plan2, run_id="R", authority=auth, at=AT)
     except Exception as e:  # noqa: BLE001
-        if _refused_foreign(e):
+        if getattr(e, "code", None) == "workflow-composed-plan-mismatch":
+            if executed:
+                return _record("F390-saga-action-step-bound", "ERROR",
+                               "victim action ran before the gate refusal")
             return _record("F390-saga-action-step-bound", "HELD",
-                           "saga-action wrong-step pair refused coded")
+                           "saga-action wrong-step attack refused coded "
+                           "workflow-composed-plan-mismatch at the "
+                           "run->plan gate (F390 attack path closed "
+                           "earlier)")
         return _record("F390-saga-action-step-bound", "ERROR",
                        "unexpected refusal: %r" % (getattr(e, "code", e),))
     got = res["units"]["su2"]
@@ -327,10 +346,13 @@ def main():
             h += 1
         else:
             e += 1
-    for pid, verdict, note in _results:
-        print("%-34s %-6s %s" % (pid, verdict, note))
+    probe_lines.emit(_results)
     print("----")
     print("%d BREAK / %d HELD / %d ERROR" % (b, h, e))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        _results, b, h, e)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
     return 1 if (b or e) else 0
 
 

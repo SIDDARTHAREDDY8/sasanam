@@ -10213,11 +10213,67 @@ adjacent batteries stay green.
 binding in `_resolve_replay`; no new decision codes, reuses
 `workflow-composed-replay-foreign`).
 
-## F393: composed idempotency identity (op_digest) does not bind the unit's code -- a descriptor-identical plan with a different fn/saga-action poisons another plan's replay under the same run (MEDIUM, OPEN)
+## F394: the F384 operator recovery path does not function for composed sagas -- the composer's post-escalation cleanup removes the wrapper ops and step verifiers, so every re-drive recovery action fails (LOW, OPEN)
+
+**Cells:** wave-309 independent red-team (this lane), claim 2026-10-03T12:13:00Z.
+Standing regression pins: `evals/w309_redteam_probes.py` (probes
+`F394-op-retry-composed`, `F394-abort-composed`,
+`F394-direct-saga-retry-works`).
+
+**Defect:** F384 (wave-303 lane 4) built the operator recovery path on
+`SagaManager` -- `describe_escalation()` / `resolve_escalation()` /
+`retry_compensation()` -- so an operator can re-drive a failed
+compensation after fixing the underlying cause. For a DIRECT saga
+(deployment-registered ops, persistent verifiers) this works
+(probe `F394-direct-saga-retry-works`: retry re-invokes the fixed
+compensation, saga ends `compensated`). For a COMPOSED saga unit it
+cannot work: when the unit escalates, the composer's `finally` block
+(`_execute_saga_unit`) deterministically removes the nonce-scoped
+wrapper ops (`_remove_saga_ops`, wave-305 hygiene) AND the step
+authority verifier (`_remove_saga_verifier`, F386). Both are
+prerequisites for re-driving compensation. Verified on the wave-308
+tree (018887f1) through the public API: a composed saga whose action
+fails and whose compensation fails transiently 3x escalates; after the
+downstream is "fixed", `retry_compensation()` raises misleading
+`workflow-saga-compensation-unauthorized` ("authority
+'composed-auth:<nonce>:...' revoked or unknown at compensation time"
+-- nothing was revoked; the verifier was removed), the fixed
+compensation is never invoked (0 calls), and the saga stays
+escalated. `abort_and_compensate_all` fails identically. Even if the
+operator re-installs a verifier for the nonce-scoped ref, the next
+layer fails: the comp op name is unresolvable ("not registered in
+this process") and the saga re-escalates. The only working resolution
+is `accept_manual_remediation` (attestation without re-running) --
+the re-drive actions, the point of F384, are dead for composed sagas.
+This limitation is documented nowhere in `gov/workflow_composed.py`.
+
+**Severity rationale:** LOW. Availability of recovery, fail-closed
+(the saga stays safely escalated; the refusals are loud and coded),
+but the documented operator intervention cannot be performed through
+the module for composed sagas, and the first error the operator sees
+is actively misleading (misdiagnosis as a verifier-config problem).
+
+**Close-when criteria:** (1) `retry_compensation()` (and
+`abort_and_compensate_all`) re-drive the failed compensation for an
+escalated COMPOSED saga after the underlying cause is fixed -- e.g.
+the composer retains/re-registers the wrapper ops and step verifiers
+until the saga reaches a terminal compensated state, or the composer
+exposes an operator-retry API that re-establishes them; (2) the
+misleading `workflow-saga-compensation-unauthorized` on operator
+retry of a composed saga is gone; (3) the F394 probes flip to HELD
+(compensation re-invoked, saga compensated); (4) adjacent batteries
+stay green.
+
+**Status: OPEN.**
+
+## F393: composed idempotency identity (op_digest) does not bind the unit's code -- a descriptor-identical plan with a different fn/saga-action poisons another plan's replay under the same run (MEDIUM, CLOSED)
 
 **Cells:** wave-308 independent red-team (this lane), claim 2026-10-03T11:19:50Z.
 Standing regression pins: `evals/w308_redteam_probes.py` (probes
-`F393-fn-code-confusion`, `F393-saga-code-confusion`).
+`F393-fn-code-confusion`, `F393-saga-code-confusion`); wave-309 independent red-team adds the slip-leg variant as supporting evidence
+(`evals/w309_redteam_probes.py`, probe `F393-slip-code-confusion` --
+descriptor-identical slip plans differing only in leg_fns yield
+identical digests; the victim's leg replays the attacker's outputs).
 
 **Defect:** the F392 closure binds the replayed step to the exact
 idempotency record via the (namespace, op_class, key) triple -- but the
@@ -10249,7 +10305,37 @@ code; (2) the F393 probes flip to HELD (descriptor-identical evil plan
 refused; legitimate same-plan re-execution still replays); (3)
 adjacent batteries stay green.
 
-**Status: OPEN.**
+**Status: CLOSED 2026-10-03, wave-309 lane A.** Both close-when
+directions implemented (the "(even descriptor-identical)" parenthetical
+requires the digest to distinguish descriptor-identical plans):
+(1) `ComposedPlan.digest` now includes a per-unit `code_digest` --
+a fingerprint of the fn's code object (bytecode, constants incl. nested
+code objects, names, argcounts, flags; line numbers/filenames excluded
+so crash-recovery rebuilds keep the digest) plus JSON-native closed-over
+values bound by value. Callables without `__code__` (builtins,
+functools.partial) refuse `workflow-composed-definition-invalid` at
+plan construction (fail closed). (2) `WorkflowStore.bind_plan_digest`
+records the first plan digest executed under a run (journal-appended as
+a `"run_plan"` record, surviving crash-recovery/store reload);
+`WorkflowComposer.execute()` refuses coded
+`workflow-composed-plan-mismatch` on a different digest. A refused
+execute never clobbers the binding; same-plan re-execution still
+replays. Red-first: both filed probes reproduced BREAK on pristine
+018887f1 (victim fn/action never executed, attacker outputs returned
+as native). Green: the filed attack shapes now refuse coded
+workflow-composed-plan-mismatch at the run->plan gate (victim fn/action
+never runs); descriptor-identical plans have different digests;
+crash-recovery replays with exactly 1 fn call; binding survives journal
+reload. Regression pins: `evals/w309_f393_probes.py` (8 closure probes),
+`tests/test_workflow_f393.py` (9 unit tests); the w308 F393 probes now
+assert the coded refusal. Adjacent batteries green (w308 0/23/0, w307
+step-collision 0/9/0, w303_f390 0/8/0, w303_f388 0/9/0, w306 0/22/0,
+w307 redteam 0/27/0, w307 saga-signal 0/8/0). +1 decision code
+(workflow-composed-plan-mismatch); pin 1828 -> 1829. Documented
+residuals: exotic (non-JSON-native) closure values bind by type name
+only; the first plan digest is recorded even if execute later fails
+mid-run (same-plan retry still correct); line numbers excluded from the
+fingerprint (same-source rebuilds keep the digest).
 
 ## F392: composed _resolve_replay does not bind the ref's step to the exact idempotency record that created it -- a poisoned (digest, ref) pair naming a DIFFERENT plan's same-named step of the same run returns the wrong unit's outputs without executing (MEDIUM, CLOSED)
 
@@ -10366,7 +10452,7 @@ requires beating the holder to the first park AND getting the
 deployment to resume from the attacker's record; the deployment
 eliminates it by parking promptly at lease acquisition.
 
-Next free finding: **F394**. **Open findings: F393.** (F393 filed 2026-10-03, wave-308 independent red-team (MEDIUM, OPEN: composed idempotency identity does not bind the unit's code -- a descriptor-identical plan with a different fn poisons another plan's replay under the same run); F391 filed 2026-10-03, wave-307 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-308 lane A: coordinator binds the lease manager object to the transaction at the first successful park (identity check); substituted manager refuses coded coord-lease-manager-mismatch; +1 code, pin 1827 -> 1828); F392 filed as F391 2026-10-03, wave-307 lane A (MEDIUM, CLOSED 2026-10-03 wave-307 merge: composed _resolve_replay binds the ref's step to the exact idempotency record that created it, refusing workflow-composed-replay-foreign on binding mismatch; renumbered F391->F392 at merge per earliest-filed (lane E claimed F391 at 10:37:32Z); no new codes; pin unchanged 1827); F391 filed 2026-10-03, wave-307 independent red-team (MEDIUM, OPEN: suspend_lease/resume_lease take the lease manager as a caller-supplied argument -- the F389 suspend-time holdership proof is vacuous against a rubber-stamp manager; fake-manager re-park clobbers the holder's suspension and fake-manager resume self-attests liveness); F390 filed and closed 2026-10-03, wave-306 lane B (MEDIUM): composed _resolve_replay binds the ref's step to the replaying unit, refusing workflow-composed-replay-foreign on step-name mismatch; no new codes; pin unchanged 1827; F389 filed 2026-10-03, wave-305 independent red-team (LOW, CLOSED 2026-10-03 wave-306 lane A: suspend_lease proves lease-holdership at suspend time via check_write before parking -- stale/foreign token refuses coord-lease-fencing, dead lease refuses coord-lease-expired; no new codes; pin unchanged 1827); F387 filed 2026-10-03, wave-304 independent red-team (LOW, CLOSED 2026-10-03 wave-305 lane A: recv_step/sleep_step completed paths now apply run_step's name+inputs-digest drift checks, refusing workflow-step-unauthorized; pin unchanged 1827); F388 filed 2026-10-03, CLOSED 2026-10-03 wave-304 lane C (composed _resolve_replay refused foreign (digest, ref) pairs coded workflow-composed-replay-foreign -- run binding + record-caller binding + detached fail-closed; +1 code, pin 1826 -> 1827); F386 filed 2026-10-03, wave-303 independent red-team (LOW, CLOSED 2026-10-03 wave-304 lane B: per-composer-instance nonce scopes verifier refs and registered op names; verifier entry removed deterministically on unit completion; no new codes; pin unchanged 1826); F385 filed 2026-10-03, wave-303 independent red-team (LOW, CLOSED 2026-10-03 wave-304 lane A: resume_lease resolves suspension xid against live transactions + coordinator-pubkey match, mismatch refuses workflow-branch-xid-mismatch; pin unchanged 1826); wave-304 lane D: gov/authority_lifecycle.py heartbeat scheduling refinement (default interval = max(ceil(fraction x ttl), remediation_floor), fraction 0.5, floor 60s, explicit interval override; no new codes; pin unchanged 1826); wave-304 merge: taxonomy pin 1826 -> 1827 (+1 workflow-composed-replay-foreign; F385/F386/F388 closed); F387 filed OPEN (wave-304 red team); wave-305 lane A: F387 closed (recv_step/sleep_step drift refusal; no new codes; pin unchanged 1827);  evals/w302_redteam_probes.py header reconstructed (was dropped at the wave-303 merge); wave-303 merge: taxonomy pin 1823 -> 1826 (+1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*; F380/F381/F382/F383/F384 closed); wave-303 lane 6: gov/authority_lifecycle.py (authority as a lease with a heartbeat: granter-signed leases, signed heartbeat proofs with strictly-monotonic counters, missed interval suspends fail-closed, per-delegator revoker mapping, suspend parks without extending ttl, hash-chained evidence journal; +3 authority-lifecycle-* codes, pin 1820 -> 1823); F384 closed 2026-10-03, wave-303 lane 4 (operator recovery for escalated sagas: SagaManager operator_authority_ref re-verified NOW per call, describe_escalation/resolve_escalation/retry_compensation, all resolving actions journaled; +2 workflow-saga-* codes, pin 1820 -> 1822); F382/F383 closed 2026-10-03, wave-303 lane 3 (journal reload fixed point via _append(persist=False); idempotency-key replay path applies seq-slot drift checks refusing workflow-step-unauthorized; pin unchanged 1820); F381 closed 2026-10-03, wave-303 lane 2 (BeginOutcome records begin-time caller; complete()/checkpoint() refuse workflow-idempotency-caller-mismatch on mismatch; evict_completed() requires authority_verifier; +1 workflow-idempotency-* code, pin 1820 -> 1821); F380 closed 2026-10-03, wave-303 lane 1 (revocation ledger required fail-closed; run_step/sleep_step/recv_step re-prove authority on every entry including replay paths; pin unchanged 1820); F380 filed 2026-10-03, wave-302 independent red-team (MEDIUM, OPEN: workflow authority treats the revocation ledger as optional -- revoked chain authorizes when the caller omits it; completed-step replay skips all authority checks); F381 filed 2026-10-03, wave-302 independent red-team (MEDIUM, OPEN: idempotency complete()/checkpoint() not caller-bound -- any authorized caller completes another actor's in-flight op with arbitrary result; evict_completed() unauthenticated); F382 filed 2026-10-03, wave-302 independent red-team (LOW, OPEN: workflow journal reload re-appends every record -- file doubles on every restart); F383 filed 2026-10-03, wave-302 independent red-team (LOW, OPEN: workflow step-level idempotency key path replays stale outputs for different name/inputs, bypassing the drift refusal); F384 filed 2026-10-03, wave-302 independent red-team (LOW, OPEN: escalated sagas have no operator recovery path -- escalation terminal); F379 filed 2026-10-03, wave-301 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-302 lane 1: per-delegator revoker sets with per-revoker anti-substitution; F371 filed 2026-10-02, wave-297 independent red-team (LOW, CLOSED 2026-10-03 wave-298 lane 1: verify_trace post-signature shape assumptions crash uncoded); F372 filed 2026-10-03, wave-298 independent red-team (LOW, CLOSED 2026-10-03 wave-299 lane 1: policy_ci.load_artifact accepted artifacts with extra files added); F373 filed 2026-10-03, wave-298 independent red-team (LOW, CLOSED 2026-10-03 wave-299 lane 1: QuorumPredicate slot attributes reassignable post-construction); F374 filed 2026-10-03, wave-299 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-300 lane 1: memory_store retraction authority migrated to the newest writer); F375 filed 2026-10-03, wave-299 independent red-team (LOW, CLOSED 2026-10-03 wave-300 lane 2: memory_reconcile write-rate bound now keyed on authenticated owner key + principal string); F376 filed 2026-10-03, wave-299 independent red-team (LOW, CLOSED 2026-10-03 wave-300 lane 2: cross-namespace recall now bearer-grant); F377 filed 2026-10-03, wave-300 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-301 lane 1: embedded DID doc admitted only on canonical digest match with pin, conflicts refuse coded); F378 filed 2026-10-03, wave-300 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-301 lane 2: ticket presentation/issuance enforce revocation liveness); F364 filed 2026-10-02, wave-293 independent red-team as F361, renumbered F361->F364)
+Next free finding: **F395**. **Open findings: F394.** (F394 filed 2026-10-03, wave-309 independent red-team (LOW, OPEN: the F384 operator recovery path does not function for composed sagas -- the composer's post-escalation cleanup removes the wrapper ops and step verifiers, so retry_compensation/abort_and_compensate_all fail and only manual attestation works); F393 filed 2026-10-03, wave-308 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-309 lane A: run binds to first plan digest (coded workflow-composed-plan-mismatch on mismatch) + per-unit code_digest in ComposedPlan.digest; +1 code, pin 1828 -> 1829); F391 filed 2026-10-03, wave-307 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-308 lane A: coordinator binds the lease manager object to the transaction at the first successful park (identity check); substituted manager refuses coded coord-lease-manager-mismatch; +1 code, pin 1827 -> 1828); F392 filed as F391 2026-10-03, wave-307 lane A (MEDIUM, CLOSED 2026-10-03 wave-307 merge: composed _resolve_replay binds the ref's step to the exact idempotency record that created it, refusing workflow-composed-replay-foreign on binding mismatch; renumbered F391->F392 at merge per earliest-filed (lane E claimed F391 at 10:37:32Z); no new codes; pin unchanged 1827); F391 filed 2026-10-03, wave-307 independent red-team (MEDIUM, OPEN: suspend_lease/resume_lease take the lease manager as a caller-supplied argument -- the F389 suspend-time holdership proof is vacuous against a rubber-stamp manager; fake-manager re-park clobbers the holder's suspension and fake-manager resume self-attests liveness); F390 filed and closed 2026-10-03, wave-306 lane B (MEDIUM): composed _resolve_replay binds the ref's step to the replaying unit, refusing workflow-composed-replay-foreign on step-name mismatch; no new codes; pin unchanged 1827; F389 filed 2026-10-03, wave-305 independent red-team (LOW, CLOSED 2026-10-03 wave-306 lane A: suspend_lease proves lease-holdership at suspend time via check_write before parking -- stale/foreign token refuses coord-lease-fencing, dead lease refuses coord-lease-expired; no new codes; pin unchanged 1827); F387 filed 2026-10-03, wave-304 independent red-team (LOW, CLOSED 2026-10-03 wave-305 lane A: recv_step/sleep_step completed paths now apply run_step's name+inputs-digest drift checks, refusing workflow-step-unauthorized; pin unchanged 1827); F388 filed 2026-10-03, CLOSED 2026-10-03 wave-304 lane C (composed _resolve_replay refused foreign (digest, ref) pairs coded workflow-composed-replay-foreign -- run binding + record-caller binding + detached fail-closed; +1 code, pin 1826 -> 1827); F386 filed 2026-10-03, wave-303 independent red-team (LOW, CLOSED 2026-10-03 wave-304 lane B: per-composer-instance nonce scopes verifier refs and registered op names; verifier entry removed deterministically on unit completion; no new codes; pin unchanged 1826); F385 filed 2026-10-03, wave-303 independent red-team (LOW, CLOSED 2026-10-03 wave-304 lane A: resume_lease resolves suspension xid against live transactions + coordinator-pubkey match, mismatch refuses workflow-branch-xid-mismatch; pin unchanged 1826); wave-304 lane D: gov/authority_lifecycle.py heartbeat scheduling refinement (default interval = max(ceil(fraction x ttl), remediation_floor), fraction 0.5, floor 60s, explicit interval override; no new codes; pin unchanged 1826); wave-304 merge: taxonomy pin 1826 -> 1827 (+1 workflow-composed-replay-foreign; F385/F386/F388 closed); F387 filed OPEN (wave-304 red team); wave-305 lane A: F387 closed (recv_step/sleep_step drift refusal; no new codes; pin unchanged 1827);  evals/w302_redteam_probes.py header reconstructed (was dropped at the wave-303 merge); wave-303 merge: taxonomy pin 1823 -> 1826 (+1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*; F380/F381/F382/F383/F384 closed); wave-303 lane 6: gov/authority_lifecycle.py (authority as a lease with a heartbeat: granter-signed leases, signed heartbeat proofs with strictly-monotonic counters, missed interval suspends fail-closed, per-delegator revoker mapping, suspend parks without extending ttl, hash-chained evidence journal; +3 authority-lifecycle-* codes, pin 1820 -> 1823); F384 closed 2026-10-03, wave-303 lane 4 (operator recovery for escalated sagas: SagaManager operator_authority_ref re-verified NOW per call, describe_escalation/resolve_escalation/retry_compensation, all resolving actions journaled; +2 workflow-saga-* codes, pin 1820 -> 1822); F382/F383 closed 2026-10-03, wave-303 lane 3 (journal reload fixed point via _append(persist=False); idempotency-key replay path applies seq-slot drift checks refusing workflow-step-unauthorized; pin unchanged 1820); F381 closed 2026-10-03, wave-303 lane 2 (BeginOutcome records begin-time caller; complete()/checkpoint() refuse workflow-idempotency-caller-mismatch on mismatch; evict_completed() requires authority_verifier; +1 workflow-idempotency-* code, pin 1820 -> 1821); F380 closed 2026-10-03, wave-303 lane 1 (revocation ledger required fail-closed; run_step/sleep_step/recv_step re-prove authority on every entry including replay paths; pin unchanged 1820); F380 filed 2026-10-03, wave-302 independent red-team (MEDIUM, OPEN: workflow authority treats the revocation ledger as optional -- revoked chain authorizes when the caller omits it; completed-step replay skips all authority checks); F381 filed 2026-10-03, wave-302 independent red-team (MEDIUM, OPEN: idempotency complete()/checkpoint() not caller-bound -- any authorized caller completes another actor's in-flight op with arbitrary result; evict_completed() unauthenticated); F382 filed 2026-10-03, wave-302 independent red-team (LOW, OPEN: workflow journal reload re-appends every record -- file doubles on every restart); F383 filed 2026-10-03, wave-302 independent red-team (LOW, OPEN: workflow step-level idempotency key path replays stale outputs for different name/inputs, bypassing the drift refusal); F384 filed 2026-10-03, wave-302 independent red-team (LOW, OPEN: escalated sagas have no operator recovery path -- escalation terminal); F379 filed 2026-10-03, wave-301 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-302 lane 1: per-delegator revoker sets with per-revoker anti-substitution; F371 filed 2026-10-02, wave-297 independent red-team (LOW, CLOSED 2026-10-03 wave-298 lane 1: verify_trace post-signature shape assumptions crash uncoded); F372 filed 2026-10-03, wave-298 independent red-team (LOW, CLOSED 2026-10-03 wave-299 lane 1: policy_ci.load_artifact accepted artifacts with extra files added); F373 filed 2026-10-03, wave-298 independent red-team (LOW, CLOSED 2026-10-03 wave-299 lane 1: QuorumPredicate slot attributes reassignable post-construction); F374 filed 2026-10-03, wave-299 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-300 lane 1: memory_store retraction authority migrated to the newest writer); F375 filed 2026-10-03, wave-299 independent red-team (LOW, CLOSED 2026-10-03 wave-300 lane 2: memory_reconcile write-rate bound now keyed on authenticated owner key + principal string); F376 filed 2026-10-03, wave-299 independent red-team (LOW, CLOSED 2026-10-03 wave-300 lane 2: cross-namespace recall now bearer-grant); F377 filed 2026-10-03, wave-300 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-301 lane 1: embedded DID doc admitted only on canonical digest match with pin, conflicts refuse coded); F378 filed 2026-10-03, wave-300 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-301 lane 2: ticket presentation/issuance enforce revocation liveness); F364 filed 2026-10-02, wave-293 independent red-team as F361, renumbered F361->F364)
 at the wave-293 merge -- the wave-293 sweep lane filed F361-F363 first
 at ~19:53 UTC and keeps them per the wave-272 earliest-filed rule;
 closed 2026-10-02, wave-294 lane 1; F367 filed 2026-10-02, wave-295

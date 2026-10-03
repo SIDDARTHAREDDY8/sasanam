@@ -81,7 +81,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-304 merge pin 1827; this lane mints no codes (red team only), so
 # the pin stays 1827. The merge-time sweep repoints to the wave-305 pin.
-TAXONOMY_PIN = 1828
+TAXONOMY_PIN = 1829
 
 _results = []
 
@@ -117,7 +117,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1828/1828/0 sorted")
+    _record("pin-taxonomy", "HELD", "1829/1829/0 sorted")
 
 
 def p_footer_state():
@@ -130,13 +130,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
-    # wave-308 lane A re-pin: F391 CLOSED; footer open none / next F393
-    if nxt != 394 or open_s != "F393":
+    # wave-308 lane A re-pin: F391 CLOSED; footer open F394 / next F395
+    if nxt != 395 or open_s != "F394":
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F393 open "
+                       "footer drift: next F%d open %r (want next F394 open "
                        "'none')" % (nxt, open_s))
     _record("footer-state", "HELD",
-            "footer open none / next F393")
+            "footer open F394 / next F395")
 
 
 AT = 1_700_000_000
@@ -212,7 +212,7 @@ def _branch_fx():
                        authority_seed=ed25519.generate_seed(),
                        issued_at=1000)
     c = wb.BranchCoordinator()
-    xid_a = c.begin(ed25519.generate_seed())
+    xid_a = c.begin(ed25519.generate_seed(), lease_manager=lm)
     return lm, lease["fencing_token"], c, xid_a, ed25519
 
 
@@ -233,7 +233,7 @@ def p_f385_resume_after_commit_refuses():
     # _branch_fx used a throwaway seed; re-begin with a known seed so we
     # can sign the decision.
     seed = ed25519.generate_seed()
-    xid = c.begin(seed)
+    xid = c.begin(seed, lease_manager=lm)
     susp = c.suspend_lease(xid, lm, "scope-x", tok, "holder-1",
                            suspended_at=1050)
     _decide(c, xid, seed, "commit")
@@ -252,7 +252,7 @@ def p_f385_resume_after_rollback_refuses():
     from gov import ed25519
     lm, tok, c, xid_a, _e = _branch_fx()
     seed = ed25519.generate_seed()
-    xid = c.begin(seed)
+    xid = c.begin(seed, lease_manager=lm)
     susp = c.suspend_lease(xid, lm, "scope-x", tok, "holder-1",
                            suspended_at=1050)
     _decide(c, xid, seed, "rollback")

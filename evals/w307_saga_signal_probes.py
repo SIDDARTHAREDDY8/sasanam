@@ -77,8 +77,9 @@ for _p in (REPO, os.path.join(REPO, "tests")):
         sys.path.insert(0, _p)
 sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
-TAXONOMY_PIN = 1828  # Wave-306 merge pin; this lane files nothing, pin unchanged
+TAXONOMY_PIN = 1829  # Wave-306 merge pin; this lane files nothing, pin unchanged
 
 FOREIGN_CODE = "workflow-composed-replay-foreign"
 ESCALATION_CODE = "workflow-saga-compensation-failed"
@@ -130,13 +131,14 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    want_open = "F393"
-    if nxt != 394 or open_s != want_open:
+    # Wave-309 lane A: F393 CLOSED; footer open F394 / next F395.
+    want_open = "F394"
+    if nxt != 395 or open_s != want_open:
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F393 open %r)"
+                       "footer drift: next F%d open %r (want next F394 open %r)"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open F391 / next F393")
+            "footer pins open F394 / next F395")
 
 
 AT = 1_700_000_000
@@ -201,15 +203,17 @@ def _scenario(pid):
 
 def _run_comp_scenario():
     """Build the compensation-path refusal scenario; return
-    (comp, raised_or_None, result_or_None)."""
+    (comp, raised_or_None, result_or_None).
+
+    NOTE (F393, wave-309): the run binds to the FIRST plan digest, so
+    the scenario uses ONE plan containing both the fn unit and the
+    saga unit (the legitimate multi-unit shape -- a workflow is a
+    single ComposedPlan). The old two-plan shape is now correctly
+    refused at the run->plan gate before any saga exists.
+    """
     wc, wf, saga, idem, comp, ws, sm, im, auth = _scaffold()
     actor = "agent-b"  # the plan actor: the F388/F390 threat model
     ws.start_run("probe", run_id="R", authority=auth, at=AT)
-    # A completed fn unit for the poisoned ref to name.
-    plan0 = wc.ComposedPlan([
-        {"kind": "fn", "name": "u1", "fn": lambda i: {"one": 1},
-         "inputs": {}, "idem_key": "k1"}])
-    comp.execute(plan0, run_id="R", authority=auth, at=AT)
 
     # Saga: s1's action succeeds, s2's action raises -> compensates s1.
     sd = sm.define([
@@ -228,10 +232,18 @@ def _run_comp_scenario():
             "action_fns": {"s1": act1, "s2": act2},
             "comp_fns": {"s1": lambda p: {"c": 1},
                          "s2": lambda p: {"c": 2}}}
-    plan = wc.ComposedPlan([unit])
+    # One plan: the fn unit runs first (creating the "fn:u1" step the
+    # poisoned ref names), then the saga unit.
+    plan = wc.ComposedPlan([
+        {"kind": "fn", "name": "u1", "fn": lambda i: {"one": 1},
+         "inputs": {}, "idem_key": "k1"},
+        unit,
+    ])
     # The plant: poisoned record under s1's COMPENSATION key, begun as
     # the plan actor, with the real digest of u1's step and a ref naming
     # u1's step (recorded name "fn:u1" != expected "saga-comp:su:s1").
+    # complete() checks ref shape only; the ref resolves when the
+    # compensation replays, by which time u1 has run.
     op_digest = _comp_op_digest(wc, plan, "su", "s1", {})
     plant = im.begin("composed", "composed-saga-comp", "sk:comp:s1",
                      op_digest, caller=actor,
@@ -346,9 +358,13 @@ def p_comp_coded_refusal_not_retried():
 
 
 def p_comp_action_path_control():
-    # S5: control -- the action path has the same property (refusal ->
-    # step failure -> compensation), accepted as HELD by wave-306
-    # lane B's A2 probe. Consistency check for the negative verdict.
+    # S5: control -- the action path refuses the poisoned pair (fail
+    # closed), accepted as HELD by wave-306 lane B's A2 probe. F393
+    # (wave-309) moves the refusal EARLIER: the run->plan gate refuses
+    # coded workflow-composed-plan-mismatch before the saga starts, so
+    # the refusal surfaces from execute() rather than as a step
+    # failure -> compensation. Both are fail-closed; the control
+    # accepts either, and asserts the action never executed.
     wc, wf, saga, idem, comp, ws, sm, im, auth = _scaffold()
     actor = "agent-b"
     ws.start_run("probe", run_id="R", authority=auth, at=AT)
@@ -382,9 +398,16 @@ def p_comp_action_path_control():
     try:
         res = comp.execute(plan, run_id="R", authority=auth, at=AT)
     except Exception as e:  # noqa: BLE001
+        code = getattr(e, "code", e)
+        if code == "workflow-composed-plan-mismatch" and not executed:
+            return _record("COMP-action-path-control", "HELD",
+                           "run->plan gate refused coded before the "
+                           "saga started; action never executed "
+                           "(fail-closed, stronger than the old "
+                           "step-failure->compensation shape)")
         return _record("COMP-action-path-control", "ERROR",
-                       "action-path refusal raised %r (want step "
-                       "failure -> compensation)" % (getattr(e, "code", e),))
+                       "action-path refusal raised %r (want coded "
+                       "refusal)" % (code,))
     got = res["units"]["su"]
     if executed:
         return _record("COMP-action-path-control", "BREAK",
@@ -430,10 +453,13 @@ def main():
             h += 1
         else:
             e += 1
-    for pid, verdict, note in _results:
-        print("%-34s %-6s %s" % (pid, verdict, note))
+    probe_lines.emit(_results)
     print("----")
     print("%d BREAK / %d HELD / %d ERROR" % (b, h, e))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        _results, b, h, e)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
     return 1 if (b or e) else 0
 
 

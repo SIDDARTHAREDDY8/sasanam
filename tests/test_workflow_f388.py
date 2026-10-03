@@ -69,31 +69,45 @@ def _plant(im, key, op_digest, result_digest, result_ref, caller="mallory"):
 
 class F388ComposedReplayForeign(unittest.TestCase):
     def test_foreign_run_replay_refused_coded(self):
-        """A1: foreign run's outputs must never return without executing."""
+        """A1: foreign run's outputs must never return without executing.
+
+        NOTE (F393, wave-309): the plan digest binds the unit's code,
+        so the forged-digest plan and the executed plan must be the
+        SAME plan object (two textually different lambdas no longer
+        share a digest).
+        """
         _, ws, _, im, comp, auth = _scaffold()
         ws.start_run("probe", run_id="victim", authority=auth, at=AT)
         ws.run_step("victim", 1, "vstep", lambda i: {"stolen": 1}, {},
                     authority=auth, at=AT)
         victim_digest = wc._digest({"stolen": 1})
+        executed = []
+
+        def real_fn(i):
+            executed.append(1)
+            return {"real": 1}
+
         plan = wc.ComposedPlan([
-            {"kind": "fn", "name": "u", "fn": lambda i: {"real": 1},
+            {"kind": "fn", "name": "u", "fn": real_fn,
              "inputs": {}, "idem_key": "ak"}])
         forged = _fn_op_digest(plan, "u", {})
         _plant(im, "ak", forged, victim_digest, "wfstep:victim:1")
-        executed = []
-        plan2 = wc.ComposedPlan([
-            {"kind": "fn", "name": "u",
-             "fn": lambda i: executed.append(1) or {"real": 1},
-             "inputs": {}, "idem_key": "ak"}])
         ws.start_run("probe", run_id="R", authority=auth, at=AT)
         with self.assertRaises(wc.ComposedError) as ctx:
-            comp.execute(plan2, run_id="R", authority=auth, at=AT)
+            comp.execute(plan, run_id="R", authority=auth, at=AT)
         self.assertEqual(ctx.exception.code, FOREIGN_CODE)
         self.assertIn("victim", str(ctx.exception))
         self.assertEqual(executed, [])
 
     def test_same_run_ref_repoint_refused_coded(self):
-        """A2: run binds but the record caller does not -> coded refusal."""
+        """A2: run binds but the record caller does not -> coded refusal.
+
+        NOTE (F393, wave-309): the two-plan shape is now refused
+        earlier at the run->plan gate (coded
+        workflow-composed-plan-mismatch). The record-caller check
+        itself is still covered by test_record_caller_mismatch_direct
+        below.
+        """
         _, ws, _, im, comp, auth = _scaffold()
         ws.start_run("probe", run_id="R", authority=auth, at=AT)
         plan1 = wc.ComposedPlan([
@@ -108,7 +122,7 @@ class F388ComposedReplayForeign(unittest.TestCase):
         _plant(im, "k2", forged, step_digest, "wfstep:R:1")
         with self.assertRaises(wc.ComposedError) as ctx:
             comp.execute(plan2, run_id="R", authority=auth, at=AT)
-        self.assertEqual(ctx.exception.code, FOREIGN_CODE)
+        self.assertEqual(ctx.exception.code, "workflow-composed-plan-mismatch")
 
     def test_record_caller_mismatch_direct(self):
         """Direct seam: run matches ctx but record caller differs."""

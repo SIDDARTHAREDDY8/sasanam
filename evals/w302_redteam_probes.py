@@ -76,7 +76,7 @@ from gov import workflow_idempotency as idem
 from gov import workflow_routing as wr
 from gov import workflow_saga as saga
 
-TAXONOMY_PIN = 1828  # Wave-301 merge pin 1812; this lane mints no codes.; Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 lane 4: pin 1820 -> 1822 (+2 workflow-saga-*); Wave-303 merge: pin 1822 -> 1826 (+4 codes from lanes 1-3)
+TAXONOMY_PIN = 1829  # Wave-301 merge pin 1812; this lane mints no codes.; Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 lane 4: pin 1820 -> 1822 (+2 workflow-saga-*); Wave-303 merge: pin 1822 -> 1826 (+4 codes from lanes 1-3)
 
 _results = []
 
@@ -133,11 +133,11 @@ class BaseStateTest(unittest.TestCase):
         # Wave-303 merge re-pin: F380-F384 CLOSED; F385,F386 OPEN.
         # Expected footer: open F387 / next free F389.
         ok = (m_open and m_open[-1].strip()
-              == "F393"
-              and m_next and m_next[-1] == "F394")
+              == "F394"
+              and m_next and m_next[-1] == "F395")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open none / next free F393")
+            "want open F394 / next free F395")
             == "HELD")
 
     def test_pin(self):
@@ -146,7 +146,7 @@ class BaseStateTest(unittest.TestCase):
               and lits == sorted(lits))
         self.assertTrue(_expect_held(
             "taxonomy-pin",
-            ok and TAXONOMY_PIN == 1828,
+            ok and TAXONOMY_PIN == 1829,
             "%d literals / %d unique / sorted=%s"
             % (len(lits), len(set(lits)), lits == sorted(lits))) == "HELD")
 

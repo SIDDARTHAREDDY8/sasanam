@@ -67,8 +67,9 @@ for _p in (REPO, os.path.join(REPO, "tests")):
         sys.path.insert(0, _p)
 sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
-TAXONOMY_PIN = 1828  # Wave-306 merge pin; Wave-307 lane A: F392 reuses workflow-composed-replay-foreign, pin unchanged
+TAXONOMY_PIN = 1829  # Wave-306 merge pin; Wave-307 lane A: F392 reuses workflow-composed-replay-foreign, pin unchanged
 FOREIGN_CODE = "workflow-composed-replay-foreign"
 
 _results = []
@@ -118,14 +119,15 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    # Wave-308 lane A: F391 CLOSED; footer open none / next F393.
-    want_open = "F393"
-    if nxt != 394 or open_s != want_open:
+    # Wave-309 lane A: F393 CLOSED; footer open F394 / next F395.
+    # Wave-309 lane A: F393 CLOSED; footer open F394 / next F395.
+    want_open = "F394"
+    if nxt != 395 or open_s != want_open:
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F393 open %r)"
+                       "footer drift: next F%d open %r (want next F394 open %r)"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open none / next F393")
+            "footer pins open F394 / next F395")
 
 
 AT = 1_700_000_000
@@ -171,9 +173,10 @@ def p_f392_same_run_same_name():
     # named "u2". Attacker executes plan_evil under run R (records
     # fn:u2 at seq 1); then plants under the victim's key "k2" a record
     # with the exact op_digest, the real digest of the evil step, and
-    # ref "wfstep:R:1". Executing the victim plan under run R must
-    # refuse coded (BREAK = evil outputs returned without the victim
-    # fn executing).
+    # ref "wfstep:R:1". F393 (wave-309) stops this shape EARLIER: the
+    # run binds to the first plan digest, so the victim plan refuses
+    # coded workflow-composed-plan-mismatch at the gate (BREAK = evil
+    # outputs returned without the victim fn executing).
     wc, wf, saga, idem, comp, ws, sm, im, auth = _scaffold()
     ws.start_run("probe", run_id="R", authority=auth, at=AT)
     evil = wc.ComposedPlan([
@@ -202,10 +205,15 @@ def p_f392_same_run_same_name():
         res = comp.execute(victim, run_id="R", authority=auth, at=AT)
     except Exception as e:  # noqa: BLE001
         code = getattr(e, "code", None)
-        if code == FOREIGN_CODE:
+        if code == "workflow-composed-plan-mismatch":
+            if executed:
+                return _record("F392-same-run-same-name", "ERROR",
+                               "victim fn ran before the gate refusal")
             return _record("F392-same-run-same-name", "HELD",
-                           "same-run same-name pair refused coded "
-                           "(F392 closed)")
+                           "same-run same-name attack refused coded "
+                           "workflow-composed-plan-mismatch at the "
+                           "run->plan gate (F392 attack path closed "
+                           "earlier)")
         return _record("F392-same-run-same-name", "ERROR",
                        "wrong refusal: %r (%r)" % (code, e))
     if executed:
@@ -226,12 +234,12 @@ def p_f392_saga_action_binding():
     # saga plan under run R (unit "su", step "s1") records saga:su:s1
     # at seq 1; a plant under the VICTIM saga action's key
     # ("sk2:action:s1") with the exact op_digest, the real digest of
-    # the evil step, and ref "wfstep:R:1" must refuse coded. The coded
-    # refusal surfaces as a failed saga step (the saga manager catches
-    # the action's exception and compensates), so: BREAK = the victim
-    # saga "succeeded" without its action executing (the attacker's
-    # outputs returned as native); HELD = the saga did not succeed
-    # (the refusal stopped the poisoned replay).
+    # the evil step, and ref "wfstep:R:1" must refuse coded. F393
+    # (wave-309) stops this shape EARLIER at the run->plan gate (coded
+    # workflow-composed-plan-mismatch), so the refusal now surfaces
+    # from execute() itself: BREAK = the victim saga "succeeded"
+    # without its action executing (the attacker's outputs returned as
+    # native); HELD = the gate refused coded.
     wc, wf, saga, idem, comp, ws, sm, im, auth = _scaffold()
     ws.start_run("probe", run_id="R", authority=auth, at=AT)
 
@@ -273,10 +281,15 @@ def p_f392_saga_action_binding():
         res = comp.execute(victim_plan, run_id="R", authority=auth, at=AT)
     except Exception as e:  # noqa: BLE001
         code = getattr(e, "code", None)
-        if code == FOREIGN_CODE:
+        if code == "workflow-composed-plan-mismatch":
+            if executed:
+                return _record("F392-saga-action-binding", "ERROR",
+                               "victim action ran before the gate refusal")
             return _record("F392-saga-action-binding", "HELD",
-                           "saga-action same-name pair refused coded "
-                           "(F392 closed)")
+                           "saga-action same-name attack refused coded "
+                           "workflow-composed-plan-mismatch at the "
+                           "run->plan gate (F392 attack path closed "
+                           "earlier)")
         return _record("F392-saga-action-binding", "ERROR",
                        "wrong refusal: %r (%r)" % (code, e))
     got = res["units"]["su"]
@@ -389,10 +402,13 @@ def main():
             h += 1
         else:
             e += 1
-    for pid, verdict, note in _results:
-        print("%-34s %-6s %s" % (pid, verdict, note))
+    probe_lines.emit(_results)
     print("----")
     print("%d BREAK / %d HELD / %d ERROR" % (b, h, e))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        _results, b, h, e)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
     return 1 if (b or e) else 0
 
 

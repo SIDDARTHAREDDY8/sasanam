@@ -63,7 +63,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 import probe_lines  # noqa: E402  (canonical probe-line form)
 
-TAXONOMY_PIN = 1828  # Wave-303 merge pin; Wave-304 lane C: pin 1827 -> 1827 (+1 workflow-composed-replay-foreign)
+TAXONOMY_PIN = 1829  # Wave-303 merge pin; Wave-304 lane C: pin 1827 -> 1827 (+1 workflow-composed-replay-foreign)
 
 FOREIGN_CODE = "workflow-composed-replay-foreign"
 
@@ -115,13 +115,14 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    want_open = "F393"
-    if nxt != 394 or open_s != want_open:
+    # Wave-309 lane A: F393 CLOSED; footer open F394 / next F395.
+    want_open = "F394"
+    if nxt != 395 or open_s != want_open:
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F393 open %r)"
+                       "footer drift: next F%d open %r (want next F394 open %r)"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open F391 / next F393")
+            "footer pins open F394 / next F395")
 
 
 AT = 1_700_000_000
@@ -181,8 +182,20 @@ def p_f387_foreign_run_replay():
     # (digest, ref) pair names the victim run. Lane-2 caller binding
     # does not stop it: the attacker begins AND completes as one
     # caller.
+    # NOTE (F393, wave-309): the plan digest now binds the unit's
+    # code, so the forged-digest plan and the executed plan must be the
+    # SAME plan object -- two textually different lambdas no longer
+    # share a digest (that two-lambda shape was a probe artifact, not a
+    # legitimate pattern: crash-recovery rebuilds from identical
+    # source, which keeps the digest).
+    executed = []
+
+    def real_fn(i):
+        executed.append(1)
+        return {"real": 1}
+
     plan = wc.ComposedPlan([
-        {"kind": "fn", "name": "u", "fn": lambda i: {"real": 1},
+        {"kind": "fn", "name": "u", "fn": real_fn,
          "inputs": {}, "idem_key": "ak"}])
     forged = _fn_op_digest(wc, plan, "u", {})
     plant = im.begin("composed", "composed-unit", "ak", forged,
@@ -192,17 +205,15 @@ def p_f387_foreign_run_replay():
         return _record("F388-foreign-run-replay", "ERROR",
                        "plant did not begin new: %s" % (plant.status,))
     plant.complete(victim_digest, "wfstep:victim:1", at=AT)
-    # The composer's own execution.
-    executed = []
-    plan2 = wc.ComposedPlan([
-        {"kind": "fn", "name": "u",
-         "fn": lambda i: executed.append(1) or {"real": 1},
-         "inputs": {}, "idem_key": "ak"}])
+    # The composer's own execution of the same plan under a new run.
     ws.start_run("probe", run_id="R", authority=auth, at=AT)
     try:
-        res = comp.execute(plan2, run_id="R", authority=auth, at=AT)
+        res = comp.execute(plan, run_id="R", authority=auth, at=AT)
     except Exception as e:  # noqa: BLE001
         if _refused_foreign(e):
+            if executed:
+                return _record("F388-foreign-run-replay", "ERROR",
+                               "fn ran before the coded refusal")
             return _record("F388-foreign-run-replay", "HELD",
                            "foreign pair refused coded "
                            "workflow-composed-replay-foreign")
@@ -219,8 +230,11 @@ def p_f387_foreign_run_replay():
 
 def p_f387_same_run_ref_repoint():
     # A2: same run, but the record was begun by a different actor and
-    # points at a step the current unit never created. The run check
-    # passes; only the record-caller binding refuses.
+    # points at a step the current unit never created. F393 (wave-309)
+    # stops this two-plan shape EARLIER: the run binds to the first
+    # plan digest, so plan2 refuses coded
+    # workflow-composed-plan-mismatch at the gate -- the pair never
+    # reaches the record-caller check.
     wc, wf, saga, idem, comp, ws, sm, im, auth = _scaffold()
     ws.start_run("probe", run_id="R", authority=auth, at=AT)
     plan1 = wc.ComposedPlan([
@@ -240,9 +254,12 @@ def p_f387_same_run_ref_repoint():
     try:
         res = comp.execute(plan2, run_id="R", authority=auth, at=AT)
     except Exception as e:  # noqa: BLE001
-        if _refused_foreign(e):
+        if getattr(e, "code", None) == "workflow-composed-plan-mismatch":
             return _record("F388-same-run-ref-repoint", "HELD",
-                           "re-pointed pair refused coded")
+                           "re-pointed pair refused coded "
+                           "workflow-composed-plan-mismatch at the "
+                           "run->plan gate (F388 attack path closed "
+                           "earlier)")
         return _record("F388-same-run-ref-repoint", "ERROR",
                        "unexpected refusal: %r" % (getattr(e, "code", e),))
     outputs = res["units"]["u2"]["outputs"]

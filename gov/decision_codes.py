@@ -16872,6 +16872,20 @@ TAXONOMY = {
         "evidence_kinds_required": ['workflow-record', 'idempotency-record'],
         "reverify_steps": ['recompute'],
     },
+    'workflow-composed-plan-mismatch': {
+        "domain": 'workflow',
+        "code": 'workflow-composed-plan-mismatch',
+        "human": 'composed workflow: a run is bound to the first plan '
+                 'digest executed under it; executing a different plan '
+                 'under the same run is refused fail-closed (the plan '
+                 'digest binds the units\' code, so a '
+                 'descriptor-identical plan with different code cannot '
+                 'share the run, while crash-recovery re-execution of '
+                 'the same plan still replays)',
+        "severity": 'critical',
+        "evidence_kinds_required": ['workflow-record'],
+        "reverify_steps": ['recompute'],
+    },
     'workflow-composed-replay-foreign': {
         "domain": 'workflow',
         "code": 'workflow-composed-replay-foreign',

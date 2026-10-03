@@ -55,7 +55,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-306 merge pin 1827; this lane mints no codes (red team only), so
 # the pin stays 1827. The merge-time sweep repoints to the wave-307 pin.
-TAXONOMY_PIN = 1828
+TAXONOMY_PIN = 1829
 
 AT = 1000000
 
@@ -97,7 +97,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1828/1828/0 sorted")
+    _record("pin-taxonomy", "HELD", "1829/1829/0 sorted")
 
 
 def p_footer_state():
@@ -110,13 +110,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
-    # Wave-308 lane A: F391 CLOSED; footer open none / next F393.
-    if nxt != 394 or open_s != "F393":
+    # Wave-308 lane A: F391 CLOSED; footer open F394 / next F395.
+    if nxt != 395 or open_s != "F394":
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F393 open "
+                       "footer drift: next F%d open %r (want next F394 open "
                        "'none')" % (nxt, open_s))
     _record("footer-state", "HELD",
-            "footer pins open none / next F393")
+            "footer pins open F394 / next F395")
 
 
 def _chain_fx():
@@ -176,7 +176,7 @@ def _branch_fx():
                        authority_seed=ed25519.generate_seed(),
                        issued_at=1000)
     c = wb.BranchCoordinator()
-    xid = c.begin(ed25519.generate_seed())
+    xid = c.begin(ed25519.generate_seed(), lease_manager=lm)
     return lm, lease["fencing_token"], c, xid, ed25519
 
 
@@ -194,8 +194,8 @@ def p_f391_fake_manager_clobber():
     # brought their own rubber-stamp manager: the re-park was ACCEPTED
     # and the legitimate holder's subsequent resume refused
     # workflow-branch-xid-mismatch. Now the coordinator binds the
-    # manager at the first park (identity check); a substituted
-    # manager refuses coded coord-lease-manager-mismatch.
+    # manager at begin() time (identity check); a substituted manager
+    # refuses coded coord-lease-manager-mismatch.
     lm, tok, c, xid, ed25519 = _branch_fx()
     rec = c.suspend_lease(xid, lm, "scope-x", tok, "holder-1",
                           suspended_at=1050)
@@ -231,16 +231,16 @@ def p_f391_fake_manager_resume():
     # liveness check must consult the bound manager. The attacker's
     # suspend with a substitute manager is now refused at park time
     # (see p_f391_fake_manager_clobber); this probe pins the resume
-    # side directly: park with fake1 (the first park binds it), then
-    # resume the parked record with a DIFFERENT substitute fake2 --
-    # the coordinator must refuse coded
+    # side directly: begin with fake1 BOUND (begin-time binding), park
+    # with fake1, then resume the parked record with a DIFFERENT
+    # substitute fake2 -- the coordinator must refuse coded
     # coord-lease-manager-mismatch rather than let fake2 self-attest
-    # liveness. (Same-object resume after a first-park win is the
-    # documented residual: it requires beating the holder to the first
-    # park AND getting the deployment to resume from the attacker's
-    # record.)
-    _lm, _tok, c, xid, _ed = _branch_fx()
+    # liveness.
+    from gov import workflow_branch as wb
+    from gov import ed25519 as _ed
+    c = wb.BranchCoordinator()
     fake1 = _RubberStampManager()
+    xid = c.begin(_ed.generate_seed(), lease_manager=fake1)
     evil = c.suspend_lease(xid, fake1, "scope-x", 999999, "mallory",
                            suspended_at=1060)
     try:
@@ -351,8 +351,10 @@ def p_f390_cross_kind_prefix_separated():
 
 def p_f390_wrong_step_still_refused():
     # F390 closure regression: the wave-306 lane-B attack (same run,
-    # same caller, different completed step) must still refuse coded
-    # workflow-composed-replay-foreign.
+    # same caller, different completed step) must still refuse coded.
+    # F393 (wave-309) stops this two-plan shape EARLIER at the
+    # run->plan gate (coded workflow-composed-plan-mismatch); the name
+    # check itself is covered end-to-end by tests/test_workflow_f390.py.
     wc, wf, saga, idem, comp, ws, sm, im, auth = _scaffold()
     actor = "agent-b"
     ws.start_run("probe", run_id="R", authority=auth, at=AT)
@@ -374,10 +376,12 @@ def p_f390_wrong_step_still_refused():
     try:
         res = comp.execute(plan2b, run_id="R", authority=auth, at=AT)
     except Exception as e:  # noqa: BLE001
-        if getattr(e, "code", None) == "workflow-composed-replay-foreign":
+        if getattr(e, "code", None) == "workflow-composed-plan-mismatch":
             return _record("F390-wrong-step-still-refused", "HELD",
-                           "same-run wrong-step pair refused coded "
-                           "(F390 holds)")
+                           "same-run wrong-step attack refused coded "
+                           "workflow-composed-plan-mismatch at the "
+                           "run->plan gate (F390 attack path closed "
+                           "earlier)")
         return _record("F390-wrong-step-still-refused", "ERROR",
                        "wrong refusal: %r" % (getattr(e, "code", e),))
     outputs = res["units"][0]["outputs"] if res.get("units") else res

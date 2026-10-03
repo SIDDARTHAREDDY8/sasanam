@@ -36,7 +36,7 @@ class F385ResumeXidBindingTests(unittest.TestCase):
         lease = lm.acquire("scope-x", 100, "holder-1",
                            authority_seed=_seed(), issued_at=1000)
         c = wb.BranchCoordinator()
-        xid_a = c.begin(_seed())
+        xid_a = c.begin(_seed(), lease_manager=lm)
         xid_b = c.begin(_seed())
         susp = c.suspend_lease(xid_a, lm, "scope-x",
                                lease["fencing_token"], "holder-1",
@@ -70,7 +70,7 @@ class F385ResumeXidBindingTests(unittest.TestCase):
         lease = lm.acquire("scope-x", 100, "holder-1",
                            authority_seed=_seed(), issued_at=1000)
         c = wb.BranchCoordinator()
-        xid_a = c.begin(seed)
+        xid_a = c.begin(seed, lease_manager=lm)
         xid_b = c.begin(seed)
         susp = c.suspend_lease(xid_a, lm, "scope-x",
                                lease["fencing_token"], "holder-1",
@@ -89,7 +89,7 @@ class F385ResumeXidBindingTests(unittest.TestCase):
         lease = lm.acquire("scope-x", 100, "holder-1",
                            authority_seed=_seed(), issued_at=1000)
         c = wb.BranchCoordinator()
-        xid = c.begin(seed)
+        xid = c.begin(seed, lease_manager=lm)
         susp = c.suspend_lease(xid, lm, "scope-x",
                                lease["fencing_token"], "holder-1",
                                suspended_at=1050)
@@ -151,7 +151,7 @@ class F385ResumeXidBindingTests(unittest.TestCase):
         lease = lm2.acquire("scope-y", 100, "holder-2",
                             authority_seed=_seed(), issued_at=1000)
         c = wb.BranchCoordinator()
-        xid = c.begin(_seed())
+        xid = c.begin(_seed(), lease_manager=lm2)
         susp = c.suspend_lease(xid, lm2, "scope-y",
                                lease["fencing_token"], "holder-2",
                                suspended_at=1050)

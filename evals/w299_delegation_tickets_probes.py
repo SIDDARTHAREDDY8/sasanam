@@ -49,13 +49,15 @@ import traceback
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 for _p in (REPO, os.path.join(REPO, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1828  # Wave-299 lane 3: pin 1780 -> 1784 (+4 delegation-ticket-*); Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
+TAXONOMY_PIN = 1829  # Wave-299 lane 3: pin 1780 -> 1784 (+4 delegation-ticket-*); Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
 
@@ -97,7 +99,7 @@ def p_taxonomy_pin():
         if want not in lits:
             return _record("pin-taxonomy", "BREAK",
                            "missing expected code %r" % want)
-    _record("pin-taxonomy", "HELD", "1828 raw literals, unique, sorted")
+    _record("pin-taxonomy", "HELD", "1829 raw literals, unique, sorted")
 
 
 def _import_mods():
@@ -489,9 +491,11 @@ def main():
     n_err = sum(1 for _, v, _ in _results if v == "ERROR")
     print("w299_delegation_tickets: %d BREAK / %d HELD / %d ERROR"
           % (n_break, n_held, n_err))
-    for pid, v, note in _results:
-        if v != "HELD":
-            print("  [%s] %s: %s" % (v, pid, note.splitlines()[0]))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        _results, n_break, n_held, n_err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    probe_lines.emit(_results)
     sys.exit(1 if (n_break or n_err) else 0)
 
 

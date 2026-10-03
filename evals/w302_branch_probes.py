@@ -18,7 +18,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 import unittest
 
-TAXONOMY_PIN = 1828  # Wave-302 lane 3: pin 1812 -> 1815 (+3 workflow-branch-*).; Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
+TAXONOMY_PIN = 1829  # Wave-302 lane 3: pin 1812 -> 1815 (+3 workflow-branch-*).; Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 try:
     from gov import ed25519
@@ -118,7 +118,7 @@ class BranchProbes(unittest.TestCase):
         lease = lm.acquire("scope-x", 100, "holder-1",
                            authority_seed=seed, issued_at=1000)
         c = wb.BranchCoordinator()
-        xid = c.begin(ed25519.generate_seed())
+        xid = c.begin(ed25519.generate_seed(), lease_manager=lm)
         susp = c.suspend_lease(xid, lm, "scope-x",
                               lease["fencing_token"], "holder-1",
                               suspended_at=1050)
@@ -136,7 +136,7 @@ class BranchProbes(unittest.TestCase):
         lease = lm.acquire("scope-y", 100, "holder-1",
                            authority_seed=seed, issued_at=1000)
         c = wb.BranchCoordinator()
-        xid = c.begin(ed25519.generate_seed())
+        xid = c.begin(ed25519.generate_seed(), lease_manager=lm)
         susp = c.suspend_lease(xid, lm, "scope-y",
                               lease["fencing_token"], "holder-1",
                               suspended_at=1050)
@@ -186,10 +186,10 @@ class RepinTest(unittest.TestCase):
             src = _f.read()
         lits = re.findall(r'"code":\s*\'([a-z][a-z0-9-_.]*)\'', src)
         self.assertTrue(_expect_held(
-            "repin-pin-1828",
-            len(lits) == 1828 and len(set(lits)) == 1828
+            "repin-pin-1829",
+            len(lits) == 1829 and len(set(lits)) == 1829
             and lits == sorted(lits),
-            "1828 unique sorted literals") == "HELD")
+            "1829 unique sorted literals") == "HELD")
 
 
 def _green_check(battery, expect):

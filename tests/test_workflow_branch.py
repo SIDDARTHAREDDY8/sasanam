@@ -150,7 +150,7 @@ class LeaseAcrossSuspensionTests(unittest.TestCase):
         seed = _seed()
         lease = self._lease(lm, seed)
         c = wb.BranchCoordinator()
-        xid = c.begin(_seed())
+        xid = c.begin(_seed(), lease_manager=lm)
         susp = c.suspend_lease(xid, lm, "scope-a",
                               lease["fencing_token"], "holder-1",
                               suspended_at=1050)
@@ -162,7 +162,7 @@ class LeaseAcrossSuspensionTests(unittest.TestCase):
         seed = _seed()
         lease = self._lease(lm, seed, ttl=100, at=1000)  # expires 1100
         c = wb.BranchCoordinator()
-        xid = c.begin(_seed())
+        xid = c.begin(_seed(), lease_manager=lm)
         susp = c.suspend_lease(xid, lm, "scope-a",
                               lease["fencing_token"], "holder-1",
                               suspended_at=1050)
@@ -177,7 +177,7 @@ class LeaseAcrossSuspensionTests(unittest.TestCase):
         seed = _seed()
         lease = self._lease(lm, seed, ttl=100, at=1000)  # expires 1100
         c = wb.BranchCoordinator()
-        xid = c.begin(_seed())
+        xid = c.begin(_seed(), lease_manager=lm)
         susp = c.suspend_lease(xid, lm, "scope-a",
                               lease["fencing_token"], "holder-1",
                               suspended_at=1050)
@@ -195,11 +195,99 @@ class LeaseAcrossSuspensionTests(unittest.TestCase):
         seed = _seed()
         lease = self._lease(lm, seed)
         c = wb.BranchCoordinator()
-        xid = c.begin(_seed())
+        xid = c.begin(_seed(), lease_manager=lm)
         susp = c.suspend_lease(xid, lm, "scope-a",
                               lease["fencing_token"], "holder-1",
                               suspended_at=1050)
         self.assertEqual(susp["xid"], xid)
+
+
+class BeginTimeBindingTests(unittest.TestCase):
+    """Wave-309 lane B: the lease manager is bound at begin() time,
+    eliminating the F391 first-park race by construction."""
+
+    def _mgr(self):
+        from gov import coordination_lease as cl
+        return cl.LeaseManager()
+
+    def _lease(self, lm, holder="holder-1"):
+        return lm.acquire("scope-a", 100, holder,
+                          authority_seed=_seed(), issued_at=1000)
+
+    def test_begin_binds_manager(self):
+        lm = self._mgr()
+        lease = self._lease(lm)
+        c = wb.BranchCoordinator()
+        xid = c.begin(_seed(), lease_manager=lm)
+        susp = c.suspend_lease(xid, lm, "scope-a",
+                               lease["fencing_token"], "holder-1",
+                               suspended_at=1050)
+        self.assertTrue(c.resume_lease(susp, lm, checked_at=1080))
+
+    def test_begin_without_manager_park_refuses_coded(self):
+        # Fail-closed: no silent first-park binding.
+        lm = self._mgr()
+        lease = self._lease(lm)
+        c = wb.BranchCoordinator()
+        xid = c.begin(_seed())
+        with self.assertRaises(wb.WorkflowBranchError) as ctx:
+            c.suspend_lease(xid, lm, "scope-a",
+                            lease["fencing_token"], "holder-1",
+                            suspended_at=1050)
+        self.assertEqual(ctx.exception.code,
+                         "coord-lease-manager-mismatch")
+
+    def test_begin_rejects_manager_without_check_write(self):
+        c = wb.BranchCoordinator()
+        with self.assertRaises(wb.WorkflowBranchError) as ctx:
+            c.begin(_seed(), lease_manager=object())
+        self.assertEqual(ctx.exception.code, "decision-code-malformed")
+
+    def test_first_park_race_eliminated(self):
+        # The wave-308 residual, now closed: an attacker who parks
+        # first can no longer bind their manager -- the binding
+        # happened at begin().
+        lm = self._mgr()
+        lease = self._lease(lm)
+        c = wb.BranchCoordinator()
+        xid = c.begin(_seed(), lease_manager=lm)
+
+        class Fake:
+            def check_write(self, scope, fencing_token, holder_id,
+                            checked_at=None):
+                return True
+
+        with self.assertRaises(wb.WorkflowBranchError) as ctx:
+            c.suspend_lease(xid, Fake(), "scope-a", 999999, "mallory",
+                            suspended_at=1060)
+        self.assertEqual(ctx.exception.code,
+                         "coord-lease-manager-mismatch")
+        # The holder is NOT locked out.
+        susp = c.suspend_lease(xid, lm, "scope-a",
+                               lease["fencing_token"], "holder-1",
+                               suspended_at=1070)
+        self.assertTrue(c.resume_lease(susp, lm, checked_at=1080))
+
+    def test_substitute_manager_at_either_end_refuses(self):
+        lm = self._mgr()
+        lease = self._lease(lm)
+        c = wb.BranchCoordinator()
+        xid = c.begin(_seed(), lease_manager=lm)
+        susp = c.suspend_lease(xid, lm, "scope-a",
+                               lease["fencing_token"], "holder-1",
+                               suspended_at=1050)
+
+        class Fake:
+            def check_write(self, scope, fencing_token, holder_id,
+                            checked_at=None):
+                return True
+
+        with self.assertRaises(wb.WorkflowBranchError) as ctx:
+            c.resume_lease(susp, Fake(), checked_at=1080)
+        self.assertEqual(ctx.exception.code,
+                         "coord-lease-manager-mismatch")
+        # Legitimate resume still works afterwards.
+        self.assertTrue(c.resume_lease(susp, lm, checked_at=1080))
 
 
 class CodeContractTests(unittest.TestCase):
