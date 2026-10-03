@@ -126,11 +126,11 @@ def p_footer_state():
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
     # Wave-309 lane D footer: F394 filed OPEN by this lane.
-    if nxt != 395 or open_s != "F394":
+    if nxt != 396 or open_s != "F394, F395":
         return _record("footer-state", "BREAK",
-                       "footer pins next F%d open '%s', want next F395 "
-                       "open 'F394'" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open F394 / next F395")
+                       "footer pins next F%d open '%s', want next F396 "
+                       "open 'F394, F395'" % (nxt, open_s))
+    _record("footer-state", "HELD", "footer pins open F394, F395 / next F396")
 
 
 # ------------------------------------------------------------------
