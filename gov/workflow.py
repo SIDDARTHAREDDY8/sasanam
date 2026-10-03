@@ -17,13 +17,16 @@ Authority model: every mutating call presents an ``authority`` dict::
      "chain": [...],                     # gov.delegation native receipts,
                                           # root-first
      "trust_roots": ["<hex>", ...],
-     "revocation_ledger": DelegationRevoker | None}
+     "revocation_ledger": DelegationRevoker}
 
 Fresh execution verifies the chain (``gov.delegation.authorize`` --
-``delegation-*`` coded errors propagate) AND, when a revocation ledger
-is presented, liveness (``assert_live_native``; a revoked chain refuses
+``delegation-*`` coded errors propagate) AND revocation liveness
+(``assert_live_native``; a revoked chain refuses
 ``workflow-authority-revoked`` -- revocation beats expiry, same as the
-receipt layer). A resume NEVER trusts the checkpoint's recorded
+receipt layer). The ledger is REQUIRED on every verification: an
+authority without one fails closed (``workflow-authority-revoked``)
+because liveness cannot be proven (the F378 precedent; F380 closure).
+A resume NEVER trusts the checkpoint's recorded
 authority: the caller re-presents authority, it is re-verified, and the
 actor must match the run's initiating actor (no resume hijacking --
 ``workflow-step-unauthorized``).
@@ -109,7 +112,14 @@ class WorkflowStore:
 
     # -- persistence ----------------------------------------------------
 
-    def _append(self, record):
+    def _append(self, record, persist=True):
+        """Append a record in memory, and persist it unless loading.
+
+        ``_load()`` passes ``persist=False``: the records already exist
+        in the journal file, so re-appending them would double the
+        file on every restart (F382). The in-memory indexes rebuild
+        identically either way.
+        """
         record = dict(record)
         record["record_digest"] = _record_digest(record)
         rtype = record["type"]
@@ -132,7 +142,7 @@ class WorkflowStore:
             self._consumed.add(record["notification_digest"])
         else:
             _fail(WF_TAMPERED, "unknown record type %r" % (rtype,))
-        if self._path is not None:
+        if persist and self._path is not None:
             with open(self._path, "a", encoding="utf-8") as fh:
                 fh.write(_canon(record) + "\n")
         return record
@@ -161,7 +171,9 @@ class WorkflowStore:
                 _fail(WF_TAMPERED,
                       "checkpoint record digest mismatch at line %d "
                       "(stored state was tampered with)" % (i,))
-            self._append(record)
+            # populate memory without re-appending: reload is a fixed
+            # point (F382) -- the records are already on disk.
+            self._append(record, persist=False)
 
     # -- authority ------------------------------------------------------
 
@@ -185,15 +197,22 @@ class WorkflowStore:
         # Propagates gov.delegation's own coded errors (delegation-*).
         _delegation.authorize(chain, action, actor, at=at,
                               trust_roots=trust_roots)
+        # F380 closure: the revocation ledger is REQUIRED on every
+        # authority verification. A caller that omits it fails closed --
+        # revocation liveness cannot be proven, so the authority is not
+        # trusted (the F378 precedent).
         ledger = authority.get("revocation_ledger")
-        if ledger is not None:
-            try:
-                ledger.assert_live_native(chain, at, trust_roots)
-            except Exception as e:  # noqa: BLE001 -- map to workflow code
-                _fail(WF_REVOKED,
-                      "delegation chain not live at resume: %s "
-                      "(underlying code: %s)"
-                      % (e, getattr(e, "code", "?")))
+        if ledger is None:
+            _fail(WF_REVOKED,
+                  "authority carries no revocation ledger: revocation "
+                  "liveness cannot be proven (fail closed)")
+        try:
+            ledger.assert_live_native(chain, at, trust_roots)
+        except Exception as e:  # noqa: BLE001 -- map to workflow code
+            _fail(WF_REVOKED,
+                  "delegation chain not live at resume: %s "
+                  "(underlying code: %s)"
+                  % (e, getattr(e, "code", "?")))
         leaf = chain[-1]
         return hashlib.sha256(
             (leaf["receipt_id"] + leaf["delegator_id"]).encode("utf-8")
@@ -284,7 +303,10 @@ class WorkflowStore:
         Returns ``(outputs, replayed)``. A completed step with matching
         inputs replays its recorded outputs WITHOUT calling ``fn``. A
         failed step re-executes. A step-level idempotency key replays
-        across seq slots.
+        across seq slots, but only for the same step name and inputs:
+        a key hit on a different name/inputs is workflow definition
+        drift and refuses ``workflow-step-unauthorized`` (F383), exactly
+        as the seq-slot path does.
         """
         self._check_step_args(run_id, seq, name)
         run = self._get_run(run_id)
@@ -293,6 +315,10 @@ class WorkflowStore:
         if not callable(fn):
             raise ValueError("fn must be callable")
         inputs = {} if inputs is None else inputs
+        # F380 closure: re-prove authority on EVERY entry, including the
+        # completed-step replay paths below. A resume never trusts the
+        # checkpoint's recorded authority.
+        authority_digest = self._verify_authority(authority, run, at)
         inputs_digest = _digest(inputs)
         if idempotency_key is not None:
             if not isinstance(idempotency_key, str) or not idempotency_key:
@@ -301,6 +327,17 @@ class WorkflowStore:
             if hit is not None:
                 rec = self._steps[hit]
                 if rec["status"] == "completed":
+                    if rec["name"] != name:
+                        _fail(WF_UNAUTHORIZED,
+                              "step under idempotency key %r already "
+                              "completed as %r (workflow definition "
+                              "drift)" % (idempotency_key, rec["name"]))
+                    if rec["inputs_digest"] != inputs_digest:
+                        _fail(WF_UNAUTHORIZED,
+                              "step under idempotency key %r already "
+                              "completed with different inputs "
+                              "(workflow definition drift)"
+                              % (idempotency_key,))
                     return rec["outputs"], True
         key = (run_id, seq)
         existing = self._steps.get(key)
@@ -314,7 +351,6 @@ class WorkflowStore:
                       "step slot %d already completed with different inputs "
                       "(workflow definition drift)" % (seq,))
             return existing["outputs"], True
-        authority_digest = self._verify_authority(authority, run, at)
         try:
             outputs = fn(inputs)
         except Exception:
@@ -378,6 +414,9 @@ class WorkflowStore:
         now = at if now is None else now
         if not _is_int(now) or now < 0:
             raise ValueError("now must be a non-negative int instant")
+        # F380 closure (same defect class as run_step): re-prove
+        # authority before trusting a completed checkpoint.
+        authority_digest = self._verify_authority(authority, run, at)
         key = (run_id, seq)
         existing = self._steps.get(key)
         if existing is not None and existing["status"] == "completed":
@@ -386,7 +425,6 @@ class WorkflowStore:
                       "step slot %d already completed as %r "
                       "(workflow definition drift)" % (seq, existing["name"]))
             return True, True
-        authority_digest = self._verify_authority(authority, run, at)
         if now >= wake_at:
             self._append({"type": "step", "schema": SCHEMA,
                           "run_id": run_id, "seq": seq, "name": name,
@@ -441,6 +479,9 @@ class WorkflowStore:
         if timeout_at is not None \
                 and (not _is_int(timeout_at) or timeout_at < 0):
             raise ValueError("timeout_at must be a non-negative int instant")
+        # F380 closure (same defect class as run_step): re-prove
+        # authority before trusting a completed checkpoint.
+        authority_digest = self._verify_authority(authority, run, at)
         key = (run_id, seq)
         existing = self._steps.get(key)
         if existing is not None and existing["status"] == "completed":
@@ -449,7 +490,6 @@ class WorkflowStore:
                       "step slot %d already completed as %r "
                       "(workflow definition drift)" % (seq, existing["name"]))
             return existing["outputs"], True
-        authority_digest = self._verify_authority(authority, run, at)
         for note in self._notifications:
             if note["run_id"] == run_id and note["event"] == event \
                     and note["record_digest"] not in self._consumed:

@@ -27,6 +27,15 @@ effects are durably recorded. A crash before the mark leaves an
 IN_FLIGHT record; the retry re-executes (safe retry, never silent loss,
 never a phantom third execution).
 
+Caller binding (wave-303, F381 closure): ``begin()`` records the
+beginning caller in the returned ``BeginOutcome``. ``complete()`` and
+``checkpoint()`` consult the binding and refuse coded
+``workflow-idempotency-caller-mismatch`` when the outcome's caller is
+not the record's beginning caller -- a different authorized caller
+cannot complete or checkpoint another actor's in-flight operation
+(result poisoning defeated). The binding is read from the live backing
+record at call time, so an evicted record also fails closed.
+
 Design rule: "A workflow outlives its runner -- every step is
 checkpointed, and every resume re-proves its authority." ``begin()``
 re-verifies the caller's authority on EVERY path (new, replay, retry)
@@ -39,6 +48,11 @@ Completed set: bounded (``max_completed``). Overflow evicts the oldest
 completed record with a sink audit record (never silent); operators may
 also evict explicitly via ``evict_completed`` (loud: returns an eviction
 record AND emits a sink record -- the deployment chains it).
+``evict_completed`` requires the operator's authority to be re-verified
+through the deployment-supplied ``authority_verifier`` (the operator is
+the caller; a refusing or raising verifier fails closed coded
+``workflow-idempotency-authority-lapsed``): unauthenticated eviction is
+refused, not just unnamed.
 
 Progress checkpointing (airflow task-state-store discipline): an
 in-flight record accepts ``checkpoint(note)`` progress notes so a retry
@@ -60,7 +74,11 @@ Threat model: the authority_verifier is the trust anchor
 markers (deployment-owned clock); sink delivery is best-effort and never
 breaks the call path; an attacker that floods new keys can force
 capacity eviction of completed records -- at-least-once makes the
-resulting re-execution safe, not a vulnerability.
+resulting re-execution safe, not a vulnerability. Caller binding is
+same-scope authorization: a caller authorized for the (namespace,
+op_class) scope may still not complete, checkpoint, or evict another
+caller's records -- authority re-verification gates entry (begin/evict),
+the caller binding gates the in-flight mutation (complete/checkpoint).
 """
 
 import re
@@ -70,6 +88,7 @@ import re
 CODE_CONFLICT = "permit-idempotency-conflict"
 CODE_KEY_INVALID = "workflow-idempotency-key-invalid"
 CODE_AUTHORITY_LAPSED = "workflow-idempotency-authority-lapsed"
+CODE_CALLER_MISMATCH = "workflow-idempotency-caller-mismatch"
 
 STATUS_NEW = "new"
 STATUS_REPLAY = "replay"
@@ -106,9 +125,15 @@ class IdempotencyKeyInvalid(IdempotencyError):
 
 
 class IdempotencyAuthorityLapsed(IdempotencyError):
-    """Authority re-verification failed at begin/retry time."""
+    """Authority re-verification failed at begin/retry/evict time."""
 
     code = CODE_AUTHORITY_LAPSED
+
+
+class IdempotencyCallerMismatch(IdempotencyError):
+    """The outcome's caller is not the in-flight record's beginning caller."""
+
+    code = CODE_CALLER_MISMATCH
 
 
 def _check(cond, exc):
@@ -152,22 +177,52 @@ class BeginOutcome:
 
     status "new"/"retry": execute the effect, then ``complete()``.
     status "replay": do NOT execute; use ``result_digest``/``result_ref``.
+
+    The outcome is bound to the caller ``begin()`` was called with.
+    ``complete()`` and ``checkpoint()`` refuse coded
+    ``workflow-idempotency-caller-mismatch`` when the outcome's caller
+    is not the in-flight record's beginning caller: whoever began the
+    effects completes them; a different authorized caller cannot
+    complete or checkpoint another actor's in-flight record.
     """
 
-    def __init__(self, store, record_key, status, record):
+    def __init__(self, store, record_key, status, record, caller):
         self._store = store
         self._record_key = record_key
         self.status = status
+        self._caller = caller
+        self._record_caller = record.get("caller")
         self.result_digest = record.get("result_digest")
         self.result_ref = record.get("result_ref")
         self.notes = list(record.get("notes", []))
 
+    def _check_caller_binding(self, action):
+        """Fail closed unless this outcome's caller began the record.
+
+        The binding is re-read from the live backing record (not the
+        begin-time snapshot): a record evicted between begin() and
+        complete()/checkpoint() also refuses.
+        """
+        record = self._store._backing.get(self._record_key)
+        recorded = record.get("caller") if isinstance(record, dict) else None
+        _check(recorded is not None and self._caller == recorded,
+               IdempotencyCallerMismatch(
+                   "%s refused: outcome issued to caller %r, but the "
+                   "in-flight record was begun by %r"
+                   % (action, self._caller, recorded),
+                   action=action, outcome_caller=self._caller,
+                   record_caller=recorded))
+
     def complete(self, result_digest, result_ref, at=None):
         """Mark the operation complete AFTER effects are durably recorded.
+
+        Refuses coded ``workflow-idempotency-caller-mismatch`` when the
+        outcome's caller is not the record's beginning caller.
 
         Returns an eviction record dict if a capacity eviction fired,
         else None.
         """
+        self._check_caller_binding("complete")
         _check(self.status in (STATUS_NEW, STATUS_RETRY),
                ValueError("complete() only valid on new/retry outcomes"))
         _check_result_shape(result_digest, result_ref)
@@ -175,7 +230,12 @@ class BeginOutcome:
                                     result_ref, at)
 
     def checkpoint(self, note, at=None):
-        """Record a progress note on the in-flight record."""
+        """Record a progress note on the in-flight record.
+
+        Refuses coded ``workflow-idempotency-caller-mismatch`` when the
+        outcome's caller is not the record's beginning caller.
+        """
+        self._check_caller_binding("checkpoint")
         _check(self.status in (STATUS_NEW, STATUS_RETRY),
                ValueError("checkpoint() only valid on new/retry outcomes"))
         _check(isinstance(note, str) and 1 <= len(note) <= 512
@@ -218,7 +278,8 @@ class IdempotencyStore:
             self._backing[_ORDER_KEY] = order
         return order
 
-    def _verify_authority(self, verifier, caller, namespace, op_class, at):
+    def _verify_authority(self, verifier, caller, namespace, op_class, at,
+                          stage="begin"):
         _check(callable(verifier),
                ValueError("authority_verifier must be callable"))
         try:
@@ -228,8 +289,10 @@ class IdempotencyStore:
             ok = False  # verifier failure fails closed
         _check(ok is True,
                IdempotencyAuthorityLapsed(
-                   "caller authority lapsed or unverifiable at begin",
-                   caller=caller, namespace=namespace, op_class=op_class))
+                   "caller authority lapsed or unverifiable at %s"
+                   % (stage,),
+                   caller=caller, namespace=namespace, op_class=op_class,
+                   stage=stage))
 
     # -- public ----------------------------------------------------------
 
@@ -258,7 +321,7 @@ class IdempotencyStore:
             self._emit({"event": "begin-new", "namespace": namespace,
                         "op_class": op_class, "key": key, "caller": caller,
                         "at": at})
-            return BeginOutcome(self, rkey, STATUS_NEW, record)
+            return BeginOutcome(self, rkey, STATUS_NEW, record, caller)
         _check(record.get("op_digest") == op_digest,
                IdempotencyConflict(
                    "same key re-presented with a different operation "
@@ -268,11 +331,11 @@ class IdempotencyStore:
             self._emit({"event": "begin-replay", "namespace": namespace,
                         "op_class": op_class, "key": key, "caller": caller,
                         "at": at})
-            return BeginOutcome(self, rkey, STATUS_REPLAY, record)
+            return BeginOutcome(self, rkey, STATUS_REPLAY, record, caller)
         self._emit({"event": "begin-retry", "namespace": namespace,
                     "op_class": op_class, "key": key, "caller": caller,
                     "at": at})
-        return BeginOutcome(self, rkey, STATUS_RETRY, record)
+        return BeginOutcome(self, rkey, STATUS_RETRY, record, caller)
 
     def _complete(self, rkey, result_digest, result_ref, at):
         record = self._backing.get(rkey)
@@ -311,16 +374,27 @@ class IdempotencyStore:
                     "op_class": record["op_class"], "key": record["key"],
                     "note": note, "at": at})
 
-    def evict_completed(self, namespace, op_class, key, operator, at=None):
+    def evict_completed(self, namespace, op_class, key, operator,
+                        authority_verifier, at=None):
         """Operator-initiated eviction of a completed record.
 
         Loud: returns the eviction record AND emits a sink record.
+        The operator's authority is re-verified through the
+        deployment-supplied ``authority_verifier`` (the operator is the
+        caller): a refusing or raising verifier fails closed coded
+        ``workflow-idempotency-authority-lapsed``; a missing or
+        non-callable verifier is a programming error (ValueError).
+        Unauthenticated eviction is refused, not just unnamed.
         Raises KeyError when the record is absent or not completed.
         """
         _check(isinstance(operator, str) and 1 <= len(operator) <= 256
                and "\x00" not in operator,
                IdempotencyKeyInvalid("operator fails grammar",
                                     field="operator"))
+        # Authority required: same trust anchor as begin(). The operator
+        # name is the caller identity presented to the verifier.
+        self._verify_authority(authority_verifier, operator, namespace,
+                               op_class, at, stage="evict")
         rkey = self._record_key(namespace, op_class, key)
         record = self._backing.get(rkey)
         if record is None or record.get("state") != "completed":

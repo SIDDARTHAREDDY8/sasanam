@@ -65,7 +65,7 @@ from gov import memory_composed as mc
 from gov import memory_reconcile as mr
 from gov import memory_store as ms
 
-TAXONOMY_PIN = 1820  # Wave-301 merge pin 1812 (was 1802 at wave-300); this lane mints no codes.; Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*)
+TAXONOMY_PIN = 1826  # Wave-301 merge pin 1812 (was 1802 at wave-300); this lane mints no codes.; Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 lane 4: pin 1820 -> 1822 (+2 workflow-saga-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
 
@@ -125,14 +125,13 @@ class BaseStateTest(unittest.TestCase):
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
         # Wave-302 lane 1 re-pin: F379 CLOSED by this lane.
         # Merged footer: open findings: none / next free F380.
-                # Wave-302 merge re-pin: F379 CLOSED by lane 1; wave-302 red team
-        # filed F380-F384 (OPEN). Merged footer: open F380,F381,F382,F383,F384 /
-        # next free F385.
-        ok = (m_open and m_open[-1].strip().lower() == "f380,f381,f382,f383,f384"
-              and m_next and m_next[-1] == "F385")
+                # Wave-303 lane 4 re-pin: F384 CLOSED by this lane.
+        # Wave-303 merge re-pin: open F385,F386 / next free F387.
+        ok = (m_open and m_open[-1].strip().lower() == "f380,f381,f382,f383"
+              and m_next and m_next[-1] == "F387")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F380,F381,F382,F383,F384 / next free F385") == "HELD")
+            "want open F385,F386 / next free F387") == "HELD")
 
     def test_pin(self):
         lits = _literals()
@@ -140,7 +139,7 @@ class BaseStateTest(unittest.TestCase):
               and lits == sorted(lits))
         self.assertTrue(_expect_held(
             "taxonomy-pin",
-            ok and TAXONOMY_PIN == 1820,
+            ok and TAXONOMY_PIN == 1826,
             "%d literals / %d unique / sorted=%s"
             % (len(lits), len(set(lits)), lits == sorted(lits))) == "HELD")
 
@@ -811,10 +810,10 @@ class RepinTest(unittest.TestCase):
     def test_pin_repin(self):
         lits = _literals()
         self.assertTrue(_expect_held(
-            "repin-pin-1820",
-            len(lits) == 1820 and len(set(lits)) == 1820
+            "repin-pin-1826",
+            len(lits) == 1826 and len(set(lits)) == 1826
             and lits == sorted(lits),
-            "1820 unique sorted literals") == "HELD")
+            "1826 unique sorted literals") == "HELD")
 
 
 def _green_check(battery, expect):

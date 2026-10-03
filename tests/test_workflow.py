@@ -125,6 +125,12 @@ class RunStepTests(WorkflowTestBase):
         self.assertEqual(len(calls), 1)  # fn NOT re-executed
 
     def test_step_idempotency_key_replays_across_seq(self):
+        # F383 closure (wave-303): the idempotency-key replay path
+        # applies the same name/inputs drift checks as the seq-slot
+        # path -- a key hit on a different name refuses coded
+        # workflow-step-unauthorized (pinned in
+        # tests/test_workflow_f382f383.py). Same-name replays across
+        # seq slots are still exactly-once.
         auth = self._auth([self._root()])
         self.store.start_run("etl", run_id="r1", authority=auth, at=self.at)
         calls = []
@@ -133,7 +139,7 @@ class RunStepTests(WorkflowTestBase):
                             inputs={"src": "db"}, idempotency_key="step-k",
                             authority=auth, at=self.at)
         out, replayed = self.store.run_step(
-            "r1", 7, "extract-again",
+            "r1", 7, "extract",
             lambda i: calls.append(1) or {"rows": 999},
             inputs={"src": "db"}, idempotency_key="step-k",
             authority=auth, at=self.at)
@@ -317,15 +323,26 @@ class CrashResumeTests(WorkflowTestBase):
         store2 = wf.WorkflowStore(path=path)
         self.assertEqual(len(store2.list_steps("r1")), 1)
 
-    def test_authority_without_ledger_still_verifies(self):
+    def test_authority_without_ledger_refuses(self):
+        # F380 closure: the revocation ledger is REQUIRED on every
+        # authority verification. An authority without one fails closed
+        # coded workflow-authority-revoked (the F378 precedent).
         auth = self._auth([self._root()], ledger=None)
         auth.pop("revocation_ledger")
-        self.store.start_run("etl", run_id="r1", authority=auth, at=self.at)
-        out, replayed = self.store.run_step(
-            "r1", 0, "extract", lambda i: {"ok": True}, inputs={},
-            authority=auth, at=self.at)
-        self.assertEqual(out, {"ok": True})
-        self.assertFalse(replayed)
+        self.assertEqual(
+            self._code_of(self.store.start_run, "etl", run_id="r1",
+                          authority=auth, at=self.at),
+            "workflow-authority-revoked")
+        # A store seeded with a ledgered authority still refuses a
+        # ledger-less step call.
+        auth2 = self._auth([self._root()])
+        self.store.start_run("etl", run_id="r2", authority=auth2, at=self.at)
+        auth2.pop("revocation_ledger")
+        self.assertEqual(
+            self._code_of(self.store.run_step, "r2", 0, "extract",
+                          lambda i: {"ok": True}, inputs={},
+                          authority=auth2, at=self.at),
+            "workflow-authority-revoked")
 
     def test_ed25519_contract_pinned(self):
         msg = b"workflow-authority"

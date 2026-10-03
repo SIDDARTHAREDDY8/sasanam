@@ -45,7 +45,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-PIN = 1820  # Wave-300 merge pin 1802; wave-301 lane 6: pin 1802 -> 1804 (+2 workflow-idempotency-*); wave-301 merge: 1812 (+10 workflow-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*)
+PIN = 1826  # Wave-300 merge pin 1802; wave-301 lane 6: pin 1802 -> 1804 (+2 workflow-idempotency-*); wave-301 merge: 1812 (+10 workflow-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 lane 2 (F381 closure): pin 1820 -> 1821 (+1 workflow-idempotency-caller-mismatch); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -234,9 +234,14 @@ class IdempotencyProbes(unittest.TestCase):
     def test_operator_evict_is_loud(self):
         out = self._begin()
         out.complete(result_digest=_hex64("res1"), result_ref="ptr://r1")
+        # Wave-303 lane 2 (F381 closure): evict_completed() requires an
+        # authority verifier -- the operator name is the caller identity
+        # presented to it.
         rec = self.store.evict_completed(namespace="billing",
                                          op_class="refund", key="k1",
-                                         operator="op-human", at=self.at)
+                                         operator="op-human",
+                                         authority_verifier=self.verifier,
+                                         at=self.at)
         self.assertEqual(rec["evicted_key"], "k1")
         self.assertEqual(rec["operator"], "op-human")
         ev = [r for r in self.sink_records if r["event"] == "evict-operator"]

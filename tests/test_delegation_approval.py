@@ -309,7 +309,7 @@ class DelegatedApprovalContractTest(unittest.TestCase):
                 m = pat.match(line.rstrip("\n"))
                 if m:
                     lits.append(m.group(1))
-        self.assertEqual(len(lits), 1820)
+        self.assertEqual(len(lits), 1826)
         new = [c for c in lits
                if c.startswith("delegation-approval-")]
         self.assertEqual(new, ["delegation-approval-chain-mismatch",

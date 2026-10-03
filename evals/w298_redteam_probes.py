@@ -51,7 +51,7 @@ from gov import policy_ci as pci
 from gov import supervision as sup
 from gov import ed25519 as _ed25519
 
-TAXONOMY_PIN = 1820  # Wave-297 merge pin; this lane mints no codes.; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*)
+TAXONOMY_PIN = 1826  # Wave-297 merge pin; this lane mints no codes.; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 lane 4: pin 1820 -> 1822 (+2 workflow-saga-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
 
@@ -153,11 +153,10 @@ class BaseStateTest(unittest.TestCase):
         # wave-301 red team filed F379 (OPEN). Re-pin, wave-302 lane 1:
         # F379 CLOSED. Merged footer is open findings: none /
         # next free F380.
-                # Wave-302 merge re-pin: F379 CLOSED by lane 1; wave-302 red team
-        # filed F380-F384 (OPEN). Merged footer: open F380,F381,F382,F383,F384 /
-        # next free F385.
+                # Wave-303 lane 4 re-pin: F384 CLOSED by this lane.
+        # Wave-303 merge re-pin: open F385,F386 / next free F387.
         ok = ("Next free finding: **F385**" in footer
-              and "Open findings: F380,F381,F382,F383,F384." in footer)
+              and "Open findings: F385,F386." in footer)
         self.assertTrue(_expect_held("footer-state", ok,
                                     "footer disagrees") == "HELD")
 

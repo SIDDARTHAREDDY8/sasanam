@@ -46,7 +46,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1820  # Wave-300 merge pin 1802; wave-301 lane 3: pin 1802 -> 1805 (+3 workflow-*); wave-301 merge: 1812 (+10 workflow-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*)
+TAXONOMY_PIN = 1826  # Wave-300 merge pin 1802; wave-301 lane 3: pin 1802 -> 1805 (+3 workflow-*); wave-301 merge: 1812 (+10 workflow-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
 
@@ -187,8 +187,12 @@ def p_idempotency():
                    lambda i: calls.append(1) or {"rows": 3},
                    inputs={}, idempotency_key="sk",
                    authority=auth, at=at)
+    # F383 closure (wave-303): the key path applies drift checks, so a
+    # replay across seq slots requires the SAME step name and inputs;
+    # a different name refuses workflow-step-unauthorized (see
+    # evals/w303_f382f383_probes.py).
     out, replayed = store.run_step(
-        "a", 5, "extract-again",
+        "a", 5, "extract",
         lambda i: calls.append(1) or {"rows": 999},
         inputs={}, idempotency_key="sk", authority=auth, at=at)
     if out != {"rows": 3} or not replayed or len(calls) != 1:

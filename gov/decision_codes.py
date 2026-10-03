@@ -1539,6 +1539,39 @@ TAXONOMY = {
         "evidence_kinds_required": ['audit-record'],
         "reverify_steps": ['recompute'],
     },
+    'authority-lifecycle-expired': {
+        "domain": 'authority-lifecycle',
+        "code": 'authority-lifecycle-expired',
+        "human": 'authority lease with heartbeat: the lease is past its '
+                 'ttl -- absolute death, terminal; a suspension parked the '
+                 'lease but never extended it',
+        "severity": 'high',
+        "evidence_kinds_required": ['authority-status', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'authority-lifecycle-heartbeat-lapsed': {
+        "domain": 'authority-lifecycle',
+        "code": 'authority-lifecycle-heartbeat-lapsed',
+        "human": 'authority lease with heartbeat: the re-proof stream '
+                 'broke -- a heartbeat was missed (silence revokes), '
+                 'replayed, stale, misbound, or forged, the proof signer '
+                 'is not the subject or the designated monitor, the lease '
+                 'is suspended, or a suspend/resume authorization is '
+                 'invalid',
+        "severity": 'high',
+        "evidence_kinds_required": ['authority-status', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'authority-lifecycle-revoked': {
+        "domain": 'authority-lifecycle',
+        "code": 'authority-lifecycle-revoked',
+        "human": 'authority lease with heartbeat: a per-delegator revoker '
+                 'entry targets this lease -- terminal; a revoked lease '
+                 'never heartbeats, checks, or resumes back to life',
+        "severity": 'high',
+        "evidence_kinds_required": ['authority-status', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
     'authority-stale': {
         "domain": 'authority',
         "code": 'authority-stale',
@@ -16836,6 +16869,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['idempotency-record'],
         "reverify_steps": ['recompute'],
     },
+    'workflow-idempotency-caller-mismatch': {
+        "domain": 'workflow-idempotency',
+        "code": 'workflow-idempotency-caller-mismatch',
+        "human": 'idempotency registry: complete()/checkpoint() called on '
+                 'an outcome whose caller is not the in-flight record\'s '
+                 'beginning caller; cross-caller completion/checkpoint '
+                 '(result poisoning) refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['idempotency-record'],
+        "reverify_steps": ['recompute'],
+    },
     'workflow-idempotency-key-invalid': {
         "domain": 'workflow-idempotency',
         "code": 'workflow-idempotency-key-invalid',
@@ -16896,6 +16940,28 @@ TAXONOMY = {
                  'never invented at failure time',
         "severity": 'high',
         "evidence_kinds_required": ['saga-definition'],
+        "reverify_steps": ['recompute'],
+    },
+    'workflow-saga-operator-unauthorized': {
+        "domain": 'workflow_saga',
+        "code": 'workflow-saga-operator-unauthorized',
+        "human": 'saga: operator recovery of an escalated saga was '
+                 'refused because the operator authority could not be '
+                 're-verified at recovery time (missing, unknown, or '
+                 'refusing verifier); the escalation is unchanged',
+        "severity": 'high',
+        "evidence_kinds_required": ['saga-history'],
+        "reverify_steps": ['recompute'],
+    },
+    'workflow-saga-resolution-invalid': {
+        "domain": 'workflow_saga',
+        "code": 'workflow-saga-resolution-invalid',
+        "human": 'saga: an operator recovery request was invalid -- the '
+                 'saga is not escalated, the resolution action is '
+                 'unknown, or a manual-remediation attestation does not '
+                 'cover exactly the outstanding steps; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['saga-history'],
         "reverify_steps": ['recompute'],
     },
     'workflow-step-unauthorized': {

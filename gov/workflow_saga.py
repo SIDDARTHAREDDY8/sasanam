@@ -24,7 +24,20 @@ Key properties:
   then the saga ESCALATES loudly
   (``workflow-saga-compensation-failed``) -- never silently skipped. An
   escalated saga refuses further ``run``/``resume`` until an operator
-  intervenes (loud refusal carrying the escalation code).
+  intervenes (loud refusal carrying the escalation code). The operator
+  recovery path is ``describe_escalation`` (inspect -- an
+  unauthenticated read of the instance's own recorded state, like
+  ``dump()``) + ``resolve_escalation`` / ``retry_compensation``
+  (resolve): the operator re-drives the failed compensation with a
+  fresh attempt window (``retry_compensation``), continues the pass
+  with the remaining budget (``abort_and_compensate_all``), or attests
+  manual remediation of every outstanding step
+  (``accept_manual_remediation``). Operator authority uses the same
+  verifier model as step authorities and is re-verified NOW at every
+  resolving call; a missing or refusing operator fails closed
+  (``workflow-saga-operator-unauthorized``). Every resolving action is
+  journaled in the append-only history, including refusals and
+  re-escalations.
 * Authority re-verification: each step may carry an ``authority_ref``;
   the manager holds verifier callables keyed by ref (deployment
   provided). Every compensation re-verifies before executing; a revoked
@@ -47,9 +60,11 @@ Key properties:
   ``Exception`` marks the step failed and triggers compensation
   immediately.
 
-New decision codes (3): ``workflow-saga-definition-invalid``,
+New decision codes (5): ``workflow-saga-definition-invalid``,
 ``workflow-saga-compensation-failed``,
-``workflow-saga-compensation-unauthorized`` (all high).
+``workflow-saga-compensation-unauthorized``,
+``workflow-saga-operator-unauthorized``,
+``workflow-saga-resolution-invalid`` (all high).
 
 Threat model / honest residuals:
 
@@ -83,6 +98,8 @@ INSTANCE_STATUSES = ("running", "compensating", "compensated",
 CODE_DEFINITION_INVALID = "workflow-saga-definition-invalid"
 CODE_COMPENSATION_FAILED = "workflow-saga-compensation-failed"
 CODE_COMPENSATION_UNAUTHORIZED = "workflow-saga-compensation-unauthorized"
+CODE_OPERATOR_UNAUTHORIZED = "workflow-saga-operator-unauthorized"
+CODE_RESOLUTION_INVALID = "workflow-saga-resolution-invalid"
 
 
 class SagaError(Exception):
@@ -317,13 +334,25 @@ class SagaInstance:
 # ---------------------------------------------------------------------------
 
 class SagaManager:
-    """Executes saga definitions with reverse-order compensation."""
+    """Executes saga definitions with reverse-order compensation.
 
-    def __init__(self, authority_verifiers=None, max_compensation_attempts=3):
+    ``operator_authority_ref`` binds the operator recovery path to the
+    same authority model as step authorities: a deployment-provided
+    verifier callable keyed by ref, re-verified NOW at every resolving
+    recovery call. When no ref is configured (or the verifier refuses),
+    every resolving call fails closed with
+    ``workflow-saga-operator-unauthorized``. ``describe_escalation``
+    is an unauthenticated read of the instance's own recorded state
+    (like ``dump()``) -- it inspects, it does not resolve.
+    """
+
+    def __init__(self, authority_verifiers=None, max_compensation_attempts=3,
+                 operator_authority_ref=None):
         if max_compensation_attempts < 1:
             raise ValueError("max_compensation_attempts must be >= 1")
         self._verifiers = dict(authority_verifiers or {})
         self._max_comp = max_compensation_attempts
+        self._operator_authority_ref = operator_authority_ref
 
     # -- lifecycle ----------------------------------------------------
     def define(self, steps):
@@ -613,3 +642,185 @@ class SagaManager:
             self._compensate(instance)
             return instance
         return self.run(instance)
+
+    # -- operator recovery ------------------------------------------
+    def _check_operator_authority(self):
+        """The operator's authority uses the SAME verifier model as step
+        authorities: a deployment-provided zero-arg callable keyed by
+        ref, re-verified NOW at recovery time. A missing ref (or a
+        refusing/unknown verifier) fails closed -- there is no
+        resolving recovery without a live operator authority."""
+
+        if not self._operator_authority_ref:
+            return False
+        return self._check_authority(
+            {"authority_ref": self._operator_authority_ref})
+
+    @staticmethod
+    def _outstanding_steps(instance):
+        """Steps still needing compensation: the single definition of
+        'outstanding' shared by inspection and resolution, so the two
+        can never drift apart."""
+        return [s for s in instance.steps
+                if s["state"] in ("succeeded", "compensating",
+                                  "compensation_failed")]
+
+    @staticmethod
+    def _require_escalated(instance):
+        if instance.status != "escalated":
+            _fail(CODE_RESOLUTION_INVALID,
+                  "saga %s is not escalated (status %r): recovery "
+                  "refused" % (instance.saga_id, instance.status))
+
+    def describe_escalation(self, instance):
+        """Operator inspection of an escalated saga: a JSON-serializable
+        summary of what escalated, which steps are outstanding, and the
+        attempt budget -- what the operator needs before choosing a
+        resolution. Refuses coded when the instance is not escalated."""
+        self._require_escalated(instance)
+        return {
+            "saga_id": instance.saga_id,
+            "status": instance.status,
+            "escalation_code": instance.escalation_code,
+            "operator_authority_ref": self._operator_authority_ref,
+            "max_compensation_attempts": self._max_comp,
+            "outstanding_steps": [
+                {"step_id": s["step_id"], "state": s["state"],
+                 "comp_attempts": s["comp_attempts"], "error": s["error"]}
+                for s in self._outstanding_steps(instance)],
+            "history_tail": instance.history[-10:],
+        }
+
+    def resolve_escalation(self, instance, resolution):
+        """Operator recovery path for an escalated saga. The operator
+        inspects via ``describe_escalation`` and chooses one action:
+
+        * ``retry_compensation`` -- re-drive the failed compensation
+          with a FRESH attempt window after the underlying cause is
+          fixed (e.g. the downstream service is back up). Re-running
+          re-verifies each step's authority NOW; a fresh failure
+          escalates again loudly.
+        * ``abort_and_compensate_all`` -- continue the compensation pass
+          with the REMAINING attempt budget (no reset). For escalations
+          whose cause was fixed externally (verifier config repaired,
+          op re-registered) where the operator wants the pass to
+          proceed rather than spend a fresh window.
+        * ``accept_manual_remediation`` -- the operator attests they
+          remediated the outstanding steps by hand; ``step_ids`` must
+          cover exactly the outstanding steps, which are then marked
+          compensated (flagged ``manual_remediation``) without
+          re-running their ops.
+
+        Every recovery action is authority-verified (operator ref,
+        re-verified NOW), journaled in the append-only history, and
+        produces coded refusals: ``workflow-saga-operator-unauthorized``
+        on a refusing/missing operator authority,
+        ``workflow-saga-resolution-invalid`` on a non-escalated saga, an
+        unknown action, or an incomplete attestation. A recovered saga
+        ends ``compensated``; a second recovery call on the same saga
+        refuses coded (safe against double-recovery).
+        """
+        self._require_escalated(instance)
+        if not isinstance(resolution, dict):
+            _fail(CODE_RESOLUTION_INVALID,
+                  "resolution must be a dict with an 'action'")
+        action = resolution.get("action")
+        if action not in ("retry_compensation", "abort_and_compensate_all",
+                          "accept_manual_remediation"):
+            _fail(CODE_RESOLUTION_INVALID,
+                  "unknown resolution action %r" % (action,))
+        # Operator authority re-verified NOW under the same model as
+        # step authorities; a revoked or unconfigured operator fails
+        # closed and the escalation is left untouched.
+        if not self._check_operator_authority():
+            instance._event(
+                "escalation_recovery_refused", None,
+                "operator authority ref %r could not be re-verified at "
+                "recovery time; escalation unchanged"
+                % (self._operator_authority_ref,))
+            _fail(CODE_OPERATOR_UNAUTHORIZED,
+                  "saga %s: operator authority %r refused at recovery "
+                  "time; escalation unchanged"
+                  % (instance.saga_id, self._operator_authority_ref))
+        instance._event(
+            "escalation_recovery_started", None,
+            "operator ref %r chose action %r on escalated saga "
+            "(escalation code %s)"
+            % (self._operator_authority_ref, action,
+               instance.escalation_code))
+        if action == "accept_manual_remediation":
+            self._resolve_manual(instance, resolution)
+        else:
+            try:
+                self._resolve_redrive(
+                    instance,
+                    fresh_window=(action == "retry_compensation"))
+            except SagaError:
+                # The redrive re-escalated: close the recovery attempt
+                # in the journal (the escalation itself is recorded by
+                # the compensation_failed/compensation_refused events).
+                instance._event(
+                    "escalation_recovery_failed", None,
+                    "action %r re-escalated the saga (code %s); "
+                    "operator intervention required again"
+                    % (action, instance.escalation_code))
+                raise
+        instance._event(
+            "escalation_resolved", None,
+            "action %r completed; saga status %r"
+            % (action, instance.status))
+        return instance
+
+    def _resolve_redrive(self, instance, fresh_window):
+        # Pick up the interrupted compensation pass. A fresh window
+        # resets the failed steps' attempt counters (the downstream is
+        # fixed; give it the full budget again); continuing keeps the
+        # remaining budget (the cause was fixed externally).
+        for st in instance.steps:
+            if st["state"] == "compensation_failed":
+                st["state"] = "compensating"
+                if fresh_window:
+                    st["comp_attempts"] = 0
+        instance.status = "compensating"
+        instance.escalation_code = None
+        # Re-runs the pass; each compensation re-verifies its step
+        # authority NOW, and a fresh failure escalates again loudly --
+        # never silently.
+        self._compensate(instance)
+
+    def _resolve_manual(self, instance, resolution):
+        outstanding = [s["step_id"]
+                       for s in self._outstanding_steps(instance)]
+        step_ids = resolution.get("step_ids")
+        if (not isinstance(step_ids, list) or not step_ids
+                or any(not isinstance(i, str) for i in step_ids)
+                or set(step_ids) != set(outstanding)):
+            instance._event(
+                "escalation_recovery_refused", None,
+                "accept_manual_remediation attestation %r does not cover "
+                "exactly the outstanding steps %r"
+                % (step_ids, outstanding))
+            _fail(CODE_RESOLUTION_INVALID,
+                  "accept_manual_remediation requires 'step_ids' covering "
+                  "exactly the outstanding steps %r" % (outstanding,))
+        for st in instance.steps:
+            if st["step_id"] in step_ids:
+                st["state"] = "compensated"
+                st["manual_remediation"] = True
+                instance._event(
+                    "manual_remediation_accepted", st["step_id"],
+                    "operator ref %r attested manual remediation for "
+                    "step %r; marked compensated without re-running its "
+                    "op" % (self._operator_authority_ref, st["step_id"]))
+        instance.status = "compensated"
+        instance.escalation_code = None
+        instance._event(
+            "saga_compensated", None,
+            "all outstanding steps resolved by attested manual "
+            "remediation")
+
+    def retry_compensation(self, instance):
+        """Convenience: operator recovery that re-drives the failed
+        compensation with a fresh attempt window."""
+        return self.resolve_escalation(instance,
+                                       {"action": "retry_compensation"})

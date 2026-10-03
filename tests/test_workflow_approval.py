@@ -44,6 +44,12 @@ class GatedStepFixture(unittest.TestCase):
         self.chain = [self.root]
 
     def _authority(self, chain=None, actor="agent-b", revoker=None):
+        # F380 closure re-pin: the workflow store requires a revocation
+        # ledger on every authority verification (fail closed when
+        # absent). Mint a fresh (empty) revoker when the caller passes
+        # none.
+        if revoker is None:
+            revoker = rv.DelegationRevoker(self.sa, "agent-a")
         return {"actor_id": actor, "action": "tool.invoke",
                 "chain": chain or self.chain,
                 "trust_roots": self.trust_roots,
@@ -238,8 +244,7 @@ class GatedStepFixture(unittest.TestCase):
                           ("tool.invoke",), issued_at=AT,
                           constraints=dict(cons))
         store = wf.WorkflowStore()
-        auth_c = {"actor_id": "agent-c", "action": "tool.invoke",
-                  "chain": [root_c], "trust_roots": self.trust_roots}
+        auth_c = self._authority(chain=[root_c], actor="agent-c")
         store.start_run("wf", run_id="run1", authority=auth_c, at=AT)
         pkg = self._pkg()  # requested by agent-b
         r = self._runner(store)

@@ -137,9 +137,13 @@ class IdempotencyContractTests(unittest.TestCase):
     def test_operator_evict_returns_loud_record(self):
         out = self._begin()
         out.complete(result_digest=_hex64("r"), result_ref="ptr://r")
+        # Wave-303 lane 2 (F381 closure): evict_completed() requires an
+        # authority verifier; the operator name is the caller identity.
         rec = self.store.evict_completed(namespace="billing",
                                          op_class="refund", key="k1",
-                                         operator="op-human", at=self.at)
+                                         operator="op-human",
+                                         authority_verifier=self.verifier,
+                                         at=self.at)
         self.assertEqual(rec["evicted_key"], "k1")
         self.assertEqual(rec["operator"], "op-human")
         self.assertEqual(rec["reason"], "operator")
@@ -147,9 +151,12 @@ class IdempotencyContractTests(unittest.TestCase):
         self.assertEqual(out2.status, "new")
 
     def test_evict_missing_key_raises(self):
+        # Wave-303 lane 2 (F381 closure): authority is verified before
+        # the key lookup, so the verifier is still required.
         with self.assertRaises(KeyError):
             self.store.evict_completed(namespace="billing", op_class="refund",
-                                       key="nope", operator="op")
+                                       key="nope", operator="op",
+                                       authority_verifier=self.verifier)
 
     def test_capacity_evicts_oldest(self):
         store = wi.IdempotencyStore(max_completed=2)

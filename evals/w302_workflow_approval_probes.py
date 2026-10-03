@@ -49,7 +49,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1820  # Wave-301 merge pin 1812; wave-302 lane 6: pin 1812 -> 1814 (+2 workflow-approval-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*)
+TAXONOMY_PIN = 1826  # Wave-301 merge pin 1812; wave-302 lane 6: pin 1812 -> 1814 (+2 workflow-approval-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
 
@@ -85,7 +85,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1820/1820/0 sorted")
+    _record("pin-taxonomy", "HELD", "1826/1826/0 sorted")
 
 
 def _wa():
@@ -127,6 +127,12 @@ def _chain(wa_mod=None):
 
 
 def _authority(fx, revoker=None):
+    # F380 closure re-pin: the workflow store requires a revocation
+    # ledger on every authority verification (fail closed when absent).
+    # Mint a fresh (empty) revoker when the caller passes none.
+    if revoker is None:
+        from gov import delegation_revocation as rv
+        revoker = rv.DelegationRevoker(fx["sa"], "agent-a")
     return {"actor_id": "agent-b", "action": "tool.invoke",
             "chain": fx["chain"], "trust_roots": fx["trust_roots"],
             "revocation_ledger": revoker}
@@ -330,8 +336,15 @@ def p_authority_chain_mismatch():
                      ("tool.invoke", "memory.read"), issued_at=AT,
                      constraints=dict(cons))
     store = _store()
+    # F380 closure re-pin: the workflow store requires a revocation
+    # ledger on every verification -- the different chain still carries
+    # a fresh (empty) revoker so the probe reaches the chain-mismatch
+    # check.
+    from gov import delegation_revocation as rv
     auth2 = {"actor_id": "agent-b", "action": "tool.invoke",
-             "chain": [root2], "trust_roots": fx["trust_roots"]}
+             "chain": [root2], "trust_roots": fx["trust_roots"],
+             "revocation_ledger": rv.DelegationRevoker(fx["sa"],
+                                                       "agent-a")}
     store.start_run("wf", run_id="run1", authority=auth2, at=AT)
     pkg = _pkg(wa, fx)  # approved under chain 1
     r = _runner(wa, fx, store)
