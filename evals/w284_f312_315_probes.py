@@ -23,6 +23,8 @@ import sys
 import traceback
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 from gov import battery_lang as bl
 from gov import decision_codes
@@ -249,14 +251,18 @@ def _green_checks():
     for battery in ("w282_agentscan_probes.py", "w283_redteam_probes.py"):
         path = os.path.join(here, battery)
         if not os.path.exists(path):
-            results.append(("green:" + battery, "SKIP", "absent"))
+            # D7-family rename: "green:<battery>" -> "green_<battery>"
+            # (pid class [A-Za-z0-9_.\-]+); value-only.
+            results.append(("green_" + battery, "SKIP", "absent"))
             continue
         p = subprocess.run([sys.executable, path], capture_output=True,
                            text=True, env=env, timeout=600,
                            cwd=os.path.join(here, ".."))
         out = (p.stdout + p.stderr).replace("\n", " | ")
-        verdict = "GREEN" if p.returncode == 0 else "RED"
-        results.append(("green:" + battery, verdict,
+        # D1: GREEN->HELD, RED->BREAK (red by this battery's own exit
+        # contract: 1 if (breaks or reds) else 0).
+        verdict = "HELD" if p.returncode == 0 else "BREAK"
+        results.append(("green_" + battery, verdict,
                         "rc=%d %s" % (p.returncode, out[-300:])))
     return results
 
@@ -264,15 +270,15 @@ def _green_checks():
 def main():
     results = [_check(name, fn) for name, fn in PROBES]
     results += _green_checks()
+    # D1: reds folded into BREAK (old exit was 1 if (breaks or reds)
+    # else 0 -- exit-equivalent).
     breaks = sum(1 for _, v, _ in results if v == "BREAK")
     held = sum(1 for _, v, _ in results if v == "HELD")
-    reds = sum(1 for _, v, _ in results if v == "RED")
-    skips = sum(1 for _, v, _ in results if v == "SKIP")
-    print("w284_f312_315: %d BREAK / %d HELD / %d RED / %d SKIP"
-          % (breaks, held, reds, skips))
-    for name, verdict, note in results:
-        print("  [%s] %s: %s" % (verdict, name, note))
-    return 1 if (breaks or reds) else 0
+    errors = sum(1 for _, v, _ in results if v == "ERROR")
+    print("w284_f312_315: %d BREAK / %d HELD / %d ERROR"
+          % (breaks, held, errors))
+    probe_lines.emit(results)
+    return 1 if breaks else 0
 
 
 if __name__ == "__main__":

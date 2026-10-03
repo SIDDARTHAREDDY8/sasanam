@@ -23,12 +23,17 @@ tooling set for all future summary-form migration waves. Provenance:
     S3 generalization (LOOP_S3_GEN_RE over rarer columnar widths,
     var-name-aware coherence for S3); extended import anchors for old
     batteries (TREE-anchor extension).
+  - wave-315 lane 6: S6 classifier + migrate path for the
+    literal-`[VERDICT]` shape (LOOP_S6_RE); D1 verdict-mapping table
+    encoded as VERDICT_MAP (codemod still refuses non-canonical
+    verdicts, never maps them); emit_dicts noted as the dict-shape
+    battery path.
 
 Usage:
     codemod_summary_form.py --check evals/w297_supervision_probes.py
-        Classify the battery's probe-line shape (S1..S5); no changes.
+        Classify the battery's probe-line shape (S1..S6); no changes.
     codemod_summary_form.py --migrate evals/w297_supervision_probes.py
-        Apply the mechanical migration (S2/S3/S4 with the standard
+        Apply the mechanical migration (S2/S3/S4/S6 with the standard
         _results structure only). Refuses anything it does not
         recognise exactly.
 
@@ -37,6 +42,11 @@ The migration:
   2. replaces the probe print loop with `probe_lines.emit(_results)`,
   3. inserts the advisory coherence check after the summary counts are
      computed.
+
+Dict-shape batteries (D2: the w279-w287 dict batteries) are NOT covered
+by this codemod: they migrate via `probe_lines.emit_dicts` after the
+lane maps their verdicts per D1. The codemod classifies them S5 and
+refuses; see evals/SUMMARY_FORM_POLICIES.md D2.
 
 It never touches probe logic, verdicts, counts, or exit codes: verify
 with `git diff` (only print-loop + import lines may move) and by
@@ -63,6 +73,9 @@ S3_RES = [
 ]
 # Conditional policy: probe lines printed only for non-HELD verdicts.
 S4_RE = re.compile(r'if\s+v(?:erdict)?\s*!=\s*"HELD"\s*:')
+# Literal-[VERDICT] shape (D6, wave-315 lane 6): the newest red-team
+# batteries print the literal word VERDICT instead of the verdict.
+S6_RE = re.compile(r'print\("\[VERDICT\] %s: %s: %s"')
 
 SUMMARY_RE = re.compile(r'%d BREAK / %d HELD / %d ERROR')
 # Wave-312: HELD-first summary order (w281_f307, w275_egress_close,
@@ -78,6 +91,7 @@ def classify(path):
     s2 = bool(S2_RE.search(src))
     s3 = any(r.search(src) for r in S3_RES)
     s4 = bool(S4_RE.search(src))
+    s6 = bool(S6_RE.search(src))
     bracket = s1 or s2
     if s1 and not s4:
         return "S1", "canonical already"
@@ -88,11 +102,58 @@ def classify(path):
         return "S1+S4", "canonical format, non-HELD-only policy"
     if s3:
         return "S3", "columnar pid/VERDICT/note, no brackets"
+    if s6:
+        # D6: literal-[VERDICT] shape. The codemod migrates it (S6);
+        # the lane must re-audit parent green checks afterwards, since
+        # BREAK_ID_RE starts capturing these probes' BREAK ids (D8).
+        return "S6", "literal-[VERDICT] probe lines (D6)"
     if has_summary and not bracket:
+        # D2 dict-shape batteries land here too: they migrate via
+        # probe_lines.emit_dicts after the lane maps verdicts per D1,
+        # not through this codemod's emit path.
         return "S5", "summary present, no bracketed probe lines"
     if not has_summary:
         return "S5", "no standard summary line"
     return "S5", "unrecognised probe-line idiom"
+
+
+# --- D1 verdict mapping ------------------------------------------------
+# Authority: evals/SUMMARY_FORM_POLICIES.md, D1. Governing rule is
+# red-first: a mapping must never make a battery greener than its own
+# exit contract says it is. The codemod NEVER applies these mappings
+# itself -- a verdict mapping is a policy decision the migration lane
+# records per battery. The codemod's rule is refusal: any non-canonical
+# verdict in a recorded position refuses mechanical migration. A
+# mapping value of None means "no mechanical mapping exists"
+# (EXPECTED is a dead class whose column is dropped; PENDING and
+# uppercase RESIDUAL have no D1 row and need an explicit policy
+# decision, never a silent map).
+VERDICT_MAP = {
+    "GAP": "BREAK",        # gap demonstrated -- the red phase
+    "RED": "BREAK",        # child rc != 0 -- red by the battery's own exit
+    "BROKEN": "BREAK",     # failed probe assertion (claim_bounds)
+    "GREEN": "HELD",       # child rc == 0 -- exact semantic match
+    "SKIPPED": "SKIP",     # green-check skip marker (GOV_SKIP_GREEN=1)
+    "EXPECTED": None,      # dead class (f204_closure) -- dropped
+    "FP": "BREAK",         # false positive demonstrated; note "FP: " prefix
+    "PASS": "HELD",        # demonstration batteries
+    "FAIL": "BREAK",
+    "stopped": "HELD",     # w72-w75: exit-equivalent mapping
+    "break": "BREAK",
+    "error": "ERROR",      # D9/F398: w280_redteam under-reporting bug fix
+    "residual": "HELD",    # w84/w85: documented accepted residuals,
+                           # note "residual: " prefix
+    "PENDING": None,       # no D1 row -- policy decision required
+    "RESIDUAL": None,      # no D1 row (uppercase) -- policy decision required
+}
+CANONICAL_VERDICTS = ("BREAK", "HELD", "ERROR", "SKIP")
+# Verdicts the codemod refuses in a recorded position: every VERDICT_MAP
+# key that is not already canonical. Sorted longest-first so the regex
+# alternation cannot be shadowed by a shorter prefix.
+_NONCANONICAL = sorted(
+    (v for v in VERDICT_MAP if v not in CANONICAL_VERDICTS),
+    key=len, reverse=True)
+_NONCANONICAL_RE = "|".join(_NONCANONICAL)
 
 
 # --- migration ---------------------------------------------------------
@@ -156,6 +217,25 @@ LOOP_S3_GEN_RE = re.compile(
     r'print\("(?P<fmt>' + "|".join(_S3_FMTS) + r')" % \((?:[A-Za-z_]\w*, )?'
     r'(?P=pid), (?P=verdict), (?P=note)'
     r'(?:\.split\("\\n"\)\[0\]|\.splitlines\(\)\[0\])?\)\)\n',
+    re.M,
+)
+
+# S6 literal-[VERDICT] loop (wave-315 lane 6, D6): all eight S6
+# batteries share this exact idiom --
+#   for <pid>, <verdict>, <note> in <lst>:
+#       first = <note>.splitlines()[0] if <note> else ""
+#       print("[VERDICT] %s: %s: %s" % (<verdict>, <pid>, first))
+# `first` is exactly probe_lines.first_line(<note>) (the idiom returns
+# "" on an empty note; first_line never raises), so the swap to
+# probe_lines.emit(<lst>) is byte-equivalent modulo the [VERDICT]
+# literal becoming [<verdict>].
+LOOP_S6_RE = re.compile(
+    r'^(?P<indent> *)for (?P<pid>[A-Za-z_]\w*), (?P<verdict>[A-Za-z_]\w*), '
+    r'(?P<note>[A-Za-z_]\w*) in (?P<lst>_results|_RESULTS|results|RESULTS):\n'
+    r'(?P=indent)    first = (?P=note)\.splitlines\(\)\[0\] if '
+    r'(?P=note) else ""\n'
+    r'(?P=indent)    print\("\[VERDICT\] %s: %s: %s" % \((?P=verdict), '
+    r'(?P=pid), first\)\)\n',
     re.M,
 )
 
@@ -292,7 +372,13 @@ def _has_import(modname, prefix):
 
 
 def _add_import(src):
-    if "import probe_lines" in src:
+    # Wave-315: only a TOP-LEVEL import counts as present. S6 batteries
+    # (w310_redteam, w311_redteam, w312_redteam) import probe_lines
+    # inside probe functions to test the seam itself; the old substring
+    # check would skip the real import and leave probe_lines.emit() a
+    # NameError at runtime.
+    if (re.search(r'^import probe_lines(?=\s|$)', src, re.M)
+            or re.search(r'^from probe_lines import ', src, re.M)):
         return src, False
     # Preferred anchor: the green_check import (batteries already using the
     # shared helper import probe_lines the same way).
@@ -357,9 +443,9 @@ def _add_import(src):
 def migrate(path):
     src = open(path).read()
     shape, _ = classify(path)
-    if shape not in ("S2", "S2+S4", "S3"):
+    if shape not in ("S2", "S2+S4", "S3", "S6"):
         raise SystemExit("codemod: refusing to migrate shape %s for %s "
-                         "(mechanical migration covers S2/S2+S4/S3 only)"
+                         "(mechanical migration covers S2/S2+S4/S3/S6 only)"
                          % (shape, path))
     # Every pid must be inside the load-bearing class before migration.
     bad = [p for p in set(re.findall(
@@ -368,18 +454,22 @@ def migrate(path):
     if bad:
         raise SystemExit("codemod: nonconforming pids %r -- fix pids first"
                          % (bad,))
-    # Wave-312: refuse non-canonical verdicts. probe_lines.emit would
-    # print e.g. "[GAP] pid: note", which parse_line cannot parse and
-    # which the canonical spec does not define. Mapping GAP/RESIDUAL/
-    # BROKEN needs a policy decision, not a codemod. (SKIP is canonical
-    # and allowed.)
+    # D1 verdict mapping (VERDICT_MAP; evals/SUMMARY_FORM_POLICIES.md is
+    # the authority). probe_lines.emit would print e.g. "[GAP] pid:
+    # note", which parse_line cannot parse and which the canonical spec
+    # does not define. The codemod refuses and never maps: the mapping
+    # is the migration lane's policy decision, recorded per battery. A
+    # None mapping (EXPECTED/PENDING/RESIDUAL) likewise refuses -- it
+    # needs an explicit policy decision, never a silent map.
     bad_v = set(re.findall(
-        r',\s*[\'"](GAP|RESIDUAL|BROKEN|PENDING)[\'"]\s*[,)]', src))
+        r',\s*[\'"](%s)[\'"]\s*[,)]' % _NONCANONICAL_RE, src))
     bad_v.update(re.findall(
-        r'return\s+[\'"](GAP|RESIDUAL|BROKEN|PENDING)[\'"]\s*,', src))
+        r'return\s+[\'"](%s)[\'"]\s*,' % _NONCANONICAL_RE, src))
     if bad_v:
+        hints = {v: VERDICT_MAP[v] for v in sorted(bad_v)}
         raise SystemExit("codemod: non-canonical verdicts %r -- needs "
-                         "policy decision, not a codemod" % (sorted(bad_v),))
+                         "policy decision per D1, not a codemod "
+                         "(D1 map: %r)" % (sorted(bad_v), hints))
 
     src, added = _add_import(src)
     coherence = None
@@ -432,6 +522,27 @@ def migrate(path):
                 n = 0
         if n != 1:
             raise SystemExit("codemod: S3 print loop pattern not found "
+                             "exactly once in %s" % path)
+        src = new_loop
+        coherence = COHERENCE_SNIPPET_BHE
+    elif shape == "S6":
+        # D6 literal-[VERDICT] loop (LOOP_S6_RE). The `first` idiom is
+        # exactly probe_lines.first_line, so the swap is
+        # byte-equivalent modulo the literal. The replacement preserves
+        # the loop's indentation and list name.
+        def _s6_repl(m):
+            pid, verdict, note = (m.group("pid"), m.group("verdict"),
+                                  m.group("note"))
+            if len({pid, verdict, note}) != 3:
+                return m.group(0)
+            lst_name_holder.append(m.group("lst"))
+            return "%sprobe_lines.emit(%s)\n" % (m.group("indent"),
+                                                 m.group("lst"))
+        new_loop, n = LOOP_S6_RE.subn(_s6_repl, src, count=1)
+        if new_loop == src:
+            n = 0
+        if n != 1:
+            raise SystemExit("codemod: S6 print loop pattern not found "
                              "exactly once in %s" % path)
         src = new_loop
         coherence = COHERENCE_SNIPPET_BHE
