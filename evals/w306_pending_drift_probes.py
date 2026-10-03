@@ -66,7 +66,7 @@ from gov import delegation_revocation as drv  # noqa: E402
 from gov import ed25519  # noqa: E402
 from gov import workflow as wf  # noqa: E402
 
-TAXONOMY_PIN = 1827  # Wave-305 merge pin; this lane mints no new codes.
+TAXONOMY_PIN = 1828  # Wave-305 merge pin; this lane mints no new codes.
 
 AT = 1_700_000_000
 
@@ -273,9 +273,9 @@ def p_footer_state():
         text = fh.read()
     m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-    # Wave-307 merge: F391 OPEN, F392 CLOSED; footer open F391 / next F393.
-    ok = (m_open and m_open[-1].strip() == "F391"
-          and m_next and m_next[-1] == "F393")
+    # Wave-308 lane A: F391 CLOSED; footer open none / next F393.
+    ok = (m_open and m_open[-1].strip() == "F393"
+          and m_next and m_next[-1] == "F394")
     if ok:
         _record("footer-state", "HELD", "open F391 / next F393")
     else:

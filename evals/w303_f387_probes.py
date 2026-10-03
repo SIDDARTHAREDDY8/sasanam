@@ -56,7 +56,7 @@ from gov import delegation_revocation as drv
 from gov import ed25519
 from gov import workflow as wf
 
-TAXONOMY_PIN = 1827  # Wave-304 merge pin; this lane mints no new codes (reuses workflow-step-unauthorized).
+TAXONOMY_PIN = 1828  # Wave-304 merge pin; this lane mints no new codes (reuses workflow-step-unauthorized).
 
 AT = 1_700_000_000
 
@@ -211,10 +211,10 @@ class RepinTest(unittest.TestCase):
             src = _f.read()
         lits = re.findall(r'"code":\s*\'([a-z][a-z0-9-_.]*)\'', src)
         self.assertTrue(_expect_held(
-            "repin-pin-1827",
-            len(lits) == 1827 and len(set(lits)) == 1827
+            "repin-pin-1828",
+            len(lits) == 1828 and len(set(lits)) == 1828
             and lits == sorted(lits),
-            "1827 unique sorted literals") == "HELD")
+            "1828 unique sorted literals") == "HELD")
 
 
 class FooterStateTest(unittest.TestCase):
@@ -225,7 +225,7 @@ class FooterStateTest(unittest.TestCase):
         # Anchor to the LAST matches: the footer, not historical entries.
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-        want_open, want_next = "F391", "F393"
+        want_open, want_next = "F393", "F394"
         self.assertTrue(_expect_held(
             "footer-state",
             m_open and m_open[-1].strip() == want_open

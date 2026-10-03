@@ -49,7 +49,7 @@ from gov import delegation_revocation as rev
 from gov import ed25519 as _ed25519
 from gov import workflow as wf
 
-TAXONOMY_PIN = 1827  # Wave-302 merge pin 1820; this lane mints no codes.; Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
+TAXONOMY_PIN = 1828  # Wave-302 merge pin 1820; this lane mints no codes.; Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
 
@@ -90,16 +90,16 @@ class BaseStateTest(unittest.TestCase):
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
         # Wave-303 lane-3 re-pin: F382/F383 closed here; F380/F381/F384
         # still OPEN (lanes 1/2 work), next free F385.
-        ok = (m_open and m_open[-1].replace(" ", "") == "F391"
-              and m_next and m_next[-1] == "F393")
+        ok = (m_open and m_open[-1].replace(" ", "") == "F393"
+              and m_next and m_next[-1] == "F394")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F391 / next free F393") == "HELD")
+            "want open none / next free F393") == "HELD")
 
     def test_taxonomy_pin(self):
         self.assertTrue(_expect_held(
-            "taxonomy-pin", TAXONOMY_PIN == 1827,
-            "TAXONOMY_PIN=%s, want 1827" % (TAXONOMY_PIN,)) == "HELD")
+            "taxonomy-pin", TAXONOMY_PIN == 1828,
+            "TAXONOMY_PIN=%s, want 1828" % (TAXONOMY_PIN,)) == "HELD")
 
 
 # ---------------------------------------------------------------------------

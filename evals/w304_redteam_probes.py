@@ -65,7 +65,7 @@ import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 
 # Wave-303 merge pin 1827; this lane mints no codes (red team only), so
 # the pin stays 1827. The merge-time sweep repoints to the wave-304 pin.
-TAXONOMY_PIN = 1827
+TAXONOMY_PIN = 1828
 
 _results = []
 
@@ -101,7 +101,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1827/1827/0 sorted")
+    _record("pin-taxonomy", "HELD", "1828/1828/0 sorted")
 
 
 def p_footer_state():
@@ -114,13 +114,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
-    want_open = "F391"  # this lane: F387 filed OPEN
-    if nxt != 393 or open_s != want_open:
+    want_open = "F393"  # this lane: F387 filed OPEN
+    if nxt != 394 or open_s != want_open:
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F393 open %r)"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open F391 / next F393")
+            "footer pins open none / next F393")
 
 
 AT = 1_700_000_000

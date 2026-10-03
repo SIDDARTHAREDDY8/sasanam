@@ -114,6 +114,22 @@ def _fail(code, detail):
     raise SagaError(detail, code=code)
 
 
+def _is_coded_refusal(exc):
+    """True when ``exc`` is a code-first refusal: it carries the decision
+    as a non-empty-string ``code`` attribute (the convention shared by
+    SagaError, ComposedError, and the IdempotencyError subclasses).
+
+    A code IS the verdict -- retrying a verdict cannot change it, so
+    compensation escalates immediately instead of burning the retry
+    budget. Anything else (timeouts, transport, resource errors,
+    non-code-first bugs) is treated as transient: a later attempt may
+    succeed. Compensation-op authors must not wrap transient failures
+    in codes.
+    """
+    code = getattr(exc, "code", None)
+    return isinstance(code, str) and bool(code)
+
+
 # ---------------------------------------------------------------------------
 # Op registry: steps name their action/compensation by string so saga
 # instances stay JSON-serializable across a crash (dump/load).
@@ -592,10 +608,27 @@ class SagaManager:
                     "compensation_attempt_failed", st["step_id"],
                     "attempt %d: %s: %s"
                     % (st["comp_attempts"], type(e).__name__, e))
-                if st["comp_attempts"] >= self._max_comp:
+                coded = _is_coded_refusal(e)
+                if coded or st["comp_attempts"] >= self._max_comp:
                     st["state"] = "compensation_failed"
                     instance.status = "escalated"
                     instance.escalation_code = CODE_COMPENSATION_FAILED
+                    if coded:
+                        # A coded refusal is a verdict, not a transient
+                        # failure: retrying cannot change it, so escalate
+                        # on the first attempt. The full refusal stays in
+                        # the compensation_attempt_failed event above for
+                        # the operator; the surfaced code remains the
+                        # saga's designed escalation code (Decision 7).
+                        instance._event(
+                            "compensation_failed", st["step_id"],
+                            "coded refusal %r: not retried; saga "
+                            "escalated -- operator intervention required"
+                            % (getattr(e, "code", None),))
+                        _fail(CODE_COMPENSATION_FAILED,
+                              "saga %s: compensation of step %r refused "
+                              "(%s); not retried; saga escalated"
+                              % (instance.saga_id, st["step_id"], e))
                     instance._event(
                         "compensation_failed", st["step_id"],
                         "exhausted %d attempt(s); saga escalated -- "

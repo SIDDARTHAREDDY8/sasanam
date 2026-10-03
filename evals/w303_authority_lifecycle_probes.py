@@ -51,7 +51,7 @@ if REPO not in sys.path:
 sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 
-TAXONOMY_PIN = 1827  # Wave-302 merge pin 1820; wave-303 lane 6: pin 1820 -> 1823 (+3 authority-lifecycle-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
+TAXONOMY_PIN = 1828  # Wave-302 merge pin 1820; wave-303 lane 6: pin 1820 -> 1823 (+3 authority-lifecycle-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
 
@@ -87,7 +87,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1827/1827/0 sorted")
+    _record("pin-taxonomy", "HELD", "1828/1828/0 sorted")
 
 
 def p_footer_state():
@@ -96,13 +96,13 @@ def p_footer_state():
         text = fh.read()
     m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-    # Wave-307 lane E re-pin: F391 filed OPEN by this lane; lane footer
-    # open F391 / next F393.
+    # Wave-308 lane A re-pin: F391 CLOSED by this lane; footer
+    # open none / next F393.
     ok = (m_open and m_open[-1].strip()
-          == "F391"
-          and m_next and m_next[-1] == "F393")
+          == "F393"
+          and m_next and m_next[-1] == "F394")
     _record("footer-state", "HELD" if ok else "BREAK",
-            "want open F391 / next free F393")
+            "want open none / next free F393")
 
 
 def _al():

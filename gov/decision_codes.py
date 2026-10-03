@@ -4112,6 +4112,19 @@ TAXONOMY = {
         "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
     },
+    'coord-lease-manager-mismatch': {
+        "domain": 'coord-lease',
+        "code": 'coord-lease-manager-mismatch',
+        "human": 'coord-lease: the lease manager presented is not the '
+                 'manager bound to this transaction -- the suspend-time '
+                 'holdership proof and the resume-time liveness check '
+                 'must consult the coordinator-bound oracle; a '
+                 'substituted (e.g. rubber-stamp) manager cannot attest '
+                 'liveness -- refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'coord-state-bound': {
         "domain": 'coord-state',
         "code": 'coord-state-bound',

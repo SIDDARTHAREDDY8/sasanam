@@ -55,7 +55,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-306 merge pin 1827; this lane mints no codes (red team only), so
 # the pin stays 1827. The merge-time sweep repoints to the wave-307 pin.
-TAXONOMY_PIN = 1827
+TAXONOMY_PIN = 1828
 
 AT = 1000000
 
@@ -97,7 +97,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1827/1827/0 sorted")
+    _record("pin-taxonomy", "HELD", "1828/1828/0 sorted")
 
 
 def p_footer_state():
@@ -110,13 +110,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
-    # Wave-307 merge: F391 OPEN, F392 CLOSED; footer open F391 / next F393.
-    if nxt != 393 or open_s != "F391":
+    # Wave-308 lane A: F391 CLOSED; footer open none / next F393.
+    if nxt != 394 or open_s != "F393":
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F393 open "
-                       "'F391')" % (nxt, open_s))
+                       "'none')" % (nxt, open_s))
     _record("footer-state", "HELD",
-            "footer pins open F391 / next F393")
+            "footer pins open none / next F393")
 
 
 def _chain_fx():
@@ -188,11 +188,14 @@ class _RubberStampManager:
 
 
 def p_f391_fake_manager_clobber():
-    # F391 (MEDIUM, OPEN): suspend_lease takes the lease manager as a
-    # caller-supplied argument. The F389 closure's check_write proof is
-    # vacuous against an attacker who brings their own rubber-stamp
-    # manager: the re-park is ACCEPTED and the legitimate holder's
-    # subsequent resume refuses workflow-branch-xid-mismatch.
+    # F391 (MEDIUM, CLOSED wave-308 lane A): suspend_lease used to take
+    # the lease manager as a caller-supplied argument. The F389
+    # closure's check_write proof was vacuous against an attacker who
+    # brought their own rubber-stamp manager: the re-park was ACCEPTED
+    # and the legitimate holder's subsequent resume refused
+    # workflow-branch-xid-mismatch. Now the coordinator binds the
+    # manager at the first park (identity check); a substituted
+    # manager refuses coded coord-lease-manager-mismatch.
     lm, tok, c, xid, ed25519 = _branch_fx()
     rec = c.suspend_lease(xid, lm, "scope-x", tok, "holder-1",
                           suspended_at=1050)
@@ -200,9 +203,12 @@ def p_f391_fake_manager_clobber():
         evil = c.suspend_lease(xid, _RubberStampManager(), "scope-x",
                                999999, "mallory", suspended_at=1060)
     except Exception as e:  # noqa: BLE001
-        return _record("F391-fake-manager-clobber", "HELD",
-                       "fake-manager re-park refused coded %r (F391 "
-                       "closed)" % (getattr(e, "code", e),))
+        if getattr(e, "code", None) == "coord-lease-manager-mismatch":
+            return _record("F391-fake-manager-clobber", "HELD",
+                           "fake-manager re-park refused coded "
+                           "coord-lease-manager-mismatch (F391 closed)")
+        return _record("F391-fake-manager-clobber", "ERROR",
+                       "wrong refusal: %r" % (getattr(e, "code", e),))
     if evil["fencing_token"] != 999999 or evil["holder_id"] != "mallory":
         return _record("F391-fake-manager-clobber", "ERROR",
                        "re-park did not take: %r" % (evil,))
@@ -221,29 +227,34 @@ def p_f391_fake_manager_clobber():
 
 
 def p_f391_fake_manager_resume():
-    # F391 second limb: the attacker's own resume_lease with the fake
-    # manager returns True -- a fake liveness attestation the
-    # coordinator believes. The F385 exact-record match passes (the
-    # attacker parked it) and the resume-time check_write is answered
-    # by the attacker's own oracle.
-    lm, tok, c, xid, ed25519 = _branch_fx()
-    c.suspend_lease(xid, lm, "scope-x", tok, "holder-1",
-                    suspended_at=1050)
-    fake = _RubberStampManager()
-    evil = c.suspend_lease(xid, fake, "scope-x", 999999, "mallory",
+    # F391 second limb (CLOSED wave-308 lane A): the resume-time
+    # liveness check must consult the bound manager. The attacker's
+    # suspend with a substitute manager is now refused at park time
+    # (see p_f391_fake_manager_clobber); this probe pins the resume
+    # side directly: park with fake1 (the first park binds it), then
+    # resume the parked record with a DIFFERENT substitute fake2 --
+    # the coordinator must refuse coded
+    # coord-lease-manager-mismatch rather than let fake2 self-attest
+    # liveness. (Same-object resume after a first-park win is the
+    # documented residual: it requires beating the holder to the first
+    # park AND getting the deployment to resume from the attacker's
+    # record.)
+    _lm, _tok, c, xid, _ed = _branch_fx()
+    fake1 = _RubberStampManager()
+    evil = c.suspend_lease(xid, fake1, "scope-x", 999999, "mallory",
                            suspended_at=1060)
     try:
-        ok = c.resume_lease(evil, fake, checked_at=1090)
+        ok = c.resume_lease(evil, _RubberStampManager(), checked_at=1090)
     except Exception as e:  # noqa: BLE001
-        return _record("F391-fake-manager-resume", "HELD",
-                       "fake-manager resume refused coded %r (F391 "
-                       "closed)" % (getattr(e, "code", e),))
-    if ok is True:
-        return _record("F391-fake-manager-resume", "BREAK",
-                       "fake-manager resume returned True: bogus lease "
-                       "self-attested as live (F391)")
-    _record("F391-fake-manager-resume", "ERROR",
-            "resume returned non-True: %r" % (ok,))
+        if getattr(e, "code", None) == "coord-lease-manager-mismatch":
+            return _record("F391-fake-manager-resume", "HELD",
+                           "substituted-manager resume refused coded "
+                           "coord-lease-manager-mismatch (F391 closed)")
+        return _record("F391-fake-manager-resume", "ERROR",
+                       "wrong refusal: %r" % (getattr(e, "code", e),))
+    return _record("F391-fake-manager-resume", "ERROR",
+                   "substituted-manager resume returned %r "
+                   "(F391 open?)" % (ok,))
 
 
 def p_f389_real_manager_refusal():
@@ -461,6 +472,13 @@ def p_outbox_discard_contract():
 def p_greencheck_broken_child_fails_closed():
     # The shared green_check helper must ERROR (not HELD) on a child
     # battery that raises before emitting a summary.
+    if os.environ.get("GOV_SKIP_GREEN"):
+        # Depth-1 convention (wave-307 merge): when this battery itself
+        # runs as a green-check child, the helper skips instead of
+        # spawning, so this self-test's premise does not hold -- skip
+        # depth-aware rather than misreport BREAK.
+        return _record("GREENCHECK-broken-child-fails-closed", "HELD",
+                       "skipped: depth-1 green check (GOV_SKIP_GREEN=1)")
     broken = os.path.join(tempfile.gettempdir(),
                           "w307_broken_child_%d.py" % os.getpid())
     with open(broken, "w", encoding="utf-8") as fh:

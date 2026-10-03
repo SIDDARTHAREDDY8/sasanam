@@ -12,10 +12,14 @@ checkpointed, and every resume re-proves its authority."
 THREAT MODEL: the coordinator seed is the trust anchor (compromised-host
 class if stolen). Instants are caller-supplied freshness markers, not a
 trusted clock. XIDs are 64-hex random ids -- uniqueness rests on the
-standard os.urandom assumption. The lease manager passed to
-suspend/resume is deployment-owned; this module never mints leases.
+standard os.urandom assumption. The lease manager is deployment-owned;
+the coordinator binds the manager object at the first successful park
+(F391) and this module never mints leases. A caller-supplied substitute
+manager is not an oracle -- it refuses coded
+``coord-lease-manager-mismatch``.
 
-DECISION CODES (3 new, domain ``workflow-branch``):
+DECISION CODES (3 new, domain ``workflow-branch``; +1 ``coord-lease``
+for F391):
 - ``workflow-branch-xid-mismatch`` (high): a step ran without the
   expected XID, or a decision package was applied under the wrong XID.
 - ``workflow-branch-unregistered`` (high): an unregistered branch tried
@@ -26,6 +30,9 @@ DECISION CODES (3 new, domain ``workflow-branch``):
 Reused (not minted): ``coord-lease-expired`` / ``coord-lease-fencing``
 for suspension resume refusals; ``decision-code-malformed`` for shape
 errors; ``coord-lease-denied`` for duplicate branch registration.
+Minted for F391: ``coord-lease-manager-mismatch`` -- the manager
+presented to suspend/resume is not the manager bound to the transaction
+at the first park.
 """
 
 import hashlib
@@ -49,6 +56,12 @@ LEASE_EXPIRED = "coord-lease-expired"
 LEASE_FENCING = "coord-lease-fencing"
 MALFORMED = "decision-code-malformed"
 LEASE_DENIED = "coord-lease-denied"
+
+# F391: minted -- a substituted lease manager refuses coded. The first
+# successful park binds the manager object to the transaction; later
+# suspend/resume calls must present the identical object (identity
+# check), never a caller-supplied substitute.
+LEASE_MISMATCH = "coord-lease-manager-mismatch"
 
 __all__ = [
     "BranchCoordinator",
@@ -160,6 +173,28 @@ class BranchCoordinator:
         if txn is None:
             _fail(MALFORMED, "unknown xid %s" % xid[:12])
         return txn
+
+    def _check_manager_binding(self, txn, lease_manager):
+        """F391: the lease manager is coordinator-bound, not
+        caller-supplied per call. The first successful park binds the
+        manager object to the transaction (identity, not equality);
+        every later suspend/resume must present the identical object.
+        A substituted manager refuses coded
+        ``coord-lease-manager-mismatch`` -- the F389 holdership proof
+        and the resume-time liveness check are only meaningful against
+        the deployment's own oracle, never a caller-supplied
+        rubber stamp.
+
+        The binding lives in the transaction's in-memory record. This
+        module has no journal/reload path; if one is ever added, the
+        binding must be persisted with the transaction -- otherwise a
+        reload would silently drop it and re-open per-call supply."""
+        bound = txn.get("lease_manager")
+        if bound is not None and bound is not lease_manager:
+            _fail(LEASE_MISMATCH,
+                  "lease manager is not the manager bound to xid %s "
+                  "at first park -- a substituted manager cannot "
+                  "attest liveness" % txn["xid"][:12])
 
     # -- branch registration (BEFORE commit) -------------------------
 
@@ -341,18 +376,33 @@ class BranchCoordinator:
         match would then make the clobbering stick: the legitimate
         holder's resume refuses ``workflow-branch-xid-mismatch``).
         Re-suspending with the current token (the documented re-park
-        semantics) still works: the latest park wins."""
+        semantics) still works: the latest park wins.
+
+        F391: the lease manager is bound by the coordinator, not
+        supplied per-call. The first successful park binds the manager
+        object to the transaction (identity check); a later suspend
+        presenting a different manager refuses coded
+        ``coord-lease-manager-mismatch`` before any oracle call. The
+        binding happens only after the F389 holdership proof passes,
+        so a refused park binds nothing."""
         txn = self._txn(xid)
         _check_ts(suspended_at, "suspended_at")
         if not isinstance(lease_manager, object) or \
                 not hasattr(lease_manager, "check_write"):
             _fail(MALFORMED, "lease_manager must expose check_write")
+        # F391: the oracle must be the bound manager. Identity, not
+        # equality -- a value-equal clone is still a substitute.
+        self._check_manager_binding(txn, lease_manager)
         # F389: prove lease-holdership BEFORE parking. check_write is
         # a pure authorization check (no mutation): it refuses
         # coord-lease-fencing on a stale/foreign token and
         # coord-lease-expired on a dead lease.
         lease_manager.check_write(scope, fencing_token, holder_id,
                                   checked_at=suspended_at)
+        # F391: bind on first successful park -- after the holdership
+        # proof, so a refused park binds nothing.
+        if "lease_manager" not in txn:
+            txn["lease_manager"] = lease_manager
         record = {
             "xid": xid,
             "scope": scope,
@@ -385,6 +435,11 @@ class BranchCoordinator:
         cannot resume under xid_B, even when both transactions belong
         to the same coordinator. Mismatch refuses
         ``workflow-branch-xid-mismatch``.
+
+        F391: the lease manager presented must be the manager bound to
+        the transaction at the first park (identity check) -- a
+        substituted manager refuses ``coord-lease-manager-mismatch``
+        before the liveness check runs.
         """
         if not isinstance(suspension, dict):
             _fail(MALFORMED, "suspension must be a dict")
@@ -421,6 +476,10 @@ class BranchCoordinator:
             _fail(WB_XID_MISMATCH,
                   "suspension does not match the record parked for xid "
                   "%s" % suspension["xid"][:12])
+        # F391: the liveness oracle must be the bound manager. A
+        # parked suspension implies a bound manager; a substituted
+        # manager refuses coded before it can self-attest liveness.
+        self._check_manager_binding(txn, lease_manager)
         # check_write is the liveness oracle: it refuses
         # coord-lease-expired / coord-lease-fencing itself, and returns
         # True without mutating anything (a pure authorization check).

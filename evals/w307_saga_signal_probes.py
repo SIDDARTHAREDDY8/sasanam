@@ -44,9 +44,10 @@ the idem store's public begin/complete, the F388/F390 plant seam):
   S3 COMP-history-preserves-refusal: the saga history contains
      ``compensation_attempt_failed`` events whose detail carries the
      ``workflow-composed-replay-foreign`` refusal message.
-  S4 COMP-verdict-retried: the deterministic refusal is retried exactly
-     ``_max_comp`` (3) times before escalation -- documents the
-     verdict-treated-as-transient behavior (observational residual).
+  S4 COMP-coded-refusal-not-retried: the deterministic refusal is a
+     verdict, not a transient failure -- exactly ONE compensation
+     attempt, then immediate escalation (wave-308 lane E hardening;
+     previously the verdict was retried _max_comp times).
   S5 COMP-action-path-control: the action-path comparison -- a
      poisoned pair under an action key becomes a step failure and the
      saga compensates (status "compensated"), no foreign outputs;
@@ -77,7 +78,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 
-TAXONOMY_PIN = 1827  # Wave-306 merge pin; this lane files nothing, pin unchanged
+TAXONOMY_PIN = 1828  # Wave-306 merge pin; this lane files nothing, pin unchanged
 
 FOREIGN_CODE = "workflow-composed-replay-foreign"
 ESCALATION_CODE = "workflow-saga-compensation-failed"
@@ -129,8 +130,8 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    want_open = "F391"
-    if nxt != 393 or open_s != want_open:
+    want_open = "F393"
+    if nxt != 394 or open_s != want_open:
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F393 open %r)"
                        % (nxt, open_s, want_open))
@@ -318,27 +319,30 @@ def p_comp_history_preserves_refusal():
             "F390 refusal (code %r)" % (len(hits), FOREIGN_CODE))
 
 
-def p_comp_verdict_retried():
-    # S4 (observational): the deterministic refusal is retried exactly
-    # _max_comp times -- a verdict treated as a transient failure.
-    sc = _scenario("COMP-verdict-retried")
+def p_comp_coded_refusal_not_retried():
+    # S4: a coded refusal is a verdict -- exactly ONE compensation
+    # attempt, then immediate escalation (wave-308 lane E hardening of
+    # the wave-307 lane B residual). Transient (uncoded) failures still
+    # burn the _max_comp attempt budget (see unit tests).
+    sc = _scenario("COMP-coded-refusal-not-retried")
     if sc is None:
         return
     comp, err, res = sc
     inst = comp._saga_instances.get("su")
     if inst is None:
-        return _record("COMP-verdict-retried", "ERROR",
+        return _record("COMP-coded-refusal-not-retried", "ERROR",
                        "no saga instance recorded")
     attempts = [ev for ev in inst.history
                 if ev.get("type") == "compensation_attempt_failed"]
-    # Default SagaManager(max_compensation_attempts=3).
-    if len(attempts) != 3:
-        return _record("COMP-verdict-retried", "BREAK",
-                       "expected 3 deterministic retries, saw %d"
+    # Default SagaManager(max_compensation_attempts=3): a verdict must
+    # NOT consume the retry budget.
+    if len(attempts) != 1:
+        return _record("COMP-coded-refusal-not-retried", "BREAK",
+                       "coded refusal retried: saw %d attempt(s), want 1"
                        % (len(attempts),))
-    _record("COMP-verdict-retried", "HELD",
-            "deterministic refusal retried 3x (= _max_comp) before "
-            "escalation; verdict-as-transient is a documented residual")
+    _record("COMP-coded-refusal-not-retried", "HELD",
+            "coded refusal escalated after 1 attempt (not retried); "
+            "verdict-as-transient residual closed")
 
 
 def p_comp_action_path_control():
@@ -406,7 +410,7 @@ def main():
     _safe("COMP-refusal-fires-fail-closed", p_comp_refusal_fires_fail_closed)
     _safe("COMP-escalation-code", p_comp_escalation_code)
     _safe("COMP-history-preserves-refusal", p_comp_history_preserves_refusal)
-    _safe("COMP-verdict-retried", p_comp_verdict_retried)
+    _safe("COMP-coded-refusal-not-retried", p_comp_coded_refusal_not_retried)
     _safe("COMP-action-path-control", p_comp_action_path_control)
     # Depth-1 adjacent green checks (wave-134 lesson: never nest).
     # NOTE: w306_redteam_probes.py is deliberately NOT green-checked

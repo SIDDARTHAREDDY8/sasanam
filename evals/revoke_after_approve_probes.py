@@ -90,18 +90,22 @@ def _grant_delete(ctx, queue_turns):
     q, ex = ctx["approvals"], ctx["executor"]
     ident = ctx["mint_identity"]("agent-1", "coder", "org")
     ex.set_intent_context(list(queue_turns))
+    args = {"path": str(ex.sandbox / "x.txt")}
     verdict = ex._intent_slice_verdict(
-        "delete_file", {"path": str(ex.sandbox / "x.txt")},
+        "delete_file", args,
         "cleaning temp files per your instruction", ident)
+    # Wave-174 display==execution contract: the preview must be rendered
+    # via the executor's renderer, not a dummy string.
+    preview = ex._preview("delete_file", args)
     aid = q.queue(
         {"tool": "delete_file",
-         "args": {"path": str(ex.sandbox / "x.txt")},
+         "args": args,
          "identity": ident.as_dict(),
          "agent_justification": "cleaning temp files per your instruction",
          "redactions": []},
         PolicyDecision("require_approval", "revoke battery",
                        policy_id="revoke-battery", flag="b"),
-        "agent_direct", "preview",
+        "agent_direct", preview,
         policy_hash=ex.policy.policy_hash, caller_identity=ident,
         intent_slice_verdict=verdict)
     q.decide(aid, True, "approved", decided_by="human-operator")

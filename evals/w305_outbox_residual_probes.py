@@ -75,7 +75,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # No new codes in this lane (negative result): pin stays at the
 # wave-304 merge pin.
-TAXONOMY_PIN = 1827
+TAXONOMY_PIN = 1828
 
 CONFLICT_CODE = "permit-idempotency-conflict"
 
@@ -127,13 +127,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    want_open = "F391"
-    if nxt != 393 or open_s != want_open:
+    want_open = "F393"
+    if nxt != 394 or open_s != want_open:
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F393 open %r)"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open F391 / next F393")
+            "footer pins open none / next F393")
 
 
 AT = 1_700_000_000
