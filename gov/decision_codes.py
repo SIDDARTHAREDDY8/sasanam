@@ -17206,6 +17206,67 @@ TAXONOMY = {
         "evidence_kinds_required": ['witness-log'],
         "reverify_steps": ['recompute'],
     },
+    'witness-rekor-anchor-expired': {
+        "domain": 'witness',
+        "code": 'witness-rekor-anchor-expired',
+        "human": 'transparency witness: the anchor receipt is stale -- '
+                 'checkpoint time outside the witness key validFor window '
+                 'at anchor time, or older than max_anchor_age; fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
+    'witness-rekor-anchor-missing': {
+        "domain": 'witness',
+        "code": 'witness-rekor-anchor-missing',
+        "human": 'transparency witness: no anchor receipt presented for '
+                 'the bundle digest -- the bundle was never anchored; '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'witness-rekor-checkpoint-invalid': {
+        "domain": 'witness',
+        "code": 'witness-rekor-checkpoint-invalid',
+        "human": 'transparency witness: checkpoint signature does not '
+                 'verify against the pinned witness key, the logId names '
+                 'a foreign key, or the checkpoint time is in the future; '
+                 'fail-closed',
+        "severity": 'critical',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
+    'witness-rekor-digest-mismatch': {
+        "domain": 'witness',
+        "code": 'witness-rekor-digest-mismatch',
+        "human": 'transparency witness: the receipt binds a different '
+                 'digest than the claimed bundle digest -- a receipt '
+                 'replayed across bundles; fail-closed',
+        "severity": 'critical',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'witness-rekor-inclusion-invalid': {
+        "domain": 'witness',
+        "code": 'witness-rekor-inclusion-invalid',
+        "human": 'transparency witness: the Merkle inclusion proof does '
+                 'not verify against the checkpoint root hash, or the '
+                 'log index is out of bounds; fail-closed',
+        "severity": 'critical',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'witness-rekor-malformed': {
+        "domain": 'witness',
+        "code": 'witness-rekor-malformed',
+        "human": 'transparency witness: malformed input -- bad digest '
+                 'hex, bad receipt shape, bad witness key, or bad '
+                 'validFor window; fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
     'workflow-approval-binding-invalid': {
         "domain": 'workflow-approval',
         "code": 'workflow-approval-binding-invalid',

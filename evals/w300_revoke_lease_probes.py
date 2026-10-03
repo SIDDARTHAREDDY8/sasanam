@@ -42,7 +42,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1872  # Wave-300 lane 4: no new codes (reuse coord-lease-fencing etc.); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
+TAXONOMY_PIN = 1878  # Wave-300 lane 4: no new codes (reuse coord-lease-fencing etc.); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
 
@@ -78,7 +78,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate code literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "code literals not sorted")
-    _record("pin-taxonomy", "HELD", "1872/1872/0 sorted")
+    _record("pin-taxonomy", "HELD", "1878/1878/0 sorted")
 
 
 def _green_check(path, name, tolerate=()):

@@ -60,7 +60,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 import probe_lines  # noqa: E402  (canonical probe-line form)
 
-TAXONOMY_PIN = 1872  # Wave-302 merge pin 1820; wave-303 lane 6: pin 1820 -> 1823 (+3 authority-lifecycle-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*); Wave-304 lane D: pin unchanged (no new codes)
+TAXONOMY_PIN = 1878  # Wave-302 merge pin 1820; wave-303 lane 6: pin 1820 -> 1823 (+3 authority-lifecycle-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*); Wave-304 lane D: pin unchanged (no new codes)
 
 _results = []
 
@@ -96,7 +96,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1872/1872/0 sorted")
+    _record("pin-taxonomy", "HELD", "1878/1878/0 sorted")
 
 
 def p_footer_state():

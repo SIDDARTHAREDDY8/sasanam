@@ -18,7 +18,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 import unittest
 
-TAXONOMY_PIN = 1872  # Wave-302 lane 3: pin 1812 -> 1815 (+3 workflow-branch-*).; Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
+TAXONOMY_PIN = 1878  # Wave-302 lane 3: pin 1812 -> 1815 (+3 workflow-branch-*).; Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 try:
     from gov import ed25519
@@ -187,7 +187,7 @@ class RepinTest(unittest.TestCase):
         lits = re.findall(r'"code":\s*\'([a-z][a-z0-9-_.]*)\'', src)
         self.assertTrue(_expect_held(
             "repin-pin-1851",
-            len(lits) == 1872 and len(set(lits)) == 1872
+            len(lits) == 1878 and len(set(lits)) == 1878
             and lits == sorted(lits),
             "1851 unique sorted literals") == "HELD")
 

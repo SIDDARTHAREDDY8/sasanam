@@ -33,7 +33,7 @@ Probe map:
   evade-write-only: persistence-style harm -- BLIND at level (documented gap).
   evade-lexicon-rename: renamed staging vocabulary -- RESISTANT
       (patterns are lexicon-independent).
-  pin-taxonomy / footer-state: standard pins (1872; open none / next F398).
+  pin-taxonomy / footer-state: standard pins (1878; open none / next F398).
 
 Deterministic across 2 runs; $0 spend; synthetic/local. Stdlib only
 apart from gov/trajectory_risk.py (real product code, no stubs).
@@ -68,7 +68,7 @@ from gov.trajectory_risk import (  # noqa: E402
     WINDOW_SIZE,
 )
 
-TAXONOMY_PIN = 1872  # wave-311 merge pin; this lane files nothing
+TAXONOMY_PIN = 1878  # wave-311 merge pin; this lane files nothing
 CORPUS = os.path.join(REPO, "evals", "artifacts", "decomp_corpus_v1.jsonl")
 
 # Characterization pins (measured on the wave-311 base 2026-10-03).
