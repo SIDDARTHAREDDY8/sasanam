@@ -52,7 +52,7 @@ Probe map:
   sink-fn-body-indirection: the wave-313 lane-E deferred case -- the
       call is gated by its REAL tool identity (http_post), not the
       plan's declared name.
-  pin-taxonomy / footer-state: standard pins (1878; open none / next
+  pin-taxonomy / footer-state: standard pins (1888; open none / next
       F398). This lane files no findings.
 """
 
@@ -75,7 +75,7 @@ import probe_lines  # noqa: E402  (canonical probe-line emission)
 from gov import provenance_labels as PL  # noqa: E402
 from gov import provenance_sink as PS  # noqa: E402
 
-TAXONOMY_PIN = 1878  # Wave-314 lane 1: pin 1863 -> 1872 (+9 provenance-*)
+TAXONOMY_PIN = 1888  # Wave-314 lane 1: pin 1863 -> 1872 (+9 provenance-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*)
 
 _results = []
 _seg_n = [0]
@@ -369,10 +369,10 @@ def pin_taxonomy():
                       "provenance-sink-redacted",
                       "provenance-sink-refused",
                       "provenance-sink-unknown-tool")]
-    ok = (len(keys) == TAXONOMY_PIN == 1878 and len(mine) == 9
+    ok = (len(keys) == TAXONOMY_PIN == 1888 and len(mine) == 9
           and keys == sorted(keys) and len(set(keys)) == len(keys))
     _held("pin-taxonomy", ok,
-          "taxonomy 1878/1878/0 sorted, 9 wave-314 codes present"
+          "taxonomy 1888/1888/0 sorted, 9 wave-314 codes present"
           if ok else "taxonomy pin mismatch")
 
 

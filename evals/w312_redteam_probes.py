@@ -106,7 +106,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 # Pin 1851 (wave-312 lane D: 1841 -> 1851, +10 witness codes). This lane mints no
 # codes (red team only; F397 needs no new code -- the fix is an `at`
 # bound, not a refusal), so the pin stays 1851.
-TAXONOMY_PIN = 1878
+TAXONOMY_PIN = 1888  #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*)
 
 AT = 1000000
 
@@ -144,7 +144,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1878/1878/0 sorted")
+    _record("pin-taxonomy", "HELD", "1888/1888/0 sorted")
 
 
 def p_footer_state():

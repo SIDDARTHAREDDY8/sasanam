@@ -42,7 +42,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 1878
+TAXONOMY_PIN = 1888  #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*)
 FOOTER_OPEN = "none"
 FOOTER_NEXT = "F398"
 

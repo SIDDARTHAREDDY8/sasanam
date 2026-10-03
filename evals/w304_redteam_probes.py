@@ -66,7 +66,7 @@ import probe_lines  # noqa: E402  (canonical probe-line form)
 
 # Wave-303 merge pin 1827; this lane mints no codes (red team only), so
 # the pin stays 1827. The merge-time sweep repoints to the wave-304 pin.
-TAXONOMY_PIN = 1878
+TAXONOMY_PIN = 1888  #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*)
 
 _results = []
 
@@ -102,7 +102,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1878/1878/0 sorted")
+    _record("pin-taxonomy", "HELD", "1888/1888/0 sorted")
 
 
 def p_footer_state():

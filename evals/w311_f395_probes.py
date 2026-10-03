@@ -52,7 +52,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # F395 closure mints no new decision codes (reuses
 # workflow-composed-definition-invalid): pin stays 1829.
-TAXONOMY_PIN = 1878  # wave-310 merge: +1 workflow-composed-plan-mismatch
+TAXONOMY_PIN = 1888  # wave-310 merge: +1 workflow-composed-plan-mismatch; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*)
 
 AT = 1000000
 REFUSAL = "workflow-composed-definition-invalid"
@@ -91,7 +91,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1878/1878/0 sorted")
+    _record("pin-taxonomy", "HELD", "1888/1888/0 sorted")
 
 
 def p_footer_state():

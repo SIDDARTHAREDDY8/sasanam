@@ -69,7 +69,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 import probe_lines  # noqa: E402  (canonical probe-line form)
 
-TAXONOMY_PIN = 1878  # Wave-306 merge pin; Wave-307 lane A: F392 reuses workflow-composed-replay-foreign, pin unchanged
+TAXONOMY_PIN = 1888  # Wave-306 merge pin; Wave-307 lane A: F392 reuses workflow-composed-replay-foreign, pin unchanged; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*)
 FOREIGN_CODE = "workflow-composed-replay-foreign"
 
 _results = []

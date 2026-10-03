@@ -79,7 +79,7 @@ import green_check
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Pin moves 1841 -> 1851: +8 witness-log-* +2 evidence-bundle-witness-*.
-TAXONOMY_PIN = 1878
+TAXONOMY_PIN = 1888  #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*)
 
 from gov import witness_log as wl
 from gov.signing import Ed25519Signer
@@ -296,7 +296,7 @@ def p_pin_taxonomy():
     if len(new) != 10:
         return _record("pin-taxonomy", "BREAK",
                        "want 10 new witness codes, got %d" % len(new))
-    _record("pin-taxonomy", "HELD", "1878/1878/0 sorted, +10 witness codes")
+    _record("pin-taxonomy", "HELD", "1888/1888/0 sorted, +10 witness codes")
 
 
 def p_footer_state():

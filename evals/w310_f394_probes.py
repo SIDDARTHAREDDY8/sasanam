@@ -51,7 +51,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Pin 1829 (wave-309 merge: +1 workflow-composed-plan-mismatch).
 # This lane mints no codes.
-TAXONOMY_PIN = 1878
+TAXONOMY_PIN = 1888  #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*)
 
 AT = 1000000
 
@@ -89,7 +89,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1878/1878/0 sorted")
+    _record("pin-taxonomy", "HELD", "1888/1888/0 sorted")
 
 
 def p_footer_state():
