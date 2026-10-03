@@ -76,6 +76,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check
+import probe_lines
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -910,9 +911,7 @@ def main():
         for pid, fn in _PROBES:
             _safe(pid, fn)
         _green_checks()
-    for pid, verdict, note in _results:
-        first = note.splitlines()[0] if note else ""
-        print("[VERDICT] %s: %s: %s" % (verdict, pid, first))
+    probe_lines.emit(_results)
     brk = sum(1 for r in _results if r[1] == "BREAK")
     held = sum(1 for r in _results if r[1] == "HELD")
     err = sum(1 for r in _results if r[1] == "ERROR")
