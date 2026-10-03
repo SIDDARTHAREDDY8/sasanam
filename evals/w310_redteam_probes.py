@@ -42,7 +42,7 @@ battery was written -- diagnosing-bugs loop):
 
 New findings filed by this lane: F395 (MEDIUM, OPEN), claim
 2026-10-03T13:27:00Z. Wave-310 merge: F394 CLOSED (lane A), F395 OPEN;
-pin 1829; footer open F395 / next F396. This battery's expected
+pin 1829; footer open F395, F396 / next F397. This battery's expected
 BREAKs: F395-exotic-closure-fn, F395-exotic-closure-saga (all OPEN).
 
 Run:
@@ -127,11 +127,11 @@ def p_footer_state():
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
     # Wave-310 merge footer: F394 CLOSED (lane A); F395 OPEN (lane C).
-    if nxt != 396 or open_s != "F395":
+    if nxt != 397 or open_s != "F395, F396":
         return _record("footer-state", "BREAK",
-                       "footer pins next F%d open '%s', want next F396 "
-                       "open 'F395'" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open F395 / next F396")
+                       "footer pins next F%d open '%s', want next F397 "
+                       "open 'F395, F396'" % (nxt, open_s))
+    _record("footer-state", "HELD", "footer pins open F395, F396 / next F397")
 
 
 # ------------------------------------------------------------------
@@ -815,7 +815,7 @@ def _green_checks():
     # F393 CLOSED (wave-309 lane A): the w309_f393 battery's F393
     # probes now assert the coded workflow-composed-plan-mismatch
     # refusal; expect no BREAKs. Re-pinned to the wave-310 merge
-    # footer (open F395 / next F396).
+    # footer (open F395, F396 / next F397).
     green_check.check_battery(
         _rec, "green-w309_f393", "evals/w309_f393_probes.py",
         repo=REPO, expect_break_ids=())
