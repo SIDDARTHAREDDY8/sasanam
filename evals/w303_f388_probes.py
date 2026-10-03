@@ -114,13 +114,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    want_open = "none"
-    if nxt != 391 or open_s != want_open:
+    want_open = "F391"
+    if nxt != 393 or open_s != want_open:
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F389 open %r)"
+                       "footer drift: next F%d open %r (want next F393 open %r)"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open F389 / next F390")
+            "footer pins open F391 / next F393")
 
 
 AT = 1_700_000_000
@@ -298,6 +298,7 @@ def p_f387_detached_resolution_refused():
         # detached check fires before it is used, so the value here is
         # unreachable (documents the new signature).
         resolved = comp._resolve_replay(replay, "composed-unit",
+                                        "unreachable-key",
                                         "fn:detached-probe")
     except Exception as e:  # noqa: BLE001
         if _refused_foreign(e):

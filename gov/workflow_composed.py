@@ -468,7 +468,23 @@ class WorkflowComposer:
             authority_verifier=self._authority_verifier(actor, at), at=at)
         return outcome
 
-    def _resolve_replay(self, outcome, op_class, expected_step_name):
+    def _step_binding(self, op_class, key):
+        """F391: the workflow step's binding to the idempotency record.
+
+        Step names are unique per (plan, unit) but NOT per run:
+        ``execute()`` takes a caller-provided run_id and never binds a
+        run to a single plan, so two plans executed under one run can
+        record the same step name for different units' work (a poisoned
+        pair naming the attacker's same-named step then passes the F390
+        name check). The (namespace, op_class, key) triple identifies
+        the exact idem record; the step records it as its
+        idempotency_key and ``_resolve_replay`` verifies the binding.
+        The ``\\x00`` separators mirror the idem store's record key so
+        a key containing \":\" cannot blur the fields.
+        """
+        return "%s\x00%s\x00%s" % (self._namespace, op_class, key)
+
+    def _resolve_replay(self, outcome, op_class, key, expected_step_name):
         """Decision 2/5: an outer REPLAY resolves through the result_ref
         back to the workflow checkpoint; digest disagreement is a fork.
 
@@ -490,6 +506,18 @@ class WorkflowComposer:
         ``workflow-composed-replay-foreign``. The step name is stored
         in the workflow store (not attacker-controlled); the idempotency
         record's ref alone cannot establish which unit created the step.
+
+        F391: the name binding is not unique per run. ``execute()``
+        takes a caller-provided run_id and never binds a run to a
+        single plan, so a different plan executed under the same run
+        can record the SAME step name for a different unit's work; a
+        poisoned pair naming the attacker's same-named step then passes
+        the F390 name check. The step records the (namespace, op_class,
+        key) triple of the idempotency record that created it (as its
+        idempotency_key, via ``_step_binding``); the replaying unit's
+        key must match, or the pair refuses
+        ``workflow-composed-replay-foreign``. ``key`` is required --
+        fail-closed by construction.
         """
         ctx = self._exec_ctx
         if ctx is None:
@@ -539,6 +567,13 @@ class WorkflowComposer:
                   "but the replaying unit expects step %r (%s): foreign "
                   "pair refused"
                   % (ref, step.get("name"), expected_step_name, op_class))
+        expected_binding = self._step_binding(op_class, key)
+        if step.get("idempotency_key") != expected_binding:
+            _fail(WC_REPLAY_FOREIGN,
+                  "idempotency replay references step %r, but that step "
+                  "was recorded under a different idempotency binding: "
+                  "step names are not unique per run (%s): foreign pair "
+                  "refused" % (ref, op_class))
         return step["outputs"]
 
     def _complete_unit(self, outcome, outputs, run_id, seq, at):
@@ -551,11 +586,19 @@ class WorkflowComposer:
         self._seq += 1
         return self._seq
 
-    def _run_unit_step(self, run_id, name, fn, inputs, authority, at):
-        """Decision 1: every unit executes inside a workflow step slot."""
+    def _run_unit_step(self, run_id, name, fn, inputs, authority, at,
+                       step_binding):
+        """Decision 1: every unit executes inside a workflow step slot.
+
+        ``step_binding`` (from ``_step_binding``) is recorded as the
+        step's idempotency_key so ``_resolve_replay`` can verify the
+        step was created by the idempotency record now replaying
+        (F391). Required -- fail-closed by construction.
+        """
         seq = self._next_seq()
         outputs, replayed = self._wstore.run_step(
             run_id, seq, name, fn, inputs,
+            idempotency_key=step_binding,
             authority=authority, at=at)
         return seq, outputs, replayed
 
@@ -581,13 +624,13 @@ class WorkflowComposer:
                         "plan": ctx["plan_digest"], "op": "saga-action",
                         "unit": unit["name"], "step": step_id,
                         "params": _digest(params)})
+                    ukey = "%s:action:%s" % (unit["idem_key"], step_id)
                     outcome = self._begin_unit(
-                        _OP_SAGA_ACTION,
-                        "%s:action:%s" % (unit["idem_key"], step_id),
+                        _OP_SAGA_ACTION, ukey,
                         op_digest, ctx["actor"], ctx["at"])
                     if outcome.status == "replay":
                         saved = self._resolve_replay(
-                            outcome, _OP_SAGA_ACTION,
+                            outcome, _OP_SAGA_ACTION, ukey,
                             "saga:%s:%s" % (unit["name"], step_id))
                         return saved["result"], saved["payloads"]
                     # Decision 4: the evidence binding uses STABLE
@@ -617,7 +660,8 @@ class WorkflowComposer:
                     name = "saga:%s:%s" % (unit["name"], step_id)
                     seq, outputs, _ = self._run_unit_step(
                         ctx["run_id"], name, _run_action,
-                        dict(params), ctx["authority"], ctx["at"])
+                        dict(params), ctx["authority"], ctx["at"],
+                        self._step_binding(_OP_SAGA_ACTION, ukey))
                     result = outputs["result"]
                     payloads = outputs["payloads"]
                     self._complete_unit(outcome, outputs, ctx["run_id"],
@@ -632,20 +676,21 @@ class WorkflowComposer:
                         "plan": ctx["plan_digest"], "op": "saga-comp",
                         "unit": unit["name"], "step": step_id,
                         "params": _digest(params)})
+                    ukey = "%s:comp:%s" % (unit["idem_key"], step_id)
                     outcome = self._begin_unit(
-                        _OP_SAGA_COMP,
-                        "%s:comp:%s" % (unit["idem_key"], step_id),
+                        _OP_SAGA_COMP, ukey,
                         op_digest, ctx["actor"], ctx["at"])
                     if outcome.status == "replay":
                         saved = self._resolve_replay(
-                            outcome, _OP_SAGA_COMP,
+                            outcome, _OP_SAGA_COMP, ukey,
                             "saga-comp:%s:%s" % (unit["name"], step_id))
                         return saved["result"]
                     name = "saga-comp:%s:%s" % (unit["name"], step_id)
                     seq, outputs, _ = self._run_unit_step(
                         ctx["run_id"], name,
                         lambda i, _f=real_fn: {"result": _f(dict(i))},
-                        dict(params), ctx["authority"], ctx["at"])
+                        dict(params), ctx["authority"], ctx["at"],
+                        self._step_binding(_OP_SAGA_COMP, ukey))
                     self._complete_unit(outcome, outputs, ctx["run_id"],
                                         seq, ctx["at"])
                     return outputs["result"]
@@ -763,12 +808,13 @@ class WorkflowComposer:
                 "unit": unit["name"], "leg": idx,
                 "slip": slip["slip_id"],
                 "input_digest": leg["input_digest"]})
+            ukey = "%s:leg:%d" % (unit["idem_key"], idx)
             outcome = self._begin_unit(
-                _OP_SLIP_LEG, "%s:leg:%d" % (unit["idem_key"], idx),
+                _OP_SLIP_LEG, ukey,
                 op_digest, ctx["actor"], ctx["at"])
             if outcome.status == "replay":
                 saved = self._resolve_replay(
-                    outcome, _OP_SLIP_LEG,
+                    outcome, _OP_SLIP_LEG, ukey,
                     "slip:%s:leg:%d" % (unit["name"], idx))
                 # The receipt was already bound on first execution.
                 slip = self._advance_slip(slip, idx, seed,
@@ -813,7 +859,8 @@ class WorkflowComposer:
                         "_composed_receipt_digest": receipt_digest}
             seq, recorded, _ = self._run_unit_step(
                 ctx["run_id"], name, lambda i, e=enriched: e,
-                leg_inputs, ctx["authority"], ctx["at"])
+                leg_inputs, ctx["authority"], ctx["at"],
+                self._step_binding(_OP_SLIP_LEG, ukey))
             self._complete_unit(outcome, recorded, ctx["run_id"], seq,
                                 ctx["at"])
             slip = new_slip
@@ -841,11 +888,13 @@ class WorkflowComposer:
         if outcome.status == "replay":
             return {"replayed": True,
                     "outputs": self._resolve_replay(
-                        outcome, _OP_UNIT, "fn:%s" % unit["name"])}
+                        outcome, _OP_UNIT, unit["idem_key"],
+                        "fn:%s" % unit["name"])}
         name = "fn:%s" % unit["name"]
         seq, outputs, _ = self._run_unit_step(
             ctx["run_id"], name, unit["fn"], dict(unit.get("inputs", {})),
-            ctx["authority"], ctx["at"])
+            ctx["authority"], ctx["at"],
+            self._step_binding(_OP_UNIT, unit["idem_key"]))
         self._complete_unit(outcome, outputs, ctx["run_id"], seq, ctx["at"])
         return {"replayed": False, "outputs": outputs}
 

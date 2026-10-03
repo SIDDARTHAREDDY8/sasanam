@@ -274,7 +274,7 @@ class FooterStateTest(unittest.TestCase):
         # Anchor to the LAST matches: the footer, not historical entries.
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-        want_open, want_next = "none", "F391"
+        want_open, want_next = "F391", "F393"
         self.assertTrue(_expect_held(
             "footer-state",
             m_open and m_open[-1].strip() == want_open

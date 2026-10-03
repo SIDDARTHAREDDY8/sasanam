@@ -90,11 +90,11 @@ class BaseStateTest(unittest.TestCase):
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
         # Wave-303 lane-3 re-pin: F382/F383 closed here; F380/F381/F384
         # still OPEN (lanes 1/2 work), next free F385.
-        ok = (m_open and m_open[-1].replace(" ", "") == "none"
-              and m_next and m_next[-1] == "F391")
+        ok = (m_open and m_open[-1].replace(" ", "") == "F391"
+              and m_next and m_next[-1] == "F393")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F380,F381,F384 / next free F385") == "HELD")
+            "want open F391 / next free F393") == "HELD")
 
     def test_taxonomy_pin(self):
         self.assertTrue(_expect_held(

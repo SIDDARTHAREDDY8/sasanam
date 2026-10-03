@@ -44,3 +44,25 @@ unverified.
    and an `OK` verdict line; a missing suite *file* is a CHECK FAILURE
    (ERROR), not a skip. (A missing *module* surfaces as a loud BREAK via
    the child's non-zero exit — also red, never a pass.)
+9. Non-vacuity (wave-307): a child's summary must claim at least one
+   probe ran (`BREAK + HELD + ERROR > 0`). A `0 BREAK / 0 HELD / 0 ERROR`
+   summary is a CHECK FAILURE (ERROR) — an emptied probe list (bad
+   merge, early return) must not read as green. Likewise a unittest
+   child reporting `Ran 0 tests` is vacuous: CHECK FAILURE.
+10. Degraded child (wave-307): a child's summary reporting any probe
+    ERRORs (`K ERROR`, K > 0) is a CHECK FAILURE (ERROR). Probe ERRORs
+    mean the dependency's probes did not verify cleanly — crashed probes
+    are not green, even with zero BREAKs.
+11. Threat-model boundary (wave-307, honest residual): this contract
+    verifies *liveness* — the child ran, emitted a parseable non-vacuous
+    summary, and did not raise. It cannot detect a deliberately
+    fabricated exit-0 success summary from code already inside the
+    trusted tree: deliberate fabrication by in-tree code means the repo
+    itself is compromised, at which point this checker, the contract
+    tests, and `gov/` are equally compromised. The defense there is
+    code review and signed commits, not runtime checks. The realistic
+    accident classes — crashed child, missing summary, emptied probe
+    list, errored probes — are all fail-closed above. (A future
+    tree-wide migration to a canonical per-probe print form would enable
+    summary/probe-count coherence checking; `w306_redteam_probes.py`'s
+    `[VERDICT] pid: note` form is the recommended canonical shape.)

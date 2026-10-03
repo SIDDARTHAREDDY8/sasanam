@@ -109,6 +109,41 @@ _UNITTEST_CHILD = """\
         unittest.main(verbosity=0)
     """
 
+# A child that prints a summary claiming zero probes ran: the vacuous
+# sibling of the w302 incident (emptied probe list, early return).
+_VACUOUS_ZERO = """\
+    import sys
+    print("child: 0 BREAK / 0 HELD / 0 ERROR")
+    sys.exit(0)
+    """
+
+# A child whose probes errored: the process survived, but the
+# dependency did not verify cleanly.
+_PROBE_ERRORS = """\
+    import sys
+    print("  [HELD] probe-a: fine")
+    print("  [HELD] probe-b: fine")
+    print("  [ERROR] probe-c: crashed")
+    print("child: 0 BREAK / 2 HELD / 1 ERROR")
+    sys.exit(0)
+    """
+
+# w302-style all-HELD shape: summary only, no per-probe lines, but a
+# non-zero total -- legitimate, must stay HELD.
+_SUMMARY_ONLY_NONZERO = """\
+    import sys
+    print("child: 0 BREAK / 3 HELD / 0 ERROR")
+    sys.exit(0)
+    """
+
+_ZERO_TESTS_CHILD = """\
+    import sys
+    print("Ran 0 tests in 0.000s")
+    print()
+    print("OK")
+    sys.exit(0)
+    """
+
 
 def _old_vacuous_green(record, label, child_path, expect_break_ids=()):
     """The pre-wave-305 allowlist form (w303_redteam_probes._green):
@@ -247,6 +282,45 @@ class GreenCheckContractTest(unittest.TestCase):
         green_check.check_unittest(self.rec, "green-x", suite,
                                    repo=self.tmp)
         self.assertEqual(self.rec.calls[0][1], "HELD")
+
+    def test_vacuous_zero_summary_fails_closed(self):
+        # Wave-307: a summary claiming zero probes ran is not evidence
+        # of anything -- an emptied probe list must not read as green.
+        child = self._child("vacuous_zero.py", _VACUOUS_ZERO)
+        green_check.check_battery(self.rec, "green-x", child,
+                                  repo=self.tmp)
+        pid, verdict, note = self.rec.calls[0]
+        self.assertEqual(verdict, "ERROR")
+        self.assertIn("vacuous", note)
+
+    def test_summary_with_probe_errors_fails_closed(self):
+        # Wave-307: probe ERRORs mean the dependency did not verify
+        # cleanly -- crashed probes are not green, even with zero
+        # BREAKs.
+        child = self._child("probe_errors.py", _PROBE_ERRORS)
+        green_check.check_battery(self.rec, "green-x", child,
+                                  repo=self.tmp)
+        pid, verdict, note = self.rec.calls[0]
+        self.assertEqual(verdict, "ERROR")
+        self.assertIn("1 probe", note)
+
+    def test_summary_only_nonzero_total_stays_held(self):
+        # The w302 all-HELD shape (summary only, no per-probe lines)
+        # with a non-zero total is legitimate and must stay HELD --
+        # the non-vacuity rule must not over-tighten.
+        child = self._child("summary_only.py", _SUMMARY_ONLY_NONZERO)
+        green_check.check_battery(self.rec, "green-x", child,
+                                  repo=self.tmp)
+        self.assertEqual(self.rec.calls[0][1], "HELD")
+
+    def test_unittest_zero_tests_fails_closed(self):
+        # Wave-307: "Ran 0 tests" + OK ran nothing -- vacuous, not
+        # green.
+        child = self._child("zero_tests.py", _ZERO_TESTS_CHILD)
+        green_check.check_battery(self.rec, "green-x", child,
+                                  repo=self.tmp)
+        pid, verdict, note = self.rec.calls[0]
+        self.assertEqual(verdict, "ERROR")
 
 
 if __name__ == "__main__":

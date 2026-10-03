@@ -51,6 +51,9 @@ def check_battery(record, label, battery, *, repo,
     Contract: the child MUST emit a parseable summary line (or, for
     unittest-style batteries, a "Ran N tests" + OK verdict) and MUST NOT
     raise; otherwise the check records ERROR (loud, distinct from HELD).
+    Additionally fail-closed (wave-307): a summary claiming zero probes
+    ran (vacuous child) records ERROR, and a summary reporting any probe
+    ERRORs records ERROR -- a degraded dependency is not green.
     GOV_SKIP_GREEN=1 records a skipped note without spawning the child.
     """
     if os.environ.get("GOV_SKIP_GREEN"):
@@ -78,6 +81,32 @@ def check_battery(record, label, battery, *, repo,
                "not a pass" % (os.path.basename(path), proc.returncode))
         return
     summary = SUMMARY_RE.search(out)
+    if summary is not None:
+        # Fail closed on a vacuous child: a summary that claims zero
+        # probes ran is not evidence of anything -- an emptied probe
+        # list (bad merge, early return) must not read as green.
+        # (Wave-307: the w302 incident was a crash; the subtler sibling
+        # is a child that prints "0 BREAK / 0 HELD / 0 ERROR" without
+        # running anything.)
+        n_break, n_held, n_err = (int(summary.group(1)),
+                                  int(summary.group(2)),
+                                  int(summary.group(3)))
+        if n_break + n_held + n_err == 0:
+            record(label, "ERROR",
+                   "green-check contract failure: %s emitted a summary "
+                   "claiming zero probes ran (vacuous child); broken "
+                   "dependency, not a pass" % os.path.basename(path))
+            return
+        # Fail closed on a degraded child: probe ERRORs mean the child's
+        # probes did not verify cleanly (crashed probes, not a crashed
+        # process). A dependency that errored is not green, even with
+        # zero BREAKs.
+        if n_err > 0:
+            record(label, "ERROR",
+                   "green-check contract failure: %s reported %d probe "
+                   "ERROR(s) [%s]; dependency did not verify cleanly"
+                   % (os.path.basename(path), n_err, summary.group(0)))
+            return
     if expected_summary is not None:
         if expected_summary in out:
             record(label, "HELD",
@@ -92,7 +121,9 @@ def check_battery(record, label, battery, *, repo,
         # unittest-style batteries report "Ran N tests" + an OK line
         # instead of the N BREAK / M HELD / K ERROR summary.
         mu = re.search(r"Ran (\d+) tests?", out)
-        if mu and proc.returncode == 0 and re.search(r"^OK", out, re.M):
+        # A "Ran 0 tests" + OK child ran nothing: vacuous, not green.
+        if (mu and int(mu.group(1)) > 0 and proc.returncode == 0
+                and re.search(r"^OK", out, re.M)):
             record(label, "HELD",
                    "%s green: %s unittest tests OK"
                    % (os.path.basename(path), mu.group(1)))

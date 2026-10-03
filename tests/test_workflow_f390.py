@@ -121,12 +121,19 @@ class F390StepNameBindingTest(unittest.TestCase):
             self.assertEqual(replay.status, "replay")
             with self.assertRaises(Exception) as cm:
                 comp._resolve_replay(replay, "composed-unit",
-                                     "fn:some-other-unit")
+                                     "unreachable-key", "fn:some-other-unit")
             self.assertEqual(getattr(cm.exception, "code", None),
                              FOREIGN_CODE)
-            # And the correct name resolves.
-            out = comp._resolve_replay(replay, "composed-unit", "fn:u1")
-            self.assertEqual(out, {"one": 1})
+            # F392: the correct name alone is NOT enough. The step was
+            # recorded by the composer's execution under idem key "k1";
+            # this plant is under "k9", so the binding check refuses
+            # even with the right name.
+            with self.assertRaises(Exception) as cm2:
+                comp._resolve_replay(replay, "composed-unit",
+                                     "k9", "fn:u1")
+            self.assertEqual(getattr(cm2.exception, "code", None),
+                             FOREIGN_CODE)
+            self.assertIn("binding", str(cm2.exception))
         finally:
             comp._exec_ctx = None
 

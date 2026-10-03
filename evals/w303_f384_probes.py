@@ -44,6 +44,10 @@ from gov import decision_codes
 from gov import ed25519 as _ed25519
 from gov import workflow_saga as saga
 
+if os.path.join(REPO, "evals") not in sys.path:
+    sys.path.insert(0, os.path.join(REPO, "evals"))
+import green_check
+
 TAXONOMY_PIN = 1827  # Wave-302 merge pin 1820; this lane: +2 workflow-saga-* (operator-unauthorized, resolution-invalid).; Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
@@ -358,7 +362,7 @@ class FooterStateTest(unittest.TestCase):
         # Anchor to the LAST matches: the footer, not historical entries.
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-        want_open, want_next = "none", "F391"
+        want_open, want_next = "F391", "F393"
         self.assertTrue(_expect_held(
             "footer-state",
             m_open and m_open[-1].strip() == want_open
@@ -370,28 +374,18 @@ class FooterStateTest(unittest.TestCase):
             == "HELD")
 
 
-class AdjacentGreenTest(unittest.TestCase):
-    def test_adjacent_saga_suites(self):
-        # Depth-1: adjacent saga/workflow suites are exercised as
-        # green checks by the lane runner outside this battery; inside
-        # the battery this is a no-recursion placeholder.
-        self.assertTrue(_expect_held(
-            "adjacent-saga-green",
-            True, "placeholder: adjacent suites run outside") == "HELD")
-
-
-def _green_check(battery, expect):
-    """Depth-1 green check: honors GOV_SKIP_GREEN=1 (no recursion)."""
-    if os.environ.get("GOV_SKIP_GREEN") == "1":
-        return "SKIPPED (GOV_SKIP_GREEN=1)"
-    return "GREEN"
-
-
 class GreenCheckTest(unittest.TestCase):
     def test_green_checks(self):
-        self.assertIn(
-            _green_check("w303_f384", None),
-            ("GREEN", "SKIPPED (GOV_SKIP_GREEN=1)"))
+        # Real depth-1 green check via the shared fail-closed helper.
+        # Wave-307: the previous stub returned "GREEN" without spawning
+        # anything -- a vacuous pass. The F384 probes exercise
+        # gov/workflow_saga.py operator recovery, so the adjacent saga
+        # unit suite is the dependency under check. GOV_SKIP_GREEN=1 is
+        # honored inside the helper (records a skip note, not a pass).
+        verdict, note = green_check.check_unittest_result(
+            "green-test-workflow-saga", "tests.test_workflow_saga",
+            repo=REPO)
+        self.assertEqual(verdict, "HELD", note)
 
 
 if __name__ == "__main__":

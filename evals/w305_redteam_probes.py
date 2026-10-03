@@ -130,13 +130,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
-    # wave-306 merge: F389/F390 CLOSED; footer open none / next F391
-    if nxt != 391 or open_s != "none":
+    # wave-307 lane E re-pin: F391 filed OPEN; footer open F391 / next F393
+    if nxt != 393 or open_s != "F391":
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F391 open "
-                       "'none')" % (nxt, open_s))
+                       "footer drift: next F%d open %r (want next F393 open "
+                       "'F391')" % (nxt, open_s))
     _record("footer-state", "HELD",
-            "footer open none / next F391")
+            "footer open F391 / next F393")
 
 
 AT = 1_700_000_000
@@ -493,6 +493,7 @@ def p_f388_foreign_run_refused():
                       "run": "other-run", "at": AT}
     try:
         comp._resolve_replay(replay, "composed-unit",
+                                     "unreachable-key",
                                      "fn:redteam-probe")
     except Exception as e:  # noqa: BLE001
         if getattr(e, "code", None) == "workflow-composed-replay-foreign":
@@ -522,6 +523,7 @@ def p_f388_record_caller_foreign_refused():
                       "run": "victim", "at": AT}
     try:
         comp._resolve_replay(replay, "composed-unit",
+                                     "unreachable-key",
                                      "fn:redteam-probe")
     except Exception as e:  # noqa: BLE001
         if getattr(e, "code", None) == "workflow-composed-replay-foreign":
@@ -544,6 +546,7 @@ def p_f388_detached_context_refuses():
     comp._exec_ctx = None
     try:
         comp._resolve_replay(replay, "composed-unit",
+                                     "unreachable-key",
                                      "fn:redteam-probe")
     except Exception as e:  # noqa: BLE001
         if getattr(e, "code", None) == "workflow-composed-replay-foreign":
