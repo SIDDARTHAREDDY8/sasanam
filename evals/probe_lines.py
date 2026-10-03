@@ -64,6 +64,39 @@ def emit(results):
         print(format_line(pid, verdict, note))
 
 
+def emit_dicts(results, *, verdict_key="verdict", pid_key="probe_id",
+               note_key="note", note_getter=None):
+    """Print canonical probe lines from dict-shaped results (one line per row).
+
+    Each row must carry the pid, verdict and note keys (or a ``note_getter``
+    callable for nested shapes, e.g. ``lambda r: r["detail"].get("note")``).
+    Fail-closed and loud: a row missing a key, or whose verdict is not in
+    VALID_VERDICTS after any verdict mapping, prints an ``[ERROR]`` line for
+    that pid -- the adapter never silently skips a row or silently maps a
+    verdict. ``note_getter`` raising on a row likewise becomes an ERROR line.
+
+    Wave-315: the D2 adapter seam for the summary-form migration
+    (evals/SUMMARY_FORM_POLICIES.md).
+    """
+    for row in results:
+        try:
+            pid = row[pid_key]
+            verdict = row[verdict_key]
+            note = note_getter(row) if note_getter is not None else row[note_key]
+        except Exception as e:  # noqa: BLE001 - missing key or getter failure
+            pid = None
+            try:
+                pid = row[pid_key]
+            except Exception:  # noqa: BLE001
+                pass
+            print("[ERROR] %s: malformed result row (%s)" % (pid, e))
+            continue
+        if verdict not in VALID_VERDICTS:
+            print("[ERROR] %s: unknown verdict %r" % (pid, verdict))
+            continue
+        print(format_line(pid, verdict, note))
+
+
 def parse_line(line):
     """Parse a canonical probe line; returns (verdict, pid, note) or None.
 
