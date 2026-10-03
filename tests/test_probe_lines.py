@@ -8,6 +8,7 @@ that makes future coherence enforcement sound.
 import io
 import os
 import sys
+import contextlib
 import unittest
 from contextlib import redirect_stdout
 
@@ -100,6 +101,59 @@ class TestCheckCoherence(unittest.TestCase):
         self.assertTrue(diags)
         ok, diags = probe_lines.check_coherence(None, 0, 0, 0)
         self.assertFalse(ok)
+
+    def test_emit_dicts_basic(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            probe_lines.emit_dicts([
+                {"probe_id": "a", "verdict": "BREAK", "note": "x"},
+                {"probe_id": "b", "verdict": "HELD", "note": "y\nz"},
+            ])
+        lines = out.getvalue().splitlines()
+        self.assertEqual(lines[0], "[BREAK] a: x")
+        self.assertEqual(lines[1], "[HELD] b: y")  # first_line applied
+
+    def test_emit_dicts_strict_verdict(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            probe_lines.emit_dicts(
+                [{"probe_id": "a", "verdict": "GAP", "note": "x"}])
+        line = out.getvalue().strip()
+        self.assertTrue(line.startswith("[ERROR] a:"))
+        self.assertIn("GAP", line)
+
+    def test_emit_dicts_missing_key(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            probe_lines.emit_dicts([{"probe_id": "a", "verdict": "HELD"}])
+        line = out.getvalue().strip()
+        self.assertTrue(line.startswith("[ERROR] a:"))
+
+    def test_emit_dicts_note_getter(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            probe_lines.emit_dicts(
+                [{"id": "a", "verdict": "HELD",
+                  "detail": {"note": "n1"}}],
+                pid_key="id",
+                note_getter=lambda r: r["detail"]["note"])
+        self.assertEqual(out.getvalue().strip(), "[HELD] a: n1")
+
+    def test_emit_dicts_note_getter_failure(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            probe_lines.emit_dicts(
+                [{"id": "a", "verdict": "HELD", "detail": {}}],
+                pid_key="id",
+                note_getter=lambda r: r["detail"]["note"])
+        line = out.getvalue().strip()
+        self.assertTrue(line.startswith("[ERROR] a:"))
+
+    def test_emit_dicts_never_raises(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            probe_lines.emit_dicts([None, 42, {}])
+        self.assertEqual(len(out.getvalue().splitlines()), 3)
 
 
 if __name__ == "__main__":
