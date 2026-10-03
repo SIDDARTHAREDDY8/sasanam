@@ -28,6 +28,9 @@ for _p in (REPO, os.path.join(REPO, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
+
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-285 lane 4 adds +1 inventory-identity-collision code (1621 -> 1622).; Wave-285 lane 4: pin 1621 -> 1622 (+1 inventory-identity-collision).
@@ -276,8 +279,8 @@ def main():
     errors = [r for r in _results if r[1] == "ERROR"]
     print("wave-285 lane-4: %d BREAK / %d HELD / %d ERROR"
           % (len(breaks), len(held), len(errors)))
-    for pid, verdict, note in _results:
-        print("  [%s] %s: %s" % (verdict, pid, note[:160]))
+    probe_lines.emit((pid, v, probe_lines.first_line(n)[:160])
+                     for pid, v, n in _results)
     return 0 if not errors else 1
 
 

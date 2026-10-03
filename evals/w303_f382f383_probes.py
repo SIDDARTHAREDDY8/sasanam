@@ -42,6 +42,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO not in sys.path:
     sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 
 from gov import delegation as dg
@@ -380,10 +381,8 @@ def main():
     print("w303_f382f383: %d BREAK / %d HELD / %d ERROR"
           % (n_break, n_held, n_err))
     if not result.wasSuccessful() or n_break or n_err:
-        for n, s, d in _results:
-            if s != "HELD":
-                print("  [%s] %s: %s" % (s, n, str(d).splitlines()[0]
-                                         if d else ""))
+        probe_lines.emit((n, s, probe_lines.first_line(d) if d else "")
+                         for n, s, d in _results if s != "HELD")
     return result
 
 
