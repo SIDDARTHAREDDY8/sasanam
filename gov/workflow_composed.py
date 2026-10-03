@@ -168,6 +168,7 @@ from gov import workflow as _wf
 from gov import workflow_saga as _saga
 from gov import workflow_routing as _wr
 from gov import workflow_idempotency as _idem
+from gov import plan_policy as _pp
 
 # ---------------------------------------------------------------------------
 # Codes (registered at true sorted positions in gov/decision_codes.py).
@@ -517,6 +518,36 @@ def _unit_code_digest(unit):
                                     key=lambda kv: str(kv[0]))}
 
 
+def _plan_entries(normed):
+    """Per-unit digest entries (F393 code binding). Factored so
+    ``ComposedPlan.verify_digest`` can recompute the digest from the
+    live unit dicts."""
+    return [
+        {"kind": u["kind"], "name": u["name"],
+         "idem_key": u["idem_key"],
+         "inputs_digest": _digest(u.get("inputs", {})),
+         # F393: the digest binds the unit's code, not just its
+         # descriptor. A descriptor-identical plan with a different
+         # fn/action_fn must not yield the same digest, or the
+         # run->plan binding below cannot distinguish them.
+         "code_digest": _unit_code_digest(u)}
+        for u in normed
+    ]
+
+
+def _plan_digest(normed, manifest):
+    """Digest inputs for a plan. When a manifest is present its
+    canonical digest is bound in (Row 7 step 4: the admission verdict
+    is deterministic over plan+manifest+policy, so binding the inputs
+    binds the verdict). Manifest-less plans hash exactly the pre-step-4
+    inputs -- byte-identical digests, no churn for existing plans."""
+    entries = _plan_entries(normed)
+    if manifest is None:
+        return _digest(entries)
+    return _digest({"units": entries,
+                    "manifest_digest": _pp.manifest_digest(manifest)})
+
+
 # ---------------------------------------------------------------------------
 # Plan
 # ---------------------------------------------------------------------------
@@ -534,7 +565,7 @@ class ComposedPlan:
        "idem_key"}
     """
 
-    def __init__(self, units):
+    def __init__(self, units, manifest=None):
         if not isinstance(units, (list, tuple)) or not units:
             _fail(WC_DEFINITION_INVALID,
                   "a composed plan needs at least one unit")
@@ -605,18 +636,35 @@ class ComposedPlan:
                     _fail(WC_DEFINITION_INVALID,
                           "slip unit %r needs trust_roots" % (name,))
             normed.append(u)
+        # Row 7 step 4: an optional plan manifest declares each unit's
+        # tool(s), capabilities, trust level and data flows. It is
+        # normalized here (malformed -> coded refusal) and its digest
+        # is bound into the plan digest, so a plan admitted by the
+        # policy check cannot be mutated into a different plan without
+        # changing its digest.
+        self.manifest = (_pp.normalize_manifest(manifest, normed)
+                         if manifest is not None else None)
         self.units = tuple(normed)
-        self.digest = _digest([
-            {"kind": u["kind"], "name": u["name"],
-             "idem_key": u["idem_key"],
-             "inputs_digest": _digest(u.get("inputs", {})),
-             # F393: the digest binds the unit's code, not just its
-             # descriptor. A descriptor-identical plan with a different
-             # fn/action_fn must not yield the same digest, or the
-             # run->plan binding below cannot distinguish them.
-             "code_digest": _unit_code_digest(u)}
-            for u in normed
-        ])
+        self.digest = _plan_digest(normed, self.manifest)
+
+    def verify_digest(self):
+        """Recompute the plan digest from the live unit dicts and the
+        live manifest, and refuse ``workflow-composed-definition-invalid``
+        when it disagrees with the construction-time digest.
+
+        The unit dicts are mutable, so a caller could mutate a unit
+        (or the manifest) after construction and keep executing under
+        a stale digest. The F393 run->plan binding compares digests,
+        not content; this recomputation closes the stale-digest shape
+        for the policy regime (``check_plan`` and the ``execute``
+        admission gate both call it). Manifest-less plans keep the
+        existing construction-time binding semantics.
+        """
+        if _plan_digest(list(self.units), self.manifest) != self.digest:
+            _fail(WC_DEFINITION_INVALID,
+                  "composed plan digest does not match the plan's "
+                  "current units/manifest: the plan was mutated after "
+                  "construction (fail closed; rebuild the plan)")
 
 
 # ---------------------------------------------------------------------------
@@ -659,6 +707,13 @@ class WorkflowComposer:
         # shared-registry state. F397: escalated_at is the escalation's
         # logical instant, against which the retry instant is checked.
         self._saga_retry_ctx = {}
+        # Row 7 step 4: plan-policy admission registry. plan digest ->
+        # PolicyVerdict. A plan carrying a manifest opted into the
+        # policy regime at construction; it may execute only under the
+        # exact digest that was admitted (fail fast, before any
+        # execution). Per-composer-instance, like the other in-memory
+        # composed state.
+        self._admissions = {}
         # F386: per-composer-instance nonce. Verifier refs installed on the
         # shared SagaManager are scoped with this nonce, so two composers
         # sharing one manager can never overwrite each other's verifier.
@@ -1318,6 +1373,25 @@ class WorkflowComposer:
 
     # -- main entry -------------------------------------------------------
 
+    def admit_plan(self, plan, policy):
+        """Admit a plan to the plan-policy regime (Row 7 step 4).
+
+        Runs ``gov.plan_policy.check_plan`` -- the pre-execution
+        policy check over the plan's declared units, capabilities and
+        data flows -- and records the verdict keyed by the plan's
+        exact digest. Returns the ``PolicyVerdict``. A plan that
+        violates the policy refuses coded here, before any execution;
+        a plan whose digest was never admitted refuses coded at
+        ``execute`` time (``plan-policy-not-admitted``).
+        """
+        if not isinstance(plan, ComposedPlan):
+            _fail(WC_DEFINITION_INVALID, "plan must be a ComposedPlan")
+        verdict = _pp.check_plan(plan, policy)
+        self._admissions[plan.digest] = verdict
+        _emit("composed_plan_admitted",
+              {"plan": plan.digest[:12], "policy": verdict.policy_id})
+        return verdict
+
     def execute(self, plan, *, run_id, authority, at, now=None):
         """Execute a composed plan inside a workflow run.
 
@@ -1329,6 +1403,22 @@ class WorkflowComposer:
         """
         if not isinstance(plan, ComposedPlan):
             _fail(WC_DEFINITION_INVALID, "plan must be a ComposedPlan")
+        # Row 7 step 4: a plan carrying a manifest opted into the
+        # policy regime at construction. It executes only under the
+        # exact digest that was admitted -- the admission verdict is
+        # deterministic over (plan, manifest, policy), so the digest
+        # key binds the verdict. verify_digest() first: the unit dicts
+        # are mutable, and a post-admission in-place mutation must not
+        # execute under the stale admitted digest.
+        if plan.manifest is not None:
+            plan.verify_digest()
+            if plan.digest not in self._admissions:
+                _fail(_pp.PP_NOT_ADMITTED,
+                      "plan %s carries a policy manifest but was never "
+                      "admitted under this digest: call admit_plan(plan, "
+                      "policy) before execute (fail closed; a mutated "
+                      "plan presents a different digest and is not "
+                      "admitted)" % plan.digest[:12])
         if not isinstance(authority, dict):
             _fail(WC_DEFINITION_INVALID, "authority must be a dict")
         actor = authority.get("actor_id")

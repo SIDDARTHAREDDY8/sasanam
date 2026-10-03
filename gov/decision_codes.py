@@ -10946,6 +10946,75 @@ TAXONOMY = {
         "evidence_kinds_required": ['bundle', 'manifest', 'digest'],
         "reverify_steps": ['recompute-digest', 'replay-chain'],
     },
+    'plan-policy-capability': {
+        "domain": 'workflow',
+        "code": 'plan-policy-capability',
+        "human": 'plan-policy admission: capability coverage violated -- '
+                 'a unit hid an inherent tool-class capability behind a '
+                 'weaker declaration, the plan envelope does not cover '
+                 'the units\' declared capabilities, or the envelope '
+                 'claims a capability the deployment policy does not allow',
+        "severity": 'high',
+        "evidence_kinds_required": ['workflow-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'plan-policy-data-flow': {
+        "domain": 'workflow',
+        "code": 'plan-policy-data-flow',
+        "human": 'plan-policy admission: a declared data flow is '
+                 'incoherent (unknown producer, non-forward edge, '
+                 'duplicate, or classification above the producer\u2019s '
+                 'trust) or an implied intra-unit edge (slip leg->leg) '
+                 'is undeclared or phantom-declared',
+        "severity": 'high',
+        "evidence_kinds_required": ['workflow-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'plan-policy-manifest-missing': {
+        "domain": 'workflow',
+        "code": 'plan-policy-manifest-missing',
+        "human": 'plan-policy admission: the plan carries no manifest -- '
+                 'a plan submitted to the policy regime must declare its '
+                 'units\' tools, capabilities, trust levels and data '
+                 'flows',
+        "severity": 'medium',
+        "evidence_kinds_required": ['workflow-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'plan-policy-not-admitted': {
+        "domain": 'workflow',
+        "code": 'plan-policy-not-admitted',
+        "human": 'composed workflow: a plan carrying a policy manifest '
+                 'was presented for execution without an admission '
+                 'verdict for its exact digest -- admit_plan must run '
+                 'first; a mutated plan presents a different digest and '
+                 'is not admitted',
+        "severity": 'high',
+        "evidence_kinds_required": ['workflow-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'plan-policy-trust-mixing': {
+        "domain": 'workflow',
+        "code": 'plan-policy-trust-mixing',
+        "human": 'plan-policy admission: a data flow carries a '
+                 'classification above the consumer\'s trust level '
+                 'without a declared declassify entry -- trust-boundary '
+                 'crossings must be declared with a reason',
+        "severity": 'high',
+        "evidence_kinds_required": ['workflow-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'plan-policy-unknown-tool': {
+        "domain": 'workflow',
+        "code": 'plan-policy-unknown-tool',
+        "human": 'plan-policy admission: a unit declares a tool outside '
+                 'the fixed tool-class table -- capability cannot be '
+                 'attributed to an unknown tool, so the plan refuses '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['workflow-record'],
+        "reverify_steps": ['recompute'],
+    },
     'poldist-bundle-malformed': {
         "domain": 'poldist',
         "code": 'poldist-bundle-malformed',
