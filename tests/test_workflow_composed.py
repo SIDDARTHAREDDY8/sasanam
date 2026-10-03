@@ -405,5 +405,125 @@ class ExoticClosureTests(ComposedTestBase):
         self.assertTrue(wc._is_json_native(deep))
 
 
+class StaleAtTests(ComposedTestBase):
+    """F397: retry_saga_unit refuses a stale `at` coded.
+
+    The composer retains the escalation's logical instant in the
+    retry material; a retry instant at or before it is a stale clock
+    claim and refuses workflow-saga-resolution-invalid. Malformed
+    `at` keeps the existing workflow-composed-definition-invalid.
+    """
+
+    def _escalated(self, ttl=3600):
+        sm = saga.SagaManager(authority_verifiers={"op": lambda: True},
+                              operator_authority_ref="op")
+        comp = wc.WorkflowComposer(self.ws, sm, self.im)
+        calls = {"comp": 0}
+
+        def ok(i):
+            return ({"r": 1}, [])
+
+        def boom(i):
+            raise RuntimeError("kaboom")
+
+        def flaky(i):
+            calls["comp"] += 1
+            if calls["comp"] <= 3:
+                raise RuntimeError("blip")
+            return {"fixed": True}
+
+        sd = sm.define([
+            saga.SagaStepDef("s1", "a1", {}, "c1"),
+            saga.SagaStepDef("s2", "a2", {}, "c2"),
+        ])
+        plan = wc.ComposedPlan([{
+            "kind": "saga", "name": "sg", "definition": sd,
+            "action_fns": {"s1": ok, "s2": boom},
+            "comp_fns": {"s1": flaky, "s2": flaky}, "idem_key": "kes"}])
+        cons = {"expires_at": self.at + ttl, "max_depth": 4,
+                "allowed_targets": ["agent-b"]}
+        chain = [dg.issue(self.sa, "agent-a", "agent-b", self.pb,
+                          ("tool.invoke",), issued_at=self.at,
+                          constraints=cons)]
+        auth = {"actor_id": "agent-b", "action": "tool.invoke",
+                "chain": chain, "trust_roots": [self.pa],
+                "revocation_ledger": drv.DelegationRevoker(self.sa,
+                                                           "agent-a")}
+        run = self.ws.start_run("plan", run_id="r-esc", authority=auth,
+                                at=self.at)
+        try:
+            comp.execute(plan, run_id=run["run_id"], authority=auth,
+                         at=self.at)
+        except Exception:  # noqa: BLE001 -- escalation is expected
+            pass
+        inst = comp._saga_instances["sg"]
+        self.assertEqual(inst.status, "escalated")
+        self.assertEqual(comp._saga_retry_ctx["sg"]["escalated_at"],
+                         self.at)
+        return comp, inst, calls
+
+    def test_stale_at_equal_escalation_refused(self):
+        comp, inst, calls = self._escalated()
+        code = self._code_of(comp.retry_saga_unit, "sg",
+                             {"action": "retry_compensation"},
+                             at=self.at)
+        self.assertEqual(code, "workflow-saga-resolution-invalid")
+        self.assertEqual(inst.status, "escalated")
+        self.assertEqual(calls["comp"], 3)
+
+    def test_stale_at_zero_refused(self):
+        comp, inst, calls = self._escalated()
+        code = self._code_of(comp.retry_saga_unit, "sg",
+                             {"action": "retry_compensation"}, at=0)
+        self.assertEqual(code, "workflow-saga-resolution-invalid")
+        self.assertEqual(calls["comp"], 3)
+
+    def test_stale_at_before_escalation_refused(self):
+        comp, inst, calls = self._escalated()
+        code = self._code_of(comp.retry_saga_unit, "sg",
+                             {"action": "retry_compensation"},
+                             at=self.at - 1)
+        self.assertEqual(code, "workflow-saga-resolution-invalid")
+        self.assertEqual(calls["comp"], 3)
+
+    def test_negative_at_refused(self):
+        comp, inst, calls = self._escalated()
+        code = self._code_of(comp.retry_saga_unit, "sg",
+                             {"action": "retry_compensation"}, at=-1)
+        self.assertEqual(code, "workflow-composed-definition-invalid")
+
+    def test_nonint_at_refused(self):
+        comp, inst, calls = self._escalated()
+        code = self._code_of(comp.retry_saga_unit, "sg",
+                             {"action": "retry_compensation"},
+                             at="not-an-instant")
+        self.assertEqual(code, "workflow-composed-definition-invalid")
+
+    def test_missing_escalated_at_fails_closed(self):
+        comp, inst, calls = self._escalated()
+        del comp._saga_retry_ctx["sg"]["escalated_at"]
+        code = self._code_of(comp.retry_saga_unit, "sg",
+                             {"action": "retry_compensation"},
+                             at=self.at + 1)
+        self.assertEqual(code, "workflow-saga-resolution-invalid")
+        self.assertEqual(calls["comp"], 3)
+
+    def test_fresh_at_live_delegation_succeeds(self):
+        comp, inst, calls = self._escalated(ttl=10000)
+        comp.retry_saga_unit("sg", {"action": "retry_compensation"},
+                             at=self.at + 7200)
+        self.assertEqual(inst.status, "compensated")
+        self.assertEqual(calls["comp"], 4)
+
+    def test_expired_at_true_instant_refuses(self):
+        comp, inst, calls = self._escalated()
+        code = self._code_of(comp.retry_saga_unit, "sg",
+                             {"action": "retry_compensation"},
+                             at=self.at + 7200)
+        self.assertEqual(code, "workflow-saga-compensation-unauthorized")
+        self.assertEqual(inst.status, "escalated")
+        self.assertEqual(calls["comp"], 3)
+
+
 if __name__ == "__main__":
     unittest.main()

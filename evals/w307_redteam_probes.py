@@ -110,13 +110,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
-    # Wave-312 merge footer: F396 CLOSED (lane A); F397 OPEN (lane C).
-    if nxt != 398 or open_s != "F397":
+    # Wave-313 lane A footer: F397 CLOSED; no open findings.
+    if nxt != 398 or open_s != "none":
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F398 open "
-                       "'F397')" % (nxt, open_s))
+                       "'none')" % (nxt, open_s))
     _record("footer-state", "HELD",
-            "footer pins open F397 / next F398")
+            "footer pins open none / next F398")
 
 
 def _chain_fx():

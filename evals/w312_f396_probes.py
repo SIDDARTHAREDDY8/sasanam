@@ -20,8 +20,8 @@ run->plan binding, `op_digest`, and `_begin_unit`/`_resolve_replay`
 all compare default-bound digests. JSON-native defaults keep
 crash-recovery stability (same source reconstructs the same digest;
 line numbers excluded per F393); F393/F394/F395 contracts not
-weakened. No new decision codes: pin stays 1851; footer open F397 /
-next F397. This battery's expected BREAKs: none (all F396 probes
+weakened. No new decision codes: pin stays 1851; footer open none /
+next F398 (F397 closed wave-313 lane A). This battery's expected BREAKs: none (all F396 probes
 assert the fix).
 
 Run:
@@ -108,12 +108,12 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    # Wave-312 merge footer: F396 CLOSED (lane A); F397 OPEN (lane C).
-    if nxt != 398 or open_s != "F397":
+    # Wave-313 lane A footer: F397 CLOSED; no open findings.
+    if nxt != 398 or open_s != "none":
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d (want F398), open '%s' "
-                       "(want 'F397')" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open F397 / next F398")
+                       "(want 'none')" % (nxt, open_s))
+    _record("footer-state", "HELD", "footer pins open none / next F398")
 
 
 def _seed(s):

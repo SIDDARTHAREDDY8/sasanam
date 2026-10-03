@@ -653,10 +653,11 @@ class WorkflowComposer:
         self._slips = {}             # unit name -> latest slip dict
         # F394: operator-retry material for escalated saga units
         # (unit name -> {scoped_tag, authority_ref, unit, plan_digest,
-        # run_id, run, authority, actor}). Retained when a saga
+        # run_id, run, authority, actor, escalated_at}). Retained when a saga
         # unit escalates so ``retry_saga_unit`` can re-establish the
         # unit's execution prerequisites; private composer state, not
-        # shared-registry state.
+        # shared-registry state. F397: escalated_at is the escalation's
+        # logical instant, against which the retry instant is checked.
         self._saga_retry_ctx = {}
         # F386: per-composer-instance nonce. Verifier refs installed on the
         # shared SagaManager are scoped with this nonce, so two composers
@@ -1051,6 +1052,16 @@ class WorkflowComposer:
                     "run": ctx["run"],
                     "authority": ctx["authority"],
                     "actor": ctx["actor"],
+                    # F397: the escalation's logical instant. The whole
+                    # saga run (forward steps + compensation attempts +
+                    # the escalation raise) executes inside this call at
+                    # ctx["at"], so that instant IS the escalation's
+                    # logical instant. retry_saga_unit requires the
+                    # retry instant to be strictly after it -- the retry
+                    # is causally after the escalation, so a retry
+                    # instant at or before it is a stale (or replayed)
+                    # clock claim and must not re-drive authority checks.
+                    "escalated_at": ctx["at"],
                 }
             # F386: the verifier entry must not outlive the unit --
             # removal is deterministic on success, failure, and
@@ -1095,6 +1106,17 @@ class WorkflowComposer:
         re-verified NOW inside ``resolve_escalation`` (F384), which is
         what gates the recovery action itself.
 
+        F397: the composer enforces the "NOW" contract on ``at`` --
+        the retry instant must be strictly AFTER the escalation's
+        logical instant (retained in the retry material; the retry is
+        causally after the escalation, so time may not stand still or
+        run backward). A stale ``at`` (at or before the escalation
+        instant, e.g. replaying the execution instant or ``at=0``)
+        refuses coded ``workflow-saga-resolution-invalid`` instead of
+        re-verifying the step authority at a past instant -- which
+        would resurrect an expired delegation. Revocation stays
+        sticky regardless of ``at`` (F384).
+
         Refuses coded ``workflow-saga-resolution-invalid`` when the
         unit is unknown, has no retained retry material (never
         escalated, or already recovered), or is not escalated. A
@@ -1125,6 +1147,20 @@ class WorkflowComposer:
         if not _is_int(at) or at < 0:
             _fail(WC_DEFINITION_INVALID,
                   "at must be a non-negative int instant")
+        # F397: the retry instant must be strictly after the
+        # escalation's logical instant (see the retained material).
+        # The retry is causally after the escalation -- an `at` at or
+        # before it is a stale clock claim (replayed execution
+        # instant, at=0, ...) that would re-verify the step authority
+        # in the past and resurrect an expired delegation. Refuse
+        # coded; no wall clock is needed. A missing/non-int
+        # escalation instant fails closed the same way.
+        escalated_at = mat.get("escalated_at")
+        if not _is_int(escalated_at) or at <= escalated_at:
+            _fail(_saga.CODE_RESOLUTION_INVALID,
+                  "stale retry instant at=%r: the retry must be after "
+                  "the escalation instant %r (composed saga unit %r)"
+                  % (at, escalated_at, unit_name))
         scoped_tag = mat["scoped_tag"]
         authority_ref = mat["authority_ref"]
         retry_ctx = {"plan_digest": mat["plan_digest"],

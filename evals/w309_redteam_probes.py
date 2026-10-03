@@ -130,12 +130,12 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    # Wave-312 merge footer: F396 CLOSED (lane A); F397 OPEN (lane C).
-    if nxt != 398 or open_s != "F397":
+    # Wave-313 lane A footer: F397 CLOSED; no open findings.
+    if nxt != 398 or open_s != "none":
         return _record("footer-state", "BREAK",
                        "footer pins next F%d open '%s', want next F398 "
-                       "open 'F397'" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open F397 / next F398")
+                       "open 'none'" % (nxt, open_s))
+    _record("footer-state", "HELD", "footer pins open none / next F398")
 
 
 # ------------------------------------------------------------------
@@ -300,7 +300,10 @@ def p_f394_op_retry_composed():
                        "saga did not escalate; probe void")
     before = calls["comp"]
     try:
-        comp.retry_saga_unit("u1", {"action": "retry_compensation"}, at=AT)
+        # F397: the retry instant must be strictly after the
+        # escalation's logical instant (AT here); AT+1 is within the
+        # delegation's validity window, so the re-drive succeeds.
+        comp.retry_saga_unit("u1", {"action": "retry_compensation"}, at=AT + 1)
     except Exception as e:  # noqa: BLE001
         code = getattr(e, "code", None)
         if code == "workflow-saga-compensation-unauthorized":
@@ -331,9 +334,12 @@ def p_f394_abort_composed():
                        "saga did not escalate; probe void")
     before = calls["comp"]
     try:
+        # F397: the retry instant must be strictly after the
+        # escalation's logical instant (AT here); AT+1 is within the
+        # delegation's validity window, so the re-drive succeeds.
         comp.retry_saga_unit("u1",
                              {"action": "abort_and_compensate_all"},
-                             at=AT)
+                             at=AT + 1)
     except Exception as e:  # noqa: BLE001
         code = getattr(e, "code", None)
         return _record("F394-abort-composed", "ERROR",

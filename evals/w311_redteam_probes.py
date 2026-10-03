@@ -45,7 +45,10 @@ battery was written -- diagnosing-bugs loop):
 
 New findings filed by this lane: F396 (MEDIUM, OPEN), claim
 2026-10-03T15:35:10Z. Wave-311 merge: F395 CLOSED (lane A), F396 OPEN;
-pin 1841; footer open F396 / next F397. This battery's expected
+pin 1841; footer open F396 / next F397 (historical -- wave-313 lane A
+re-pinned this battery's footer-state probe to open none / next F398
+after F397 closed; F394 success-path probes now retry at a
+post-escalation instant per the F397 monotonicity bound). This battery's expected
 BREAKs: F396-defaults-fn, F396-defaults-saga, F396-kwdefaults-fn
 (all OPEN); the 3 F395 probes assert the coded refusal (HELD).
 
@@ -138,13 +141,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-        # Wave-312 merge footer: F396 CLOSED (lane A); F397 OPEN (lane C).
-    if nxt != 398 or open_s != "F397":
+        # Wave-313 lane A footer: F397 CLOSED; no open findings.
+    if nxt != 398 or open_s != "none":
         return _record("footer-state", "BREAK",
                        "footer pins next F%d open '%s', want next F398 "
-                       "open 'F397'" % (nxt, open_s))
+                       "open 'none'" % (nxt, open_s))
     _record("footer-state", "HELD",
-            "footer pins open F397 / next F398")
+            "footer pins open none / next F398")
 
 # ------------------------------------------------------------------
 # Shared scaffolds
@@ -594,7 +597,7 @@ def p_f394_composer_retry_holds():
     before = calls["comp"]
     try:
         comp.retry_saga_unit("u1", {"action": "retry_compensation"},
-                             at=AT)
+                             at=AT + 1)
     except Exception as e:  # noqa: BLE001
         code = getattr(e, "code", None)
         if code == "workflow-saga-compensation-unauthorized":
@@ -626,7 +629,7 @@ def p_f394_composer_abort_holds():
     try:
         comp.retry_saga_unit("u1",
                              {"action": "abort_and_compensate_all"},
-                             at=AT)
+                             at=AT + 1)
     except Exception as e:  # noqa: BLE001
         return _record("F394-composer-abort-holds", "ERROR",
                        "composer abort raised %r (calls %d->%d)"
@@ -677,7 +680,7 @@ def p_f394_unauthorized_operator_refused():
                        "saga did not escalate; probe void")
     try:
         comp.retry_saga_unit("u1", {"action": "retry_compensation"},
-                             at=AT)
+                             at=AT + 1)
     except Exception as e:  # noqa: BLE001
         code = getattr(e, "code", None)
         if code == "workflow-saga-operator-unauthorized":
@@ -698,7 +701,7 @@ def p_f394_double_retry_refused():
     comp, sm, inst, calls = _escalated_composed_saga_fixable("dbl")
     try:
         comp.retry_saga_unit("u1", {"action": "retry_compensation"},
-                             at=AT)
+                             at=AT + 1)
     except Exception as e:  # noqa: BLE001
         return _record("F394-double-retry-refused", "ERROR",
                        "first retry raised %r" % (getattr(e, "code", e),))
@@ -752,7 +755,7 @@ def p_f394_hygiene_preserved():
     auth_prefix = "composed-auth:"
     try:
         comp.retry_saga_unit("u1", {"action": "retry_compensation"},
-                             at=AT)
+                             at=AT + 1)
     except Exception as e:  # noqa: BLE001
         return _record("F394-hygiene-preserved", "ERROR",
                        "retry raised %r" % (getattr(e, "code", e),))
