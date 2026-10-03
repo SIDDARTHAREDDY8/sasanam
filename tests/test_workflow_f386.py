@@ -34,6 +34,17 @@ import gov.workflow_composed as wc
 AT = 1_700_000_000
 
 
+# Wave-311 merge: the F395 closure contract requires plan fns to close
+# over JSON-native values only (ComposedPlan refuses coded
+# workflow-composed-definition-invalid for exotic closures). Test
+# instrumentation that needs live objects (ledger, composer, saga
+# manager) during execution uses this module-level registry keyed by a
+# JSON-native string: the fn closes over nothing and looks the objects
+# up by key. This is F395-safe: the registry is process-global, so two
+# plans with identical code resolve identical objects — no confusion.
+_F386_PROBE_STATE = {}
+
+
 def _seed(tag):
     return hashlib.sha256((b"w304f386-" + tag)).digest()
 
@@ -104,17 +115,26 @@ class F386ClosureTests(unittest.TestCase):
         self.store.start_run("probe", run_id="n1", authority=self.auth,
                              at=AT)
         seen = {}
+        # F395 contract: spy must not close over self/c1 (exotic). The
+        # live registry and the nonce travel via the module registry.
+        _F386_PROBE_STATE["n1"] = {"sm": self.sm,
+                                   "nonce": c1._verifier_nonce,
+                                   "seen": seen}
 
         def spy(i):
-            seen["refs"] = [k for k in self.sm._verifiers
-                            if c1._verifier_nonce in k]
+            st = _F386_PROBE_STATE["n1"]
+            st["seen"]["refs"] = [k for k in st["sm"]._verifiers
+                                  if st["nonce"] in k]
             return ({"r": 1}, [])
 
         sd = self.sm.define([saga.SagaStepDef("s1", "a1", {}, "c1")])
         plan = self._plan(
             sd, {"s1": spy},
             {"s1": lambda i: {"u": 1}}, key="nk")
-        res = c1.execute(plan, run_id="n1", authority=self.auth, at=AT)
+        try:
+            res = c1.execute(plan, run_id="n1", authority=self.auth, at=AT)
+        finally:
+            _F386_PROBE_STATE.pop("n1", None)
         self.assertEqual(res["units"]["sg"]["status"], "succeeded")
         # One verifier entry per executed unit, scoped to this composer.
         self.assertEqual(len(seen["refs"]), 1)
@@ -179,10 +199,14 @@ class F386ClosureTests(unittest.TestCase):
             return {"u": 1}
 
         def comp_s2(i):
-            if entered["n"] == 0:
-                entered["n"] += 1
-                c2.execute(plan, run_id="col-r2", authority=self.auth,
-                           at=AT)
+            # F395 contract: must not close over c2/plan/self.auth
+            # (exotic). The reentrant targets travel via the module
+            # registry, populated after plan construction.
+            st = _F386_PROBE_STATE["col"]
+            if st["entered"]["n"] == 0:
+                st["entered"]["n"] += 1
+                st["c2"].execute(st["plan"], run_id="col-r2",
+                                 authority=st["auth"], at=AT)
             return {"u": 2}
 
         sd = self.sm.define([
@@ -194,8 +218,14 @@ class F386ClosureTests(unittest.TestCase):
              "action_fns": {"s1": ok, "s2": ok, "s3": boom},
              "comp_fns": {"s1": comp_s1, "s2": comp_s2, "s3": comp_s1},
              "idem_key": "ck"}])
-        res = c1.execute(plan, run_id="col-r1", authority=self.auth,
-                         at=AT)
+        _F386_PROBE_STATE["col"] = {"c2": c2, "plan": plan,
+                                    "auth": self.auth,
+                                    "entered": entered}
+        try:
+            res = c1.execute(plan, run_id="col-r1", authority=self.auth,
+                             at=AT)
+        finally:
+            _F386_PROBE_STATE.pop("col", None)
         self.assertEqual(res["units"]["sg"]["status"], "compensated")
         # Nothing lingered on the shared manager from either composer.
         leftovers = [k for k in self.sm._verifiers
@@ -317,8 +347,15 @@ class F386ClosureTests(unittest.TestCase):
         def ok(i):
             return ({"r": 1}, [])
 
+        # F395 contract: boom_and_revoke must not close over
+        # self.ledger/self.root (exotic). The revocation target travels
+        # via the module registry.
+        _F386_PROBE_STATE["v1"] = {"ledger": self.ledger,
+                                   "receipt_id": self.root["receipt_id"]}
+
         def boom_and_revoke(i):
-            self.ledger.revoke(self.root["receipt_id"], AT + 1)
+            st = _F386_PROBE_STATE["v1"]
+            st["ledger"].revoke(st["receipt_id"], AT + 1)
             raise RuntimeError("kaboom")
 
         def comp(i):
@@ -330,14 +367,17 @@ class F386ClosureTests(unittest.TestCase):
         plan = self._plan(
             sd, {"s1": ok, "s2": boom_and_revoke},
             {"s1": comp, "s2": comp}, key="vk")
-        with self.assertRaises(wc.ComposedError) as ctx:
-            c1.execute(plan, run_id="v1", authority=self.auth, at=AT)
+        try:
+            with self.assertRaises(wc.ComposedError) as ctx:
+                c1.execute(plan, run_id="v1", authority=self.auth, at=AT)
+        finally:
+            _F386_PROBE_STATE.pop("v1", None)
         self.assertEqual(ctx.exception.code,
                          "workflow-saga-compensation-unauthorized")
 
     def test_no_new_decision_codes(self):
         # F386 adds no decision codes: the raw literal inventory is
-        # unchanged at 1827/1827/0.
+        # unchanged at 1829/1829/0.
         import re
         with open(os.path.join(os.path.dirname(__file__), "..", "gov",
                                "decision_codes.py"),
