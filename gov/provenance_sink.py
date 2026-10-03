@@ -59,7 +59,7 @@ except ImportError:  # standalone
     import approval_tokens as _at
 
 # ---------------------------------------------------------------------------
-# Codes (+9 -> pin 1872 -> 1872)
+# Codes (+9 -> pin 1878)
 # ---------------------------------------------------------------------------
 
 LABEL_UNVERIFIABLE = "provenance-label-unverifiable"

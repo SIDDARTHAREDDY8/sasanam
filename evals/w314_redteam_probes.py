@@ -42,7 +42,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 1863
+TAXONOMY_PIN = 1878
 FOOTER_OPEN = "none"
 FOOTER_NEXT = "F398"
 
