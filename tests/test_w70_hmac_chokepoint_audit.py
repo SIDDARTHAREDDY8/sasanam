@@ -496,6 +496,24 @@ ALLOWED_HMAC_SITES = {
     # (hmac.compare_digest) is out of scope per the module docstring.
     ("gov/provenance_labels.py", "_seal", 0):
         "provenance-label seal MAC; key from _active_key() chokepoint, domain-separated",
+    # gov/transform_policy.py (wave-316 lane 4): the sealed transform
+    # output MAC. The key is gov.log._active_key() output (the wave-69
+    # guarded chokepoint, same key as the action-log chain), passed
+    # implicitly via _active_key(); the MAC is domain-separated
+    # (_OUTPUT_DOMAIN = b"transform-output-v1:") with the key_epoch bound
+    # into the MAC input, so output seals can never be confused with log
+    # entries, tokens, or labels. Verification (hmac.compare_digest) is
+    # out of scope per the module docstring.
+    ("gov/transform_policy.py", "_seal_output_body", 0):
+        "transform-output seal MAC; key from _active_key() chokepoint, domain-separated",
+    # gov/transform_policy.py (wave-316 lane 4): the durable consume-ledger
+    # line MAC. Same key ceremony as above; domain-separated
+    # (_CONSUME_DOMAIN = b"transform-consume-v1:") with the key_epoch bound
+    # in, so ledger lines can never be confused with output seals. A broken
+    # chain fails closed (transform-ledger-corrupt); verification is
+    # hmac.compare_digest, out of scope per the module docstring.
+    ("gov/transform_policy.py", "FileConsumeStore._line_digest", 0):
+        "consume-ledger line MAC; key from _active_key() chokepoint, domain-separated",
 }
 
 

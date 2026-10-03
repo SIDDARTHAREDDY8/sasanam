@@ -46,7 +46,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1888  # Wave-301 merge pin 1812; wave-299 lane 5: pin 1780 -> 1783 (+3 delegation-revocation-*); Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*)
+TAXONOMY_PIN = 1900 # Wave-301 merge pin 1812; wave-299 lane 5: pin 1780 -> 1783 (+3 delegation-revocation-*); Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*)
 
 _results = []
 
@@ -94,7 +94,7 @@ def p_taxonomy_pin():
             and dr.RV_LIST_FULL == "delegation-revocation-list-full"):
         return _record("pin-taxonomy", "BREAK",
                        "module code constants drift from taxonomy")
-    _record("pin-taxonomy", "HELD", "1888/1888/0 sorted")
+    _record("pin-taxonomy", "HELD", "1900/1900/0 sorted")
 
 
 class _H:

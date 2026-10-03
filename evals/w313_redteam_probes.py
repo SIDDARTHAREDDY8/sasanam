@@ -3,7 +3,7 @@
 Base: wave-312 merge 4b1fa29e (F397 OPEN on the base -- the only
 open finding; F397 CLOSED 2026-10-03 wave-313 lane A;
 F396 CLOSED wave-312 lane A; persistent witness log (gov/witness_log.py,
-wave-312 lane D); pin 1851 on the base, 1888 merged).
+wave-312 lane D); pin 1851 on the base, 1900 merged).
 
 Targets (all verified empirically with throwaway scripts BEFORE this
 battery was written -- diagnosing-bugs loop):
@@ -58,7 +58,7 @@ battery was written -- diagnosing-bugs loop):
 
 New findings filed by this lane: NONE -- every fresh attack
 hypothesis was falsified (fail-closed coded). Wave-313 merge footer:
-open none / next F398; pin 1888 (this lane mints no decision codes).
+open none / next F398; pin 1900 (this lane mints no decision codes).
 
 This battery's expected BREAKs: none (F397 CLOSED 2026-10-03 wave-313
 lane A; the three F397 probes are dual-mode and record HELD).
@@ -110,7 +110,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 # Pin 1851 (wave-312 lane D: 1841 -> 1851, +10 witness codes). This lane mints no
 # codes (red team only; F397 needs no new code -- the fix is an `at`
 # bound, not a refusal), so the pin stays 1851.
-TAXONOMY_PIN = 1888  #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*)
+TAXONOMY_PIN = 1900 #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*)
 
 AT = 1000000
 
@@ -148,7 +148,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1888/1888/0 sorted")
+    _record("pin-taxonomy", "HELD", "1900/1900/0 sorted")
 
 
 def p_footer_state():

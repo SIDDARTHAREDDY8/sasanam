@@ -77,7 +77,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # No new codes in this lane (negative result): pin stays at the
 # wave-304 merge pin.
-TAXONOMY_PIN = 1888  #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*)
+TAXONOMY_PIN = 1900 #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*)
 
 CONFLICT_CODE = "permit-idempotency-conflict"
 

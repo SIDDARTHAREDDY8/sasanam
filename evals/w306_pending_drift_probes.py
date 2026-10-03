@@ -66,7 +66,7 @@ from gov import delegation_revocation as drv  # noqa: E402
 from gov import ed25519  # noqa: E402
 from gov import workflow as wf  # noqa: E402
 
-TAXONOMY_PIN = 1888  # Wave-305 merge pin; this lane mints no new codes.; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*)
+TAXONOMY_PIN = 1900 # Wave-305 merge pin; this lane mints no new codes.; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*)
 
 AT = 1_700_000_000
 

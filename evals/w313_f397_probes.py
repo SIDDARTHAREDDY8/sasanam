@@ -50,7 +50,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 # Pin 1851. This lane mints no decision codes (the fix is an `at`
 # monotonicity bound refusing the existing
 # workflow-saga-resolution-invalid), so the pin stays 1851.
-TAXONOMY_PIN = 1888  #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*)
+TAXONOMY_PIN = 1900 #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*)
 
 AT = 1000000
 
@@ -88,7 +88,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1888/1888/0 sorted")
+    _record("pin-taxonomy", "HELD", "1900/1900/0 sorted")
 
 
 def p_footer_state():

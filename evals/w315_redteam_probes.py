@@ -33,7 +33,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 1888  # wave-314 merge: pin 1863 -> 1878 (+9 provenance-* +6 witness-rekor-*); wave-315 merge: pin 1878 -> 1888 (+10 vsa-packet-*)
+TAXONOMY_PIN = 1900 # wave-314 merge: pin 1863 -> 1878 (+9 provenance-* +6 witness-rekor-*); wave-315 merge: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*)
 
 from gov import provenance_labels as PL
 from gov import provenance_sink as PS
@@ -876,7 +876,7 @@ def _p4_gate_code():
 # pin + footer
 # ---------------------------------------------------------------------------
 
-@probe("pin-taxonomy-1888-sorted")
+@probe("pin-taxonomy-1900-sorted")
 def _pin():
     import json as _json
     from gov import decision_codes as _dc
@@ -887,16 +887,16 @@ def _pin():
     lits = _re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += _re.findall(r'"code":\s*"([^"]+)"', src)
     if len(lits) != TAXONOMY_PIN:
-        return _break("pin-taxonomy-1888-sorted",
+        return _break("pin-taxonomy-1900-sorted",
                       "taxonomy literals %d != pin %d"
                       % (len(lits), TAXONOMY_PIN))
     if len(set(lits)) != len(lits):
-        return _break("pin-taxonomy-1888-sorted",
+        return _break("pin-taxonomy-1900-sorted",
                       "duplicate code literals in source")
     if sorted(lits) != lits:
-        return _break("pin-taxonomy-1888-sorted", "literals not sorted")
-    return _held("pin-taxonomy-1888-sorted",
-                 "1888/1888/0 unique sorted on source literals")
+        return _break("pin-taxonomy-1900-sorted", "literals not sorted")
+    return _held("pin-taxonomy-1900-sorted",
+                 "1900/1900/0 unique sorted on source literals")
 
 
 @probe("footer-F398-F399-F400-open-next-F401")
