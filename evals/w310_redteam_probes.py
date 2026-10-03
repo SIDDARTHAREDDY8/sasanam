@@ -1,8 +1,9 @@
 """Wave-310 lane C battery: independent red team vs the wave-309 tree.
 
 Base: wave-309 merge f0d6c9c1 (F393 CLOSED -- code binding + run->plan
-binding, +1 code workflow-composed-plan-mismatch, pin 1829; F394 OPEN --
-composed-saga operator recovery gap).
+binding, +1 code workflow-composed-plan-mismatch, pin 1829; F394 was
+OPEN (composed-saga operator recovery gap), CLOSED 2026-10-03 wave-310
+lane A via the composer-level retry API).
 
 Targets (all verified empirically with throwaway scripts BEFORE this
 battery was written -- diagnosing-bugs loop):
@@ -19,10 +20,14 @@ battery was written -- diagnosing-bugs loop):
     never executes and the attacker's outputs return as native.
     Verified on the fn path and the saga action path via the public
     API.
- 2. F394 (LOW, OPEN): the F384 operator recovery path does not function
-    for composed sagas -- retry_compensation / abort_and_compensate_all
-    raise misleading workflow-saga-compensation-unauthorized; the
-    direct-saga control recovers fine.
+ 2. F394 (LOW, CLOSED 2026-10-03 wave-310 lane A): the F384 operator
+    recovery path did not function for composed sagas --
+    WorkflowComposer.retry_saga_unit(unit_name, resolution, *, at)
+    re-establishes the prerequisites and re-drives the fixed
+    compensation. The probes below use the supported composer-API
+    pattern (updated at the wave-310 merge; the direct-SagaManager
+    path on a composed instance still fails closed coded, pinned in
+    w310_f394_probes).
  3. F393 closure regressions: descriptor-identical plans now refuse
     coded workflow-composed-plan-mismatch (fn + saga paths).
  4. F391 closure regressions: begin-time manager binding holds --
@@ -36,10 +41,9 @@ battery was written -- diagnosing-bugs loop):
     batteries.
 
 New findings filed by this lane: F395 (MEDIUM, OPEN), claim
-2026-10-03T13:27:00Z. Wave-310 merge: F394/F395 stay OPEN; pin 1829;
-footer open F394, F395 / next F396. This battery's expected BREAKs:
-F394-op-retry-composed, F394-abort-composed,
-F395-exotic-closure-fn, F395-exotic-closure-saga (all OPEN).
+2026-10-03T13:27:00Z. Wave-310 merge: F394 CLOSED (lane A), F395 OPEN;
+pin 1829; footer open F395 / next F396. This battery's expected
+BREAKs: F395-exotic-closure-fn, F395-exotic-closure-saga (all OPEN).
 
 Run:
   mkdir -p /var/tmp/g310-rt && TMPDIR=/var/tmp/g310-rt \\
@@ -122,12 +126,12 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    # Wave-310 lane C footer: F394 + F395 filed OPEN by this lane.
-    if nxt != 396 or open_s != "F394, F395":
+    # Wave-310 merge footer: F394 CLOSED (lane A); F395 OPEN (lane C).
+    if nxt != 396 or open_s != "F395":
         return _record("footer-state", "BREAK",
                        "footer pins next F%d open '%s', want next F396 "
-                       "open 'F394, F395'" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open F394, F395 / next F396")
+                       "open 'F395'" % (nxt, open_s))
+    _record("footer-state", "HELD", "footer pins open F395 / next F396")
 
 
 # ------------------------------------------------------------------
@@ -169,10 +173,28 @@ def _composed_scaffold(tag, operator_ref=False):
     return wc, wf, saga, idem, comp, ws, sm, im, auth
 
 
-def _escalated_composed_saga(tag):
-    """Drive a composed saga unit to escalation: s2's action fails,
-    s1's compensation fails transiently 3x. Returns
-    (comp, sm, instance, comp_calls)."""
+# ------------------------------------------------------------------
+# F394 (LOW, CLOSED wave-310 lane A): the F384 operator recovery path
+# did not function for composed sagas. Closure direction: a
+# composer-level operator-retry API
+# (WorkflowComposer.retry_saga_unit(unit_name, resolution, *, at))
+# re-establishes the escalated unit's prerequisites and delegates to
+# SagaManager.resolve_escalation. The supported operator path for a
+# composed saga is the composer API; calling the saga manager
+# directly on a composed instance still fails closed and coded
+# (pinned in w310_f394_probes). Probes updated from the
+# direct-SagaManager call pattern to the supported composer-API
+# call pattern (probe intent -- re-drive works after the downstream
+# is fixed -- unchanged).
+# ------------------------------------------------------------------
+
+def _escalated_composed_saga_fixable(tag):
+    """Drive a composed saga unit to escalation with a compensation
+    that fails transiently during the initial window (3 attempts) but
+    succeeds once the downstream is "fixed" (4th call onward).
+    Returns (comp, sm, instance, comp_calls). Used by the F394
+    operator-recovery probes: the operator path must re-drive the
+    compensation to a terminal state after the cause is fixed."""
     wc, wf, saga, idem, comp, ws, sm, im, auth = _composed_scaffold(
         tag, operator_ref=True)
     calls = {"comp": 0}
@@ -183,9 +205,11 @@ def _escalated_composed_saga(tag):
     def bad_action(params):
         raise RuntimeError("action boom")
 
-    def flaky_comp(params):
+    def flaky_then_fixed(params):
         calls["comp"] += 1
-        raise RuntimeError("downstream blip %d" % calls["comp"])
+        if calls["comp"] <= 3:
+            raise RuntimeError("downstream blip %d" % calls["comp"])
+        return {"recovered": True}
 
     definition = saga.SagaDefinition([
         saga.SagaStepDef(step_id="s1", action_op="a1", action_params={},
@@ -196,7 +220,7 @@ def _escalated_composed_saga(tag):
     plan = wc.ComposedPlan([{
         "kind": "saga", "name": "u1", "definition": definition,
         "action_fns": {"s1": good_action, "s2": bad_action},
-        "comp_fns": {"s1": flaky_comp, "s2": flaky_comp},
+        "comp_fns": {"s1": flaky_then_fixed, "s2": flaky_then_fixed},
         "idem_key": "k1",
     }])
     try:
@@ -207,76 +231,71 @@ def _escalated_composed_saga(tag):
     return comp, sm, inst, calls
 
 
-# ------------------------------------------------------------------
-# F394 (LOW, OPEN): the F384 operator recovery path does not function
-# for composed sagas
-# ------------------------------------------------------------------
-
 def p_f394_op_retry_composed():
-    # After a composed saga escalates, the composer's finally block has
-    # removed the nonce-scoped wrapper ops AND the step authority
-    # verifiers. retry_compensation (the F384 recovery path) can never
-    # re-drive the compensation: it raises misleading
-    # workflow-saga-compensation-unauthorized, the fixed compensation
-    # is never invoked, and the saga stays escalated.
-    comp, sm, inst, calls = _escalated_composed_saga("f394retry")
+    # F394 CLOSED: after a composed saga escalates, the operator
+    # re-drives via the supported composer API
+    # comp.retry_saga_unit("u1", {"action": "retry_compensation"},
+    # at=AT). The composer re-establishes the prerequisites, so the
+    # fixed compensation is actually invoked and the saga reaches
+    # compensated. The misleading
+    # workflow-saga-compensation-unauthorized on this path is gone.
+    comp, sm, inst, calls = _escalated_composed_saga_fixable("f394retry")
     if inst.status != "escalated":
         return _record("F394-op-retry-composed", "ERROR",
                        "saga did not escalate; probe void")
     before = calls["comp"]
     try:
-        sm.retry_compensation(inst)
+        comp.retry_saga_unit("u1", {"action": "retry_compensation"}, at=AT)
     except Exception as e:  # noqa: BLE001
         code = getattr(e, "code", None)
-        if calls["comp"] != before:
-            return _record("F394-op-retry-composed", "ERROR",
-                           "comp invoked but retry still raised %r" % (code,))
-        if inst.status == "compensated":
-            return _record("F394-op-retry-composed", "HELD",
-                           "operator retry re-drove the compensation "
-                           "(F394 closed)")
-        return _record(
-            "F394-op-retry-composed", "BREAK",
-            "F394: retry_compensation raised %r; fixed compensation "
-            "never invoked (%d calls); saga still %r -- the F384 "
-            "operator recovery path does not function for composed "
-            "sagas" % (code, calls["comp"], inst.status))
+        if code == "workflow-saga-compensation-unauthorized":
+            return _record("F394-op-retry-composed", "BREAK",
+                           "F394 regression: misleading "
+                           "workflow-saga-compensation-unauthorized "
+                           "on composer retry")
+        return _record("F394-op-retry-composed", "ERROR",
+                       "composer retry raised %r" % (code,))
     if inst.status == "compensated" and calls["comp"] > before:
         return _record("F394-op-retry-composed", "HELD",
-                       "operator retry re-drove the compensation "
-                       "(F394 closed)")
+                       "composer retry re-drove the compensation "
+                       "(%d->%d calls); saga compensated (F394 closed)"
+                       % (before, calls["comp"]))
     return _record("F394-op-retry-composed", "ERROR",
-                   "unexpected: status=%r calls=%d"
-                   % (inst.status, calls["comp"]))
+                   "unexpected: status=%r calls=%d->%d"
+                   % (inst.status, before, calls["comp"]))
 
 
 def p_f394_abort_composed():
-    # The second re-drive action, abort_and_compensate_all, fails the
-    # same way: the compensation op is unresolvable in this process.
-    comp, sm, inst, calls = _escalated_composed_saga("f394abort")
+    # F394 CLOSED: the second re-drive action,
+    # abort_and_compensate_all, now works through the composer API:
+    # the fixed compensation is re-driven (remaining attempt budget)
+    # and the saga reaches compensated.
+    comp, sm, inst, calls = _escalated_composed_saga_fixable("f394abort")
     if inst.status != "escalated":
         return _record("F394-abort-composed", "ERROR",
                        "saga did not escalate; probe void")
     before = calls["comp"]
     try:
-        sm.resolve_escalation(inst, {"action": "abort_and_compensate_all"})
+        comp.retry_saga_unit("u1",
+                             {"action": "abort_and_compensate_all"},
+                             at=AT)
     except Exception as e:  # noqa: BLE001
         code = getattr(e, "code", None)
-        if inst.status == "compensated" and calls["comp"] > before:
-            return _record("F394-abort-composed", "HELD",
-                           "abort_and_compensate_all re-drove the "
-                           "compensation (F394 closed)")
-        return _record(
-            "F394-abort-composed", "BREAK",
-            "F394: abort_and_compensate_all raised %r; compensation "
-            "never re-driven (%d calls); saga still %r"
-            % (code, calls["comp"], inst.status))
-    if inst.status == "compensated":
+        if code == "workflow-saga-compensation-unauthorized":
+            return _record("F394-abort-composed", "BREAK",
+                           "F394 regression: misleading "
+                           "workflow-saga-compensation-unauthorized "
+                           "on composer abort retry")
+        return _record("F394-abort-composed", "ERROR",
+                       "composer abort retry raised %r" % (code,))
+    if inst.status == "compensated" and calls["comp"] > before:
         return _record("F394-abort-composed", "HELD",
-                       "abort_and_compensate_all re-drove the "
-                       "compensation (F394 closed)")
+                       "composer abort retry re-drove the compensation "
+                       "(%d->%d calls); saga compensated (F394 closed)"
+                       % (before, calls["comp"]))
     return _record("F394-abort-composed", "ERROR",
-                   "unexpected: status=%r" % (inst.status,))
+                   "unexpected: status=%r calls=%d->%d"
+                   % (inst.status, before, calls["comp"]))
 
 
 def p_f394_direct_saga_retry_works():
@@ -795,20 +814,20 @@ def _green_checks():
         return
     # F393 CLOSED (wave-309 lane A): the w309_f393 battery's F393
     # probes now assert the coded workflow-composed-plan-mismatch
-    # refusal; expect no BREAKs. Re-pinned to the lane footer
-    # (open F394, F395 / next F396).
+    # refusal; expect no BREAKs. Re-pinned to the wave-310 merge
+    # footer (open F395 / next F396).
     green_check.check_battery(
         _rec, "green-w309_f393", "evals/w309_f393_probes.py",
         repo=REPO, expect_break_ids=())
-    # F394 OPEN: the w309 red-team battery's F394 probes still report
-    # BREAK; re-pinned to the lane footer.
+    # F394 CLOSED (wave-310 lane A): the w309 red-team battery's F394
+    # probes now use the composer-API pattern and assert recovery;
+    # expect no BREAKs.
     green_check.check_battery(
         _rec, "green-w309_redteam", "evals/w309_redteam_probes.py",
-        repo=REPO, expect_break_ids=("F394-op-retry-composed",
-                                     "F394-abort-composed"))
+        repo=REPO, expect_break_ids=())
     # F391 CLOSED (wave-309 lane B): the w308 battery's F391 probes
     # assert the coded coord-lease-manager-mismatch refusal; expect no
-    # BREAKs. Re-pinned to the lane footer.
+    # BREAKs. Re-pinned to the wave-310 merge footer.
     green_check.check_battery(
         _rec, "green-w308_f391", "evals/w308_f391_probes.py",
         repo=REPO, expect_break_ids=())
@@ -895,8 +914,6 @@ _PROBES = [
 ]
 
 _EXPECTED_BREAKS = frozenset({
-    "F394-op-retry-composed",   # F394 OPEN
-    "F394-abort-composed",      # F394 OPEN
     "F395-exotic-closure-fn",   # F395 OPEN (filed this lane)
     "F395-exotic-closure-saga", # F395 OPEN (filed this lane)
 })

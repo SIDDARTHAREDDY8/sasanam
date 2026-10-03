@@ -513,6 +513,13 @@ class WorkflowComposer:
         self._exec_ctx = None        # live execution context (sync only)
         self._saga_instances = {}    # unit name -> SagaInstance
         self._slips = {}             # unit name -> latest slip dict
+        # F394: operator-retry material for escalated saga units
+        # (unit name -> {scoped_tag, authority_ref, unit, plan_digest,
+        # run_id, run, authority, actor}). Retained when a saga
+        # unit escalates so ``retry_saga_unit`` can re-establish the
+        # unit's execution prerequisites; private composer state, not
+        # shared-registry state.
+        self._saga_retry_ctx = {}
         # F386: per-composer-instance nonce. Verifier refs installed on the
         # shared SagaManager are scoped with this nonce, so two composers
         # sharing one manager can never overwrite each other's verifier.
@@ -860,6 +867,7 @@ class WorkflowComposer:
         scoped_tag = "%s:%s" % (self._verifier_nonce, unit_tag)
         authority_ref = "composed-auth:%s" % scoped_tag
         self._install_saga_verifier(authority_ref)
+        instance = None
         try:
             wrapped = self._saga_wrappers(scoped_tag, unit, authority_ref)
             instance = self._saga.start(wrapped)
@@ -889,6 +897,23 @@ class WorkflowComposer:
                         for s in instance.steps],
                     "outbox_dispatched": dispatched}
         finally:
+            # F394: when the unit escalated, retain the material needed
+            # to re-establish its execution prerequisites for operator
+            # retry (see ``retry_saga_unit``). The verifier and wrapper
+            # ops are still removed below -- they are re-installed by
+            # the retry API, so the shared registries stay clean except
+            # during active execution or an active retry.
+            if instance is not None and instance.status == "escalated":
+                self._saga_retry_ctx[unit["name"]] = {
+                    "scoped_tag": scoped_tag,
+                    "authority_ref": authority_ref,
+                    "unit": unit,
+                    "plan_digest": ctx["plan_digest"],
+                    "run_id": ctx["run_id"],
+                    "run": ctx["run"],
+                    "authority": ctx["authority"],
+                    "actor": ctx["actor"],
+                }
             # F386: the verifier entry must not outlive the unit --
             # removal is deterministic on success, failure, and
             # compensation end. The entry is needed only while
@@ -902,6 +927,90 @@ class WorkflowComposer:
             # the outbox drain above) execute; after the unit completes
             # they are dead names in a shared process-global registry.
             self._remove_saga_ops(scoped_tag, unit)
+
+    def retry_saga_unit(self, unit_name, resolution, *, at):
+        """F394: operator recovery for an escalated composed saga unit.
+
+        The F384 operator recovery path (``SagaManager.resolve_escalation``
+        / ``retry_compensation``) cannot run directly against a composed
+        saga instance: the composer installs the unit's step authority
+        verifier and nonce-scoped wrapper ops only for the duration of
+        ``_execute_saga_unit`` (F386, wave-305 hygiene), so a
+        post-escalation ``retry_compensation`` fails with a misleading
+        ``workflow-saga-compensation-unauthorized`` -- the verifier was
+        removed, nothing was revoked. This API re-establishes the
+        unit's execution prerequisites -- a retry execution context
+        (so the verifier, the wrapper ops, and the idempotency layer
+        behave exactly as during execution), the step authority
+        verifier, and the wrapper ops -- delegates to the saga
+        manager's ``resolve_escalation``, then tears everything down
+        deterministically (mirroring ``_execute_saga_unit``'s
+        ``finally``). For composed saga units, operator recovery goes
+        through the composer; calling the saga manager directly on a
+        composed instance still fails closed and coded.
+
+        ``at`` is the retry instant (required, keyword-only, following
+        the ``execute`` precedent -- no wall-clock is read). The step
+        authority is re-verified AT this instant per the F384 "NOW"
+        contract: pass the current time so post-execution revocation
+        or expiry is honored. The operator's own authority is
+        re-verified NOW inside ``resolve_escalation`` (F384), which is
+        what gates the recovery action itself.
+
+        Refuses coded ``workflow-saga-resolution-invalid`` when the
+        unit is unknown, has no retained retry material (never
+        escalated, or already recovered), or is not escalated. A
+        genuinely unauthorized operator still refuses
+        ``workflow-saga-operator-unauthorized`` (F386 not weakened);
+        the retained material is the composer's own, never
+        operator-supplied.
+        """
+        mat = self._saga_retry_ctx.get(unit_name)
+        if mat is None:
+            _fail(_saga.CODE_RESOLUTION_INVALID,
+                  "no retained operator-retry material for composed saga "
+                  "unit %r (unknown unit, unit never escalated, or unit "
+                  "already recovered)" % (unit_name,))
+        instance = self._saga_instances.get(unit_name)
+        if instance is None or instance.status != "escalated":
+            _fail(_saga.CODE_RESOLUTION_INVALID,
+                  "composed saga unit %r is not escalated (status %r): "
+                  "recovery refused" % (
+                      unit_name, getattr(instance, "status", None)))
+        unit = mat["unit"]
+        if unit.get("action_fns") is None or unit.get("comp_fns") is None:
+            # Post-restart: the dump cannot restore callables.
+            _fail(_saga.CODE_RESOLUTION_INVALID,
+                  "composed saga unit %r has no callable fns attached "
+                  "(e.g. after a restart): operator retry needs the "
+                  "deployment to re-attach the plan's fns" % (unit_name,))
+        if not _is_int(at) or at < 0:
+            _fail(WC_DEFINITION_INVALID,
+                  "at must be a non-negative int instant")
+        scoped_tag = mat["scoped_tag"]
+        authority_ref = mat["authority_ref"]
+        retry_ctx = {"plan_digest": mat["plan_digest"],
+                     "run_id": mat["run_id"],
+                     "run": mat["run"],
+                     "authority": mat["authority"],
+                     "actor": mat["actor"],
+                     "at": at,
+                     "now": at}
+        # Re-establish the prerequisites (idempotent: dict assignment).
+        self._install_saga_verifier(authority_ref)
+        self._saga_wrappers(scoped_tag, unit, authority_ref)
+        prev_ctx = self._exec_ctx
+        self._exec_ctx = retry_ctx
+        try:
+            result = self._saga.resolve_escalation(instance, resolution)
+        finally:
+            self._exec_ctx = prev_ctx
+            self._remove_saga_verifier(authority_ref)
+            self._remove_saga_ops(scoped_tag, unit)
+        if instance.status == "compensated":
+            # Terminal: the unit needs no further operator recovery.
+            self._saga_retry_ctx.pop(unit_name, None)
+        return result
 
     def _drain_outbox_composed(self, instance, unit, ctx):
         # The idempotency key binds (unit idem_key, intent_id) -- never
