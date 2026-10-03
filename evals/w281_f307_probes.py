@@ -50,6 +50,8 @@ _TMP = tempfile.mkdtemp(prefix="g281-f307-%d-" % os.getpid(), dir="/var/tmp")
 os.environ["TMPDIR"] = _TMP
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 for _p in (REPO, os.path.join(REPO, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -357,8 +359,11 @@ def main():
     brk = sum(1 for _, v, _ in _results if v == "BREAK")
     err = sum(1 for _, v, _ in _results if v not in ("HELD", "BREAK"))
     print("w281_f307: %d HELD / %d BREAK / %d ERROR" % (held, brk, err))
-    for pid, v, note in _results:
-        print("  [%s] %s: %s" % (v, pid, note))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        _results, brk, held, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    probe_lines.emit(_results)
     return 0 if (brk == 0 and err == 0) else 1
 
 

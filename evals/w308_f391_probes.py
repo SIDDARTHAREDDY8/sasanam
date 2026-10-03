@@ -68,6 +68,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
         sys.path.insert(0, _p)
 sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 # Wave-307 merge pin 1827; this lane mints +1 coord-lease-manager-mismatch.
 TAXONOMY_PIN = 1841
@@ -446,10 +447,13 @@ def main():
             h += 1
         else:
             e += 1
-    for pid, verdict, note in _results:
-        print("%-34s %-6s %s" % (pid, verdict, note.split("\n")[0]))
+    probe_lines.emit(_results)
     print("----")
     print("%d BREAK / %d HELD / %d ERROR" % (b, h, e))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        _results, b, h, e)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
     return 1 if (b or e) else 0
 
 
