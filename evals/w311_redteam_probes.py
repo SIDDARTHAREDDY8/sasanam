@@ -138,13 +138,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    # Wave-311 merge footer: F395 CLOSED (lane A); F396 OPEN (lane C).
-    if nxt != 397 or open_s != "F396":
+    # Wave-312 lane A footer: F396 CLOSED; no open findings.
+    if nxt != 397 or open_s != "none":
         return _record("footer-state", "BREAK",
                        "footer pins next F%d open '%s', want next F397 "
-                       "open 'F396'" % (nxt, open_s))
+                       "open 'none'" % (nxt, open_s))
     _record("footer-state", "HELD",
-            "footer pins open F396 / next F397")
+            "footer pins open none / next F397")
 
 # ------------------------------------------------------------------
 # Shared scaffolds
@@ -391,8 +391,10 @@ def p_f395_exotic_closure_nested():
 
 
 # ------------------------------------------------------------------
-# F396 (MEDIUM, OPEN -- filed this lane): the F393 code binding
-# ignores __defaults__/__kwdefaults__
+# ------------------------------------------------------------------
+# F396 (MEDIUM, CLOSED wave-312 lane A): the F393 code binding now
+# binds __defaults__/__kwdefaults__ by value (JSON-native) and
+# refuses non-JSON-native defaults coded
 # ------------------------------------------------------------------
 
 class _HitDict(dict):
@@ -421,45 +423,76 @@ def _mkdefault_kwfn(client):
 
 
 def _f396_fn_attack(pid, factory):
+    # F396 CLOSED: __defaults__/__kwdefaults__ are bound by value in
+    # the code fingerprint. Channel 1: JSON-native defaults with
+    # different values must yield different digests. Channel 2:
+    # non-JSON-native defaults must refuse coded
+    # (workflow-composed-definition-invalid).
     wc, wf, saga, idem, comp, ws, sm, im, auth = _composed_scaffold(
         "f396fn")
-    _HitDict.hits = 0
     evil_fn = factory({"endpoint": "evil"})
-    victim_fn = factory(_HitDict({"endpoint": "real"}))
+    victim_fn = factory({"endpoint": "real"})
     if evil_fn.__code__.co_code != victim_fn.__code__.co_code:
         return _record(pid, "ERROR", "bytecode differs; probe void")
-    if wc._code_fingerprint(evil_fn) != wc._code_fingerprint(victim_fn):
-        return _record(pid, "ERROR",
-                       "fingerprints differ; probe void")
+    if wc._code_fingerprint(evil_fn) == wc._code_fingerprint(victim_fn):
+        return _record(pid, "BREAK",
+                       "F396: identical bytecode with different "
+                       "JSON-native default values shares a code "
+                       "fingerprint")
     evil = wc.ComposedPlan([
         {"kind": "fn", "name": "u2", "fn": evil_fn,
          "inputs": {}, "idem_key": "k2"}])
     victim = wc.ComposedPlan([
         {"kind": "fn", "name": "u2", "fn": victim_fn,
          "inputs": {}, "idem_key": "k2"}])
-    if evil.digest != victim.digest:
-        return _record(pid, "HELD",
-                       "defaults distinguished in the digest (F396 "
-                       "closed)")
+    if evil.digest == victim.digest:
+        return _record(pid, "BREAK",
+                       "F396: descriptor-identical plans with different "
+                       "default values share a plan digest")
+    # The run->plan binding must refuse the victim's plan under the
+    # attacker's run, coded.
     comp.execute(evil, run_id="R", authority=auth, at=AT)
     try:
-        res = comp.execute(victim, run_id="R", authority=auth, at=AT)
+        comp.execute(victim, run_id="R", authority=auth, at=AT)
     except Exception as e:  # noqa: BLE001
         code = getattr(e, "code", None)
-        if code == "workflow-composed-plan-mismatch":
-            return _record(pid, "HELD",
-                           "different plan under same run refused coded "
-                           "(F396 closed)")
-        return _record(pid, "ERROR", "unexpected refusal %r" % (code,))
-    out = res["units"]["u2"]["outputs"]
-    if out == {"data": "from-evil"} and _HitDict.hits == 0:
+        if code != "workflow-composed-plan-mismatch":
+            return _record(pid, "ERROR",
+                           "unexpected refusal %r" % (code,))
+    else:
         return _record(pid, "BREAK",
-                       "F396: victim fn never executed; attacker's "
-                       "outputs returned as native (__defaults__ not "
-                       "bound by the code fingerprint)")
-    return _record(pid, "ERROR",
-                   "unexpected: outputs=%r hits=%r" % (out,
-                                                      _HitDict.hits))
+                       "F396: a different plan shared the run")
+    # A fresh run executes the victim's fn natively with its own
+    # defaults (the fix must not just refuse everything). The fresh
+    # plan needs its own idem_key: the idempotency store keys by
+    # (namespace, op_class, key), so re-presenting "k2" with the
+    # victim's op_digest would refuse as a digest conflict.
+    victim_fresh = wc.ComposedPlan([
+        {"kind": "fn", "name": "u2", "fn": victim_fn,
+         "inputs": {}, "idem_key": "k2-fresh"}])
+    ws.start_run("probe", run_id="R-fresh", authority=auth, at=AT)
+    res = comp.execute(victim_fresh, run_id="R-fresh", authority=auth,
+                       at=AT)
+    out = res["units"]["u2"]["outputs"]
+    if out != {"data": "from-real"}:
+        return _record(pid, "ERROR",
+                       "victim fn did not execute natively: %r" % (out,))
+    # Channel 2: a non-JSON-native default refuses coded
+    # (F395-shaped fail-closed).
+    try:
+        wc.ComposedPlan([
+            {"kind": "fn", "name": "u2",
+             "fn": factory(_HitDict({"endpoint": "real"})),
+             "inputs": {}, "idem_key": "k2"}])
+    except Exception as e:  # noqa: BLE001
+        code = getattr(e, "code", None)
+        if code == "workflow-composed-definition-invalid":
+            return _record(pid, "HELD",
+                           "JSON-native defaults distinguished by value; "
+                           "exotic defaults refused coded (F396 closed)")
+        return _record(pid, "ERROR", "wrong refusal %r" % (code,))
+    return _record(pid, "BREAK",
+                   "F396: exotic default accepted (refusal regressed)")
 
 
 def p_f396_defaults_fn():
@@ -471,13 +504,12 @@ def p_f396_kwdefaults_fn():
 
 
 def p_f396_defaults_saga():
-    # Same defect class on the saga action path: descriptor-identical
-    # saga plans whose action_fns differ only in default-arg values
-    # share a digest; the victim saga "succeeds" with the attacker's
-    # outputs, victim action never runs.
+    # Same defect class on the saga action path, now asserting the
+    # fix: descriptor-identical saga plans whose action_fns differ
+    # only in JSON-native default-arg values must have different
+    # digests; exotic defaults refuse coded.
     wc, wf, saga, idem, comp, ws, sm, im, auth = _composed_scaffold(
         "f396saga")
-    _HitDict.hits = 0
 
     def mkaction(client):
         def act(params, c=client):
@@ -487,7 +519,7 @@ def p_f396_defaults_saga():
     def mkcomp(params):
         return {"undone": True}, []
 
-    def mkplan(act):
+    def mkplan(act, idem_key="ksg"):
         definition = saga.SagaDefinition([
             saga.SagaStepDef(step_id="s1", action_op="a1",
                              action_params={},
@@ -498,34 +530,52 @@ def p_f396_defaults_saga():
             "kind": "saga", "name": "sg", "definition": definition,
             "action_fns": {"s1": act},
             "comp_fns": {"s1": mkcomp},
-            "idem_key": "ksg"}])
+            "idem_key": idem_key}])
 
     evil = mkplan(mkaction({"endpoint": "evil"}))
-    victim = mkplan(mkaction(_HitDict({"endpoint": "real"})))
-    if evil.digest != victim.digest:
-        return _record("F396-defaults-saga", "HELD",
-                       "defaults distinguished in the digest (F396 "
-                       "closed)")
+    victim = mkplan(mkaction({"endpoint": "real"}))
+    if evil.digest == victim.digest:
+        return _record("F396-defaults-saga", "BREAK",
+                       "F396: descriptor-identical saga plans with "
+                       "different default values share a plan digest")
     comp.execute(evil, run_id="R", authority=auth, at=AT)
     try:
-        res = comp.execute(victim, run_id="R", authority=auth, at=AT)
+        comp.execute(victim, run_id="R", authority=auth, at=AT)
     except Exception as e:  # noqa: BLE001
         code = getattr(e, "code", None)
-        if code == "workflow-composed-plan-mismatch":
-            return _record("F396-defaults-saga", "HELD",
-                           "different saga plan under same run refused "
-                           "coded (F396 closed)")
-        return _record("F396-defaults-saga", "ERROR",
-                       "unexpected refusal %r" % (code,))
-    unit = res["units"]["sg"]
-    if _HitDict.hits == 0 and unit["status"] == "succeeded":
+        if code != "workflow-composed-plan-mismatch":
+            return _record("F396-defaults-saga", "ERROR",
+                           "unexpected refusal %r" % (code,))
+    else:
         return _record("F396-defaults-saga", "BREAK",
-                       "F396: victim saga action never executed; saga "
-                       "succeeded with the attacker's outputs "
-                       "(__defaults__ not bound)")
-    return _record("F396-defaults-saga", "ERROR",
-                   "unexpected: hits=%r status=%r"
-                   % (_HitDict.hits, unit["status"]))
+                       "F396: a different saga plan shared the run")
+    # Fresh run: the victim saga executes natively and succeeds. The
+    # fresh plan needs its own idem_key (same (namespace, op_class,
+    # key) reasoning as the fn path above).
+    victim_fresh = mkplan(mkaction({"endpoint": "real"}),
+                          idem_key="ksg-fresh")
+    ws.start_run("probe", run_id="R-fresh", authority=auth, at=AT)
+    res = comp.execute(victim_fresh, run_id="R-fresh", authority=auth,
+                       at=AT)
+    unit = res["units"]["sg"]
+    if unit["status"] != "succeeded":
+        return _record("F396-defaults-saga", "ERROR",
+                       "victim saga did not succeed natively: %r"
+                       % (unit["status"],))
+    # Exotic default on the saga action path refuses coded.
+    try:
+        mkplan(mkaction(_HitDict({"endpoint": "real"})))
+    except Exception as e:  # noqa: BLE001
+        code = getattr(e, "code", None)
+        if code == "workflow-composed-definition-invalid":
+            return _record("F396-defaults-saga", "HELD",
+                           "saga action defaults distinguished by value; "
+                           "exotic defaults refused coded (F396 closed)")
+        return _record("F396-defaults-saga", "ERROR",
+                       "wrong refusal %r" % (code,))
+    return _record("F396-defaults-saga", "BREAK",
+                   "F396: exotic saga action default accepted")
+
 
 # ------------------------------------------------------------------
 # F394 (LOW, CLOSED wave-310 lane A): composer-level operator retry
@@ -1546,9 +1596,8 @@ _PROBES = [
 ]
 
 _EXPECTED_BREAKS = frozenset({
-    "F396-defaults-fn",           # F396 OPEN (filed this lane)
-    "F396-defaults-saga",         # F396 OPEN (filed this lane)
-    "F396-kwdefaults-fn",         # F396 OPEN (filed this lane)
+    # F396 CLOSED wave-312 lane A: the three F396 probes now assert
+    # the fix (HELD); no expected BREAKs remain in this battery.
 })
 
 
