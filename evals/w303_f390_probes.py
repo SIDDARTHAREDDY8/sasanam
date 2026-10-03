@@ -57,7 +57,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 import probe_lines  # noqa: E402  (canonical probe-line form)
 
-TAXONOMY_PIN = 1863  # Wave-303 merge pin; Wave-304 lane C: pin 1827 -> 1827 (+1 workflow-composed-replay-foreign); Wave-306 lane B: F390 reuses that code, pin unchanged
+TAXONOMY_PIN = 1872  # Wave-303 merge pin; Wave-304 lane C: pin 1827 -> 1827 (+1 workflow-composed-replay-foreign); Wave-306 lane B: F390 reuses that code, pin unchanged
 
 FOREIGN_CODE = "workflow-composed-replay-foreign"
 

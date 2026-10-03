@@ -486,6 +486,16 @@ ALLOWED_HMAC_SITES = {
     # module docstring.
     ("gov/approval_tokens.py", "_seal", 0):
         "approval-token seal MAC; key from _active_key() chokepoint, domain-separated",
+    # gov/provenance_labels.py (wave-314 lane 1, Row 7 step 5): the
+    # provenance-label seal. The key is gov.log._active_key() output
+    # (the wave-69 guarded chokepoint, same key as the action-log
+    # chain), passed implicitly via _active_key(); the MAC is
+    # domain-separated (_LABEL_DOMAIN = b"provenance-label-v1:") with
+    # the key_epoch bound into the MAC input, so label seals can never
+    # be confused with log entries or approval tokens. Verification
+    # (hmac.compare_digest) is out of scope per the module docstring.
+    ("gov/provenance_labels.py", "_seal", 0):
+        "provenance-label seal MAC; key from _active_key() chokepoint, domain-separated",
 }
 
 

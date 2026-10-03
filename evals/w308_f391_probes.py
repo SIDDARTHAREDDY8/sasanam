@@ -71,7 +71,7 @@ import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 import probe_lines  # noqa: E402  (canonical probe-line form)
 
 # Wave-307 merge pin 1827; this lane mints +1 coord-lease-manager-mismatch.
-TAXONOMY_PIN = 1863
+TAXONOMY_PIN = 1872
 LEASE_MISMATCH = "coord-lease-manager-mismatch"
 
 _results = []
@@ -108,7 +108,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1863/1863/0 sorted")
+    _record("pin-taxonomy", "HELD", "1872/1872/0 sorted")
 
 
 def p_footer_state():

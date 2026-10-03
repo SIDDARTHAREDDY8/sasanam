@@ -69,7 +69,7 @@ genuine public-seam miss; ERROR = probe/harness problem):
   m3_no_post_execution_warnings: on the success path, no "warn"-class
       audit event for the approval postdates its execution_authorized
       marker. HELD (Manus pin: warnings never follow execution).
-  pin-taxonomy / footer-state: standard pins (1863; open none / next F398).
+  pin-taxonomy / footer-state: standard pins (1872; open none / next F398).
 
 Row mapping (18-row program, evals/attack_program_status_2026-09-26.md):
   SJ* -> Row 7 (delayed execution / logic bombs, PARTIAL): new *shape*
@@ -125,7 +125,7 @@ from gov.memory_actgate import ActGate  # noqa: E402
 from gov.memory_provenance import MemoryFirewall  # noqa: E402
 from gov.log import read_entries  # noqa: E402
 
-TAXONOMY_PIN = 1863  # Wave-307 merge pin; this lane files nothing, pin unchanged
+TAXONOMY_PIN = 1872  # Wave-307 merge pin; this lane files nothing, pin unchanged
 
 _results = []
 

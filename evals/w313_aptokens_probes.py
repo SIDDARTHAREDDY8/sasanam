@@ -41,7 +41,7 @@ Probe map:
       executes.
   backward-compat-no-token: a record carrying no token sweeps exactly
       as before (the check is additional, not a replacement).
-  pin-taxonomy / footer-state: standard pins (1863; open none / next F398).
+  pin-taxonomy / footer-state: standard pins (1872; open none / next F398).
 
 Deterministic across 2 runs; $0 spend; synthetic/local. Stdlib only
 apart from gov/approval_tokens.py (real product code, no stubs).
@@ -73,7 +73,7 @@ import probe_lines  # noqa: E402  (canonical probe-line emission)
 
 from gov import approval_tokens as AT  # noqa: E402
 
-TAXONOMY_PIN = 1863  # Wave-313 lane B: pin 1851 -> 1857 (+6 approval-token-*)
+TAXONOMY_PIN = 1872  # Wave-313 lane B: pin 1851 -> 1857 (+6 approval-token-*)
 
 _NOW = 1798765432
 _BENIGN = {"to": "teammate@synthetic.local", "body": "weekly report"}

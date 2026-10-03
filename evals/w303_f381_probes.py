@@ -41,7 +41,7 @@ import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 
 from gov import workflow_idempotency as idem
 
-TAXONOMY_PIN = 1863  # Wave-302 merge pin 1820; this lane: pin 1820 -> 1821 (+1 workflow-idempotency-caller-mismatch); Wave-303 lane 2: pin 1820 -> 1821 (+1 workflow-idempotency-caller-mismatch); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
+TAXONOMY_PIN = 1872  # Wave-302 merge pin 1820; this lane: pin 1820 -> 1821 (+1 workflow-idempotency-caller-mismatch); Wave-303 lane 2: pin 1820 -> 1821 (+1 workflow-idempotency-caller-mismatch); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
 
@@ -110,7 +110,7 @@ class BaseStateTest(unittest.TestCase):
               and lits == sorted(lits))
         self.assertTrue(_expect_held(
             "taxonomy-pin",
-            ok and TAXONOMY_PIN == 1863,
+            ok and TAXONOMY_PIN == 1872,
             "%d literals / %d unique / sorted=%s"
             % (len(lits), len(set(lits)), lits == sorted(lits))) == "HELD")
 

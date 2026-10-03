@@ -76,7 +76,7 @@ from gov import workflow_idempotency as idem
 from gov import workflow_routing as wr
 from gov import workflow_saga as saga
 
-TAXONOMY_PIN = 1863  # Wave-301 merge pin 1812; this lane mints no codes.; Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 lane 4: pin 1820 -> 1822 (+2 workflow-saga-*); Wave-303 merge: pin 1822 -> 1826 (+4 codes from lanes 1-3)
+TAXONOMY_PIN = 1872  # Wave-301 merge pin 1812; this lane mints no codes.; Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 lane 4: pin 1820 -> 1822 (+2 workflow-saga-*); Wave-303 merge: pin 1822 -> 1826 (+4 codes from lanes 1-3)
 
 _results = []
 
@@ -146,7 +146,7 @@ class BaseStateTest(unittest.TestCase):
               and lits == sorted(lits))
         self.assertTrue(_expect_held(
             "taxonomy-pin",
-            ok and TAXONOMY_PIN == 1863,
+            ok and TAXONOMY_PIN == 1872,
             "%d literals / %d unique / sorted=%s"
             % (len(lits), len(set(lits)), lits == sorted(lits))) == "HELD")
 
