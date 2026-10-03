@@ -42,7 +42,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1812  # Wave-300 lane 4: no new codes (reuse coord-lease-fencing etc.)
+TAXONOMY_PIN = 1820  # Wave-300 lane 4: no new codes (reuse coord-lease-fencing etc.); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*)
 
 _results = []
 
@@ -78,7 +78,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate code literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "code literals not sorted")
-    _record("pin-taxonomy", "HELD", "1812/1812/0 sorted")
+    _record("pin-taxonomy", "HELD", "1820/1820/0 sorted")
 
 
 def _green_check(path, name, tolerate=()):
@@ -552,6 +552,108 @@ def p_no_context_neither_mode_invalid():
         "coord-lease-invalid")
 
 
+def _f379_multihop_fixture():
+    """A -> B -> C chain bound at the leaf, with per-delegator revokers."""
+    pub_c = ed25519.publickey(SEED_C).hex()
+    root = _native_receipt(SEED_A, "authority", "holder", PUB_B)
+    child = _native_receipt(SEED_B, "holder", "sub", pub_c, parent=root)
+    revoker_a = rev.DelegationRevoker(SEED_A, "authority")
+    revoker_b = rev.DelegationRevoker(SEED_B, "holder")
+    binding = {"receipt_id": child["receipt_id"],
+               "revocation_list_digest": revoker_a.list_digest()}
+    mgr = cl.LeaseManager()
+    lease = mgr.acquire("f379-scope", 3600, "sub",
+                        authority_seed=SEED_A, issued_at=AT,
+                        delegation_binding=binding)
+    ctx = {"revokers": {"authority": revoker_a, "holder": revoker_b},
+           "chain": [root, child], "trust_roots": [PUB_A]}
+    return mgr, lease, revoker_a, revoker_b, root, child, ctx
+
+
+def p_f379_multihop_live_mapping():
+    if not _needs_binding("f379-multihop-live"):
+        return
+    # Positive control: multi-hop chain, every delegator's revoker
+    # presented, nothing revoked -> the write goes through.
+    mgr, lease, ra, rb, root, child, ctx = _f379_multihop_fixture()
+    try:
+        ok = mgr.check_write("f379-scope", lease["fencing_token"], "sub",
+                             checked_at=AT + 10, delegation_context=ctx)
+    except cl.CoordinationLeaseError as e:
+        return _record("f379-multihop-live", "BREAK",
+                       "per-delegator revokers unsupported on pristine "
+                       "base (refused %s)" % (e.code,))
+    if ok is True:
+        _record("f379-multihop-live", "HELD", "multi-hop live write True")
+    else:
+        _record("f379-multihop-live", "BREAK", "unexpected %r" % (ok,))
+
+
+def p_f379_intermediate_revocation_fencing():
+    if not _needs_binding("f379-intermediate-revocation"):
+        return
+    # F379 core: B revokes the bound leaf. Before wave-302 only the
+    # root's list was consulted, so this write passed (BREAK on the
+    # pristine base); now it must fence.
+    mgr, lease, ra, rb, root, child, ctx = _f379_multihop_fixture()
+    rb.revoke(child["receipt_id"], AT + 5)
+    _expect_code(
+        "f379-intermediate-revocation",
+        lambda: mgr.check_write("f379-scope", lease["fencing_token"],
+                                "sub", checked_at=AT + 10,
+                                delegation_context=ctx),
+        "coord-lease-fencing")
+
+
+def p_f379_legacy_single_revoker_multihop_fencing():
+    if not _needs_binding("f379-legacy-single-multihop"):
+        return
+    # Legacy single (root) revoker on a multi-hop chain: the
+    # intermediate hop's revocation state cannot be shown, so the
+    # write fails closed instead of passing on the root's clean
+    # list as wave-300 did.
+    mgr, lease, ra, rb, root, child, ctx = _f379_multihop_fixture()
+    legacy = {"revoker": ra, "chain": [root, child],
+              "trust_roots": [PUB_A]}
+    _expect_code(
+        "f379-legacy-single-multihop",
+        lambda: mgr.check_write("f379-scope", lease["fencing_token"],
+                                "sub", checked_at=AT + 10,
+                                delegation_context=legacy),
+        "coord-lease-fencing")
+
+
+def p_f379_missing_member_revoker_fencing():
+    if not _needs_binding("f379-missing-member-revoker"):
+        return
+    # Mapping without the intermediate delegator's revoker:
+    # incomplete revocation state fails closed.
+    mgr, lease, ra, rb, root, child, ctx = _f379_multihop_fixture()
+    partial = {"revokers": {"authority": ra},
+               "chain": [root, child], "trust_roots": [PUB_A]}
+    _expect_code(
+        "f379-missing-member-revoker",
+        lambda: mgr.check_write("f379-scope", lease["fencing_token"],
+                                "sub", checked_at=AT + 10,
+                                delegation_context=partial),
+        "coord-lease-fencing")
+
+
+def p_f379_mislabeled_mapping_invalid():
+    if not _needs_binding("f379-mislabeled-mapping"):
+        return
+    # A's revoker filed under B's delegator_id: substitution attempt.
+    mgr, lease, ra, rb, root, child, ctx = _f379_multihop_fixture()
+    bad = {"revokers": {"authority": ra, "holder": ra},
+           "chain": [root, child], "trust_roots": [PUB_A]}
+    _expect_code(
+        "f379-mislabeled-mapping",
+        lambda: mgr.check_write("f379-scope", lease["fencing_token"],
+                                "sub", checked_at=AT + 10,
+                                delegation_context=bad),
+        "coord-lease-invalid")
+
+
 def main():
     _safe("pin-taxonomy", p_taxonomy_pin)
     _safe("acquire-stores-binding", p_acquire_stores_binding)
@@ -574,6 +676,11 @@ def main():
     _safe("redelegated-grant", p_redelegated_grant_works)
     _safe("verify-lease-binding", p_verify_lease_ignores_binding)
     _safe("no-mode-context", p_no_context_neither_mode_invalid)
+    _safe("f379-multihop-live", p_f379_multihop_live_mapping)
+    _safe("f379-intermediate-revocation", p_f379_intermediate_revocation_fencing)
+    _safe("f379-legacy-single-multihop", p_f379_legacy_single_revoker_multihop_fencing)
+    _safe("f379-missing-member-revoker", p_f379_missing_member_revoker_fencing)
+    _safe("f379-mislabeled-mapping", p_f379_mislabeled_mapping_invalid)
     _green_check(os.path.join(REPO, "evals", "w294_coord_lease_probes.py"),
                  "w294_coord_lease")
     _green_check(os.path.join(REPO, "evals", "w299_delegation_revoke_probes.py"),

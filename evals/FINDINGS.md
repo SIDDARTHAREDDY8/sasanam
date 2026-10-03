@@ -9450,7 +9450,178 @@ refuses issuance on a revoked anchoring receipt; (2) the F378 probes
 flip to HELD; (3) adjacent batteries stay green.
 
 **Status: CLOSED** (filed 2026-10-03, wave-300 independent red-team; closed 2026-10-03 wave-301 lane 2: `gov/delegation_tickets.py` `present()` and `issue_ticket_on_receipt()` now accept `revocation={'revoker': DelegationRevoker}` and enforce revocation liveness fail-closed whenever a receipt chain is consulted (wave-300 lane-4 `coordination_lease` precedent) -- no revocation state refuses coded `delegation-ticket-invalid`; the presented revoker must be the anchoring receipt's own delegator's revoker (delegator_id + key match, anti-substitution); a revoked anchor or revoked ancestor refuses coded `delegation-revoked` via `assert_live_native` (revocation beats expiry); expired anchor refuses `delegation-expired`. Pure ticket chains need no revocation input. Red-first: both facets reproduced BREAK on pristine base (present-after-revoke, issue-on-revoked); re-pinned `evals/w300_redteam_probes.py` F378 probes (incl. new fail-closed / substituted-revoker / ancestor-revocation probes) HELD with exact coded refusals; `tests/test_delegation_compose.py` receipt-anchored call sites updated to the new API; w299 delegation batteries green.)
-## F379: multi-hop delegation-bound leases honor only the root delegator's revocation list -- an intermediate delegator's revocation of the bound receipt is invisible (MEDIUM, OPEN)
+## F380: workflow authority verification treats the revocation ledger as optional -- a revoked chain authorizes when the caller omits the ledger, and the completed-step replay path skips all authority checks (MEDIUM, OPEN)
+
+**Cells:** wave-302 independent red-team, 2026-10-03. Standing regression pins:
+`evals/w302_redteam_probes.py` (probes `F380-revoked-no-ledger-executes`,
+`F380-replay-no-authority-check`, `F380-replay-cross-actor`).
+
+**Defect:** `gov/workflow.py::_verify_authority` consults the revocation
+ledger only "when a revocation ledger is presented"
+(`ledger = authority.get("revocation_ledger"); if ledger is not None`).
+The authority dict is constructed by the caller -- the same agent whose
+authority is being checked -- so a holder of a REVOKED delegation chain
+omits the key and the step executes: verified empirically
+(`run_step` returned outputs under a revoked chain with the ledger
+omitted; the control with the ledger presented refuses coded
+`workflow-authority-revoked`). Worse, the completed-step replay path in
+`run_step` returns BEFORE `_verify_authority` is reached, so replaying
+completed steps performs NO authority check at all -- not even the
+actor binding. Verified empirically: `replay()` of completed steps
+succeeded with a revoked chain and no ledger, and succeeded again with
+a DIFFERENT actor presenting garbage authority (`{"actor_id":
+"mallory", "chain": [], "trust_roots": []}`), returning the victim
+run's recorded outputs. The module's standing design rule -- "every
+resume re-proves its authority" -- is violated on both paths. Contrast
+the sibling modules: `gov/workflow_idempotency.py` requires
+`authority_verifier` positionally, and `gov/workflow_saga.py` holds
+verifiers deployment-side where the caller cannot omit them.
+
+**Severity rationale:** MEDIUM. Revocation is the delegation stack's
+kill switch; this is the same class as F377/F378/F379 (revocation
+visibility on a revocation-enforcement seam). The replay variant is a
+cross-actor read of another run's step outputs with zero
+authentication. Preconditions are plausible: any agent that can call
+the library constructs its own authority dict.
+
+**Close-when criteria:** (1) revocation liveness is enforced whenever a
+chain is verified -- require the revocation ledger on every authority
+verification (fail closed when absent, the F378 precedent), or the
+deployment pins and tests that it always supplies one; (2) the
+completed-step replay path re-verifies authority (including the actor
+binding) before returning recorded outputs; (3) the F380 probes flip to
+HELD; (4) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-03, wave-302 independent red-team).
+## F381: idempotency complete()/checkpoint() are not caller-bound and evict_completed() is unauthenticated -- any authorized caller can complete another actor's in-flight operation with an arbitrary result (MEDIUM, OPEN)
+
+**Cells:** wave-302 independent red-team, 2026-10-03. Standing regression pins:
+`evals/w302_redteam_probes.py` (probes
+`F381-cross-caller-complete-poisons`, `F381-evict-unauthenticated`,
+`F381-cross-caller-checkpoint`).
+
+**Defect:** `gov/workflow_idempotency.py` re-verifies authority at
+`begin()` on every path, but the returned `BeginOutcome` is not bound
+to the beginning caller: `complete()` and `checkpoint()` consult no
+caller identity. Verified empirically: alice begins key K (op `pay`);
+mallory begins the same key with the same digest (authorized for the
+namespace/op_class) and gets a RETRY outcome on alice's in-flight
+record; mallory's `complete()` with a fabricated result digest/ref
+succeeds, and alice's subsequent re-begin replays mallory's fabricated
+`result_ref` -- the replay cache is poisoned and the acks_late
+discipline ("marked complete only AFTER its effects are durably
+recorded") is defeated by someone who recorded no effects. Separately,
+`evict_completed()` takes an `operator` NAME but no `authority_verifier`
+at all: verified empirically that an unauthenticated caller evicts a
+completed record, forcing re-execution. The module's own threat model
+names the authority verifier the trust anchor, yet two of the three
+state-mutating paths after `begin()` never consult it.
+
+**Severity rationale:** MEDIUM. Cross-actor result poisoning in a
+component whose contract is exactly-once execution with recorded
+results; unauthenticated eviction defeats the completed-set durability
+the module exists to provide. Any caller authorized for the
+(namespace, op_class) scope can do this -- no key theft needed.
+
+**Close-when criteria:** (1) `BeginOutcome` records the beginning
+caller and `complete()`/`checkpoint()` refuse when the completing
+caller differs (or re-verify authority with the completing caller's
+identity); (2) `evict_completed()` requires and verifies an authority
+verifier like `begin()` does; (3) the F381 probes flip to HELD; (4)
+adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-03, wave-302 independent red-team).
+## F382: workflow journal reload re-appends every record -- the file doubles on every restart (LOW, OPEN)
+
+**Cells:** wave-302 independent red-team, 2026-10-03. Standing regression pins:
+`evals/w302_redteam_probes.py` (probe `F382-reload-doubles-journal`).
+
+**Defect:** `gov/workflow.py::WorkflowStore._load()` replays the
+journal through `self._append(record)`, and `_append` writes to the
+file whenever `self._path` is set. Loading therefore re-appends every
+record it just read. Verified empirically: a 2-record journal became 4
+records after one `WorkflowStore(path=...)` reload, with byte-identical
+duplicated records. Every process restart doubles the file: unbounded
+disk growth under normal operation of a durable-execution library,
+where restarts are routine. (Duplicate records are also re-indexed
+idempotently in memory, so the corruption is silent -- nothing refuses.)
+
+**Severity rationale:** LOW. Correctness/availability bug, no attacker
+needed; integrity of the in-memory state is preserved (digests
+recompute), but the store file grows without bound and a flipped byte
+in a duplicated record would then refuse `workflow-checkpoint-tampered`
+on the next load.
+
+**Close-when criteria:** (1) `_load()` populates memory without
+re-appending to the file (or opens the file in a read phase distinct
+from the append phase); (2) the F382 probe flips to HELD (reload is a
+fixed point: N records before == N after); (3) adjacent batteries stay
+green.
+
+**Status: OPEN** (filed 2026-10-03, wave-302 independent red-team).
+## F383: workflow step-level idempotency key path replays stale outputs for a different step name/inputs, bypassing the drift refusal (LOW, OPEN)
+
+**Cells:** wave-302 independent red-team, 2026-10-03. Standing regression pins:
+`evals/w302_redteam_probes.py` (probe `F383-key-path-skips-drift`).
+
+**Defect:** `gov/workflow.py::run_step` has two replay paths. The
+seq-slot path refuses definition drift coded
+(`workflow-step-unauthorized`) when the name or inputs differ. The
+step-level idempotency-key path (`self._step_idem.get((run_id,
+idempotency_key))`) returns the recorded outputs WITHOUT checking the
+step name or the inputs digest. Verified empirically: step (seq 0,
+name "step-a", inputs `{"in": 1}`) completed under key K; step (seq 5,
+name "step-B-DIFFERENT", inputs `{"in": 999}`) under key K returned
+`{"v": "A"}` with `replayed=True` -- a different operation's outputs,
+without executing. The module documents "a step-level idempotency key
+replays across seq slots" but does not document that the replay ignores
+name/inputs; the inconsistency with its own drift refusal (and with
+`gov/workflow_idempotency.py`, where same-key-different-digest is a
+coded conflict) makes this a silent-wrong-result path: downstream steps
+act on outputs from an operation that never ran with these inputs.
+
+**Severity rationale:** LOW. Exploitation needs key reuse across
+different steps (caller-side), but the module's own contract treats
+drift as an attack signal on the adjacent path -- the key path
+silently bypasses it.
+
+**Close-when criteria:** (1) the idempotency-key replay path applies
+the same name and inputs-digest drift checks as the seq-slot path
+(refusing `workflow-step-unauthorized` on mismatch); (2) the F383 probe
+flips to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-03, wave-302 independent red-team).
+## F384: escalated sagas have no operator recovery path -- escalation is terminal despite "until an operator intervenes" (LOW, OPEN)
+
+**Cells:** wave-302 independent red-team, 2026-10-03. Standing regression pins:
+`evals/w302_redteam_probes.py` (probe `F384-escalation-terminal`).
+
+**Defect:** `gov/workflow_saga.py::SagaManager.run()` and `resume()`
+refuse an `escalated` saga, and the docstring says escalation lasts
+"until an operator intervenes" -- but no manager API resolves,
+retries, or clears an escalation (`dir(SagaManager)` exposes no
+escalation/recover/resolve/retry method; `dump`/`load` round-trip
+preserves the terminal status). Verified empirically: after a
+compensation exhausted its attempts, `run` and `resume` both refuse
+coded `workflow-saga-compensation-failed` with no path forward. A
+transient compensation failure (e.g. a downstream service down for the
+retry window) therefore bricks the saga permanently: completed steps
+stay uncompensated-or-worse with no operator mechanism to finish the
+rollback or re-drive the saga. Escalation is loud, as designed -- but
+loud without recourse is a liveness bug in a durability component.
+
+**Severity rationale:** LOW. Availability/liveness; no silent wrong
+behavior (the refusal is loud and coded), but the documented operator
+intervention cannot be performed through the module.
+
+**Close-when criteria:** (1) an operator recovery path exists and is
+tested -- e.g. `resolve_escalation()` / `retry_compensation()` that
+re-drives the failed compensation after the underlying cause is fixed,
+or a documented, tested manual recovery procedure via dump/load; (2)
+the F384 probe flips to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-03, wave-302 independent red-team).
+## F379: multi-hop delegation-bound leases honor only the root delegator's revocation list -- an intermediate delegator's revocation of the bound receipt is invisible (MEDIUM, CLOSED)
 
 **Cells:** wave-301 independent red-team, 2026-10-03. Standing regression pins:
 `evals/w301_redteam_probes.py` (probes `F379-intermediate-revocation-invisible`,
@@ -9498,8 +9669,41 @@ single-hop chains (refuse multi-hop bound chains coded at
 `check_write`) with the restriction documented and tested; (2) the
 F379 probes flip to HELD; (3) adjacent batteries stay green.
 
-**Status: OPEN** (filed 2026-10-03, wave-301 independent red-team).
-Next free finding: **F380**. **Open findings: F379.** (F379 filed 2026-10-03, wave-301 independent red-team (MEDIUM, OPEN: multi-hop delegation-bound leases honor only the root delegator's revocation list -- intermediate delegator's revocation of the bound receipt invisible); F371 filed 2026-10-02, wave-297 independent red-team (LOW, CLOSED 2026-10-03 wave-298 lane 1: verify_trace post-signature shape assumptions crash uncoded); F372 filed 2026-10-03, wave-298 independent red-team (LOW, CLOSED 2026-10-03 wave-299 lane 1: policy_ci.load_artifact accepted artifacts with extra files added); F373 filed 2026-10-03, wave-298 independent red-team (LOW, CLOSED 2026-10-03 wave-299 lane 1: QuorumPredicate slot attributes reassignable post-construction); F374 filed 2026-10-03, wave-299 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-300 lane 1: memory_store retraction authority migrated to the newest writer); F375 filed 2026-10-03, wave-299 independent red-team (LOW, CLOSED 2026-10-03 wave-300 lane 2: memory_reconcile write-rate bound now keyed on authenticated owner key + principal string); F376 filed 2026-10-03, wave-299 independent red-team (LOW, CLOSED 2026-10-03 wave-300 lane 2: cross-namespace recall now bearer-grant); F377 filed 2026-10-03, wave-300 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-301 lane 1: embedded DID doc admitted only on canonical digest match with pin, conflicts refuse coded); F378 filed 2026-10-03, wave-300 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-301 lane 2: ticket presentation/issuance enforce revocation liveness); F364 filed 2026-10-02, wave-293 independent red-team as F361, renumbered F361->F364
+**Status: CLOSED** (filed 2026-10-03, wave-301 independent red-team;
+closed 2026-10-03, wave-302 lane 1).
+
+**Closure record (wave-302 lane 1):** chose close-when option (a) --
+per-delegator revoker sets with per-revoker anti-substitution, keeping
+the multi-hop feature. `gov/coordination_lease.py::
+_check_delegation_binding_live` now normalizes the revocation state
+to a `{delegator_id: DelegationRevoker}` mapping: the new
+`delegation_context["revokers"]` mapping, or the legacy
+`delegation_context["revoker"]` single shape normalized to a
+one-entry mapping (the single revoker must still speak for the chain
+ROOT, preserving wave-300's wrong-delegator-substitution refusal).
+Every chain member's revocation is checked against ITS delegator's
+list, each with per-revoker anti-substitution (revoker's
+`delegator_id` must match the member's; native: revoker key must
+equal the receipt's `delegator_pubkey`, root additionally in
+`trust_roots`; local-shape: revoker key must equal the keyring
+entry). A member with no presented revoker refuses fail-closed
+`coord-lease-fencing` -- a multi-hop chain presented with only the
+root's list can no longer pass on the root's clean list. Refusal
+order preserved: revoked -> `coord-lease-fencing`, expired ->
+`coord-lease-expired`, other defects -> `coord-lease-invalid`.
+Red-first: pristine-base repro (`/tmp/repro_f379.py`: B revokes the
+bound leaf, A's revoker presented) BREAK (write returned True) ->
+HELD (`coord-lease-fencing`) on the fixed tree; w300 battery F379
+probes 3 BREAK / 0 ERROR on pristine base -> 5/5 HELD fixed;
+`tests/test_revoke_lease.py` 20/20 (12 existing + 8 new
+`TestF379PerDelegatorRevokers`); w300 battery 0/28/0; w301 F379
+probes re-pinned to the fixed behavior (HELD). No new codes; pin
+stays 1812. Honest residuals: revocation-list freshness remains
+deployment-owned (a presenter can withhold new revocations until the
+verifier demands a fresh list -- fail-closed only when no state for a
+hop is presented); compromised delegator key is the
+compromised-host class.
+Next free finding: **F385**. **Open findings: F380,F381,F382,F383,F384.** (F380 filed 2026-10-03, wave-302 independent red-team (MEDIUM, OPEN: workflow authority treats the revocation ledger as optional -- revoked chain authorizes when the caller omits it; completed-step replay skips all authority checks); F381 filed 2026-10-03, wave-302 independent red-team (MEDIUM, OPEN: idempotency complete()/checkpoint() not caller-bound -- any authorized caller completes another actor's in-flight op with arbitrary result; evict_completed() unauthenticated); F382 filed 2026-10-03, wave-302 independent red-team (LOW, OPEN: workflow journal reload re-appends every record -- file doubles on every restart); F383 filed 2026-10-03, wave-302 independent red-team (LOW, OPEN: workflow step-level idempotency key path replays stale outputs for different name/inputs, bypassing the drift refusal); F384 filed 2026-10-03, wave-302 independent red-team (LOW, OPEN: escalated sagas have no operator recovery path -- escalation terminal); F379 filed 2026-10-03, wave-301 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-302 lane 1: per-delegator revoker sets with per-revoker anti-substitution; F371 filed 2026-10-02, wave-297 independent red-team (LOW, CLOSED 2026-10-03 wave-298 lane 1: verify_trace post-signature shape assumptions crash uncoded); F372 filed 2026-10-03, wave-298 independent red-team (LOW, CLOSED 2026-10-03 wave-299 lane 1: policy_ci.load_artifact accepted artifacts with extra files added); F373 filed 2026-10-03, wave-298 independent red-team (LOW, CLOSED 2026-10-03 wave-299 lane 1: QuorumPredicate slot attributes reassignable post-construction); F374 filed 2026-10-03, wave-299 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-300 lane 1: memory_store retraction authority migrated to the newest writer); F375 filed 2026-10-03, wave-299 independent red-team (LOW, CLOSED 2026-10-03 wave-300 lane 2: memory_reconcile write-rate bound now keyed on authenticated owner key + principal string); F376 filed 2026-10-03, wave-299 independent red-team (LOW, CLOSED 2026-10-03 wave-300 lane 2: cross-namespace recall now bearer-grant); F377 filed 2026-10-03, wave-300 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-301 lane 1: embedded DID doc admitted only on canonical digest match with pin, conflicts refuse coded); F378 filed 2026-10-03, wave-300 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-301 lane 2: ticket presentation/issuance enforce revocation liveness); F364 filed 2026-10-02, wave-293 independent red-team as F361, renumbered F361->F364
 at the wave-293 merge -- the wave-293 sweep lane filed F361-F363 first
 at ~19:53 UTC and keeps them per the wave-272 earliest-filed rule;
 closed 2026-10-02, wave-294 lane 1; F367 filed 2026-10-02, wave-295

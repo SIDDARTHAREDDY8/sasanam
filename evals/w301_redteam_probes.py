@@ -65,7 +65,7 @@ from gov import memory_composed as mc
 from gov import memory_reconcile as mr
 from gov import memory_store as ms
 
-TAXONOMY_PIN = 1812  # Wave-301 merge pin 1812 (was 1802 at wave-300); this lane mints no codes.
+TAXONOMY_PIN = 1820  # Wave-301 merge pin 1812 (was 1802 at wave-300); this lane mints no codes.; Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*)
 
 _results = []
 
@@ -123,14 +123,16 @@ class BaseStateTest(unittest.TestCase):
             text = fh.read()
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-        # Wave-301 merge re-pin: F377/F378 CLOSED by lanes 1-2;
-        # F379 filed OPEN by this lane. Merged footer: open F379 /
-        # next free F380.
-        ok = (m_open and m_open[-1].strip() == "F379"
-              and m_next and m_next[-1] == "F380")
+        # Wave-302 lane 1 re-pin: F379 CLOSED by this lane.
+        # Merged footer: open findings: none / next free F380.
+                # Wave-302 merge re-pin: F379 CLOSED by lane 1; wave-302 red team
+        # filed F380-F384 (OPEN). Merged footer: open F380,F381,F382,F383,F384 /
+        # next free F385.
+        ok = (m_open and m_open[-1].strip().lower() == "f380,f381,f382,f383,f384"
+              and m_next and m_next[-1] == "F385")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F379 / next free F380") == "HELD")
+            "want open F380,F381,F382,F383,F384 / next free F385") == "HELD")
 
     def test_pin(self):
         lits = _literals()
@@ -138,7 +140,7 @@ class BaseStateTest(unittest.TestCase):
               and lits == sorted(lits))
         self.assertTrue(_expect_held(
             "taxonomy-pin",
-            ok and TAXONOMY_PIN == 1812,
+            ok and TAXONOMY_PIN == 1820,
             "%d literals / %d unique / sorted=%s"
             % (len(lits), len(set(lits)), lits == sorted(lits))) == "HELD")
 
@@ -423,13 +425,13 @@ class RevokeLeaseSeamTest(unittest.TestCase):
     """Target 2: the delegation_binding seam in check_write."""
 
     def test_F379_multihop_intermediate_revocation_invisible(self):
-        # F379 (MEDIUM, OPEN): for a multi-hop chain bound at the leaf,
-        # only the ROOT delegator's revocation list is consulted. When
-        # the leaf's own delegator (an intermediate hop) revokes the
-        # bound receipt, the write still succeeds -- the revocation is
-        # invisible to the check. BREAK: the write must refuse
-        # coord-lease-fencing (lane-4 close-when: "Revoked
-        # receipt/ancestor maps to coord-lease-fencing").
+        # F379 (MEDIUM, CLOSED wave-302 lane 1): for a multi-hop chain
+        # bound at the leaf, every delegator's revocation list is now
+        # consulted. When the leaf's own delegator (an intermediate
+        # hop) revokes the bound receipt, the write must refuse
+        # coord-lease-fencing -- both under the legacy single-revoker
+        # shape (fail closed: the intermediate hop's state cannot be
+        # shown) and under the new per-delegator revokers mapping.
         sa, sb, sc = _seed("f379-a"), _seed("f379-b"), _seed("f379-c")
         root = _lease_native(sa, "authority-a", "holder-b", _pub(sb))
         # Re-delegate holder-b -> holder-c (multi-hop chain).
@@ -450,26 +452,44 @@ class RevokeLeaseSeamTest(unittest.TestCase):
                 "revocation_list_digest": rev_a.list_digest()})
         # The leaf's delegator revokes the bound receipt.
         rev_b.revoke(child["receipt_id"], _AT + 5)
-        ctx = {"revoker": rev_a, "chain": [root, child],
-               "trust_roots": [_pub(sa)]}
+        # Legacy shape: only the root's revoker presented -- the
+        # intermediate hop's revocation state is unshowable, so the
+        # write fails closed instead of passing on the root's clean
+        # list as wave-300 did.
+        legacy_ctx = {"revoker": rev_a, "chain": [root, child],
+                      "trust_roots": [_pub(sa)]}
         try:
             mgr.check_write("f379-scope", lease["fencing_token"],
                             "holder-c", checked_at=_AT + 10,
-                            delegation_context=ctx)
-            broke = True
-        except Exception:  # noqa: BLE001
-            broke = False
+                            delegation_context=legacy_ctx)
+            legacy_code = "NO-REFUSAL"
+        except Exception as e:  # noqa: BLE001
+            legacy_code = getattr(e, "code", None)
+        # New shape: per-delegator revokers -- B's revocation is
+        # enforced.
+        map_ctx = {"revokers": {"authority-a": rev_a,
+                               "holder-b": rev_b},
+                   "chain": [root, child], "trust_roots": [_pub(sa)]}
+        try:
+            mgr.check_write("f379-scope", lease["fencing_token"],
+                            "holder-c", checked_at=_AT + 10,
+                            delegation_context=map_ctx)
+            map_code = "NO-REFUSAL"
+        except Exception as e:  # noqa: BLE001
+            map_code = getattr(e, "code", None)
         self.assertTrue(_expect_held(
-            "F379-intermediate-revocation-invisible", not broke,
-            "write succeeded despite the bound leaf receipt being "
-            "revoked by its own delegator") == "BREAK")
+            "F379-intermediate-revocation-fenced",
+            legacy_code == "coord-lease-fencing"
+            and map_code == "coord-lease-fencing",
+            "legacy=%r mapping=%r; want coord-lease-fencing both"
+            % (legacy_code, map_code)) == "HELD")
 
     def test_F379_correct_revoker_structurally_refused(self):
-        # The other half of F379: presenting the leaf delegator's OWN
-        # revoker (the one that actually revoked the bound receipt) is
-        # refused coord-lease-invalid by the anti-substitution check,
-        # which demands the ROOT's delegator. There is no way to get
-        # the genuine revocation recognized.
+        # F379 (MEDIUM, CLOSED wave-302 lane 1): the leaf delegator's
+        # OWN revoker is now a first-class citizen via the
+        # per-delegator revokers mapping -- presenting it enforces
+        # its revocation (fencing), instead of being structurally
+        # refused as invalid for not being the root's.
         sa, sb, sc = _seed("f379b-a"), _seed("f379b-b"), _seed("f379b-c")
         root = _lease_native(sa, "authority-a", "holder-b", _pub(sb))
         child = dg.issue(sb, "holder-b", "holder-c", _pub(sc),
@@ -488,8 +508,8 @@ class RevokeLeaseSeamTest(unittest.TestCase):
                 "receipt_id": child["receipt_id"],
                 "revocation_list_digest": rev_a.list_digest()})
         rev_b.revoke(child["receipt_id"], _AT + 5)
-        ctx = {"revoker": rev_b, "chain": [root, child],
-               "trust_roots": [_pub(sa)]}
+        ctx = {"revokers": {"authority-a": rev_a, "holder-b": rev_b},
+               "chain": [root, child], "trust_roots": [_pub(sa)]}
         try:
             mgr.check_write("f379b-scope", lease["fencing_token"],
                             "holder-c", checked_at=_AT + 10,
@@ -497,12 +517,12 @@ class RevokeLeaseSeamTest(unittest.TestCase):
             code = "NO-REFUSAL"
         except Exception as e:  # noqa: BLE001
             code = getattr(e, "code", None)
-        # BREAK: the genuine revoker is refused as invalid instead of
-        # being accepted and fencing the write.
+        # The genuine revocation is enforced (fencing), not refused
+        # as structurally invalid.
         self.assertTrue(_expect_held(
-            "F379-correct-revoker-refused", code != "coord-lease-invalid",
-            "leaf delegator's revoker refused %r; no path to enforce "
-            "its revocation" % (code,)) == "BREAK")
+            "F379-correct-revoker-enforced", code == "coord-lease-fencing",
+            "leaf delegator's revoker gave %r; want "
+            "coord-lease-fencing" % (code,)) == "HELD")
 
     def test_renew_then_revoke_fences(self):
         # Renewal preserves the binding; a later revocation still
@@ -791,10 +811,10 @@ class RepinTest(unittest.TestCase):
     def test_pin_repin(self):
         lits = _literals()
         self.assertTrue(_expect_held(
-            "repin-pin-1812",
-            len(lits) == 1812 and len(set(lits)) == 1812
+            "repin-pin-1820",
+            len(lits) == 1820 and len(set(lits)) == 1820
             and lits == sorted(lits),
-            "1812 unique sorted literals") == "HELD")
+            "1820 unique sorted literals") == "HELD")
 
 
 def _green_check(battery, expect):

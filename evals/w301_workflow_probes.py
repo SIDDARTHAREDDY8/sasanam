@@ -46,7 +46,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1812  # Wave-300 merge pin 1802; wave-301 lane 3: pin 1802 -> 1805 (+3 workflow-*); wave-301 merge: 1812 (+10 workflow-*)
+TAXONOMY_PIN = 1820  # Wave-300 merge pin 1802; wave-301 lane 3: pin 1802 -> 1805 (+3 workflow-*); wave-301 merge: 1812 (+10 workflow-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*)
 
 _results = []
 

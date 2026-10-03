@@ -16715,6 +16715,30 @@ TAXONOMY = {
         "evidence_kinds_required": ['chain-bundle'],
         "reverify_steps": ['recompute'],
     },
+    'workflow-approval-binding-invalid': {
+        "domain": 'workflow-approval',
+        "code": 'workflow-approval-binding-invalid',
+        "human": 'approval-gated workflow step: the step\u2019s approval '
+                 'binding is malformed -- non-dict inputs (the binding is '
+                 'augmented into the inputs), user inputs carrying the '
+                 'reserved _gated_step key, or uncanonicalizable material',
+        "severity": 'high',
+        "evidence_kinds_required": ['workflow-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'workflow-approval-digest-mismatch': {
+        "domain": 'workflow-approval',
+        "code": 'workflow-approval-digest-mismatch',
+        "human": 'approval-gated workflow step: the presented approval does '
+                 'not authorize this step -- its bound step digest differs '
+                 '(wrong step, cross-step replay, or a non-gated approval), '
+                 'its requester is not the step\u2019s actor, or the '
+                 'executing authority chain is not the chain the approval '
+                 'bound',
+        "severity": 'high',
+        "evidence_kinds_required": ['workflow-record'],
+        "reverify_steps": ['recompute'],
+    },
     'workflow-authority-revoked': {
         "domain": 'workflow',
         "code": 'workflow-authority-revoked',
@@ -16726,6 +16750,36 @@ TAXONOMY = {
         "evidence_kinds_required": ['workflow-record'],
         "reverify_steps": ['recompute'],
     },
+    'workflow-branch-decision-forgery': {
+        "domain": 'workflow-branch',
+        "code": 'workflow-branch-decision-forgery',
+        "human": 'branch transaction: the coordinator decision signature '
+                 'does not verify under the transaction coordinator key; '
+                 'refused fail-closed, never applied',
+        "severity": 'critical',
+        "evidence_kinds_required": ['decision-package', 'signature'],
+        "reverify_steps": ['recompute', 'verify-signature'],
+    },
+    'workflow-branch-unregistered': {
+        "domain": 'workflow-branch',
+        "code": 'workflow-branch-unregistered',
+        "human": 'branch transaction: an unregistered branch tried to '
+                 'apply a coordinator decision; registration must precede '
+                 'commit',
+        "severity": 'high',
+        "evidence_kinds_required": ['decision-package', 'branch-registry'],
+        "reverify_steps": ['recompute'],
+    },
+    'workflow-branch-xid-mismatch': {
+        "domain": 'workflow-branch',
+        "code": 'workflow-branch-xid-mismatch',
+        "human": 'branch transaction: a step ran without the expected '
+                 'transaction XID, or a decision package was applied under '
+                 'the wrong XID',
+        "severity": 'high',
+        "evidence_kinds_required": ['step-record', 'xid'],
+        "reverify_steps": ['recompute'],
+    },
     'workflow-checkpoint-tampered': {
         "domain": 'workflow',
         "code": 'workflow-checkpoint-tampered',
@@ -16735,6 +16789,41 @@ TAXONOMY = {
                  'therefore cannot be checkpointed',
         "severity": 'critical',
         "evidence_kinds_required": ['workflow-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'workflow-composed-authority-mismatch': {
+        "domain": 'workflow',
+        "code": 'workflow-composed-authority-mismatch',
+        "human": 'composed workflow: the authority actor changed '
+                 'mid-execution across composed units (authority '
+                 'substitution); the plan actor is pinned at first '
+                 'execute and every later call must present the same '
+                 'actor',
+        "severity": 'high',
+        "evidence_kinds_required": ['workflow-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'workflow-composed-definition-invalid': {
+        "domain": 'workflow',
+        "code": 'workflow-composed-definition-invalid',
+        "human": 'composed workflow: the composed plan is malformed '
+                 '(empty, duplicate unit name, unknown unit kind, '
+                 'missing fn/definition/leg material, or non-checkpointable '
+                 'inputs)',
+        "severity": 'high',
+        "evidence_kinds_required": ['workflow-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'workflow-composed-divergent': {
+        "domain": 'workflow',
+        "code": 'workflow-composed-divergent',
+        "human": 'composed workflow: the idempotency layer and the '
+                 'workflow checkpoint layer disagree (replay points at a '
+                 'missing/incomplete/digest-mismatched step) -- the layers '
+                 'have forked; refused fail-closed instead of re-executing '
+                 'or trusting either side',
+        "severity": 'critical',
+        "evidence_kinds_required": ['workflow-record', 'idempotency-record'],
         "reverify_steps": ['recompute'],
     },
     'workflow-idempotency-authority-lapsed': {

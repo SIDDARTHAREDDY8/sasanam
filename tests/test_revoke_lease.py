@@ -171,5 +171,124 @@ class TestDelegationBindingWiring(unittest.TestCase):
         self.assertIs(ed25519.verify(pub, b"other", sig), False)
 
 
+SEED_C = bytes([0x0C]) * 32
+PUB_C = ed25519.publickey(SEED_C).hex()
+
+
+def _multihop():
+    """A -> B -> C chain bound at the leaf, with per-delegator revokers."""
+    root = _native(SEED_A, "authority", "holder", PUB_B)
+    child = _native(SEED_B, "holder", "sub", PUB_C, parent=root)
+    revoker_a = rev.DelegationRevoker(SEED_A, "authority")
+    revoker_b = rev.DelegationRevoker(SEED_B, "holder")
+    mgr = cl.LeaseManager()
+    binding = {"receipt_id": child["receipt_id"],
+               "revocation_list_digest": revoker_a.list_digest()}
+    lease = mgr.acquire("u-multi", 3600, "sub", authority_seed=SEED_A,
+                        issued_at=AT, delegation_binding=binding)
+    ctx = {"revokers": {"authority": revoker_a, "holder": revoker_b},
+           "chain": [root, child], "trust_roots": [PUB_A]}
+    return mgr, lease, revoker_a, revoker_b, root, child, ctx
+
+
+class TestF379PerDelegatorRevokers(unittest.TestCase):
+    """F379 (wave-302): multi-hop delegation-bound leases must honor
+    every delegator's revocation list, not just the root's."""
+
+    def test_multihop_live_with_revokers_mapping(self):
+        mgr, lease, ra, rb, root, child, ctx = _multihop()
+        self.assertIs(
+            mgr.check_write("u-multi", lease["fencing_token"], "sub",
+                            checked_at=AT + 10, delegation_context=ctx),
+            True)
+
+    def test_intermediate_revocation_fencing(self):
+        # B revokes the bound leaf: invisible before F379, fences now.
+        mgr, lease, ra, rb, root, child, ctx = _multihop()
+        rb.revoke(child["receipt_id"], AT + 5)
+        with self.assertRaises(cl.CoordinationLeaseError) as cm:
+            mgr.check_write("u-multi", lease["fencing_token"], "sub",
+                            checked_at=AT + 10, delegation_context=ctx)
+        self.assertEqual(cm.exception.code, "coord-lease-fencing")
+
+    def test_intermediate_revokes_ancestor_receipt(self):
+        # B revokes the receipt B itself issued (the leaf); A revoking
+        # nothing keeps A's list clean -- the write must still fence.
+        mgr, lease, ra, rb, root, child, ctx = _multihop()
+        rb.revoke(root["receipt_id"], AT + 5)  # not B's receipt; no-op semantically
+        self.assertIs(
+            mgr.check_write("u-multi", lease["fencing_token"], "sub",
+                            checked_at=AT + 10, delegation_context=ctx),
+            True)
+
+    def test_legacy_single_revoker_multihop_fencing(self):
+        # Legacy single (root) revoker on a multi-hop chain: the
+        # intermediate hop's revocation state is unshowable, so the
+        # write fails closed (F379) instead of passing on the
+        # root's clean list as wave-300 did.
+        mgr, lease, ra, rb, root, child, ctx = _multihop()
+        legacy = {"revoker": ra, "chain": [root, child],
+                  "trust_roots": [PUB_A]}
+        with self.assertRaises(cl.CoordinationLeaseError) as cm:
+            mgr.check_write("u-multi", lease["fencing_token"], "sub",
+                            checked_at=AT + 10,
+                            delegation_context=legacy)
+        self.assertEqual(cm.exception.code, "coord-lease-fencing")
+
+    def test_missing_member_revoker_fencing(self):
+        mgr, lease, ra, rb, root, child, ctx = _multihop()
+        partial = {"revokers": {"authority": ra},
+                   "chain": [root, child], "trust_roots": [PUB_A]}
+        with self.assertRaises(cl.CoordinationLeaseError) as cm:
+            mgr.check_write("u-multi", lease["fencing_token"], "sub",
+                            checked_at=AT + 10,
+                            delegation_context=partial)
+        self.assertEqual(cm.exception.code, "coord-lease-fencing")
+
+    def test_mislabeled_mapping_entry_invalid(self):
+        # A's revoker filed under B's delegator_id: substitution.
+        mgr, lease, ra, rb, root, child, ctx = _multihop()
+        bad = {"revokers": {"authority": ra, "holder": ra},
+               "chain": [root, child], "trust_roots": [PUB_A]}
+        with self.assertRaises(cl.CoordinationLeaseError) as cm:
+            mgr.check_write("u-multi", lease["fencing_token"], "sub",
+                            checked_at=AT + 10, delegation_context=bad)
+        self.assertEqual(cm.exception.code, "coord-lease-invalid")
+
+    def test_wrong_key_member_revoker_invalid(self):
+        # Attacker revoker filed under B's id but with the attacker's
+        # key: the per-member key binding refuses.
+        mgr, lease, ra, rb, root, child, ctx = _multihop()
+        evil = rev.DelegationRevoker(bytes([0xE1]) * 32, "holder")
+        bad = {"revokers": {"authority": ra, "holder": evil},
+               "chain": [root, child], "trust_roots": [PUB_A]}
+        with self.assertRaises(cl.CoordinationLeaseError) as cm:
+            mgr.check_write("u-multi", lease["fencing_token"], "sub",
+                            checked_at=AT + 10, delegation_context=bad)
+        self.assertEqual(cm.exception.code, "coord-lease-invalid")
+
+    def test_local_shape_multihop_revocation(self):
+        # Local-shape (keyring) receipts: same per-delegator rule.
+        la = rev.make_receipt(SEED_A, "authority", "holder", None, 0,
+                              ["lease.acquire"], AT, AT + 3600)
+        lb = rev.make_receipt(SEED_B, "holder", "sub", la["receipt_id"],
+                              0, ["lease.acquire"], AT, AT + 3600)
+        ra = rev.DelegationRevoker(SEED_A, "authority")
+        rb = rev.DelegationRevoker(SEED_B, "holder")
+        rb.revoke(lb["receipt_id"], AT + 5)
+        mgr = cl.LeaseManager()
+        binding = {"receipt_id": lb["receipt_id"],
+                   "revocation_list_digest": ra.list_digest()}
+        lease = mgr.acquire("u-loc", 3600, "sub", authority_seed=SEED_A,
+                            issued_at=AT, delegation_binding=binding)
+        ctx = {"revokers": {"authority": ra, "holder": rb},
+               "chain": [la, lb],
+               "keyring": {"authority": PUB_A, "holder": PUB_B}}
+        with self.assertRaises(cl.CoordinationLeaseError) as cm:
+            mgr.check_write("u-loc", lease["fencing_token"], "sub",
+                            checked_at=AT + 10, delegation_context=ctx)
+        self.assertEqual(cm.exception.code, "coord-lease-fencing")
+
+
 if __name__ == "__main__":
     unittest.main()

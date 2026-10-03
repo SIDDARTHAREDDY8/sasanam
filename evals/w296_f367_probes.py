@@ -35,7 +35,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1812  # Wave-296 lane 1: unchanged (F367 fix reuses existing; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
+TAXONOMY_PIN = 1820  # Wave-296 lane 1: unchanged (F367 fix reuses existing; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*)
                      # codes; no new decision codes minted).
 
 _results = []
@@ -72,7 +72,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate code literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "code literals not sorted")
-    _record("pin-taxonomy", "HELD", "1812 raw literals, unique, sorted")
+    _record("pin-taxonomy", "HELD", "1820 raw literals, unique, sorted")
 
 
 def _import_cl():

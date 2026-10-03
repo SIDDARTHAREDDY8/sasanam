@@ -42,7 +42,7 @@ from gov import invocation_pipeline as ip
 from gov import decision_codes as dc
 import gov.tool_call_policy as tcp
 
-TAXONOMY_PIN = 1812  # Wave-296 merge pin; this lane mints no codes.; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
+TAXONOMY_PIN = 1820  # Wave-296 merge pin; this lane mints no codes.; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*)
 
 _results = []
 
@@ -103,14 +103,18 @@ class DecisionTraceAttackTest(unittest.TestCase):
         # (OPEN). Wave-300 lanes 1-2 CLOSED F374/F375/F376; the wave-300
         # red team filed F377/F378 (OPEN). The footer must say so in its
         # own words. (Merge re-pin, wave-301: F377/F378 CLOSED by lanes
-        # 1-2; F379 filed OPEN by the wave-301 red team. Merged footer:
-        # open F379 / next free F380.)
+        # 1-2; F379 filed OPEN by the wave-301 red team. Re-pin, wave-302
+        # lane 1: F379 CLOSED. Merged footer: open findings: none /
+        # next free F380.)
         path = os.path.join(os.path.dirname(
             os.path.dirname(os.path.abspath(__file__))), "evals",
             "FINDINGS.md")
         footer = open(path).read()[-4000:]
-        ok = "Next free finding: **F380**" in footer \
-            and "Open findings: F379." in footer
+                # Wave-302 merge re-pin: F379 CLOSED by lane 1; wave-302 red team
+        # filed F380-F384 (OPEN). Merged footer: open F380,F381,F382,F383,F384 /
+        # next free F385.
+        ok = "Next free finding: **F385**" in footer \
+            and "Open findings: F380,F381,F382,F383,F384." in footer
         self.assertTrue(_expect_held("footer-state", ok,
                                     "footer disagrees") == "HELD")
 

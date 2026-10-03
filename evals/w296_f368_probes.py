@@ -44,7 +44,7 @@ if _REPO not in sys.path:
 
 from gov import invocation_pipeline as ip  # noqa: E402
 
-TAXONOMY_PIN = 1812
+TAXONOMY_PIN = 1820  #; Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*)
 
 
 def _record(pid, verdict, note):

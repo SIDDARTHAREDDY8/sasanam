@@ -433,28 +433,36 @@ class LeaseManager:
         ``coord-lease-expired`` BEFORE any state change (pre-decay
         fail-closed). Returns True.
 
-        ``delegation_context`` (optional, wave-300): required when
-        the live grant carries a ``delegation_binding``. Shape::
+        ``delegation_context`` (optional, wave-300; per-delegator
+        revoker sets wave-302 / F379): required when the live grant
+        carries a ``delegation_binding``. Shape::
 
-            {"revoker": <gov.delegation_revocation.DelegationRevoker>,
+            {"revokers": {delegator_id: <gov.delegation_revocation.DelegationRevoker>},
              "chain":   [<root-first receipts, leaf last>],
              "trust_roots": [...] }   # native gov/delegation.py receipts
             # -- or --
-            {"revoker": <DelegationRevoker>,
+            {"revokers": {delegator_id: <DelegationRevoker>},
              "chain":   [...],
              "keyring": {delegator_id: pubkey_hex}}  # local-shape receipts
 
-        The presented chain must terminate at the bound
-        ``receipt_id``; the presented revoker must be the bound
-        receipt's delegator -- its key must match the delegator's
-        key in the trust roots / keyring (always checked, never
-        skipped: a digest-only check is insufficient since an empty
-        attacker-controlled revoker shares the empty list's digest).
-        This stops a substituted revoker while letting the
-        delegator's newer revocations take effect without
-        re-acquire. A bound grant presented WITHOUT revocation
-        state refuses fail-closed coded ``coord-lease-fencing`` --
-        authority that cannot be shown live is dead authority. A
+        The legacy ``{"revoker": <DelegationRevoker>}`` single-revoker
+        shape is still accepted and means
+        ``{revoker.delegator_id: revoker}`` (the revoker must speak
+        for the chain root, as wave-300). Every chain member's
+        revocation is checked against ITS delegator's list, each
+        with per-revoker anti-substitution: the presented revoker
+        must hold the member delegator's own key (pubkey in
+        ``trust_roots`` for the root / equal to the receipt's
+        ``delegator_pubkey`` for native members, equal to the
+        keyring entry for local-shape members) and its
+        ``delegator_id`` must match. A member with no presented
+        revoker refuses fail-closed. The presented chain must
+        terminate at the bound ``receipt_id``. This stops a
+        substituted revoker while letting each delegator's newer
+        revocations take effect without re-acquire. A bound grant
+        presented WITHOUT (complete) revocation state refuses
+        fail-closed coded ``coord-lease-fencing`` -- authority that
+        cannot be shown live for every hop is dead authority. A
         ``delegation-revoked`` refusal maps onto
         ``coord-lease-fencing``; a ``delegation-expired`` refusal
         maps onto ``coord-lease-expired``; other delegation
@@ -491,26 +499,56 @@ class LeaseManager:
 
     def _check_delegation_binding_live(self, binding, delegation_context,
                                        checked_at):
-        """Enforce a delegation binding at write time (wave-300).
+        """Enforce a delegation binding at write time (wave-300;
+        per-delegator revoker sets wave-302 / F379).
 
         Fail-closed at every step: missing state, a substituted
         revoker, a chain that does not terminate at the bound
         receipt, or a revoked receipt all refuse. Revocation beats
         expiry, matching the revocation module's refusal order.
+
+        F379: revocation state is per-delegator. The context carries
+        either the legacy ``{"revoker": <DelegationRevoker>}`` shape
+        (normalized to a one-entry mapping keyed by its
+        delegator_id; the single revoker must still speak for the
+        chain ROOT, exactly as wave-300) or the new
+        ``{"revokers": {delegator_id: <DelegationRevoker>}}``
+        mapping. Every chain member's revocation is checked against
+        ITS delegator's list, each with per-revoker
+        anti-substitution -- a multi-hop chain bound at the leaf
+        can no longer hide an intermediate delegator's revocation
+        behind the root's clean list. A member whose delegator has
+        no presented revoker refuses fail-closed: authority that
+        cannot be shown live for every hop is dead authority.
         """
         from gov import delegation_revocation as _rev  # lazy: no cycle
         if not isinstance(delegation_context, dict):
             _fail(LEASE_FENCING,
                   "write denied: grant is delegation-bound but no "
                   "revocation state was presented (fail closed)")
-        revoker = delegation_context.get("revoker")
-        if not isinstance(revoker, _rev.DelegationRevoker):
+        # Normalize revokers to a per-delegator mapping (F379).
+        # The legacy single-revoker shape keeps wave-300 semantics:
+        # wrong-type refuses fail-closed; a revoker that does not
+        # speak for the chain root is a substitution attempt.
+        _legacy = None
+        revokers = delegation_context.get("revokers")
+        if revokers is None:
+            _legacy = delegation_context.get("revoker")
+            if not isinstance(_legacy, _rev.DelegationRevoker):
+                _fail(LEASE_FENCING,
+                      "write denied: grant is delegation-bound but the "
+                      "delegator's revocation list was not presented "
+                      "(fail closed)")
+        elif not isinstance(revokers, dict) or not revokers or any(
+                not isinstance(_k, str)
+                or not isinstance(_v, _rev.DelegationRevoker)
+                for _k, _v in revokers.items()):
             _fail(LEASE_FENCING,
-                  "write denied: grant is delegation-bound but the "
-                  "delegator's revocation list was not presented "
+                  "write denied: revokers must be a non-empty "
+                  "delegator_id -> DelegationRevoker mapping "
                   "(fail closed)")
-        # Anti-substitution: the presented revoker must speak for
-        # the bound receipt's delegator -- ALWAYS checked, never
+        # Anti-substitution: the presented revoker(s) must speak for
+        # the receipts' own delegators -- ALWAYS checked, never
         # skipped on a digest match. (A digest-only check is
         # insufficient: an empty attacker-controlled revoker has
         # the same list digest as an empty legitimate one.) The
@@ -534,18 +572,82 @@ class LeaseManager:
         root = chain[0]
         root_delegator = root.get("delegator_id") \
             if isinstance(root, Mapping) else None
+        if _legacy is not None:
+            if _legacy.delegator_id != root_delegator:
+                _fail(LEASE_INVALID,
+                      "write denied: presented revocation list is not "
+                      "the bound receipt's delegator's own list")
+            revokers = {_legacy.delegator_id: _legacy}
         if "trust_roots" in delegation_context:
-            trusted = revoker.pubkey_hex in \
-                delegation_context["trust_roots"]
+            _native = True
         elif "keyring" in delegation_context:
-            trusted = delegation_context["keyring"].get(
-                revoker.delegator_id) == revoker.pubkey_hex
+            _native = False
         else:
-            trusted = False
-        if not trusted or revoker.delegator_id != root_delegator:
             _fail(LEASE_INVALID,
-                  "write denied: presented revocation list is not "
-                  "the bound receipt's delegator's own list")
+                  "write denied: delegation_context needs "
+                  "trust_roots (native receipts) or keyring "
+                  "(local-shape receipts)")
+        # F379 per-member revocation: each chain member is checked
+        # against ITS delegator's revocation list, with
+        # per-revoker anti-substitution. Native receipts carry
+        # their delegator's pubkey (signature-verified downstream
+        # by verify_chain); the root's key must additionally sit
+        # in trust_roots. Local-shape receipts bind through the
+        # keyring. A member with no presented revoker refuses
+        # fail-closed -- a multi-hop chain presented with only the
+        # root's list can no longer pass on the root's clean list
+        # while an intermediate delegator's revocation stays
+        # invisible.
+        for _i, _receipt in enumerate(chain):
+            if not isinstance(_receipt, Mapping):
+                _fail(LEASE_INVALID,
+                      "write denied: chain member %d is not a receipt "
+                      "mapping" % (_i,))
+            _did = _receipt.get("delegator_id")
+            if not isinstance(_did, str) or not _did:
+                _fail(LEASE_INVALID,
+                      "write denied: chain member %d has no "
+                      "delegator_id" % (_i,))
+            _r = revokers.get(_did)
+            if _r is None:
+                _fail(LEASE_FENCING,
+                      "write denied: no revocation state presented "
+                      "for delegator %r (fail closed)" % (_did,))
+            if _r.delegator_id != _did:
+                _fail(LEASE_INVALID,
+                      "write denied: revoker filed under %r does not "
+                      "speak for delegator %r"
+                      % (_r.delegator_id, _did))
+            if _native:
+                _dpk = _receipt.get("delegator_pubkey")
+                if not isinstance(_dpk, str) \
+                        or _r.pubkey_hex.lower() != _dpk.lower():
+                    _fail(LEASE_INVALID,
+                          "write denied: presented revocation list "
+                          "is not the delegator's own list")
+                if _i == 0 and _r.pubkey_hex not in \
+                        delegation_context["trust_roots"]:
+                    _fail(LEASE_INVALID,
+                          "write denied: presented revocation list "
+                          "is not the bound receipt's delegator's "
+                          "own list")
+            elif delegation_context["keyring"].get(_did) != \
+                    _r.pubkey_hex:
+                _fail(LEASE_INVALID,
+                      "write denied: presented revocation list "
+                      "is not the delegator's own list")
+            _rid = _receipt.get("receipt_id")
+            if isinstance(_rid, str) and _rid in _r.revoked_targets():
+                _fail(LEASE_FENCING,
+                      "write denied: delegation receipt %s revoked; "
+                      "the fencing token's authority is dead" %
+                      _rid[:16])
+        # Full chain liveness (signatures, linkage, expiry) through
+        # the existing single-revoker path, keyed on the root
+        # delegator's revoker. Per-member revocation above already
+        # passed; the call below re-checks the root member
+        # harmlessly and performs the chain verification.
+        revoker = revokers[root_delegator]
         try:
             from gov import delegation as _dg  # lazy: no cycle
             _chain_errors = (_rev.RevocationError, _dg.DelegationError)
