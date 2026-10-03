@@ -34,6 +34,8 @@ import traceback
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 1829  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*); Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
@@ -337,10 +339,13 @@ def main():
     nbreak = sum(1 for _, v, _ in _results if v == "BREAK")
     nheld = sum(1 for _, v, _ in _results if v == "HELD")
     nerr = sum(1 for _, v, _ in _results if v == "ERROR")
-    for pid, verdict, note in _results:
-        print("  [%s] %s: %s" % (verdict, pid, note))
+    probe_lines.emit(_results)
     print("w294_f364: %d BREAK / %d HELD / %d ERROR"
           % (nbreak, nheld, nerr))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        _results, nbreak, nheld, nerr)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
 
 
 if __name__ == "__main__":

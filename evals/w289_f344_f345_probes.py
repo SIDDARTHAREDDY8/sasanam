@@ -36,6 +36,8 @@ import tempfile
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 for _p in (REPO, os.path.join(REPO, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -376,8 +378,11 @@ def main():
     errors = sum(1 for _, v, _ in _results if v == "ERROR")
     print("w289_f344_f345: %d BREAK / %d HELD / %d ERROR" %
           (breaks, helds, errors))
-    for pid, verdict, note in _results:
-        print("  [%s] %s: %s" % (verdict, pid, note))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        _results, breaks, helds, errors)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    probe_lines.emit(_results)
     return 1 if (breaks or errors) else 0
 
 
