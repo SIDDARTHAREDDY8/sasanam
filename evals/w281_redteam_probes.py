@@ -55,6 +55,9 @@ for _p in (REPO, os.path.join(REPO, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
+
 from keyfixture import provision_test_key  # noqa: E402
 
 provision_test_key()
@@ -909,7 +912,15 @@ def _green_checks():
             out = p.stdout + p.stderr
             bad = [l for l in out.splitlines()
                    if l.startswith("  [BREAK]") or
-                   l.startswith("  [ERROR]")]
+                   l.startswith("[BREAK]") or
+                   l.startswith("  [ERROR]") or
+                   l.startswith("[ERROR]")]
+            # Wave-315: w280_redteam (D9) and w280_shields (D2) now emit
+            # canonical unindented lines; the indent-anchored predicate
+            # alone would go blind on their BREAKs. Both forms are
+            # matched. (w280_f304/f305 were already invisible to the
+            # indented predicate before this wave; this fix also catches
+            # w280_f305's unindented lines.)
             if p.returncode == 0 and not bad:
                 checks.append((batt, "HELD", "exit 0, no BREAK/ERROR"))
             else:
@@ -958,8 +969,8 @@ def main():
     errors = [r for r in _results if r[1] == "ERROR"]
     print("wave-281 redteam: %d BREAK / %d HELD / %d ERROR"
           % (len(breaks), len(held), len(errors)))
-    for pid, verdict, note in _results:
-        print("  [%s] %s: %s" % (verdict, pid, note[:160]))
+    probe_lines.emit((pid, v, probe_lines.first_line(n)[:160])
+                     for pid, v, n in _results)
     return 0 if not errors else 1
 
 

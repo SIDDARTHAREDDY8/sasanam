@@ -28,6 +28,8 @@ import subprocess  # noqa: E402
 import tempfile  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 from gov import gate_hardening as gh  # noqa: E402
 
@@ -377,8 +379,19 @@ def main():
     break_n = sum(1 for _, s, _ in RESULTS if s == "BREAK")
     err_n = sum(1 for _, s, _ in RESULTS if s == "ERROR")
     print("== w273 monitor-but-count accounting ==")
-    for name, status, detail in RESULTS:
-        print("%-34s %-6s %s" % (name, status, detail))
+    # Named exception (INFO is not in D1): info() records "INFO" for
+    # informational probes. SKIP is the canonical informational verdict
+    # (uncounted, as the old summary tallied only HELD/BREAK/ERROR).
+    # Exit-neutral: the exit consults only err_n and g_held.
+    display = [(n, ("SKIP" if s == "INFO" else s), d)
+               for n, s, d in RESULTS]
+    probe_lines.emit(display)
+    print("w273 monitor-but-count accounting: %d BREAK / %d HELD / %d ERROR"
+          % (break_n, held_n, err_n))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        display, break_n, held_n, err_n)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
     g_held, g_detail = green_check()
     print("green-check: %s (%s)" % ("HELD" if g_held else "BREAK", g_detail))
     print("RESULT %s: %d HELD / %d BREAK / %d ERROR (+green %s)" % (

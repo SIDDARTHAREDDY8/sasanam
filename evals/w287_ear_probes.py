@@ -45,6 +45,8 @@ os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
 os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w287-ear")
 os.environ.setdefault("TMPDIR", "/var/tmp/g287-ear")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 # Wave-287 lane 8: pin 1660 -> 1670 (+10 trustvec-* codes).; Wave-287 merge: pin 1670 -> 1684 (+7 tsa-* +7 evidence-provenance +10 trustvec-*)
 TAXONOMY_PIN = 1888  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*); Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*)
@@ -574,8 +576,8 @@ def main():
     nbreak = sum(1 for r in _RESULTS if r["verdict"] == "BREAK")
     nheld = sum(1 for r in _RESULTS if r["verdict"] == "HELD")
     nerr = sum(1 for r in _RESULTS if r["verdict"] == "ERROR")
-    for r in _RESULTS:
-        print("  [%s] %s: %s" % (r["verdict"], r["probe_id"], r["note"]))
+    probe_lines.emit_dicts(_RESULTS, verdict_key="verdict",
+                           pid_key="probe_id", note_key="note")
     print("w287_ear: %d BREAK / %d HELD / %d ERROR" % (nbreak, nheld, nerr))
 
 

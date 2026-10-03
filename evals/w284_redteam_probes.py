@@ -56,6 +56,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 # main() (with green checks) is not invoked. We reset its _results list
 # and call only the re-pin probes.
 sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 import w283_redteam_probes as _W283  # noqa: E402
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
@@ -1010,8 +1011,8 @@ def main():
     errors = [r for r in _results if r[1] == "ERROR"]
     print("wave-284 redteam: %d BREAK / %d HELD / %d ERROR"
           % (len(breaks), len(held), len(errors)))
-    for pid, verdict, note in _results:
-        print("  [%s] %s: %s" % (verdict, pid, note[:160]))
+    probe_lines.emit((pid, v, probe_lines.first_line(n)[:160])
+                     for pid, v, n in _results)
     return 0 if not errors else 1
 
 

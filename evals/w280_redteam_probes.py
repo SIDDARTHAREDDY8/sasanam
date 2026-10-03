@@ -64,6 +64,9 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 from keyfixture import provision_test_key  # noqa: E402
 
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
+
 provision_test_key()
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
@@ -275,7 +278,10 @@ def _seal_verdict(fix, body, **over):
     except eb2.EvidenceBundleV2Error as e:
         return "refused", e.code
     except Exception as e:  # noqa: BLE001
-        return "error", "%s: %s" % (type(e).__name__, e)
+        # D9 fix (F398): this arm recorded lowercase "error", which main()
+        # never counted -- a genuine error printed [error], missed the
+        # tally, and exited 0. D1 maps it to canonical ERROR.
+        return "ERROR", "%s: %s" % (type(e).__name__, e)
 
 
 def _good_body():
@@ -823,8 +829,11 @@ def main():
     errors = [r for r in _results if r[1] == "ERROR"]
     print("wave-280 redteam: %d BREAK / %d HELD / %d ERROR"
           % (len(breaks), len(held), len(errors)))
-    for pid, verdict, note in _results:
-        print("  [%s] %s: %s" % (verdict, pid, note[:160]))
+    # D3: canonical note is first_line(note)[:160]; emit prints each
+    # probe line in canonical form (unindented, parseable by
+    # probe_lines.parse_line).
+    probe_lines.emit([(pid, verdict, probe_lines.first_line(note)[:160])
+                      for pid, verdict, note in _results])
     return 0 if not errors else 1
 
 

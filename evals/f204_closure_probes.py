@@ -36,7 +36,7 @@ Probe map:
   p_cap_boundary_anchor_backend:      boundary through its transport.
   p_deterministic_x2:                 verdicts byte-identical across 2 runs.
 
-Verdicts: HELD / BREAK / EXPECTED / ERROR.
+Verdicts: HELD / BREAK / ERROR.
 
 $0 spend, synthetic/local, deterministic. Real product code
 (gov.rekor_anchor, gov.anchor_backend); the only network use is
@@ -61,6 +61,10 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
+_EVALS_DIR = os.path.join(REPO_ROOT, "evals")
+if _EVALS_DIR not in sys.path:
+    sys.path.insert(0, _EVALS_DIR)
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 import base64  # noqa: E402
 import hashlib  # noqa: E402
@@ -79,8 +83,8 @@ OVERSIZED = 2 * 1024 * 1024
 
 
 def _record(name, verdict, detail=""):
+    # Lines are emitted canonically by main(); _record only appends.
     _RESULTS.append((name, verdict, detail))
-    print("%-42s %s %s" % (name, verdict, detail))
 
 
 def _entry_body(uuid, pad_len=0):
@@ -431,11 +435,21 @@ def main():
     ok = green_check()
     held = sum(1 for _, v, _ in _RESULTS if v == "HELD")
     brk = sum(1 for _, v, _ in _RESULTS if v == "BREAK")
-    exp = sum(1 for _, v, _ in _RESULTS if v == "EXPECTED")
     err = sum(1 for _, v, _ in _RESULTS if v == "ERROR")
-    print("f204_closure_probes: "
-          "%d HELD / %d BREAK / %d EXPECTED / %d ERROR / green=%s"
-          % (held, brk, exp, err, ok))
+    # Note: _RESULTS holds only the p_deterministic_x2 verdict here --
+    # p_deterministic_x2 clears the per-probe rows after certifying the
+    # two runs byte-identical, so the 14 ephemeral determinism-
+    # scaffolding lines no longer print. The single recorded verdict
+    # line and the summary cohere by construction (the old "1 HELD"
+    # summary never counted those 14 lines either).
+    probe_lines.emit(_RESULTS)
+    print("f204_closure_probes: %d BREAK / %d HELD / %d ERROR"
+          % (brk, held, err))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        _RESULTS, brk, held, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("green=%s" % ("OK" if ok else "FAIL"))
     return 1 if (brk or err or not ok) else 0
 
 

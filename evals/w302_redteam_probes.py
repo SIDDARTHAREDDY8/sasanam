@@ -67,6 +67,8 @@ import unittest
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO not in sys.path:
     sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 from gov import delegation as dg
 from gov import delegation_revocation as rev
@@ -878,10 +880,8 @@ def main():
     print("w302_redteam: %d BREAK / %d HELD / %d ERROR"
           % (n_break, n_held, n_err))
     if not result.wasSuccessful() or n_break or n_err:
-        for n, s, d in _results:
-            if s != "HELD":
-                print("  [%s] %s: %s" % (s, n, str(d).splitlines()[0]
-                                         if d else ""))
+        probe_lines.emit((n, s, probe_lines.first_line(d) if d else "")
+                         for n, s, d in _results if s != "HELD")
     return result
 
 

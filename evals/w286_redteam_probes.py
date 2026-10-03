@@ -94,7 +94,7 @@ _REPIN_BATTERIES = [
     ("evals/w283_redteam_probes.py", 0, "f312-315-closed"),
     ("evals/w284_f312_315_probes.py", 0, "f312-315-closed-b"),
     ("evals/w284_redteam_probes.py", 0, "f316-324-closed"),
-    ("evals/w285_f324_f316_probes.py", 0, "f316-f324-closed"),
+    ("evals/w285_f324_f316_probes.py", 0, "f316-f324-closed"),  # Wave-315: repin runs children with GOV_SKIP_GREEN=1, so w285's own green checks are skipped and the pre-existing w283_defectdojo rc=1 BREAK (stale F343 pin, visible only when green checks run) does not appear here. The 0 is now enforced, not vacuous: the canonical summary's BREAK count is what the regex reads.
     ("evals/w285_f318_probes.py", 0, "f318-closed"),
     ("evals/w285_f317_f319_probes.py", 0, "f317-f319-closed"),
     ("evals/w285_f320_f323_probes.py", 0, "f320-f323-closed"),

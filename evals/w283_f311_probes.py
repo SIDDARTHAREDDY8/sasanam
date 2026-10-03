@@ -46,6 +46,9 @@ for _p in (REPO, os.path.join(REPO, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
+
 from keyfixture import provision_test_key  # noqa: E402
 
 provision_test_key()
@@ -550,8 +553,8 @@ def main():
     errors = [r for r in _results if r[1] == "ERROR"]
     print("wave-283 f311: %d BREAK / %d HELD / %d ERROR"
           % (len(breaks), len(held), len(errors)))
-    for pid, verdict, note in _results:
-        print("  [%s] %s: %s" % (verdict, pid, note[:160]))
+    probe_lines.emit((pid, v, probe_lines.first_line(n)[:160])
+                     for pid, v, n in _results)
     return 0 if not errors else 1
 
 

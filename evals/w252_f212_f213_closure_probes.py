@@ -28,6 +28,8 @@ import traceback
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 HAVE_ALL = False
 try:
@@ -45,7 +47,9 @@ GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 def _run_probe(name, fn, have):
     if not have:
-        return name, "GAP", "capability absent on pristine base"
+        # D1 (wave-315): GAP maps to BREAK; the "GAP:" prefix keeps the
+        # gap-demonstrated evidence in the note.
+        return name, "BREAK", "GAP: capability absent on pristine base"
     try:
         note = fn()
         return name, "HELD", note
@@ -259,15 +263,15 @@ def _green():
 
 
 PROBES = [
-    ("f212/hide-refused", probe_f212_hide, HAVE_ALL),
-    ("f212/fabricate-refused", probe_f212_fabricate, HAVE_ALL),
-    ("f212/policy-key-mutation-refused", probe_f212_policy_key_mutation,
+    ("f212-hide-refused", probe_f212_hide, HAVE_ALL),
+    ("f212-fabricate-refused", probe_f212_fabricate, HAVE_ALL),
+    ("f212-policy-key-mutation-refused", probe_f212_policy_key_mutation,
      HAVE_ALL),
-    ("f213/bogus-index-returns-false", probe_f213_bogus_index, HAVE_ALL),
-    ("f213/bad-index-returns-false", probe_f213_bad_index, HAVE_ALL),
-    ("control/genuine-equivocation", probe_control_genuine_equivocation,
+    ("f213-bogus-index-returns-false", probe_f213_bogus_index, HAVE_ALL),
+    ("f213-bad-index-returns-false", probe_f213_bad_index, HAVE_ALL),
+    ("control-genuine-equivocation", probe_control_genuine_equivocation,
      HAVE_ALL),
-    ("control/no-false-positive", probe_control_no_false_positive,
+    ("control-no-false-positive", probe_control_no_false_positive,
      HAVE_ALL),
 ]
 
@@ -278,20 +282,19 @@ def main():
         results.append(_run_probe(name, fn, have))
     held = sum(1 for _n, v, _x in results if v == "HELD")
     brk = sum(1 for _n, v, _x in results if v == "BREAK")
-    gap = sum(1 for _n, v, _x in results if v == "GAP")
     err = sum(1 for _n, v, _x in results if v == "ERROR")
-    print("w252 f212/f213 closure: %d/%d HELD, %d BREAK, %d GAP, %d ERROR"
-          % (held, len(results), brk, gap, err))
-    for name, verdict, note in results:
-        first = note.splitlines()[0] if note else ""
-        print("  [%s] %s: %s" % (verdict, name, first[:160]))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(results, brk, held, err)
+    probe_lines.emit(results)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk, held, err))
     try:
         for note in _green():
             print("  green: %s" % note)
     except AssertionError as exc:
         print("  GREEN-CHECK FAILED: %s" % (exc,))
         return 2
-    if brk or err or gap:
+    if brk or err:
         return 1
     return 0
 

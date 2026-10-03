@@ -67,6 +67,8 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TREE = REPO_ROOT  # this battery lives in the tree it tests
 sys.path.insert(0, TREE)
+sys.path.insert(0, os.path.join(TREE, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 _SEED1 = bytes.fromhex("11" * 32)
 _SEED2 = bytes.fromhex("22" * 32)
@@ -538,12 +540,24 @@ def main(argv):
     second = _run_once(probes)
     det_ok = ([(n, s) for n, s, _ in first]
               == [(n, s) for n, s, _ in second])
-    width = max(len(n) for n, _, _ in first)
     print("== tuf_corpus probes (%s) =="
           % ("RED-PHASE: gap demonstration" if red_phase else
              "GREEN-PHASE: closure battery"))
-    for name, status, detail in first:
-        print("%-*s %s  %s" % (width, name, status, detail))
+    # D1: PASS -> HELD, non-PASS -> BREAK. The executed phase rides in
+    # each line's note so a canonical line is self-describing.
+    phase = "red-phase" if red_phase else "green-phase"
+    triples = [(n, "HELD" if s == "PASS" else "BREAK",
+                "%s: %s" % (phase, d)) for n, s, d in first]
+    probe_lines.emit(triples)
+    brk = sum(1 for _, v, _ in triples if v == "BREAK")
+    held = sum(1 for _, v, _ in triples if v == "HELD")
+    err = sum(1 for _, v, _ in triples if v == "ERROR")
+    print("tuf_corpus probes: %d BREAK / %d HELD / %d ERROR"
+          % (brk, held, err))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        triples, brk, held, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
     print("determinism x2: %s" % ("IDENTICAL" if det_ok else "DIVERGED"))
     if red_phase:
         if all(s == "PASS" for _, s, _ in first) and det_ok:

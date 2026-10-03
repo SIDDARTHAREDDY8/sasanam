@@ -45,6 +45,8 @@ os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
 os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w284-tink")
 os.environ.setdefault("TMPDIR", "/var/tmp/g284-tink")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 # Wave-283 merge pin 1587 -> 1595 (+8 keyset-* codes).
 TAXONOMY_PIN = 1888  # Wave-284 lane 8: +8 keyset-* (tink ADAPT).; Wave-284 lane 8: pin 1587 -> 1595 (+8 keyset-*).; Wave-284 merge: pin 1595 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).; Wave-286 lane 4: pin 1641 -> 1642 (+1 keyset-pin-key-invalid).; Wave-289 merge: pin 1700 -> 1706 (+6 challenge-*); Wave-293 merge: pin 1730 -> 1730 (renumber F361->F364, no new codes). Wave-294 merge: pin 1730 -> 1742 (+12: 4 coord-lease-* + 4 toolcall/toolfilter-* + 4 toolcall-schema-*); Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*); Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*)
@@ -576,7 +578,7 @@ def p_deterministic():
 def _green_checks():
     # Depth-1: adjacent suites only, never spawn another battery's main.
     if os.environ.get("GOV_SKIP_GREEN") == "1":
-        _record("green-check", "SKIPPED", "GOV_SKIP_GREEN=1")
+        _record("green-check", "SKIP", "GOV_SKIP_GREEN=1")
         return
     import subprocess
     here = os.path.dirname(os.path.abspath(__file__))
@@ -588,7 +590,7 @@ def _green_checks():
                            cwd=os.path.dirname(here), env=env,
                            capture_output=True, text=True, timeout=300)
         tail = (r.stderr or r.stdout)[-200:].replace("\n", " | ")
-        _record("green-check:" + argv[-1],
+        _record("green-check_" + os.path.basename(argv[-1]),
                 "HELD" if r.returncode == 0 else "ERROR", tail)
 
 
@@ -609,8 +611,8 @@ def main():
     n_held = sum(1 for r in _RESULTS if r["verdict"] == "HELD")
     print("w284_tink: %d BREAK / %d HELD / %d ERROR"
           % (n_break, n_held, n_err))
-    for r in _RESULTS:
-        print("  [%s] %s: %s" % (r["verdict"], r["probe_id"], r["note"]))
+    probe_lines.emit_dicts(_RESULTS, verdict_key="verdict",
+                           pid_key="probe_id", note_key="note")
     return 1 if (n_break or n_err) else 0
 
 
