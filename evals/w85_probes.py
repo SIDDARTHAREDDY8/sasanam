@@ -59,7 +59,11 @@ from contextlib import redirect_stderr
 from datetime import datetime, timezone
 from pathlib import Path
 
+os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT / "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "tests"))
 
@@ -554,19 +558,51 @@ def sit_bypass_invisible_in_evidence_export():
             "note": "export renders the bypass loudly: %r" % (loud[0],)}
 
 
+# D1 verdict mapping for the HOLD/MISS/RESIDUAL vocabulary
+# (evals/SUMMARY_FORM_POLICIES.md): "stopped" -> HELD, "break" -> BREAK,
+# "residual" -> HELD with a "residual: " note prefix (residuals are
+# documented accepted boundaries, green by the battery's own contract;
+# the prefix keeps them visible on the canonical line for human audit).
+# Red-first: the old contract counted anything outside
+# ("stopped", "residual") as a miss, so an unmapped verdict maps to
+# BREAK (never greener than the old exit).
+_VERDICT_MAP = {"stopped": "HELD", "break": "BREAK", "residual": "HELD"}
+
+
+def _note_of(row):
+    # D2 contract for the w72 family: the note lives under
+    # detail["note"], falling back to detail["error"] for harness
+    # exceptions (which record {"error": ...} with no "note").
+    return row["detail"].get("note") or row["detail"].get("error", "")
+
+
 def main():
     for sid in sorted(SITUATIONS):
         SITUATIONS[sid]()
-    n_hold = sum(1 for r in RESULTS if r["verdict"] == "stopped")
-    n_res = sum(1 for r in RESULTS if r["verdict"] == "residual")
-    n_miss = sum(1 for r in RESULTS if r["verdict"] not in (
-        "stopped", "residual"))
+    rows = []
     for r in RESULTS:
-        print("%-62s %s  %s" % (r["id"], r["verdict"],
-                                r["detail"].get("note", "")))
-    print("w85 battery: %d HOLD / %d RESIDUAL / %d MISS|ERROR"
-          % (n_hold, n_res, n_miss))
-    return 1 if n_miss else 0
+        detail = r["detail"]
+        if r["verdict"] == "residual":
+            detail = dict(detail)
+            detail["note"] = "residual: " + detail.get("note", "")
+        rows.append({"id": r["id"],
+                     "verdict": _VERDICT_MAP.get(r["verdict"], "BREAK"),
+                     "detail": detail})
+    probe_lines.emit_dicts(rows, pid_key="id", note_getter=_note_of)
+    brk = sum(1 for r in rows if r["verdict"] == "BREAK")
+    held = sum(1 for r in rows if r["verdict"] == "HELD")
+    err = sum(1 for r in rows if r["verdict"] == "ERROR")
+    print("w85 battery: %d BREAK / %d HELD / %d ERROR"
+          % (brk, held, err))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        [(r["id"], r["verdict"], _note_of(r)) for r in rows], brk, held, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    # Exit-equivalent to the old `1 if n_miss`: n_miss counted every
+    # verdict outside ("stopped", "residual"), i.e. break == brk here
+    # (this battery records no "error" verdicts; harness exceptions are
+    # recorded as "break").
+    return 1 if (brk or err) else 0
 
 
 @_sit("redteam.seam_w85.caller_frame_captured")

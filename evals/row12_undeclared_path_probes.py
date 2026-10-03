@@ -78,9 +78,12 @@ os.environ.setdefault("TMPDIR", "/tmp/gov-row12-undeclared")
 Path(os.environ["TMPDIR"]).mkdir(parents=True, exist_ok=True)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
+for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests"),
+           os.path.join(REPO_ROOT, "evals")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 from gov.executor import ToolExecutor  # noqa: E402
 from gov.policy import PolicyEngine  # noqa: E402
@@ -470,6 +473,7 @@ PROBES = [
 def main():
     from collections import Counter
     counts = Counter()
+    results = []
     for name, fn in PROBES:
         try:
             verdict, detail = fn()
@@ -477,10 +481,25 @@ def main():
             verdict, detail = ("ERROR", "%s: %s"
                                % (type(exc).__name__, exc))
         counts[verdict] += 1
-        print("%-42s %s %s" % (name, verdict, detail))
-    print("TOTAL %s" % (dict(counts),))
+        if verdict == "FP":
+            # D1: FP (false positive demonstrated) is red by the
+            # battery's own contract (post-seam exit counts it in
+            # `bad`); map to BREAK and keep the FP legible.
+            verdict, detail = "BREAK", "FP: %s" % detail
+        results.append((name, verdict, detail))
+    probe_lines.emit(results)
+    brk = sum(1 for _, v, _ in results if v == "BREAK")
+    held = sum(1 for _, v, _ in results if v == "HELD")
+    err = sum(1 for _, v, _ in results if v == "ERROR")
+    print("row12_undeclared_path: %d BREAK / %d HELD / %d ERROR"
+          % (brk, held, err))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        results, brk, held, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
     # Red-first contract: pre-seam r1 must BREAK; post-seam zero BREAK
-    # and zero FP.
+    # and zero FP. `counts` keeps the RAW verdicts so the exit contract
+    # is byte-identical (brk == BREAK_raw + FP_raw).
     bad = counts["BREAK"] + counts["FP"] + counts["ERROR"]
     if not HAVE_SEAM:
         ok = counts["BREAK"] >= 1
