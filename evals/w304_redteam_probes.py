@@ -62,6 +62,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
         sys.path.insert(0, _p)
 sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 # Wave-303 merge pin 1827; this lane mints no codes (red team only), so
 # the pin stays 1827. The merge-time sweep repoints to the wave-304 pin.
@@ -768,8 +769,11 @@ def main():
     nh = sum(1 for _, v, _ in _results if v == "HELD")
     ne = sum(1 for _, v, _ in _results if v == "ERROR")
     print("w304_redteam: %d BREAK / %d HELD / %d ERROR" % (nb, nh, ne))
-    for pid, verdict, note in _results:
-        print("  [%s] %s: %s" % (verdict, pid, note.split("\n")[0]))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        _results, nb, nh, ne)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    probe_lines.emit(_results)
     return 1 if (nb or ne) else 0
 
 

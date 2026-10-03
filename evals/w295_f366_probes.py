@@ -34,6 +34,8 @@ import traceback
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 for _p in (REPO, os.path.join(REPO, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -292,10 +294,13 @@ def main():
     breaks = sum(1 for _, v, _ in _RESULTS if v == "BREAK")
     held = sum(1 for _, v, _ in _RESULTS if v == "HELD")
     errors = sum(1 for _, v, _ in _RESULTS if v == "ERROR")
-    for pid, verdict, note in _RESULTS:
-        print("  [%s] %s: %s" % (verdict, pid, note))
+    probe_lines.emit(_RESULTS)
     print("w295_f366: %d BREAK / %d HELD / %d ERROR"
           % (breaks, held, errors))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        _RESULTS, breaks, held, errors)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
     return 1 if breaks or errors else 0
 
 

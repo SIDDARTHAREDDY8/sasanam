@@ -58,6 +58,7 @@ if REPO not in sys.path:
     sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 TAXONOMY_PIN = 1829  # Wave-302 merge pin 1820; wave-303 lane 6: pin 1820 -> 1823 (+3 authority-lifecycle-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*); Wave-304 lane D: pin unchanged (no new codes)
 
@@ -456,8 +457,11 @@ def main():
     errors = sum(1 for _, v, _ in _results if v == "ERROR")
     print("w304 heartbeat-schedule probes: %d BREAK / %d HELD / %d ERROR"
           % (breaks, held, errors))
-    for pid, v, note in _results:
-        print("  [%s] %s: %s" % (v, pid, note.splitlines()[0]))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        _results, breaks, held, errors)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    probe_lines.emit(_results)
     return 1 if (breaks or errors) else 0
 
 
