@@ -55,7 +55,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1797  # Wave-299 lane 3: pin 1780 -> 1784 (+4 delegation-ticket-*); Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
+TAXONOMY_PIN = 1802  # Wave-299 lane 3: pin 1780 -> 1784 (+4 delegation-ticket-*); Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
 
 _results = []
 
@@ -97,7 +97,7 @@ def p_taxonomy_pin():
         if want not in lits:
             return _record("pin-taxonomy", "BREAK",
                            "missing expected code %r" % want)
-    _record("pin-taxonomy", "HELD", "1797 raw literals, unique, sorted")
+    _record("pin-taxonomy", "HELD", "1802 raw literals, unique, sorted")
 
 
 def _import_mods():

@@ -111,7 +111,7 @@ from gov import ed25519
 
 # ---------------------------------------------------------------------------
 # Machine codes (registered in gov/decision_codes.py at true sorted
-# positions; raw literals 1797/1797/0/sorted).; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
+# positions; raw literals 1802/1802/0/sorted).; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
 # ---------------------------------------------------------------------------
 
 DI_INVALID = "delegation-identity-invalid"

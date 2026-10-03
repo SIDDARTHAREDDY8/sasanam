@@ -58,6 +58,7 @@ import hashlib
 import json
 import re
 import time
+from collections.abc import Mapping
 
 from gov import ed25519
 
@@ -82,6 +83,43 @@ _HEX128_RE = re.compile(r"^[0-9a-f]{128}$")
 
 _MIN_TTL = 1            # 1 second
 _MAX_TTL = 30 * 86400  # 30 days; there is no unbounded lease
+
+
+# ---------------------------------------------------------------------------
+# Delegation binding (wave-300): a lease grant may be issued AS a
+# delegation receipt (the receipt binds the fencing token's
+# authority). The binding is declared at acquire time, stored on the
+# in-memory grant record (manager-side, unsigned -- the manager's
+# memory is deployment-owned), and enforced at check_write: the
+# presented revocation state must show the bound receipt live.
+#
+# A bound grant presented WITHOUT revocation state refuses
+# fail-closed coded ``coord-lease-fencing`` -- authority that cannot
+# be shown live is dead authority. Revocation beats expiry in the
+# check order (the revocation module's own refusal order).
+# ---------------------------------------------------------------------------
+
+_BINDING_FIELDS = ("receipt_id", "revocation_list_digest")
+
+
+def _check_delegation_binding(value):
+    """Validate the optional delegation binding declared at acquire.
+
+    Shape: {"receipt_id": <64 hex>, "revocation_list_digest": <64 hex>}.
+    Unknown keys refuse -- the binding is a closed contract."""
+    if not isinstance(value, dict):
+        _fail(LEASE_INVALID,
+              "delegation_binding must be a dict with %r" % (_BINDING_FIELDS,))
+    extra = set(value) - set(_BINDING_FIELDS)
+    if extra:
+        _fail(LEASE_INVALID,
+              "delegation_binding has unknown keys: %r" % (sorted(extra),))
+    for field in _BINDING_FIELDS:
+        v = value.get(field)
+        if not isinstance(v, str) or not _HEX64_RE.match(v):
+            _fail(LEASE_INVALID,
+                  "delegation_binding[%r] must be 64 lowercase hex chars"
+                  % (field,))
 
 
 class CoordinationLeaseError(Exception):
@@ -227,7 +265,7 @@ class LeaseManager:
     # -- acquisition ----------------------------------------------------
 
     def acquire(self, scope, ttl_seconds, holder_id, authority_seed=None,
-                issued_at=None):
+                issued_at=None, delegation_binding=None):
         """Grant ``scope`` to ``holder_id`` for ``ttl_seconds``.
 
         Refuses coded ``coord-lease-invalid`` for malformed inputs
@@ -239,6 +277,15 @@ class LeaseManager:
         instead of -- the currently-live lease, so it cannot
         silently evict the live holder's record (F367). Returns the
         signed lease dict.
+
+        ``delegation_binding`` (optional, wave-300): when the grant
+        is issued AS a delegation receipt, declare
+        ``{"receipt_id": <64 hex>, "revocation_list_digest": <64
+        hex>}``. The binding is stored on the in-memory grant
+        record and enforced at ``check_write``: the presented
+        revocation state must show the bound receipt live, or the
+        write refuses coded ``coord-lease-fencing``. Grants without
+        a binding behave exactly as before.
         """
         _check_scope(scope)
         _check_ttl(ttl_seconds)
@@ -251,6 +298,8 @@ class LeaseManager:
             issued_at = int(time.time())
         else:
             _check_ts(issued_at, "issued_at")
+        if delegation_binding is not None:
+            _check_delegation_binding(delegation_binding)
         not_after = issued_at + ttl_seconds
 
         for old in self._leases.get(scope, []):
@@ -276,6 +325,11 @@ class LeaseManager:
         sig = ed25519.sign(authority_seed, _canonical(body)).hex()
         lease = dict(body)
         lease["signature"] = sig
+        if delegation_binding is not None:
+            # Manager-side, unsigned: the manager's memory is
+            # deployment-owned. verify_lease ignores extra fields,
+            # so bound leases still verify statelessly.
+            lease["delegation_binding"] = dict(delegation_binding)
         # F367: the grant is RETAINED, never evicting. A future-dated
         # non-overlapping grant queues alongside the live record.
         self._leases.setdefault(scope, []).append(lease)
@@ -284,7 +338,9 @@ class LeaseManager:
                     {"scope": scope, "holder_id": holder_id,
                      "not_after": lease["not_after"],
                      "fencing_token": token,
-                     "lease_digest": _lease_digest(lease)})
+                     "lease_digest": _lease_digest(lease),
+                     "delegation_binding":
+                         lease.get("delegation_binding")})
         return lease
 
     # -- renewal ----------------------------------------------------------
@@ -351,24 +407,60 @@ class LeaseManager:
         sig = ed25519.sign(authority_seed, _canonical(body)).hex()
         renewed = dict(body)
         renewed["signature"] = sig
+        if lease.get("delegation_binding") is not None:
+            # Renewal extends the same generation: the delegation
+            # binding rides along (same token, same authority).
+            renewed["delegation_binding"] = dict(lease["delegation_binding"])
         self._leases[scope].remove(lease)
         self._leases[scope].append(renewed)
         _emit_event("coord-lease-renewed",
                     {"scope": scope, "holder_id": holder_id,
                      "not_after": renewed["not_after"],
                      "fencing_token": renewed["fencing_token"],
-                     "lease_digest": _lease_digest(renewed)})
+                     "lease_digest": _lease_digest(renewed),
+                     "delegation_binding":
+                         renewed.get("delegation_binding")})
         return renewed
 
     # -- write authorization -----------------------------------------------
 
-    def check_write(self, scope, fencing_token, holder_id, checked_at=None):
+    def check_write(self, scope, fencing_token, holder_id, checked_at=None,
+                    delegation_context=None):
         """Authorize one mutation under the lease. Every mutation
         carries its fencing token: a stale token (zombie write, or a
         replayed token from an older generation) refuses coded
         ``coord-lease-fencing``; an expired lease refuses coded
         ``coord-lease-expired`` BEFORE any state change (pre-decay
-        fail-closed). Returns True."""
+        fail-closed). Returns True.
+
+        ``delegation_context`` (optional, wave-300): required when
+        the live grant carries a ``delegation_binding``. Shape::
+
+            {"revoker": <gov.delegation_revocation.DelegationRevoker>,
+             "chain":   [<root-first receipts, leaf last>],
+             "trust_roots": [...] }   # native gov/delegation.py receipts
+            # -- or --
+            {"revoker": <DelegationRevoker>,
+             "chain":   [...],
+             "keyring": {delegator_id: pubkey_hex}}  # local-shape receipts
+
+        The presented chain must terminate at the bound
+        ``receipt_id``; the presented revoker must be the bound
+        receipt's delegator -- its key must match the delegator's
+        key in the trust roots / keyring (always checked, never
+        skipped: a digest-only check is insufficient since an empty
+        attacker-controlled revoker shares the empty list's digest).
+        This stops a substituted revoker while letting the
+        delegator's newer revocations take effect without
+        re-acquire. A bound grant presented WITHOUT revocation
+        state refuses fail-closed coded ``coord-lease-fencing`` --
+        authority that cannot be shown live is dead authority. A
+        ``delegation-revoked`` refusal maps onto
+        ``coord-lease-fencing``; a ``delegation-expired`` refusal
+        maps onto ``coord-lease-expired``; other delegation
+        defects refuse coded ``coord-lease-invalid``. Grants
+        without a binding behave exactly as before.
+        """
         _check_scope(scope)
         _check_token(fencing_token)
         _check_holder(holder_id)
@@ -390,7 +482,103 @@ class LeaseManager:
             _fail(LEASE_INVALID,
                   "write denied: holder %r is not the lease holder %r" %
                   (holder_id, lease["holder_id"]))
+        binding = lease.get("delegation_binding")
+        if binding is not None:
+            self._check_delegation_binding_live(binding,
+                                                delegation_context,
+                                                checked_at)
         return True
+
+    def _check_delegation_binding_live(self, binding, delegation_context,
+                                       checked_at):
+        """Enforce a delegation binding at write time (wave-300).
+
+        Fail-closed at every step: missing state, a substituted
+        revoker, a chain that does not terminate at the bound
+        receipt, or a revoked receipt all refuse. Revocation beats
+        expiry, matching the revocation module's refusal order.
+        """
+        from gov import delegation_revocation as _rev  # lazy: no cycle
+        if not isinstance(delegation_context, dict):
+            _fail(LEASE_FENCING,
+                  "write denied: grant is delegation-bound but no "
+                  "revocation state was presented (fail closed)")
+        revoker = delegation_context.get("revoker")
+        if not isinstance(revoker, _rev.DelegationRevoker):
+            _fail(LEASE_FENCING,
+                  "write denied: grant is delegation-bound but the "
+                  "delegator's revocation list was not presented "
+                  "(fail closed)")
+        # Anti-substitution: the presented revoker must speak for
+        # the bound receipt's delegator -- ALWAYS checked, never
+        # skipped on a digest match. (A digest-only check is
+        # insufficient: an empty attacker-controlled revoker has
+        # the same list digest as an empty legitimate one.) The
+        # receipt signatures then anchor the trust roots/keyring:
+        # a caller-supplied keyring naming the wrong key fails
+        # signature verification inside the revocation module.
+        # The bound revocation_list_digest is recorded for audit
+        # and lets deployments pin exact list state if desired.
+        chain = delegation_context.get("chain")
+        if not isinstance(chain, list) or not chain:
+            _fail(LEASE_INVALID,
+                  "write denied: delegation_context chain must be a "
+                  "non-empty root-first receipt list")
+        leaf = chain[-1]
+        leaf_id = leaf.get("receipt_id") if isinstance(leaf, Mapping) \
+            else None
+        if leaf_id != binding["receipt_id"]:
+            _fail(LEASE_INVALID,
+                  "write denied: presented chain does not terminate "
+                  "at the bound receipt_id")
+        root = chain[0]
+        root_delegator = root.get("delegator_id") \
+            if isinstance(root, Mapping) else None
+        if "trust_roots" in delegation_context:
+            trusted = revoker.pubkey_hex in \
+                delegation_context["trust_roots"]
+        elif "keyring" in delegation_context:
+            trusted = delegation_context["keyring"].get(
+                revoker.delegator_id) == revoker.pubkey_hex
+        else:
+            trusted = False
+        if not trusted or revoker.delegator_id != root_delegator:
+            _fail(LEASE_INVALID,
+                  "write denied: presented revocation list is not "
+                  "the bound receipt's delegator's own list")
+        try:
+            from gov import delegation as _dg  # lazy: no cycle
+            _chain_errors = (_rev.RevocationError, _dg.DelegationError)
+        except ImportError:
+            _chain_errors = (_rev.RevocationError,)
+        try:
+            if "trust_roots" in delegation_context:
+                revoker.assert_live_native(
+                    chain, checked_at,
+                    delegation_context["trust_roots"])
+            elif "keyring" in delegation_context:
+                revoker.is_live(chain, checked_at,
+                                delegation_context["keyring"])
+            else:
+                _fail(LEASE_INVALID,
+                      "write denied: delegation_context needs "
+                      "trust_roots (native receipts) or keyring "
+                      "(local-shape receipts)")
+        except _chain_errors as exc:
+            # Both modules' errors are coded (F351); getattr keeps
+            # the mapping total even for unforeseen codes.
+            code = getattr(exc, "code", None)
+            if code == _rev.RV_REVOKED:
+                _fail(LEASE_FENCING,
+                      "write denied: delegation receipt %s revoked; "
+                      "the fencing token's authority is dead" %
+                      binding["receipt_id"][:16])
+            if code == _rev.EXP:
+                _fail(LEASE_EXPIRED,
+                      "write denied: delegation receipt expired")
+            _fail(LEASE_INVALID,
+                  "write denied: delegation liveness check failed "
+                  "(%s)" % (code,))
 
     # -- release -----------------------------------------------------------
 

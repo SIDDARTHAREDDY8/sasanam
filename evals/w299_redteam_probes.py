@@ -57,7 +57,7 @@ from gov import policy_ci as pci
 from gov import approval_quorum as aq
 from gov import ed25519 as _ed25519
 
-TAXONOMY_PIN = 1797  # Wave-298 merge pin; this lane mints no codes.; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
+TAXONOMY_PIN = 1802  # Wave-298 merge pin; this lane mints no codes.; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -121,9 +121,12 @@ class BaseStateTest(unittest.TestCase):
         # open F372, F373, F374, F375, F376 / next free F377.
         # Wave-299 merge re-pin: F372/F373 CLOSED by lane 1; merged footer
         # is open F374, F375, F376 / next free F377.
+        # Wave-300 merge re-pin: F374/F375/F376 CLOSED by lanes 1-2;
+        # wave-300 red team filed F377/F378. Merged footer is
+        # open F377, F378 / next free F379.
         # Anchor to the LAST matches: the footer, not historical entries.
-        ok = (m_open and m_open[-1].strip() == "F374, F375, F376"
-              and m_next and m_next[-1] == "F377")
+        ok = (m_open and m_open[-1].strip() == "F377, F378"
+              and m_next and m_next[-1] == "F379")
         self.assertTrue(_expect_held(
             "footer-state", ok,
             "open=%r next=%r" % (
@@ -214,10 +217,12 @@ class MemoryStoreAttackTest(unittest.TestCase):
             "key recovered after hostile retract") == "HELD")
 
     def test_f374_victim_loses_retract_authority(self):
-        """F374 facet 2: after being superseded, the ORIGINAL author
-        can no longer retract their own claim -- authorized is the
-        newest record's source key, not the claim's source key.
-        Record-only: F374 is OPEN at this base (BREAK by design)."""
+        """F374 facet 2 (CLOSED 2026-10-03, wave-300 lane 1): after
+        being superseded, the ORIGINAL author RETAINS retraction
+        authority over their claim -- retract_fact now authorizes
+        against the claim's first writer, not the newest writer. The
+        hostile superseder's own retract of the victim's key must
+        refuse coded memory-store-unsigned-retraction."""
         victim, attacker = _seed("f374b-victim"), _seed("f374b-attacker")
         ms = mst.MemoryStore()
         ep_v = _ms_episode(ms, victim, "vic", 100)
@@ -225,11 +230,52 @@ class MemoryStoreAttackTest(unittest.TestCase):
         ep_a = _ms_episode(ms, attacker, "atk", 200, digest="ef" * 32)
         _ms_fact(ms, attacker, "atk", ep_a, "k1", "12" * 32, 200, 200)
         # The victim's own retract of their superseded claim now
-        # refuses: authority migrated to the attacker's key.
-        self.assertTrue(_expect_coded(
+        # succeeds: authority is anchored at first write.
+        tid = _ms_retract(ms, victim, "vic", "k1", 250)
+        self.assertTrue(_expect_held(
             "F374-victim-loses-retract",
-            lambda: _ms_retract(ms, victim, "vic", "k1", 250),
+            isinstance(tid, str) and len(tid) == 64,
+            "original author retracts own claim after supersession")
+            == "HELD")
+        # And the hostile superseder cannot retract the victim's key.
+        ms2 = mst.MemoryStore()
+        ep_v = _ms_episode(ms2, victim, "vic", 100)
+        _ms_fact(ms2, victim, "vic", ep_v, "k1", "cd" * 32, 100, 100)
+        ep_a = _ms_episode(ms2, attacker, "atk", 200, digest="ef" * 32)
+        _ms_fact(ms2, attacker, "atk", ep_a, "k1", "12" * 32, 200, 200)
+        self.assertTrue(_expect_coded(
+            "F374-hostile-retract-refused",
+            lambda: _ms_retract(ms2, attacker, "atk", "k1", 300),
             {"memory-store-unsigned-retraction"}) == "HELD")
+
+    def test_f374_regression_pins(self):
+        """F374 closure regression pins (wave-300 lane 1): an author
+        who supersedes their OWN fact keeps retract authority; the
+        archivist override still works; double retract stays a
+        tombstone refusal, not a toggle."""
+        victim = _seed("f374r-victim")
+        arch = _seed("f374r-arch")
+        ms = mst.MemoryStore(archivists={"chief": _pub(arch)})
+        ep = _ms_episode(ms, victim, "vic", 100)
+        _ms_fact(ms, victim, "vic", ep, "k2", "cd" * 32, 100, 100)
+        ep2 = _ms_episode(ms, victim, "vic", 200, digest="bb" * 32)
+        _ms_fact(ms, victim, "vic", ep2, "k2", "ee" * 32, 200, 200)
+        tid = _ms_retract(ms, victim, "vic", "k2", 300)
+        ok1 = isinstance(tid, str) and len(tid) == 64
+        ms2 = mst.MemoryStore(archivists={"chief": _pub(arch)})
+        ep3 = _ms_episode(ms2, victim, "vic", 100)
+        _ms_fact(ms2, victim, "vic", ep3, "k3", "cd" * 32, 100, 100)
+        tid2 = _ms_retract(ms2, arch, "chief", "k3", 150)
+        ok2 = isinstance(tid2, str) and len(tid2) == 64
+        ok3 = False
+        try:
+            _ms_retract(ms2, arch, "chief", "k3", 160)
+        except mst.MemoryStoreError as e:
+            ok3 = e.code == "memory-store-tombstoned"
+        self.assertTrue(_expect_held(
+            "F374-regression-pins", ok1 and ok2 and ok3,
+            "own-supersede-retract=%s archivist=%s double=%s"
+            % (ok1, ok2, ok3)) == "HELD")
 
     def test_corroboration_dedupes_principal(self):
         """Falsified-not-filed: corroboration counts DISTINCT source
@@ -432,22 +478,23 @@ class ReconcileAttackTest(unittest.TestCase):
         g = r.grant_sharing("alice", "bob", 900, 1200, owner)
         r.reconcile(_rc_candidate(owner, "alice", "ap", "secret",
                                   "s3cr3t", 1000), [], {}, 1000)
-        # live grant reads
+        # live grant reads (F376 wave-300: the grant is PRESENTED --
+        # bearer-grant model; a bare namespace string never suffices)
         rec = r.recall({"namespace": "alice", "key": "secret"},
-                       "bob", 1100)
+                       "bob", 1100, grant=g)
         self.assertTrue(_expect_held(
             "mr-grant-live", rec["key"] == "secret",
             "live grant reads") == "HELD")
         self.assertTrue(_expect_coded(
             "mr-grant-expired",
             lambda: r.recall({"namespace": "alice", "key": "secret"},
-                             "bob", 1300),
+                             "bob", 1300, grant=g),
             {"memory-reconcile-unauthorized-namespace"}) == "HELD")
         r.revoke_grant(g["grant_id"], owner)
         self.assertTrue(_expect_coded(
             "mr-grant-revoked",
             lambda: r.recall({"namespace": "alice", "key": "secret"},
-                             "bob", 1100),
+                             "bob", 1100, grant=g),
             {"memory-reconcile-unauthorized-namespace"}) == "HELD")
         mallory = _seed("grant-mallory")
         self.assertTrue(_expect_coded(

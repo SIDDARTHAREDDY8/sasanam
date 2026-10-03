@@ -44,7 +44,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-297 lane 3: pin 1753 -> 1757 (+4 policy-ci-*).
-TAXONOMY_PIN = 1797
+TAXONOMY_PIN = 1802
 
 try:
     from gov import policy_ci as PCI

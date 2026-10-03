@@ -463,15 +463,53 @@ class MemoryReconciler:
         self._revoked.add(grant_id)
         _emit_event("sharing-revoked", {"grant_id": grant_id})
 
-    def _grant_live(self, owner_namespace, grantee_namespace, at):
-        for gid, grant in self._grants.items():
-            if gid in self._revoked:
-                continue
-            if (grant["owner_namespace"] == owner_namespace
-                    and grant["grantee_namespace"] == grantee_namespace
-                    and grant["not_before"] <= at < grant["not_after"]):
-                return True
-        return False
+    def _verify_presented_grant(self, owner_namespace, grantee_namespace,
+                                grant, at):
+        """Verify a bearer sharing grant presented at recall time (F376).
+
+        The grant is verified against the owner namespace's DECLARED
+        owner key (not against any caller-supplied key), its window, and
+        the live grant inventory (revocation honored). A bare namespace
+        string never authorizes cross-namespace reads.
+        """
+        if not isinstance(grant, dict):
+            _fail(RC_UNAUTH_NS, "cross-namespace recall requires "
+                                "presenting the signed sharing grant")
+        extra = set(grant) - set(_GRANT_FIELDS) - {"signature"}
+        if extra:
+            _fail(RC_UNAUTH_NS, "grant carries unexpected fields: %r"
+                  % sorted(extra))
+        if grant.get("schema") != "memory-sharing-grant/v1":
+            _fail(RC_UNAUTH_NS, "grant schema must be "
+                                "memory-sharing-grant/v1")
+        if grant.get("owner_namespace") != owner_namespace:
+            _fail(RC_UNAUTH_NS, "presented grant is not issued by "
+                                "namespace %r" % owner_namespace)
+        if grant.get("grantee_namespace") != grantee_namespace:
+            _fail(RC_UNAUTH_NS, "presented grant is not issued to %r"
+                  % grantee_namespace)
+        gid = grant.get("grant_id")
+        if not isinstance(gid, str) or not gid:
+            _fail(RC_UNAUTH_NS, "grant_id must be a non-empty string")
+        _check_ts(grant.get("not_before"), "grant.not_before")
+        _check_ts(grant.get("not_after"), "grant.not_after")
+        owner_pubkey = self._namespaces.get(owner_namespace)
+        sig = grant.get("signature")
+        if not isinstance(sig, str) or not _sig_ok(
+                owner_pubkey, sig, _canonical(_unsigned_grant(grant))):
+            _fail(RC_UNAUTH_NS, "grant signature does not verify against "
+                                "the owner namespace's declared key")
+        nb, na = grant["not_before"], grant["not_after"]
+        if not nb <= at < na:
+            _fail(RC_UNAUTH_NS, "grant window does not cover the recall "
+                                "instant")
+        live = self._grants.get(gid)
+        if live is None or gid in self._revoked:
+            _fail(RC_UNAUTH_NS, "grant %r is not live (unknown or "
+                                "revoked)" % gid)
+        if live.get("signature") != sig:
+            _fail(RC_UNAUTH_NS, "presented grant does not match the live "
+                                "inventory record")
 
     # -- write-rate bound ----------------------------------------------
     def _check_write_rate(self, principal, at):
@@ -571,7 +609,14 @@ class MemoryReconciler:
                                 "owner's key")
 
         principal = candidate["provenance"]["source_principal"]
-        self._check_write_rate(principal, at)
+        # F375: the write-rate bound is keyed on the authenticated
+        # namespace-owner key (whose signature was just verified above)
+        # IN ADDITION TO the self-reported provenance string. The owner
+        # signs every candidate, so rotating the source_principal string
+        # no longer evades the bound; distinct owners keep independent
+        # budgets. Both keys must pass.
+        self._check_write_rate("owner:" + owner_pubkey, at)
+        self._check_write_rate("principal:" + principal, at)
 
         key = candidate["key"]
         hist = list(existing_facts)
@@ -708,14 +753,25 @@ class MemoryReconciler:
         self._facts.setdefault((ns, key), []).append(record)
 
     # -- recall (mandatory scope) ---------------------------------------
-    def recall(self, scope, caller_namespace, at):
+    def recall(self, scope, caller_namespace, at, grant=None):
         """Recall facts under a MANDATORY scope predicate (qdrant
         checklist). ``scope`` is {"namespace": <id>, "key": <str>} --
         a recall without a scope refuses ``memory-reconcile-scope-missing``
-        (there is no default scope). Cross-namespace recall requires a
-        live sharing grant or refuses
-        ``memory-reconcile-unauthorized-namespace``. Tombstoned facts
-        are excluded from recall."""
+        (there is no default scope). Tombstoned facts are excluded from
+        recall.
+
+        Caller identity (F376): ``caller_namespace`` MUST be the
+        deployment-authenticated identity of the caller -- this module
+        is a decision layer and cannot authenticate callers itself; a
+        bare string is never trusted beyond that precondition.
+
+        Cross-namespace recall additionally requires the caller to
+        PRESENT the signed sharing grant (bearer-grant model):
+        ``grant`` is verified against the owner namespace's DECLARED
+        owner key, its window, and the live grant inventory (revocation
+        honored). Without a presented grant, cross-namespace recall
+        refuses ``memory-reconcile-unauthorized-namespace`` -- a
+        self-asserted grantee name is never sufficient."""
         if not isinstance(scope, dict) or not scope.get("namespace") \
                 or not scope.get("key"):
             _fail(RC_SCOPE_MISSING,
@@ -731,11 +787,8 @@ class MemoryReconciler:
                                     "1..%d chars" % _MAX_KEY_LEN)
         if ns not in self._namespaces:
             _fail(RC_UNAUTH_NS, "scope namespace %r is not declared" % ns)
-        if caller_namespace != ns and not self._grant_live(
-                ns, caller_namespace, at):
-            _fail(RC_UNAUTH_NS,
-                  "cross-namespace recall of %r requires a live sharing "
-                  "grant for %r" % (ns, caller_namespace))
+        if caller_namespace != ns:
+            self._verify_presented_grant(ns, caller_namespace, grant, at)
         rec = self._latest(ns, key)
         if rec is None:
             _fail(RC_INVALID, "no fact under key %r in namespace %r"

@@ -278,6 +278,63 @@ class RetractionTests(unittest.TestCase):
         self.assertEqual(code, ms.MEM_TOMBSTONED)
 
 
+class F374RetractionAuthorityTests(unittest.TestCase):
+    """F374 (CLOSED 2026-10-03, wave-300 lane 1): retraction
+    authority is anchored at the claim's FIRST writer, never the
+    newest writer. A conflicting writer cannot inherit destructive
+    authority over another principal's key, and the original author
+    keeps their own retract authority after being superseded."""
+
+    def _retract(self, w, key, seed, principal, at=3000):
+        import json
+        body = {"statement_key": key, "retractor_principal": principal,
+                "retractor_pubkey": _pub(seed), "retracted_at": at}
+        sig = ed25519.sign(seed, json.dumps(
+            body, sort_keys=True, separators=(",", ":"),
+            ensure_ascii=True).encode()).hex()
+        return w.store.retract_fact(key, principal, _pub(seed), sig, at)
+
+    def test_hostile_superseder_cannot_retract(self):
+        w = _World()
+        eid = w.episode(w.sa, "alice")
+        w.fact(w.sa, "alice", "k", "s", [eid])
+        e2 = w.episode(w.sb, "bob", tag="e2", at=2000)
+        w.fact(w.sb, "bob", "k", "s2", [e2], valid_at=2000,
+               recorded_at=2100)
+        # The attacker is the newest writer but not the author.
+        code = _code_of(lambda: self._retract(w, "k", w.sb, "bob",
+                                             at=2200))
+        self.assertEqual(code, ms.MEM_UNSIGNED_RETRACTION)
+        # The key is still live and recallable.
+        got = w.store.recall("k", 2150)
+        self.assertEqual(got["statement_digest"],
+                         hashlib.sha256(b"stmt-s2").hexdigest())
+
+    def test_original_author_retracts_after_supersession(self):
+        w = _World()
+        eid = w.episode(w.sa, "alice")
+        w.fact(w.sa, "alice", "k", "s", [eid])
+        e2 = w.episode(w.sb, "bob", tag="e2", at=2000)
+        w.fact(w.sb, "bob", "k", "s2", [e2], valid_at=2000,
+               recorded_at=2100)
+        # The original author keeps retract authority over their
+        # claim even after a conflicting writer superseded it.
+        tid = self._retract(w, "k", w.sa, "alice", at=2200)
+        self.assertRegex(tid, r"^[0-9a-f]{64}$")
+        code = _code_of(lambda: w.store.recall("k", 2150))
+        self.assertEqual(code, ms.MEM_TOMBSTONED)
+
+    def test_archivist_retracts_after_supersession(self):
+        w = _World()
+        eid = w.episode(w.sa, "alice")
+        w.fact(w.sa, "alice", "k", "s", [eid])
+        e2 = w.episode(w.sb, "bob", tag="e2", at=2000)
+        w.fact(w.sb, "bob", "k", "s2", [e2], valid_at=2000,
+               recorded_at=2100)
+        tid = self._retract(w, "k", w.arch, "chief", at=2200)
+        self.assertRegex(tid, r"^[0-9a-f]{64}$")
+
+
 class RetentionTests(unittest.TestCase):
 
     def test_retention_lapse_refuses_loud(self):

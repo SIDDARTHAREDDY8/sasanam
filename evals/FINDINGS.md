@@ -9191,7 +9191,7 @@ wave-299 lane 1):**
 - Taxonomy pin 1780 unchanged (1780/1780/0 sorted, no new codes);
   `git diff` == `git diff -w`.
 
-## F374: memory_store retraction authority migrates to the newest writer -- a conflicting writer can permanently tombstone another principal's key (MEDIUM, OPEN)
+## F374: memory_store retraction authority migrates to the newest writer -- a conflicting writer can permanently tombstone another principal's key (MEDIUM, CLOSED)
 
 **Cells:** wave-299 independent red-team, 2026-10-03. Standing regression pins:
 `evals/w299_redteam_probes.py` (probes `F374-hostile-tombstone`,
@@ -9231,9 +9231,21 @@ tombstones); (2) the F374 probes flip to HELD (hostile retract refuses
 coded; the victim retains retract authority over their own claim);
 (3) adjacent batteries stay green.
 
-**Status: OPEN** (filed 2026-10-03, wave-299 independent red-team).
+**Status: CLOSED** (2026-10-03, wave-300 lane 1). Closure evidence:
+`gov/memory_store.py::retract_fact` now authorizes against the first
+record's `source_pubkey` under the statement key (authorship fixed at
+first write; superseding writers never inherit it) or a named
+archivist; docstring and inline comment updated. Red-first: pristine
+base `evals/w299_redteam_probes.py` 3 BREAK (incl.
+`F374-hostile-tombstone`) -> fixed tree hostile retract refuses coded
+`memory-store-unsigned-retraction`, victim's own retract after
+supersession succeeds, archivist override intact, double-retract still
+refuses `memory-store-tombstoned`; new probes
+`F374-hostile-retract-refused` + `F374-regression-pins` HELD; new unit
+tests `F374RetractionAuthorityTests` (3 tests) green; existing 24
+`test_memory_store` tests green (single-writer behavior unchanged).
 
-## F375: memory_reconcile write-rate bound is keyed on a self-reported principal string and is evaded by rotation (LOW, OPEN)
+## F375: memory_reconcile write-rate bound is keyed on a self-reported principal string and is evaded by rotation (LOW, CLOSED)
 
 **Cells:** wave-299 independent red-team, 2026-10-03. Standing regression pins:
 `evals/w299_redteam_probes.py` (probes `F375-rate-bound-evasion`,
@@ -9265,9 +9277,27 @@ in addition to, or instead of, the self-reported principal string;
 (2) the F375 evasion probe flips to HELD (rotated-principal flood
 refuses); (3) adjacent batteries stay green.
 
-**Status: OPEN** (filed 2026-10-03, wave-299 independent red-team).
+**Status: CLOSED** (2026-10-03, wave-300 lane 2). Red-first: the
+`F375-rate-bound-evasion` probe reproduced on the pristine base (6/6
+rotated-principal writes accepted, bound=2). Fix:
+`gov/memory_reconcile.py::reconcile` now keys the write-rate bound on
+the authenticated namespace-owner key (`"owner:" + owner_pubkey`,
+whose signature was just verified) IN ADDITION TO the self-reported
+provenance string (`"principal:" + source_principal`); both keys must
+pass. String rotation no longer evades (3rd rotated write refuses
+`memory-reconcile-invalid`); distinct owners keep independent budgets
+(pinned by `test_f375_distinct_owners_keep_independent_budgets`);
+existing same-principal behavior unchanged
+(`test_rate_bound`, `mr-rate-bound` probe). Post-fix:
+`evals/w299_redteam_probes.py` 1 BREAK (F374 expected-open) / 36 HELD /
+0 ERROR; `evals/w298_memory_reconcile_probes.py` 0/30/0; adjacent
+`w298_memory_store`, `w298_supervision_lease`, `w297_supervision`
+green; `tests.test_memory_reconcile` 24/24. Close-when (1)(2)(3) all
+met. Residual: the bound is per (owner key, principal string) pair;
+two colluding owners still get independent budgets each (bounded,
+fail-closed per budget).
 
-## F376: memory_reconcile cross-namespace recall authorization rests on a self-asserted caller_namespace -- the grant check is bypassable (LOW, OPEN)
+## F376: memory_reconcile cross-namespace recall authorization rests on a self-asserted caller_namespace -- the grant check is bypassable (LOW, CLOSED)
 
 **Cells:** wave-299 independent red-team, 2026-10-03. Standing regression pins:
 `evals/w299_redteam_probes.py` (probe `F376-caller-assertion-bypass`).
@@ -9305,9 +9335,122 @@ deployment-authenticated identity (docstring + module docs, battery
 pins the precondition); (2) the F376 probe flips to HELD under the
 documented contract; (3) adjacent batteries stay green.
 
-**Status: OPEN** (filed 2026-10-03, wave-299 independent red-team).
+**Status: CLOSED** (2026-10-03, wave-300 lane 2). Chose close-when
+option (a): bearer-grant model. Red-first: the
+`F376-caller-assertion-bypass` probe reproduced on the pristine base
+(unauthenticated caller asserting "bob" read alice's fact). Fix:
+`gov/memory_reconcile.py::recall(scope, caller_namespace, at,
+grant=None)` now requires cross-namespace callers to PRESENT the
+signed sharing grant; `_verify_presented_grant` verifies it against
+the owner namespace's DECLARED owner key (never caller-supplied key
+material), its window, and the live grant inventory (revocation
+honored, presented signature must match the inventory record). A bare
+namespace string never authorizes cross-namespace reads (refuses
+`memory-reconcile-unauthorized-namespace`). Same-namespace reads keep
+the documented precondition that `caller_namespace` is the
+deployment-authenticated caller identity (docstring states it
+loudly; no cryptographic artifact exists for the owner reading their
+own namespace). Post-fix: the F376 probe flips HELD; new regression
+pins (`test_f376_grant_must_be_presented`,
+`test_f376_presented_grant_verifies`,
+`test_f376_wrong_grantee_name_refused`, `mr-grant-absent`,
+`mr-grant-forged`); forged/wrong-grantee/expired/revoked grants all
+refuse coded; adjacent batteries green. Close-when (1)(2)(3) all met.
+Residual: same-namespace caller identity remains deployment-owned;
+a deployment that lies about the caller defeats the check
+(documented, not a module defect).
 
-Next free finding: **F377**. **Open findings: F374, F375, F376.** (F371 filed 2026-10-02, wave-297 independent red-team (LOW, CLOSED 2026-10-03 wave-298 lane 1: verify_trace post-signature shape assumptions crash uncoded); F372 filed 2026-10-03, wave-298 independent red-team (LOW, CLOSED 2026-10-03 wave-299 lane 1: policy_ci.load_artifact accepted artifacts with extra files added); F373 filed 2026-10-03, wave-298 independent red-team (LOW, CLOSED 2026-10-03 wave-299 lane 1: QuorumPredicate slot attributes reassignable post-construction); F374 filed 2026-10-03, wave-299 independent red-team (MEDIUM, OPEN: memory_store retraction authority migrates to the newest writer); F375 filed 2026-10-03, wave-299 independent red-team (LOW, OPEN: memory_reconcile write-rate bound evaded by principal rotation); F376 filed 2026-10-03, wave-299 independent red-team (LOW, OPEN: memory_reconcile recall authorization rests on self-asserted caller_namespace); F364 filed 2026-10-02, wave-293 independent red-team as F361, renumbered F361->F364
+## F377: embedded DID documents override the verifier's pinned trust roots in offline chain verification (MEDIUM, OPEN)
+
+**Cells:** wave-300 independent red-team, 2026-10-03. Standing regression pins:
+`evals/w300_redteam_probes.py` (probes `F377-native-override`,
+`F377-local-override`, `F377-tampered-embedded`, `F377-honest-flow`).
+
+**Defect:** In `gov/delegation_identity.py`, both
+`verify_native_chain_offline` and `verify_chain_offline` build the
+verifier's DID trust roots by first copying the caller's
+`trusted_did_docs` and then, for every DID document embedded in the
+chain document, executing `roots[did] = doc` -- silently REPLACING the
+verifier's own pinned root for the same DID. The embedded document is
+only "re-verified" via `verify_did_document`, which checks the
+document's controller self-signature -- always valid for an
+attacker-controlled DID. Attack chain, verified empirically on BOTH
+paths: (1) Mallory holds a link in a chain rooted at a trust root
+Victor accepts; (2) Mallory self-issues a DID document for
+`did:example:alice` naming HER key in `delegation_keys`, self-signs it
+as controller (a valid signature), and attaches it as the embedded DID
+document with a matching `did`-method identity-evidence block;
+(3) Mallory exports the chain herself (`export_native_chain` verifies
+the evidence -- it is internally consistent); (4) Victor verifies
+offline while passing his PINNED real Alice document in
+`trusted_did_docs` -- verification SUCCEEDS, and Victor's verifier now
+treats Mallory's key as bound to Alice's DID. The pinned trust root
+was replaced, not honored. (A tampered embedded doc -- broken
+controller signature -- is still refused, `delegation-identity-invalid`;
+the flaw is substitution of a valid self-signed doc, not acceptance of
+invalid ones.)
+
+**Severity rationale:** MEDIUM. The attacker must already hold a link
+in a chain the victim will verify (the "evidence IS the chain"
+handoff), and native delegation rights are still enforced -- this
+corrupts identity attribution (which key is bound to whose DID), not
+authorization scope. But it defeats the explicit purpose of
+`trusted_did_docs` pinning: a verifier who pins roots gets no
+protection against a chain document that carries its own replacement
+roots.
+
+**Close-when criteria:** (1) embedded DID documents never replace
+verifier-supplied roots: when a DID is already present in the caller's
+`trusted_did_docs`, either refuse coded `delegation-identity-invalid`
+on digest mismatch or ignore the embedded document and use the pinned
+one -- in BOTH `verify_chain_offline` and
+`verify_native_chain_offline`; (2) the F377 override probes flip to
+HELD on both paths while the tampered-embedded and honest-flow probes
+stay HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-03, wave-300 independent red-team).
+
+## F378: ticket presentation never consults revocation -- a ticket anchored on a revoked receipt still presents (MEDIUM, OPEN)
+
+**Cells:** wave-300 independent red-team, 2026-10-03. Standing regression pins:
+`evals/w300_redteam_probes.py` (probes `F378-present-after-revoke`,
+`F378-issue-on-revoked`, `F378-native-revoke-enforced`).
+
+**Defect:** `gov/delegation_tickets.py::present()` takes no revocation
+input at all -- no revocation-list parameter, no revoker -- and no
+function in the ticket module references revocation (the revocation
+story stops at the receipt layer). Two facets, both verified
+empirically on native receipt chains: (a) PRESENTATION: a ticket
+issued on a receipt via `issue_ticket_on_receipt` presents
+successfully via `present(..., receipt_chain=..., trust_roots=...)`
+AFTER the anchoring receipt is revoked with
+`DelegationRevoker.revoke`; (b) ISSUANCE: `issue_ticket_on_receipt`
+succeeds on an already-revoked receipt (the issue path verifies the
+chain via `gov/delegation.verify_chain` but never revocation). The
+control holds: `DelegationRevoker.assert_live_native` correctly
+refuses `delegation-revoked` for revoked chains -- the ticket
+presentation path simply never calls it. A revoked delegation's
+presentation token survives revocation indefinitely.
+
+**Severity rationale:** MEDIUM. Revocation is the delegation stack's
+kill switch, and the revocation lane claims power-of-attorney
+semantics (revocation binds ALL downstream copies). A presentation
+token that outlives the revocation of its anchoring authority record
+silently defeats that claim. The ticket remains attenuated (scope and
+rights are still enforced), so the blast radius is bounded to the
+ticket's original scope -- but that scope was revoked, and
+presentation still grants it.
+
+**Close-when criteria:** (1) `present()` accepts an optional
+revocation input (revocation list or revoker) and refuses coded
+`delegation-revoked` when the anchoring receipt -- or any receipt in
+the presented chain -- is revoked; `issue_ticket_on_receipt` likewise
+refuses issuance on a revoked anchoring receipt; (2) the F378 probes
+flip to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-03, wave-300 independent red-team).
+
+Next free finding: **F379**. **Open findings: F377, F378.** (F371 filed 2026-10-02, wave-297 independent red-team (LOW, CLOSED 2026-10-03 wave-298 lane 1: verify_trace post-signature shape assumptions crash uncoded); F372 filed 2026-10-03, wave-298 independent red-team (LOW, CLOSED 2026-10-03 wave-299 lane 1: policy_ci.load_artifact accepted artifacts with extra files added); F373 filed 2026-10-03, wave-298 independent red-team (LOW, CLOSED 2026-10-03 wave-299 lane 1: QuorumPredicate slot attributes reassignable post-construction); F374 filed 2026-10-03, wave-299 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-300 lane 1: memory_store retraction authority migrated to the newest writer); F375 filed 2026-10-03, wave-299 independent red-team (LOW, CLOSED 2026-10-03 wave-300 lane 2: memory_reconcile write-rate bound now keyed on authenticated owner key + principal string); F376 filed 2026-10-03, wave-299 independent red-team (LOW, CLOSED 2026-10-03 wave-300 lane 2: cross-namespace recall now bearer-grant); F377 filed 2026-10-03, wave-300 independent red-team (MEDIUM, OPEN: embedded DID documents override verifier trust roots in offline chain verification); F378 filed 2026-10-03, wave-300 independent red-team (MEDIUM, OPEN: ticket presentation never consults revocation); F364 filed 2026-10-02, wave-293 independent red-team as F361, renumbered F361->F364
 at the wave-293 merge -- the wave-293 sweep lane filed F361-F363 first
 at ~19:53 UTC and keeps them per the wave-272 earliest-filed rule;
 closed 2026-10-02, wave-294 lane 1; F367 filed 2026-10-02, wave-295

@@ -12,7 +12,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1797  # Wave-299 lane 6: pin 1780 -> 1783 (+3 delegation-identity-*).; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
+TAXONOMY_PIN = 1802  # Wave-299 lane 6: pin 1780 -> 1783 (+3 delegation-identity-*).; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
 
 _RESULTS = []
 

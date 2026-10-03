@@ -44,7 +44,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1797  # Wave-297 merge pin 1769; wave-298 lane 3: pin 1769 -> 1774 (+5 memory-reconcile-*); wave-298 merge: pin 1774 -> 1780 (+11 codes); Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
+TAXONOMY_PIN = 1802  # Wave-297 merge pin 1769; wave-298 lane 3: pin 1769 -> 1774 (+5 memory-reconcile-*); wave-298 merge: pin 1774 -> 1780 (+11 codes); Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
 
 _results = []
 
@@ -86,7 +86,7 @@ def p_taxonomy_pin():
                  "memory-reconcile-conflict-unresolved"):
         if want not in lits:
             return _record("pin-taxonomy", "BREAK", "missing code %s" % want)
-    _record("pin-taxonomy", "HELD", "1797/1797/0 sorted")
+    _record("pin-taxonomy", "HELD", "1802/1802/0 sorted")
 
 
 def _mod():
@@ -374,22 +374,40 @@ def p_grant_flow():
     r.declare_namespace("agent-b", ed25519.publickey(b_seed).hex())
     r.reconcile(_candidate(r, owner_seed), [], {}, 1000)
     grant = r.grant_sharing("agent-a", "agent-b", 900, 2000, owner_seed)
+    # F376 (wave-300): cross-namespace recall is bearer-grant -- the
+    # caller presents the signed grant; a bare namespace string never
+    # authorizes.
     rec = r.recall({"namespace": "agent-a",
-                    "key": "user/preference/theme"}, "agent-b", 1001)
+                    "key": "user/preference/theme"}, "agent-b", 1001,
+                   grant=grant)
     if rec["state"] != "active":
         return _record("mr-grant-flow", "BREAK", "granted recall failed")
-    # expired grant
+    # presenting the grant after its window still refuses
     _expect_code("mr-grant-expired",
                  lambda: r.recall({"namespace": "agent-a",
                                    "key": "user/preference/theme"},
-                                  "agent-b", 2001),
+                                  "agent-b", 2001, grant=grant),
                  mr.RC_UNAUTH_NS)
-    # revoked grant
+    # presenting a revoked grant still refuses
     r.revoke_grant(grant["grant_id"], owner_seed)
     _expect_code("mr-grant-revoked",
                  lambda: r.recall({"namespace": "agent-a",
                                    "key": "user/preference/theme"},
+                                  "agent-b", 1500, grant=grant),
+                 mr.RC_UNAUTH_NS)
+    # no grant presented at all still refuses (F376 regression pin)
+    _expect_code("mr-grant-absent",
+                 lambda: r.recall({"namespace": "agent-a",
+                                   "key": "user/preference/theme"},
                                   "agent-b", 1500),
+                 mr.RC_UNAUTH_NS)
+    # forged grant (wrong owner key) still refuses
+    forged = dict(grant)
+    forged["signature"] = "00" * 64
+    _expect_code("mr-grant-forged",
+                 lambda: r.recall({"namespace": "agent-a",
+                                   "key": "user/preference/theme"},
+                                  "agent-b", 1500, grant=forged),
                  mr.RC_UNAUTH_NS)
     _record("mr-grant-flow", "HELD",
             "grant permits recall; expiry and revocation refuse")

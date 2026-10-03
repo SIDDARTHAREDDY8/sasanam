@@ -12,7 +12,7 @@ boundary, rest_for_one exactness), and F371 re-verification on this base
 Base: wave-297 merge 5662f8874b63724a1bfd1f4441b470bfe1ba43d8
 (verified via git rev-parse HEAD after clone; git ls-remote agreed).
 
-Pin 1797 (no new codes minted by this lane -- attack only; gov/ stays
+Pin 1802 (no new codes minted by this lane -- attack only; gov/ stays
 byte-identical). Next free F374 at lane time (F372, F373 filed by this lane);
 wave-299 merge re-pin: next free F377 (open F374, F375, F376).
 
@@ -51,7 +51,7 @@ from gov import policy_ci as pci
 from gov import supervision as sup
 from gov import ed25519 as _ed25519
 
-TAXONOMY_PIN = 1797  # Wave-297 merge pin; this lane mints no codes.; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
+TAXONOMY_PIN = 1802  # Wave-297 merge pin; this lane mints no codes.; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
 
 _results = []
 
@@ -149,10 +149,11 @@ class BaseStateTest(unittest.TestCase):
         path = os.path.join(os.path.dirname(os.path.dirname(
             os.path.abspath(__file__))), "evals", "FINDINGS.md")
         footer = open(path, encoding="utf-8").read()[-6000:]
-        # Wave-299 merge re-pin: F372/F373 CLOSED by wave-299 lane 1;
-        # merged footer is open F374, F375, F376 / next free F377.
-        ok = ("Next free finding: **F377**" in footer
-              and "Open findings: F374, F375, F376" in footer)
+        # Wave-300 merge re-pin: F374/F375/F376 CLOSED by lanes 1-2;
+        # wave-300 red team filed F377/F378. Merged footer is
+        # open F377, F378 / next free F379.
+        ok = ("Next free finding: **F379**" in footer
+              and "Open findings: F377, F378" in footer)
         self.assertTrue(_expect_held("footer-state", ok,
                                     "footer disagrees") == "HELD")
 

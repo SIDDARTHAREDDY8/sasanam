@@ -87,7 +87,7 @@ def green_check():
 # Taxonomy pin (closure-only lane: gov/decision_codes.py untouched; pin 1750)
 # ---------------------------------------------------------------------------
 
-TAXONOMY_PIN = 1797  # Wave-295 merge (F365-F370 filed, +8 codes); wave-296; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
+TAXONOMY_PIN = 1802  # Wave-295 merge (F365-F370 filed, +8 codes); wave-296; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
                      # lane 3 closes F369: correctness fix, no new codes.
 
 
@@ -106,7 +106,7 @@ def p_taxonomy_pin():
         _record("pin-taxonomy", "BREAK", "literals unsorted")
         return
     _record("pin-taxonomy", "HELD",
-            "pin 1797: raw literals %d/%d/0/sorted" % (len(codes),
+            "pin 1802: raw literals %d/%d/0/sorted" % (len(codes),
                                                        len(set(codes))))
 
 

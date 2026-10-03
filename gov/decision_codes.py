@@ -4688,6 +4688,26 @@ TAXONOMY = {
         "evidence_kinds_required": ['delegation', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'delegation-approval-chain-mismatch': {
+        "domain": 'delegation',
+        "code": 'delegation-approval-chain-mismatch',
+        "human": 'delegated approval: the presented delegation chain (or '
+                 'its root delegator) does not match the chain digest bound '
+                 'into the approval request; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-approval-right-mismatch': {
+        "domain": 'delegation',
+        "code": 'delegation-approval-right-mismatch',
+        "human": 'delegated approval: the presented delegation right does '
+                 'not match the right digest bound into the approval '
+                 'request at issue time; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
     'delegation-attenuation-inverted': {
         "domain": 'delegation',
         "code": 'delegation-attenuation-inverted',
@@ -9597,6 +9617,39 @@ TAXONOMY = {
         "human": 'measurement policy: the measurement is not listed',
         "severity": 'medium',
         "evidence_kinds_required": ['measurement', 'policy', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'memory-composed-divergent': {
+        "domain": 'memory_composed',
+        "code": 'memory-composed-divergent',
+        "human": 'memory composed: the bi-temporal store and the '
+                 'reconciler disagree about a key (a second writer '
+                 'touched one layer outside the composed path, or a '
+                 'different store object was offered for a bound '
+                 'namespace) -- refusing to serve a forked claim',
+        "severity": 'critical',
+        "evidence_kinds_required": ['reconciliation-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'memory-composed-key-invalid': {
+        "domain": 'memory_composed',
+        "code": 'memory-composed-key-invalid',
+        "human": 'memory composed: the key is valid for the reconciler '
+                 'but not representable in the bi-temporal store, whose '
+                 'key grammar ([a-z][a-z0-9-]) is immutable -- the '
+                 'composed path narrows to the store grammar fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['reconciliation-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'memory-composed-key-too-long': {
+        "domain": 'memory_composed',
+        "code": 'memory-composed-key-too-long',
+        "human": 'memory composed: composed keys are bounded at 48 '
+                 'chars (room for the tombstone-generation suffix '
+                 'inside the store id grammar)',
+        "severity": 'high',
+        "evidence_kinds_required": ['reconciliation-record'],
         "reverify_steps": ['recompute'],
     },
     'memory-reconcile-conflict-unresolved': {

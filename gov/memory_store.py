@@ -349,7 +349,9 @@ class MemoryStore:
     def retract_fact(self, statement_key, retractor_principal,
                      retractor_pubkey_hex, signature_hex, at):
         """Retract a claim via a SIGNED TOMBSTONE. The retractor must
-        be the claim's source key or a named archivist. The tombstone
+        be the claim's ORIGINAL source key (the first writer under
+        this statement key -- authorship does not migrate to later
+        superseding writers) or a named archivist. The tombstone
         closes the fact's validity window; the fact's digest remains
         in history. There is no un-retract and no delete."""
         _check_id(statement_key, "statement_key")
@@ -374,10 +376,15 @@ class MemoryStore:
             "retractor_pubkey": retractor_pubkey_hex,
             "retracted_at": at,
         }
-        # The authorized retractor key is the newest record's source
-        # key, or any named archivist key.
-        newest = self._facts[fids[-1]]
-        authorized = {newest["source_pubkey"]}
+        # The authorized retractor key is the claim's ORIGINAL source
+        # key -- the first record written under this statement key.
+        # Authorship is fixed at first write and does NOT migrate to
+        # later superseding writers (F374: a conflicting writer must
+        # never inherit retraction authority over another
+        # principal's claim, and the original author must not lose
+        # it). Named archivist keys may retract any claim.
+        original = self._facts[fids[0]]
+        authorized = {original["source_pubkey"]}
         authorized.update(self._archivists.values())
         if (retractor_pubkey_hex not in authorized
                 or not _sig_ok(retractor_pubkey_hex, signature_hex,
