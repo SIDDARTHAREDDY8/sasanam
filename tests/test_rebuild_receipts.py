@@ -355,8 +355,8 @@ class TestTaxonomy(unittest.TestCase):
 
     def test_pin(self):
         from gov import decision_codes as dc
-        self.assertEqual(len(dc.TAXONOMY), 1769)  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
-        self.assertEqual(len(set(dc.TAXONOMY)), 1769)  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
+        self.assertEqual(len(dc.TAXONOMY), 1780)  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
+        self.assertEqual(len(set(dc.TAXONOMY)), 1780)  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
         self.assertEqual(sorted(dc.TAXONOMY), list(dc.TAXONOMY))
 
 

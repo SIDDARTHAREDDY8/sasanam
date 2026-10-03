@@ -9448,6 +9448,95 @@ TAXONOMY = {
         "evidence_kinds_required": ['measurement', 'policy', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'memory-reconcile-conflict-unresolved': {
+        "domain": 'memory_reconcile',
+        "code": 'memory-reconcile-conflict-unresolved',
+        "human": 'memory reconcile: an ADD arrived for a key that already '
+                 'holds a live fact with a different value; ADD is not a '
+                 'supersession -- use op=update or retract first',
+        "severity": 'medium',
+        "evidence_kinds_required": ['reconciliation-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'memory-reconcile-invalid': {
+        "domain": 'memory_reconcile',
+        "code": 'memory-reconcile-invalid',
+        "human": 'memory reconcile: malformed record, forged signature, '
+                 'missing snapshot-before-mutation, tombstoned recall, '
+                 'divergent store history, or exceeded write-rate bound',
+        "severity": 'high',
+        "evidence_kinds_required": ['reconciliation-record', 'signature'],
+        "reverify_steps": ['recompute', 'verify-signature'],
+    },
+    'memory-reconcile-poison-refused': {
+        "domain": 'memory_reconcile',
+        "code": 'memory-reconcile-poison-refused',
+        "human": 'memory reconcile: an UPDATE contradicting a '
+                 'high-reliability fact without corroboration >= 2 or a '
+                 'signed archivist override; refused as poison',
+        "severity": 'critical',
+        "evidence_kinds_required": ['reconciliation-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'memory-reconcile-scope-missing': {
+        "domain": 'memory_reconcile',
+        "code": 'memory-reconcile-scope-missing',
+        "human": 'memory reconcile: recall without a scope predicate; '
+                 'there is no default scope',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'memory-reconcile-unauthorized-namespace': {
+        "domain": 'memory_reconcile',
+        "code": 'memory-reconcile-unauthorized-namespace',
+        "human": 'memory reconcile: write or recall against an undeclared '
+                 'namespace, a write not signed by the namespace owner, or '
+                 'cross-namespace recall without a live sharing grant',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'memory-store-expired': {
+        "domain": 'memory_store',
+        "code": 'memory-store-expired',
+        "human": 'memory store: no live record for the statement key at the requested instant -- the claim\'s validity window does not cover it',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest', 'message'],
+        "reverify_steps": ['recompute'],
+    },
+    'memory-store-invalid': {
+        "domain": 'memory_store',
+        "code": 'memory-store-invalid',
+        "human": 'memory store: malformed episode, fact, or retraction -- shape, signature, provenance reference, or store bound violated; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['message'],
+        "reverify_steps": ['recompute'],
+    },
+    'memory-store-retention-lapsed': {
+        "domain": 'memory_store',
+        "code": 'memory-store-retention-lapsed',
+        "human": 'memory store: the record lapsed its declared retention schedule -- refused loud, never silently vanished',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest', 'message'],
+        "reverify_steps": ['recompute'],
+    },
+    'memory-store-tombstoned': {
+        "domain": 'memory_store',
+        "code": 'memory-store-tombstoned',
+        "human": 'memory store: the claim was retracted via a signed tombstone -- the claim is withdrawn, not time-boxed; history remains queryable',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest', 'signature'],
+        "reverify_steps": ['verify-signature'],
+    },
+    'memory-store-unsigned-retraction': {
+        "domain": 'memory_store',
+        "code": 'memory-store-unsigned-retraction',
+        "human": 'memory store: retraction is not signed by the claim\'s source key or a named archivist -- refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature', 'message', 'key'],
+        "reverify_steps": ['verify-signature', 'check-key-purpose'],
+    },
     'mesh-auth-envelope-missing': {
         "domain": 'mesh-auth',
         "code": 'mesh-auth-envelope-missing',
@@ -14629,6 +14718,14 @@ TAXONOMY = {
         "severity": 'low',
         "evidence_kinds_required": ['message'],
         "reverify_steps": ['recompute'],
+    },
+    'supervision-lease-obligation-expired': {
+        "domain": 'supervision',
+        "code": 'supervision-lease-obligation-expired',
+        "human": 'supervision: a lease re-acquisition obligation expired unsatisfied -- the crashed child was not re-entered; escalated to the parent supervisor',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest', 'signature'],
+        "reverify_steps": ['verify-signature'],
     },
     'supervision-undeclared-child': {
         "domain": 'supervision',

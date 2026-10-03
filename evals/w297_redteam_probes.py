@@ -42,7 +42,7 @@ from gov import invocation_pipeline as ip
 from gov import decision_codes as dc
 import gov.tool_call_policy as tcp
 
-TAXONOMY_PIN = 1769  # Wave-296 merge pin; this lane mints no codes.
+TAXONOMY_PIN = 1780  # Wave-296 merge pin; this lane mints no codes.
 
 _results = []
 
@@ -97,16 +97,17 @@ def _good_envelope(tracer=None, edges=None, verdict="DENY"):
 class DecisionTraceAttackTest(unittest.TestCase):
     def test_footer_state_matches_wave297(self):
         # Wave-297's own red team filed F371 (LOW, OPEN) after the
-        # base-state probe ran; wave-298 lane 1 CLOSED it. The footer
+        # base-state probe ran; wave-298 lane 1 CLOSED it, and the
+        # wave-298 red team filed F372/F373 (LOW, OPEN). The footer
         # must say so in its own words. (Merge re-pin: the base claim
-        # "open findings: none" is stale by design -- this wave filed
-        # F371. Lane-1 re-pin: F371 is now CLOSED.)
+        # "open findings: none" is stale by design -- wave-298 filed
+        # F372/F373 and closed F371.)
         path = os.path.join(os.path.dirname(
             os.path.dirname(os.path.abspath(__file__))), "evals",
             "FINDINGS.md")
         footer = open(path).read()[-4000:]
-        ok = "Next free finding: **F372**" in footer \
-            and "Open findings: none" in footer
+        ok = "Next free finding: **F374**" in footer \
+            and "Open findings: F372, F373" in footer
         self.assertTrue(_expect_held("footer-state", ok,
                                     "footer disagrees") == "HELD")
 

@@ -28,7 +28,7 @@ import re
 import subprocess
 import tempfile
 
-TAXONOMY_PIN = 1769  # Wave-295 lane 3: pin 1742 -> 1745 (+3 toolcall-predicate-*).; Wave-295 merge: pin 1745 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
+TAXONOMY_PIN = 1780  # Wave-295 lane 3: pin 1742 -> 1745 (+3 toolcall-predicate-*).; Wave-295 merge: pin 1745 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 

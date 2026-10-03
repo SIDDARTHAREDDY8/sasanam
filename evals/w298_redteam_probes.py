@@ -12,7 +12,7 @@ boundary, rest_for_one exactness), and F371 re-verification on this base
 Base: wave-297 merge 5662f8874b63724a1bfd1f4441b470bfe1ba43d8
 (verified via git rev-parse HEAD after clone; git ls-remote agreed).
 
-Pin 1769 (no new codes minted by this lane -- attack only; gov/ stays
+Pin 1780 (no new codes minted by this lane -- attack only; gov/ stays
 byte-identical). Next free F374 (F372, F373 filed by this lane).
 
 $0 spend, synthetic/local, deterministic. Stdlib only, no in-repo git
@@ -50,7 +50,7 @@ from gov import policy_ci as pci
 from gov import supervision as sup
 from gov import ed25519 as _ed25519
 
-TAXONOMY_PIN = 1769  # Wave-297 merge pin; this lane mints no codes.
+TAXONOMY_PIN = 1780  # Wave-297 merge pin; this lane mints no codes.
 
 _results = []
 
@@ -149,15 +149,17 @@ class BaseStateTest(unittest.TestCase):
             os.path.abspath(__file__))), "evals", "FINDINGS.md")
         footer = open(path, encoding="utf-8").read()[-6000:]
         ok = ("Next free finding: **F374**" in footer
-              and "Open findings: F371, F372, F373" in footer)
+              and "Open findings: F372, F373" in footer)
         self.assertTrue(_expect_held("footer-state", ok,
                                     "footer disagrees") == "HELD")
 
 
 class F371ReverifyTest(unittest.TestCase):
-    """F371 (OPEN at this base): validly-signed malformed traces must
-    refuse coded decision-trace-invalid. At this base they crash
-    uncoded -- the probes BREAK, confirming the finding is real."""
+    """F371 (CLOSED by wave-298 lane 1): validly-signed malformed traces
+    must refuse coded decision-trace-invalid. On the wave-298 merge
+    tree these probes HELD (regression pins for the closure); on the
+    pristine wave-297 base they BREAK, confirming the finding was
+    real."""
 
     def _signed_malformed(self, mut):
         seed = bytes([9] * 32)
@@ -174,8 +176,8 @@ class F371ReverifyTest(unittest.TestCase):
 
     def _probe(self, name, mut):
         env, pub = self._signed_malformed(mut)
-        # Record-only: F371 is OPEN at this base, so these BREAK by
-        # design (no AssertionError -- the BREAK is the evidence).
+        # Record-only: F371 is CLOSED on the wave-298 merge tree, so
+        # these HELD (closure regression pins; no AssertionError).
         _expect_coded(name, lambda: dt.verify_trace(env, pub),
                       {"decision-trace-invalid"})
 

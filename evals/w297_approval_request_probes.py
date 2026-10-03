@@ -52,7 +52,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 # Wave-297 lane 1: pin 1757 -> 1757 (+4 approval-request-digest-missing,
 # approval-request-expired, approval-request-forgery,
 # approval-request-invalid).
-TAXONOMY_PIN = 1769  # Wave-296 merge: pin 1757 (lane-local repoint base); Wave-297 merge: pin 1769 (+16 codes, approval-request-expired shared)
+TAXONOMY_PIN = 1780  # Wave-296 merge: pin 1757 (lane-local repoint base); Wave-297 merge: pin 1780 (+16 codes, approval-request-expired shared)
 
 try:
     from gov import approval_request as AR
