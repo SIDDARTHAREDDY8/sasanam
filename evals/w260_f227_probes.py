@@ -45,6 +45,9 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 from gov import control_profiles as cp  # noqa: E402
 from gov import decision_codes  # noqa: E402  (taxonomy pin below)
@@ -238,21 +241,27 @@ def main():
     assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN, (
         "taxonomy pin: expected %d, got %d"
         % (TAXONOMY_PIN, len(decision_codes.TAXONOMY)))
-    held, broken = 0, 0
+    results = []
     for fn in PROBES:
         try:
             verdict, detail = fn()
         except Exception as exc:  # noqa: BLE001 -- probe harness
             verdict, detail = ("ERROR", "%r" % (exc,))
-        if verdict == "HELD":
-            held += 1
-        else:
-            broken += 1
-        print("%-34s %-6s %s" % (fn.__name__, verdict, detail))
+        results.append((fn.__name__, verdict, detail))
+    probe_lines.emit(results)
+    held = sum(1 for _, v, _ in results if v == "HELD")
+    brk = sum(1 for _, v, _ in results if v == "BREAK")
+    err = sum(1 for _, v, _ in results if v == "ERROR")
+    print("w260_f227: %d BREAK / %d HELD / %d ERROR" % (brk, held, err))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        results, brk, held, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
     ok = green_check()
-    print("probes=%d held=%d broken=%d green=%s"
-          % (len(PROBES), held, broken, "OK" if ok else "FAIL"))
-    return 0 if (broken == 0 and ok) else 1
+    print("green=%s" % ("OK" if ok else "FAIL"))
+    # `broken == 0` (old) counted every non-HELD verdict; verdicts here
+    # are HELD/BREAK/ERROR only, so `brk == 0 and err == 0` is identical.
+    return 0 if (brk == 0 and err == 0 and ok) else 1
 
 
 if __name__ == "__main__":

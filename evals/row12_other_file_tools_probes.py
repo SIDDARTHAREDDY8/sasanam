@@ -71,9 +71,12 @@ os.environ.setdefault("TMPDIR", "/tmp/gov-row12-filetools")
 Path(os.environ["TMPDIR"]).mkdir(parents=True, exist_ok=True)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
+for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests"),
+           os.path.join(REPO_ROOT, "evals")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 from gov.executor import ToolExecutor  # noqa: E402
 from gov.policy import PolicyEngine  # noqa: E402
@@ -357,17 +360,30 @@ def main():
     _neutralize()
     red_results = _run_phase(red=True)
     _restore()
-    for name, verdict, detail in red_results:
-        print("  [%s] %s: %s" % (verdict, name, detail))
+    # Phase-prefixed pids keep per-line pid uniqueness for coherence
+    # (pid-class safe); verdicts here are already canonical.
+    probe_lines.emit([("red_" + n, v, d) for n, v, d in red_results])
     print("== GREEN phase (seam present: all must HELD) ==")
     green_results = _run_phase(red=False)
-    for name, verdict, detail in green_results:
-        print("  [%s] %s: %s" % (verdict, name, detail))
+    probe_lines.emit([("green_" + n, v, d) for n, v, d in green_results])
     # Determinism x2: repeat the green phase.
     print("== GREEN phase repeat (determinism x2) ==")
     green2 = _run_phase(red=False)
-    for name, verdict, detail in green2:
-        print("  [%s] %s: %s" % (verdict, name, detail))
+    probe_lines.emit([("green2_" + n, v, d) for n, v, d in green2])
+
+    # Canonical summary over the union of all three phases.
+    union = ([("red_" + n, v, d) for n, v, d in red_results]
+             + [("green_" + n, v, d) for n, v, d in green_results]
+             + [("green2_" + n, v, d) for n, v, d in green2])
+    brk = sum(1 for _, v, _ in union if v == "BREAK")
+    held = sum(1 for _, v, _ in union if v == "HELD")
+    err = sum(1 for _, v, _ in union if v == "ERROR")
+    print("row12_other_file_tools: %d BREAK / %d HELD / %d ERROR"
+          % (brk, held, err))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        union, brk, held, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
 
     expect_break = {"e1_direct_write_file", "e2_framework_alias",
                     "e3_sandboxed_backend", "e6_run_body_split"}
