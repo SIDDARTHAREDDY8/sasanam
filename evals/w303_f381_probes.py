@@ -39,7 +39,7 @@ if REPO not in sys.path:
 
 from gov import workflow_idempotency as idem
 
-TAXONOMY_PIN = 1826  # Wave-302 merge pin 1820; this lane: pin 1820 -> 1821 (+1 workflow-idempotency-caller-mismatch); Wave-303 lane 2: pin 1820 -> 1821 (+1 workflow-idempotency-caller-mismatch); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
+TAXONOMY_PIN = 1827  # Wave-302 merge pin 1820; this lane: pin 1820 -> 1821 (+1 workflow-idempotency-caller-mismatch); Wave-303 lane 2: pin 1820 -> 1821 (+1 workflow-idempotency-caller-mismatch); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
 
@@ -93,11 +93,11 @@ class BaseStateTest(unittest.TestCase):
             text = fh.read()
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-        ok = (m_open and m_open[-1].strip() == "F385,F386"
-              and m_next and m_next[-1] == "F387")
+        ok = (m_open and m_open[-1].strip() == "F387"
+              and m_next and m_next[-1] == "F389")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F385,F386 / next free F387") == "HELD")
+            "want open F386 / next free F387") == "HELD")
 
     def test_pin(self):
         with open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -108,7 +108,7 @@ class BaseStateTest(unittest.TestCase):
               and lits == sorted(lits))
         self.assertTrue(_expect_held(
             "taxonomy-pin",
-            ok and TAXONOMY_PIN == 1826,
+            ok and TAXONOMY_PIN == 1827,
             "%d literals / %d unique / sorted=%s"
             % (len(lits), len(set(lits)), lits == sorted(lits))) == "HELD")
 

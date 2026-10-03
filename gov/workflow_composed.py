@@ -50,6 +50,13 @@ DECISIONS (each resolves a documented seam hazard):
      workflow step is absent or its digest disagrees, the layers have
      forked -- refuse ``workflow-composed-divergent`` (fail closed,
      never silently re-execute and never silently trust).
+   - Foreign pairs (F388): the composer only ever completes refs of
+     the form ``wfstep:<current run>:<seq>`` under its plan actor
+     (Decision 3). A replay whose ref names a different run, or whose
+     record was begun by a different actor, is not a fork the
+     composer can heal -- it is a foreign (poisoned) pair and refuses
+     ``workflow-composed-replay-foreign``. Resolution attempted with
+     no composed execution in progress refuses the same code.
 
 3. AUTHORITY (seam 4: compensation authority vs resume authority --
    two re-verification paths). UNIFIED at the composed layer. The
@@ -127,9 +134,10 @@ DECISIONS (each resolves a documented seam hazard):
    the latest slip so the caller can resume from the outstanding leg.
    The receipt digest is bound into the step outputs (Decision 4).
 
-New decision codes (3, all high): ``workflow-composed-divergent``,
-``workflow-composed-definition-invalid``,
-``workflow-composed-authority-mismatch``.
+New decision codes (4): ``workflow-composed-divergent`` (critical),
+``workflow-composed-definition-invalid`` (high),
+``workflow-composed-authority-mismatch`` (high),
+``workflow-composed-replay-foreign`` (critical).
 
 Threat model / honest residuals:
 
@@ -152,6 +160,7 @@ Threat model / honest residuals:
 
 import hashlib
 import json
+import secrets
 
 from gov import workflow as _wf
 from gov import workflow_saga as _saga
@@ -165,6 +174,7 @@ from gov import workflow_idempotency as _idem
 WC_DIVERGENT = "workflow-composed-divergent"
 WC_DEFINITION_INVALID = "workflow-composed-definition-invalid"
 WC_AUTHORITY_MISMATCH = "workflow-composed-authority-mismatch"
+WC_REPLAY_FOREIGN = "workflow-composed-replay-foreign"
 
 # Reused (not minted): the submodules' own coded refusals propagate with
 # their codes -- workflow-*, workflow-saga-*, workflow-routing-*,
@@ -176,6 +186,7 @@ __all__ = [
     "WC_DIVERGENT",
     "WC_DEFINITION_INVALID",
     "WC_AUTHORITY_MISMATCH",
+    "WC_REPLAY_FOREIGN",
     "UNIT_FN",
     "UNIT_SAGA",
     "UNIT_SLIP",
@@ -367,6 +378,10 @@ class WorkflowComposer:
         self._exec_ctx = None        # live execution context (sync only)
         self._saga_instances = {}    # unit name -> SagaInstance
         self._slips = {}             # unit name -> latest slip dict
+        # F386: per-composer-instance nonce. Verifier refs installed on the
+        # shared SagaManager are scoped with this nonce, so two composers
+        # sharing one manager can never overwrite each other's verifier.
+        self._verifier_nonce = secrets.token_hex(8)
 
     # -- authority ----------------------------------------------------
 
@@ -388,7 +403,16 @@ class WorkflowComposer:
     def _install_saga_verifier(self, ref):
         """Decision 3: the saga's ref mechanism dispatches to the SAME
         workflow authority check, re-proven NOW. Same-trust-plane,
-        in-process adaptation (memory_composed precedent)."""
+        in-process adaptation (memory_composed precedent).
+
+        F386: ``ref`` must already be composer-instance-scoped (the
+        caller builds it from the nonce-scoped unit tag). The shared
+        SagaManager's ``_verifiers`` dict is process-global storage, so
+        a plan-scoped ref alone lets a second composer overwrite the
+        first composer's verifier. The entry is removed deterministically
+        by ``_remove_saga_verifier`` when the unit completes.
+        """
+
         def verify():
             ctx = self._exec_ctx
             if ctx is None:
@@ -400,6 +424,13 @@ class WorkflowComposer:
             except Exception:
                 return False
         self._saga._verifiers[ref] = verify
+
+    def _remove_saga_verifier(self, scoped_ref):
+        """F386: deterministic removal when the unit completes (success,
+        failure, or compensation end). A verifier entry that outlives its
+        unit is exactly the collision surface -- a later composer sharing
+        the manager could inherit or overwrite it."""
+        self._saga._verifiers.pop(scoped_ref, None)
 
     def _check_plan_actor(self, actor):
         if self._plan_actor is None:
@@ -420,7 +451,23 @@ class WorkflowComposer:
 
     def _resolve_replay(self, outcome, op_class):
         """Decision 2/5: an outer REPLAY resolves through the result_ref
-        back to the workflow checkpoint; digest disagreement is a fork."""
+        back to the workflow checkpoint; digest disagreement is a fork.
+
+        F388: the pair must be NATIVE to this composed execution. The
+        composer only ever completes refs of the form
+        ``wfstep:<current run>:<seq>`` under its plan actor (Decision 3,
+        ``_complete_unit``), so a ref naming any other run -- or a
+        record begun by any other caller -- is a foreign (poisoned)
+        pair and refuses ``workflow-composed-replay-foreign``. A
+        resolution attempted outside a composed execution has no run
+        to bind to and refuses the same code.
+        """
+        ctx = self._exec_ctx
+        if ctx is None:
+            _fail(WC_REPLAY_FOREIGN,
+                  "idempotency replay resolved with no composed "
+                  "execution in progress (%s): the pair cannot be bound "
+                  "to a run the composer began" % (op_class,))
         ref = outcome.result_ref or ""
         if not ref.startswith("wfstep:"):
             _fail(WC_DIVERGENT,
@@ -429,8 +476,23 @@ class WorkflowComposer:
         try:
             _, run_id, seq_s = ref.split(":")
             seq = int(seq_s)
+        except ValueError:
+            _fail(WC_DIVERGENT,
+                  "idempotency replay references a malformed record %r "
+                  "(%s)" % (ref, op_class))
+        if run_id != ctx["run_id"]:
+            _fail(WC_REPLAY_FOREIGN,
+                  "idempotency replay references run %r, but the composer "
+                  "is executing run %r (%s): foreign pair refused"
+                  % (run_id, ctx["run_id"], op_class))
+        if outcome.record_caller != ctx["actor"]:
+            _fail(WC_REPLAY_FOREIGN,
+                  "idempotency replay record was begun by %r, not the "
+                  "plan actor %r (%s): foreign pair refused"
+                  % (outcome.record_caller, ctx["actor"], op_class))
+        try:
             step = self._wstore.get_step(run_id, seq)
-        except (ValueError, KeyError) as e:
+        except KeyError as e:
             _fail(WC_DIVERGENT,
                   "idempotency replay points at a missing workflow step "
                   "%r (%s): %s" % (ref, op_class, e))
@@ -464,9 +526,12 @@ class WorkflowComposer:
 
     # -- saga unit ------------------------------------------------------
 
-    def _saga_wrappers(self, unit_tag, unit, authority_ref):
-        """Register plan-scoped wrapper ops so saga actions and
-        compensations execute inside the composed path (Decisions 1-3)."""
+    def _saga_wrappers(self, scoped_tag, unit, authority_ref):
+        """Register composer-instance-scoped wrapper ops so saga actions
+        and compensations execute inside the composed path (Decisions
+        1-3). F386: ``scoped_tag`` must be the nonce-scoped unit tag
+        (see ``_execute_saga_unit``); plan-scoped names alone let a
+        second composer overwrite the first's wrapper ops."""
         definition = unit["definition"]
         action_fns = unit["action_fns"]
         comp_fns = unit["comp_fns"]
@@ -547,18 +612,18 @@ class WorkflowComposer:
                     return outputs["result"]
                 return comp_op
 
-            _saga.register_op("composed:%s:action:%s" % (unit_tag, sid),
+            _saga.register_op("composed:%s:action:%s" % (scoped_tag, sid),
                               make_action(action_fns[sid]))
-            _saga.register_op("composed:%s:comp:%s" % (unit_tag, sid),
+            _saga.register_op("composed:%s:comp:%s" % (scoped_tag, sid),
                               make_comp(comp_fns[sid]))
 
         wrapped_steps = []
         for step in definition.steps:
             wrapped_steps.append(_saga.SagaStepDef(
                 step_id=step.step_id,
-                action_op="composed:%s:action:%s" % (unit_tag, step.step_id),
+                action_op="composed:%s:action:%s" % (scoped_tag, step.step_id),
                 action_params=dict(step.action_params),
-                compensation_op="composed:%s:comp:%s" % (unit_tag,
+                compensation_op="composed:%s:comp:%s" % (scoped_tag,
                                                         step.step_id),
                 compensation_params=dict(step.compensation_params),
                 authority_ref=authority_ref))
@@ -566,35 +631,52 @@ class WorkflowComposer:
 
     def _execute_saga_unit(self, unit, ctx):
         unit_tag = "%s:%s" % (ctx["plan_digest"][:12], unit["name"])
-        authority_ref = "composed-auth:%s" % unit_tag
+        # F386: everything this unit installs on SHARED registries -- the
+        # saga manager's ``_verifiers`` dict and the process-global op
+        # registry (whose names are built from the unit tag) -- must be
+        # scoped to this composer instance. A second composer running the
+        # same plan on the same manager would otherwise overwrite this
+        # composer's verifier AND its wrapper ops, breaking reentrant
+        # same-plan execution during compensation.
+        scoped_tag = "%s:%s" % (self._verifier_nonce, unit_tag)
+        authority_ref = "composed-auth:%s" % scoped_tag
         self._install_saga_verifier(authority_ref)
-        wrapped = self._saga_wrappers(unit_tag, unit, authority_ref)
-        instance = self._saga.start(wrapped)
-        self._saga_instances[unit["name"]] = instance
         try:
-            self._saga.run(instance)
-        except _saga.SagaError as e:
-            # Decision 7: an escalated saga fails the composed unit
-            # coded with the saga's escalation code.
-            code = getattr(e, "code", None) or \
-                _saga.CODE_COMPENSATION_FAILED
-            _fail(code,
-                  "composed saga unit %r escalated: %s"
-                  % (unit["name"], e))
-        if instance.status == "escalated":
-            _fail(instance.escalation_code or
-                  _saga.CODE_COMPENSATION_FAILED,
-                  "composed saga unit %r escalated" % (unit["name"],))
-        # Decision 6: outbox dispatch goes through the idempotency
-        # store, so a redrain after a crash-before-mark is a safe
-        # retry, never a duplicate.
-        dispatched = self._drain_outbox_composed(instance, unit, ctx)
-        return {"saga_id": instance.saga_id,
-                "status": instance.status,
-                "steps": [
-                    {"step_id": s["step_id"], "state": s["state"]}
-                    for s in instance.steps],
-                "outbox_dispatched": dispatched}
+            wrapped = self._saga_wrappers(scoped_tag, unit, authority_ref)
+            instance = self._saga.start(wrapped)
+            self._saga_instances[unit["name"]] = instance
+            try:
+                self._saga.run(instance)
+            except _saga.SagaError as e:
+                # Decision 7: an escalated saga fails the composed unit
+                # coded with the saga's escalation code.
+                code = getattr(e, "code", None) or \
+                    _saga.CODE_COMPENSATION_FAILED
+                _fail(code,
+                      "composed saga unit %r escalated: %s"
+                      % (unit["name"], e))
+            if instance.status == "escalated":
+                _fail(instance.escalation_code or
+                      _saga.CODE_COMPENSATION_FAILED,
+                      "composed saga unit %r escalated" % (unit["name"],))
+            # Decision 6: outbox dispatch goes through the idempotency
+            # store, so a redrain after a crash-before-mark is a safe
+            # retry, never a duplicate.
+            dispatched = self._drain_outbox_composed(instance, unit, ctx)
+            return {"saga_id": instance.saga_id,
+                    "status": instance.status,
+                    "steps": [
+                        {"step_id": s["step_id"], "state": s["state"]}
+                        for s in instance.steps],
+                    "outbox_dispatched": dispatched}
+        finally:
+            # F386: the verifier entry must not outlive the unit --
+            # removal is deterministic on success, failure, and
+            # compensation end. The entry is needed only while
+            # self._saga.run() executes (forward + compensation
+            # authority checks); afterwards the composer's execution
+            # context is torn down anyway.
+            self._remove_saga_verifier(authority_ref)
 
     def _drain_outbox_composed(self, instance, unit, ctx):
         # The idempotency key binds (unit idem_key, intent_id) -- never

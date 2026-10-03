@@ -196,6 +196,16 @@ class BeginOutcome:
         self.result_ref = record.get("result_ref")
         self.notes = list(record.get("notes", []))
 
+    @property
+    def record_caller(self):
+        """The caller recorded on the backing record at begin() time.
+
+        Exposed for the composed layer (F388): replay resolution must
+        refuse records begun by a different actor than the plan actor.
+        Read-only snapshot from the begin-time record dict.
+        """
+        return self._record_caller
+
     def _check_caller_binding(self, action):
         """Fail closed unless this outcome's caller began the record.
 

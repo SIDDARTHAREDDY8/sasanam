@@ -78,6 +78,7 @@ $0 spend, synthetic/local, deterministic. Stdlib only.
 
 import hashlib
 import json
+import math
 
 from gov import delegation_revocation as _rv
 from gov import ed25519 as _ed
@@ -89,6 +90,30 @@ from gov import ed25519 as _ed
 AL_EXPIRED = "authority-lifecycle-expired"
 AL_LAPSED = "authority-lifecycle-heartbeat-lapsed"
 AL_REVOKED = "authority-lifecycle-revoked"
+
+# ---------------------------------------------------------------------------
+# Default heartbeat schedule (wave-304 lane D). The wave-303 prospectus
+# refined rule: "A heartbeat is a re-proof, not a renewal -- silence
+# revokes, and a missed proof never extends the lease." The schedule
+# follows the fraction-of-lifetime convention (SPIRE uses 1/2 of
+# lifetime; step-ca >2/3; Kubernetes 80%):
+#
+#   heartbeat_interval_seconds
+#       = max(ceil(heartbeat_fraction * ttl_seconds),
+#             remediation_floor_seconds)
+#
+# clamped to ttl_seconds: the default schedule can never violate the
+# "interval must not exceed ttl" contract (an explicit interval is a
+# hard override and still fails fast on that contract). The 60-second
+# floor is the minimum lead time between the first due re-proof and
+# expiry, so a missed proof still leaves remediation time; it is
+# deliberately small relative to production lifetimes (minutes to
+# hours) so it cannot swallow short synthetic leases -- and the clamp
+# is the backstop when a deployment floor meets a shorter ttl.
+# ---------------------------------------------------------------------------
+
+HEARTBEAT_FRACTION_DEFAULT = 0.5
+REMEDIATION_FLOOR_SECONDS_DEFAULT = 60
 
 # Suspend/resume authorization action names (bound into the signed
 # authorization).
@@ -151,6 +176,13 @@ def _check_ts(value, what):
 def _check_positive_int(value, what):
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         raise ValueError("%s must be a positive int" % what)
+
+
+def _check_fraction(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) \
+            or not 0 < value <= 1:
+        raise ValueError("heartbeat_fraction must be a number in (0, 1]")
+    return value
 
 
 def _check_seed(value, what):
@@ -253,16 +285,32 @@ class AuthorityLeaseManager:
 
     def issue_lease(self, *, granter_id, granter_seed, subject_id,
                     subject_pubkey_hex, scope_digest, issued_at,
-                    ttl_seconds, heartbeat_interval_seconds,
+                    ttl_seconds, heartbeat_interval_seconds=None,
+                    heartbeat_fraction=HEARTBEAT_FRACTION_DEFAULT,
+                    remediation_floor_seconds=
+                    REMEDIATION_FLOOR_SECONDS_DEFAULT,
                     monitor_id=None, monitor_pubkey_hex=None,
                     lease_id=None):
         """Issue a granter-signed authority lease.
 
         The granter's signature binds the full issuance body. The
         lease id defaults to ``lease_id_for(...)`` (deterministic).
-        ``heartbeat_interval_seconds`` must not exceed ``ttl_seconds``
-        (a lease that expires before any heartbeat is due cannot carry
-        a heartbeat stream -- fail fast). Returns the lease record.
+
+        Heartbeat schedule (wave-304 lane D, the wave-303 prospectus
+        refined rule): when ``heartbeat_interval_seconds`` is not
+        given, the interval is derived as
+        ``max(ceil(heartbeat_fraction * ttl_seconds),
+        remediation_floor_seconds)``, clamped to ``ttl_seconds`` so
+        the default schedule can never violate the interval <= ttl
+        contract (the floor must not swallow the ttl). An explicit
+        interval is a hard override and still fails fast when it
+        exceeds ``ttl_seconds`` (a lease that expires before any
+        heartbeat is due cannot carry a heartbeat stream).
+
+        Scheduling arithmetic only: the heartbeat remains a re-proof,
+        never an extension. The derived schedule is recorded on the
+        lease-issued journal entry (the auditor evidence event).
+        Returns the lease record.
         """
         _check_id(granter_id, "granter_id")
         _check_seed(granter_seed, "granter_seed")
@@ -273,11 +321,25 @@ class AuthorityLeaseManager:
             raise ValueError("scope_digest must be 64 lowercase hex")
         _check_ts(issued_at, "issued_at")
         _check_positive_int(ttl_seconds, "ttl_seconds")
-        _check_positive_int(heartbeat_interval_seconds,
-                            "heartbeat_interval_seconds")
-        if heartbeat_interval_seconds > ttl_seconds:
-            raise ValueError("heartbeat_interval_seconds must not exceed "
-                             "ttl_seconds")
+        heartbeat_fraction = _check_fraction(heartbeat_fraction)
+        _check_positive_int(remediation_floor_seconds,
+                            "remediation_floor_seconds")
+        if heartbeat_interval_seconds is None:
+            # Default schedule (wave-304 lane D); see the banner above
+            # and the issue_lease docstring for the formula.
+            schedule = "derived"
+            heartbeat_interval_seconds = max(
+                math.ceil(heartbeat_fraction * ttl_seconds),
+                remediation_floor_seconds)
+            if heartbeat_interval_seconds > ttl_seconds:
+                heartbeat_interval_seconds = ttl_seconds
+        else:
+            schedule = "explicit"
+            _check_positive_int(heartbeat_interval_seconds,
+                                "heartbeat_interval_seconds")
+            if heartbeat_interval_seconds > ttl_seconds:
+                raise ValueError("heartbeat_interval_seconds must not "
+                                 "exceed ttl_seconds")
         if monitor_pubkey_hex is not None:
             if not _is_hex64(monitor_pubkey_hex):
                 raise ValueError("monitor_pubkey_hex must be 64 lowercase "
@@ -321,7 +383,11 @@ class AuthorityLeaseManager:
                       "scope_digest": scope_digest,
                       "ttl_seconds": ttl_seconds,
                       "heartbeat_interval_seconds":
-                          heartbeat_interval_seconds})
+                          heartbeat_interval_seconds,
+                      "heartbeat_fraction": heartbeat_fraction,
+                      "remediation_floor_seconds":
+                          remediation_floor_seconds,
+                      "schedule": schedule})
         return dict(lease)
 
     # -- evaluation ------------------------------------------------------

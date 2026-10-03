@@ -51,7 +51,7 @@ if REPO not in sys.path:
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1826  # Wave-302 merge pin 1820; wave-303 lane 6: pin 1820 -> 1823 (+3 authority-lifecycle-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
+TAXONOMY_PIN = 1827  # Wave-302 merge pin 1820; wave-303 lane 6: pin 1820 -> 1823 (+3 authority-lifecycle-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
 
@@ -87,7 +87,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1826/1826/0 sorted")
+    _record("pin-taxonomy", "HELD", "1827/1827/0 sorted")
 
 
 def p_footer_state():
@@ -96,12 +96,13 @@ def p_footer_state():
         text = fh.read()
     m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
+# Wave-304 lane A re-pin: F385 CLOSED; lane footer open F386 / next free F387.
     # Wave-303 merge footer: open F385,F386 / next F387.
     ok = (m_open and m_open[-1].strip()
-          == "F385,F386"
-          and m_next and m_next[-1] == "F387")
+          == "F387"
+          and m_next and m_next[-1] == "F389")
     _record("footer-state", "HELD" if ok else "BREAK",
-            "want open F385,F386 / next free F387")
+            "want open F387 / next free F389")
 
 
 def _al():

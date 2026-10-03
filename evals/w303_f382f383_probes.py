@@ -13,7 +13,7 @@ the same name/inputs-digest drift checks (coded
 workflow-step-unauthorized); no new decision codes needed.
 
 Base: wave-302 merge c18ed4c7b4025d1949b2042aa1ff202e856d6b6f
-(pin 1826; F382/F383 closed here; footer open F385,F386 /
+(pin 1827; F382/F383 closed here; footer open F385,F386 /
 next free F387).
 
 $0 spend, synthetic/local, deterministic. Stdlib only, no in-repo git
@@ -47,7 +47,7 @@ from gov import delegation_revocation as rev
 from gov import ed25519 as _ed25519
 from gov import workflow as wf
 
-TAXONOMY_PIN = 1826  # Wave-302 merge pin 1820; this lane mints no codes.; Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
+TAXONOMY_PIN = 1827  # Wave-302 merge pin 1820; this lane mints no codes.; Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
 
@@ -88,16 +88,16 @@ class BaseStateTest(unittest.TestCase):
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
         # Wave-303 lane-3 re-pin: F382/F383 closed here; F380/F381/F384
         # still OPEN (lanes 1/2 work), next free F385.
-        ok = (m_open and m_open[-1].replace(" ", "") == "F385,F386"
-              and m_next and m_next[-1] == "F387")
+        ok = (m_open and m_open[-1].replace(" ", "") == "F387"
+              and m_next and m_next[-1] == "F389")
         self.assertTrue(_expect_held(
             "footer-state", ok,
             "want open F380,F381,F384 / next free F385") == "HELD")
 
     def test_taxonomy_pin(self):
         self.assertTrue(_expect_held(
-            "taxonomy-pin", TAXONOMY_PIN == 1826,
-            "TAXONOMY_PIN=%s, want 1826" % (TAXONOMY_PIN,)) == "HELD")
+            "taxonomy-pin", TAXONOMY_PIN == 1827,
+            "TAXONOMY_PIN=%s, want 1827" % (TAXONOMY_PIN,)) == "HELD")
 
 
 # ---------------------------------------------------------------------------

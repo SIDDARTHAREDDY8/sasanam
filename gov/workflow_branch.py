@@ -326,13 +326,16 @@ class BranchCoordinator:
         """Park a coordination lease with the suspension record. The
         lease is NOT renewed or extended -- the record captures the
         fencing token, holder, and the suspension instant so resume
-        can re-validate liveness."""
+        can re-validate liveness. The XID and the coordinator's public
+        key are bound into the record; resume re-resolves the XID
+        against this coordinator's live transactions and requires the
+        presented record to match the parked one exactly (F385)."""
         txn = self._txn(xid)
         _check_ts(suspended_at, "suspended_at")
         if not isinstance(lease_manager, object) or \
                 not hasattr(lease_manager, "check_write"):
             _fail(MALFORMED, "lease_manager must expose check_write")
-        return {
+        record = {
             "xid": xid,
             "scope": scope,
             "fencing_token": fencing_token,
@@ -340,20 +343,66 @@ class BranchCoordinator:
             "suspended_at": suspended_at,
             "coordinator_pubkey": txn["coordinator_pubkey"],
         }
+        # F385: the coordinator remembers exactly what it parked. A
+        # suspension record is a bearer token -- without this memory,
+        # a caller could edit the xid field and resume under a
+        # different transaction. resume_lease compares the presented
+        # record against this parked copy.
+        txn["suspension"] = dict(record)
+        return record
 
     def resume_lease(self, suspension, lease_manager, checked_at):
         """Re-validate the parked lease. Fail-closed: an expired lease
         refuses ``coord-lease-expired``; a stale fencing token refuses
         ``coord-lease-fencing``. The lease's expiry is NEVER extended
         by suspend/resume -- the deployment must renew explicitly via
-        the lease manager if it wants more time."""
+        the lease manager if it wants more time.
+
+        F385: the suspension's XID is resolved against this
+        coordinator's live transactions -- unknown XIDs refuse coded
+        (``decision-code-malformed``), and so do transactions that are
+        no longer open (committed / rolled-back). The presented record
+        must then match, field for field, the suspension parked for
+        that XID by ``suspend_lease``: a record parked under xid_A
+        cannot resume under xid_B, even when both transactions belong
+        to the same coordinator. Mismatch refuses
+        ``workflow-branch-xid-mismatch``.
+        """
         if not isinstance(suspension, dict):
             _fail(MALFORMED, "suspension must be a dict")
         _check_ts(checked_at, "checked_at")
-        for key in ("xid", "scope", "fencing_token", "holder_id"):
+        for key in ("xid", "scope", "fencing_token", "holder_id",
+                    "coordinator_pubkey"):
             if key not in suspension:
                 _fail(MALFORMED, "suspension is missing %r" % key)
         _check_xid(suspension["xid"])
+        pubkey = suspension["coordinator_pubkey"]
+        if not isinstance(pubkey, str) or not pubkey:
+            _fail(MALFORMED, "suspension coordinator_pubkey must be a "
+                             "non-empty string")
+        # F385: bind the resume to a live transaction of THIS
+        # coordinator. _txn fails closed on unknown XIDs; the state
+        # check pins it to a LIVE transaction -- a suspension parked
+        # under a committed or rolled-back transaction cannot resume.
+        txn = self._txn(suspension["xid"])
+        if txn["state"] != "open":
+            _fail(MALFORMED, "transaction %s is %s, not open"
+                  % (suspension["xid"][:12], txn["state"]))
+        if pubkey != txn["coordinator_pubkey"]:
+            _fail(WB_XID_MISMATCH,
+                  "suspension's xid %s is not the transaction it was "
+                  "parked under (coordinator key mismatch)"
+                  % suspension["xid"][:12])
+        # F385: the record must be the one parked for this xid. The
+        # coordinator's own memory -- not the record's self-description
+        # -- is the binding. An edited xid (A->B swap) or any other
+        # field edit fails here, even when both transactions share the
+        # coordinator's key.
+        parked = txn.get("suspension")
+        if parked is None or suspension != parked:
+            _fail(WB_XID_MISMATCH,
+                  "suspension does not match the record parked for xid "
+                  "%s" % suspension["xid"][:12])
         # check_write is the liveness oracle: it refuses
         # coord-lease-expired / coord-lease-fencing itself, and returns
         # True without mutating anything (a pure authorization check).

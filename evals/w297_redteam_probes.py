@@ -42,7 +42,7 @@ from gov import invocation_pipeline as ip
 from gov import decision_codes as dc
 import gov.tool_call_policy as tcp
 
-TAXONOMY_PIN = 1826  # Wave-296 merge pin; this lane mints no codes.; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 lane 4: pin 1820 -> 1822 (+2 workflow-saga-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
+TAXONOMY_PIN = 1827  # Wave-296 merge pin; this lane mints no codes.; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 lane 4: pin 1820 -> 1822 (+2 workflow-saga-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
 
@@ -109,11 +109,16 @@ class DecisionTraceAttackTest(unittest.TestCase):
         path = os.path.join(os.path.dirname(
             os.path.dirname(os.path.abspath(__file__))), "evals",
             "FINDINGS.md")
-        footer = open(path).read()[-4000:]
-                # Wave-303 lane 4 re-pin: F384 CLOSED by this lane.
-        # Wave-303 merge re-pin: open F385,F386 / next free F387.
-        ok = "Next free finding: **F385**" in footer \
-            and "Open findings: F385,F386." in footer
+        # Wave-304 lane A re-pin: F385 CLOSED by this lane. The old
+        # windowed-substring form (read()[-4000:]) could no longer see
+        # the footer line (~6000 chars from EOF as the history chain
+        # grows), so this anchors to the LAST footer matches in the
+        # full file, like the w299+ batteries.
+        text = open(path, encoding="utf-8").read()
+        m_open = _re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
+        m_next = _re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
+        ok = (m_open and m_open[-1].strip() == "F387"
+              and m_next and m_next[-1] == "F389")
         self.assertTrue(_expect_held("footer-state", ok,
                                     "footer disagrees") == "HELD")
 

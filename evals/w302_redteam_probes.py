@@ -1,3 +1,127 @@
+"""Wave-302 independent red-team battery: wave-301 workflow seams under attack.
+
+The four wave-301 workflow modules (workflow.py, workflow_saga.py,
+workflow_routing.py, workflow_idempotency.py) were built standalone and
+never composed. This battery attacks the seams BETWEEN them plus each
+module's own authority/checkpoint discipline:
+
+  1. Authority re-verification gaps (F380): gov/workflow.py verifies
+     the delegation chain but treats the revocation ledger as optional
+     (a revoked chain authorizes when the caller omits the ledger),
+     and the completed-step replay path skips ALL authority checks --
+     including the actor binding -- so a different actor with garbage
+     authority can replay another run's completed steps.
+  2. Idempotency authorization gaps (F381): gov/workflow_idempotency.py
+     re-verifies authority at begin() but complete()/checkpoint() are
+     not caller-bound (any authorized caller can complete another
+     actor's in-flight operation with an arbitrary result, poisoning
+     the replay cache), and evict_completed() takes no authority
+     verifier at all.
+  3. Journal durability (F382): gov/workflow.py _load() re-appends
+     every record, so the journal file doubles on every restart.
+  4. Step-key drift (F383): gov/workflow.py's step-level idempotency
+     key path replays stale outputs for a different step name/inputs,
+     bypassing the seq-slot drift refusal.
+  5. Saga escalation (F384, CLOSED 2026-10-03 wave-303 lane 4): an
+     escalated saga had no operator recovery path -- escalation was
+     terminal despite "until an operator intervenes". The F384 probe
+     is re-pinned to the fixed behavior (recovery via
+     describe_escalation / resolve_escalation / retry_compensation).
+  6. F379 expected-open control: reproduced on pristine base via the
+     wave-301 battery's own probe classes; its BREAKs are reported
+     separately from the new F380-F384 BREAKs.
+
+Base: wave-303 merge c9138cc53888 (wave-303 merge composition:
+lane 4's file as base; F380/F381/F382-F383 probe classes from
+lanes 1/2/3 re-pinned to the closed behavior; header restored
+2026-10-03 wave-304 lane A -- the merge had dropped it, leaving
+the file unimportable).
+
+Pin 1827 at wave-303 merge (+4 decision codes from wave-303
+lanes 1-3; F380-F384 CLOSED). Next free F387.
+Wave-304 lane A: F385 CLOSED; lane footer open F386 / next free F387.
+
+$0 spend, synthetic/local, deterministic. Stdlib only, no in-repo git
+subprocesses. New batteries set deployment mode at module level and are
+also verified under a clean environment.
+
+Run:
+  mkdir -p /var/tmp/g302-rt && TMPDIR=/var/tmp/g302-rt \\
+    ~/workspace/.gov-venv/bin/python evals/w302_redteam_probes.py
+Also standalone (clean env):
+  env -u GOV_DEPLOYMENT_MODE TMPDIR=/var/tmp/g302-rtb \\
+    ~/workspace/.gov-venv/bin/python evals/w302_redteam_probes.py
+"""
+
+import os
+
+os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
+
+import hashlib
+import json
+import re
+import subprocess
+import sys
+import unittest
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO not in sys.path:
+    sys.path.insert(0, REPO)
+
+from gov import delegation as dg
+from gov import delegation_revocation as rev
+from gov import ed25519 as _ed25519
+from gov import workflow as wf
+from gov import workflow_idempotency as idem
+from gov import workflow_routing as wr
+from gov import workflow_saga as saga
+
+TAXONOMY_PIN = 1827  # Wave-301 merge pin 1812; this lane mints no codes.; Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 lane 4: pin 1820 -> 1822 (+2 workflow-saga-*); Wave-303 merge: pin 1822 -> 1826 (+4 codes from lanes 1-3)
+
+_results = []
+
+
+def _record(name, status, detail=""):
+    _results.append((name, status, detail))
+    return status
+
+
+def _expect_coded(name, fn, codes):
+    """fn must raise a coded error whose .code is in codes. Anything
+    else (no raise, uncoded raise, wrong code) is a BREAK."""
+    try:
+        fn()
+    except Exception as e:  # noqa: BLE001
+        code = getattr(e, "code", None)
+        if code in codes:
+            return _record(name, "HELD", "coded %s" % (code,))
+        return _record(name, "BREAK",
+                       "wrong escape: %s(code=%r), want one of %s"
+                       % (type(e).__name__, code, sorted(codes)))
+    return _record(name, "BREAK", "no refusal: fn returned")
+
+
+def _expect_held(name, cond, detail=""):
+    if cond:
+        return _record(name, "HELD", detail)
+    return _record(name, "BREAK", detail or "condition false")
+
+
+def _seed(tag):
+    return hashlib.sha256(("w302-redteam-%s" % tag).encode()).digest()
+
+
+def _pub(seed):
+    return _ed25519.publickey(seed).hex()
+
+
+def _literals():
+    with open(os.path.join(REPO, "gov", "decision_codes.py"),
+              encoding="utf-8") as fh:
+        src = fh.read()
+    return re.findall(r'"code":\s*\'([a-z][a-z0-9-_.]*)\'', src)
+
+
 class BaseStateTest(unittest.TestCase):
     def test_footer_state(self):
         with open(os.path.join(REPO, "evals", "FINDINGS.md"),
@@ -5,14 +129,15 @@ class BaseStateTest(unittest.TestCase):
             text = fh.read()
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
+# Wave-304 merge re-pin: F385/F386/F388 CLOSED; F387 OPEN; footer open F387 / next free F389.
         # Wave-303 merge re-pin: F380-F384 CLOSED; F385,F386 OPEN.
-        # Expected footer: open F385,F386 / next free F387.
+        # Expected footer: open F387 / next free F389.
         ok = (m_open and m_open[-1].strip()
-              == "F385,F386"
-              and m_next and m_next[-1] == "F387")
+              == "F387"
+              and m_next and m_next[-1] == "F389")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F385,F386 / next free F387")
+            "want open F387 / next free F389")
             == "HELD")
 
     def test_pin(self):
@@ -21,7 +146,7 @@ class BaseStateTest(unittest.TestCase):
               and lits == sorted(lits))
         self.assertTrue(_expect_held(
             "taxonomy-pin",
-            ok and TAXONOMY_PIN == 1826,
+            ok and TAXONOMY_PIN == 1827,
             "%d literals / %d unique / sorted=%s"
             % (len(lits), len(set(lits)), lits == sorted(lits))) == "HELD")
 

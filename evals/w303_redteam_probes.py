@@ -72,7 +72,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1826  # Wave-302 merge pin (1812 + 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
+TAXONOMY_PIN = 1827  # Wave-302 merge pin (1812 + 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
 
@@ -108,7 +108,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1826/1826/0 sorted")
+    _record("pin-taxonomy", "HELD", "1827/1827/0 sorted")
 
 
 def p_footer_state():
@@ -121,13 +121,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
-    want_open = "F385,F386"  # wave-303 merge: F380-F384 CLOSED
-    if nxt != 387 or open_s != want_open:
+    want_open = "F387"  # wave-304 lane A: F385 CLOSED
+    if nxt != 389 or open_s != want_open:
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F387 open %r)"
+                       "footer drift: next F%d open %r (want next F389 open %r)"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open F385,F386 / next F387")
+            "footer pins open F387 / next F389")
 
 
 AT = 1_700_000_000
@@ -319,11 +319,11 @@ def p_f386_control_no_collision():
 
 
 def p_f381amp_composed_foreign_replay():
-    # Same root cause as F381 (OPEN): complete()/checkpoint() are not
-    # caller-bound, so a poisoned idempotency record's (digest, ref)
-    # pair is trusted by WorkflowComposer._resolve_replay -- the
-    # composed unit returns a FOREIGN run's checkpoint outputs without
-    # executing. Annotated to F381, not a new finding.
+    # F388 (MEDIUM, CLOSED by wave-304 lane C): regression pin. A
+    # poisoned idempotency record's (digest, ref) pair was trusted by
+    # WorkflowComposer._resolve_replay -- the composed unit returned a
+    # FOREIGN run's checkpoint outputs without executing. Post-fix:
+    # refuses coded workflow-composed-replay-foreign.
     from gov import workflow as wf
     from gov import workflow_saga as saga
     from gov import workflow_idempotency as idem
@@ -356,14 +356,23 @@ def p_f381amp_composed_foreign_replay():
     if replay.status != "replay":
         return _record("F381amp-composed-foreign-replay", "ERROR",
                        "poison did not stick: %s" % (replay.status,))
-    resolved = comp._resolve_replay(replay, "composed-unit")
+    try:
+        resolved = comp._resolve_replay(replay, "composed-unit")
+    except Exception as e:  # noqa: BLE001
+        code = getattr(e, "code", None)
+        if code == "workflow-composed-replay-foreign":
+            return _record(
+                "F381amp-composed-foreign-replay", "HELD",
+                "foreign pair refused coded (F388 closed)")
+        return _record("F381amp-composed-foreign-replay", "ERROR",
+                       "unexpected refusal code %r (%r)" % (code, e))
     if resolved == victim_outputs:
         return _record(
             "F381amp-composed-foreign-replay", "BREAK",
             "F381 root cause: poisoned record made the composer return "
             "a foreign run's outputs without executing")
     _record("F381amp-composed-foreign-replay", "HELD",
-            "foreign ref refused")
+            "foreign ref refused (F388 closed)")
 
 
 def p_f383amp_gated_key_reuse():

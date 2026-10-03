@@ -275,5 +275,72 @@ class LifecycleFixture(unittest.TestCase):
         self.assertIs(ed25519.verify(pub, b"other", sig), False)
 
 
+class HeartbeatScheduleTest(unittest.TestCase):
+    """Wave-304 lane D: the default heartbeat schedule is
+    fraction-of-lifetime with a remediation floor
+    (max(ceil(fraction * ttl), floor), clamped to ttl); an explicit
+    interval remains a hard override. Scheduling arithmetic only --
+    no change to proof verification, suspension, revocation, or the
+    coded-refusal contract."""
+
+    def setUp(self):
+        self.sg = _seed("granter")
+        self.sx = _seed("subject")
+        self.px = ed25519.publickey(self.sx).hex()
+        self.mgr = al.AuthorityLeaseManager()
+
+    def _issue_default(self, **kw):
+        args = dict(granter_id="granter-a", granter_seed=self.sg,
+                    subject_id="agent-x", subject_pubkey_hex=self.px,
+                    scope_digest=_hex64("scope:tool.invoke"),
+                    issued_at=AT, ttl_seconds=3600)
+        args.update(kw)
+        return self.mgr.issue_lease(**args)
+
+    def test_default_interval_is_fraction_of_ttl(self):
+        # max(ceil(0.5 * 3600), 60) = 1800.
+        lease = self._issue_default()
+        self.assertEqual(lease["heartbeat_interval_seconds"], 1800)
+
+    def test_floor_wins_for_short_ttl(self):
+        # max(ceil(0.5 * 100) = 50, 60) = 60.
+        lease = self._issue_default(ttl_seconds=100)
+        self.assertEqual(lease["heartbeat_interval_seconds"], 60)
+
+    def test_floor_clamped_to_ttl(self):
+        # max(ceil(0.5 * 30) = 15, 60) = 60, but the floor must not
+        # swallow the ttl -> clamped to 30.
+        lease = self._issue_default(ttl_seconds=30)
+        self.assertEqual(lease["heartbeat_interval_seconds"], 30)
+
+    def test_explicit_interval_is_hard_override(self):
+        lease = self._issue_default(heartbeat_interval_seconds=600)
+        self.assertEqual(lease["heartbeat_interval_seconds"], 600)
+        v = self.mgr.check(lease["lease_id"], at=AT + 599)
+        self.assertEqual(v["next_heartbeat_due"], AT + 600)
+
+    def test_invalid_fraction_refuses(self):
+        for frac in (0, 1.5, -0.25, True):
+            with self.assertRaises(ValueError, msg="fraction=%r" % (frac,)):
+                self._issue_default(heartbeat_fraction=frac)
+
+    def test_invalid_floor_refuses(self):
+        for floor in (0, -5, "60"):
+            with self.assertRaises(ValueError, msg="floor=%r" % (floor,)):
+                self._issue_default(remediation_floor_seconds=floor)
+
+    def test_schedule_parameters_journaled(self):
+        lease = self._issue_default()
+        issued = [e for e in self.mgr.journal
+                  if e["kind"] == "lease-issued"
+                  and e["lease_id"] == lease["lease_id"]]
+        self.assertEqual(len(issued), 1)
+        fields = issued[0]["fields"]
+        self.assertEqual(fields["heartbeat_fraction"], 0.5)
+        self.assertEqual(fields["remediation_floor_seconds"], 60)
+        self.assertEqual(fields["schedule"], "derived")
+        self.assertEqual(fields["heartbeat_interval_seconds"], 1800)
+
+
 if __name__ == "__main__":
     unittest.main()

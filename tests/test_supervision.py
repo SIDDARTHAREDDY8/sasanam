@@ -64,7 +64,7 @@ class TestSupervisionDecisions(unittest.TestCase):
                      "supervision-invalid",
                      "supervision-undeclared-child"):
             self.assertIn(code, dc.TAXONOMY)
-        self.assertEqual(len(dc.TAXONOMY), 1826)
+        self.assertEqual(len(dc.TAXONOMY), 1827)
 
     def test_code_literals_sorted_unique(self):
         lits = [c for c in dc.TAXONOMY]

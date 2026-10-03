@@ -16859,6 +16859,21 @@ TAXONOMY = {
         "evidence_kinds_required": ['workflow-record', 'idempotency-record'],
         "reverify_steps": ['recompute'],
     },
+    'workflow-composed-replay-foreign': {
+        "domain": 'workflow',
+        "code": 'workflow-composed-replay-foreign',
+        "human": 'composed workflow: an idempotency replay references a '
+                 '(digest, ref) pair foreign to this composed execution -- '
+                 'the ref names a run other than the one the composer is '
+                 'executing, the record was begun by a different actor, or '
+                 'resolution was attempted outside a composed execution; '
+                 'the composer only ever completes refs of the form '
+                 'wfstep:<current run>:<seq> under its plan actor, so a '
+                 'foreign pair is refused fail-closed instead of trusted',
+        "severity": 'critical',
+        "evidence_kinds_required": ['workflow-record', 'idempotency-record'],
+        "reverify_steps": ['recompute'],
+    },
     'workflow-idempotency-authority-lapsed': {
         "domain": 'workflow-idempotency',
         "code": 'workflow-idempotency-authority-lapsed',

@@ -44,7 +44,7 @@ from gov import decision_codes
 from gov import ed25519 as _ed25519
 from gov import workflow_saga as saga
 
-TAXONOMY_PIN = 1826  # Wave-302 merge pin 1820; this lane: +2 workflow-saga-* (operator-unauthorized, resolution-invalid).; Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
+TAXONOMY_PIN = 1827  # Wave-302 merge pin 1820; this lane: +2 workflow-saga-* (operator-unauthorized, resolution-invalid).; Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
 
@@ -344,10 +344,10 @@ class RepinTest(unittest.TestCase):
             src = _f.read()
         lits = re.findall(r'"code":\s*\'([a-z][a-z0-9-_.]*)\'', src)
         self.assertTrue(_expect_held(
-            "repin-pin-1826",
-            len(lits) == 1826 and len(set(lits)) == 1826
+            "repin-pin-1827",
+            len(lits) == 1827 and len(set(lits)) == 1827
             and lits == sorted(lits),
-            "1826 unique sorted literals") == "HELD")
+            "1827 unique sorted literals") == "HELD")
 
 
 class FooterStateTest(unittest.TestCase):
@@ -358,7 +358,7 @@ class FooterStateTest(unittest.TestCase):
         # Anchor to the LAST matches: the footer, not historical entries.
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-        want_open, want_next = "F385,F386", "F387"
+        want_open, want_next = "F387", "F389"
         self.assertTrue(_expect_held(
             "footer-state",
             m_open and m_open[-1].strip() == want_open

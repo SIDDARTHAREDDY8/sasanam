@@ -61,7 +61,7 @@ from gov import delegation_revocation as rev
 from gov import ed25519 as _ed25519
 from gov import workflow as wf
 
-TAXONOMY_PIN = 1826  # Wave-302 merge pin 1820; this lane mints no codes.; Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
+TAXONOMY_PIN = 1827  # Wave-302 merge pin 1820; this lane mints no codes.; Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
 
@@ -146,11 +146,11 @@ class BaseStateTest(unittest.TestCase):
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
         # Wave-303 F380 closure lane: F380 CLOSED; F381-F384 still OPEN.
         ok = (m_open and m_open[-1].strip()
-              == "F385,F386"
-              and m_next and m_next[-1] == "F387")
+              == "F387"
+              and m_next and m_next[-1] == "F389")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F385,F386 / next free F387")
+            "want open F387 / next free F389")
             == "HELD")
 
     def test_pin(self):
