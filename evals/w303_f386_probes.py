@@ -96,13 +96,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
-    want_open = "F395"  # this lane: F386 CLOSED
+    want_open = "none"  # this lane: F386 CLOSED
     if nxt != 396 or open_s != want_open:
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F395 open %r)"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open F395 / next F396")
+            "footer pins open none / next F396")
 
 
 AT = 1_700_000_000

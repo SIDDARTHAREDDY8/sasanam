@@ -299,16 +299,84 @@ def _code_fingerprint_inner(code):
     }
 
 
+_EXIT_CONTAINER = object()  # stack marker: leaving a container
+
+
+def _is_json_native(value):
+    """Iterative JSON-native check for closed-over values (F395).
+
+    The plan digest binds closed-over values *by value*; only values
+    that serialize deterministically are eligible. Anything else is
+    "exotic" and must refuse (see ``_closure_fingerprint``). Iterative
+    (explicit stack) so adversarially deep structures cannot exhaust
+    the C recursion limit. Cycle detection tracks the current
+    descent path only: a shared substructure (DAG) is JSON-native and
+    fine; only a true reference cycle refuses (``json.dumps`` would
+    raise ``ValueError`` on it anyway).
+
+    Containers must be the *exact* builtin types: ``json.dumps``
+    honors overridden ``.items()``/``__iter__`` on dict/list/tuple
+    subclasses, so a lying subclass could make the digest bind
+    different bytes than the fn reads at runtime (an F395-shaped
+    collision channel). Scalar subclasses (str/int/...) cannot lie --
+    the encoder binds their true underlying value -- so they stay
+    eligible.
+    """
+    path = set()
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, tuple) and item[:1] == (_EXIT_CONTAINER,):
+            path.discard(item[1])
+            continue
+        v = item
+        if v is None or isinstance(v, (str, int, float, bool)):
+            continue
+        if type(v) is dict:
+            oid = id(v)
+            if oid in path:
+                return False
+            for k in v:
+                # Accept exactly the key kinds json.dumps coerces
+                # deterministically (str native; int/float/bool/None
+                # coerced to their JSON string forms).
+                if not (isinstance(k, str) or k is None
+                        or isinstance(k, (int, float, bool))):
+                    return False
+            path.add(oid)
+            stack.append((_EXIT_CONTAINER, oid))
+            stack.extend(v.values())
+            continue
+        if type(v) is list or type(v) is tuple:
+            oid = id(v)
+            if oid in path:
+                return False
+            path.add(oid)
+            stack.append((_EXIT_CONTAINER, oid))
+            stack.extend(v)
+            continue
+        return False
+    return True
+
+
 def _closure_fingerprint(fn):
-    """Fingerprint closed-over values, JSON-native only (F393).
+    """Fingerprint closed-over values, JSON-native only (F393, F395).
 
     A substituted closure with identical bytecode but different
     captured values (``lambda i: evil_val`` vs ``lambda i: real_val``)
     must not collide. Values of JSON-native types are bound by value
     -- they are stable across reconstruction from the same source, so
-    crash-recovery re-execution keeps the same digest. Anything else
-    binds only its type name (stable, but a documented residual: two
-    exotic objects of the same type with different state collide).
+    crash-recovery re-execution keeps the same digest.
+
+    A non-JSON-native ("exotic") closed-over value cannot be bound at
+    all, so the plan refuses ``WC_DEFINITION_INVALID`` (fail closed,
+    F395). Binding it by ``type(value).__name__`` collides across
+    instances of the same type (the F395 break); binding it by
+    ``repr`` is unstable across processes (memory addresses), which
+    would break crash-recovery re-execution of the same plan. The
+    check is recursive -- an exotic value nested inside a
+    dict/list/tuple refuses too, because ``_canon``'s ``default=str``
+    would otherwise bind its ``repr`` silently.
     """
     freevars = fn.__code__.co_freevars
     cells = fn.__closure__ or ()
@@ -319,11 +387,17 @@ def _closure_fingerprint(fn):
         except ValueError:
             bound.append([name, {"#unbound": "empty-cell"}])
             continue
-        if isinstance(value, (dict, list, tuple, str, int, float,
-                              bool)) or value is None:
+        if _is_json_native(value):
             bound.append([name, value])
         else:
-            bound.append([name, {"#unbound": type(value).__name__}])
+            _fail(WC_DEFINITION_INVALID,
+                  "composed plan fn %r closes over non-JSON-native value "
+                  "for %r (type %s): the plan digest binds closed-over "
+                  "values by value, and exotic objects cannot be bound "
+                  "(fail closed; close over JSON-native configuration "
+                  "values instead)"
+                  % (getattr(fn, "__name__", fn), name,
+                     type(value).__name__))
     return bound
 
 
@@ -340,7 +414,11 @@ def _code_fingerprint(fn):
     referenced names and calling convention, plus JSON-native
     closed-over values: stable across reconstruction from the same
     source (crash-recovery re-execution of the same plan keeps its
-    digest), different for a different function body. Callables
+    digest), different for a different function body. Non-JSON-native
+    ("exotic") closed-over values refuse ``WC_DEFINITION_INVALID``
+    (F395): binding them by type name collides across instances of
+    the same type, and binding them by ``repr`` is unstable across
+    processes. Callables
     without an introspectable code object (builtins,
     functools.partial, C extensions) refuse ``WC_DEFINITION_INVALID``:
     the digest must bind code, and uninspectable code cannot be bound
