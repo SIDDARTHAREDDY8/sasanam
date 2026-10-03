@@ -50,7 +50,7 @@ Probe map:
       payload): write capability declared -> admitted.
   synth-privesc: corpus PRV-01 shape (read -> write -> write):
       admitted under state-write; refused when the envelope hides it.
-  pin-taxonomy / footer-state: standard pins (1878; open none / next F398).
+  pin-taxonomy / footer-state: standard pins (1888; open none / next F398).
 
 Deterministic across 2 runs; $0 spend; synthetic/local. Stdlib only
 apart from gov/* (real product code, no stubs).
@@ -90,7 +90,7 @@ from gov import workflow_routing as wr  # noqa: E402
 from gov import workflow_idempotency as idem  # noqa: E402
 from gov import workflow_composed as wc  # noqa: E402
 
-TAXONOMY_PIN = 1878  # wave-313 lane E: +6 plan-policy-* codes
+TAXONOMY_PIN = 1888  # wave-313 lane E: +6 plan-policy-* codes; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*)
 
 _SA = hashlib.sha256(b"w313pp-battery").digest()
 _PA = ed25519.publickey(_SA).hex()
@@ -673,7 +673,7 @@ def _green_checks():
     # extends; w302_workflow_composed_probes pins the composed path.
     green_check.check_battery(_record, "green-f396",
                               "evals/w312_f396_probes.py", repo=REPO)
-    # Merge re-pin 1857->1878 done: w302's pin-taxonomy probe now passes,
+    # Merge re-pin 1857->1888 done: w302's pin-taxonomy probe now passes,
     # so no expected-BREAK entry is needed (wave-305 lesson: sweep the
     # transient rather than leaving a stale expectation).
     green_check.check_battery(_record, "green-composed",

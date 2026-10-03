@@ -17061,6 +17061,106 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
     },
+    'vsa-packet-levels-missing': {
+        "domain": 'vsa',
+        "code": 'vsa-packet-levels-missing',
+        "human": 'VSA decision packet: the required verification level is '
+                 'not among the VSA asserted verifiedLevels; the VSA does '
+                 'not cover what the consumer requires; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['vsa-packet', 'signature'],
+        "reverify_steps": ['replay-vsa-consumer'],
+    },
+    'vsa-packet-malformed': {
+        "domain": 'vsa',
+        "code": 'vsa-packet-malformed',
+        "human": 'VSA decision packet: the envelope or statement is '
+                 'malformed -- not an object, wrong field set, unexpected '
+                 'payloadType, not exactly one signature, undecodable '
+                 'payload; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['vsa-packet', 'signature'],
+        "reverify_steps": ['replay-vsa-consumer'],
+    },
+    'vsa-packet-predicate-mismatch': {
+        "domain": 'vsa',
+        "code": 'vsa-packet-predicate-mismatch',
+        "human": 'VSA decision packet: predicateType is not the SLSA '
+                 'verification_summary; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['vsa-packet', 'signature'],
+        "reverify_steps": ['replay-vsa-consumer'],
+    },
+    'vsa-packet-resource-mismatch': {
+        "domain": 'vsa',
+        "code": 'vsa-packet-resource-mismatch',
+        "human": 'VSA decision packet: resourceUri does not name the '
+                 'expected decision packet; cross-decision replay refused '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['vsa-packet', 'signature'],
+        "reverify_steps": ['replay-vsa-consumer'],
+    },
+    'vsa-packet-result-not-passed': {
+        "domain": 'vsa',
+        "code": 'vsa-packet-result-not-passed',
+        "human": 'VSA decision packet: verificationResult is not PASSED; '
+                 'the evidence does not assert success; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['vsa-packet', 'signature'],
+        "reverify_steps": ['replay-vsa-consumer'],
+    },
+    'vsa-packet-signature-invalid': {
+        "domain": 'vsa',
+        "code": 'vsa-packet-signature-invalid',
+        "human": 'VSA decision packet: the envelope signature does not '
+                 'verify under any key pinned for the expected verifier; '
+                 'forged VSA refused fail-closed',
+        "severity": 'critical',
+        "evidence_kinds_required": ['vsa-packet', 'signature'],
+        "reverify_steps": ['replay-vsa-consumer'],
+    },
+    'vsa-packet-signer-unpinned': {
+        "domain": 'vsa',
+        "code": 'vsa-packet-signer-unpinned',
+        "human": 'VSA decision packet: the signing key is not pinned for '
+                 'the expected verifier id -- not an accepted (signer, '
+                 'verifier) pair; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['vsa-packet', 'signature'],
+        "reverify_steps": ['replay-vsa-consumer'],
+    },
+    'vsa-packet-subject-mismatch': {
+        "domain": 'vsa',
+        "code": 'vsa-packet-subject-mismatch',
+        "human": 'VSA decision packet: the statement subject digest does '
+                 'not name the expected decision packet; refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['vsa-packet', 'signature'],
+        "reverify_steps": ['replay-vsa-consumer'],
+    },
+    'vsa-packet-verifier-mismatch': {
+        "domain": 'vsa',
+        "code": 'vsa-packet-verifier-mismatch',
+        "human": 'VSA decision packet: the statement verifier id is not '
+                 'the expected pinned verifier, or the expected verifier '
+                 'is not pinned at all; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['vsa-packet', 'signature'],
+        "reverify_steps": ['replay-vsa-consumer'],
+    },
+    'vsa-packet-window-invalid': {
+        "domain": 'vsa',
+        "code": 'vsa-packet-window-invalid',
+        "human": 'VSA decision packet: timeVerified is unparseable or the '
+                 'consumer clock falls outside [timeVerified, timeVerified '
+                 '+ max_age]; stale or not-yet-valid VSA refused '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['vsa-packet', 'signature'],
+        "reverify_steps": ['replay-vsa-consumer'],
+    },
     'wall_proof_unreadable': {
         "domain": 'platform',
         "code": 'wall_proof_unreadable',

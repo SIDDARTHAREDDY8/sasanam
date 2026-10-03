@@ -49,7 +49,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1878  # Wave-303 merge pin; F386 adds no decision codes.
+TAXONOMY_PIN = 1888  # Wave-303 merge pin; F386 adds no decision codes.; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*)
 
 # Wave-312 merge: the F395 closure contract (coded
 # workflow-composed-definition-invalid for non-JSON-native closed-over
@@ -94,7 +94,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1878/1878/0 sorted")
+    _record("pin-taxonomy", "HELD", "1888/1888/0 sorted")
 
 
 def p_footer_state():
