@@ -1,9 +1,9 @@
 """Wave-312 lane C battery: independent red team vs the wave-311 merge tree.
 
 Base: wave-311 merge e8cdd51f (F395 CLOSED -- exotic-closure coded
-refusal; F396 OPEN -- defaults/kwdefaults ignored by the code
-fingerprint; Sigstore-bundle distribution; standalone offline verifier;
-pin 1841).
+refusal; F396 CLOSED 2026-10-03 wave-312 lane A -- defaults/kwdefaults
+bound by value in the code fingerprint; Sigstore-bundle distribution;
+standalone offline verifier; persistent witness log; pin 1851).
 
 Targets (all verified empirically with throwaway scripts BEFORE this
 battery was written -- diagnosing-bugs loop):
@@ -26,9 +26,9 @@ battery was written -- diagnosing-bugs loop):
     (workflow-saga-compensation-unauthorized, compensation never runs);
     retry with the stale execution instant succeeds (comp 3->4 calls,
     saga compensated); retry with at=0 likewise succeeds.
- 2. F396 (MEDIUM, OPEN -- filed wave-311 lane C): the F393 code
-    binding ignores __defaults__/__kwdefaults__ (fn path, saga action
-    path, kwdefaults channel) -- expected BREAKs.
+ 2. F396 (MEDIUM, CLOSED 2026-10-03 wave-312 lane A): the F393 code
+    binding binds __defaults__/__kwdefaults__ by value (fn path, saga
+    action path, kwdefaults channel) -- HELD (probes are dual-mode).
  3. F395 (MEDIUM, CLOSED 2026-10-03 wave-311 lane A): exotic-closure
     coded refusal holds (fn, saga, nested) -- HELD.
  4. F394 (LOW, CLOSED 2026-10-03 wave-310 lane A): composer-API retry
@@ -58,15 +58,15 @@ battery was written -- diagnosing-bugs loop):
     batteries.
 
 New findings filed by this lane: F397 (LOW, OPEN), claim
-2026-10-03T17:44:00Z. Wave-312 lane footer: open F396, F397 / next
-F398; pin 1841 (this lane mints no decision codes). This battery's
-expected BREAKs: F397-stale-at-retry, F397-stale-at-zero (both OPEN),
-F396-defaults-fn, F396-defaults-saga, F396-kwdefaults-fn (OPEN).
+2026-10-03T17:44:00Z. Wave-312 merge footer: open F397 / next F398;
+pin 1851 (lane D bump; this lane mints no decision codes). This
+battery's expected BREAKs: F397-stale-at-retry, F397-stale-at-zero
+(both OPEN); the three F396 probes now record HELD (F396 CLOSED).
 
-Expected counts: 44 probes -- 5 BREAK / 39 HELD / 0 ERROR direct
+Expected counts: 44 probes -- 2 BREAK / 42 HELD / 0 ERROR direct
 probes. A full standalone run adds 10 depth-1 green checks (54 lines:
-5 BREAK / 49 HELD / 0 ERROR); under GOV_SKIP_GREEN=1 the checks are
-replaced by one green-skipped HELD line (45 lines: 5/40/0).
+2 BREAK / 52 HELD / 0 ERROR); under GOV_SKIP_GREEN=1 the checks are
+replaced by one green-skipped HELD line (45 lines: 2/43/0).
 
 Run:
   mkdir -p /var/tmp/g312-rt && TMPDIR=/var/tmp/g312-rt \\
@@ -102,10 +102,10 @@ import green_check
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-# Pin 1841 (wave-311 merge: +12 evidence-bundle-*). This lane mints no
+# Pin 1851 (wave-312 lane D: 1841 -> 1851, +10 witness codes). This lane mints no
 # codes (red team only; F397 needs no new code -- the fix is an `at`
-# bound, not a refusal), so the pin stays 1841.
-TAXONOMY_PIN = 1841
+# bound, not a refusal), so the pin stays 1851.
+TAXONOMY_PIN = 1851
 
 AT = 1000000
 
@@ -143,7 +143,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1841/1841/0 sorted")
+    _record("pin-taxonomy", "HELD", "1851/1851/0 sorted")
 
 
 def p_footer_state():
@@ -156,13 +156,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    # Wave-312 lane footer: F396 OPEN, F397 OPEN (filed this lane).
-    if nxt != 398 or open_s != "F396, F397":
+    # Wave-312 merge footer: F396 CLOSED (lane A); F397 OPEN (lane C).
+    if nxt != 398 or open_s != "F397":
         return _record("footer-state", "BREAK",
                        "footer pins next F%d open '%s', want next F398 "
-                       "open 'F396, F397'" % (nxt, open_s))
+                       "open 'F397'" % (nxt, open_s))
     _record("footer-state", "HELD",
-            "footer pins open F396, F397 / next F398")
+            "footer pins open F397 / next F398")
 
 # ------------------------------------------------------------------
 # Shared scaffolds
@@ -405,8 +405,9 @@ def p_f397_stale_at_zero():
 
 
 # ------------------------------------------------------------------
-# F396 (MEDIUM, OPEN -- filed wave-311 lane C): the F393 code binding
-# ignores __defaults__/__kwdefaults__
+# F396 (MEDIUM, CLOSED 2026-10-03 wave-312 lane A): the F393 code binding
+# binds __defaults__/__kwdefaults__ by value (dual-mode probes: BREAK
+# only if the attack still succeeds; HELD on the closed tree)
 # ------------------------------------------------------------------
 
 class _HitDict(dict):
@@ -1816,14 +1817,13 @@ def _green_checks():
         _record("green-skipped", "HELD",
                 "green check skipped (GOV_SKIP_GREEN=1)")
         return
-    # F396 OPEN (filed wave-311 lane C): the w311 red-team battery's
-    # F396 probes still report BREAK. Re-pinned to the lane footer
-    # (open F396, F397 / next F398).
+    # F396 CLOSED 2026-10-03 wave-312 lane A: the w311 red-team
+    # battery's three F396 probes were rewritten to assert the fix;
+    # expect no BREAKs. Re-pinned to the merge footer (open F397 /
+    # next F398).
     green_check.check_battery(
         _rec, "green-w311_redteam", "evals/w311_redteam_probes.py",
-        repo=REPO, expect_break_ids=("F396-defaults-fn",
-                                     "F396-defaults-saga",
-                                     "F396-kwdefaults-fn"))
+        repo=REPO, expect_break_ids=())
     # F395 CLOSED (wave-311 lane A): the w311_f395 battery asserts the
     # coded exotic-closure refusal; expect no BREAKs. Re-pinned to
     # the lane footer.
@@ -1944,9 +1944,9 @@ _PROBES = [
 _EXPECTED_BREAKS = frozenset({
     "F397-stale-at-retry",          # F397 OPEN (filed this lane)
     "F397-stale-at-zero",           # F397 OPEN (filed this lane)
-    "F396-defaults-fn",             # F396 OPEN
-    "F396-defaults-saga",           # F396 OPEN
-    "F396-kwdefaults-fn",           # F396 OPEN
+    # F396 CLOSED 2026-10-03 wave-312 lane A: the three F396 probes
+    # (dual-mode: digest distinction / coded plan-mismatch) now
+    # record HELD on the merged tree.
 })
 
 

@@ -69,7 +69,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 import probe_lines  # noqa: E402  (canonical probe-line form)
 
-TAXONOMY_PIN = 1841  # Wave-306 merge pin; Wave-307 lane A: F392 reuses workflow-composed-replay-foreign, pin unchanged
+TAXONOMY_PIN = 1851  # Wave-306 merge pin; Wave-307 lane A: F392 reuses workflow-composed-replay-foreign, pin unchanged
 FOREIGN_CODE = "workflow-composed-replay-foreign"
 
 _results = []
@@ -119,15 +119,15 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    # Wave-309 lane A: F393 CLOSED; footer open F396 / next F397.
-    # Wave-309 lane A: F393 CLOSED; footer open F396 / next F397.
-    want_open = "F396"
-    if nxt != 397 or open_s != want_open:
+    # Wave-312 merge footer: F396 CLOSED (lane A); F397 OPEN (lane C).
+    # Wave-312 merge footer: F396 CLOSED (lane A); F397 OPEN (lane C).
+    want_open = "F397"
+    if nxt != 398 or open_s != want_open:
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F397 open %r)"
+                       "footer drift: next F%d open %r (want next F398 open %r)"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open F396 / next F397")
+            "footer pins open F397 / next F398")
 
 
 AT = 1_700_000_000

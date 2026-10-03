@@ -282,7 +282,7 @@ def p_pin_taxonomy():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1841/1841/0 sorted")
+    _record("pin-taxonomy", "HELD", "1851/1851/0 sorted")
 
 
 def p_footer_state():
@@ -291,10 +291,11 @@ def p_footer_state():
         text = fh.read()
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
     m_open = re.findall(r"Open findings: ([^.]*)\.", text)
+    # Wave-312 merge footer: F396 CLOSED (lane A); F397 OPEN (lane C).
     ok = (m_next and m_next[-1] == "F398"
-          and m_open and "F396" in m_open[-1] and "F397" in m_open[-1])
+          and m_open and m_open[-1].strip() == "F397")
     _record("footer-state", "HELD" if ok else "BREAK",
-            "open F396, F397 / next F398" if ok else "footer drift")
+            "open F397 / next F398" if ok else "footer drift")
 
 
 def p_taxonomy_shape():

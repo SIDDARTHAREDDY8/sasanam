@@ -20,7 +20,7 @@ run->plan binding, `op_digest`, and `_begin_unit`/`_resolve_replay`
 all compare default-bound digests. JSON-native defaults keep
 crash-recovery stability (same source reconstructs the same digest;
 line numbers excluded per F393); F393/F394/F395 contracts not
-weakened. No new decision codes: pin stays 1841; footer open none /
+weakened. No new decision codes: pin stays 1851; footer open F397 /
 next F397. This battery's expected BREAKs: none (all F396 probes
 assert the fix).
 
@@ -54,8 +54,8 @@ import green_check
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # F396 closure mints no new decision codes (reuses
-# workflow-composed-definition-invalid): pin stays 1841.
-TAXONOMY_PIN = 1841  # wave-311 merge: pin 1829 -> 1841 (evidence-bundle codes)
+# workflow-composed-definition-invalid): pin stays 1851.
+TAXONOMY_PIN = 1851  # wave-311 merge: pin 1829 -> 1841 (evidence-bundle codes)
 
 AT = 1000000
 REFUSAL = "workflow-composed-definition-invalid"
@@ -95,7 +95,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1841/1841/0 sorted")
+    _record("pin-taxonomy", "HELD", "1851/1851/0 sorted")
 
 
 def p_footer_state():
@@ -108,12 +108,12 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    # Wave-312 lane A footer: F396 CLOSED; no open findings.
-    if nxt != 397 or open_s != "none":
+    # Wave-312 merge footer: F396 CLOSED (lane A); F397 OPEN (lane C).
+    if nxt != 398 or open_s != "F397":
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d (want F397), open '%s' "
-                       "(want 'none')" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open none / next F397")
+                       "footer drift: next F%d (want F398), open '%s' "
+                       "(want 'F397')" % (nxt, open_s))
+    _record("footer-state", "HELD", "footer pins open F397 / next F398")
 
 
 def _seed(s):

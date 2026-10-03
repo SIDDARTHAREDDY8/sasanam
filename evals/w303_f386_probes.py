@@ -49,7 +49,16 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1841  # Wave-303 merge pin; F386 adds no decision codes.
+TAXONOMY_PIN = 1851  # Wave-303 merge pin; F386 adds no decision codes.
+
+# Wave-312 merge: the F395 closure contract (coded
+# workflow-composed-definition-invalid for non-JSON-native closed-over
+# values) fires on this battery's instrumentation closures. Probes that
+# need live objects during execution look them up here by a JSON-native
+# key instead of closing over them (afab9a59 precedent). F395-safe: the
+# registry is process-global, so identical code resolves identical
+# objects -- no confusion.
+_F386_PROBE_STATE = {}
 
 _results = []
 
@@ -85,7 +94,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1841/1841/0 sorted")
+    _record("pin-taxonomy", "HELD", "1851/1851/0 sorted")
 
 
 def p_footer_state():
@@ -98,13 +107,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
-    want_open = "F396"  # this lane: F386 CLOSED
-    if nxt != 397 or open_s != want_open:
+    want_open = "F397"  # this lane: F386 CLOSED
+    if nxt != 398 or open_s != want_open:
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F397 open %r)"
+                       "footer drift: next F%d open %r (want next F398 open %r)"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open F396 / next F397")
+            "footer pins open F397 / next F398")
 
 
 AT = 1_700_000_000
@@ -182,7 +191,6 @@ def p_f386_verifier_collision():
     c1, c2 = h["composer"](), h["composer"]()
     h["ws"].start_run("probe", run_id="col-r1", authority=h["auth"], at=AT)
     h["ws"].start_run("probe", run_id="col-r2", authority=h["auth"], at=AT)
-    entered = {"n": 0}
 
     def ok(i):
         return ({"r": 1}, [])
@@ -194,9 +202,13 @@ def p_f386_verifier_collision():
         return {"u": 1}
 
     def comp_s2(i):
-        if entered["n"] == 0:
-            entered["n"] += 1
-            c2.execute(plan, run_id="col-r2", authority=h["auth"], at=AT)
+        # F395 contract: no exotic closures (c2/plan/entered/h). The
+        # reentrant execution targets travel via the module registry.
+        st = _F386_PROBE_STATE["col"]
+        if st["entered"]["n"] == 0:
+            st["entered"]["n"] += 1
+            st["c2"].execute(st["plan"], run_id="col-r2",
+                             authority=st["auth"], at=AT)
         return {"u": 2}
 
     saga = h["saga"]
@@ -209,6 +221,8 @@ def p_f386_verifier_collision():
          "action_fns": {"s1": ok, "s2": ok, "s3": boom},
          "comp_fns": {"s1": comp_s1, "s2": comp_s2, "s3": comp_s1},
          "idem_key": "ck"}])
+    _F386_PROBE_STATE["col"] = {"entered": {"n": 0}, "c2": c2,
+                                "plan": plan, "auth": h["auth"]}
     try:
         res = c1.execute(plan, run_id="col-r1", authority=h["auth"], at=AT)
     except Exception as e:  # noqa: BLE001
@@ -217,6 +231,8 @@ def p_f386_verifier_collision():
             "F386-verifier-collision", "BREAK",
             "reentrant same-plan execution escalated: coded %r (%r)"
             % (code, e))
+    finally:
+        _F386_PROBE_STATE.pop("col", None)
     if res["units"]["sg"]["status"] != "compensated":
         return _record("F386-verifier-collision", "BREAK",
                        "unexpected status %r"
@@ -279,11 +295,15 @@ def p_f386_op_names_scoped():
     h["ws"].start_run("probe", run_id="op-r1", authority=h["auth"], at=AT)
     h["ws"].start_run("probe", run_id="op-r2", authority=h["auth"], at=AT)
 
-    seen = {}
+    _F386_PROBE_STATE["op"] = {"seen": {}, "saga": saga}
 
     def ok(i):
-        seen.setdefault("names", []).extend(
-            k for k in saga.registered_ops() if k.startswith("composed:"))
+        # F395 contract: no exotic closures (seen/saga). Live objects
+        # travel via the module registry.
+        st = _F386_PROBE_STATE["op"]
+        st["seen"].setdefault("names", []).extend(
+            k for k in st["saga"].registered_ops()
+            if k.startswith("composed:"))
         return ({"r": 1}, [])
 
     def comp(i):
@@ -299,8 +319,11 @@ def p_f386_op_names_scoped():
         {"kind": "saga", "name": "sg", "definition": sd,
          "action_fns": {"s1": ok}, "comp_fns": {"s1": comp},
          "idem_key": "opk2"}])
-    c1.execute(p1, run_id="op-r1", authority=h["auth"], at=AT)
-    c2.execute(p2, run_id="op-r2", authority=h["auth"], at=AT)
+    try:
+        c1.execute(p1, run_id="op-r1", authority=h["auth"], at=AT)
+        c2.execute(p2, run_id="op-r2", authority=h["auth"], at=AT)
+    finally:
+        seen = _F386_PROBE_STATE.pop("op", {}).get("seen", {})
     n1, n2 = c1._verifier_nonce, c2._verifier_nonce
     during = seen.get("names", [])
     unscoped = [k for k in during
@@ -339,7 +362,10 @@ def p_f386_compensation_authority_intact():
         return ({"r": 1}, [])
 
     def boom_and_revoke(i):
-        h["ledger"].revoke(h["root"]["receipt_id"], AT + 1)
+        # F395 contract: no exotic closures (h). Live objects travel
+        # via the module registry.
+        st = _F386_PROBE_STATE["au"]
+        st["ledger"].revoke(st["receipt_id"], AT + 1)
         raise RuntimeError("kaboom")
 
     def comp(i):
@@ -353,10 +379,10 @@ def p_f386_compensation_authority_intact():
         {"kind": "saga", "name": "sg", "definition": sd,
          "action_fns": {"s1": ok, "s2": boom_and_revoke},
          "comp_fns": {"s1": comp, "s2": comp}, "idem_key": "auk"}])
+    _F386_PROBE_STATE["au"] = {"ledger": h["ledger"],
+                               "receipt_id": h["root"]["receipt_id"]}
     try:
         c1.execute(plan, run_id="au-r1", authority=h["auth"], at=AT)
-        return _record("F386-compensation-authority-intact", "BREAK",
-                       "revoked authority compensated without refusal")
     except Exception as e:  # noqa: BLE001
         if getattr(e, "code", None) == \
                 "workflow-saga-compensation-unauthorized":
@@ -364,6 +390,10 @@ def p_f386_compensation_authority_intact():
                            "revoked authority refuses coded at compensation")
         return _record("F386-compensation-authority-intact", "BREAK",
                        "unexpected code %r" % (getattr(e, "code", None),))
+    finally:
+        _F386_PROBE_STATE.pop("au", None)
+    return _record("F386-compensation-authority-intact", "BREAK",
+                   "revoked authority compensated without refusal")
 
 
 def p_f386_control_no_collision():
@@ -374,7 +404,6 @@ def p_f386_control_no_collision():
     c1, c2 = h["composer"](), h["composer"]()
     h["ws"].start_run("probe", run_id="ctl-r1", authority=h["auth"], at=AT)
     h["ws"].start_run("probe", run_id="ctl-r2", authority=h["auth"], at=AT)
-    entered = {"n": 0}
 
     def ok(i):
         return ({"r": 1}, [])
@@ -386,15 +415,14 @@ def p_f386_control_no_collision():
         return {"u": 1}
 
     def comp_s2(i):
-        if entered["n"] == 0:
-            entered["n"] += 1
-            plan_other = wc.ComposedPlan([
-                {"kind": "saga", "name": "other", "definition": sd,
-                 "action_fns": {"s1": ok, "s2": ok, "s3": boom},
-                 "comp_fns": {"s1": comp_s1, "s2": comp_s2, "s3": comp_s1},
-                 "idem_key": "ck2"}])
-            c2.execute(plan_other, run_id="ctl-r2", authority=h["auth"],
-                       at=AT)
+        # F395 contract: no exotic closures (entered/wc/ok/boom/sd/c2/h
+        # were all closed over). The reentrant plan and its targets
+        # travel via the module registry; this fn closes over nothing.
+        st = _F386_PROBE_STATE["ctl"]
+        if st["entered"]["n"] == 0:
+            st["entered"]["n"] += 1
+            st["c2"].execute(st["plan_other"], run_id="ctl-r2",
+                             authority=st["auth"], at=AT)
         return {"u": 2}
 
     saga = h["saga"]
@@ -402,17 +430,28 @@ def p_f386_control_no_collision():
         saga.SagaStepDef("s1", "a1", {}, "c1"),
         saga.SagaStepDef("s2", "a2", {}, "c2"),
         saga.SagaStepDef("s3", "a3", {}, "c3")])
+    # Pre-built (was built inside comp_s2): closure-free comp_s2 above
+    # lets the reentrant plan be constructed at probe scope.
+    plan_other = wc.ComposedPlan([
+        {"kind": "saga", "name": "other", "definition": sd,
+         "action_fns": {"s1": ok, "s2": ok, "s3": boom},
+         "comp_fns": {"s1": comp_s1, "s2": comp_s2, "s3": comp_s1},
+         "idem_key": "ck2"}])
     plan = wc.ComposedPlan([
         {"kind": "saga", "name": "sg", "definition": sd,
          "action_fns": {"s1": ok, "s2": ok, "s3": boom},
          "comp_fns": {"s1": comp_s1, "s2": comp_s2, "s3": comp_s1},
          "idem_key": "ck"}])
+    _F386_PROBE_STATE["ctl"] = {"entered": {"n": 0}, "c2": c2,
+                                "plan_other": plan_other, "auth": h["auth"]}
     try:
         res = c1.execute(plan, run_id="ctl-r1", authority=h["auth"], at=AT)
     except Exception as e:  # noqa: BLE001
         return _record("F386-control-no-collision", "BREAK",
                        "control escalated unexpectedly: %r"
                        % (getattr(e, "code", None),))
+    finally:
+        _F386_PROBE_STATE.pop("ctl", None)
     if res["units"]["sg"]["status"] == "compensated":
         return _record("F386-control-no-collision", "HELD",
                        "different plan -> compensated")
