@@ -39,7 +39,7 @@ Probe map:
       byte-for-byte proof the verifier's witness step consumes our
       receipts (that step's acceptance of seal output is pinned by the
       w311/w312 batteries).
-  pin-taxonomy / footer-state: standard pins (1888; open F398, F399, F400 / next F401).
+  pin-taxonomy / footer-state: standard pins (1888; open F399, F400 / next F401).
 
 Deterministic across 2 runs; $0 spend; synthetic/local. Stdlib only
 apart from gov/witness_rekor.py + gov/witness_log.py (real product
@@ -317,17 +317,17 @@ def footer_state():
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               encoding="utf-8") as fh:
         text = fh.read()
-    # Wave-315 merge footer: F398, F399, F400 OPEN; next F401.
+    # Wave-316 lane 1 footer: F399, F400 OPEN (F398 CLOSED); next F401.
     # This lane files no findings. Footer lines repeat through history;
     # the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
     ok = ("Next free finding: **F401**" in text
-          and m_open and m_open[-1].strip() == "F398, F399, F400")
+          and m_open and m_open[-1].strip() == "F399, F400")
     if ok:
-        _record("footer-state", "HELD", "footer: open F398, F399, F400 / next F401")
+        _record("footer-state", "HELD", "footer: open F399, F400 / next F401")
     else:
         _record("footer-state", "BREAK",
-                "footer mismatch vs open F398, F399, F400 / next F401")
+                "footer mismatch vs open F399, F400 / next F401")
 
 
 PROBES = [anchor_verify_roundtrip, replay_across_bundles,
