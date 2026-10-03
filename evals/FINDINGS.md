@@ -9076,8 +9076,75 @@ wave-298 lane 1):**
   approval_quorum) 90/90 OK. Taxonomy pin 1769 unchanged
   (1769/1769/0 sorted, no new codes).
 
-Next free finding: **F372**. **Open findings: none.** (F371 filed 2026-10-02, wave-297 independent red-team (LOW, CLOSED 2026-10-03 wave-298 lane 1: verify_trace post-signature shape assumptions crash uncoded); F364 filed
-2026-10-02, wave-293 independent red-team as F361, renumbered F361->F364
+## F372: policy_ci.load_artifact accepts artifacts with extra files added -- the derived file set is not closed (LOW, OPEN)
+
+**Cells:** wave-298 independent red-team, 2026-10-03. Standing regression pins:
+`evals/w298_redteam_probes.py` (probe `F372-artifact-extra-file`).
+
+**Defect:** `gov/policy_ci.py::load_artifact` verifies that every file in
+`derived` matches its entry in `digests`, but it never checks that the file
+set is CLOSED: an artifact copied from `derive()` output with an added file
+(e.g. `derived["evil.yaml"] = "..."` plus a matching `digests["evil.yaml"]`
+entry) passes verification. The embedded manifest (`policy.manifest.json`)
+lists the files `derive()` emitted, but `load_artifact` never compares the
+manifest's `files` map against the artifact's actual `derived` keys -- the
+manifest is inert (no consumer in `gov/` reads its `files` map;
+`compile_authoring` verifies the artifact but compiles from the source text,
+never from derived files). The lane-297 report's claim -- "Derived artifacts
+... hand-edited files refuse coded `policy-ci-derived-tampered`" -- is true
+for edits to existing files but not for additions to the set: the artifact
+is not the frozen closed set `derive()` emitted.
+
+**Severity rationale:** LOW. Currently no consumer reads the extra files, so
+there is no exploit path in this tree -- this is a claim-vs-implementation
+gap on the evidence seam (same defense-in-depth class as F371). It becomes
+a real primitive the moment any consumer enumerates `artifact["derived"]`
+or trusts the manifest's file list: a tampered artifact store could smuggle
+a file past verification.
+
+**Close-when criteria:** (1) `load_artifact` refuses coded
+`policy-ci-derived-tampered` when the derived file set differs from the
+closed set `derive()` emits (or when the manifest's `files` map disagrees
+with the artifact's `derived` keys); (2) the F372 probe flips to HELD;
+(3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-03, wave-298 independent red-team).
+
+## F373: QuorumPredicate slot attributes are reassignable post-construction -- the "immutable after construction" claim is overstated (LOW, OPEN)
+
+**Cells:** wave-298 independent red-team, 2026-10-03. Standing regression pins:
+`evals/w298_redteam_probes.py` (probes `F373-predicate-min-mutable`,
+`F373-predicate-veto-mutable`).
+
+**Defect:** `gov/approval_quorum.py::QuorumPredicate` documents "Immutable
+after construction" and the wave-297 lane-2 code comments claim "the object
+itself is slot-locked (no `__dict__`)" so "a post-build in-process mutation
+cannot silently change decisions under a still-valid digest". `__slots__`
+prevents NEW attributes but does not prevent reassignment of the declared
+slots: `p._min_approvals = 1` and `p._blocking_veto_roles = frozenset()`
+both succeed silently, and `tally` reads `predicate.min_approvals` /
+`predicate.blocking_veto_roles` live, so a mutated predicate decides under
+weakened rules while the deployment believes the declared predicate holds.
+The lane's own freeze test (`test_veto_roles_frozen`) only proves the
+frozenset itself rejects `.add` -- it never probes slot reassignment.
+The F330/F340 precedent (`ChildSpec.__setattr__` refusing coded
+`supervision-invalid`) shows the intended pattern; it was not applied here.
+
+**Severity rationale:** LOW. Exploitation (or accidental weakening by buggy
+deployment code) requires in-process write access -- the compromised-host
+class -- and `tally_digest` binds `predicate.digest()`, so the weakened
+predicate is forensically visible. But the module explicitly claims
+immutability as a security property, and the fix is the one-line
+`__setattr__` guard the tree already uses elsewhere.
+
+**Close-when criteria:** (1) `QuorumPredicate` refuses coded
+`approval-quorum-invalid` on any post-construction attribute assignment
+(F330/F340 pattern); (2) the two F373 probes flip to HELD; (3) adjacent
+batteries stay green.
+
+**Status: OPEN** (filed 2026-10-03, wave-298 independent red-team).
+
+Next free finding: **F374**. **Open findings: F372, F373.** (F371 filed 2026-10-02, wave-297 independent red-team (LOW, CLOSED 2026-10-03 wave-298 lane 1: verify_trace post-signature shape assumptions crash uncoded); F372 filed 2026-10-03, wave-298 independent red-team (LOW, OPEN: policy_ci.load_artifact accepts artifacts with extra files added); F373 filed 2026-10-03, wave-298 independent red-team (LOW, OPEN: QuorumPredicate slot attributes reassignable post-construction); F364 filed 2026-10-02, wave-293 independent red-team as F361, renumbered F361->F364
 at the wave-293 merge -- the wave-293 sweep lane filed F361-F363 first
 at ~19:53 UTC and keeps them per the wave-272 earliest-filed rule;
 closed 2026-10-02, wave-294 lane 1; F367 filed 2026-10-02, wave-295
