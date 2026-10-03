@@ -37,6 +37,8 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -68,7 +70,7 @@ def _run_probe(name, fn):
             raise ImportError("gov.measurement_policy")
         verdict, detail = fn()
     except ImportError as e:
-        verdict, detail = "GAP", "module absent: %s" % (e,)
+        verdict, detail = "BREAK", "module absent: %s" % (e,)
     except Exception as exc:  # noqa: BLE001
         verdict, detail = "ERROR", "%s: %s" % (type(exc).__name__, exc)
     _record(name, verdict, detail)
@@ -124,7 +126,7 @@ def p_unknown():
     except mp.MeasurementPolicyError as e:
         if e.code == "policy-unknown":
             return "HELD", "unknown policy refused with policy-unknown"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "evaluation succeeded with no activated policy"
 
 
@@ -140,7 +142,7 @@ def p_wrong_key():
     except mp.MeasurementPolicyError as e:
         if e.code == "policy-signature-invalid":
             return "HELD", "wrong-key policy refused at activation"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "policy signed by a foreign key activated"
 
 
@@ -158,7 +160,7 @@ def p_self_signed():
     except mp.MeasurementPolicyError as e:
         if e.code == "policy-signature-invalid":
             return "HELD", "self-asserted key never becomes trust"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "self-signed policy activated"
 
 
@@ -173,7 +175,7 @@ def p_stale_activate():
     except mp.MeasurementPolicyError as e:
         if e.code == "policy-stale":
             return "HELD", "expired policy cannot activate"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "already-expired policy activated"
 
 
@@ -188,7 +190,7 @@ def p_stale_eval():
     except mp.MeasurementPolicyError as e:
         if e.code == "policy-stale":
             return "HELD", "stale policy refused at evaluation"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "expired policy evaluated successfully"
 
 
@@ -209,7 +211,7 @@ def p_no_upgrade():
     except mp.MeasurementPolicyError as e:
         if e.code == "policy-stale":
             return "HELD", "stale v1 refused even though v2 is valid"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "stale v1 silently upgraded to v2"
 
 
@@ -225,12 +227,12 @@ def p_explicit_roll():
     out = reg.evaluate("gpu-fleet", 2, {"launch_image": _DIGEST_B},
                        now=_NOW)
     if out != ("gpu-fleet", 2):
-        return "GAP", "explicit v2 evaluation did not bind v2"
+        return "BREAK", "explicit v2 evaluation did not bind v2"
     # And the caller can still pin v1 while it is valid.
     out = reg.evaluate("gpu-fleet", 1, _measured("launch_image"),
                        now=_NOW)
     if out != ("gpu-fleet", 1):
-        return "GAP", "explicit v1 evaluation did not bind v1"
+        return "BREAK", "explicit v1 evaluation did not bind v1"
     return "HELD", "explicit version binding honored for v1 and v2"
 
 
@@ -246,7 +248,7 @@ def p_downgrade():
     except mp.MeasurementPolicyError as e:
         if e.code == "policy-version-downgrade":
             return "HELD", "version downgrade refused"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "older policy version displaced v2"
 
 
@@ -263,7 +265,7 @@ def p_replay():
     except mp.MeasurementPolicyError as e:
         if e.code == "policy-version-downgrade":
             return "HELD", "same-version replay refused (floor holds)"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "same-version policy with new digests replaced v1"
 
 
@@ -280,7 +282,7 @@ def p_swap_body():
     except mp.MeasurementPolicyError as e:
         if e.code == "policy-signature-invalid":
             return "HELD", "post-activation body edit fails re-check"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "swapped policy body evaluated as valid"
 
 
@@ -295,7 +297,7 @@ def p_swap_sig():
     except mp.MeasurementPolicyError as e:
         if e.code == "policy-signature-invalid":
             return "HELD", "post-activation sig corruption fails re-check"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "corrupted stored signature evaluated as valid"
 
 
@@ -308,7 +310,7 @@ def p_mismatch():
     except mp.MeasurementPolicyError as e:
         if e.code == "measurement-mismatch":
             return "HELD", "digest mismatch refused"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "wrong measurement digest accepted"
 
 
@@ -322,7 +324,7 @@ def p_missing():
     except mp.MeasurementPolicyError as e:
         if e.code == "measurement-missing":
             return "HELD", "missing required component refused"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "partial measurements accepted"
 
 
@@ -336,7 +338,7 @@ def p_unlisted():
     except mp.MeasurementPolicyError as e:
         if e.code == "measurement-unlisted":
             return "HELD", "unlisted measured component refused"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "unlisted software component accepted silently"
 
 
@@ -349,7 +351,7 @@ def p_malformed():
     except mp.MeasurementPolicyError as e:
         if e.code == "measurement-mismatch":
             return "HELD", "malformed digest verifies False"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "malformed digest accepted"
 
 
@@ -394,7 +396,7 @@ def p_tee_wrap():
     out = reg.evaluate("sev-snp-fleet", 1,
                        {"launch_image": claims["measurement"]}, now=_NOW)
     if out != ("sev-snp-fleet", 1):
-        return "GAP", "TEE measurement not evaluable through the policy"
+        return "BREAK", "TEE measurement not evaluable through the policy"
     # A tampered measurement refuses at the policy seam.
     try:
         reg.evaluate("sev-snp-fleet", 1, {"launch_image": _DIGEST_C},
@@ -402,7 +404,7 @@ def p_tee_wrap():
     except mp.MeasurementPolicyError as e:
         if e.code == "measurement-mismatch":
             return "HELD", "TEE verifier intact; policy binds measurement"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "tampered TEE measurement accepted by policy"
 
 
@@ -421,7 +423,7 @@ def p_shape():
     except mp.MeasurementPolicyError as e:
         if e.code == "policy-body-malformed":
             return "HELD", "unknown body fields refused"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "extra field in policy body ignored silently"
 
 
@@ -432,7 +434,7 @@ def _green_check():
     import subprocess
     path = os.path.join(REPO, "tests", "test_measurement_policy.py")
     if not os.path.exists(path):
-        _record("green:test_measurement_policy", "HELD",
+        _record("green_test_measurement_policy", "HELD",
                 "unit tests absent (lane not merged)")
         return
     env = dict(os.environ, GOV_SKIP_GREEN="1")
@@ -441,7 +443,7 @@ def _green_check():
                        capture_output=True, text=True, env=env,
                        cwd=REPO, timeout=600)
     ok = r.returncode == 0
-    _record("green:test_measurement_policy",
+    _record("green_test_measurement_policy",
             "HELD" if ok else "ERROR",
             "unit tests %s" % ("green" if ok else
                                "RED: " + (r.stdout + r.stderr)[-300:]))
@@ -454,11 +456,11 @@ def main():
         first[name] = _run_probe(name, _PROBE_FNS[name])
     # Determinism: re-run every probe, verdicts must be identical.
     for name in order:
-        verdict = _run_probe(name + ":determinism", _PROBE_FNS[name])
+        verdict = _run_probe(name + "determinism", _PROBE_FNS[name])
         got = verdict
         want = first[name]
         if got != want:
-            _RESULTS[-1] = (name + ":determinism", "ERROR",
+            _RESULTS[-1] = (name + "determinism", "ERROR",
                             "nondeterministic: %s then %s" % (want, got))
     if not GREEN_SKIP:
         _green_check()
@@ -468,8 +470,9 @@ def main():
     err = sum(1 for _, v, _ in _RESULTS if v == "ERROR")
     print("w214 measurement-policy: %d probes: %d HELD / %d GAP / %d BREAK / "
           "%d ERROR" % (len(_RESULTS), held, gap, brk, err))
-    for name, verdict, detail in _RESULTS:
-        print("  [%s] %s: %s" % (verdict, name, detail))
+    # D1: all GAP verdicts mapped to BREAK above (red-first); the gap
+    # counter is now 0 (w215 dead-counter precedent).
+    probe_lines.emit(_RESULTS)
     return 0 if (brk == 0 and err == 0) else 1
 
 

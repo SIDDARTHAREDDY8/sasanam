@@ -49,6 +49,8 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -138,7 +140,7 @@ def _p_swapped():
     denied at promotion."""
     reg, reason = _gate_registry(_BASE_RULES)
     if reg is None:
-        return "GAP", reason
+        return "BREAK", reason
     signers, _ = _keys()
     name = _staged_signed(reg, signers)
     swapped = dict(_BASE_MATERIALS, **{"src/main.py": _HWRONG})
@@ -158,7 +160,7 @@ def _p_extra():
     be denied at promotion."""
     reg, reason = _gate_registry(_BASE_RULES)
     if reg is None:
-        return "GAP", reason
+        return "BREAK", reason
     signers, _ = _keys()
     name = _staged_signed(reg, signers)
     poisoned = dict(_BASE_PRODUCTS, **{"dist/evil.bin": _H4})
@@ -179,7 +181,7 @@ def _p_load():
     try:
         import gov.promotion_artifact_gate as pag
     except ImportError:
-        return "GAP", "no gov.promotion_artifact_gate on this tree"
+        return "BREAK", "no gov.promotion_artifact_gate on this tree"
     bad = [("MATCH", "src/main.py", _H1), ("CREATE", "dist/*")]
     try:
         pag.load_promotion_rules(bad)
@@ -196,7 +198,7 @@ def _p_maps():
     deny, never silent skip."""
     reg, reason = _gate_registry(_BASE_RULES)
     if reg is None:
-        return "GAP", reason
+        return "BREAK", reason
     signers, _ = _keys()
     name = _staged_signed(reg, signers)
     try:
@@ -214,7 +216,7 @@ def _p_audit():
     audit log (public seam: the operator's audit trail)."""
     reg, reason = _gate_registry(_BASE_RULES)
     if reg is None:
-        return "GAP", reason
+        return "BREAK", reason
     signers, _ = _keys()
     name = _staged_signed(reg, signers)
     try:
@@ -254,7 +256,7 @@ def _p_valid():
     enforced)."""
     reg, reason = _gate_registry(_BASE_RULES)
     if reg is None:
-        return "GAP", reason
+        return "BREAK", reason
     signers, _ = _keys()
     name = _staged_signed(reg, signers)
     out = reg.promote(name, operator_ids=["op-a", "op-b"],
@@ -347,14 +349,14 @@ def _green_check():
     for rel in adj:
         path = os.path.join(REPO, rel)
         if not os.path.exists(path):
-            _record("green:" + os.path.basename(rel), "HELD",
+            _record("green_" + os.path.basename(rel), "HELD",
                     "battery absent (lane not merged)")
             continue
         env = dict(os.environ, GOV_SKIP_GREEN="1")
         r = subprocess.run([sys.executable, path], capture_output=True,
                            text=True, env=env, timeout=600)
         ok = r.returncode == 0
-        _record("green:" + os.path.basename(rel),
+        _record("green_" + os.path.basename(rel),
                 "HELD" if ok else "ERROR",
                 "adjacent battery %s" % ("green" if ok else
                                          "RED: " + (r.stdout + r.stderr)[-300:]))
@@ -367,11 +369,11 @@ def main():
         first[name] = _run_probe(name, _PROBE_FNS[name])
     # Determinism: re-run every probe, verdicts must be identical.
     for name in order:
-        verdict = _run_probe(name + ":determinism", _PROBE_FNS[name])
+        verdict = _run_probe(name + "determinism", _PROBE_FNS[name])
         got = verdict
         want = first[name]
         if got != want:
-            _RESULTS[-1] = (name + ":determinism", "ERROR",
+            _RESULTS[-1] = (name + "determinism", "ERROR",
                             "nondeterministic: %s then %s" % (want, got))
     if not GREEN_SKIP:
         _green_check()
@@ -381,8 +383,9 @@ def main():
     err = sum(1 for _, v, _ in _RESULTS if v == "ERROR")
     print("w213b promotion-gate: %d probes: %d HELD / %d GAP / %d BREAK / "
           "%d ERROR" % (len(_RESULTS), held, gap, brk, err))
-    for name, verdict, detail in _RESULTS:
-        print("  [%s] %s: %s" % (verdict, name, detail))
+    # D1: all GAP verdicts mapped to BREAK above (red-first); the gap
+    # counter is now 0 (w215 dead-counter precedent).
+    probe_lines.emit(_RESULTS)
     return 0 if (brk == 0 and err == 0) else 1
 
 

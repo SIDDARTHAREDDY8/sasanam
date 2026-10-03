@@ -41,6 +41,8 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -72,7 +74,7 @@ def _run_probe(name, fn):
             raise ImportError("gov.jail_policy")
         verdict, detail = fn()
     except ImportError as e:
-        verdict, detail = "GAP", "module absent: %s" % (e,)
+        verdict, detail = "BREAK", "module absent: %s" % (e,)
     except Exception as exc:  # noqa: BLE001
         verdict, detail = "ERROR", "%s: %s" % (type(exc).__name__, exc)
     _record(name, verdict, detail)
@@ -138,7 +140,7 @@ def p_unsigned():
     except jp.JailPolicyError as e:
         if e.code == "policy-signature-invalid":
             return "HELD", "unsigned policy refused"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "unsigned policy activated"
 
 
@@ -154,7 +156,7 @@ def p_self_signed():
     except jp.JailPolicyError as e:
         if e.code == "policy-signature-invalid":
             return "HELD", "rogue-signed policy refused"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "self-signed policy activated against pinned issuer"
 
 
@@ -167,7 +169,7 @@ def p_unknown():
     except jp.JailPolicyError as e:
         if e.code == "policy-unknown":
             return "HELD", "unknown policy refused"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "invocation checked against unknown policy"
 
 
@@ -184,7 +186,7 @@ def p_downgrade():
     except jp.JailPolicyError as e:
         if e.code == "policy-version-downgrade":
             return "HELD", "downgrade refused"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "older version activated over newer"
 
 
@@ -199,7 +201,7 @@ def p_stale():
     except jp.JailPolicyError as e:
         if e.code == "policy-stale":
             return "HELD", "stale-at-birth policy refused"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "expired policy activated"
 
 
@@ -211,7 +213,7 @@ def p_malformed():
         jp.validate_policy_body(body)
     except jp.JailPolicyError as e:
         if e.code != "policy-body-malformed":
-            return "GAP", "refused but wrong code: %s" % (e.code,)
+            return "BREAK", "refused but wrong code: %s" % (e.code,)
     else:
         return "BREAK", "missing field accepted"
     body2 = _body()
@@ -221,7 +223,7 @@ def p_malformed():
     except jp.JailPolicyError as e:
         if e.code == "policy-body-malformed":
             return "HELD", "missing and unknown fields both refused"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "unknown field silently ignored"
 
 
@@ -233,21 +235,21 @@ def p_escape():
         reg.check("tool-python", 1, _req(dirs=("/output/../etc",)), now=_NOW)
     except jp.JailPolicyError as e:
         if e.code != "invocation-writable-dir-mismatch":
-            return "GAP", "refused but wrong code: %s" % (e.code,)
+            return "BREAK", "refused but wrong code: %s" % (e.code,)
     else:
         return "BREAK", "traversal escape accepted"
     try:
         reg.check("tool-python", 1, _req(dirs=("/etc",)), now=_NOW)
     except jp.JailPolicyError as e:
         if e.code != "invocation-writable-dir-mismatch":
-            return "GAP", "refused but wrong code: %s" % (e.code,)
+            return "BREAK", "refused but wrong code: %s" % (e.code,)
     else:
         return "BREAK", "undeclared writable dir accepted"
     # a subdirectory of the declared mount is honestly inside it
     rep = reg.check("tool-python", 1, _req(dirs=("/output/sub",)), now=_NOW)
     if rep.get("conforms") is True:
         return "HELD", "escape refused; subdir of declared mount conforms"
-    return "GAP", "subdir refused: %r" % (rep,)
+    return "BREAK", "subdir refused: %r" % (rep,)
 
 
 @_probe("network_request_under_none_refused")
@@ -258,7 +260,7 @@ def p_network():
     except jp.JailPolicyError as e:
         if e.code == "invocation-network-request-refused":
             return "HELD", "network request under none refused"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "network request granted under network:none"
 
 
@@ -269,13 +271,13 @@ def p_timeout():
         reg.check("tool-python", 1, _req(timeout_s=600), now=_NOW)
     except jp.JailPolicyError as e:
         if e.code != "invocation-timeout-exceeds-policy":
-            return "GAP", "refused but wrong code: %s" % (e.code,)
+            return "BREAK", "refused but wrong code: %s" % (e.code,)
     else:
         return "BREAK", "over-budget timeout accepted"
     rep = reg.check("tool-python", 1, _req(timeout_s=3), now=_NOW)
     if rep.get("conforms") is True:
         return "HELD", "over-budget refused; shorter timeout conforms"
-    return "GAP", "shorter timeout refused: %r" % (rep,)
+    return "BREAK", "shorter timeout refused: %r" % (rep,)
 
 
 @_probe("backend_coverage_gap_refused")
@@ -289,9 +291,9 @@ def p_gap():
                      features=_FULL_FEATURES - {"seccomp"})
     except jp.JailPolicyError as e:
         if e.code != "policy-needs-unimplemented-feature":
-            return "GAP", "refused but wrong code: %s" % (e.code,)
+            return "BREAK", "refused but wrong code: %s" % (e.code,)
         if "seccomp" not in e.detail:
-            return "GAP", "gap not named: %s" % (e.detail,)
+            return "BREAK", "gap not named: %s" % (e.detail,)
     else:
         return "BREAK", "policy activated despite missing seccomp"
     # a kvm platform is refused at authoring (closed vocabulary)
@@ -302,7 +304,7 @@ def p_gap():
     except jp.JailPolicyError as e:
         if e.code == "policy-body-malformed":
             return "HELD", "gap named (seccomp); kvm refused at authoring"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "kvm platform accepted"
 
 
@@ -315,7 +317,7 @@ def p_caps():
     except jp.JailPolicyError as e:
         if e.code == "policy-body-malformed":
             return "HELD", "non-empty capabilities refused"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "capabilities silently accepted"
 
 
@@ -328,7 +330,7 @@ def p_profile():
     except jp.JailPolicyError as e:
         if e.code == "policy-body-malformed":
             return "HELD", "unknown syscall profile refused"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "unknown syscall profile accepted"
 
 
@@ -343,7 +345,7 @@ def p_swap():
     except jp.JailPolicyError as e:
         if e.code == "policy-signature-invalid":
             return "HELD", "post-activation edit caught by re-check"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "edited policy passed signature re-check"
 
 
@@ -353,11 +355,11 @@ def p_report():
     body = reg.get("tool-python", 1, now=_NOW)
     rep = reg.check("tool-python", 1, _req(), now=_NOW)
     if rep.get("conforms") is not True:
-        return "GAP", "conforming request did not conform"
+        return "BREAK", "conforming request did not conform"
     if rep.get("policy_digest") != jp.policy_digest(body):
-        return "GAP", "report does not carry the policy digest pin"
+        return "BREAK", "report does not carry the policy digest pin"
     if sorted(rep.get("checked", ())) == []:
-        return "GAP", "report names no checks"
+        return "BREAK", "report names no checks"
     return "HELD", "conformance report carries digest + check list"
 
 
@@ -369,17 +371,17 @@ def p_wiring():
     for flag in ("require_netns", "require_pidns", "require_pivot_root",
                  "require_privdrop", "require_seccomp"):
         if kw.get(flag) is not True:
-            return "GAP", "fail-closed twin %s not on" % (flag,)
+            return "BREAK", "fail-closed twin %s not on" % (flag,)
     if kw.get("cage_mode") != "strict" or kw.get("timeout") != 5:
-        return "GAP", "kwargs mismatch: %r" % (kw,)
+        return "BREAK", "kwargs mismatch: %r" % (kw,)
     if kw.get("memory_bytes") != 256 << 20 or kw.get("cpu_seconds") != 10:
-        return "GAP", "resource limits not mapped: %r" % (kw,)
+        return "BREAK", "resource limits not mapped: %r" % (kw,)
     try:
         jp.to_sandbox_kwargs(body, {})  # unwired mount
     except jp.JailPolicyError as e:
         if e.code == "wiring-unmapped-mount":
             return "HELD", "tighten-only kwargs; unwired mount refused"
-        return "GAP", "refused but wrong code: %s" % (e.code,)
+        return "BREAK", "refused but wrong code: %s" % (e.code,)
     return "BREAK", "unwired mount silently accepted"
 
 
@@ -398,7 +400,7 @@ def p_legacy():
               "require_seccomp": False, "cage_mode": "strict"}
     for key, want in pinned.items():
         if defaults.get(key) != want:
-            return "GAP", "Sandbox default %s drifted: %r" % (key,
+            return "BREAK", "Sandbox default %s drifted: %r" % (key,
                                                              defaults.get(key))
     return "HELD", "Sandbox() defaults byte-identical (opt-in only)"
 
@@ -410,7 +412,7 @@ def _green_check():
     import subprocess
     path = os.path.join(REPO, "tests", "test_jail_policy.py")
     if not os.path.exists(path):
-        _record("green:test_jail_policy", "HELD",
+        _record("green_test_jail_policy", "HELD",
                 "unit tests absent (lane not merged)")
         return
     env = dict(os.environ, GOV_SKIP_GREEN="1")
@@ -419,7 +421,7 @@ def _green_check():
                        capture_output=True, text=True, env=env,
                        cwd=REPO, timeout=600)
     ok = r.returncode == 0
-    _record("green:test_jail_policy",
+    _record("green_test_jail_policy",
             "HELD" if ok else "ERROR",
             "unit tests %s" % ("green" if ok else
                                "RED: " + (r.stdout + r.stderr)[-300:]))
@@ -432,11 +434,11 @@ def main():
         first[name] = _run_probe(name, _PROBE_FNS[name])
     # Determinism: re-run every probe, verdicts must be identical.
     for name in order:
-        verdict = _run_probe(name + ":determinism", _PROBE_FNS[name])
+        verdict = _run_probe(name + "determinism", _PROBE_FNS[name])
         got = verdict
         want = first[name]
         if got != want:
-            _RESULTS[-1] = (name + ":determinism", "ERROR",
+            _RESULTS[-1] = (name + "determinism", "ERROR",
                             "nondeterministic: %s then %s" % (want, got))
     if not GREEN_SKIP:
         _green_check()
@@ -446,8 +448,9 @@ def main():
     err = sum(1 for _, v, _ in _RESULTS if v == "ERROR")
     print("w216 jail-policy: %d probes: %d HELD / %d GAP / %d BREAK / "
           "%d ERROR" % (len(_RESULTS), held, gap, brk, err))
-    for name, verdict, detail in _RESULTS:
-        print("  [%s] %s: %s" % (verdict, name, detail))
+    # D1: all GAP verdicts mapped to BREAK above (red-first); the gap
+    # counter is now 0 (w215 dead-counter precedent).
+    probe_lines.emit(_RESULTS)
     return 0 if (brk == 0 and err == 0) else 1
 
 
