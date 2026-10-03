@@ -89,6 +89,7 @@ from . import egress_content as _egress_content
 from . import detection_verdicts as _detection_verdicts
 from . import exchange_ledger as _exchange_ledger
 from . import approval_tokens as _approval_tokens  # wave-313 Row-7 step 3
+from . import provenance_sink as _provenance_sink  # wave-314 Row-7 step 5
 from . import rules_tiering as _rules_tiering
 from . import precommit as _precommit
 from . import tool_continuity as _tool_continuity
@@ -13044,6 +13045,40 @@ class ToolExecutor:
                             policy_id="approval-token-execution-refused",
                             extra={"code": e.code})
                     continue
+            # Wave-314 (Row 7 step 5): provenance-graded sink policy. An
+            # ADDITIONAL check, run only when the record carries labeled
+            # provenance segments (rec["provenance_segments"]); records
+            # without segments skip it entirely -- existing behavior is
+            # unchanged when no provenance context is present (the lane-B
+            # token-check discipline). REFUSE/ESCALATE block the call
+            # fail-closed; REDACT rewrites the args to opaque refs and
+            # the call continues with the redacted form.
+            _pv_segments = rec.get("provenance_segments")
+            if _pv_segments is not None:
+                _pv_verdict = _provenance_sink.provenance_gate(
+                    rec["tool"], rec["args"], _pv_segments)
+                if _pv_verdict is not None and \
+                        _pv_verdict.verdict in ("REFUSE", "ESCALATE"):
+                    _refuse("Approval %s refused: the provenance-graded "
+                            "sink policy %s the call (%s: %s) -- the "
+                            "influencing context does not meet the tool's "
+                            "required trust; re-plan or declassify."
+                            % (aid, _pv_verdict.verdict.lower(),
+                               _pv_verdict.code, _pv_verdict.detail),
+                            "provenance_sink_refused",
+                            policy_id="provenance-sink-execution-refused",
+                            extra={"code": _pv_verdict.code})
+                    continue
+                if _pv_verdict is not None and \
+                        _pv_verdict.verdict == "REDACT":
+                    rec["args"] = dict(_pv_verdict.redacted_args or {})
+                    self.log.append({
+                        "event": "provenance_redacted",
+                        "run_id": rec.get("run_id", self.run_id),
+                        "agent_id": rec.get("agent_id"),
+                        "approval_id": aid,
+                        "code": _pv_verdict.code,
+                    })
             # Write-ahead audit (fail-closed): the authorization is durably
             # logged BEFORE the side effect. If this append raises, the tool
             # is never touched.

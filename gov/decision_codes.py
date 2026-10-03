@@ -11911,6 +11911,28 @@ TAXONOMY = {
         "evidence_kinds_required": ['provenance-receipt'],
         "reverify_steps": ['recompute'],
     },
+    'provenance-critical-arg-refused': {
+        "domain": 'provenance',
+        "code": 'provenance-critical-arg-refused',
+        "human": 'sink policy: a critical argument (recipient, path, url, '
+                 'command) binds below the tool\'s required trust -- the '
+                 'argument\'s value traces to untrusted-influenced context '
+                 'and no audited declassification clears it; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['quarantine-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'provenance-declassify-invalid': {
+        "domain": 'provenance',
+        "code": 'provenance-declassify-invalid',
+        "human": 'sink policy: a declassification token was invalid, expired, '
+                 'replayed, or bound to a different (segment, tool, '
+                 'scope) -- declassification is single-use and '
+                 'argument-bound; anything else refuses fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['declassification-token'],
+        "reverify_steps": ['recompute'],
+    },
     'provenance-digest-mismatch': {
         "domain": 'provenance',
         "code": 'provenance-digest-mismatch',
@@ -11930,6 +11952,27 @@ TAXONOMY = {
         "reverify_steps": ['recompute'],
     },
 
+    'provenance-label-tampered': {
+        "domain": 'provenance',
+        "code": 'provenance-label-tampered',
+        "human": 'sink policy: a segment label carries a signature but it does '
+                 'not verify against the segment content -- the '
+                 'label or the content was edited after issuance; '
+                 'the segment downgrades to UNTRUSTED',
+        "severity": 'high',
+        "evidence_kinds_required": ['provenance-label'],
+        "reverify_steps": ['recompute', 'reverify-signature'],
+    },
+    'provenance-label-unverifiable': {
+        "domain": 'provenance',
+        "code": 'provenance-label-unverifiable',
+        "human": 'sink policy: a segment label carries no usable signature -- '
+                 'unsigned labels never verify; the segment '
+                 'downgrades to UNTRUSTED, fail closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['provenance-label'],
+        "reverify_steps": ['recompute'],
+    },
     'provenance-material-unmarked': {
         "domain": 'evidence-provenance',
         "code": 'provenance-material-unmarked',
@@ -11977,6 +12020,17 @@ TAXONOMY = {
         "reverify_steps": ['recompute'],
     },
 
+    'provenance-quarantine-terminal': {
+        "domain": 'provenance',
+        "code": 'provenance-quarantine-terminal',
+        "human": 'sink policy: the bounded re-plan budget is exhausted for this '
+                 'context -- the call is parked escalate-terminal; '
+                 'a human owns the reroute, never an automatic '
+                 'retry loop',
+        "severity": 'medium',
+        "evidence_kinds_required": ['quarantine-record'],
+        "reverify_steps": ['recompute'],
+    },
     'provenance-rebuild-invalid': {
         "domain": 'evidence-provenance',
         "code": 'provenance-rebuild-invalid',
@@ -12033,6 +12087,48 @@ TAXONOMY = {
         "reverify_steps": ['recompute'],
     },
 
+    'provenance-sink-escalated': {
+        "domain": 'provenance',
+        "code": 'provenance-sink-escalated',
+        "human": 'sink policy: a destructive or hard-to-undo tool call on '
+                 'untrusted-influenced context is parked for human '
+                 'adjudication -- never auto-executed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['quarantine-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'provenance-sink-redacted': {
+        "domain": 'provenance',
+        "code": 'provenance-sink-redacted',
+        "human": 'sink policy: an untrusted-bound critical argument was replaced '
+                 'with an opaque ref ($UNTRUSTED_n) -- the call '
+                 'continues without the raw untrusted bytes in '
+                 'the model-visible context',
+        "severity": 'low',
+        "evidence_kinds_required": ['quarantine-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'provenance-sink-refused': {
+        "domain": 'provenance',
+        "code": 'provenance-sink-refused',
+        "human": 'sink policy: required_trust(tool) exceeds the minimum trust '
+                 'among influencing segments and no per-argument '
+                 'refinement or audited declassification clears '
+                 'it -- the call never executes',
+        "severity": 'high',
+        "evidence_kinds_required": ['quarantine-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'provenance-sink-unknown-tool': {
+        "domain": 'provenance',
+        "code": 'provenance-sink-unknown-tool',
+        "human": 'sink policy: the tool is not declared in the sink policy -- '
+                 'deny by default; undeclared tools cannot have '
+                 'capability attributed, so they refuse',
+        "severity": 'medium',
+        "evidence_kinds_required": ['quarantine-record'],
+        "reverify_steps": ['recompute'],
+    },
     'provenance-source-refused': {
         "domain": 'provenance-policy',
         "code": 'provenance-source-refused',

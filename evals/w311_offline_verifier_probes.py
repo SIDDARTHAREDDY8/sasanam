@@ -91,7 +91,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # No new decision codes minted by this lane (verifier taxonomy is the
 # verifier's own surface, not governance decisions); pin stays 1829.
-TAXONOMY_PIN = 1863  # wave-312: 1841 + 10 witness-log/evidence-bundle codes
+TAXONOMY_PIN = 1872  # wave-312: 1841 + 10 witness-log/evidence-bundle codes
 
 from gov.signing import Ed25519Signer, Ed25519Verifier
 from gov import evidence_verify_offline as v
@@ -282,7 +282,7 @@ def p_pin_taxonomy():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1863/1863/0 sorted")
+    _record("pin-taxonomy", "HELD", "1872/1872/0 sorted")
 
 
 def p_footer_state():

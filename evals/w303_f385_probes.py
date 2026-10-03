@@ -54,7 +54,7 @@ from gov import ed25519
 from gov import coordination_lease as cl
 from gov import workflow_branch as wb
 
-TAXONOMY_PIN = 1863  # Wave-303 merge pin; this lane mints no new codes (reuses workflow-branch-xid-mismatch).
+TAXONOMY_PIN = 1872  # Wave-303 merge pin; this lane mints no new codes (reuses workflow-branch-xid-mismatch).
 
 _results = []
 
@@ -261,7 +261,7 @@ class RepinTest(unittest.TestCase):
         lits = re.findall(r'"code":\s*\'([a-z][a-z0-9-_.]*)\'', src)
         self.assertTrue(_expect_held(
             "repin-pin-1851",
-            len(lits) == 1863 and len(set(lits)) == 1863
+            len(lits) == 1872 and len(set(lits)) == 1872
             and lits == sorted(lits),
             "1851 unique sorted literals") == "HELD")
 
