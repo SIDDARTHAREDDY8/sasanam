@@ -322,7 +322,19 @@ class FindingsMdTest(unittest.TestCase):
         # F364 closed 2026-10-02, wave-294 lane 1 (gate coverage bound
         # to the policy demand: uncovered demand refuses coded
         # revocation-status-unverifiable; w294_f364 0 BREAK / 8 HELD;
-        # w293_redteam 0 BREAK; taxonomy pin 1743 unchanged).
+        # w293_redteam 0 BREAK; taxonomy pin 1743 unchanged);
+        # F365 closed 2026-10-02, wave-295 lane 1 (secret-scan bounds
+        # fail-closed: tristate scan refuses coded
+        # toolcall-secret-scan-incomplete when bounds are truncated;
+        # w295_f365 0 BREAK / 12 HELD; w294_redteam 0 BREAK);
+        # F366 closed 2026-10-02, wave-295 lane 2 (advance(record)
+        # validates the overlap window before _apply_record; no
+        # ceremony poisoning; w295_f366 0 BREAK / 10 HELD);
+        # F367-F370 filed OPEN 2026-10-02 by the wave-295 independent
+        # red team (F367 future-dated issued_at preempts live lease;
+        # F368 filter-name-only drift digest; F369 audit_log shallow
+        # copies; F370 nested credential-named dict keys; w295_redteam
+        # 4 BREAK expected-open / 24 HELD).
         self.assertEqual(reg.get("F311").state, "verified")
         for num in ("F312", "F313", "F314", "F315", "F316", "F317",
                     "F318", "F319", "F320", "F321", "F322", "F323",
@@ -332,9 +344,9 @@ class FindingsMdTest(unittest.TestCase):
                     "F342", "F343", "F344", "F345", "F346", "F347", "F348",
                     "F349", "F350", "F351", "F352", "F353", "F354",
                     "F355", "F356", "F357", "F358", "F359", "F360",
-                    "F361", "F362", "F363", "F364"):
+                    "F361", "F362", "F363", "F364", "F365", "F366"):
             self.assertEqual(reg.get(num).state, "verified")
-        self.assertGreaterEqual(reg.next_number, 365)
+        self.assertGreaterEqual(reg.next_number, 371)
         self.assertEqual(reg.get("F310").state, "verified")
         self.assertEqual(reg.get("F309").state, "verified")
         self.assertGreaterEqual(len(reg.all()), 200)

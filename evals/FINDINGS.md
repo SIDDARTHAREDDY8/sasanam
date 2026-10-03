@@ -8701,9 +8701,8 @@ are inherent to the bounded pattern set -- there is no falsifiable
 close-when for arbitrary encodings that does not demand the impossible
 -- so they stay documented residuals per the lane-2 report.
 
-**Status: OPEN** (filed 2026-10-02, wave-294 independent red-team).
-
-**Closure record (2026-10-02, wave-295 lane 1):**
+**Status: CLOSED** (filed 2026-10-02, wave-294 independent red-team;
+closed 2026-10-02, wave-295 lane 1). **Closure record (2026-10-02, wave-295 lane 1):**
 - `_scan_value` is now tristate: True = secret found, False = fully
   scanned and clean, None = scan could not complete within the declared
   bounds (nesting deeper than `MAX_SECRET_DEPTH`, or bytes left to scan
@@ -8728,7 +8727,6 @@ close-when for arbitrary encodings that does not demand the impossible
 - Residuals unchanged: base64-encoded PEM and split-across-values
   secrets still evade the bounded pattern set (inherent, documented,
   not falsifiable).
-- **Status: CLOSED.**
 
 ## F366: key_succession.advance(record=...) is not atomic -- a malformed advance record poisons the ceremony (LOW)
 
