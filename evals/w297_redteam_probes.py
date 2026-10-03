@@ -42,7 +42,7 @@ from gov import invocation_pipeline as ip
 from gov import decision_codes as dc
 import gov.tool_call_policy as tcp
 
-TAXONOMY_PIN = 1802  # Wave-296 merge pin; this lane mints no codes.; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
+TAXONOMY_PIN = 1812  # Wave-296 merge pin; this lane mints no codes.; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
 
 _results = []
 
@@ -102,14 +102,15 @@ class DecisionTraceAttackTest(unittest.TestCase):
         # CLOSED F372/F373; the wave-299 red team filed F374/F375/F376
         # (OPEN). Wave-300 lanes 1-2 CLOSED F374/F375/F376; the wave-300
         # red team filed F377/F378 (OPEN). The footer must say so in its
-        # own words. (Merge re-pin, wave-300: open F377, F378 /
-        # next free F379.)
+        # own words. (Merge re-pin, wave-301: F377/F378 CLOSED by lanes
+        # 1-2; F379 filed OPEN by the wave-301 red team. Merged footer:
+        # open F379 / next free F380.)
         path = os.path.join(os.path.dirname(
             os.path.dirname(os.path.abspath(__file__))), "evals",
             "FINDINGS.md")
         footer = open(path).read()[-4000:]
-        ok = "Next free finding: **F379**" in footer \
-            and "Open findings: F377, F378" in footer
+        ok = "Next free finding: **F380**" in footer \
+            and "Open findings: F379." in footer
         self.assertTrue(_expect_held("footer-state", ok,
                                     "footer disagrees") == "HELD")
 

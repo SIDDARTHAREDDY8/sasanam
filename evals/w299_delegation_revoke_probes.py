@@ -44,7 +44,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1802  # Wave-298 merge pin 1802; wave-299 lane 5: pin 1780 -> 1783 (+3 delegation-revocation-*); Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
+TAXONOMY_PIN = 1812  # Wave-301 merge pin 1812; wave-299 lane 5: pin 1780 -> 1783 (+3 delegation-revocation-*); Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
 
 _results = []
 
@@ -92,7 +92,7 @@ def p_taxonomy_pin():
             and dr.RV_LIST_FULL == "delegation-revocation-list-full"):
         return _record("pin-taxonomy", "BREAK",
                        "module code constants drift from taxonomy")
-    _record("pin-taxonomy", "HELD", "1802/1802/0 sorted")
+    _record("pin-taxonomy", "HELD", "1812/1812/0 sorted")
 
 
 class _H:

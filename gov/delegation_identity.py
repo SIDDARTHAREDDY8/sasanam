@@ -111,7 +111,7 @@ from gov import ed25519
 
 # ---------------------------------------------------------------------------
 # Machine codes (registered in gov/decision_codes.py at true sorted
-# positions; raw literals 1802/1802/0/sorted).; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
+# positions; raw literals 1812/1812/0/sorted).; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
 # ---------------------------------------------------------------------------
 
 DI_INVALID = "delegation-identity-invalid"
@@ -873,9 +873,11 @@ def verify_chain_offline(chain_doc, at, trusted_did_docs):
         if not receipt["not_before"] <= at < receipt["not_after"]:
             _fail(_DELEGATION_EXPIRED,
                   "chain: link %d outside its time window" % index)
-        # Trust roots: the verifier's own roots plus the chain's
-        # embedded documents (each re-verified here, never trusted
-        # blindly).
+        # Trust roots: the verifier's OWN pinned roots are authoritative.
+        # Embedded documents are untrusted claims: they may fill in for
+        # DIDs the verifier never pinned, but they NEVER silently replace
+        # a pinned root (F377). A conflicting embedded document for a
+        # pinned DID is a substitution attempt and refuses coded.
         roots = dict(trusted_did_docs) if isinstance(trusted_did_docs,
                                                     dict) else {}
         if not isinstance(embedded_docs, dict):
@@ -886,7 +888,16 @@ def verify_chain_offline(chain_doc, at, trusted_did_docs):
             if doc["did"] != did:
                 _fail(DI_INVALID,
                       "chain: link %d embedded did mismatch" % index)
-            roots[did] = doc
+            if did in roots:
+                if did_document_digest(doc) != did_document_digest(
+                        roots[did]):
+                    _fail(DI_INVALID,
+                          "chain: link %d embedded did document conflicts "
+                          "with the verifier's pinned trust root" % index)
+                # Digests match: the embedded copy is redundant; the
+                # pinned root stays authoritative.
+            else:
+                roots[did] = doc
         evidence = receipt.get("identity_evidence")
         if evidence is not None:
             verify_identity_evidence(evidence, receipt["receipt_id"],
@@ -1036,6 +1047,11 @@ def verify_native_chain_offline(chain_doc, at, trusted_did_docs,
         if not isinstance(embedded_docs, dict):
             _fail(DI_INVALID,
                   "native chain: link %d malformed did_documents" % index)
+        # Trust roots: the verifier's OWN pinned roots are authoritative.
+        # Embedded documents are untrusted claims: they may fill in for
+        # DIDs the verifier never pinned, but they NEVER silently replace
+        # a pinned root (F377). A conflicting embedded document for a
+        # pinned DID is a substitution attempt and refuses coded.
         roots = dict(trusted_did_docs) if isinstance(trusted_did_docs,
                                                     dict) else {}
         for did, doc in embedded_docs.items():
@@ -1043,7 +1059,17 @@ def verify_native_chain_offline(chain_doc, at, trusted_did_docs,
             if doc["did"] != did:
                 _fail(DI_INVALID,
                       "native chain: link %d embedded did mismatch" % index)
-            roots[did] = doc
+            if did in roots:
+                if did_document_digest(doc) != did_document_digest(
+                        roots[did]):
+                    _fail(DI_INVALID,
+                          "native chain: link %d embedded did document "
+                          "conflicts with the verifier's pinned trust "
+                          "root" % index)
+                # Digests match: the embedded copy is redundant; the
+                # pinned root stays authoritative.
+            else:
+                roots[did] = doc
         if evidence is not None:
             verify_identity_evidence(evidence, receipt["receipt_id"],
                                      receipt["delegator_pubkey"], roots)

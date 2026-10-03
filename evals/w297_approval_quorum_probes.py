@@ -46,7 +46,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-297 lane 2: pin 1753 -> 1758 (+5: 4 approval-quorum-* +1
 # approval-request-expired).
-TAXONOMY_PIN = 1802  # Wave-296 merge: pin 1743 -> 1753 (+3 decision-trace-*) Wave-297 lane 2: pin 1753 -> 1758 (+5: 4 approval-quorum-* +1 approval-request-expired).; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
+TAXONOMY_PIN = 1812  # Wave-296 merge: pin 1743 -> 1753 (+3 decision-trace-*) Wave-297 lane 2: pin 1753 -> 1758 (+5: 4 approval-quorum-* +1 approval-request-expired).; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
 
 try:
     from gov import approval_quorum as AQ

@@ -168,6 +168,132 @@ class TestChainExport(unittest.TestCase):
             di.delegated_authority_edge("a", "b", "xx", "cd" * 32)
 
 
+class TestF377PinnedTrustRoots(unittest.TestCase):
+    """F377 closure: embedded DID documents never replace the verifier's
+    pinned trust roots. A conflicting embedded document refuses coded
+    ``delegation-identity-invalid`` on BOTH offline paths; a
+    byte-identical embedded copy still verifies."""
+
+    def _forged_vs_real(self, tag):
+        # The real Alice doc (Victor's pin) names Alice's key; the forged
+        # doc reuses Alice's DID but names Mallory's key, self-signed by
+        # Mallory's controller key (a valid controller signature).
+        alice_ctrl, alice_key = _seed(tag), _seed(tag + 1)
+        mallory_ctrl, mallory_key = _seed(tag + 2), _seed(tag + 3)
+        real = di.issue_did_document(
+            "did:sasanam:alice", alice_ctrl, [_pub(alice_key)],
+            created_at=100)
+        forged = di.issue_did_document(
+            "did:sasanam:alice", mallory_ctrl, [_pub(mallory_key)],
+            created_at=100)
+        return real, forged, mallory_ctrl, mallory_key
+
+    def _did_evidence_for(self, receipt_digest, doc, controller_seed):
+        return di.make_identity_evidence(
+            "did", receipt_digest, did="did:sasanam:alice",
+            did_document_digest=di.did_document_digest(doc),
+            controller_seed=controller_seed)
+
+    def test_local_conflicting_embedded_refuses_coded(self):
+        alice_ctrl = _seed(61)
+        mallory_ctrl, signer = _seed(63), _seed(65)
+        real = di.issue_did_document(
+            "did:sasanam:alice", alice_ctrl, [_pub(_seed(62))],
+            created_at=100)
+        # Mallory self-issues an Alice doc naming the receipt signer's key.
+        forged = di.issue_did_document(
+            "did:sasanam:alice", mallory_ctrl, [_pub(signer)],
+            created_at=100)
+        r1 = di.make_receipt("alice", "mallory", "ab" * 32, signer, 100,
+                             10 ** 6, None)
+        ev = self._did_evidence_for(r1["receipt_id"], forged, mallory_ctrl)
+        r1e = di.make_receipt("alice", "mallory", "ab" * 32, signer, 100,
+                              10 ** 6, None, identity_evidence=ev)
+        chain = di.export_chain(
+            [{"receipt": r1e, "from_pubkey": _pub(signer),
+              "did_documents": {"did:sasanam:alice": forged}}],
+            _seed(66), 200)
+        with self.assertRaises(di.DelegationIdentityError) as ctx:
+            di.verify_chain_offline(chain, 200,
+                                    {"did:sasanam:alice": real})
+        self.assertEqual(ctx.exception.code, "delegation-identity-invalid")
+
+    def test_native_conflicting_embedded_refuses_coded(self):
+        from gov import delegation as dg
+        real, _, mallory_ctrl, _ = self._forged_vs_real(71)
+        rs, ms = _seed(75), _seed(76)
+        rp, mp = _pub(rs), _pub(ms)
+        cons = {"expires_at": 10 ** 12, "max_depth": 8}
+        root = dg.issue(rs, "root-f377u", "mid-f377u", mp,
+                        {"memory.read"}, constraints=dict(cons))
+        leaf = dg.issue(ms, "mid-f377u", "leaf-f377u", _pub(_seed(77)),
+                        {"memory.read"}, parent=root,
+                        constraints=dict(cons))
+        # Mallory (mid) forges an Alice doc naming the leaf-holder's key.
+        forged = di.issue_did_document(
+            "did:sasanam:alice", mallory_ctrl, [leaf["delegator_pubkey"]],
+            created_at=100)
+        ev = self._did_evidence_for(leaf["receipt_id"], forged,
+                                    mallory_ctrl)
+        entries = [
+            {"receipt": root, "identity_evidence": None,
+             "did_documents": {}},
+            {"receipt": leaf, "identity_evidence": ev,
+             "did_documents": {"did:sasanam:alice": forged}},
+        ]
+        chain = di.export_native_chain(entries, ms, 200, 200, [rp])
+        with self.assertRaises(di.DelegationIdentityError) as ctx:
+            di.verify_native_chain_offline(
+                chain, 200, {"did:sasanam:alice": real}, [rp])
+        self.assertEqual(ctx.exception.code, "delegation-identity-invalid")
+
+    def test_identical_embedded_doc_still_verifies(self):
+        # The embedded copy is byte-identical to the pinned root: the
+        # honest flow must keep working.
+        ctrl = _seed(81)
+        signer = _seed(82)
+        doc = di.issue_did_document("did:sasanam:carol", ctrl,
+                                    [_pub(signer)], created_at=100)
+        r1 = di.make_receipt("carol", "dave", "ab" * 32, signer, 100,
+                             10 ** 6, None)
+        ev = di.make_identity_evidence(
+            "did", r1["receipt_id"], did="did:sasanam:carol",
+            did_document_digest=di.did_document_digest(doc),
+            controller_seed=ctrl)
+        r1e = di.make_receipt("carol", "dave", "ab" * 32, signer, 100,
+                              10 ** 6, None, identity_evidence=ev)
+        chain = di.export_chain(
+            [{"receipt": r1e, "from_pubkey": _pub(signer),
+              "did_documents": {"did:sasanam:carol": doc}}],
+            _seed(83), 200)
+        rec = di.verify_chain_offline(chain, 200,
+                                      {"did:sasanam:carol": doc})
+        self.assertIs(rec["verified"], True)
+
+    def test_unpinned_embedded_doc_admitted(self):
+        # Residual, pinned deliberately: an embedded document for a DID
+        # the verifier never pinned is still admitted as that DID's root
+        # for this verification. Pinning stays the trust decision.
+        ctrl = _seed(91)
+        signer = _seed(92)
+        doc = di.issue_did_document("did:sasanam:erin", ctrl,
+                                    [_pub(signer)], created_at=100)
+        r1 = di.make_receipt("erin", "fred", "ab" * 32, signer, 100,
+                             10 ** 6, None)
+        ev = di.make_identity_evidence(
+            "did", r1["receipt_id"], did="did:sasanam:erin",
+            did_document_digest=di.did_document_digest(doc),
+            controller_seed=ctrl)
+        r1e = di.make_receipt("erin", "fred", "ab" * 32, signer, 100,
+                              10 ** 6, None, identity_evidence=ev)
+        chain = di.export_chain(
+            [{"receipt": r1e, "from_pubkey": _pub(signer),
+              "did_documents": {"did:sasanam:erin": doc}}],
+            _seed(93), 200)
+        rec = di.verify_chain_offline(chain, 200, {})
+        self.assertIs(rec["verified"], True)
+
+
 class TestEd25519Contract(unittest.TestCase):
     def test_verify_returns_bool(self):
         seed = _seed(51)

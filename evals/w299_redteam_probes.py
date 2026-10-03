@@ -57,7 +57,7 @@ from gov import policy_ci as pci
 from gov import approval_quorum as aq
 from gov import ed25519 as _ed25519
 
-TAXONOMY_PIN = 1802  # Wave-298 merge pin; this lane mints no codes.; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
+TAXONOMY_PIN = 1812  # Wave-298 merge pin; this lane mints no codes.; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -122,11 +122,12 @@ class BaseStateTest(unittest.TestCase):
         # Wave-299 merge re-pin: F372/F373 CLOSED by lane 1; merged footer
         # is open F374, F375, F376 / next free F377.
         # Wave-300 merge re-pin: F374/F375/F376 CLOSED by lanes 1-2;
-        # wave-300 red team filed F377/F378. Merged footer is
-        # open F377, F378 / next free F379.
+        # wave-301 merge re-pin: F377/F378 CLOSED by lanes 1-2;
+        # wave-301 red team filed F379 (OPEN). Merged footer is
+        # open F379 / next free F380.
         # Anchor to the LAST matches: the footer, not historical entries.
-        ok = (m_open and m_open[-1].strip() == "F377, F378"
-              and m_next and m_next[-1] == "F379")
+        ok = (m_open and m_open[-1].strip() == "F379"
+              and m_next and m_next[-1] == "F380")
         self.assertTrue(_expect_held(
             "footer-state", ok,
             "open=%r next=%r" % (

@@ -9359,8 +9359,7 @@ refuse coded; adjacent batteries green. Close-when (1)(2)(3) all met.
 Residual: same-namespace caller identity remains deployment-owned;
 a deployment that lies about the caller defeats the check
 (documented, not a module defect).
-
-## F377: embedded DID documents override the verifier's pinned trust roots in offline chain verification (MEDIUM, OPEN)
+## F377: embedded DID documents override the verifier's pinned trust roots in offline chain verification (MEDIUM, CLOSED)
 
 **Cells:** wave-300 independent red-team, 2026-10-03. Standing regression pins:
 `evals/w300_redteam_probes.py` (probes `F377-native-override`,
@@ -9408,9 +9407,11 @@ one -- in BOTH `verify_chain_offline` and
 HELD on both paths while the tampered-embedded and honest-flow probes
 stay HELD; (3) adjacent batteries stay green.
 
-**Status: OPEN** (filed 2026-10-03, wave-300 independent red-team).
+**Status: CLOSED** (filed 2026-10-03, wave-300 independent red-team; closed 2026-10-03, wave-301 lane 1).
 
-## F378: ticket presentation never consults revocation -- a ticket anchored on a revoked receipt still presents (MEDIUM, OPEN)
+**Closure record (2026-10-03, wave-301 lane 1):** fixed in `gov/delegation_identity.py` only. Both `verify_chain_offline` and `verify_native_chain_offline` no longer execute `roots[did] = doc` unconditionally: when a DID is already present in the caller's `trusted_did_docs`, the embedded document is accepted only when its canonical unsigned-body digest matches the pinned document's digest (`did_document_digest`); any conflicting embedded document refuses coded `delegation-identity-invalid` (the close-when's refuse-on-digest-mismatch option). A byte-identical embedded copy stays authoritative via the pinned root. Embedded documents for DIDs the verifier never pinned are still admitted as that DID's root for the verification (documented residual; pinning stays the trust decision).
+Red-first evidence: `evals/w300_redteam_probes.py` F377 probes BREAK on the pristine base (2 BREAK / 27 HELD on the lane tree before the fix) and flip HELD after it (0 F377 BREAKs; the only remaining BREAKs are the expected-open F378 probes, wave-301 lane 2's work); tampered-embedded and honest-flow probes stay HELD under staging and `env -u GOV_DEPLOYMENT_MODE`. New unit tests `TestF377PinnedTrustRoots` (4 tests) in `tests/test_delegation_identity.py`: conflicting embedded docs refuse coded on both paths, byte-identical embedded copy verifies, unpinned embedded doc admitted (residual pinned). Adjacent green: `tests/test_delegation_identity.py` 18/18, `evals/w299_delegation_probes.py` 28/28, full `evals/w300_redteam_probes.py` 27 HELD / 0 ERROR (2 expected-open F378 BREAKs). No new decision codes; taxonomy pin unchanged at 1802.
+## F378: ticket presentation never consults revocation -- a ticket anchored on a revoked receipt still presents (MEDIUM, CLOSED)
 
 **Cells:** wave-300 independent red-team, 2026-10-03. Standing regression pins:
 `evals/w300_redteam_probes.py` (probes `F378-present-after-revoke`,
@@ -9448,9 +9449,57 @@ the presented chain -- is revoked; `issue_ticket_on_receipt` likewise
 refuses issuance on a revoked anchoring receipt; (2) the F378 probes
 flip to HELD; (3) adjacent batteries stay green.
 
-**Status: OPEN** (filed 2026-10-03, wave-300 independent red-team).
+**Status: CLOSED** (filed 2026-10-03, wave-300 independent red-team; closed 2026-10-03 wave-301 lane 2: `gov/delegation_tickets.py` `present()` and `issue_ticket_on_receipt()` now accept `revocation={'revoker': DelegationRevoker}` and enforce revocation liveness fail-closed whenever a receipt chain is consulted (wave-300 lane-4 `coordination_lease` precedent) -- no revocation state refuses coded `delegation-ticket-invalid`; the presented revoker must be the anchoring receipt's own delegator's revoker (delegator_id + key match, anti-substitution); a revoked anchor or revoked ancestor refuses coded `delegation-revoked` via `assert_live_native` (revocation beats expiry); expired anchor refuses `delegation-expired`. Pure ticket chains need no revocation input. Red-first: both facets reproduced BREAK on pristine base (present-after-revoke, issue-on-revoked); re-pinned `evals/w300_redteam_probes.py` F378 probes (incl. new fail-closed / substituted-revoker / ancestor-revocation probes) HELD with exact coded refusals; `tests/test_delegation_compose.py` receipt-anchored call sites updated to the new API; w299 delegation batteries green.)
+## F379: multi-hop delegation-bound leases honor only the root delegator's revocation list -- an intermediate delegator's revocation of the bound receipt is invisible (MEDIUM, OPEN)
 
-Next free finding: **F379**. **Open findings: F377, F378.** (F371 filed 2026-10-02, wave-297 independent red-team (LOW, CLOSED 2026-10-03 wave-298 lane 1: verify_trace post-signature shape assumptions crash uncoded); F372 filed 2026-10-03, wave-298 independent red-team (LOW, CLOSED 2026-10-03 wave-299 lane 1: policy_ci.load_artifact accepted artifacts with extra files added); F373 filed 2026-10-03, wave-298 independent red-team (LOW, CLOSED 2026-10-03 wave-299 lane 1: QuorumPredicate slot attributes reassignable post-construction); F374 filed 2026-10-03, wave-299 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-300 lane 1: memory_store retraction authority migrated to the newest writer); F375 filed 2026-10-03, wave-299 independent red-team (LOW, CLOSED 2026-10-03 wave-300 lane 2: memory_reconcile write-rate bound now keyed on authenticated owner key + principal string); F376 filed 2026-10-03, wave-299 independent red-team (LOW, CLOSED 2026-10-03 wave-300 lane 2: cross-namespace recall now bearer-grant); F377 filed 2026-10-03, wave-300 independent red-team (MEDIUM, OPEN: embedded DID documents override verifier trust roots in offline chain verification); F378 filed 2026-10-03, wave-300 independent red-team (MEDIUM, OPEN: ticket presentation never consults revocation); F364 filed 2026-10-02, wave-293 independent red-team as F361, renumbered F361->F364
+**Cells:** wave-301 independent red-team, 2026-10-03. Standing regression pins:
+`evals/w301_redteam_probes.py` (probes `F379-intermediate-revocation-invisible`,
+`F379-correct-revoker-refused`).
+
+**Defect:** `gov/coordination_lease.py::_check_delegation_binding_live`
+accepts exactly one revoker, and its anti-substitution check demands the
+CHAIN ROOT's delegator (`revoker.delegator_id != root_delegator` refuses
+`coord-lease-invalid`), while `DelegationRevoker.assert_live_native`
+checks every chain member against that single revoker's list. For a
+multi-hop chain bound at the leaf (A delegating to B delegating to C,
+binding on the B->C receipt), a revocation of the bound receipt by its
+own delegator B -- recorded in B's revocation list -- is invisible: the
+holder presents A's revoker (the only one the code accepts), A's list
+has no such revocation, the chain verifies, and `check_write` returns
+True. Verified empirically on native chains: after
+`rev_b.revoke(child["receipt_id"])`, `check_write` with
+`{"revoker": rev_a, "chain": [root, child], "trust_roots": [pub_a]}`
+succeeds. Worse, the presenter cannot fix it: presenting B's revoker
+(the one that actually revoked the bound receipt) is refused
+`coord-lease-invalid` -- there is no path to get the genuine
+revocation recognized. This contradicts the module's own docstring
+("the presented revoker must be the bound receipt's delegator") and the
+wave-300 lane-4 close-when ("Revoked receipt/ancestor maps to
+coord-lease-fencing"): the REVOKED bound receipt does not map to
+fencing. The tested direction ("revoked ancestor kills
+descendant-bound grant") holds; the untested direction (revoked
+descendant, revoked by its own delegator) does not.
+
+**Severity rationale:** MEDIUM. Same class as F377/F378 (revocation
+visibility on a revocation-enforcement seam). Preconditions are
+plausible: multi-hop delegation-backed leases are explicitly
+supported, and any intermediate delegator may revoke. Impact: a
+delegatee whose capability was revoked by its direct delegator keeps
+writing under the lease -- revocation does not beat expiry on this
+path.
+
+**Close-when criteria:** (1) `check_write` consults every chain member
+against its own delegator's revocation state -- e.g. accept a
+per-delegator revoker mapping and verify each revoker speaks for its
+delegator (extending the existing anti-substitution check per
+revoker), refusing `coord-lease-fencing` when any member is revoked by
+its delegator; alternatively, explicitly restrict bindings to
+single-hop chains (refuse multi-hop bound chains coded at
+`check_write`) with the restriction documented and tested; (2) the
+F379 probes flip to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-03, wave-301 independent red-team).
+Next free finding: **F380**. **Open findings: F379.** (F379 filed 2026-10-03, wave-301 independent red-team (MEDIUM, OPEN: multi-hop delegation-bound leases honor only the root delegator's revocation list -- intermediate delegator's revocation of the bound receipt invisible); F371 filed 2026-10-02, wave-297 independent red-team (LOW, CLOSED 2026-10-03 wave-298 lane 1: verify_trace post-signature shape assumptions crash uncoded); F372 filed 2026-10-03, wave-298 independent red-team (LOW, CLOSED 2026-10-03 wave-299 lane 1: policy_ci.load_artifact accepted artifacts with extra files added); F373 filed 2026-10-03, wave-298 independent red-team (LOW, CLOSED 2026-10-03 wave-299 lane 1: QuorumPredicate slot attributes reassignable post-construction); F374 filed 2026-10-03, wave-299 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-300 lane 1: memory_store retraction authority migrated to the newest writer); F375 filed 2026-10-03, wave-299 independent red-team (LOW, CLOSED 2026-10-03 wave-300 lane 2: memory_reconcile write-rate bound now keyed on authenticated owner key + principal string); F376 filed 2026-10-03, wave-299 independent red-team (LOW, CLOSED 2026-10-03 wave-300 lane 2: cross-namespace recall now bearer-grant); F377 filed 2026-10-03, wave-300 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-301 lane 1: embedded DID doc admitted only on canonical digest match with pin, conflicts refuse coded); F378 filed 2026-10-03, wave-300 independent red-team (MEDIUM, CLOSED 2026-10-03 wave-301 lane 2: ticket presentation/issuance enforce revocation liveness); F364 filed 2026-10-02, wave-293 independent red-team as F361, renumbered F361->F364
 at the wave-293 merge -- the wave-293 sweep lane filed F361-F363 first
 at ~19:53 UTC and keeps them per the wave-272 earliest-filed rule;
 closed 2026-10-02, wave-294 lane 1; F367 filed 2026-10-02, wave-295

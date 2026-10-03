@@ -37,7 +37,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-PIN = 1802  # wave-300 merge pin 1802 (lane-local 1799 at lane time)
+PIN = 1812  # wave-301 merge pin 1812 (lane-local 1799 at wave-300 lane time; wave-300 pin was 1802)
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -507,7 +507,7 @@ class GreenChecks(unittest.TestCase):
                                "w297_approval_quorum_probes.py"))
 
     def test_green_w299_delegation(self):
-        # Wave-300 merge: tree and w299 battery both pin 1802.
+        # Wave-300 merge: tree and w299 battery both pin 1812.
         # Tolerate only its pin-taxonomy probe; every other break is real.
         self._run("w299_delegation",
                   os.path.join(REPO, "evals", "w299_delegation_probes.py"),

@@ -20,7 +20,7 @@ Targets:
 Base: wave-299 merge a830f65f80e9317aa7ae65b83b7eb14b3922bd0e
 (verified via git rev-parse HEAD after clone; git ls-remote agreed).
 
-Pin 1802 at lane time (no new codes minted by this lane -- attack only; gov/ stays
+Pin 1812 at lane time (no new codes minted by this lane -- attack only; gov/ stays
 byte-identical). Next free F379 at wave-300 merge.
 
 $0 spend, synthetic/local, deterministic. Stdlib only, no in-repo git
@@ -56,7 +56,7 @@ from gov import memory_store as mst
 from gov import memory_reconcile as mrc
 from gov import ed25519 as _ed25519
 
-TAXONOMY_PIN = 1802  # Wave-300 merge pin 1802 (was 1797 at wave-299); this lane mints no codes.
+TAXONOMY_PIN = 1812  # Wave-301 merge pin 1812 (was 1802 at wave-300); this lane mints no codes.
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -117,10 +117,12 @@ class BaseStateTest(unittest.TestCase):
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
         # Wave-300 merge re-pin: F374/F375/F376 CLOSED by lanes 1-2.
-        # Merged footer is open F377, F378 / next free F379.
+        # Wave-301 merge re-pin: F377/F378 CLOSED by lanes 1-2;
+        # wave-301 red team filed F379 (OPEN). Merged footer is
+        # open F379 / next free F380.
         # Anchor to the LAST matches: the footer, not historical entries.
-        ok = (m_open and m_open[-1].strip() == "F377, F378"
-              and m_next and m_next[-1] == "F379")
+        ok = (m_open and m_open[-1].strip() == "F379"
+              and m_next and m_next[-1] == "F380")
         self.assertTrue(_expect_held(
             "footer-state", ok,
             "open=%r next=%r" % (
@@ -311,17 +313,23 @@ class F377DIDTrustRootTest(unittest.TestCase):
 # ------------------------------------------------------------------
 
 class F378TicketRevocationTest(unittest.TestCase):
-    """F378 (MEDIUM, OPEN): a delegation ticket anchored on a receipt
-    (``issue_ticket_on_receipt``) keeps presenting successfully AFTER
-    the anchoring receipt is revoked. ``present()`` takes no
-    revocation input at all -- the revocation story (power of
-    attorney: revocation binds ALL downstream copies) stops at the
-    receipt layer and never reaches the ticket presentation path.
-    OPEN at this base (BREAK by design)."""
+    """F378 (MEDIUM, CLOSED 2026-10-03 wave-301 lane 2): a delegation
+    ticket anchored on a receipt (``issue_ticket_on_receipt``) kept
+    presenting successfully AFTER the anchoring receipt was revoked --
+    ``present()`` took no revocation input at all.  Wave-301 re-pin:
+    both paths now take ``revocation={"revoker": DelegationRevoker}``
+    and enforce revocation liveness fail-closed (wave-300 lane-4
+    precedent): no revocation state -> coded
+    ``delegation-ticket-invalid``; revoked anchor/ancestor -> coded
+    ``delegation-revoked``; a substituted revoker (wrong delegator or
+    wrong key) -> coded ``delegation-ticket-invalid``.  Pure ticket
+    chains still present without revocation input."""
 
     def _ticket_on_receipt(self, tag="f378"):
         # The ticket issuer must HOLD the anchoring receipt: the leaf
-        # holder's seed issues the ticket.
+        # holder's seed issues the ticket.  The anchor's delegator
+        # ("mid-<tag>") owns the revocation list presented at issue
+        # and at presentation.
         fx = _native_chain(tag)
         chain = fx["chain"]
         leaf = chain[-1]
@@ -329,39 +337,45 @@ class F378TicketRevocationTest(unittest.TestCase):
         opt = tkt.declare_opt_in(delegatee, "d-" + tag, 10 ** 6, 100)
         reg = tkt.OptInRegistry()
         reg.register(opt, 100)
+        revoker = rv.DelegationRevoker(fx["seeds"]["mid"], "mid-" + tag)
+        revocation = {"revoker": revoker}
         ticket, ticket_seed = tkt.issue_ticket_on_receipt(
             leaf, chain, fx["seeds"]["leaf"], "d-" + tag, "memory.read",
             tkt.FORWARDABLE, [], 10 ** 6, reg, 100,
-            [fx["pubs"]["root"]])
-        return fx, chain, leaf, ticket, ticket_seed, delegatee
+            [fx["pubs"]["root"]], revocation=revocation)
+        return fx, chain, leaf, ticket, ticket_seed, delegatee, revocation
+
+    def _present(self, ticket, tag, at, chain, pubs, revocation):
+        return tkt.present(ticket, "d-" + tag, "memory.read", "ab" * 32,
+                           at, receipt_chain=chain,
+                           trust_roots=[pubs["root"]],
+                           revocation=revocation)
 
     def test_F378_present_after_receipt_revoked(self):
-        fx, chain, leaf, ticket, ticket_seed, delegatee = \
+        fx, chain, leaf, ticket, ticket_seed, delegatee, revocation = \
             self._ticket_on_receipt()
         # The ticket presents fine before revocation.
-        got = tkt.present(ticket, "d-f378", "memory.read", "ab" * 32, 200,
-                          receipt_chain=chain,
-                          trust_roots=[fx["pubs"]["root"]])
+        got = self._present(ticket, "f378", 200, chain, fx["pubs"],
+                            revocation)
         assert got is not None
         # Now the delegator revokes the anchoring receipt.
-        revoker = rv.DelegationRevoker(fx["seeds"]["mid"], "mid-f378")
-        revoker.revoke(leaf["receipt_id"], 300)
+        revocation["revoker"].revoke(leaf["receipt_id"], 300)
         try:
-            tkt.present(ticket, "d-f378", "memory.read", "ab" * 32, 400,
-                        receipt_chain=chain,
-                        trust_roots=[fx["pubs"]["root"]])
+            self._present(ticket, "f378", 400, chain, fx["pubs"],
+                          revocation)
         except Exception as e:  # noqa: BLE001
+            code = getattr(e, "code", None)
             return self.assertTrue(_expect_held(
-                "F378-present-after-revoke", True,
-                "post-revoke presentation refused coded %s"
-                % getattr(e, "code", "?")) == "HELD")
+                "F378-present-after-revoke", code == "delegation-revoked",
+                "post-revoke presentation refused coded %s" % (code,))
+                == "HELD")
         self.assertTrue(_expect_held(
             "F378-present-after-revoke", False,
             "ticket anchored on a REVOKED receipt still presents") == "BREAK")
 
     def test_F378_issue_on_already_revoked_receipt(self):
-        # Issuance on an already-revoked receipt also succeeds: the
-        # issue path checks the chain but never revocation either.
+        # Issuance on an already-revoked receipt refuses coded: the
+        # issue path now enforces revocation liveness fail-closed.
         # (The ticket issuer must HOLD the anchoring receipt, so the
         # leaf holder's seed issues here.)
         fx = _native_chain("f378i")
@@ -376,19 +390,80 @@ class F378TicketRevocationTest(unittest.TestCase):
             tkt.issue_ticket_on_receipt(
                 leaf, chain, fx["seeds"]["leaf"], "d-f378i",
                 "memory.read", tkt.FORWARDABLE, [], 10 ** 6, reg, 200,
-                [fx["pubs"]["root"]])
+                [fx["pubs"]["root"]],
+                revocation={"revoker": revoker})
         except Exception as e:  # noqa: BLE001
+            code = getattr(e, "code", None)
             return self.assertTrue(_expect_held(
-                "F378-issue-on-revoked", True,
-                "issuance on revoked receipt refused coded %s"
-                % getattr(e, "code", "?")) == "HELD")
+                "F378-issue-on-revoked", code == "delegation-revoked",
+                "issuance on revoked receipt refused coded %s" % (code,))
+                == "HELD")
         self.assertTrue(_expect_held(
             "F378-issue-on-revoked", False,
             "ticket issued on an already-REVOKED receipt") == "BREAK")
 
+    def test_F378_present_without_revocation_state_fail_closed(self):
+        # No revocation state on a receipt-anchored presentation
+        # refuses coded -- the kill switch is not optional.
+        fx, chain, leaf, ticket, ticket_seed, delegatee, revocation = \
+            self._ticket_on_receipt()
+        self.assertTrue(_expect_coded(
+            "F378-present-no-revocation-state",
+            lambda: tkt.present(ticket, "d-f378", "memory.read",
+                                "ab" * 32, 200, receipt_chain=chain,
+                                trust_roots=[fx["pubs"]["root"]]),
+            {"delegation-ticket-invalid"}) == "HELD")
+
+    def test_F378_issue_without_revocation_state_fail_closed(self):
+        fx = _native_chain("f378j")
+        chain, leaf = fx["chain"], fx["chain"][-1]
+        delegatee = _seed("f378j-delegatee")
+        opt = tkt.declare_opt_in(delegatee, "d-f378j", 10 ** 6, 100)
+        reg = tkt.OptInRegistry()
+        reg.register(opt, 100)
+        self.assertTrue(_expect_coded(
+            "F378-issue-no-revocation-state",
+            lambda: tkt.issue_ticket_on_receipt(
+                leaf, chain, fx["seeds"]["leaf"], "d-f378j",
+                "memory.read", tkt.FORWARDABLE, [], 10 ** 6, reg, 200,
+                [fx["pubs"]["root"]]),
+            {"delegation-ticket-invalid"}) == "HELD")
+
+    def test_F378_substituted_revoker_refused(self):
+        # An attacker's own revoker (wrong delegator id AND wrong key)
+        # must not silently validate: anti-substitution binds the
+        # revoker to the anchoring receipt's delegator key.
+        fx, chain, leaf, ticket, ticket_seed, delegatee, revocation = \
+            self._ticket_on_receipt()
+        evil = rv.DelegationRevoker(_seed("f378-evil"), "evil-f378")
+        self.assertTrue(_expect_coded(
+            "F378-substituted-revoker",
+            lambda: self._present(ticket, "f378", 200, chain, fx["pubs"],
+                                  {"revoker": evil}),
+            {"delegation-ticket-invalid"}) == "HELD")
+        # Right id, wrong key: also refused.
+        evil2 = rv.DelegationRevoker(_seed("f378-evil2"), "mid-f378")
+        self.assertTrue(_expect_coded(
+            "F378-substituted-revoker-key",
+            lambda: self._present(ticket, "f378", 200, chain, fx["pubs"],
+                                  {"revoker": evil2}),
+            {"delegation-ticket-invalid"}) == "HELD")
+
+    def test_F378_ancestor_revocation_kills_ticket(self):
+        # Revoking an ANCESTOR of the anchor kills the ticket too:
+        # assert_live_native checks every chain member.
+        fx, chain, leaf, ticket, ticket_seed, delegatee, revocation = \
+            self._ticket_on_receipt()
+        revocation["revoker"].revoke(chain[0]["receipt_id"], 150)
+        self.assertTrue(_expect_coded(
+            "F378-ancestor-revoked",
+            lambda: self._present(ticket, "f378", 200, chain,
+                                  fx["pubs"], revocation),
+            {"delegation-revoked"}) == "HELD")
+
     def test_F378_native_revocation_still_enforced(self):
         # Control: the receipt-layer revocation path itself works --
-        # the gap is ticket presentation, not revocation per se.
+        # the gap was ticket presentation, not revocation per se.
         fx = _native_chain("f378c")
         chain, leaf = fx["chain"], fx["chain"][-1]
         revoker = rv.DelegationRevoker(fx["seeds"]["mid"], "mid-f378c")

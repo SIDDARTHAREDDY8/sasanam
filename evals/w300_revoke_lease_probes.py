@@ -10,7 +10,7 @@ New product surface:
   assert_live_native, local-shape receipts through is_live). A
   delegation-revoked refusal maps onto coord-lease-fencing; a bound
   grant presented WITHOUT revocation state refuses fail-closed
-  coord-lease-fencing. No new codes; pin 1797 lane-local (1802 at wave-300 merge).
+  coord-lease-fencing. No new codes; pin 1797 lane-local (1812 at wave-300 merge).
 
 Red-first: on the pristine base the binding probes BREAK (feature
 absent: acquire() takes no delegation_binding kwarg); on the fixed
@@ -42,7 +42,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1802  # Wave-300 lane 4: no new codes (reuse coord-lease-fencing etc.)
+TAXONOMY_PIN = 1812  # Wave-300 lane 4: no new codes (reuse coord-lease-fencing etc.)
 
 _results = []
 
@@ -78,7 +78,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate code literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "code literals not sorted")
-    _record("pin-taxonomy", "HELD", "1802/1802/0 sorted")
+    _record("pin-taxonomy", "HELD", "1812/1812/0 sorted")
 
 
 def _green_check(path, name, tolerate=()):

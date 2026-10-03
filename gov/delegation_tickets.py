@@ -56,6 +56,37 @@ receipts the RECORD half. The seam is WIRED (below):
   (lazy import -- delegation never imports this module) and the ticket
   signature is checked against the receipt's ``delegatee_pubkey``.
 
+WAVE-301 F378 CLOSURE: the revocation story now reaches the ticket
+layer. Both ``issue_ticket_on_receipt`` and ``present`` accept an
+optional ``revocation`` input::
+
+    {"revoker": <gov.delegation_revocation.DelegationRevoker>}
+
+Whenever a receipt chain is consulted (issuance, or presentation of
+a receipt-anchored ticket), revocation liveness is enforced
+fail-closed (wave-300 lane-4 ``coordination_lease`` precedent):
+
+* no revocation state presented -> refuse coded
+  ``delegation-ticket-invalid`` (fail closed: a receipt-anchored
+  ticket never presents on "no revocation info");
+* the presented revoker must be the ANCHORING receipt's own
+  delegator's revoker (``delegator_id`` match + revoker key equals the
+  receipt's ``delegator_pubkey``) -- a substituted list from another
+  principal refuses coded, never silently validates (a digest-only or
+  id-only check is insufficient: an empty attacker revoker is
+  indistinguishable from an empty legitimate one without the key
+  binding);
+* the anchoring receipt -- or any receipt in the presented chain --
+  revoked -> refuse coded ``delegation-revoked`` (revocation beats
+  expiry, matching the revocation module's refusal order);
+* an expired anchoring receipt -> ``delegation-expired``.
+
+Pure ticket chains (no receipt ancestry) are unaffected: no receipt
+chain is consulted, so no revocation input is required. Revocation
+freshness (how recent the presented list is) remains
+deployment-owned -- the list is presented, not fetched; a deployment
+that needs freshness pins it explicitly.
+
 All refusals carry machine codes (F351 contract)::
 
     delegation-ticket-invalid        -- malformed ticket/opt-in, bad
@@ -70,6 +101,13 @@ All refusals carry machine codes (F351 contract)::
                                         CONSTRAINED presented outside
                                         its downstream set, empty
                                         downstream on CONSTRAINED issue
+
+    (Wave-301 F378: receipt-anchored paths additionally refuse with
+    the revocation module's own codes, reused not re-minted:
+    ``delegation-revoked`` -- anchoring receipt or ancestor revoked;
+    ``delegation-expired`` -- anchoring receipt outside its window.
+    No-revocation-state and substituted-revoker refusals are coded
+    ``delegation-ticket-invalid``.)
 
 Decision layer: in-memory per verifier (wave-292 decay precedent);
 timestamps are caller-supplied freshness markers.  The audit sink is
@@ -379,6 +417,85 @@ def _build_ticket(issuer_seed, issuer_id, delegatee_id, scope,
     return MappingProxyType(body), ticket_seed
 
 
+# ---------------------------------------------------------------------------
+# Revocation liveness for receipt-anchored tickets (wave-301, F378).
+# ---------------------------------------------------------------------------
+
+def _enforce_receipt_revocation(receipt_chain, at, trust_roots,
+                                revocation):
+    """Enforce revocation liveness on a native receipt chain, fail-closed.
+
+    Called whenever a receipt chain is consulted for a ticket --
+    issuance (``issue_ticket_on_receipt``) and presentation
+    (``_verify_receipt_parent``). ``revocation`` must be a dict of the
+    shape ``{"revoker": <gov.delegation_revocation.DelegationRevoker>}``.
+
+    Refusal order: revocation-state presence -> anti-substitution ->
+    revocation -> chain verification (revocation beats expiry, matching
+    the revocation module). A revoked anchoring receipt -- or any
+    revoked receipt in the presented chain -- refuses coded
+    ``delegation-revoked``. Chain defects propagate as the
+    ``gov/delegation.py`` coded error unchanged (the previous
+    behavior); every other revocation defect refuses coded here.
+    """
+    from gov import delegation_revocation as _rv  # lazy: no cycle
+    anchor = receipt_chain[-1]
+    if not isinstance(revocation, dict):
+        _fail(TKT_INVALID,
+              "receipt-anchored ticket without revocation state "
+              "(fail closed): pass revocation={'revoker': "
+              "DelegationRevoker}")
+    revoker = revocation.get("revoker")
+    if not isinstance(revoker, _rv.DelegationRevoker):
+        _fail(TKT_INVALID,
+              "receipt-anchored ticket without the delegator's "
+              "revocation list (fail closed)")
+    # Anti-substitution: the presented revoker must be the ANCHORING
+    # receipt's own delegator's revoker -- delegator_id match AND the
+    # revoker's key equals the receipt's delegator_pubkey.  An id-only
+    # or digest-only check is insufficient: an empty attacker revoker
+    # is indistinguishable from an empty legitimate one without the
+    # key binding (wave-300 lane-4 lesson).
+    anchor_delegator = anchor.get("delegator_id") \
+        if isinstance(anchor, Mapping) else None
+    anchor_pubkey = anchor.get("delegator_pubkey") \
+        if isinstance(anchor, Mapping) else None
+    if revoker.delegator_id != anchor_delegator:
+        _fail(TKT_INVALID,
+              "presented revocation list is not the anchoring "
+              "receipt's delegator's own list")
+    if not isinstance(anchor_pubkey, str) or \
+            revoker.pubkey_hex.lower() != anchor_pubkey.lower():
+        _fail(TKT_INVALID,
+              "presented revoker key does not match the anchoring "
+              "receipt's delegator key")
+    try:
+        from gov import delegation as _dg  # lazy: no cycle
+        _chain_errors = (_rv.RevocationError, _dg.DelegationError)
+    except ImportError:  # pragma: no cover - defensive
+        _chain_errors = (_rv.RevocationError,)
+    try:
+        # Checks every chain member's id against the revoker's list
+        # (revocation first), then verifies the native chain.
+        revoker.assert_live_native(receipt_chain, at, trust_roots)
+    except _chain_errors as exc:
+        code = getattr(exc, "code", None)
+        if code == _rv.RV_REVOKED:
+            _fail(_rv.RV_REVOKED,
+                  "anchoring receipt %s revoked; the ticket's "
+                  "authority is dead"
+                  % (anchor.get("receipt_id", "")[:16]
+                     if isinstance(anchor, Mapping) else "?"))
+        if code == _rv.EXP:
+            _fail(_rv.EXP, "anchoring receipt expired")
+        if isinstance(exc, _rv.RevocationError):
+            _fail(TKT_INVALID,
+                  "receipt revocation liveness check failed (%s)"
+                  % (code,))
+        # gov/delegation.py chain defects propagate unchanged.
+        raise
+
+
 def issue_root_ticket(authority_seed, authority_id, scope, ttl_seconds,
                       at, ticket_type=FORWARDABLE):
     """Issue a root ticket: the trust anchor's own delegation
@@ -533,7 +650,7 @@ def issue_delegation_ticket(parent_ticket, parent_seed, delegatee_id,
 def issue_ticket_on_receipt(receipt, receipt_chain, holder_seed,
                             delegatee_id, scope, ticket_type,
                             allowed_downstream, ttl_seconds, opt_ins, at,
-                            trust_roots):
+                            trust_roots, revocation=None):
     """Issue a delegation ticket anchored on a ``gov/delegation.py`` receipt.
 
     ``receipt_chain`` is the root-first native receipt chain whose leaf
@@ -547,8 +664,13 @@ def issue_ticket_on_receipt(receipt, receipt_chain, holder_seed,
     ``expires_at``. The ticket's ``parent_ticket_digest`` is the
     receipt's ``receipt_id``: the receipt is the authority RECORD, the
     ticket the PRESENTATION token. Returns ``(ticket, ticket_seed)``.
+
+    ``revocation`` (optional, wave-301 F378): ``{"revoker":
+    <gov.delegation_revocation.DelegationRevoker>}``. Revocation
+    liveness of the anchoring chain is enforced fail-closed: no
+    revocation state -> ``delegation-ticket-invalid``; a revoked
+    anchoring receipt (or revoked ancestor) -> ``delegation-revoked``.
     """
-    from gov import delegation as _dg  # lazy: delegation never imports this module
     if not isinstance(holder_seed, (bytes, bytearray)) \
             or len(holder_seed) != 32:
         _fail(TKT_INVALID, "holder seed must be 32 bytes")
@@ -556,7 +678,8 @@ def issue_ticket_on_receipt(receipt, receipt_chain, holder_seed,
         _fail(TKT_INVALID, "receipt chain must be a non-empty sequence")
     if receipt_chain[-1].get("receipt_id") != receipt.get("receipt_id"):
         _fail(TKT_INVALID, "receipt is not the chain leaf")
-    _dg.verify_chain(receipt, receipt_chain, at=at, trust_roots=trust_roots)
+    _enforce_receipt_revocation(receipt_chain, at, trust_roots,
+                                revocation)
     if ed25519.publickey(bytes(holder_seed)).hex() \
             != receipt["delegatee_pubkey"]:
         _fail(TKT_INVALID,
@@ -608,7 +731,7 @@ def attest_action(ticket_seed, ticket, action_digest):
 
 
 def _verify_chain(ticket, at, ticket_store, depth=0, receipt_chain=None,
-                trust_roots=None):
+                trust_roots=None, revocation=None):
     """Recursively verify the parent chain to a root ticket.
 
     When ``parent_ticket_digest`` names a ``gov/delegation.py`` receipt
@@ -618,6 +741,9 @@ def _verify_chain(ticket, at, ticket_store, depth=0, receipt_chain=None,
     native ``trust_roots``. The ticket issuer must be the receipt's
     delegatee (cross-seam holder continuity) and the ticket signature
     must verify under the receipt's ``delegatee_pubkey``.
+
+    ``revocation`` (wave-301 F378) is threaded to the receipt leg:
+    receipt-anchored tickets enforce revocation liveness fail-closed.
     """
     if depth > 32:
         _fail(TKT_INVALID, "delegation chain exceeds depth bound")
@@ -629,7 +755,8 @@ def _verify_chain(ticket, at, ticket_store, depth=0, receipt_chain=None,
     parent = ticket_store.get(parent_digest)
     if parent is None:
         return _verify_receipt_parent(ticket, parent_digest, at,
-                                      receipt_chain, trust_roots, depth)
+                                      receipt_chain, trust_roots, depth,
+                                      revocation)
 
     parent = _check_ticket_shape(parent)
     if not (parent["issued_at"] <= at < parent["expires_at"]):
@@ -649,20 +776,25 @@ def _verify_chain(ticket, at, ticket_store, depth=0, receipt_chain=None,
             is not True:
         _fail(TKT_INVALID, "ticket not signed by parent ticket key")
     return _verify_chain(parent, at, ticket_store, depth + 1,
-                         receipt_chain, trust_roots)
+                         receipt_chain, trust_roots, revocation)
 
 
 def _verify_receipt_parent(ticket, parent_digest, at, receipt_chain,
-                           trust_roots, depth):
-    """Verify a ticket whose parent is a ``gov/delegation.py`` receipt."""
-    from gov import delegation as _dg  # lazy: delegation never imports this module
+                           trust_roots, depth, revocation=None):
+    """Verify a ticket whose parent is a ``gov/delegation.py`` receipt.
+
+    Wave-301 F378: revocation liveness is enforced fail-closed via
+    ``_enforce_receipt_revocation`` before the holder-continuity and
+    signature checks.
+    """
     if not isinstance(receipt_chain, (list, tuple)) or not receipt_chain:
         _fail(TKT_INVALID, "parent digest not in store and no receipt "
                           "chain supplied")
     receipt = receipt_chain[-1]
     if receipt.get("receipt_id") != parent_digest:
         _fail(TKT_INVALID, "receipt chain leaf does not match parent digest")
-    _dg.verify_chain(receipt, receipt_chain, at=at, trust_roots=trust_roots)
+    _enforce_receipt_revocation(receipt_chain, at, trust_roots,
+                                revocation)
     if ticket["issuer_id"] != receipt["delegatee_id"]:
         _fail(TKT_INVALID,
               "ticket issuer is not the receipt holder "
@@ -684,13 +816,22 @@ def _verify_receipt_parent(ticket, parent_digest, at, receipt_chain,
 
 def present(ticket, presenter_id, action_scope, action_digest, at,
             ticket_store=None, action_sig=None, receipt_chain=None,
-            trust_roots=None):
+            trust_roots=None, revocation=None):
     """Present a ticket to authorize an action.
 
     Verifies, in order: shape -> signature -> validity window ->
     holder -> scope containment -> chain to root -> optional
     ticket-key action attestation.  Returns the verified ticket
     (frozen) on success; every failure refuses coded.
+
+    ``revocation`` (optional, wave-301 F378): ``{"revoker":
+    <gov.delegation_revocation.DelegationRevoker>}``.  Required
+    whenever a receipt chain is consulted (receipt-anchored ticket):
+    revocation liveness is enforced fail-closed -- a receipt-anchored
+    ticket presented without revocation state refuses coded
+    ``delegation-ticket-invalid``, and a revoked anchoring receipt
+    refuses coded ``delegation-revoked``.  Pure ticket chains need no
+    revocation input.
     """
     ticket = _check_ticket_shape(ticket)
     if not _is_id(presenter_id):
@@ -708,7 +849,7 @@ def present(ticket, presenter_id, action_scope, action_digest, at,
     if not _scope_within(action_scope, ticket["scope"]):
         _fail(TKT_INVALID, "action scope escapes the ticket scope")
     _verify_chain(ticket, at, ticket_store or {}, 0, receipt_chain,
-                trust_roots)
+                trust_roots, revocation)
     if action_sig is not None:
         try:
             key_pub = bytes.fromhex(ticket["ticket_key_pub"])

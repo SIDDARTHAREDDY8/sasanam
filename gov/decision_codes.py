@@ -16715,6 +16715,112 @@ TAXONOMY = {
         "evidence_kinds_required": ['chain-bundle'],
         "reverify_steps": ['recompute'],
     },
+    'workflow-authority-revoked': {
+        "domain": 'workflow',
+        "code": 'workflow-authority-revoked',
+        "human": 'durable workflow: a step execution or resume presented a '
+                 'delegation chain that is no longer live (revoked; '
+                 'revocation beats expiry) -- resume re-proves authority, '
+                 'never trusts the checkpoint',
+        "severity": 'high',
+        "evidence_kinds_required": ['workflow-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'workflow-checkpoint-tampered': {
+        "domain": 'workflow',
+        "code": 'workflow-checkpoint-tampered',
+        "human": 'durable workflow: a stored step/run record digest does '
+                 'not recompute (stored state was tampered with), or the '
+                 'presented inputs/outputs are not JSON-serializable and '
+                 'therefore cannot be checkpointed',
+        "severity": 'critical',
+        "evidence_kinds_required": ['workflow-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'workflow-idempotency-authority-lapsed': {
+        "domain": 'workflow-idempotency',
+        "code": 'workflow-idempotency-authority-lapsed',
+        "human": 'idempotency registry: the caller authority re-verification '
+                 'at begin/retry time failed (revoked, expired, or '
+                 'unverifiable); the retry is refused instead of replaying',
+        "severity": 'high',
+        "evidence_kinds_required": ['idempotency-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'workflow-idempotency-key-invalid': {
+        "domain": 'workflow-idempotency',
+        "code": 'workflow-idempotency-key-invalid',
+        "human": 'idempotency registry: keying material (namespace, '
+                 'op_class, key, caller, digest) failed grammar; refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['idempotency-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'workflow-routing-rights-widened': {
+        "domain": 'workflow-routing',
+        "code": 'workflow-routing-rights-widened',
+        "human": 'routing slip: a leg forwarded rights it was not granted, '
+                 'or a later leg was granted rights never forwarded by the '
+                 'previous leg; delegation narrows, never widens',
+        "severity": 'high',
+        "evidence_kinds_required": ['routing-slip', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'workflow-routing-slip-tampered': {
+        "domain": 'workflow-routing',
+        "code": 'workflow-routing-slip-tampered',
+        "human": 'routing slip: signature invalid, issuer untrusted, leg '
+                 'skipped or reordered, handler key mismatch, or receipt '
+                 'chain broken; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['routing-slip', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'workflow-saga-compensation-failed': {
+        "domain": 'workflow_saga',
+        "code": 'workflow-saga-compensation-failed',
+        "human": 'saga: a compensation action failed after all retry '
+                 'attempts; the saga is escalated -- the failure is '
+                 'recorded, never silently skipped',
+        "severity": 'high',
+        "evidence_kinds_required": ['saga-history'],
+        "reverify_steps": ['recompute'],
+    },
+    'workflow-saga-compensation-unauthorized': {
+        "domain": 'workflow_saga',
+        "code": 'workflow-saga-compensation-unauthorized',
+        "human": 'saga: a compensation action was refused because its '
+                 'step authority could not be re-verified (revoked or '
+                 'unknown) at compensation time; the saga is escalated '
+                 'and the step stays recorded as uncompensated',
+        "severity": 'high',
+        "evidence_kinds_required": ['saga-history'],
+        "reverify_steps": ['recompute'],
+    },
+    'workflow-saga-definition-invalid': {
+        "domain": 'workflow_saga',
+        "code": 'workflow-saga-definition-invalid',
+        "human": 'saga: the saga definition is invalid (empty, duplicate '
+                 'step id, missing action, or a step without a declared '
+                 'compensation) -- compensation is declared up front, '
+                 'never invented at failure time',
+        "severity": 'high',
+        "evidence_kinds_required": ['saga-definition'],
+        "reverify_steps": ['recompute'],
+    },
+    'workflow-step-unauthorized': {
+        "domain": 'workflow',
+        "code": 'workflow-step-unauthorized',
+        "human": 'durable workflow: a step was attempted without a '
+                 'verifiable delegation chain, by an actor other than the '
+                 "run's initiating actor, or the step slot was already "
+                 'executed with different inputs (workflow definition '
+                 'drift) -- checkpointed evidence is never overwritten',
+        "severity": 'high',
+        "evidence_kinds_required": ['workflow-record'],
+        "reverify_steps": ['recompute'],
+    },
     'wrong-keyset-purpose': {
         "domain": 'key_identity',
         "code": 'wrong-keyset-purpose',

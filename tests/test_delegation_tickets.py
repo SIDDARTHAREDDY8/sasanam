@@ -199,5 +199,83 @@ class Ed25519ContractTests(unittest.TestCase):
         self.assertIs(ed25519.verify(pub, msg, bytes(bad)), False)
 
 
+class TicketRevocationTests(unittest.TestCase):
+    """Wave-301 F378: receipt-anchored tickets enforce revocation
+    liveness fail-closed. Every coded refusal asserted by code."""
+
+    def _receipt_ticket(self, tag="f378u"):
+        from gov import delegation as dg
+        from gov import delegation_revocation as dr
+        rs = _seed(tag + "-root")
+        ms = _seed(tag + "-mid")
+        ls = _seed(tag + "-leaf")
+        pubs = {k: ed25519.publickey(s).hex()
+                for k, s in (("r", rs), ("m", ms), ("l", ls))}
+        cons = {"expires_at": AT + 10 ** 6, "max_depth": 8}
+        root = dg.issue(rs, "rt-" + tag, "mid-" + tag, pubs["m"],
+                        {"memory.read"}, constraints=dict(cons))
+        mid = dg.issue(ms, "mid-" + tag, "leaf-" + tag, pubs["l"],
+                       {"memory.read"}, parent=root,
+                       constraints=dict(cons))
+        chain = [root, mid]
+        reg = _registry()
+        revoker = dr.DelegationRevoker(ms, "mid-" + tag)
+        revocation = {"revoker": revoker}
+        ticket, _ = dt.issue_ticket_on_receipt(
+            mid, chain, ls, "agent-1", "memory.read",
+            dt.FORWARDABLE, [], 3600, reg, AT, [pubs["r"]],
+            revocation=revocation)
+        act = hashlib.sha256(b"u").hexdigest()
+        return {"chain": chain, "ticket": ticket, "act": act,
+                "roots": [pubs["r"]], "revocation": revocation,
+                "revoker": revoker, "mid_id": mid["receipt_id"]}
+
+    def _present(self, fx, at, revocation):
+        return dt.present(fx["ticket"], "agent-1", "memory.read",
+                          fx["act"], at, receipt_chain=fx["chain"],
+                          trust_roots=fx["roots"], revocation=revocation)
+
+    def test_present_live_receipt_with_revocation_ok(self):
+        fx = self._receipt_ticket()
+        out = self._present(fx, AT + 5, fx["revocation"])
+        self.assertEqual(out["ticket_id"], fx["ticket"]["ticket_id"])
+
+    def test_present_without_revocation_state_fail_closed(self):
+        fx = self._receipt_ticket()
+        with self.assertRaises(dt.DelegationTicketError) as ctx:
+            self._present(fx, AT + 5, None)
+        self.assertEqual(ctx.exception.code, "delegation-ticket-invalid")
+
+    def test_present_after_anchor_revoked(self):
+        fx = self._receipt_ticket()
+        fx["revoker"].revoke(fx["mid_id"], AT + 1)
+        with self.assertRaises(dt.DelegationTicketError) as ctx:
+            self._present(fx, AT + 5, fx["revocation"])
+        self.assertEqual(ctx.exception.code, "delegation-revoked")
+
+    def test_issue_on_revoked_receipt_refused(self):
+        from gov import delegation as dg
+        from gov import delegation_revocation as dr
+        fx = self._receipt_ticket(tag="f378ui")
+        # Build a second ticket issuance attempt on the revoked anchor.
+        fx["revoker"].revoke(fx["mid_id"], AT + 1)
+        reg = _registry()
+        with self.assertRaises(dt.DelegationTicketError) as ctx:
+            dt.issue_ticket_on_receipt(
+                fx["chain"][-1], fx["chain"],
+                _seed("f378ui-leaf"), "agent-2", "memory.read",
+                dt.FORWARDABLE, [], 3600, reg, AT + 2, fx["roots"],
+                revocation=fx["revocation"])
+        self.assertEqual(ctx.exception.code, "delegation-revoked")
+
+    def test_substituted_revoker_refused(self):
+        from gov import delegation_revocation as dr
+        fx = self._receipt_ticket()
+        evil = dr.DelegationRevoker(_seed("evil"), "evil")
+        with self.assertRaises(dt.DelegationTicketError) as ctx:
+            self._present(fx, AT + 5, {"revoker": evil})
+        self.assertEqual(ctx.exception.code, "delegation-ticket-invalid")
+
+
 if __name__ == "__main__":
     unittest.main()

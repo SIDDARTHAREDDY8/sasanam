@@ -44,7 +44,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1802  # Wave-299 merge pin 1797; wave-300 lane 3: pin 1797 -> 1800 (+3 memory-composed-*); wave-300 merge: 1802 (+2 delegation-approval-*)
+TAXONOMY_PIN = 1812  # Wave-299 merge pin 1797; wave-300 lane 3: pin 1797 -> 1800 (+3 memory-composed-*); wave-300 merge: 1802 (+2 delegation-approval-*); wave-301 merge: 1812 (+10 workflow-*)
 
 _results = []
 
@@ -83,7 +83,7 @@ def p_taxonomy_pin():
     for want in ("memory-composed-divergent", "memory-composed-key-too-long"):
         if want not in lits:
             return _record("pin-taxonomy", "BREAK", "missing code %s" % want)
-    _record("pin-taxonomy", "HELD", "1802/1802/0 sorted")
+    _record("pin-taxonomy", "HELD", "1812/1812/0 sorted")
 
 
 def _mod_or_break(pid):

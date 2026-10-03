@@ -148,6 +148,9 @@ class DelegationComposeTest(unittest.TestCase):
         self.assertEqual(chain_doc["schema"], "delegation-native-chain/v1")
 
     # -- lane 3: ticket anchored on a native receipt --------------------
+    # (wave-301 F378: receipt-anchored ticket paths enforce revocation
+    # liveness fail-closed, so every call below presents the anchor's
+    # delegator's revoker -- child-agent's own list.)
     def _opt_ins(self, delegatee_seed, delegatee_id):
         reg = dt.OptInRegistry()
         opt_in = dt.declare_opt_in(delegatee_seed, delegatee_id, 3600,
@@ -155,19 +158,24 @@ class DelegationComposeTest(unittest.TestCase):
         reg.register(opt_in, self.at)
         return reg
 
+    def _revocation(self):
+        return {"revoker": dr.DelegationRevoker(self.child_seed,
+                                                "child-agent")}
+
     def test_ticket_on_receipt_roundtrip(self):
         reg = self._opt_ins(_seed(4), "ticket-holder")
         ticket, ticket_seed = dt.issue_ticket_on_receipt(
             self.child, self.chain, self.grandchild_seed, "ticket-holder",
             "tool.invoke", dt.FORWARDABLE, [], 900, reg, self.at,
-            self.roots)
+            self.roots, revocation=self._revocation())
         self.assertEqual(ticket["parent_ticket_digest"],
                          self.child["receipt_id"])
         action_digest = "cd" * 32
         presented = dt.present(
             ticket, "ticket-holder", "tool.invoke", action_digest,
             self.at, ticket_store={},
-            receipt_chain=self.chain, trust_roots=self.roots)
+            receipt_chain=self.chain, trust_roots=self.roots,
+            revocation=self._revocation())
         self.assertEqual(presented["ticket_id"], ticket["ticket_id"])
 
     def test_ticket_on_receipt_requires_chain_at_present(self):
@@ -175,7 +183,7 @@ class DelegationComposeTest(unittest.TestCase):
         ticket, _ = dt.issue_ticket_on_receipt(
             self.child, self.chain, self.grandchild_seed, "ticket-holder",
             "tool.invoke", dt.FORWARDABLE, [], 900, reg, self.at,
-            self.roots)
+            self.roots, revocation=self._revocation())
         with self.assertRaises(dt.DelegationTicketError) as ctx:
             dt.present(ticket, "ticket-holder", "tool.invoke", "cd" * 32,
                        self.at, ticket_store={})
@@ -187,7 +195,7 @@ class DelegationComposeTest(unittest.TestCase):
             dt.issue_ticket_on_receipt(
                 self.child, self.chain, _seed(5), "ticket-holder",
                 "tool.invoke", dt.FORWARDABLE, [], 900, reg, self.at,
-                self.roots)
+                self.roots, revocation=self._revocation())
         self.assertEqual(ctx.exception.code, "delegation-ticket-invalid")
 
     def test_ticket_scope_escaping_receipt_rights_refused(self):
@@ -196,7 +204,7 @@ class DelegationComposeTest(unittest.TestCase):
             dt.issue_ticket_on_receipt(
                 self.child, self.chain, self.grandchild_seed, "ticket-holder",
                 "subagent.spawn", dt.FORWARDABLE, [], 900, reg, self.at,
-                self.roots)
+                self.roots, revocation=self._revocation())
         self.assertEqual(ctx.exception.code,
                          "delegation-ticket-type-violated")
 
