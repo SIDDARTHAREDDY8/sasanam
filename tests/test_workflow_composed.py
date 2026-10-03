@@ -301,5 +301,109 @@ class CodePinTests(ComposedTestBase):
         self.assertIs(ed25519.verify(pub, b"tampered", sig), False)
 
 
+class ExoticClosureTests(ComposedTestBase):
+    """F395: ComposedPlan refuses coded fns that close over
+    non-JSON-native values (fail closed -- type-name binding
+    collides, repr binding is unstable)."""
+
+    class _Client:
+        def __init__(self, endpoint):
+            self.endpoint = endpoint
+
+    def _mkfn(self, client):
+        def fn(i):
+            return client.fetch()
+        return fn
+
+    def test_exotic_closure_fn_refused(self):
+        self.assertEqual(
+            self._code_of(
+                wc.ComposedPlan,
+                [{"kind": "fn", "name": "u", "fn": self._mkfn(
+                    self._Client("x")), "inputs": {}, "idem_key": "k"}]),
+            "workflow-composed-definition-invalid")
+
+    def test_exotic_closure_saga_action_refused(self):
+        def mkaction(client):
+            def action(params):
+                return client, []
+            return action
+        sd = saga.SagaDefinition([
+            saga.SagaStepDef("s1", "a", {}, "c")])
+        self.assertEqual(
+            self._code_of(
+                wc.ComposedPlan,
+                [{"kind": "saga", "name": "sg", "definition": sd,
+                  "action_fns": {"s1": mkaction(self._Client("x"))},
+                  "comp_fns": {"s1": lambda p: None}, "idem_key": "k"}]),
+            "workflow-composed-definition-invalid")
+
+    def test_nested_exotic_refused(self):
+        def mknested(client):
+            def fn(i):
+                return ("a", client)
+            return fn
+        self.assertEqual(
+            self._code_of(
+                wc.ComposedPlan,
+                [{"kind": "fn", "name": "u", "fn": mknested(
+                    self._Client("x")), "inputs": {}, "idem_key": "k"}]),
+            "workflow-composed-definition-invalid")
+
+    def test_json_native_closure_still_binds_by_value(self):
+        def mkj(v):
+            def fn(i):
+                return v
+            return fn
+        v = {"a": [1, 2, ("x", None)], "b": True}
+        p1 = wc.ComposedPlan([
+            {"kind": "fn", "name": "u", "fn": mkj(v),
+             "inputs": {}, "idem_key": "k"}])
+        p2 = wc.ComposedPlan([
+            {"kind": "fn", "name": "u",
+             "fn": mkj({"a": [1, 2, ("x", None)], "b": True}),
+             "inputs": {}, "idem_key": "k"}])
+        p3 = wc.ComposedPlan([
+            {"kind": "fn", "name": "u",
+             "fn": mkj({"a": [1, 2, ("y", None)], "b": True}),
+             "inputs": {}, "idem_key": "k"}])
+        self.assertEqual(p1.digest, p2.digest)
+        self.assertNotEqual(p1.digest, p3.digest)
+
+    def test_is_json_native_edge_cases(self):
+        self.assertTrue(wc._is_json_native({"k": [1, "s", (2.5, None)]}))
+        self.assertTrue(wc._is_json_native({1: "int-key"}))
+        self.assertFalse(wc._is_json_native(object()))
+        self.assertFalse(wc._is_json_native(frozenset({1, 2})))
+        self.assertFalse(wc._is_json_native([object()]))
+        cyclic = []
+        cyclic.append(cyclic)
+        self.assertFalse(wc._is_json_native(cyclic))
+        # A shared substructure (DAG, no cycle) is JSON-native.
+        shared = {"cfg": 1}
+        self.assertTrue(wc._is_json_native({"a": shared, "b": [shared]}))
+        # Container subclasses can lie to json.dumps via overridden
+        # .items()/__iter__ (digest would bind different bytes than the
+        # fn reads at runtime): exotic, must refuse.
+        class LyingDict(dict):
+            def items(self):
+                return [("lied", "clean")]
+        self.assertFalse(wc._is_json_native(LyingDict({"real": 1})))
+        class LyingList(list):
+            def __iter__(self):
+                return iter(["lied"])
+        self.assertFalse(wc._is_json_native(LyingList([1])))
+        # Scalar subclasses cannot lie (encoder binds the true value).
+        class HonestStr(str):
+            pass
+        self.assertTrue(wc._is_json_native(HonestStr("s")))
+        deep = cur = []
+        for _ in range(100000):
+            nxt = []
+            cur.append(nxt)
+            cur = nxt
+        self.assertTrue(wc._is_json_native(deep))
+
+
 if __name__ == "__main__":
     unittest.main()

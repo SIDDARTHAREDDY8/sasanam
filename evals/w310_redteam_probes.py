@@ -7,8 +7,11 @@ lane A via the composer-level retry API).
 
 Targets (all verified empirically with throwaway scripts BEFORE this
 battery was written -- diagnosing-bugs loop):
- 1. F395 (MEDIUM, OPEN -- filed by this lane, claim 2026-10-03T13:27:00Z):
-    the F393 code binding collides for exotic closures.
+ 1. F395 (MEDIUM, CLOSED 2026-10-03 wave-311 lane A): the F393 code
+    binding collided for exotic closures -- ComposedPlan now refuses
+    coded workflow-composed-definition-invalid for non-JSON-native
+    closed-over values (recursive), and the probes below assert that
+    coded refusal.
     `_closure_fingerprint` binds non-JSON-native closure values by
     type-name only. Two fns with identical bytecode whose closures
     differ only in exotic objects of the same type (e.g. a shared
@@ -41,9 +44,12 @@ battery was written -- diagnosing-bugs loop):
     batteries.
 
 New findings filed by this lane: F395 (MEDIUM, OPEN), claim
-2026-10-03T13:27:00Z. Wave-310 merge: F394 CLOSED (lane A), F395 OPEN;
-pin 1829; footer open F395, F396 / next F397. This battery's expected
-BREAKs: F395-exotic-closure-fn, F395-exotic-closure-saga (all OPEN).
+2026-10-03T13:27:00Z -- CLOSED 2026-10-03 wave-311 lane A (exotic
+closures refuse coded workflow-composed-definition-invalid; no new
+codes). Wave-310 merge: F394 CLOSED (lane A), F395 CLOSED (wave-311
+lane A); pin 1829; footer open none / next F396. This battery's
+expected BREAKs: none (the F395 probes now assert the coded
+refusal).
 
 Run:
   mkdir -p /var/tmp/g310-rt && TMPDIR=/var/tmp/g310-rt \\
@@ -126,12 +132,12 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    # Wave-310 merge footer: F394 CLOSED (lane A); F395 OPEN (lane C).
-    if nxt != 397 or open_s != "F395, F396":
+    # Wave-311 lane A footer: F395 CLOSED; no open findings.
+    if nxt != 396 or open_s != "none":
         return _record("footer-state", "BREAK",
-                       "footer pins next F%d open '%s', want next F397 "
-                       "open 'F395, F396'" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open F395, F396 / next F397")
+                       "footer pins next F%d open '%s', want next F396 "
+                       "open 'none'" % (nxt, open_s))
+    _record("footer-state", "HELD", "footer pins open none / next F396")
 
 
 # ------------------------------------------------------------------
@@ -352,14 +358,16 @@ def p_f394_direct_saga_retry_works():
 
 
 # ------------------------------------------------------------------
-# F395 (MEDIUM, OPEN): the F393 code binding collides for exotic
-# closures
+# F395 (MEDIUM, CLOSED 2026-10-03 wave-311 lane A): ComposedPlan refuses
+# coded workflow-composed-definition-invalid for exotic closures --
+# the collision scenario below can no longer be constructed.
 # ------------------------------------------------------------------
 
 class _Client:
     """Exotic (non-JSON-native) closure value. Two instances of the
     same type with different state must not share a code_digest --
-    but _closure_fingerprint binds only type(value).__name__."""
+    F395: the plan now refuses coded instead of binding type-name
+    only."""
 
     def __init__(self, endpoint):
         self.endpoint = endpoint
@@ -378,66 +386,47 @@ def _mkfn(client):
 
 
 def p_f395_exotic_closure_fn():
-    # Attacker executes an evil plan whose fn closes over
-    # Client("evil"); the victim executes a plan whose fn closes over
-    # Client("real") -- identical bytecode, same type-name-only
-    # binding. The digests collide, the run->plan binding passes, and
-    # the victim's fn never executes.
+    # F395 CLOSED (2026-10-03, wave-311 lane A): ComposedPlan refuses
+    # coded workflow-composed-definition-invalid for fns that close
+    # over non-JSON-native values. The original attack shape (evil
+    # plan executes, victim plan replays the attacker's record) can
+    # no longer be constructed: both plans refuse at construction.
     wc, wf, saga, idem, comp, ws, sm, im, auth = _composed_scaffold(
         "f395fn")
-    ran = {"victim": 0}
     evil_fn = _mkfn(_Client("evil"))
-    real_client = _Client("real")
-    orig_fetch = real_client.fetch
+    victim_fn = _mkfn(_Client("real"))
 
-    def counting_fetch():
-        ran["victim"] += 1
-        return orig_fetch()
-    real_client.fetch = counting_fetch
-    victim_fn = _mkfn(real_client)
+    def _mkplan(fn):
+        return wc.ComposedPlan([
+            {"kind": "fn", "name": "u2", "fn": fn,
+             "inputs": {}, "idem_key": "k2"}])
 
-    if wc._code_fingerprint(evil_fn) != wc._code_fingerprint(victim_fn):
-        return _record("F395-exotic-closure-fn", "ERROR",
-                       "fingerprints differ; probe void")
-    evil = wc.ComposedPlan([
-        {"kind": "fn", "name": "u2", "fn": evil_fn,
-         "inputs": {}, "idem_key": "k2"}])
-    victim = wc.ComposedPlan([
-        {"kind": "fn", "name": "u2", "fn": victim_fn,
-         "inputs": {}, "idem_key": "k2"}])
-    if evil.digest != victim.digest:
-        return _record("F395-exotic-closure-fn", "HELD",
-                       "exotic closures distinguished (F395 closed)")
-    comp.execute(evil, run_id="R", authority=auth, at=AT)
-    try:
-        res = comp.execute(victim, run_id="R", authority=auth, at=AT)
-    except Exception as e:  # noqa: BLE001
-        code = getattr(e, "code", None)
-        if code == "workflow-composed-plan-mismatch":
-            return _record("F395-exotic-closure-fn", "HELD",
-                           "different plan under same run refused coded "
-                           "(F395 closed)")
-        return _record("F395-exotic-closure-fn", "ERROR",
-                       "unexpected refusal %r" % (code,))
-    out = res["units"]["u2"]["outputs"]
-    if out == {"data": "from-evil"} and ran["victim"] == 0:
-        return _record("F395-exotic-closure-fn", "BREAK",
-                       "F395: victim fn never executed; attacker's "
-                       "outputs returned as native (exotic closure "
-                       "collision defeats the code binding)")
-    return _record("F395-exotic-closure-fn", "ERROR",
-                   "unexpected: outputs=%r ran=%r" % (out, ran))
+    for label, build in (
+            ("fingerprint", lambda: wc._code_fingerprint(evil_fn)),
+            ("evil-plan", lambda: _mkplan(evil_fn)),
+            ("victim-plan", lambda: _mkplan(victim_fn))):
+        try:
+            build()
+        except Exception as e:  # noqa: BLE001
+            if getattr(e, "code", None) != \
+                    "workflow-composed-definition-invalid":
+                return _record("F395-exotic-closure-fn", "ERROR",
+                               "%s: wrong refusal %r"
+                               % (label, getattr(e, "code", e)))
+        else:
+            return _record("F395-exotic-closure-fn", "BREAK",
+                           "F395: %s accepted an exotic closure "
+                           "(closure direction regressed)" % label)
+    _record("F395-exotic-closure-fn", "HELD",
+            "exotic closures refused coded at construction (F395 closed)")
 
 
 def p_f395_exotic_closure_saga():
-    # Same defect class on the saga action path: descriptor-identical
-    # saga plans whose action_fns differ only in exotic closure state
-    # share a digest; the victim saga "succeeds" with the attacker's
-    # outputs, victim action never runs.
+    # F395 CLOSED (2026-10-03, wave-311 lane A): the saga action path
+    # refuses coded too -- the confusion scenario cannot be built.
     from gov import workflow_saga as saga_mod
     wc, wf, saga, idem, comp, ws, sm, im, auth = _composed_scaffold(
         "f395saga")
-    ran = {"victim": 0}
 
     def mkaction(client):
         def action(params):
@@ -448,15 +437,6 @@ def p_f395_exotic_closure_saga():
         def comp_fn(params):
             return {"undone": True}
         return comp_fn
-
-    evil_client = _Client("evil")
-    real_client = _Client("real")
-    orig_fetch = real_client.fetch
-
-    def counting_fetch():
-        ran["victim"] += 1
-        return orig_fetch()
-    real_client.fetch = counting_fetch
 
     def mkdef():
         return saga_mod.SagaDefinition([
@@ -473,29 +453,23 @@ def p_f395_exotic_closure_saga():
             "comp_fns": {"s1": mkcomp(client)},
             "idem_key": "ksg"}])
 
-    evil, victim = mkplan(evil_client), mkplan(real_client)
-    if evil.digest != victim.digest:
-        return _record("F395-exotic-closure-saga", "HELD",
-                       "exotic closures distinguished (F395 closed)")
-    comp.execute(evil, run_id="R", authority=auth, at=AT)
-    try:
-        res = comp.execute(victim, run_id="R", authority=auth, at=AT)
-    except Exception as e:  # noqa: BLE001
-        code = getattr(e, "code", None)
-        if code == "workflow-composed-plan-mismatch":
-            return _record("F395-exotic-closure-saga", "HELD",
-                           "different saga plan under same run refused "
-                           "coded (F395 closed)")
-        return _record("F395-exotic-closure-saga", "ERROR",
-                       "unexpected refusal %r" % (code,))
-    unit = res["units"]["sg"]
-    if ran["victim"] == 0 and unit["status"] == "succeeded":
-        return _record("F395-exotic-closure-saga", "BREAK",
-                       "F395: victim saga action never executed; saga "
-                       "succeeded with the attacker's outputs (exotic "
-                       "closure collision)")
-    return _record("F395-exotic-closure-saga", "ERROR",
-                   "unexpected: ran=%r status=%r" % (ran, unit["status"]))
+    for label, client in (("evil", _Client("evil")),
+                          ("victim", _Client("real"))):
+        try:
+            mkplan(client)
+        except Exception as e:  # noqa: BLE001
+            if getattr(e, "code", None) != \
+                    "workflow-composed-definition-invalid":
+                return _record("F395-exotic-closure-saga", "ERROR",
+                               "%s plan: wrong refusal %r"
+                               % (label, getattr(e, "code", e)))
+        else:
+            return _record("F395-exotic-closure-saga", "BREAK",
+                           "F395: %s saga plan accepted an exotic "
+                           "closure (closure direction regressed)"
+                           % label)
+    _record("F395-exotic-closure-saga", "HELD",
+            "exotic-closure saga plans refuse coded (F395 closed)")
 
 
 # ------------------------------------------------------------------
@@ -815,7 +789,7 @@ def _green_checks():
     # F393 CLOSED (wave-309 lane A): the w309_f393 battery's F393
     # probes now assert the coded workflow-composed-plan-mismatch
     # refusal; expect no BREAKs. Re-pinned to the wave-310 merge
-    # footer (open F395, F396 / next F397).
+    # footer (open F395 / next F396).
     green_check.check_battery(
         _rec, "green-w309_f393", "evals/w309_f393_probes.py",
         repo=REPO, expect_break_ids=())
@@ -892,7 +866,7 @@ _PROBES = [
     ("F394-op-retry-composed", p_f394_op_retry_composed),
     ("F394-abort-composed", p_f394_abort_composed),
     ("F394-direct-saga-retry-works", p_f394_direct_saga_retry_works),
-    # F395 (OPEN -- expected BREAKs)
+    # F395 (CLOSED -- coded refusal probes)
     ("F395-exotic-closure-fn", p_f395_exotic_closure_fn),
     ("F395-exotic-closure-saga", p_f395_exotic_closure_saga),
     # F393 closure regressions (must be HELD, coded refusal)
@@ -913,10 +887,9 @@ _PROBES = [
     ("probe-lines-strict-parse", p_probe_lines_strict_parse),
 ]
 
-_EXPECTED_BREAKS = frozenset({
-    "F395-exotic-closure-fn",   # F395 OPEN (filed this lane)
-    "F395-exotic-closure-saga", # F395 OPEN (filed this lane)
-})
+# Wave-311 lane A: F395 CLOSED -- the F395 probes now assert the coded
+# refusal, so no expected BREAKs remain.
+_EXPECTED_BREAKS = frozenset()
 
 
 def main():
