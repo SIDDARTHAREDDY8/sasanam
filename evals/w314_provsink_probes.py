@@ -52,8 +52,8 @@ Probe map:
   sink-fn-body-indirection: the wave-313 lane-E deferred case -- the
       call is gated by its REAL tool identity (http_post), not the
       plan's declared name.
-  pin-taxonomy / footer-state: standard pins (1888; open none / next
-      F398). This lane files no findings.
+  pin-taxonomy / footer-state: standard pins (1888; open F398, F399, F400 / next
+      F401). This lane files no findings.
 """
 
 import os
@@ -378,15 +378,15 @@ def pin_taxonomy():
 
 def footer_state():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
-    # Wave-313 merge footer: F397 CLOSED (lane A); no open findings.
+    # Wave-315 merge footer: F398, F399, F400 OPEN; next F401.
     # This lane files no findings. Footer lines repeat through history;
     # the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F398**" in text
-          and m_open and m_open[-1].strip() == "none")
+    ok = ("Next free finding: **F401**" in text
+          and m_open and m_open[-1].strip() == "F398, F399, F400")
     _held("footer-state", ok,
-          "footer: open none / next F398" if ok
-          else "footer mismatch vs open none / next F398")
+          "footer: open F398, F399, F400 / next F401" if ok
+          else "footer mismatch vs open F398, F399, F400 / next F401")
 
 
 PROBES = [label_roundtrip, label_tamper_content, label_tamper_trust,

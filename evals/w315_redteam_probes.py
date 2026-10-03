@@ -33,7 +33,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 1878  # wave-314 merge: pin 1863 -> 1878 (+9 provenance-* +6 witness-rekor-*)
+TAXONOMY_PIN = 1888  # wave-314 merge: pin 1863 -> 1878 (+9 provenance-* +6 witness-rekor-*); wave-315 merge: pin 1878 -> 1888 (+10 vsa-packet-*)
 
 from gov import provenance_labels as PL
 from gov import provenance_sink as PS
@@ -876,7 +876,7 @@ def _p4_gate_code():
 # pin + footer
 # ---------------------------------------------------------------------------
 
-@probe("pin-taxonomy-1878-sorted")
+@probe("pin-taxonomy-1888-sorted")
 def _pin():
     import json as _json
     from gov import decision_codes as _dc
@@ -887,19 +887,19 @@ def _pin():
     lits = _re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += _re.findall(r'"code":\s*"([^"]+)"', src)
     if len(lits) != TAXONOMY_PIN:
-        return _break("pin-taxonomy-1878-sorted",
+        return _break("pin-taxonomy-1888-sorted",
                       "taxonomy literals %d != pin %d"
                       % (len(lits), TAXONOMY_PIN))
     if len(set(lits)) != len(lits):
-        return _break("pin-taxonomy-1878-sorted",
+        return _break("pin-taxonomy-1888-sorted",
                       "duplicate code literals in source")
     if sorted(lits) != lits:
-        return _break("pin-taxonomy-1878-sorted", "literals not sorted")
-    return _held("pin-taxonomy-1878-sorted",
-                 "1878/1878/0 unique sorted on source literals")
+        return _break("pin-taxonomy-1888-sorted", "literals not sorted")
+    return _held("pin-taxonomy-1888-sorted",
+                 "1888/1888/0 unique sorted on source literals")
 
 
-@probe("footer-F398-F399-open-next-F400")
+@probe("footer-F398-F399-F400-open-next-F401")
 def _footer():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     text = open(path).read()
@@ -908,16 +908,16 @@ def _footer():
         r"Next free finding: \*\*(F\d+)\*\*\. \*\*Open findings: ([^*]*)\*\*",
         text)
     if not feet:
-        return _error("footer-F398-F399-open-next-F400",
+        return _error("footer-F398-F399-F400-open-next-F401",
                       "no footer parsed")
     num, opens = feet[-1]
     opens = opens.strip().lower().rstrip(".")
-    if num != "F400" or opens != "f398, f399":
-        return _break("footer-F398-F399-open-next-F400",
-                      "footer is %s / %s, want F400 / F398, F399"
+    if num != "F401" or opens != "f398, f399, f400":
+        return _break("footer-F398-F399-F400-open-next-F401",
+                      "footer is %s / %s, want F401 / F398, F399, F400"
                       % (num, opens))
-    return _held("footer-F398-F399-open-next-F400",
-                 "footer: open F398, F399 / next F400")
+    return _held("footer-F398-F399-F400-open-next-F401",
+                 "footer: open F398, F399, F400 / next F401")
 
 
 # ---------------------------------------------------------------------------

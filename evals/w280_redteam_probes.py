@@ -278,7 +278,7 @@ def _seal_verdict(fix, body, **over):
     except eb2.EvidenceBundleV2Error as e:
         return "refused", e.code
     except Exception as e:  # noqa: BLE001
-        # D9 fix (F398): this arm recorded lowercase "error", which main()
+        # D9 fix (F400): this arm recorded lowercase "error", which main()
         # never counted -- a genuine error printed [error], missed the
         # tally, and exited 0. D1 maps it to canonical ERROR.
         return "ERROR", "%s: %s" % (type(e).__name__, e)
