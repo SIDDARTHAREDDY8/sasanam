@@ -66,7 +66,7 @@ import probe_lines  # noqa: E402  (canonical probe-line form)
 
 # Wave-303 merge pin 1827; this lane mints no codes (red team only), so
 # the pin stays 1827. The merge-time sweep repoints to the wave-304 pin.
-TAXONOMY_PIN = 1857
+TAXONOMY_PIN = 1863
 
 _results = []
 
@@ -102,7 +102,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1857/1857/0 sorted")
+    _record("pin-taxonomy", "HELD", "1863/1863/0 sorted")
 
 
 def p_footer_state():
@@ -115,13 +115,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
-    want_open = "F397"  # this lane: F387 filed OPEN
+    want_open = "none"  # this lane: F387 filed OPEN
     if nxt != 398 or open_s != want_open:
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F398 open %r)"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open F397 / next F398")
+            "footer pins open none / next F398")
 
 
 AT = 1_700_000_000

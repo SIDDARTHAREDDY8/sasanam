@@ -475,6 +475,17 @@ ALLOWED_HMAC_SITES = {
     # hmac.compare_digest (keyset-verify-failed).
     ("gov/kms_keyset.py", "KmsKeyset._mac_for", 0):
         "keyset content pin MAC; key = deployment-held 32-byte pin key (0600 file, explicit pass, no default)",
+    # gov/approval_tokens.py (wave-313 lane B, Row 7 step 3): the
+    # capability-bound approval-token seal. The key is
+    # gov.log._active_key() output (the wave-69 guarded chokepoint,
+    # same key as the action-log chain), passed explicitly into
+    # _seal(); the MAC is domain-separated (_MAC_DOMAIN =
+    # b"approval-token-v1:") with the key_epoch bound into the MAC
+    # input, so token seals can never be confused with log entries.
+    # Verification (hmac.compare_digest) is out of scope per the
+    # module docstring.
+    ("gov/approval_tokens.py", "_seal", 0):
+        "approval-token seal MAC; key from _active_key() chokepoint, domain-separated",
 }
 
 

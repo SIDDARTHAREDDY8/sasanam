@@ -50,7 +50,7 @@ Probe map:
       payload): write capability declared -> admitted.
   synth-privesc: corpus PRV-01 shape (read -> write -> write):
       admitted under state-write; refused when the envelope hides it.
-  pin-taxonomy / footer-state: standard pins (1857; open F397 / next F398).
+  pin-taxonomy / footer-state: standard pins (1863; open none / next F398).
 
 Deterministic across 2 runs; $0 spend; synthetic/local. Stdlib only
 apart from gov/* (real product code, no stubs).
@@ -66,6 +66,7 @@ Single-probe mode:
 
 import hashlib
 import os
+import re
 import sys
 import traceback
 
@@ -89,7 +90,7 @@ from gov import workflow_routing as wr  # noqa: E402
 from gov import workflow_idempotency as idem  # noqa: E402
 from gov import workflow_composed as wc  # noqa: E402
 
-TAXONOMY_PIN = 1857  # wave-313 lane E: +6 plan-policy-* codes
+TAXONOMY_PIN = 1863  # wave-313 lane E: +6 plan-policy-* codes
 
 _SA = hashlib.sha256(b"w313pp-battery").digest()
 _PA = ed25519.publickey(_SA).hex()
@@ -641,14 +642,16 @@ def footer_state():
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               encoding="utf-8") as fh:
         text = fh.read()
-    # Wave-312 merge footer: F397 OPEN (red team); next free F398.
-    # This lane files no findings.
+    # Wave-313 merge footer: F397 CLOSED (lane A); no open findings.
+    # This lane files no findings. Footer lines repeat through history;
+    # the LAST one is current.
+    m_open = re.findall(r"Open findings: ([^*]*)\.", text)
     ok = ("Next free finding: **F398**" in text
-          and "Open findings: F397" in text)
+          and m_open and m_open[-1].strip() == "none")
     if ok:
-        _record("footer-state", "HELD", "footer: open F397 / next F398")
+        _record("footer-state", "HELD", "footer: open none / next F398")
     else:
-        _record("footer-state", "BREAK", "footer mismatch vs open F397 / next F398")
+        _record("footer-state", "BREAK", "footer mismatch vs open none / next F398")
 
 
 PROBES = [happy_observation, happy_egress_declared,
@@ -670,15 +673,12 @@ def _green_checks():
     # extends; w302_workflow_composed_probes pins the composed path.
     green_check.check_battery(_record, "green-f396",
                               "evals/w312_f396_probes.py", repo=REPO)
-    # TRANSIENT (merge re-pin 1851->1857): this lane adds 6
-    # plan-policy-* codes, so w302's pin-taxonomy probe BREAKs until
-    # the merge coordinator's tree-wide re-pin. The entry stays
-    # harmless after the re-pin (no break -> still HELD); sweep per
-    # the wave-305 lesson if it ever fires unexpectedly.
+    # Merge re-pin 1857->1863 done: w302's pin-taxonomy probe now passes,
+    # so no expected-BREAK entry is needed (wave-305 lesson: sweep the
+    # transient rather than leaving a stale expectation).
     green_check.check_battery(_record, "green-composed",
                               "evals/w302_workflow_composed_probes.py",
-                              repo=REPO,
-                              expect_break_ids=("pin-taxonomy",))
+                              repo=REPO)
 
 
 def run_once(only=None):

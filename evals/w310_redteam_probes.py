@@ -47,7 +47,7 @@ New findings filed by this lane: F395 (MEDIUM, OPEN), claim
 2026-10-03T13:27:00Z -- CLOSED 2026-10-03 wave-311 lane A (exotic
 closures refuse coded workflow-composed-definition-invalid; no new
 codes). Wave-310 merge: F394 CLOSED (lane A), F395 CLOSED (wave-311
-lane A); pin 1851; footer open F397 / next F398. This battery's
+lane A); pin 1851; footer open none / next F398. This battery's
 expected BREAKs: none (the F395 probes now assert the coded
 refusal).
 
@@ -81,7 +81,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-309 pin 1829 (+1 workflow-composed-plan-mismatch). This lane
 # mints no codes (red team only), so the pin stays 1829.
-TAXONOMY_PIN = 1857  # wave-309 merge: +1 workflow-composed-plan-mismatch
+TAXONOMY_PIN = 1863  # wave-309 merge: +1 workflow-composed-plan-mismatch
 
 AT = 1000000
 
@@ -119,7 +119,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1857/1857/0 sorted")
+    _record("pin-taxonomy", "HELD", "1863/1863/0 sorted")
 
 
 def p_footer_state():
@@ -133,11 +133,11 @@ def p_footer_state():
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
     # Wave-312 merge footer: F396 CLOSED (lane A); F397 OPEN (lane C).
-    if nxt != 398 or open_s != "F397":
+    if nxt != 398 or open_s != "none":
         return _record("footer-state", "BREAK",
                        "footer pins next F%d open '%s', want next F397 "
                        "open 'F396'" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open F397 / next F398")
+    _record("footer-state", "HELD", "footer pins open none / next F398")
 
 
 # ------------------------------------------------------------------

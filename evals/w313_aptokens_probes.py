@@ -41,7 +41,7 @@ Probe map:
       executes.
   backward-compat-no-token: a record carrying no token sweeps exactly
       as before (the check is additional, not a replacement).
-  pin-taxonomy / footer-state: standard pins (1857; open F397 / next F398).
+  pin-taxonomy / footer-state: standard pins (1863; open none / next F398).
 
 Deterministic across 2 runs; $0 spend; synthetic/local. Stdlib only
 apart from gov/approval_tokens.py (real product code, no stubs).
@@ -57,6 +57,7 @@ Single-probe mode:
 
 import copy
 import os
+import re
 import sys
 import traceback
 
@@ -72,7 +73,7 @@ import probe_lines  # noqa: E402  (canonical probe-line emission)
 
 from gov import approval_tokens as AT  # noqa: E402
 
-TAXONOMY_PIN = 1857  # Wave-313 lane B: pin 1851 -> 1857 (+6 approval-token-*)
+TAXONOMY_PIN = 1863  # Wave-313 lane B: pin 1851 -> 1857 (+6 approval-token-*)
 
 _NOW = 1798765432
 _BENIGN = {"to": "teammate@synthetic.local", "body": "weekly report"}
@@ -436,15 +437,17 @@ def footer_state():
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               encoding="utf-8") as fh:
         text = fh.read()
-    # Wave-312 merge footer: F396 CLOSED (lane A); F397 OPEN (lane C).
-    # This lane files no findings.
+    # Wave-313 merge footer: F397 CLOSED (lane A); no open findings.
+    # This lane files no findings. Footer lines repeat through history;
+    # the LAST one is current.
+    m_open = re.findall(r"Open findings: ([^*]*)\.", text)
     ok = ("Next free finding: **F398**" in text
-          and "Open findings: F397" in text)
+          and m_open and m_open[-1].strip() == "none")
     if ok:
-        _record("footer-state", "HELD", "footer: open F397 / next F398")
+        _record("footer-state", "HELD", "footer: open none / next F398")
     else:
         _record("footer-state", "BREAK",
-                "footer mismatch vs open F397 / next F398")
+                "footer mismatch vs open none / next F398")
 
 
 PROBES = [issue_verify_roundtrip, refuse_tampered,

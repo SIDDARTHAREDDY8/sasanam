@@ -1,22 +1,23 @@
 """Wave-313 lane C battery: independent red team vs the wave-312 merge tree.
 
-Base: wave-312 merge 4b1fa29e (F397 OPEN -- the only open finding;
+Base: wave-312 merge 4b1fa29e (F397 OPEN on the base -- the only
+open finding; F397 CLOSED 2026-10-03 wave-313 lane A;
 F396 CLOSED wave-312 lane A; persistent witness log (gov/witness_log.py,
-wave-312 lane D); pin 1851).
+wave-312 lane D); pin 1851 on the base, 1863 merged).
 
 Targets (all verified empirically with throwaway scripts BEFORE this
 battery was written -- diagnosing-bugs loop):
- 1. F397 (LOW, OPEN -- filed wave-312 independent red-team, claim
-    2026-10-03T17:44:00Z): WorkflowComposer.retry_saga_unit accepts a
-    stale `at`. Three expected BREAKs on this base: stale-at-retry
-    (at=AT), stale-at-zero (at=0), and the new stale-at-boundary
-    (at=expires_at-1, the instant just inside the delegation's
-    validity -- the retry re-drives compensation under a delegation
-    that would be expired at any genuine retry instant). All probes
-    are dual-mode: BREAK while F397 is OPEN, HELD once the fix lands
-    (stale-at refused coded; fresh-at on a live delegation still
-    re-drives; expired delegation still fails closed at the true
-    retry instant).
+ 1. F397 (LOW, CLOSED 2026-10-03 wave-313 lane A -- filed wave-312
+    independent red-team, claim 2026-10-03T17:44:00Z):
+    WorkflowComposer.retry_saga_unit accepted a stale `at`. Two
+    probes on the open base: stale-at-retry (at=AT) and
+    stale-at-zero (at=0) -- both dual-mode, now HELD (stale-at
+    refused coded). The third probe, stale-at-boundary
+    (at=expires_at-1, strictly after the escalation and inside the
+    delegation's validity), is a residual pin, not a break probe:
+    the instant is unfalsifiable under logical time and a genuine
+    retry there MUST succeed (F394 happy path); HELD documents the
+    inherent residual.
  2. F396 (MEDIUM, CLOSED 2026-10-03 wave-312 lane A):
     defaults/kwdefaults bound by value in the code fingerprint --
     HELD.
@@ -56,17 +57,17 @@ battery was written -- diagnosing-bugs loop):
     (documented leniency, observation).
 
 New findings filed by this lane: NONE -- every fresh attack
-hypothesis was falsified (fail-closed coded). Wave-313 lane footer:
-open F397 / next F398; pin 1851 (this lane mints no decision codes).
+hypothesis was falsified (fail-closed coded). Wave-313 merge footer:
+open none / next F398; pin 1863 (this lane mints no decision codes).
 
-This battery's expected BREAKs: F397-stale-at-retry,
-F397-stale-at-zero, F397-stale-at-boundary (all OPEN).
+This battery's expected BREAKs: none (F397 CLOSED 2026-10-03 wave-313
+lane A; the three F397 probes are dual-mode and record HELD).
 
-Expected counts: 71 probes -- 3 BREAK / 68 HELD / 0 ERROR direct
+Expected counts: 71 probes -- 0 BREAK / 71 HELD / 0 ERROR direct
 probes. A full standalone run adds 11 depth-1 green checks (82
-lines: 3 BREAK / 79 HELD / 0 ERROR); under GOV_SKIP_GREEN=1 the
+lines: 0 BREAK / 82 HELD / 0 ERROR); under GOV_SKIP_GREEN=1 the
 checks are replaced by one green-skipped HELD line (72 lines:
-3/69/0).
+0/72/0).
 
 Probe lines are emitted in the canonical `[VERDICT] pid: note` form
 (evals/probe_lines.py) before the `----` separator and the
@@ -109,7 +110,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 # Pin 1851 (wave-312 lane D: 1841 -> 1851, +10 witness codes). This lane mints no
 # codes (red team only; F397 needs no new code -- the fix is an `at`
 # bound, not a refusal), so the pin stays 1851.
-TAXONOMY_PIN = 1851
+TAXONOMY_PIN = 1863
 
 AT = 1000000
 
@@ -147,7 +148,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1851/1851/0 sorted")
+    _record("pin-taxonomy", "HELD", "1863/1863/0 sorted")
 
 
 def p_footer_state():
@@ -161,12 +162,12 @@ def p_footer_state():
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
     # Wave-312 merge footer: F396 CLOSED (lane A); F397 OPEN (lane C).
-    if nxt != 398 or open_s != "F397":
+    if nxt != 398 or open_s != "none":
         return _record("footer-state", "BREAK",
                        "footer pins next F%d open '%s', want next F398 "
                        "open 'F397'" % (nxt, open_s))
     _record("footer-state", "HELD",
-            "footer pins open F397 / next F398")
+            "footer pins open none / next F398")
 
 # ------------------------------------------------------------------
 # Shared scaffolds
@@ -744,7 +745,7 @@ def p_f394_composer_retry_holds():
     before = calls["comp"]
     try:
         comp.retry_saga_unit("u1", {"action": "retry_compensation"},
-                             at=AT)
+                             at=AT + 1)
     except Exception as e:  # noqa: BLE001
         code = getattr(e, "code", None)
         if code == "workflow-saga-compensation-unauthorized":
@@ -776,7 +777,7 @@ def p_f394_composer_abort_holds():
     try:
         comp.retry_saga_unit("u1",
                              {"action": "abort_and_compensate_all"},
-                             at=AT)
+                             at=AT + 1)
     except Exception as e:  # noqa: BLE001
         return _record("F394-composer-abort-holds", "ERROR",
                        "composer abort raised %r (calls %d->%d)"
@@ -826,7 +827,7 @@ def p_f394_unauthorized_operator_refused():
                        "saga did not escalate; probe void")
     try:
         comp.retry_saga_unit("u1", {"action": "retry_compensation"},
-                             at=AT)
+                             at=AT + 1)
     except Exception as e:  # noqa: BLE001
         code = getattr(e, "code", None)
         if code == "workflow-saga-operator-unauthorized":
@@ -847,7 +848,7 @@ def p_f394_double_retry_refused():
     comp, sm, inst, calls = _escalated_composed_saga_fixable("dbl")
     try:
         comp.retry_saga_unit("u1", {"action": "retry_compensation"},
-                             at=AT)
+                             at=AT + 1)
     except Exception as e:  # noqa: BLE001
         return _record("F394-double-retry-refused", "ERROR",
                        "first retry raised %r" % (getattr(e, "code", e),))
@@ -857,7 +858,7 @@ def p_f394_double_retry_refused():
                        % (inst.status,))
     try:
         comp.retry_saga_unit("u1", {"action": "retry_compensation"},
-                             at=AT)
+                             at=AT + 1)
     except Exception as e:  # noqa: BLE001
         code = getattr(e, "code", None)
         if code == "workflow-saga-resolution-invalid":
@@ -877,7 +878,7 @@ def p_f394_unknown_unit_refused():
     try:
         comp.retry_saga_unit("no-such-unit",
                              {"action": "retry_compensation"},
-                             at=AT)
+                             at=AT + 1)
     except Exception as e:  # noqa: BLE001
         code = getattr(e, "code", None)
         if code == "workflow-saga-resolution-invalid":
@@ -918,7 +919,7 @@ def p_f394_never_escalated_refused():
         return _record("F394-never-escalated-refused", "ERROR",
                        "saga did not succeed; probe void")
     code = _code_of(lambda: comp.retry_saga_unit(
-        "u9", {"action": "retry_compensation"}, at=AT))
+        "u9", {"action": "retry_compensation"}, at=AT + 1))
     if code == "workflow-saga-resolution-invalid":
         return _record("F394-never-escalated-refused", "HELD",
                        "retry on a never-escalated unit refused coded "
@@ -939,7 +940,7 @@ def p_f394_hygiene_preserved():
     auth_prefix = "composed-auth:"
     try:
         comp.retry_saga_unit("u1", {"action": "retry_compensation"},
-                             at=AT)
+                             at=AT + 1)
     except Exception as e:  # noqa: BLE001
         return _record("F394-hygiene-preserved", "ERROR",
                        "retry raised %r" % (getattr(e, "code", e),))
@@ -1850,10 +1851,16 @@ def p_probe_lines_round_trip():
 
 def p_f397_stale_at_boundary():
     # Boundary: at = expires_at - 1 -- the instant JUST inside the
-    # delegation's validity. A genuine operator retries at "now"
-    # (long after expiry); the stale-at hole lets them pick the last
-    # valid instant instead. Dual-mode: BREAK while OPEN, HELD when
-    # the fix refuses the stale instant.
+    # delegation's validity (and strictly AFTER the escalation).
+    # This is NOT the F397 defect: the F397 close-when refuses a
+    # stale `at` (at <= escalation instant); an in-window
+    # post-escalation instant is unfalsifiable under the system's
+    # pure logical-time model (every `at` is caller-supplied) and a
+    # genuine retry at this instant MUST still succeed -- refusing
+    # it would break the F394 happy path. This probe is therefore a
+    # residual pin, not a break probe: HELD when the in-window retry
+    # succeeds (documenting the inherent residual), BREAK if a
+    # future change refuses legitimate in-window retries.
     comp, sm, inst, calls = _f397_escalated("f397c", ttl=3600)
     if inst.status != "escalated":
         return _record("F397-stale-at-boundary", "ERROR",
@@ -1863,15 +1870,16 @@ def p_f397_stale_at_boundary():
         "u1", {"action": "retry_compensation"}, at=AT + 3599))
     if (code == "no-refusal" and inst.status == "compensated"
             and calls["comp"] > before):
-        return _record("F397-stale-at-boundary", "BREAK",
-                       "F397: at=expires_at-1 re-drove compensation under "
-                       "a delegation expired at any genuine retry instant "
-                       "(%d->%d calls; saga compensated)"
-                       % (before, calls["comp"]))
-    if code != "no-refusal":
         return _record("F397-stale-at-boundary", "HELD",
-                       "boundary-at retry refused coded %r (F397 closed)"
-                       % (code,))
+                       "in-window post-escalation retry succeeds "
+                       "(delegation genuinely valid at the claimed "
+                       "instant); residual: the claim itself is "
+                       "unfalsifiable under logical time -- backward "
+                       "time travel (at<=escalation) refuses coded")
+    if code != "no-refusal":
+        return _record("F397-stale-at-boundary", "BREAK",
+                       "REGRESSION: legitimate in-window retry refused "
+                       "coded %r (F394 happy path broken)" % (code,))
     return _record("F397-stale-at-boundary", "ERROR",
                    "unexpected: code=%r status=%r calls=%d->%d"
                    % (code, inst.status, before, calls["comp"]))
@@ -2517,8 +2525,8 @@ def _green_checks():
         return
     # F396 CLOSED 2026-10-03 wave-312 lane A: the w311 red-team
     # battery's three F396 probes were rewritten to assert the fix;
-    # expect no BREAKs. Re-pinned to the merge footer (open F397 /
-    # next F398).
+    # expect no BREAKs. Re-pinned to the wave-313 merge footer
+    # (open none / next F398).
     green_check.check_battery(
         _rec, "green-w311_redteam", "evals/w311_redteam_probes.py",
         repo=REPO, expect_break_ids=())
@@ -2681,9 +2689,9 @@ _PROBES = [
 ]
 
 _EXPECTED_BREAKS = frozenset({
-    "F397-stale-at-retry",          # F397 OPEN (filed wave-312)
-    "F397-stale-at-zero",           # F397 OPEN (filed wave-312)
-    "F397-stale-at-boundary",       # F397 OPEN (filed wave-313, this lane)
+    # F397 CLOSED 2026-10-03 wave-313 lane A (stale `at` refused coded):
+    # the three F397 probes (dual-mode: stale-at-retry / stale-at-zero /
+    # stale-at-boundary) now record HELD on the merged tree.
     # F396 CLOSED 2026-10-03 wave-312 lane A: the three F396 probes
     # (dual-mode: digest distinction / coded plan-mismatch) now
     # record HELD on the merged tree.

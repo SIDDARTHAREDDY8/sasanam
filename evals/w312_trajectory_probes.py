@@ -33,7 +33,7 @@ Probe map:
   evade-write-only: persistence-style harm -- BLIND at level (documented gap).
   evade-lexicon-rename: renamed staging vocabulary -- RESISTANT
       (patterns are lexicon-independent).
-  pin-taxonomy / footer-state: standard pins (1851; open F397 / next F398).
+  pin-taxonomy / footer-state: standard pins (1863; open none / next F398).
 
 Deterministic across 2 runs; $0 spend; synthetic/local. Stdlib only
 apart from gov/trajectory_risk.py (real product code, no stubs).
@@ -49,6 +49,7 @@ Single-probe mode:
 
 import json
 import os
+import re
 import sys
 import traceback
 
@@ -67,7 +68,7 @@ from gov.trajectory_risk import (  # noqa: E402
     WINDOW_SIZE,
 )
 
-TAXONOMY_PIN = 1857  # wave-311 merge pin; this lane files nothing
+TAXONOMY_PIN = 1863  # wave-311 merge pin; this lane files nothing
 CORPUS = os.path.join(REPO, "evals", "artifacts", "decomp_corpus_v1.jsonl")
 
 # Characterization pins (measured on the wave-311 base 2026-10-03).
@@ -442,13 +443,15 @@ def footer_state():
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               encoding="utf-8") as fh:
         text = fh.read()
-    # Wave-312 merge footer: F396 CLOSED (lane A); F397 OPEN (lane C).
+    # Wave-313 merge footer: F397 CLOSED (lane A); no open findings.
+    # Footer lines repeat through history; the LAST one is current.
+    m_open = re.findall(r"Open findings: ([^*]*)\.", text)
     ok = ("Next free finding: **F398**" in text
-          and "Open findings: F397" in text)
+          and m_open and m_open[-1].strip() == "none")
     if ok:
-        _record("footer-state", "HELD", "footer: open F397 / next F398")
+        _record("footer-state", "HELD", "footer: open none / next F398")
     else:
-        _record("footer-state", "BREAK", "footer mismatch vs open F397 / next F398")
+        _record("footer-state", "BREAK", "footer mismatch vs open none / next F398")
 
 
 PROBES = [corpus_schema, corpus_deterministic_replay,

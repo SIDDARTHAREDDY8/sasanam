@@ -49,7 +49,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1857  # Wave-303 merge pin; F386 adds no decision codes.
+TAXONOMY_PIN = 1863  # Wave-303 merge pin; F386 adds no decision codes.
 
 # Wave-312 merge: the F395 closure contract (coded
 # workflow-composed-definition-invalid for non-JSON-native closed-over
@@ -94,7 +94,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1857/1857/0 sorted")
+    _record("pin-taxonomy", "HELD", "1863/1863/0 sorted")
 
 
 def p_footer_state():
@@ -107,13 +107,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
-    want_open = "F397"  # this lane: F386 CLOSED
+    want_open = "none"  # this lane: F386 CLOSED
     if nxt != 398 or open_s != want_open:
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F398 open %r)"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open F397 / next F398")
+            "footer pins open none / next F398")
 
 
 AT = 1_700_000_000

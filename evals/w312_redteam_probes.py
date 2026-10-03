@@ -106,7 +106,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 # Pin 1851 (wave-312 lane D: 1841 -> 1851, +10 witness codes). This lane mints no
 # codes (red team only; F397 needs no new code -- the fix is an `at`
 # bound, not a refusal), so the pin stays 1851.
-TAXONOMY_PIN = 1857
+TAXONOMY_PIN = 1863
 
 AT = 1000000
 
@@ -144,7 +144,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1857/1857/0 sorted")
+    _record("pin-taxonomy", "HELD", "1863/1863/0 sorted")
 
 
 def p_footer_state():
@@ -1865,8 +1865,8 @@ def _green_checks():
         return
     # F396 CLOSED 2026-10-03 wave-312 lane A: the w311 red-team
     # battery's three F396 probes were rewritten to assert the fix;
-    # expect no BREAKs. Re-pinned to the merge footer (open F397 /
-    # next F398).
+    # expect no BREAKs. Re-pinned to the wave-313 merge footer
+    # (open none / next F398).
     green_check.check_battery(
         _rec, "green-w311_redteam", "evals/w311_redteam_probes.py",
         repo=REPO, expect_break_ids=())

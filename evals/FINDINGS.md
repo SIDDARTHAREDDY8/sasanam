@@ -10280,7 +10280,11 @@ caller-supplied, including `execute`), an operator can still claim a
 post-escalation instant inside the delegation's validity window (e.g.
 `at=escalation+1` while true time is later) -- unfalsifiable without a
 trusted time source; the demonstrated breaks (exact-instant replay,
-`at=0`) and all backward time travel are closed.
+`at=0`) and all backward time travel are closed. The wave-313 red
+team's `F397-stale-at-boundary` probe (`at=expires_at-1`) exercises
+exactly this residual and is kept as a HELD residual pin (a genuine
+in-window retry must succeed; refusing it would break the F394
+happy path).
 
 ## F396: the F393 code binding ignores __defaults__/__kwdefaults__ -- two fns with identical bytecode but different default argument values share a plan digest, defeating the run->plan binding (MEDIUM, CLOSED 2026-10-03, wave-312 lane A)
 

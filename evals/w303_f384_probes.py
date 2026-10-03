@@ -48,7 +48,7 @@ if os.path.join(REPO, "evals") not in sys.path:
     sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check
 
-TAXONOMY_PIN = 1857  # Wave-302 merge pin 1820; this lane: +2 workflow-saga-* (operator-unauthorized, resolution-invalid).; Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
+TAXONOMY_PIN = 1863  # Wave-302 merge pin 1820; this lane: +2 workflow-saga-* (operator-unauthorized, resolution-invalid).; Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
 
@@ -349,7 +349,7 @@ class RepinTest(unittest.TestCase):
         lits = re.findall(r'"code":\s*\'([a-z][a-z0-9-_.]*)\'', src)
         self.assertTrue(_expect_held(
             "repin-pin-1851",
-            len(lits) == 1857 and len(set(lits)) == 1857
+            len(lits) == 1863 and len(set(lits)) == 1863
             and lits == sorted(lits),
             "1851 unique sorted literals") == "HELD")
 
