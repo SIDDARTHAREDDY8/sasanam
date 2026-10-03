@@ -42,6 +42,8 @@ import traceback
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 HAVE_SU = False
 try:
@@ -77,7 +79,9 @@ def _good_record(name, version, digest, expires=FUTURE):
 
 def _run_probe(name, fn, have):
     if not have:
-        return name, "GAP", "capability absent on pristine base"
+        # D1 (wave-315): GAP maps to BREAK; the "GAP:" prefix keeps the
+        # gap-demonstrated evidence in the note.
+        return name, "BREAK", "GAP: capability absent on pristine base"
     try:
         note = fn()
         return name, "HELD", note
@@ -322,13 +326,8 @@ def _green_check():
 def main():
     results = run_probes()
     held = sum(1 for _, v, _ in results if v == "HELD")
-    gap = sum(1 for _, v, _ in results if v == "GAP")
     brk = sum(1 for _, v, _ in results if v == "BREAK")
     err = sum(1 for _, v, _ in results if v == "ERROR")
-    print("w248 skill-update probes: %d/%d HELD, %d GAP, %d BREAK, "
-          "%d ERROR" % (held, len(results), gap, brk, err))
-    for name, verdict, note in results:
-        print("  [%s] %s: %s" % (verdict, name, note))
     try:
         gc = _green_check()
         print("green check: %s" % gc)
@@ -336,9 +335,15 @@ def main():
     except AssertionError as exc:
         print("green check FAILED: %s" % exc)
         green_ok = False
+    _coh_ok, _coh_diags = probe_lines.check_coherence(results, brk, held, err)
+    probe_lines.emit(results)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk, held, err))
     rc = 0 if (brk == 0 and err == 0 and green_ok) else 1
-    # Red phase: all GAP is the honest pre-build state.
-    if gap == len(results):
+    # Red phase: all GAP (now BREAK) is the honest pre-build state.
+    # D1 exception: GAP was not red by the exit contract (explicit rc=0).
+    if brk == len(results) and held == 0 and err == 0:
         print("RED phase confirmed: capability absent.")
         rc = 0
     return rc

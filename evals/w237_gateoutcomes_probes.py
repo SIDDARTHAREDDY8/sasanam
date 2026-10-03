@@ -49,6 +49,8 @@ import traceback
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 HAVE_NEW_API = False
 try:
@@ -72,7 +74,9 @@ PROBE_NAMES = [
 
 def _run_probe(name, fn):
     if not HAVE_NEW_API:
-        return (name, "GAP", "module absent on base")
+        # D1 (wave-315): GAP maps to BREAK; the "GAP:" prefix keeps the
+        # gap-demonstrated evidence in the note.
+        return (name, "BREAK", "GAP: module absent on base")
     t0 = time.time()
     try:
         verdict, note = fn()
@@ -201,13 +205,13 @@ def main():
     for name in PROBE_NAMES:
         results.append(_run_probe(name, _PROBES[name]))
     held = sum(1 for _, v, _ in results if v == "HELD")
-    gap = sum(1 for _, v, _ in results if v == "GAP")
     brk = sum(1 for _, v, _ in results if v == "BREAK")
     err = sum(1 for _, v, _ in results if v == "ERROR")
-    for name, verdict, note in results:
-        print("%-48s %s  %s" % (name, verdict, note))
-    print("summary: %d HELD / %d GAP / %d BREAK / %d ERROR"
-          % (held, gap, brk, err))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(results, brk, held, err)
+    probe_lines.emit(results)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk, held, err))
     return 0 if (brk == 0 and err == 0) else 1
 
 

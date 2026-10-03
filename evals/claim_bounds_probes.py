@@ -39,6 +39,8 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -52,10 +54,14 @@ def _probe(name):
                 detail = fn()
             except ImportError as e:
                 # Pristine tree: the module does not exist. Genuine red.
-                _RESULTS.append((name, "GAP", "module absent: %s" % e))
+                # D1 (wave-315): GAP maps to BREAK; the "GAP:" prefix keeps
+                # the gap-demonstrated evidence in the note.
+                _RESULTS.append((name, "BREAK", "GAP: module absent: %s" % e))
                 return
             except AssertionError as e:
-                _RESULTS.append((name, "BROKEN", str(e)[:300]))
+                # D1 (wave-315): BROKEN maps to BREAK (failed probe assertion
+                # is demonstrated non-conformance).
+                _RESULTS.append((name, "BREAK", "BROKEN: %s" % str(e)[:300]))
                 return
             except Exception as e:  # noqa: BLE001 - hostile-input battery
                 _RESULTS.append((name, "ERROR", "%s: %s"
@@ -448,22 +454,22 @@ def main():
         else:
             final.append((name, status, detail))
     held = sum(1 for _n, s, _d in final if s == "HELD")
-    gap = sum(1 for _n, s, _d in final if s == "GAP")
-    broken = sum(1 for _n, s, _d in final if s == "BROKEN")
+    brk = sum(1 for _n, s, _d in final if s == "BREAK")
     errors = sum(1 for _n, s, _d in final if s == "ERROR")
-    print("claim_bounds probes: %d/%d HELD, %d GAP, %d BROKEN, %d ERROR"
-          % (held, len(final), gap, broken, errors))
-    for name, status, detail in final:
-        print("  [%s] %s: %s" % (status, name, detail))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(final, brk, held, errors)
+    probe_lines.emit(final)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk, held, errors))
     gc = green_check()
     print("green_check: %s" % gc["green_check"])
     result = {"probes": [{"name": n, "status": s, "detail": d}
                          for n, s, d in final],
-              "summary": {"held": held, "gap": gap, "broken": broken,
+              "summary": {"held": held, "break": brk,
                           "error": errors},
               "green_check": gc}
     print(json.dumps(result["summary"]))
-    if broken or errors or (held == 0 and gap == 0):
+    if brk or errors or held == 0:
         return 1
     return 0
 
