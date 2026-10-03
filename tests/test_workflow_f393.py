@@ -26,7 +26,7 @@ first direction (extended):
    workflow-composed-plan-mismatch. A refused execute never clobbers
    the binding; same-plan re-execution still replays.
 
-New decision code: workflow-composed-plan-mismatch (pin 1828 -> 1829).
+New decision code: workflow-composed-plan-mismatch (pin 1828 -> 1841).
 """
 import functools
 import hashlib

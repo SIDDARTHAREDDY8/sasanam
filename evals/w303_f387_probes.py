@@ -56,7 +56,7 @@ from gov import delegation_revocation as drv
 from gov import ed25519
 from gov import workflow as wf
 
-TAXONOMY_PIN = 1829  # Wave-304 merge pin; this lane mints no new codes (reuses workflow-step-unauthorized).
+TAXONOMY_PIN = 1841  # Wave-304 merge pin; this lane mints no new codes (reuses workflow-step-unauthorized).
 
 AT = 1_700_000_000
 
@@ -211,10 +211,10 @@ class RepinTest(unittest.TestCase):
             src = _f.read()
         lits = re.findall(r'"code":\s*\'([a-z][a-z0-9-_.]*)\'', src)
         self.assertTrue(_expect_held(
-            "repin-pin-1829",
-            len(lits) == 1829 and len(set(lits)) == 1829
+            "repin-pin-1841",
+            len(lits) == 1841 and len(set(lits)) == 1841
             and lits == sorted(lits),
-            "1829 unique sorted literals") == "HELD")
+            "1841 unique sorted literals") == "HELD")
 
 
 class FooterStateTest(unittest.TestCase):

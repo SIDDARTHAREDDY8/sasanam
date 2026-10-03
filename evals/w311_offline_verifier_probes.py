@@ -1,6 +1,6 @@
 """Wave-311 lane E battery: standalone offline verifier (registystack pattern).
 
-Base: wave-310 merge 38650946 (pin 1829; open F395 / next F396).
+Base: wave-310 merge 38650946 (pin 1841; open F395 / next F396).
 
 Target: gov/evidence_verify_offline.py -- the auditor-side standalone
 offline verifier, build-order step 4 (after Sigstore-bundle
@@ -45,7 +45,7 @@ NO Sasanam import (asserted via sys.modules in the child).
 
 No new decision codes are minted by this lane (the 11 verifier codes
 are the verifier's own taxonomy, not governance decisions); pin stays
-1829. No open findings expected: _EXPECTED_BREAKS is empty.
+1841. No open findings expected: _EXPECTED_BREAKS is empty.
 
 Run:
   mkdir -p /var/tmp/g311-ovf && TMPDIR=/var/tmp/g311-ovf \\
@@ -86,7 +86,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # No new decision codes minted by this lane (verifier taxonomy is the
 # verifier's own surface, not governance decisions); pin stays 1829.
-TAXONOMY_PIN = 1829  # wave-310 merge pin
+TAXONOMY_PIN = 1841  # wave-310 merge pin
 
 from gov.signing import Ed25519Signer, Ed25519Verifier
 from gov import evidence_verify_offline as v
@@ -277,7 +277,7 @@ def p_pin_taxonomy():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1829/1829/0 sorted")
+    _record("pin-taxonomy", "HELD", "1841/1841/0 sorted")
 
 
 def p_footer_state():

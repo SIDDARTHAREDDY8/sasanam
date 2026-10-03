@@ -2,7 +2,7 @@
 
 Base: wave-310 merge 38650946 (F394 CLOSED -- composer-level operator
 retry WorkflowComposer.retry_saga_unit; F395 OPEN -- exotic-closure
-digest collision; pin 1829).
+digest collision; pin 1841).
 
 Targets (all verified empirically with throwaway scripts BEFORE this
 battery was written -- diagnosing-bugs loop):
@@ -45,7 +45,7 @@ battery was written -- diagnosing-bugs loop):
 
 New findings filed by this lane: F396 (MEDIUM, OPEN), claim
 2026-10-03T15:35:10Z. Wave-311 merge: F395 CLOSED (lane A), F396 OPEN;
-pin 1829; footer open F396 / next F397. This battery's expected
+pin 1841; footer open F396 / next F397. This battery's expected
 BREAKs: F396-defaults-fn, F396-defaults-saga, F396-kwdefaults-fn
 (all OPEN); the 3 F395 probes assert the coded refusal (HELD).
 
@@ -87,7 +87,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 # Pin 1829 (wave-309 merge: +1 workflow-composed-plan-mismatch). This
 # lane mints no codes (red team only; F396 needs no new code -- the
 # fix is a digest change, not a refusal), so the pin stays 1829.
-TAXONOMY_PIN = 1829  # wave-310 merge: pin unchanged
+TAXONOMY_PIN = 1841  # wave-310 merge: pin unchanged
 
 AT = 1000000
 
@@ -125,7 +125,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1829/1829/0 sorted")
+    _record("pin-taxonomy", "HELD", "1841/1841/0 sorted")
 
 
 def p_footer_state():

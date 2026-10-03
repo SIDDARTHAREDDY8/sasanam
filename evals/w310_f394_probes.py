@@ -16,7 +16,7 @@ supported operator path; the SagaManager-direct path on a composed
 instance still fails closed and coded (documented -- operator
 recovery for composed sagas goes through the composer).
 
-New findings filed by this lane: none. Pin unchanged 1829.
+New findings filed by this lane: none. Pin unchanged 1841.
 No new decision codes.
 
 This battery's expected BREAKs: none (0 BREAK / all HELD).
@@ -51,7 +51,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Pin 1829 (wave-309 merge: +1 workflow-composed-plan-mismatch).
 # This lane mints no codes.
-TAXONOMY_PIN = 1829
+TAXONOMY_PIN = 1841
 
 AT = 1000000
 
@@ -89,7 +89,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1829/1829/0 sorted")
+    _record("pin-taxonomy", "HELD", "1841/1841/0 sorted")
 
 
 def p_footer_state():

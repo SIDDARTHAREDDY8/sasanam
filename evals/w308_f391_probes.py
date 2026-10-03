@@ -70,7 +70,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 
 # Wave-307 merge pin 1827; this lane mints +1 coord-lease-manager-mismatch.
-TAXONOMY_PIN = 1829
+TAXONOMY_PIN = 1841
 LEASE_MISMATCH = "coord-lease-manager-mismatch"
 
 _results = []
@@ -107,7 +107,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1829/1829/0 sorted")
+    _record("pin-taxonomy", "HELD", "1841/1841/0 sorted")
 
 
 def p_footer_state():

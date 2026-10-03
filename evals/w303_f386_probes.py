@@ -49,7 +49,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1829  # Wave-303 merge pin; F386 adds no decision codes.
+TAXONOMY_PIN = 1841  # Wave-303 merge pin; F386 adds no decision codes.
 
 _results = []
 
@@ -85,7 +85,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1829/1829/0 sorted")
+    _record("pin-taxonomy", "HELD", "1841/1841/0 sorted")
 
 
 def p_footer_state():

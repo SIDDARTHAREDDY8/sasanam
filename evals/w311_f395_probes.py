@@ -17,7 +17,7 @@ addresses) and would break crash-recovery re-execution. Refusal is
 deterministic -- a plan that refuses refuses identically on every
 rebuild. JSON-native closures keep the F393 by-value binding
 (crash-recovery stable); uninspectable callables still refuse coded
-(F393 not weakened). No new decision codes: pin stays 1829; footer
+(F393 not weakened). No new decision codes: pin stays 1841; footer
 open none / next F396. This battery's expected BREAKs: none (all
 F395 probes assert the coded refusal).
 
@@ -52,7 +52,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # F395 closure mints no new decision codes (reuses
 # workflow-composed-definition-invalid): pin stays 1829.
-TAXONOMY_PIN = 1829  # wave-310 merge: +1 workflow-composed-plan-mismatch
+TAXONOMY_PIN = 1841  # wave-310 merge: +1 workflow-composed-plan-mismatch
 
 AT = 1000000
 REFUSAL = "workflow-composed-definition-invalid"
@@ -91,7 +91,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1829/1829/0 sorted")
+    _record("pin-taxonomy", "HELD", "1841/1841/0 sorted")
 
 
 def p_footer_state():

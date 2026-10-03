@@ -33,7 +33,7 @@ battery was written -- diagnosing-bugs loop):
 
 New findings filed by this lane: F393 (MEDIUM, OPEN), claim
 2026-10-03T11:19:50Z. Wave-308 merge: F391 CLOSED (lane A), F393 OPEN;
-pin 1829; footer open none / next F396 (wave-309: F393 CLOSED).
+pin 1841; footer open none / next F396 (wave-309: F393 CLOSED).
 
 Run:
   mkdir -p /var/tmp/g308-rt && TMPDIR=/var/tmp/g308-rt \
@@ -66,7 +66,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-307 merge pin 1827; this lane mints no codes (red team only), so
 # the pin stays 1827. The merge-time sweep repoints to the wave-308 pin.
-TAXONOMY_PIN = 1829
+TAXONOMY_PIN = 1841
 
 AT = 1000000
 
@@ -104,7 +104,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1829/1829/0 sorted")
+    _record("pin-taxonomy", "HELD", "1841/1841/0 sorted")
 
 
 def p_footer_state():

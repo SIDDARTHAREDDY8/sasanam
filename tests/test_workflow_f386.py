@@ -384,8 +384,8 @@ class F386ClosureTests(unittest.TestCase):
                   encoding="utf-8") as fh:
             src = fh.read()
         lits = re.findall(r'"code":\s*\'([a-z][a-z0-9-_.]*)\'', src)
-        self.assertEqual(len(lits), 1829)
-        self.assertEqual(len(set(lits)), 1829)
+        self.assertEqual(len(lits), 1841)
+        self.assertEqual(len(set(lits)), 1841)
         self.assertEqual(lits, sorted(lits))
 
 

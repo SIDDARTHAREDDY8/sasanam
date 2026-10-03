@@ -1,7 +1,7 @@
 """Wave-310 lane C battery: independent red team vs the wave-309 tree.
 
 Base: wave-309 merge f0d6c9c1 (F393 CLOSED -- code binding + run->plan
-binding, +1 code workflow-composed-plan-mismatch, pin 1829; F394 was
+binding, +1 code workflow-composed-plan-mismatch, pin 1841; F394 was
 OPEN (composed-saga operator recovery gap), CLOSED 2026-10-03 wave-310
 lane A via the composer-level retry API).
 
@@ -47,7 +47,7 @@ New findings filed by this lane: F395 (MEDIUM, OPEN), claim
 2026-10-03T13:27:00Z -- CLOSED 2026-10-03 wave-311 lane A (exotic
 closures refuse coded workflow-composed-definition-invalid; no new
 codes). Wave-310 merge: F394 CLOSED (lane A), F395 CLOSED (wave-311
-lane A); pin 1829; footer open F396 / next F397. This battery's
+lane A); pin 1841; footer open F396 / next F397. This battery's
 expected BREAKs: none (the F395 probes now assert the coded
 refusal).
 
@@ -81,7 +81,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-309 pin 1829 (+1 workflow-composed-plan-mismatch). This lane
 # mints no codes (red team only), so the pin stays 1829.
-TAXONOMY_PIN = 1829  # wave-309 merge: +1 workflow-composed-plan-mismatch
+TAXONOMY_PIN = 1841  # wave-309 merge: +1 workflow-composed-plan-mismatch
 
 AT = 1000000
 
@@ -119,7 +119,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1829/1829/0 sorted")
+    _record("pin-taxonomy", "HELD", "1841/1841/0 sorted")
 
 
 def p_footer_state():

@@ -40,10 +40,10 @@ battery was written -- diagnosing-bugs loop):
 
 New findings filed by this lane: F394 (LOW, OPEN), claim
 2026-10-03T12:13:00Z. Wave-309 merge: F393 CLOSED (coded
-workflow-composed-plan-mismatch); F394 stays OPEN; pin 1829;
+workflow-composed-plan-mismatch); F394 stays OPEN; pin 1841;
 footer open F396 / next F397. Wave-310 lane A: F394 CLOSED via
 WorkflowComposer.retry_saga_unit (composer-level operator-retry
-API; no new codes; pin unchanged 1829); the F394 probes in this
+API; no new codes; pin unchanged 1841); the F394 probes in this
 battery were updated from the direct-SagaManager call pattern to
 the supported composer-API call pattern (probe IDs and intent
 unchanged); footer open F396 / next F397. This battery's expected
@@ -79,7 +79,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-308 pin 1828 (+1 coord-lease-manager-mismatch). This lane mints
 # no codes (red team only), so the pin stays 1828.
-TAXONOMY_PIN = 1829  # wave-309 merge: +1 workflow-composed-plan-mismatch
+TAXONOMY_PIN = 1841  # wave-309 merge: +1 workflow-composed-plan-mismatch
 
 AT = 1000000
 
@@ -117,7 +117,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1829/1829/0 sorted")
+    _record("pin-taxonomy", "HELD", "1841/1841/0 sorted")
 
 
 def p_footer_state():

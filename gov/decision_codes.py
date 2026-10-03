@@ -6784,6 +6784,122 @@ TAXONOMY = {
         "evidence_kinds_required": ['identity-assertion'],
         "reverify_steps": ['re-fetch-assertion'],
     },
+    'evidence-bundle-malformed': {
+        "domain": 'evbundle',
+        "code": 'evidence-bundle-malformed',
+        "human": 'sigstore bundle: bundle/envelope/token shape violation '
+                 '(bad mediaType, bad base64, missing fields, bad token '
+                 'shape, non-numeric time, missing validity window); '
+                 'refused at parse, fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-parse-bundle'],
+    },
+    'evidence-bundle-payload-type-refused': {
+        "domain": 'evbundle',
+        "code": 'evidence-bundle-payload-type-refused',
+        "human": 'sigstore bundle: the DSSE envelope payloadType is not '
+                 'application/vnd.in-toto+json; the payload type is bound '
+                 'into the signature (PAE), fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-check-payload-type'],
+    },
+    'evidence-bundle-predicate-refused': {
+        "domain": 'evbundle',
+        "code": 'evidence-bundle-predicate-refused',
+        "human": 'sigstore bundle: the in-toto statement _type / '
+                 'predicateType / predicate shape is rejected by the '
+                 'always-on content checks; fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-check-statement'],
+    },
+    'evidence-bundle-signature-invalid': {
+        "domain": 'evbundle',
+        "code": 'evidence-bundle-signature-invalid',
+        "human": 'sigstore bundle: the DSSE signature threshold is not '
+                 'met over the exact PAE bytes; fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-verify-signatures'],
+    },
+    'evidence-bundle-subject-mismatch': {
+        "domain": 'evbundle',
+        "code": 'evidence-bundle-subject-mismatch',
+        "human": 'sigstore bundle: the statement subject digest does not '
+                 'match the caller-expected bundle bytes; fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-check-subject-digest'],
+    },
+    'evidence-bundle-timestamp-malformed': {
+        "domain": 'evbundle',
+        "code": 'evidence-bundle-timestamp-malformed',
+        "human": 'sigstore bundle: the RFC 3161 timestamp token is '
+                 'malformed; fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-parse-token'],
+    },
+    'evidence-bundle-witness-expired': {
+        "domain": 'evbundle',
+        "code": 'evidence-bundle-witness-expired',
+        "human": 'sigstore bundle: the witness entry integratedTime is '
+                 'outside the caller-pinned validity window; fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-entry'],
+        "reverify_steps": ['re-check-witness-time'],
+    },
+    'evidence-bundle-witness-key-unavailable': {
+        "domain": 'evbundle',
+        "code": 'evidence-bundle-witness-key-unavailable',
+        "human": 'sigstore bundle: the witness verifier does not expose '
+                 'its public key, required for the logId binding; '
+                 'key-remote witness verifiers are unsupported, '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-entry'],
+        "reverify_steps": ['re-check-witness-key'],
+    },
+    'evidence-bundle-witness-missing': {
+        "domain": 'evbundle',
+        "code": 'evidence-bundle-witness-missing',
+        "human": 'sigstore bundle: no witness entry present; '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-entry'],
+        "reverify_steps": ['re-check-witness-present'],
+    },
+    'evidence-bundle-witness-signature-invalid': {
+        "domain": 'evbundle',
+        "code": 'evidence-bundle-witness-signature-invalid',
+        "human": 'sigstore bundle: the witness signed-entry-timestamp '
+                 'does not verify against the pinned witness verifier; '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-entry'],
+        "reverify_steps": ['re-verify-witness-set'],
+    },
+    'evidence-bundle-witness-unbound': {
+        "domain": 'evbundle',
+        "code": 'evidence-bundle-witness-unbound',
+        "human": 'sigstore bundle: the witness entry body or logId does '
+                 'not bind this bundle artifact/signature/key; '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-entry'],
+        "reverify_steps": ['re-check-witness-binding'],
+    },
+    'evidence-bundle-witness-unsupported': {
+        "domain": 'evbundle',
+        "code": 'evidence-bundle-witness-unsupported',
+        "human": 'sigstore bundle: not exactly one witness entry, or an '
+                 'unknown witness kind/version; fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-entry'],
+        "reverify_steps": ['re-check-witness-shape'],
+    },
     'evidence-envelope-record-limit': {
         "domain": 'evidence',
         "code": 'evidence-envelope-record-limit',

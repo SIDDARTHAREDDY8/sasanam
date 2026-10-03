@@ -49,7 +49,7 @@ from gov import delegation_revocation as rev
 from gov import ed25519 as _ed25519
 from gov import workflow as wf
 
-TAXONOMY_PIN = 1829  # Wave-302 merge pin 1820; this lane mints no codes.; Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
+TAXONOMY_PIN = 1841  # Wave-302 merge pin 1820; this lane mints no codes.; Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 _results = []
 
@@ -98,8 +98,8 @@ class BaseStateTest(unittest.TestCase):
 
     def test_taxonomy_pin(self):
         self.assertTrue(_expect_held(
-            "taxonomy-pin", TAXONOMY_PIN == 1829,
-            "TAXONOMY_PIN=%s, want 1829" % (TAXONOMY_PIN,)) == "HELD")
+            "taxonomy-pin", TAXONOMY_PIN == 1841,
+            "TAXONOMY_PIN=%s, want 1841" % (TAXONOMY_PIN,)) == "HELD")
 
 
 # ---------------------------------------------------------------------------
