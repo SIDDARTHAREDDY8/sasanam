@@ -83,7 +83,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-304 merge pin 1827; this lane mints no codes (red team only), so
 # the pin stays 1827. The merge-time sweep repoints to the wave-305 pin.
-TAXONOMY_PIN = 1863
+TAXONOMY_PIN = 1869
 
 _results = []
 
@@ -119,7 +119,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1863/1863/0 sorted")
+    _record("pin-taxonomy", "HELD", "1869/1869/0 sorted")
 
 
 def p_footer_state():
