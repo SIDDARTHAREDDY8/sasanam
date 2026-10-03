@@ -41,12 +41,12 @@ battery was written -- diagnosing-bugs loop):
 New findings filed by this lane: F394 (LOW, OPEN), claim
 2026-10-03T12:13:00Z. Wave-309 merge: F393 CLOSED (coded
 workflow-composed-plan-mismatch); F394 stays OPEN; pin 1829;
-footer open F395 / next F396. Wave-310 lane A: F394 CLOSED via
+footer open F395, F396 / next F397. Wave-310 lane A: F394 CLOSED via
 WorkflowComposer.retry_saga_unit (composer-level operator-retry
 API; no new codes; pin unchanged 1829); the F394 probes in this
 battery were updated from the direct-SagaManager call pattern to
 the supported composer-API call pattern (probe IDs and intent
-unchanged); footer open F395 / next F396. This battery's expected
+unchanged); footer open F395, F396 / next F397. This battery's expected
 BREAKs: none.
 
 Run:
@@ -131,11 +131,11 @@ def p_footer_state():
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
     # Wave-310 merge footer: F394 CLOSED (lane A); F395 OPEN (lane C red team).
-    if nxt != 396 or open_s != "F395":
+    if nxt != 397 or open_s != "F395, F396":
         return _record("footer-state", "BREAK",
-                       "footer pins next F%d open '%s', want next F396 "
-                       "open 'F395'" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open F395 / next F396")
+                       "footer pins next F%d open '%s', want next F397 "
+                       "open 'F395, F396'" % (nxt, open_s))
+    _record("footer-state", "HELD", "footer pins open F395, F396 / next F397")
 
 
 # ------------------------------------------------------------------
