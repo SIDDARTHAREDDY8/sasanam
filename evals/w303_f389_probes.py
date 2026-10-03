@@ -54,7 +54,7 @@ from gov import decision_codes
 from gov import ed25519
 from gov import workflow_branch as wb
 
-TAXONOMY_PIN = 1851  # Wave-305 merge pin; this lane mints no new codes (reuses coord-lease-*).
+TAXONOMY_PIN = 1857  # Wave-305 merge pin; this lane mints no new codes (reuses coord-lease-*).
 
 _results = []
 
@@ -161,7 +161,7 @@ class RepinTest(unittest.TestCase):
         lits = re.findall(r'"code":\s*\'([a-z][a-z0-9-_.]*)\'', src)
         self.assertTrue(_expect_held(
             "repin-pin-1851",
-            len(lits) == 1851 and len(set(lits)) == 1851
+            len(lits) == 1857 and len(set(lits)) == 1857
             and lits == sorted(lits),
             "1851 unique sorted literals") == "HELD")
 

@@ -67,7 +67,7 @@ from gov.trajectory_risk import (  # noqa: E402
     WINDOW_SIZE,
 )
 
-TAXONOMY_PIN = 1851  # wave-311 merge pin; this lane files nothing
+TAXONOMY_PIN = 1857  # wave-311 merge pin; this lane files nothing
 CORPUS = os.path.join(REPO, "evals", "artifacts", "decomp_corpus_v1.jsonl")
 
 # Characterization pins (measured on the wave-311 base 2026-10-03).

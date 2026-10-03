@@ -1139,6 +1139,67 @@ TAXONOMY = {
         "evidence_kinds_required": ['approval-packet', 'state-digest'],
         "reverify_steps": ['recompute'],
     },
+    'approval-token-argument-mismatch': {
+        "domain": 'approval',
+        "code": 'approval-token-argument-mismatch',
+        "human": 'approval token: the presented arguments do not match '
+                 'the token\'s argument binding -- substitution, removal, '
+                 'or widening of the approved arguments; the token '
+                 'authorizes a different action than the one presented',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-token', 'approval-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-token-capability-mismatch': {
+        "domain": 'approval',
+        "code": 'approval-token-capability-mismatch',
+        "human": 'approval token: the presented capability (tool/operation) '
+                 'is not the capability the token was minted for; a token '
+                 'for one tool never authorizes another',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-token', 'approval-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-token-expired': {
+        "domain": 'approval',
+        "code": 'approval-token-expired',
+        "human": 'approval token: the token\'s time box elapsed; an '
+                 'expired token authorizes nothing -- re-approval mints a '
+                 'fresh token',
+        "severity": 'medium',
+        "evidence_kinds_required": ['approval-token'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-token-malformed': {
+        "domain": 'approval',
+        "code": 'approval-token-malformed',
+        "human": 'approval token: malformed shape -- missing fields, bad '
+                 'version, non-JSON-native argument binding, or a token '
+                 'from the future; uninterpretable tokens authorize nothing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['approval-token'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-token-replayed': {
+        "domain": 'approval',
+        "code": 'approval-token-replayed',
+        "human": 'approval token: the token\'s nonce was already consumed -- '
+                 'a token authorizes at most one execution; replaying a '
+                 'consumed token is refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-token'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-token-tampered': {
+        "domain": 'approval',
+        "code": 'approval-token-tampered',
+        "human": 'approval token: the seal does not recompute over the '
+                 'token body under any keyring epoch -- the token was '
+                 'edited after minting',
+        "severity": 'critical',
+        "evidence_kinds_required": ['approval-token', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
     'arap-error': {
         "domain": 'arap',
         "code": 'arap-error',

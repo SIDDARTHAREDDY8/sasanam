@@ -42,7 +42,7 @@ import green_check
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-309 pin: lane A minted workflow-composed-plan-mismatch.
-TAXONOMY_PIN = 1851
+TAXONOMY_PIN = 1857
 
 PLAN_MISMATCH = "workflow-composed-plan-mismatch"
 
@@ -87,7 +87,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1851/1851/0 sorted")
+    _record("pin-taxonomy", "HELD", "1857/1857/0 sorted")
 
 
 def p_footer_state():

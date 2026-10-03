@@ -60,6 +60,7 @@ from .egress_ledger import _ledger_keyring
 from . import approver_shield as _approver_shield
 from . import delegation_tokens as _delegation_tokens
 from . import approval_request as _approval_request  # wave-297 request schema
+from . import approval_tokens as _approval_tokens  # wave-313 Row-7 step 3
 from . import ceremony_integrity as _ceremony_integrity
 from . import packet_display as _packet_display  # F192: one shared carrier-display schema
 from .target_match import (DEFAULT_THRESHOLD, typed_scope_similarity,
@@ -446,6 +447,18 @@ _SECURITY_PAYLOAD_FIELDS = (
     # automatically after the upgrade -- queued items must be decided
     # or drained before upgrading.
     "approval_request",
+    # Wave-313 (Row 7 step 3): the capability/argument-bound approval
+    # token (gov.approval_tokens.issue_token, minted at decision time)
+    # is integrity-bound from birth alongside the decision. Swapping
+    # the token after the decision (e.g. copying step 1's token onto
+    # step 3's record) breaks the MAC and is refused, never silently
+    # re-usable; the sweep additionally verifies the token's own seal
+    # and binding independently. FAIL-CLOSED UPGRADE (same precedent
+    # as F34/F38/R11/D1/wave-24/F101/F103/H3): records queued BEFORE
+    # this change do not carry this field, so their digests fail
+    # verification automatically after the upgrade -- queued items
+    # must be decided or drained before upgrading.
+    "approval_token",
 )
 
 
@@ -672,6 +685,33 @@ def approval_record_digest(rec):
     key, key_epoch = _active_key()
     return _approval_record_mac(key, key_epoch,
                                 _security_record_payload(rec))
+
+
+# Wave-313 (Row 7 step 3): default time box for a minted approval
+# token. Independent of the approval TTL (which the sweep still
+# enforces separately): the token is a second, portable seal on the
+# same authorized action, so it carries its own expiry. 24h matches
+# the default approval TTL; deployments wanting a tighter binding
+# mint via gov.approval_tokens.issue_token directly.
+_APPROVAL_TOKEN_TTL_SECONDS = 24 * 3600
+
+
+def _mint_approval_token(tool, args, issuer):
+    """Wave-313 (Row 7 step 3): mint the capability/argument-bound
+    approval token for an approved action.
+
+    Called on the approve paths BEFORE the decision re-MAC so the
+    token is integrity-bound on the record (see
+    _SECURITY_PAYLOAD_FIELDS). Binds the FINAL args (post human edit).
+    Loud on failure -- and a failure here is never a new failure mode:
+    the decision re-MAC immediately after needs the same key, so the
+    key is present whenever this runs.
+    """
+    return _approval_tokens.issue_token(
+        tool,
+        {"mode": "exact", "args": args},
+        issuer=issuer,
+        ttl_seconds=_APPROVAL_TOKEN_TTL_SECONDS)
 
 
 def _pending_record_content_ok(rec):
@@ -4699,6 +4739,14 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # record's current decided_by, so pending and decided records
         # each verify exactly one way. F43: the re-MAC covers the full
         # security payload of the (possibly tamper-checked) record.
+        # Wave-313 (Row 7 step 3): mint the capability/argument-bound
+        # approval token on approve, BEFORE the re-MAC so the token is
+        # integrity-bound on the record. The token binds the FINAL args
+        # (post human edit, when edited_args was supplied). Rejections
+        # mint nothing: there is no authorized action to bind.
+        if approved:
+            target["approval_token"] = _mint_approval_token(
+                target.get("tool"), target.get("args") or {}, decided_by)
         target["args_digest"] = approval_record_digest(target)
         # NOTE: all() re-parses from disk, so the mutated `target` dict
         # must be spliced into the rewritten records explicitly.
@@ -5827,6 +5875,13 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         target["decision_reason"] = (
             "quorum approved %d-of-%d by %s" % (
                 min_approvals, eligible_count, ", ".join(voters)))
+        # Wave-313 (Row 7 step 3): the quorum approve-finalize mints
+        # the token too (the single-decider path is not the only way
+        # a record becomes approved). Bound before the re-MAC like
+        # every other decision field.
+        target["approval_token"] = _mint_approval_token(
+            target.get("tool"), target.get("args") or {},
+            target["decided_by"])
         target["args_digest"] = approval_record_digest(target)
         self._rewrite(lambda records: [
             target if r["id"] == target["id"] else r for r in records])
