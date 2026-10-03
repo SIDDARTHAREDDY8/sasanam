@@ -26,6 +26,8 @@ import warnings
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(REPO_ROOT, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 sys.path.insert(0, REPO_ROOT)
 
 # NOTE: gov.identity_policy does NOT exist on the pristine tree. The import
@@ -570,9 +572,11 @@ def main():
     skip = sum(1 for _n, s, _d in results if s == "SKIP")
     print("w215 identity-policy battery: %d HELD / %d BREAK / %d ERROR / "
           "%d GAP / %d SKIP" % (held, brk, err, gap, skip))
-    for name, status, detail in results:
-        if status != "HELD":
-            print("  [%s] %s: %s" % (status, name, detail))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        results, brk, held, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    probe_lines.emit(results)
     return 0 if (brk == 0 and err == 0) else 1
 
 
