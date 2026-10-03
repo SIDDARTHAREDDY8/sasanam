@@ -100,10 +100,10 @@ def p_footer_state():
     # Wave-308 lane A re-pin: F391 CLOSED by this lane; footer
     # open F395 / next F396.
     ok = (m_open and m_open[-1].strip()
-          == "F394"
-          and m_next and m_next[-1] == "F395")
+          == "F396"
+          and m_next and m_next[-1] == "F397")
     _record("footer-state", "HELD" if ok else "BREAK",
-            "want open F394 / next free F395")
+            "want open F396 / next free F397")
 
 
 def _al():

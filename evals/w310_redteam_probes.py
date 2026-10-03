@@ -47,7 +47,7 @@ New findings filed by this lane: F395 (MEDIUM, OPEN), claim
 2026-10-03T13:27:00Z -- CLOSED 2026-10-03 wave-311 lane A (exotic
 closures refuse coded workflow-composed-definition-invalid; no new
 codes). Wave-310 merge: F394 CLOSED (lane A), F395 CLOSED (wave-311
-lane A); pin 1829; footer open none / next F396. This battery's
+lane A); pin 1829; footer open F396 / next F397. This battery's
 expected BREAKs: none (the F395 probes now assert the coded
 refusal).
 
@@ -133,11 +133,11 @@ def p_footer_state():
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
     # Wave-311 lane A footer: F395 CLOSED; no open findings.
-    if nxt != 396 or open_s != "none":
+    if nxt != 397 or open_s != "F396":
         return _record("footer-state", "BREAK",
-                       "footer pins next F%d open '%s', want next F396 "
-                       "open 'none'" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open none / next F396")
+                       "footer pins next F%d open '%s', want next F397 "
+                       "open 'F396'" % (nxt, open_s))
+    _record("footer-state", "HELD", "footer pins open F396 / next F397")
 
 
 # ------------------------------------------------------------------

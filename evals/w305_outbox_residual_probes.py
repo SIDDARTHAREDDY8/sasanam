@@ -129,13 +129,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    want_open = "none"
-    if nxt != 396 or open_s != want_open:
+    want_open = "F396"
+    if nxt != 397 or open_s != want_open:
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F395 open %r)"
+                       "footer drift: next F%d open %r (want next F397 open %r)"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open none / next F396")
+            "footer pins open F396 / next F397")
 
 
 AT = 1_700_000_000
