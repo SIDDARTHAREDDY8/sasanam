@@ -225,8 +225,8 @@ class FooterStateTest(unittest.TestCase):
         # Anchor to the LAST matches: the footer, not historical entries.
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-        # Wave-309 lane A: F393 CLOSED; footer open F394 / next F395.
-        want_open, want_next = "F394", "F395"
+        # Wave-309 lane A: F393 CLOSED; footer open F395 / next F396.
+        want_open, want_next = "F395", "F396"
         self.assertTrue(_expect_held(
             "footer-state",
             m_open and m_open[-1].strip() == want_open

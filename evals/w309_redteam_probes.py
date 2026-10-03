@@ -41,12 +41,12 @@ battery was written -- diagnosing-bugs loop):
 New findings filed by this lane: F394 (LOW, OPEN), claim
 2026-10-03T12:13:00Z. Wave-309 merge: F393 CLOSED (coded
 workflow-composed-plan-mismatch); F394 stays OPEN; pin 1829;
-footer open F394 / next F395. Wave-310 lane A: F394 CLOSED via
+footer open F395 / next F396. Wave-310 lane A: F394 CLOSED via
 WorkflowComposer.retry_saga_unit (composer-level operator-retry
 API; no new codes; pin unchanged 1829); the F394 probes in this
 battery were updated from the direct-SagaManager call pattern to
 the supported composer-API call pattern (probe IDs and intent
-unchanged); footer open none / next F395. This battery's expected
+unchanged); footer open F395 / next F396. This battery's expected
 BREAKs: none.
 
 Run:

@@ -33,7 +33,7 @@ battery was written -- diagnosing-bugs loop):
 
 New findings filed by this lane: F393 (MEDIUM, OPEN), claim
 2026-10-03T11:19:50Z. Wave-308 merge: F391 CLOSED (lane A), F393 OPEN;
-pin 1829; footer open F394 / next F395 (wave-309: F393 CLOSED).
+pin 1829; footer open F395 / next F396 (wave-309: F393 CLOSED).
 
 Run:
   mkdir -p /var/tmp/g308-rt && TMPDIR=/var/tmp/g308-rt \
@@ -117,12 +117,12 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    # Wave-309 lane A footer: F393 CLOSED; open F394 / next F395.
-    if nxt != 395 or open_s != "F394":
+    # Wave-309 lane A footer: F393 CLOSED; open F395 / next F396.
+    if nxt != 396 or open_s != "F395":
         return _record("footer-state", "BREAK",
                        "footer pins next F%d open '%s', want next F395 "
                        "open 'F394'" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open F394 / next F395")
+    _record("footer-state", "HELD", "footer pins open F395 / next F396")
 
 
 # ------------------------------------------------------------------
