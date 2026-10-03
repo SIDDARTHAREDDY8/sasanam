@@ -66,6 +66,49 @@ and changes no existing API):
   pipeline consumes -- escalation records carry digests and ids
   only, never key material, so they are safe to forward.
 
+Capability manifests (wave-299 lane 4; fuchsia component-framework
+ADAPT -- declared ``use``/``offer``/``expose`` with rights-attenuation
+checked at offer time, failing closed BEFORE the child ever runs):
+
+* every ``ChildSpec`` may carry an optional ``capabilities``
+  manifest ``{use: [...], offer: [...], expose: [...]}``; each
+  entry is ``{capability, rights, from}`` with ``rights`` a
+  non-empty subset of ``{"r","w","x"}`` or declared right tokens
+  and ``from`` in ``{"parent","self"}`` (plus a named sibling
+  child for ``offer`` entries, forward-declared for nested
+  supervisors). The manifest is deep-frozen at declaration with
+  the rest of the spec;
+* the supervisor declares its own closed capability inventory --
+  the ``endowment``: ``{capability: {"rights": {...},
+  "held": "use"|"route", "from": "parent"|"self"|child_id}}``.
+  Offer-time attenuation: a child's ``use ... from: "parent"``
+  entry is granted only when the offered rights are a subset of
+  the rights the supervisor holds -- offering rights you do not
+  hold refuses coded ``supervision-capability-rights-exceeded``
+  at DECLARATION time, before the child ever runs;
+* no silent retention: the endowment distinguishes holding from
+  routing. A supervisor that merely ROUTES a capability
+  (``held: "route"``) cannot exercise it -- ``exercise()`` is the
+  auditable choke point and a ``use`` claim on a merely-routed
+  capability refuses coded
+  ``supervision-capability-route-violation``. Symmetrically, a
+  child may only ``offer`` downstream what it holds via its own
+  ``use`` entries -- offering an unheld capability refuses
+  ``supervision-capability-undeclared`` (an ``expose`` is the
+  child's own upward provision and needs no ``use`` backing, but
+  the supervisor still bounds what it routes);
+* ``expose``: a child may expose a capability upward; the
+  supervisor routes it further only when its endowment declares
+  the matching ``from: <child_id>`` entry, otherwise the
+  capability terminates at the supervisor (visible via
+  ``exposed_routing()``, never a silent drop);
+* spawn-path enforcement: ``granted_capabilities(child_id)``
+  re-derives the child's exact grant from the frozen
+  declarations, and every restart decision carries
+  ``capability_grants`` for restarted children with manifests --
+  a restarted child gets exactly its declared capabilities, no
+  more.
+
 THREAT MODEL:
 
 * The supervisor seed is the trust anchor (signs escalations).
@@ -90,7 +133,8 @@ from gov import coordination_lease
 
 # ---------------------------------------------------------------------------
 # Decision codes (registered at true sorted positions in
-# gov/decision_codes.py; pin 1753 -> 1757).
+# gov/decision_codes.py; pin 1753 -> 1757; wave-298 merge: 1757 -> 1780;
+# this lane: 1780 -> 1783; wave-299 merge: 1783 -> 1797).
 # ---------------------------------------------------------------------------
 
 SUP_CRASH_LOOP = "supervision-crash-loop"
@@ -98,6 +142,9 @@ SUP_INTENSITY = "supervision-intensity-exceeded"
 SUP_INVALID = "supervision-invalid"
 SUP_LEASE_OBLIGATION_EXPIRED = "supervision-lease-obligation-expired"
 SUP_UNDECLARED = "supervision-undeclared-child"
+SUP_CAP_UNDECLARED = "supervision-capability-undeclared"
+SUP_CAP_RIGHTS = "supervision-capability-rights-exceeded"
+SUP_CAP_ROUTE = "supervision-capability-route-violation"
 
 _DOMAIN = "supervision"
 
@@ -240,6 +287,161 @@ def _check_intensity(max_restarts, window_seconds):
               "no unbounded window" % (_MIN_WINDOW, _MAX_WINDOW))
 
 
+# ---------------------------------------------------------------------------
+# Capability manifests (wave-299 lane 4; fuchsia component-framework
+# ADAPT). All validation is declaration-time: a bad manifest refuses
+# coded before the child ever runs.
+# ---------------------------------------------------------------------------
+
+_MANIFEST_SECTIONS = ("use", "offer", "expose")
+_MANIFEST_SOURCES = ("parent", "self")
+_BUILTIN_RIGHTS = frozenset({"r", "w", "x"})
+_HELD_USE = "use"
+_HELD_ROUTE = "route"
+
+
+def _check_rights(value, what="rights"):
+    """A non-empty set of right tokens: the builtins r/w/x or
+    declared right tokens (bounded identifier grammar). Returns a
+    frozenset."""
+    if isinstance(value, str):
+        _fail(SUP_INVALID,
+              "%s must be a non-empty collection of right tokens, "
+              "not a bare string" % what)
+    try:
+        items = list(value)
+    except TypeError:
+        _fail(SUP_INVALID,
+              "%s must be a non-empty collection of right tokens" % what)
+    if not items:
+        _fail(SUP_INVALID,
+              "%s must be non-empty -- there are no zero-right "
+              "capabilities" % what)
+    rights = set()
+    for item in items:
+        if not isinstance(item, str):
+            _fail(SUP_INVALID,
+                  "%s entries must be strings; got %r" % (what, item))
+        if item not in _BUILTIN_RIGHTS and not _ID_RE.match(item):
+            _fail(SUP_INVALID,
+                  "%s entry %r must be r/w/x or a declared right "
+                  "token [a-z][a-z0-9-]{0,63}" % (what, item))
+        rights.add(item)
+    return frozenset(rights)
+
+
+def _check_manifest_entry(entry, section, allow_named_source=False):
+    """Validate one manifest entry dict. Returns the normalized
+    (capability, frozenset(rights), from_source) tuple."""
+    if not isinstance(entry, dict):
+        _fail(SUP_INVALID,
+              "capability manifest %s entries must be dicts" % section)
+    if sorted(entry.keys()) != ["capability", "from", "rights"]:
+        _fail(SUP_INVALID,
+              "capability manifest %s entries must carry exactly "
+              "capability/rights/from; got %r"
+              % (section, sorted(entry.keys())))
+    _check_id(entry["capability"], "manifest capability")
+    rights = _check_rights(entry["rights"],
+                           "rights for capability %r" % entry["capability"])
+    src = entry["from"]
+    if not isinstance(src, str):
+        _fail(SUP_INVALID, "manifest entry 'from' must be a string")
+    if src not in _MANIFEST_SOURCES and not allow_named_source:
+        _fail(SUP_INVALID,
+              "manifest %s entry 'from' must be one of %s; got %r"
+              % (section, "/".join(_MANIFEST_SOURCES), src))
+    if allow_named_source and src not in _MANIFEST_SOURCES \
+            and not _ID_RE.match(src):
+        _fail(SUP_INVALID,
+              "manifest offer entry 'from' must be parent/self or a "
+              "declared child id; got %r" % (src,))
+    return (entry["capability"], rights, src)
+
+
+def _check_manifest(manifest):
+    """Validate a child capabilities manifest. Returns the normalized
+    immutable form: a tuple of (section, capability, rights, from)
+    tuples. None stays None (no manifest declared)."""
+    if manifest is None:
+        return None
+    if not isinstance(manifest, dict):
+        _fail(SUP_INVALID, "capabilities manifest must be a dict")
+    if sorted(manifest.keys()) != sorted(_MANIFEST_SECTIONS):
+        _fail(SUP_INVALID,
+              "capabilities manifest must carry exactly the sections "
+              "%s; got %r" % ("/".join(_MANIFEST_SECTIONS),
+                              sorted(manifest.keys())))
+    normalized = []
+    for section in _MANIFEST_SECTIONS:
+        entries = manifest[section]
+        if not isinstance(entries, list):
+            _fail(SUP_INVALID,
+                  "manifest section %r must be a list" % (section,))
+        seen = set()
+        for entry in entries:
+            cap, rights, src = _check_manifest_entry(
+                entry, section,
+                allow_named_source=(section == "offer"))
+            if section == "expose" and src != "self":
+                _fail(SUP_INVALID,
+                      "manifest expose entries are the child's own "
+                      "upward exposure -- 'from' must be \"self\"; "
+                      "got %r" % (src,))
+            if cap in seen:
+                _fail(SUP_INVALID,
+                      "duplicate capability %r in manifest section %r "
+                      "-- one entry per capability per section"
+                      % (cap, section))
+            seen.add(cap)
+            normalized.append((section, cap, rights, src))
+    return tuple(normalized)
+
+
+def _check_endowment(endowment, child_ids):
+    """Validate the supervisor's closed capability inventory.
+    Returns the normalized immutable form: {capability:
+    (frozenset(rights), held, from_source)}. None stays None (no
+    declared inventory -- children may then only use from: "self")."""
+    if endowment is None:
+        return None
+    if not isinstance(endowment, dict):
+        _fail(SUP_INVALID, "supervisor endowment must be a dict")
+    normalized = {}
+    for cap, spec in endowment.items():
+        _check_id(cap, "endowment capability")
+        if isinstance(spec, (set, frozenset, list, tuple)):
+            rights = _check_rights(spec, "endowment rights for %r" % cap)
+            held, src = _HELD_USE, "parent"
+        elif isinstance(spec, dict):
+            if sorted(spec.keys()) != ["from", "held", "rights"]:
+                _fail(SUP_INVALID,
+                      "endowment entry for %r must carry exactly "
+                      "rights/held/from; got %r" % (cap, sorted(spec.keys())))
+            rights = _check_rights(spec["rights"],
+                                   "endowment rights for %r" % cap)
+            held = spec["held"]
+            if held not in (_HELD_USE, _HELD_ROUTE):
+                _fail(SUP_INVALID,
+                      "endowment held for %r must be %r (may exercise "
+                      "and grant) or %r (merely routes); got %r"
+                      % (cap, _HELD_USE, _HELD_ROUTE, held))
+            src = spec["from"]
+            if not isinstance(src, str):
+                _fail(SUP_INVALID,
+                      "endowment from for %r must be a string" % (cap,))
+            if src not in ("parent", "self") and src not in child_ids:
+                _fail(SUP_UNDECLARED,
+                      "endowment entry for %r names undeclared child "
+                      "%r as its source" % (cap, src))
+        else:
+            _fail(SUP_INVALID,
+                  "endowment entry for %r must be a rights collection "
+                  "or a rights/held/from dict" % (cap,))
+        normalized[cap] = (rights, held, src)
+    return normalized
+
+
 def _check_reason(value):
     if isinstance(value, str):
         raw = value.encode("utf-8")
@@ -270,13 +472,23 @@ class ChildSpec:
     a restarted agent must hold a fresh fencing token before
     re-entry, so zombie writes under the old token are refused
     even at the supervision seam.
+
+    ``capabilities`` (wave-299 lane 4, default None): an optional
+    Fuchsia-style capability manifest ``{use: [...], offer: [...],
+    expose: [...]`` -- declared, bounded, deep-frozen at
+    declaration like the rest of the spec. The supervisor
+    validates it against its endowment at ``Supervisor``
+    construction (offer-time attenuation, no silent retention),
+    and every restart decision carries the child's exact grant.
     """
 
     __slots__ = ("child_id", "child_pubkey", "strategy",
-                 "max_restarts", "window_seconds", "requires_lease")
+                 "max_restarts", "window_seconds", "requires_lease",
+                 "capabilities")
 
     def __init__(self, child_id, child_pubkey, strategy,
-                 max_restarts, window_seconds, requires_lease=False):
+                 max_restarts, window_seconds, requires_lease=False,
+                 capabilities=None):
         _check_id(child_id, "child_id")
         _check_pubkey_hex(child_pubkey)
         _check_strategy(strategy)
@@ -285,14 +497,32 @@ class ChildSpec:
             _fail(SUP_INVALID,
                   "requires_lease must be a bool; got %r"
                   % (requires_lease,))
+        frozen_manifest = _check_manifest(capabilities)
         # Frozen at declaration: __init__ bypasses the __setattr__
-        # guard below; every later assignment refuses coded.
+        # guard below; every later assignment refuses coded. The
+        # manifest is normalized to immutable tuples/frozensets, so
+        # the freeze is deep, not just slot-level.
         object.__setattr__(self, "child_id", child_id)
         object.__setattr__(self, "child_pubkey", child_pubkey)
         object.__setattr__(self, "strategy", strategy)
         object.__setattr__(self, "max_restarts", max_restarts)
         object.__setattr__(self, "window_seconds", window_seconds)
         object.__setattr__(self, "requires_lease", requires_lease)
+        object.__setattr__(self, "capabilities", frozen_manifest)
+
+    @property
+    def manifest(self):
+        """The declared capability manifest as plain data (a deep
+        copy -- mutating the return value cannot touch the frozen
+        spec). None when the child declared no manifest."""
+        if self.capabilities is None:
+            return None
+        out = {"use": [], "offer": [], "expose": []}
+        for section, cap, rights, src in self.capabilities:
+            out[section].append({"capability": cap,
+                                 "rights": sorted(rights),
+                                 "from": src})
+        return out
 
     def __setattr__(self, name, value):
         _fail(SUP_INVALID,
@@ -317,9 +547,15 @@ class Supervisor:
     module's own fencing check stays authoritative.
     ``_reentered`` is the set of lease-gated children that have proven
     re-acquisition since their last crash.
+    ``_endowment`` is the supervisor's closed capability inventory
+    (wave-299 lane 4): ``{capability: (rights, held, from)}`` --
+    what the supervisor holds and may grant or route to children.
+    Every child manifest is validated against it at declaration
+    (offer-time attenuation, no silent retention); a restarted
+    child is re-granted exactly its declared capabilities.
     """
 
-    def __init__(self, name, child_specs, supervisor_seed):
+    def __init__(self, name, child_specs, supervisor_seed, endowment=None):
         _check_id(name, "supervisor name")
         _check_seed(supervisor_seed)
         if not isinstance(child_specs, (list, tuple)) or not child_specs:
@@ -338,6 +574,9 @@ class Supervisor:
             specs[spec.child_id] = spec
         self._name = name
         self._specs = specs
+        self._endowment = _check_endowment(endowment, set(specs))
+        for cid, spec in specs.items():
+            self._validate_manifest(cid, spec)
         self._seed = bytes(supervisor_seed)
         self._pubkey = ed25519.publickey(supervisor_seed).hex()
         self._start_order = []
@@ -348,6 +587,83 @@ class Supervisor:
         self._dead_tokens = set()
         self._reentered = set()
         self._obligation_seq = 0
+
+    # -- capability manifests (wave-299 lane 4) -----------------------------
+
+    def _validate_manifest(self, child_id, spec):
+        """Declaration-time manifest validation against the
+        supervisor's endowment. Offer-time attenuation and
+        no-silent-retention are enforced here -- before the child
+        ever runs. Delegation narrows, never widens."""
+        manifest = spec.capabilities
+        if manifest is None:
+            return
+        endowment = self._endowment or {}
+        held = {}  # capability -> rights the child holds via use
+        for section, cap, rights, src in manifest:
+            if section != "use":
+                continue
+            if src == "parent":
+                entry = endowment.get(cap)
+                if entry is None:
+                    _fail(SUP_CAP_UNDECLARED,
+                          "child %r uses capability %r from its parent, "
+                          "but the supervisor holds no such capability "
+                          "-- the inventory is closed" % (child_id, cap))
+                if not rights <= entry[0]:
+                    _fail(SUP_CAP_RIGHTS,
+                          "child %r claims rights %s on capability %r, "
+                          "wider than the supervisor holds %s -- "
+                          "delegation narrows, never widens"
+                          % (child_id, sorted(rights), cap,
+                             sorted(entry[0])))
+            # from == "self": the child's intrinsic authority --
+            # declared and bounded, no endowment check.
+            held[cap] = held.get(cap, frozenset()) | rights
+        for section, cap, rights, src in manifest:
+            if section == "use":
+                continue
+            if src not in ("parent", "self") and src not in self._specs:
+                _fail(SUP_CAP_UNDECLARED,
+                      "child %r manifest %s entry for %r names "
+                      "undeclared child %r as its source"
+                      % (child_id, section, cap, src))
+            if section == "expose":
+                # Expose is the child's own upward provision (its
+                # implementation) -- it needs no use-entry backing,
+                # but the supervisor still bounds what it routes
+                # (see _check_expose_routing). Termination is
+                # explicit, never silent.
+                self._check_expose_routing(child_id, cap, rights)
+                continue
+            held_rights = held.get(cap)
+            if held_rights is None:
+                _fail(SUP_CAP_UNDECLARED,
+                      "child %r %s capability %r it does not hold -- "
+                      "a component may only route downstream what its "
+                      "use entries declare" % (child_id, section, cap))
+            if not rights <= held_rights:
+                _fail(SUP_CAP_RIGHTS,
+                      "child %r %s rights %s on %r, wider than it "
+                      "holds %s -- delegation narrows, never widens"
+                      % (child_id, section, sorted(rights), cap,
+                         sorted(held_rights)))
+
+    def _check_expose_routing(self, child_id, cap, rights):
+        """An exposed capability routes further only when the
+        supervisor's endowment declares the matching
+        ``from: <child_id>`` entry; otherwise it terminates at the
+        supervisor (visible via exposed_routing(), never a silent
+        drop)."""
+        entry = (self._endowment or {}).get(cap)
+        if entry is None or entry[2] != child_id:
+            return  # terminates at the supervisor
+        if not rights <= entry[0]:
+            _fail(SUP_CAP_RIGHTS,
+                  "child %r exposes %r with rights %s, wider than the "
+                  "supervisor routes %s -- delegation narrows, never "
+                  "widens" % (child_id, cap, sorted(rights),
+                               sorted(entry[0])))
 
     # -- lifecycle --------------------------------------------------------
 
@@ -472,6 +788,17 @@ class Supervisor:
                 cid, at, old_token, ttl)
         if obligations:
             decision["lease_obligations"] = obligations
+        grants = {}
+        for cid in restart_set:
+            if self._specs[cid].capabilities is not None:
+                # Spawn-path enforcement: re-derive each restarted
+                # child's exact grant from the frozen manifest and
+                # endowment -- a restarted child gets exactly its
+                # declared capabilities, no more. The re-derivation
+                # is the re-validation (both inputs are frozen).
+                grants[cid] = self.granted_capabilities(cid)
+        if grants:
+            decision["capability_grants"] = grants
         return decision
 
     def _check_dead_tokens(self, old_fencing_tokens):
@@ -842,6 +1169,92 @@ class Supervisor:
         if spec is None:
             _fail(SUP_UNDECLARED, "child %r is not declared" % (child_id,))
         return child_id in self._reentered
+
+    # -- capability exercise + grants (wave-299 lane 4) --------------------
+
+    def exercise(self, capability, rights):
+        """Auditable choke point for the supervisor's OWN exercise
+        of a capability -- the no-silent-retention rule. Refuses
+        coded: ``supervision-capability-undeclared`` (not held at
+        all), ``supervision-capability-route-violation`` (held for
+        routing only -- a parent that merely routes a capability
+        cannot use it), ``supervision-capability-rights-exceeded``
+        (claim wider than held). Returns True on a granted
+        exercise; the grant is audit-logged via the module sink."""
+        _check_id(capability, "capability")
+        want = _check_rights(rights, "exercise rights")
+        entry = (self._endowment or {}).get(capability)
+        if entry is None:
+            _fail(SUP_CAP_UNDECLARED,
+                  "supervisor %r holds no capability %r -- exercise "
+                  "refused; the inventory is closed"
+                  % (self._name, capability))
+        held_rights, held, _src = entry
+        if held == _HELD_ROUTE:
+            _fail(SUP_CAP_ROUTE,
+                  "supervisor %r merely routes capability %r (held "
+                  "for routing, not use) -- a use claim on a "
+                  "merely-routed capability is refused"
+                  % (self._name, capability))
+        if not want <= held_rights:
+            _fail(SUP_CAP_RIGHTS,
+                  "supervisor %r claims rights %s on %r, wider than "
+                  "held %s -- delegation narrows, never widens"
+                  % (self._name, sorted(want), capability,
+                     sorted(held_rights)))
+        _emit_event("supervision.capability-exercised",
+                    {"supervisor": self._name,
+                     "capability": capability,
+                     "rights": sorted(want)})
+        return True
+
+    def granted_capabilities(self, child_id):
+        """Re-derive the child's exact capability grant from the
+        frozen declarations (spawn-path enforcement): the union of
+        its ``use`` entries -- parent-granted rights (already
+        attenuation-checked at declaration) and intrinsic rights.
+        Returns ``{capability: [rights]}``; ``{}`` when the child
+        declared no manifest. A restarted child gets exactly this
+        grant -- no more."""
+        _check_id(child_id, "child_id")
+        spec = self._specs.get(child_id)
+        if spec is None:
+            _fail(SUP_UNDECLARED, "child %r is not declared" % (child_id,))
+        grant = {}
+        if spec.capabilities is not None:
+            for section, cap, rights, _src in spec.capabilities:
+                if section != "use":
+                    continue
+                grant[cap] = sorted(rights)
+        return grant
+
+    def exposed_routing(self):
+        """``{child_id: {capability: {"status": "routed"|"terminated",
+        "rights": [...]}}}`` -- where every exposed capability goes.
+        An expose routes further only when the supervisor's
+        endowment declares the matching ``from: <child_id>`` entry;
+        otherwise it terminates at the supervisor. Termination is
+        explicit here, never a silent drop."""
+        endowment = self._endowment or {}
+        out = {}
+        for cid, spec in self._specs.items():
+            if spec.capabilities is None:
+                continue
+            routing = {}
+            for section, cap, rights, _src in spec.capabilities:
+                if section != "expose":
+                    continue
+                entry = endowment.get(cap)
+                if entry is not None and entry[2] == cid \
+                        and rights <= entry[0]:
+                    routing[cap] = {"status": "routed",
+                                    "rights": sorted(rights)}
+                else:
+                    routing[cap] = {"status": "terminated",
+                                    "rights": sorted(rights)}
+            if routing:
+                out[cid] = routing
+        return out
 
     # -- introspection ------------------------------------------------------
 

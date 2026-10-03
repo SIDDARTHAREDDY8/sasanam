@@ -9005,7 +9005,7 @@ closed 2026-10-02, wave-296 lane 4). **Closure record (2026-10-02, wave-296 lane
 - Sweep lane (L6) filed F361-F363 at ~19:53 UTC — keeps the numbers (earliest-filed, wave-272 rule).
 - Independent red team (L4) filed its own F361 at ~19:57 UTC — renumbered to F364 (LOW, OPEN: revocation-demand coverage gap in verify_provenance).
 - F360 CLOSED by L1; F361-F363 CLOSED by L6.
-## F371: verify_trace crashes uncoded on validly-signed malformed traces -- post-signature shape assumptions (LOW, OPEN)
+## F371: verify_trace crashes uncoded on validly-signed malformed traces -- post-signature shape assumptions (LOW, CLOSED)
 
 **Cells:** wave-297 independent red-team, 2026-10-02. Standing regression pins:
 `evals/w297_redteam_probes.py` (probes `F371-signed-missing-verdict`,
@@ -9076,7 +9076,7 @@ wave-298 lane 1):**
   approval_quorum) 90/90 OK. Taxonomy pin 1769 unchanged
   (1769/1769/0 sorted, no new codes).
 
-## F372: policy_ci.load_artifact accepts artifacts with extra files added -- the derived file set is not closed (LOW, OPEN)
+## F372: policy_ci.load_artifact accepts artifacts with extra files added -- the derived file set is not closed (LOW, CLOSED)
 
 **Cells:** wave-298 independent red-team, 2026-10-03. Standing regression pins:
 `evals/w298_redteam_probes.py` (probe `F372-artifact-extra-file`).
@@ -9108,9 +9108,34 @@ closed set `derive()` emits (or when the manifest's `files` map disagrees
 with the artifact's `derived` keys); (2) the F372 probe flips to HELD;
 (3) adjacent batteries stay green.
 
-**Status: OPEN** (filed 2026-10-03, wave-298 independent red-team).
+**Status: CLOSED** (filed 2026-10-03, wave-298 independent red-team;
+closed 2026-10-03, wave-299 lane 1). **Closure record (2026-10-03,
+wave-299 lane 1):**
+- `gov/policy_ci.py::load_artifact` now enforces the closed derived
+  file set: after the per-file digest checks it parses the embedded
+  `policy.manifest.json`, requires its `format` to be
+  `sasanam-policy-manifest/v1` and its `source_digest` to match the
+  artifact's, requires `set(derived.keys()) == set(manifest["files"]) |
+  {"policy.manifest.json"}` (the manifest lists every file except
+  itself, by `derive()`'s construction), and requires each manifest
+  digest to agree with the artifact's `digests` map. Any deviation
+  refuses coded `policy-ci-derived-tampered` -- no new codes minted.
+- Red-first: pristine wave-298 base `evals/w298_redteam_probes.py`
+  **3 BREAK / 19 HELD / 0 ERROR** (`F372-artifact-extra-file` BREAK);
+  fixed tree **0 BREAK / 22 HELD / 0 ERROR** under staging and
+  `env -u GOV_DEPLOYMENT_MODE`.
+- New unit tests in `tests/test_policy_ci.py::LoadTests`
+  (`test_f372_extra_file_refused`,
+  `test_f372_removed_file_refused`,
+  `test_f372_manifest_files_disagree_refused`,
+  `test_f372_closed_set_happy`): all OK; full
+  `tests.test_policy_ci` + `tests.test_approval_quorum` **57/57 OK**.
+- Adjacent batteries green: `w297_policy_ci` 0/20/0,
+  `w297_approval_quorum` 0/22/0, `w298_redteam` 0/22/0.
+- Taxonomy pin 1780 unchanged (1780/1780/0 sorted, no new codes);
+  `git diff` == `git diff -w`.
 
-## F373: QuorumPredicate slot attributes are reassignable post-construction -- the "immutable after construction" claim is overstated (LOW, OPEN)
+## F373: QuorumPredicate slot attributes are reassignable post-construction -- the "immutable after construction" claim is overstated (LOW, CLOSED)
 
 **Cells:** wave-298 independent red-team, 2026-10-03. Standing regression pins:
 `evals/w298_redteam_probes.py` (probes `F373-predicate-min-mutable`,
@@ -9142,9 +9167,147 @@ immutability as a security property, and the fix is the one-line
 (F330/F340 pattern); (2) the two F373 probes flip to HELD; (3) adjacent
 batteries stay green.
 
-**Status: OPEN** (filed 2026-10-03, wave-298 independent red-team).
+**Status: CLOSED** (filed 2026-10-03, wave-298 independent red-team;
+closed 2026-10-03, wave-299 lane 1). **Closure record (2026-10-03,
+wave-299 lane 1):**
+- `gov/approval_quorum.py::QuorumPredicate` now defines
+  `__setattr__` refusing coded `approval-quorum-invalid` on any
+  post-construction attribute assignment (the F330/F340
+  `supervision.ChildSpec` pattern); `__init__` writes via
+  `object.__setattr__`. The stale comment claiming slot-locking was
+  sufficient was corrected. No new codes minted.
+- Red-first: pristine wave-298 base
+  `evals/w298_redteam_probes.py` **3 BREAK / 19 HELD / 0 ERROR**
+  (`F373-predicate-min-mutable`, `F373-predicate-veto-mutable`
+  BREAK); fixed tree **0 BREAK / 22 HELD / 0 ERROR** under staging
+  and `env -u GOV_DEPLOYMENT_MODE`.
+- New unit tests in `tests/test_approval_quorum.py::QuorumPredicateTests`
+  (`test_f373_slot_reassignment_refused` covering `_min_approvals`,
+  `_blocking_veto_roles`, `_max_voters`, and
+  `test_f373_new_attribute_refused`): all OK; full
+  `tests.test_policy_ci` + `tests.test_approval_quorum` **57/57 OK**.
+- Adjacent batteries green: `w297_policy_ci` 0/20/0,
+  `w297_approval_quorum` 0/22/0, `w298_redteam` 0/22/0.
+- Taxonomy pin 1780 unchanged (1780/1780/0 sorted, no new codes);
+  `git diff` == `git diff -w`.
 
-Next free finding: **F374**. **Open findings: F372, F373.** (F371 filed 2026-10-02, wave-297 independent red-team (LOW, CLOSED 2026-10-03 wave-298 lane 1: verify_trace post-signature shape assumptions crash uncoded); F372 filed 2026-10-03, wave-298 independent red-team (LOW, OPEN: policy_ci.load_artifact accepts artifacts with extra files added); F373 filed 2026-10-03, wave-298 independent red-team (LOW, OPEN: QuorumPredicate slot attributes reassignable post-construction); F364 filed 2026-10-02, wave-293 independent red-team as F361, renumbered F361->F364
+## F374: memory_store retraction authority migrates to the newest writer -- a conflicting writer can permanently tombstone another principal's key (MEDIUM, OPEN)
+
+**Cells:** wave-299 independent red-team, 2026-10-03. Standing regression pins:
+`evals/w299_redteam_probes.py` (probes `F374-hostile-tombstone`,
+`F374-victim-loses-retract`).
+
+**Defect:** `gov/memory_store.py::retract_fact` authorizes the retractor
+against the NEWEST record's source key (`authorized =
+{newest["source_pubkey"]}` plus archivists), not the claim's original
+source key. The documented contract says "The retractor must be the
+claim's source key or a named archivist." Attack chain, verified
+empirically: (1) the victim records a fact on key K with their own key;
+(2) the attacker -- holding only legitimate write access under their own
+key -- records a CONFLICTING fact on K (the graphiti supersession rule
+closes the victim's record, by design); the attacker is now the newest
+writer; (3) the attacker retracts K, which succeeds because the newest
+record's source key is the attacker's. The tombstone closes every record
+under K and is keyed by statement_key forever: the victim re-records a
+fresh fact, but `recall` still refuses `memory-store-tombstoned` -- the
+key is permanently dead for recall. Two facets: (a) a conflicting writer
+gains destructive, irreversible authority over another principal's key
+history; (b) the ORIGINAL author loses retraction authority over their
+own superseded claim the moment someone else writes a conflicting fact
+(their own retract then refuses `memory-store-unsigned-retraction`).
+
+**Severity rationale:** MEDIUM. No key compromise is needed -- any
+authorized writer can permanently deny recall of another principal's
+key, which exceeds what supersession alone permits (a superseded victim
+could otherwise re-assert). The tombstone is irreversible by design
+("no un-retract"), so the damage is permanent. History remains
+queryable via `history()`, bounding the harm to recall denial.
+
+**Close-when criteria:** (1) `retract_fact` authorizes against the
+claim's ORIGINAL source key (first record under the key) or a named
+archivist -- not the newest writer; or, alternatively, retraction
+closes only records authored by the retractor's own key (per-record
+tombstones); (2) the F374 probes flip to HELD (hostile retract refuses
+coded; the victim retains retract authority over their own claim);
+(3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-03, wave-299 independent red-team).
+
+## F375: memory_reconcile write-rate bound is keyed on a self-reported principal string and is evaded by rotation (LOW, OPEN)
+
+**Cells:** wave-299 independent red-team, 2026-10-03. Standing regression pins:
+`evals/w299_redteam_probes.py` (probes `F375-rate-bound-evasion`,
+`F375-rate-bound-control`).
+
+**Defect:** `gov/memory_reconcile.py::_check_write_rate` bounds writes
+per `candidate["provenance"]["source_principal"]` -- a free-form string
+inside the owner-signed candidate. The namespace owner, who signs every
+candidate, rotates the string per write (`principal-0`, `principal-1`,
+...) and the bound never fires: 6/6 writes accepted with
+`max_writes_per_principal=2` (verified empirically; the control -- same
+string 3 times -- correctly refuses the 3rd with
+`memory-reconcile-invalid`). The wave-298 lane-3 report explicitly
+claims "Defenses bound even the owner (rate, evidence, snapshots)"; the
+rate defense does not bind the owner, because the identity it keys on
+is self-reported by the bound party. The per-principal bound only
+constrains honest principals who keep a stable name.
+
+**Severity rationale:** LOW. The namespace owner is already the trust
+anchor for their own namespace (a compromised owner key is the
+compromised-host class), so the incremental blast radius is a flood the
+owner could partly achieve anyway -- but the flood is exactly what the
+bound exists to stop, and the lane claimed it binds the owner. This is a
+claim-vs-mechanism gap on a poisoning defense (qdrant checklist item).
+
+**Close-when criteria:** (1) the rate bound is keyed on an
+authenticated identity -- the namespace owner's key (per-owner bound)
+in addition to, or instead of, the self-reported principal string;
+(2) the F375 evasion probe flips to HELD (rotated-principal flood
+refuses); (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-03, wave-299 independent red-team).
+
+## F376: memory_reconcile cross-namespace recall authorization rests on a self-asserted caller_namespace -- the grant check is bypassable (LOW, OPEN)
+
+**Cells:** wave-299 independent red-team, 2026-10-03. Standing regression pins:
+`evals/w299_redteam_probes.py` (probe `F376-caller-assertion-bypass`).
+
+**Defect:** `gov/memory_reconcile.py::recall(scope, caller_namespace,
+at)` enforces cross-namespace sharing grants via
+`self._grant_live(ns, caller_namespace, at)` -- but `caller_namespace`
+is a bare caller-supplied string, validated only by `_check_id`
+(shape). Nothing binds the caller to the asserted namespace: any caller
+that knows a grant exists (e.g. alice -> bob) asserts
+`caller_namespace="bob"` and reads alice's facts, with no key material
+and no grant presentation (verified empirically: an unauthenticated
+caller asserting "bob" read alice's fact covered by a live alice -> bob
+grant, while a non-grantee name correctly refused). The documented
+contract -- "Cross-namespace recall requires a live sharing grant or
+refuses" -- is therefore enforced only against honest callers; the
+grant mechanism's access-control purpose is vacuous against a caller
+who lies about their name. The lane-3 report's honest residuals do not
+list caller authentication as deployment-owned, and the battery pins
+only the honest case.
+
+**Severity rationale:** LOW. Same claim-vs-mechanism class as F373: the
+security property reads as module-enforced access control, but the
+authorization decision rests on an unauthenticated input. Exploitation
+requires being an API caller (the deployment mediates who calls), and a
+fully in-process attacker could reach internals anyway -- but the
+reference-monitor-between-agents threat model is exactly what the grant
+system is for, and it does not deliver it.
+
+**Close-when criteria:** (1) EITHER the caller presents the signed
+sharing grant and the module verifies it against the owner's declared
+key before serving cross-namespace reads (bearer-grant model), OR the
+module contract explicitly documents that `caller_namespace` must be a
+deployment-authenticated identity (docstring + module docs, battery
+pins the precondition); (2) the F376 probe flips to HELD under the
+documented contract; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-03, wave-299 independent red-team).
+
+Next free finding: **F377**. **Open findings: F374, F375, F376.** (F371 filed 2026-10-02, wave-297 independent red-team (LOW, CLOSED 2026-10-03 wave-298 lane 1: verify_trace post-signature shape assumptions crash uncoded); F372 filed 2026-10-03, wave-298 independent red-team (LOW, CLOSED 2026-10-03 wave-299 lane 1: policy_ci.load_artifact accepted artifacts with extra files added); F373 filed 2026-10-03, wave-298 independent red-team (LOW, CLOSED 2026-10-03 wave-299 lane 1: QuorumPredicate slot attributes reassignable post-construction); F374 filed 2026-10-03, wave-299 independent red-team (MEDIUM, OPEN: memory_store retraction authority migrates to the newest writer); F375 filed 2026-10-03, wave-299 independent red-team (LOW, OPEN: memory_reconcile write-rate bound evaded by principal rotation); F376 filed 2026-10-03, wave-299 independent red-team (LOW, OPEN: memory_reconcile recall authorization rests on self-asserted caller_namespace); F364 filed 2026-10-02, wave-293 independent red-team as F361, renumbered F361->F364
 at the wave-293 merge -- the wave-293 sweep lane filed F361-F363 first
 at ~19:53 UTC and keeps them per the wave-272 earliest-filed rule;
 closed 2026-10-02, wave-294 lane 1; F367 filed 2026-10-02, wave-295

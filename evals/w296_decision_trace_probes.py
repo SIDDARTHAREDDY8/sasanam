@@ -47,7 +47,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-296 lane 5: pin 1750 -> 1753 (+3 decision-trace-forgery,
 # decision-trace-invalid, decision-trace-replay-mismatch).
-TAXONOMY_PIN = 1780  # Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
+TAXONOMY_PIN = 1797  # Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*); Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
 
 try:
     from gov import decision_trace as DT

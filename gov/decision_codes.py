@@ -4759,6 +4759,16 @@ TAXONOMY = {
         "evidence_kinds_required": ['assessment', 'pack', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'delegation-depth-exceeded': {
+        "domain": 'delegation',
+        "code": 'delegation-depth-exceeded',
+        "human": 'signed delegation receipt: delegating at or beyond the '
+                 'parent receipt\'s max_depth; the chain cannot grow deeper; '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
     'delegation-ephemeral-grant-refused': {
         "domain": 'delegation',
         "code": 'delegation-ephemeral-grant-refused',
@@ -4769,6 +4779,18 @@ TAXONOMY = {
                  'fail-closed',
         "severity": 'high',
         "evidence_kinds_required": ['delegation', 'grant-decision'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-escrow-violated': {
+        "domain": 'delegation',
+        "code": 'delegation-escrow-violated',
+        "human": 'delegation escrow: commit attempted on a non-open escrow, '
+                 'a declared step presented no verifiable receipt chain, a '
+                 'step\'s leaf lacks the escrow.commit right, or a step\'s '
+                 'leaf designates a different effect than declared; '
+                 'offer-safety violated, refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation', 'signature', 'escrow'],
         "reverify_steps": ['recompute'],
     },
     'delegation-expired': {
@@ -4790,6 +4812,48 @@ TAXONOMY = {
         "severity": 'high',
         "evidence_kinds_required": ['capability-attestation',
                                     'freshness-timestamp'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-identity-false-hardware-claim': {
+        "domain": 'delegation-identity',
+        "code": 'delegation-identity-false-hardware-claim',
+        "human": 'delegation identity: claim_hardware set without quote '
+                 'bytes -- a hardware attestation claim with no real quote '
+                 'path is refused; honest naming enforced in code',
+        "severity": 'high',
+        "evidence_kinds_required": ['attestation', 'identity'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-identity-invalid': {
+        "domain": 'delegation-identity',
+        "code": 'delegation-identity-invalid',
+        "human": 'delegation identity: malformed identity evidence, DID '
+                 'document, ceremony transcript, receipt, or chain link; '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['identity', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-identity-unauthorized-key': {
+        "domain": 'delegation-identity',
+        "code": 'delegation-identity-unauthorized-key',
+        "human": 'delegation identity: the receipt signer is not authorized '
+                 'for delegation by the identity evidence (not in the DID '
+                 "document's delegation_keys, or transcript not about the "
+                 'signer); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['identity', 'signature', 'delegation'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-invalid': {
+        "domain": 'delegation',
+        "code": 'delegation-invalid',
+        "human": 'delegation receipt: malformed shape (unknown schema, bad '
+                 'ids, non-hex digests, rights outside the closed '
+                 'vocabulary, or bad constraints); refused fail-closed '
+                 'before any authority is considered',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation'],
         "reverify_steps": ['recompute'],
     },
     'delegation-invocation-audience-mismatch': {
@@ -4903,6 +4967,39 @@ TAXONOMY = {
         "evidence_kinds_required": ['delegation'],
         "reverify_steps": ['recompute'],
     },
+    'delegation-revocation-invalid': {
+        "domain": 'delegation',
+        "code": 'delegation-revocation-invalid',
+        "human": 'delegation revocation: a revocation record, revocation '
+                 'list, or delegation chain failed structural validation '
+                 '(bad shape, digest mismatch, broken linkage, backwards '
+                 'revoked_at); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation', 'revocation'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-revocation-list-full': {
+        "domain": 'delegation',
+        "code": 'delegation-revocation-list-full',
+        "human": 'delegation revocation: the per-delegator revocation '
+                 'list is at its bound (4096 entries); further '
+                 'revocations refuse loud rather than silently drop; '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['delegation', 'revocation'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-revoked': {
+        "domain": 'delegation',
+        "code": 'delegation-revoked',
+        "human": 'delegation revocation: a presented receipt (or one of '
+                 'its ancestors) was revoked by its delegator; '
+                 'revocation binds all downstream copies and beats '
+                 'expiry; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation', 'revocation'],
+        "reverify_steps": ['recompute'],
+    },
     'delegation-root-exceeds-policy': {
         "domain": 'delegation',
         "code": 'delegation-root-exceeds-policy',
@@ -4953,6 +5050,50 @@ TAXONOMY = {
         "evidence_kinds_required": ['capability-attestation'],
         "reverify_steps": ['recompute'],
     },
+    'delegation-ticket-expired': {
+        "domain": 'delegation',
+        "code": 'delegation-ticket-expired',
+        "human": 'delegation ticket presented or used outside its '
+                 'validity window (or its ok-as-delegate declaration '
+                 'lapsed); time-boxed authority refuses fail-closed, '
+                 'silence never extends it',
+        "severity": 'medium',
+        "evidence_kinds_required": ['delegation'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-ticket-invalid': {
+        "domain": 'delegation',
+        "code": 'delegation-ticket-invalid',
+        "human": 'delegation ticket malformed, bad signature, wrong '
+                 'holder, action scope escapes the ticket scope, broken '
+                 'parent chain, ticket-key confusion, or a child ticket '
+                 'that outlives its parent; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-ticket-not-opted-in': {
+        "domain": 'delegation',
+        "code": 'delegation-ticket-not-opted-in',
+        "human": 'delegation ticket issued to a delegatee with no live, '
+                 'signed ok-as-delegate declaration; authority is never '
+                 'pushed onto an unwilling principal; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['delegation'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-ticket-type-violated': {
+        "domain": 'delegation',
+        "code": 'delegation-ticket-type-violated',
+        "human": 'delegation ticket type rule broken: re-delegating a '
+                 'non-forwardable ticket, presenting outside a '
+                 'constrained downstream set, an empty downstream set '
+                 'on a constrained ticket, or a delegation that widens '
+                 'the parent scope; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation'],
+        "reverify_steps": ['recompute'],
+    },
     'delegation-ttl-excessive': {
         "domain": 'delegation-freshness',
         "code": 'delegation-ttl-excessive',
@@ -4991,6 +5132,16 @@ TAXONOMY = {
                  'interpretation',
         "severity": 'medium',
         "evidence_kinds_required": ['delegation'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-widened': {
+        "domain": 'delegation',
+        "code": 'delegation-widened',
+        "human": 'signed delegation receipt: a downstream receipt claims '
+                 'rights wider than its parent\'s rights; delegation '
+                 'narrows, never widens; refused fail-closed',
+        "severity": 'critical',
+        "evidence_kinds_required": ['delegation', 'signature'],
         "reverify_steps": ['recompute'],
     },
     'delegation-would-widen': {
@@ -14694,6 +14845,30 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['credential', 'signature', 'digest'],
         "reverify_steps": ['verify-signature'],
+    },
+    'supervision-capability-rights-exceeded': {
+        "domain": 'supervision',
+        "code": 'supervision-capability-rights-exceeded',
+        "human": 'supervision: a capability grant or route claims rights wider than held -- delegation narrows, never widens; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['message'],
+        "reverify_steps": ['recompute'],
+    },
+    'supervision-capability-route-violation': {
+        "domain": 'supervision',
+        "code": 'supervision-capability-route-violation',
+        "human": 'supervision: a use claim on a merely-routed capability -- a parent that only routes a capability cannot exercise it; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['message'],
+        "reverify_steps": ['recompute'],
+    },
+    'supervision-capability-undeclared': {
+        "domain": 'supervision',
+        "code": 'supervision-capability-undeclared',
+        "human": 'supervision: a capability use, offer, or exercise names a capability outside the closed inventory -- refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['message'],
+        "reverify_steps": ['recompute'],
     },
     'supervision-crash-loop': {
         "domain": 'supervision',

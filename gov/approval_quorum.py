@@ -265,13 +265,20 @@ class QuorumPredicate(object):
                 or max_voters <= 0):
             _refuse("approval-quorum-invalid",
                     "max_voters must be a positive int")
-        # The F330/F340 pattern: freeze the declaration so a post-build
-        # in-process mutation cannot silently change decisions under a
-        # still-valid digest. frozenset is already immutable; the object
-        # itself is slot-locked (no __dict__).
-        self._min_approvals = min_approvals
-        self._blocking_veto_roles = roles
-        self._max_voters = max_voters
+        # The F330/F340 pattern (supervision.ChildSpec): the declaration is
+        # frozen at construction. __init__ writes via object.__setattr__
+        # below; every later assignment refuses coded
+        # approval-quorum-invalid. __slots__ alone does NOT stop
+        # reassignment of declared slots (F373), so the refusal is
+        # explicit. frozenset is already immutable.
+        object.__setattr__(self, "_min_approvals", min_approvals)
+        object.__setattr__(self, "_blocking_veto_roles", roles)
+        object.__setattr__(self, "_max_voters", max_voters)
+
+    def __setattr__(self, name, value):
+        _refuse("approval-quorum-invalid",
+                "QuorumPredicate is frozen after construction; "
+                "a re-plan requires a new predicate, never a mutation")
 
     @property
     def min_approvals(self):

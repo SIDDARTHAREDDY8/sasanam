@@ -100,7 +100,7 @@ def green_check():
 # Taxonomy pin (attack-only lane: gov/ is byte-identical, pin stays 1742)
 # ---------------------------------------------------------------------------
 
-TAXONOMY_PIN = 1780  # Wave-294 merge (F365, F366 filed OPEN); Wave-295 merge: pin 1742 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
+TAXONOMY_PIN = 1797  # Wave-294 merge (F365, F366 filed OPEN); Wave-295 merge: pin 1742 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*); Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
 
 
 def p_taxonomy_pin():

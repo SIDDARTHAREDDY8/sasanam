@@ -270,6 +270,39 @@ def load_artifact(obj):
             raise PolicyCIError(
                 "derived file %r digest mismatch (hand-edited artifact)"
                 % (name,), code=DERIVED_TAMPERED)
+    # F372: the derived file set is CLOSED. derive() emits exactly the
+    # files recorded in the embedded manifest (the manifest lists every
+    # file except itself, by construction). An added file -- even with a
+    # consistent digests entry -- is not in the closed set and refuses.
+    manifest_text = derived.get("policy.manifest.json")
+    try:
+        manifest = (json.loads(manifest_text)
+                    if isinstance(manifest_text, str) else None)
+    except ValueError:
+        manifest = None
+    if (not isinstance(manifest, dict)
+            or manifest.get("format") != "sasanam-policy-manifest/v1"):
+        raise PolicyCIError("artifact manifest missing or malformed",
+                            code=DERIVED_TAMPERED)
+    if manifest.get("source_digest") != obj.get("source_digest"):
+        raise PolicyCIError(
+            "artifact manifest disagrees with artifact source_digest",
+            code=DERIVED_TAMPERED)
+    manifest_files = manifest.get("files")
+    if not isinstance(manifest_files, dict):
+        raise PolicyCIError("artifact manifest files map malformed",
+                            code=DERIVED_TAMPERED)
+    closed = set(manifest_files) | {"policy.manifest.json"}
+    if set(derived.keys()) != closed:
+        raise PolicyCIError(
+            "derived file set is not closed (expected %s, got %s)"
+            % (sorted(closed), sorted(derived.keys())),
+            code=DERIVED_TAMPERED)
+    for name, want in manifest_files.items():
+        if digests.get(name) != want:
+            raise PolicyCIError(
+                "manifest digest for %r disagrees with artifact digests"
+                % (name,), code=DERIVED_TAMPERED)
     if not obj.get("source_digest"):
         raise PolicyCIError("artifact missing source_digest",
                             code=DERIVED_TAMPERED)

@@ -12,8 +12,9 @@ boundary, rest_for_one exactness), and F371 re-verification on this base
 Base: wave-297 merge 5662f8874b63724a1bfd1f4441b470bfe1ba43d8
 (verified via git rev-parse HEAD after clone; git ls-remote agreed).
 
-Pin 1780 (no new codes minted by this lane -- attack only; gov/ stays
-byte-identical). Next free F374 (F372, F373 filed by this lane).
+Pin 1797 (no new codes minted by this lane -- attack only; gov/ stays
+byte-identical). Next free F374 at lane time (F372, F373 filed by this lane);
+wave-299 merge re-pin: next free F377 (open F374, F375, F376).
 
 $0 spend, synthetic/local, deterministic. Stdlib only, no in-repo git
 subprocesses. New batteries set deployment mode at module level and are
@@ -50,7 +51,7 @@ from gov import policy_ci as pci
 from gov import supervision as sup
 from gov import ed25519 as _ed25519
 
-TAXONOMY_PIN = 1780  # Wave-297 merge pin; this lane mints no codes.
+TAXONOMY_PIN = 1797  # Wave-297 merge pin; this lane mints no codes.; Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*)
 
 _results = []
 
@@ -148,8 +149,10 @@ class BaseStateTest(unittest.TestCase):
         path = os.path.join(os.path.dirname(os.path.dirname(
             os.path.abspath(__file__))), "evals", "FINDINGS.md")
         footer = open(path, encoding="utf-8").read()[-6000:]
-        ok = ("Next free finding: **F374**" in footer
-              and "Open findings: F372, F373" in footer)
+        # Wave-299 merge re-pin: F372/F373 CLOSED by wave-299 lane 1;
+        # merged footer is open F374, F375, F376 / next free F377.
+        ok = ("Next free finding: **F377**" in footer
+              and "Open findings: F374, F375, F376" in footer)
         self.assertTrue(_expect_held("footer-state", ok,
                                     "footer disagrees") == "HELD")
 
@@ -215,7 +218,8 @@ class PolicyCIAttackTest(unittest.TestCase):
         evil["derived"]["evil.yaml"] = "allow: everything\n"
         evil["digests"]["evil.yaml"] = hashlib.sha256(
             b"allow: everything\n").hexdigest()
-        # Record-only: F372 is OPEN at this base (BREAK by design).
+        # Record-only: F372 was OPEN at the wave-298 base (BREAK by design
+        # there); CLOSED by wave-299 lane 1, so this HELDs on the merged tree.
         _expect_coded("F372-artifact-extra-file",
                       lambda: pci.load_artifact(evil),
                       {"policy-ci-derived-tampered"})
@@ -289,7 +293,8 @@ class QuorumAttackTest(unittest.TestCase):
             p._min_approvals = 1
         # The F330/F340 pattern: post-construction assignment must
         # refuse coded approval-quorum-invalid. Silent success BREAKs.
-        # Record-only: F373 is OPEN at this base (BREAK by design).
+        # Record-only: F373 was OPEN at the wave-298 base (BREAK by design
+        # there); CLOSED by wave-299 lane 1, so this HELDs on the merged tree.
         _expect_coded("F373-predicate-min-mutable", mutate,
                       {"approval-quorum-invalid"})
 
@@ -298,7 +303,8 @@ class QuorumAttackTest(unittest.TestCase):
                                blocking_veto_roles=("veto",))
         def mutate():
             p._blocking_veto_roles = frozenset()
-        # Record-only: F373 is OPEN at this base (BREAK by design).
+        # Record-only: F373 was OPEN at the wave-298 base (BREAK by design
+        # there); CLOSED by wave-299 lane 1, so this HELDs on the merged tree.
         _expect_coded("F373-predicate-veto-mutable", mutate,
                       {"approval-quorum-invalid"})
 

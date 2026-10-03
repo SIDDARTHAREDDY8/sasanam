@@ -44,7 +44,7 @@ if _REPO not in sys.path:
 
 from gov import invocation_pipeline as ip  # noqa: E402
 
-TAXONOMY_PIN = 1780
+TAXONOMY_PIN = 1797
 
 
 def _record(pid, verdict, note):
