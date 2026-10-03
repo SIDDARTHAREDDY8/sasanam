@@ -56,6 +56,8 @@ import traceback
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -146,8 +148,8 @@ def _ctx(jti):
 
 def _p1_conflict(results):
     if not HAVE_FOLLOWTHROUGH:
-        _rec(results, PROBE_NAMES[0], "GAP",
-             "pre-lane: no verify_presentation/InMemoryConsumeStore")
+        _rec(results, PROBE_NAMES[0], "BREAK",
+             "GAP: pre-lane: no verify_presentation/InMemoryConsumeStore")
         return
     try:
         reg, ledger, store, permit = _ctx("p1-jti")
@@ -183,8 +185,8 @@ def _p1_conflict(results):
 
 def _p2_store_unavailable(results):
     if not HAVE_FOLLOWTHROUGH:
-        _rec(results, PROBE_NAMES[1], "GAP",
-             "pre-lane: no verify_presentation/InMemoryConsumeStore")
+        _rec(results, PROBE_NAMES[1], "BREAK",
+             "GAP: pre-lane: no verify_presentation/InMemoryConsumeStore")
         return
     try:
         reg, ledger, _s, permit = _ctx("p2-jti")
@@ -217,8 +219,8 @@ def _p2_store_unavailable(results):
 
 def _p3_reconcile(results):
     if not HAVE_FOLLOWTHROUGH:
-        _rec(results, PROBE_NAMES[2], "GAP",
-             "pre-lane: follow-through API absent")
+        _rec(results, PROBE_NAMES[2], "BREAK",
+             "GAP: pre-lane: follow-through API absent")
         return
     try:
         reg, ledger, store, permit = _ctx("p3-jti")
@@ -256,8 +258,8 @@ def _p3_reconcile(results):
 
 def _p4_replay(results):
     if not HAVE_FOLLOWTHROUGH:
-        _rec(results, PROBE_NAMES[3], "GAP",
-             "pre-lane: follow-through API absent")
+        _rec(results, PROBE_NAMES[3], "BREAK",
+             "GAP: pre-lane: follow-through API absent")
         return
     try:
         reg, ledger, store, permit = _ctx("p4-jti")
@@ -295,8 +297,8 @@ def _p4_replay(results):
 
 def _p5_order_drift(results):
     if not HAVE_FOLLOWTHROUGH:
-        _rec(results, PROBE_NAMES[4], "GAP",
-             "pre-lane: no verify_presentation")
+        _rec(results, PROBE_NAMES[4], "BREAK",
+             "GAP: pre-lane: no verify_presentation")
         return
     try:
         reg, ledger, store, permit = _ctx("p5-jti")
@@ -409,8 +411,8 @@ def _p5_order_drift(results):
 
 def _p6_crypto_before_state(results):
     if not HAVE_FOLLOWTHROUGH:
-        _rec(results, PROBE_NAMES[5], "GAP",
-             "pre-lane: no verify_presentation")
+        _rec(results, PROBE_NAMES[5], "BREAK",
+             "GAP: pre-lane: no verify_presentation")
         return
     try:
         reg, ledger, store, permit = _ctx("p6-jti")
@@ -437,8 +439,8 @@ def _p6_crypto_before_state(results):
 
 def _p7_timeout_budget(results):
     if not HAVE_FOLLOWTHROUGH:
-        _rec(results, PROBE_NAMES[6], "GAP",
-             "pre-lane: no BudgetLedger")
+        _rec(results, PROBE_NAMES[6], "BREAK",
+             "GAP: pre-lane: no BudgetLedger")
         return
     try:
         reg, ledger, store, permit = _ctx("p7-jti")
@@ -469,8 +471,8 @@ def _p7_timeout_budget(results):
 
 def _p8_unsigned_no_effect(results):
     if not HAVE_FOLLOWTHROUGH:
-        _rec(results, PROBE_NAMES[7], "GAP",
-             "pre-lane: no BudgetLedger")
+        _rec(results, PROBE_NAMES[7], "BREAK",
+             "GAP: pre-lane: no BudgetLedger")
         return
     try:
         reg, ledger, store, permit = _ctx("p8-jti")
@@ -509,8 +511,8 @@ def _p8_unsigned_no_effect(results):
 
 def _p9_signed_no_effect(results):
     if not HAVE_FOLLOWTHROUGH:
-        _rec(results, PROBE_NAMES[8], "GAP",
-             "pre-lane: no BudgetLedger")
+        _rec(results, PROBE_NAMES[8], "BREAK",
+             "GAP: pre-lane: no BudgetLedger")
         return
     try:
         reg, ledger, store, permit = _ctx("p9-jti")
@@ -547,8 +549,8 @@ def _p9_signed_no_effect(results):
 
 def _p10_rate_budget(results):
     if not HAVE_FOLLOWTHROUGH:
-        _rec(results, PROBE_NAMES[9], "GAP",
-             "pre-lane: no BudgetLedger")
+        _rec(results, PROBE_NAMES[9], "BREAK",
+             "GAP: pre-lane: no BudgetLedger")
         return
     try:
         budget = _bp.BudgetLedger()
@@ -576,8 +578,8 @@ def _p10_rate_budget(results):
 
 def _p11_no_fallback(results):
     if not HAVE_FOLLOWTHROUGH:
-        _rec(results, PROBE_NAMES[10], "GAP",
-             "pre-lane: no verify_presentation")
+        _rec(results, PROBE_NAMES[10], "BREAK",
+             "GAP: pre-lane: no verify_presentation")
         return
     try:
         _reg, ledger, store, _p = _ctx("p11-jti")
@@ -600,8 +602,8 @@ def _p11_no_fallback(results):
 
 def _p12_admission_gate(results):
     if not HAVE_FOLLOWTHROUGH:
-        _rec(results, PROBE_NAMES[11], "GAP",
-             "pre-lane: no InMemoryConsumeStore")
+        _rec(results, PROBE_NAMES[11], "BREAK",
+             "GAP: pre-lane: no InMemoryConsumeStore")
         return
     try:
         reg, ledger, _s, permit = _ctx("p12-jti")
@@ -633,8 +635,8 @@ def _p12_admission_gate(results):
 
 def _p13_local_policy(results):
     if not HAVE_FOLLOWTHROUGH:
-        _rec(results, PROBE_NAMES[12], "GAP",
-             "pre-lane: no verify_presentation")
+        _rec(results, PROBE_NAMES[12], "BREAK",
+             "GAP: pre-lane: no verify_presentation")
         return
     try:
         reg, ledger, store, permit = _ctx("p13-jti")
@@ -657,8 +659,8 @@ def _p13_local_policy(results):
 
 def _p14_registry_unavailable(results):
     if not HAVE_FOLLOWTHROUGH:
-        _rec(results, PROBE_NAMES[13], "GAP",
-             "pre-lane: no verify_presentation")
+        _rec(results, PROBE_NAMES[13], "BREAK",
+             "GAP: pre-lane: no verify_presentation")
         return
     try:
         reg, ledger, store, permit = _ctx("p14-jti")
@@ -707,8 +709,8 @@ def _p14_registry_unavailable(results):
 
 def _p15_in_progress_retryable(results):
     if not HAVE_FOLLOWTHROUGH:
-        _rec(results, PROBE_NAMES[14], "GAP",
-             "pre-lane: no verify_presentation")
+        _rec(results, PROBE_NAMES[14], "BREAK",
+             "GAP: pre-lane: no verify_presentation")
         return
     try:
         reg, ledger, store, permit = _ctx("p15-jti")
@@ -781,15 +783,16 @@ def main():
     second = _run_once()
     det_ok = [a["verdict"] for a in first] == [b["verdict"] for b in second]
     held = sum(1 for r in first if r["verdict"] == "HELD")
-    gap = sum(1 for r in first if r["verdict"] == "GAP")
     brk = sum(1 for r in first if r["verdict"] == "BREAK")
     err = sum(1 for r in first if r["verdict"] == "ERROR")
-    print("w240_boundpermit_followthrough: %d/%d HELD, %d GAP, %d BREAK, "
-          "%d ERROR; determinism %s" % (held, len(first), gap, brk, err,
-                                        "OK" if det_ok else "MISMATCH"))
-    for r in first:
-        if r["verdict"] != "HELD":
-            print("  [%s] %s: %s" % (r["verdict"], r["probe"], r["detail"]))
+    _triples = [(r["probe"], r["verdict"], r["detail"]) for r in first]
+    _coh_ok, _coh_diags = probe_lines.check_coherence(_triples, brk, held, err)
+    probe_lines.emit_dicts(first, verdict_key="verdict", pid_key="probe",
+                           note_key="detail")
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR; determinism %s"
+          % (brk, held, err, "OK" if det_ok else "MISMATCH"))
     if not det_ok:
         print("  determinism mismatch between runs")
         return 1

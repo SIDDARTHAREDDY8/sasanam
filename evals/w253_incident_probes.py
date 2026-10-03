@@ -24,6 +24,8 @@ import traceback
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 HAVE_INC = False
 try:
@@ -39,7 +41,9 @@ GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 def _run_probe(name, fn, have):
     if not have:
-        return name, "GAP", "capability absent on pristine base"
+        # D1 (wave-315): GAP maps to BREAK; the "GAP:" prefix keeps the
+        # gap-demonstrated evidence in the note.
+        return name, "BREAK", "GAP: capability absent on pristine base"
     try:
         note = fn()
         return name, "HELD", note
@@ -404,7 +408,10 @@ def _green():
         except Exception as exc:  # noqa: BLE001
             raise AssertionError("%s green check failed: %r" % (bat, exc))
         out = (proc.stdout or "") + (proc.stderr or "")
-        if "BREAK" in out or proc.returncode != 0:
+        # D8 (wave-315): match the canonical [BREAK] probe-line form,
+        # not the "BREAK" substring (the canonical summary
+        # "N BREAK / M HELD / K ERROR" contains it).
+        if "[BREAK]" in out or proc.returncode != 0:
             raise AssertionError(
                 "%s green check not green (rc=%d):\n%s"
                 % (bat, proc.returncode, out[-2000:]))
@@ -416,27 +423,27 @@ def _green():
 
 
 PROBES = [
-    ("resolve/open-findings-refused", probe_resolve_open_findings_refused,
+    ("resolve-open-findings-refused", probe_resolve_open_findings_refused,
      HAVE_INC),
-    ("resolve/no-provider-fail-closed", probe_resolve_no_provider_fail_closed,
+    ("resolve-no-provider-fail-closed", probe_resolve_no_provider_fail_closed,
      HAVE_INC),
-    ("resolve/unknown-finding-fail-closed",
+    ("resolve-unknown-finding-fail-closed",
      probe_resolve_unknown_finding_fail_closed, HAVE_INC),
-    ("resolve/open-tasks-refused", probe_resolve_open_tasks_refused,
+    ("resolve-open-tasks-refused", probe_resolve_open_tasks_refused,
      HAVE_INC),
-    ("transition/illegal-from-open", probe_illegal_transition_refused,
+    ("transition-illegal-from-open", probe_illegal_transition_refused,
      HAVE_INC),
-    ("transition/resolved-terminal", probe_transition_after_resolved_refused,
+    ("transition-resolved-terminal", probe_transition_after_resolved_refused,
      HAVE_INC),
-    ("postmortem/unknown-incident", probe_postmortem_unknown_incident,
+    ("postmortem-unknown-incident", probe_postmortem_unknown_incident,
      HAVE_INC),
-    ("postmortem/premature", probe_postmortem_premature, HAVE_INC),
-    ("state/no-forged-resolution", probe_forged_resolution_impossible,
+    ("postmortem-premature", probe_postmortem_premature, HAVE_INC),
+    ("state-no-forged-resolution", probe_forged_resolution_impossible,
      HAVE_INC),
-    ("input/malformed", probe_malformed_inputs, HAVE_INC),
-    ("input/duplicate-declare", probe_duplicate_declare, HAVE_INC),
-    ("orchestration/happy-path", probe_happy_path_orchestration, HAVE_INC),
-    ("audit/trail-complete", probe_audit_trail_complete, HAVE_INC),
+    ("input-malformed", probe_malformed_inputs, HAVE_INC),
+    ("input-duplicate-declare", probe_duplicate_declare, HAVE_INC),
+    ("orchestration-happy-path", probe_happy_path_orchestration, HAVE_INC),
+    ("audit-trail-complete", probe_audit_trail_complete, HAVE_INC),
 ]
 
 
@@ -446,20 +453,19 @@ def main():
         results.append(_run_probe(name, fn, have))
     held = sum(1 for _n, v, _x in results if v == "HELD")
     brk = sum(1 for _n, v, _x in results if v == "BREAK")
-    gap = sum(1 for _n, v, _x in results if v == "GAP")
     err = sum(1 for _n, v, _x in results if v == "ERROR")
-    print("w253 incident: %d/%d HELD, %d BREAK, %d GAP, %d ERROR"
-          % (held, len(results), brk, gap, err))
-    for name, verdict, note in results:
-        first = note.splitlines()[0] if note else ""
-        print("  [%s] %s: %s" % (verdict, name, first[:160]))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(results, brk, held, err)
+    probe_lines.emit(results)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk, held, err))
     try:
         for note in _green():
             print("  green: %s" % note)
     except AssertionError as exc:
         print("  GREEN-CHECK FAILED: %s" % (exc,))
         return 2
-    if brk or err or gap:
+    if brk or err:
         return 1
     return 0
 

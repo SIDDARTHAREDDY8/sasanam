@@ -9,8 +9,10 @@ signatures anywhere), and the expected_command field is DIAGNOSTIC
 ONLY (a compromised functionary can forge it, so command equality is
 never an enforcement control).
 
-Verdicts: HELD / GAP / BREAK / ERROR. Any BREAK = genuine break of
-the quorum discipline (file as F209+). Exit 1 on any BREAK/ERROR.
+Verdicts: HELD / BREAK / ERROR (GAP mapped to BREAK per D1, wave-315;
+the "GAP:" note prefix preserves the gap-demonstrated evidence). Any
+BREAK = genuine break of the quorum discipline (file as F209+).
+Exit 1 on any BREAK/ERROR.
 
 $0 spend. No network. stdlib only. Real product code, no stubs.
 
@@ -31,6 +33,8 @@ os.environ.setdefault("TMPDIR", "/var/tmp/g217a-%d" % os.getpid())
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -57,7 +61,6 @@ def _probe(name):
 
 def _record(name, verdict, detail):
     _RESULTS.append((name, verdict, detail))
-    print("%-34s %-6s %s" % (name, verdict, detail))
 
 
 _SEEDS = {
@@ -82,7 +85,9 @@ def _keyset(signers, *names):
 
 def _require_module(name):
     if _ABSENT:
-        _record(name, "GAP", "module absent (%s)" % _IMPORT_ERROR)
+        # D1 (wave-315): GAP maps to BREAK; the "GAP:" prefix keeps the
+        # gap-demonstrated evidence in the note.
+        _record(name, "BREAK", "GAP: module absent (%s)" % _IMPORT_ERROR)
         return None
     return True
 
@@ -559,7 +564,9 @@ def _green_check():
         _record("green-check", "HELD", "skipped (GOV_SKIP_GREEN=1)")
         return
     if _ABSENT:
-        _record("green-check", "GAP", "module absent; nothing to check")
+        # D1 (wave-315): GAP maps to BREAK; the "GAP:" prefix keeps the
+        # gap-demonstrated evidence in the note.
+        _record("green-check", "BREAK", "GAP: module absent; nothing to check")
         return
     env = dict(os.environ)
     env["GOV_SKIP_GREEN"] = "1"
@@ -613,11 +620,14 @@ def main():
           % (len(_RESULTS), len(first)))
     _green_check()
     held = sum(1 for _n, v, _d in _RESULTS if v == "HELD")
-    gaps = sum(1 for _n, v, _d in _RESULTS if v == "GAP")
     breaks = sum(1 for _n, v, _d in _RESULTS if v == "BREAK")
     errors = sum(1 for _n, v, _d in _RESULTS if v == "ERROR")
-    print("SUMMARY: %d HELD / %d GAP / %d BREAK / %d ERROR"
-          % (held, gaps, breaks, errors))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        _RESULTS, breaks, held, errors)
+    probe_lines.emit(_RESULTS)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (breaks, held, errors))
     return 1 if (breaks or errors) else 0
 
 

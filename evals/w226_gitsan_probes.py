@@ -67,6 +67,8 @@ except OSError:
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -100,7 +102,9 @@ def _held(name, detail=""):
 
 
 def _gap(name, detail="absent on base"):
-    _record(name, "GAP", detail)
+    # D1 (wave-315): GAP maps to BREAK; the "GAP:" prefix keeps the
+    # gap-demonstrated evidence in the note.
+    _record(name, "BREAK", "GAP: " + detail)
 
 
 def _break(name, detail):
@@ -449,14 +453,14 @@ def main():
             _record(name, "ERROR", "probe crashed: %r" % (exc,))
     _green_checks()
     held = sum(1 for _, v, _ in _RESULTS if v == "HELD")
-    gap = sum(1 for _, v, _ in _RESULTS if v == "GAP")
     brk = sum(1 for _, v, _ in _RESULTS if v == "BREAK")
     err = sum(1 for _, v, _ in _RESULTS if v == "ERROR")
     print("== w226 gitsan probes ==")
-    for name, verdict, detail in _RESULTS:
-        print("%-34s %-6s %s" % (name, verdict, detail))
-    print("HELD %d / GAP %d / BREAK %d / ERROR %d" % (held, gap, brk,
-                                                      err))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(_RESULTS, brk, held, err)
+    probe_lines.emit(_RESULTS)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk, held, err))
     det = "PASS"
     if _IMPORT_OK:
         try:

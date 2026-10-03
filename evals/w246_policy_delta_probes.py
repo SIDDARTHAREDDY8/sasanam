@@ -42,6 +42,8 @@ import traceback
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 HAVE_PDG = False
 try:
@@ -107,7 +109,9 @@ def _swap(old, new):
 
 def _run_probe(name, fn, have):
     if not have:
-        return name, "GAP", "capability absent on pristine base"
+        # D1 (wave-315): GAP maps to BREAK; the "GAP:" prefix keeps the
+        # gap-demonstrated evidence in the note.
+        return name, "BREAK", "GAP: capability absent on pristine base"
     try:
         note = fn()
         return name, "HELD", note
@@ -287,20 +291,22 @@ def _run_green_checks():
 
 def main():
     print("wave-246 policy-delta probes (module: %s)" % (HAVE_PDG,))
-    held = gap = 0
+    results = []
     for name in PROBE_NAMES:
         fn, have = _PROBES[name]
         name_r, status, note = _run_probe(name, fn, have)
-        if status == "HELD":
-            held += 1
-        elif status == "GAP":
-            gap += 1
-        print("%-42s %s %s" % (name_r, status, note))
+        results.append((name_r, status, note))
     notes = _run_green_checks()
     for note in notes:
         print("green: %s" % note)
-    print("summary: %d HELD / %d GAP / %d total"
-          % (held, gap, len(PROBE_NAMES)))
+    held = sum(1 for _n, s, _d in results if s == "HELD")
+    brk = sum(1 for _n, s, _d in results if s == "BREAK")
+    err = sum(1 for _n, s, _d in results if s == "ERROR")
+    _coh_ok, _coh_diags = probe_lines.check_coherence(results, brk, held, err)
+    probe_lines.emit(results)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk, held, err))
     if held != len(PROBE_NAMES):
         raise SystemExit("battery not fully HELD (%d/%d)"
                          % (held, len(PROBE_NAMES)))

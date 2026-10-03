@@ -65,6 +65,8 @@ import urllib.parse
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -470,8 +472,10 @@ def _run_once():
     results = []
     for name, probe in zip(PROBE_NAMES, _PROBES):
         if not HAVE_MODULE:
-            results.append((name, "GAP",
-                            "gov/spiffe_credential_provider.py absent "
+            # D1 (wave-315): GAP maps to BREAK; the "GAP:" prefix keeps the
+            # gap-demonstrated evidence in the note.
+            results.append((name, "BREAK",
+                            "GAP: gov/spiffe_credential_provider.py absent "
                             "(pristine red)"))
             continue
         t0 = time.time()
@@ -521,15 +525,14 @@ def main():
     det_ok = [v for _, v, _d in first] == [v for _, v, _d in second]
     green = _run_green_checks()
     held = sum(1 for _, v, _d in first if v == "HELD")
-    gap = sum(1 for _, v, _d in first if v == "GAP")
     brk = sum(1 for _, v, _d in first if v == "BREAK")
     err = sum(1 for _, v, _d in first if v == "ERROR")
-    print("w232 spiffe-auth probes: %d HELD / %d GAP / %d BREAK / %d ERROR "
-          "of %d; determinism %s"
-          % (held, gap, brk, err, len(first),
-             "PASS" if det_ok else "FAIL"))
-    for name, verdict, detail in first:
-        print("  [%s] %s: %s" % (verdict, name, detail))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(first, brk, held, err)
+    probe_lines.emit(first)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR; determinism %s"
+          % (brk, held, err, "PASS" if det_ok else "FAIL"))
     for name, verdict, detail in green:
         print("  green [%s] %s: %s" % (verdict, name, detail))
     if brk or err or not det_ok:

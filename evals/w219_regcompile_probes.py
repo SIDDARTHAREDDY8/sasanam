@@ -40,6 +40,8 @@ os.environ.setdefault("TMPDIR", "/var/tmp/g219a-%d" % os.getpid())
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -67,12 +69,13 @@ def _probe(name):
 
 def _record(name, verdict, detail):
     _RESULTS.append((name, verdict, detail))
-    print("%-34s %-6s %s" % (name, verdict, detail))
 
 
 def _need(name):
     if _ABSENT:
-        _record(name, "GAP", "regcompile names absent from gov.policy_compile")
+        # D1 (wave-315): GAP maps to BREAK; the "GAP:" prefix keeps the
+        # gap-demonstrated evidence in the note.
+        _record(name, "BREAK", "GAP: regcompile names absent from gov.policy_compile")
         return False
     return True
 
@@ -607,7 +610,9 @@ def _green_check():
         _record("green-check", "HELD", "skipped (GOV_SKIP_GREEN=1)")
         return
     if _ABSENT:
-        _record("green-check", "GAP", "regcompile names absent")
+        # D1 (wave-315): GAP maps to BREAK; the "GAP:" prefix keeps the
+        # gap-demonstrated evidence in the note.
+        _record("green-check", "BREAK", "GAP: regcompile names absent")
         return
     env = dict(os.environ)
     env["GOV_SKIP_GREEN"] = "1"
@@ -669,11 +674,14 @@ def main():
           % (len(_RESULTS), len(first)))
     _green_check()
     held = sum(1 for _n, v, _d in _RESULTS if v == "HELD")
-    gaps = sum(1 for _n, v, _d in _RESULTS if v == "GAP")
     breaks = sum(1 for _n, v, _d in _RESULTS if v == "BREAK")
     errors = sum(1 for _n, v, _d in _RESULTS if v == "ERROR")
-    print("SUMMARY: %d HELD / %d GAP / %d BREAK / %d ERROR"
-          % (held, gaps, breaks, errors))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        _RESULTS, breaks, held, errors)
+    probe_lines.emit(_RESULTS)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (breaks, held, errors))
     return 1 if (breaks or errors) else 0
 
 

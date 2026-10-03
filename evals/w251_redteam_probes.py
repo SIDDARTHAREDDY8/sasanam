@@ -72,6 +72,8 @@ import traceback
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 HAVE_DL = HAVE_PC = HAVE_PD = HAVE_PJ = HAVE_EG = HAVE_SU = False
 try:
@@ -115,7 +117,9 @@ GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 def _run_probe(name, fn, have):
     if not have:
-        return name, "GAP", "capability absent on pristine base"
+        # D1 (wave-315): GAP maps to BREAK; the "GAP:" prefix keeps the
+        # gap-demonstrated evidence in the note.
+        return name, "BREAK", "GAP: capability absent on pristine base"
     try:
         note = fn()
         return name, "HELD", note
@@ -552,7 +556,10 @@ def _green():
         except Exception as exc:  # noqa: BLE001
             raise AssertionError("%s green check failed: %r" % (bat, exc))
         out = (proc.stdout or "") + (proc.stderr or "")
-        if "BREAK" in out or proc.returncode != 0:
+        # D8 (wave-315): match the canonical [BREAK] probe-line form,
+        # not the "BREAK" substring (the canonical summary
+        # "N BREAK / M HELD / K ERROR" contains it).
+        if "[BREAK]" in out or proc.returncode != 0:
             raise AssertionError(
                 "%s green check not green (rc=%d):\n%s"
                 % (bat, proc.returncode, out[-2000:]))
@@ -564,29 +571,29 @@ def _green():
 
 
 PROBES = [
-    ("log/forged-inclusion-proof", probe_log_forged_proof, HAVE_LOG),
-    ("log/equivocation-detected", probe_log_equivocation_control, HAVE_LOG),
-    ("log/post-append-mutation-hides", probe_log_mutation_hides, HAVE_LOG),
-    ("log/post-append-mutation-fabricates", probe_log_mutation_fabricates,
+    ("log-forged-inclusion-proof", probe_log_forged_proof, HAVE_LOG),
+    ("log-equivocation-detected", probe_log_equivocation_control, HAVE_LOG),
+    ("log-post-append-mutation-hides", probe_log_mutation_hides, HAVE_LOG),
+    ("log-post-append-mutation-fabricates", probe_log_mutation_fabricates,
      HAVE_LOG),
-    ("log/bogus-proof-index", probe_log_bogus_index, HAVE_LOG),
-    ("log/sth-tamper-and-epoch-replay", probe_log_sth_and_epoch, HAVE_LOG),
-    ("journal/forged-mac", probe_journal_forged_mac, HAVE_PJ),
-    ("journal/terminal-resurrection", probe_journal_terminal_resurrection,
+    ("log-bogus-proof-index", probe_log_bogus_index, HAVE_LOG),
+    ("log-sth-tamper-and-epoch-replay", probe_log_sth_and_epoch, HAVE_LOG),
+    ("journal-forged-mac", probe_journal_forged_mac, HAVE_PJ),
+    ("journal-terminal-resurrection", probe_journal_terminal_resurrection,
      HAVE_PJ),
-    ("journal/duplicate-event-id", probe_journal_duplicate_event, HAVE_PJ),
-    ("journal/wrong-key-reopen", probe_journal_wrong_key, HAVE_PJ),
-    ("journal/snapshot-tamper", probe_journal_snapshot_tamper, HAVE_PJ),
-    ("journal/nonserializable-payload", probe_journal_bad_payload, HAVE_PJ),
-    ("graph/ambiguous-link", probe_graph_ambiguous, HAVE_EG),
-    ("graph/unlinked-selector", probe_graph_unlinked, HAVE_EG),
-    ("graph/overflow", probe_graph_overflow, HAVE_EG),
-    ("graph/attr-merge-observed", probe_graph_attr_merge, HAVE_EG),
-    ("update/legacy-installed-map", probe_update_legacy_map, HAVE_SU),
-    ("update/same-version-digest-change", probe_update_digest_change,
+    ("journal-duplicate-event-id", probe_journal_duplicate_event, HAVE_PJ),
+    ("journal-wrong-key-reopen", probe_journal_wrong_key, HAVE_PJ),
+    ("journal-snapshot-tamper", probe_journal_snapshot_tamper, HAVE_PJ),
+    ("journal-nonserializable-payload", probe_journal_bad_payload, HAVE_PJ),
+    ("graph-ambiguous-link", probe_graph_ambiguous, HAVE_EG),
+    ("graph-unlinked-selector", probe_graph_unlinked, HAVE_EG),
+    ("graph-overflow", probe_graph_overflow, HAVE_EG),
+    ("graph-attr-merge-observed", probe_graph_attr_merge, HAVE_EG),
+    ("update-legacy-installed-map", probe_update_legacy_map, HAVE_SU),
+    ("update-same-version-digest-change", probe_update_digest_change,
      HAVE_SU),
-    ("update/no-aliasing", probe_update_no_aliasing, HAVE_SU),
-    ("update/identical-bytes-idempotent", probe_update_idempotent, HAVE_SU),
+    ("update-no-aliasing", probe_update_no_aliasing, HAVE_SU),
+    ("update-identical-bytes-idempotent", probe_update_idempotent, HAVE_SU),
 ]
 
 
@@ -596,20 +603,19 @@ def main():
         results.append(_run_probe(name, fn, have))
     held = sum(1 for _n, v, _x in results if v == "HELD")
     brk = sum(1 for _n, v, _x in results if v == "BREAK")
-    gap = sum(1 for _n, v, _x in results if v == "GAP")
     err = sum(1 for _n, v, _x in results if v == "ERROR")
-    print("w251 red-team: %d/%d HELD, %d BREAK, %d GAP, %d ERROR"
-          % (held, len(results), brk, gap, err))
-    for name, verdict, note in results:
-        first = note.splitlines()[0] if note else ""
-        print("  [%s] %s: %s" % (verdict, name, first[:160]))
     try:
         for note in _green():
             print("  green: %s" % note)
     except AssertionError as exc:
         print("  GREEN-CHECK FAILED: %s" % (exc,))
         return 2
-    if brk or err or gap:
+    _coh_ok, _coh_diags = probe_lines.check_coherence(results, brk, held, err)
+    probe_lines.emit(results)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk, held, err))
+    if brk or err:
         return 1
     return 0
 
