@@ -912,7 +912,15 @@ def _green_checks():
             out = p.stdout + p.stderr
             bad = [l for l in out.splitlines()
                    if l.startswith("  [BREAK]") or
-                   l.startswith("  [ERROR]")]
+                   l.startswith("[BREAK]") or
+                   l.startswith("  [ERROR]") or
+                   l.startswith("[ERROR]")]
+            # Wave-315: w280_redteam (D9) and w280_shields (D2) now emit
+            # canonical unindented lines; the indent-anchored predicate
+            # alone would go blind on their BREAKs. Both forms are
+            # matched. (w280_f304/f305 were already invisible to the
+            # indented predicate before this wave; this fix also catches
+            # w280_f305's unindented lines.)
             if p.returncode == 0 and not bad:
                 checks.append((batt, "HELD", "exit 0, no BREAK/ERROR"))
             else:
