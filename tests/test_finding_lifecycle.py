@@ -334,7 +334,20 @@ class FindingsMdTest(unittest.TestCase):
         # red team (F367 future-dated issued_at preempts live lease;
         # F368 filter-name-only drift digest; F369 audit_log shallow
         # copies; F370 nested credential-named dict keys; w295_redteam
-        # 4 BREAK expected-open / 24 HELD).
+        # 4 BREAK expected-open / 24 HELD); F367 closed 2026-10-02,
+        # wave-296 lane 1 (queueing design: per-scope grant list,
+        # overlap refused coded coord-lease-denied, future grants
+        # queue instead of evicting; w296_f367 0 BREAK / 12 HELD;
+        # pin unchanged 1750); F368 closed 2026-10-02, wave-296 lane 2
+        # (drift digest binds name + code object + callable identity;
+        # same-name replacement refuses coded toolcall-filter-frozen;
+        # w296_f368 0 BREAK / 7 HELD; pin unchanged 1750); F369 closed
+        # 2026-10-02, wave-296 lane 3 (audit_log returns deep copies;
+        # w296_f369 0 BREAK / 9 HELD; pin unchanged 1750); F370 closed
+        # 2026-10-02, wave-296 lane 4 (nested dict keys name-checked
+        # at call time; match refuses coded toolcall-schema-secret-field;
+        # w296_f370 0 BREAK / 14 HELD; pin unchanged 1750);
+        # w295_redteam 0 BREAK expected-open / 28 HELD.
         self.assertEqual(reg.get("F311").state, "verified")
         for num in ("F312", "F313", "F314", "F315", "F316", "F317",
                     "F318", "F319", "F320", "F321", "F322", "F323",
@@ -344,7 +357,8 @@ class FindingsMdTest(unittest.TestCase):
                     "F342", "F343", "F344", "F345", "F346", "F347", "F348",
                     "F349", "F350", "F351", "F352", "F353", "F354",
                     "F355", "F356", "F357", "F358", "F359", "F360",
-                    "F361", "F362", "F363", "F364", "F365", "F366"):
+                    "F361", "F362", "F363", "F364", "F365", "F366",
+                    "F367", "F368", "F369", "F370"):
             self.assertEqual(reg.get(num).state, "verified")
         self.assertGreaterEqual(reg.next_number, 371)
         self.assertEqual(reg.get("F310").state, "verified")

@@ -71,6 +71,7 @@ import hmac
 import json
 import re
 import time
+from collections.abc import Mapping
 from types import MappingProxyType
 
 # ---------------------------------------------------------------------------
@@ -552,6 +553,10 @@ class CallDecision:
         self.alert = alert
         self.code = code
         self.near_misses = near_misses
+        # First-class decision trace (gov/decision_trace.py), attached by
+        # CompiledToolPolicy.decide when a DecisionTracer is bound.
+        # None when no tracer is bound or tracing is opted out.
+        self.trace = None
 
     def to_dict(self):
         return {"verdict": self.verdict, "rule_index": self.rule_index,
@@ -589,6 +594,13 @@ class CompiledToolPolicy:
         # inside _doc, so binding a schema set never changes the policy
         # pin.
         self._tool_schema_set = None
+        # Opt-in decision-trace layer (gov/decision_trace.py): None until
+        # bind_tracer is called. Stored beside the policy, not inside
+        # _doc, so binding a tracer never changes the policy pin.
+        # Tracing is ON by default once bound; set_trace_enabled(False)
+        # is the documented opt-out.
+        self._decision_tracer = None
+        self._trace_enabled = True
 
     def bind_rule_set(self, rule_set):
         """Opt-in: bind a compiled tool-rule set to this policy.
@@ -625,6 +637,33 @@ class CompiledToolPolicy:
                     "got %r" % (type(schema_set),))
         self._tool_schema_set = schema_set
         return schema_set
+
+    def bind_tracer(self, tracer):
+        """Opt-in: bind a decision tracer to this policy.
+
+        From then on every :meth:`decide` emits a first-class signed
+        decision trace (gov/decision_trace.py) recording the ordered
+        evaluation edges, input digests, and the policy version +
+        snapshot token the decision was evaluated against. Tracing is
+        ON by default once bound; :meth:`set_trace_enabled` is the
+        documented opt-out. With no tracer bound, ``decide`` behaves
+        exactly as before (``decision.trace`` is None). Binding a
+        tracer never changes the policy pin.
+        """
+        from gov import decision_trace as _decision_trace
+        if not isinstance(tracer, _decision_trace.DecisionTracer):
+            _refuse("bind_tracer needs a DecisionTracer; got %r"
+                    % (type(tracer),))
+        self._decision_tracer = tracer
+        self._trace_enabled = True
+        return tracer
+
+    def set_trace_enabled(self, enabled):
+        """Documented opt-out for decision-trace emission. The policy
+        decides exactly as before; no trace is attached to decisions
+        while disabled."""
+        self._trace_enabled = bool(enabled)
+        return self._trace_enabled
 
     @property
     def name(self):
@@ -679,7 +718,27 @@ class CompiledToolPolicy:
         return identity
 
     def _deny(self, rule, rule_index, caller_identity, tool, operation,
-              args, code, rejection_layer, message=None, extra=None):
+              args, code, rejection_layer, message=None, extra=None,
+              edges=None):
+        # Decision-trace edge (gov/decision_trace.py): every denial --
+        # enforced or audit-mode would-deny -- is one ordered edge in the
+        # trace. ``edges`` is the decide-local edge list; None keeps
+        # _deny usable without a trace context.
+        if edges is not None:
+            if self._doc["mode"] == "audit":
+                outcome = "would-deny"
+            else:
+                outcome = "deny"
+            rule_name = "rule[%s]" % (rule_index,)
+            # NOTE: compiled rules are MappingProxyType (frozen), not
+            # plain dicts -- check Mapping, not dict.
+            if isinstance(rule, Mapping) and rule.get("name"):
+                rule_name = str(rule["name"])
+            edges.append({"seq": len(edges),
+                          "layer": rejection_layer or "authz",
+                          "rule": rule_name,
+                          "outcome": outcome,
+                          "reason": code})
         if self._doc["mode"] == "audit":
             # Audit-before-Block rollout: record the would-be denial as
             # prospective evidence; do NOT enforce and do NOT emit a
@@ -702,6 +761,37 @@ class CompiledToolPolicy:
             extra=extra))
         return CallDecision("DENY", rule_index, rejection_layer, alert,
                             code, [])
+
+    @staticmethod
+    def _edge(edges, layer, rule, outcome, reason=None):
+        """Append one ordered evaluation edge to a decide-local edge
+        list (gov/decision_trace.py contract)."""
+        edges.append({"seq": len(edges), "layer": layer, "rule": rule,
+                      "outcome": outcome, "reason": reason})
+
+    def _emit_decision_trace(self, edges, identity, tool, operation,
+                             args, decision):
+        """Attach a signed decision trace to ``decision`` (best
+        effort). F345-class trade-off: a broken or unbound tracer can
+        NEVER break a decision -- emission failures are swallowed and
+        the decision stands exactly as decided."""
+        try:
+            tracer = self._decision_tracer
+            if tracer is None or not self._trace_enabled:
+                return None
+            import uuid
+            envelope = tracer.emit(
+                decision_id=uuid.uuid4().hex,
+                snapshot_token=self.digest,
+                edges=edges,
+                inputs={"caller": identity, "tool": tool,
+                        "operation": operation, "args": args},
+                final_verdict=decision.verdict,
+                final_code=decision.code)
+            decision.trace = envelope
+            return envelope
+        except Exception:  # noqa: BLE001 -- emission never breaks decide
+            return None
 
     def decide(self, caller, tool, operation, args=None, now=None,
                history=None, context_flags=None):
@@ -727,6 +817,16 @@ class CompiledToolPolicy:
         AUDIT/CUSTOM/DENY/ALLOW -- so a shape violation can never be
         rescued by a permissive policy rule. The validated args (with
         optional defaults injected) flow into the policy rules.
+
+        When a decision tracer is bound (see :meth:`bind_tracer`), every
+        returned decision carries a signed first-class decision trace
+        (gov/decision_trace.py): the ordered evaluation edges, input
+        digests (never raw inputs), the final verdict, and the policy
+        version + snapshot token (this policy's digest) the decision
+        was evaluated against. Tracing is ON by default once bound;
+        :meth:`set_trace_enabled` is the documented opt-out. The
+        authn-raise path emits no trace -- no decision was produced,
+        and the raised coded exception is the evidence at that seam.
         """
         # F342: ill-typed public inputs refuse LOUD with a coded refusal
         # instead of crashing uncoded (fnmatch TypeError) or silently
@@ -749,6 +849,18 @@ class CompiledToolPolicy:
                     "decide args keys must be strings; got %r" % (_key,),
                     code=INVALID_CALL)
         identity = self._check_caller(caller)
+        # Decision-trace edges (gov/decision_trace.py): one ordered edge
+        # per evaluated layer/rule. ``_finish`` attaches the signed trace
+        # to the returned decision (best effort -- a broken tracer never
+        # breaks the decision).
+        edges = []
+        self._edge(edges, "authn", "caller-authn", "pass")
+
+        def _finish(decision):
+            self._emit_decision_trace(edges, identity, tool, operation,
+                                      args, decision)
+            return decision
+
         # Declared-sequence layer (opt-in): a bound rule set closes the
         # tool inventory and enforces the Init/Child/Terminal/Conditional
         # grammar plus the secret-shape gate. Violations refuse LOUD and
@@ -765,8 +877,10 @@ class CompiledToolPolicy:
                 # coded refusal, never an uncoded escape (F351 class).
                 code = getattr(e, "code", None) \
                     or "toolcall-sequence-violated"
-                return self._deny(None, None, identity, tool, operation,
-                                  args, code, "sequence", message=str(e))
+                return _finish(self._deny(None, None, identity, tool,
+                                          operation, args, code, "sequence",
+                                          message=str(e), edges=edges))
+            self._edge(edges, "sequence", "declared-sequence", "pass")
         # Typed-schema layer (opt-in): a bound schema set closes the
         # tool inventory and enforces declared field types and bounds.
         # Violations refuse LOUD and coded at this same seam; audit mode
@@ -782,8 +896,10 @@ class CompiledToolPolicy:
                 # coded refusal, never an uncoded escape (F351 class).
                 code = getattr(e, "code", None) \
                     or "toolcall-schema-invalid"
-                return self._deny(None, None, identity, tool, operation,
-                                  args, code, "schema", message=str(e))
+                return _finish(self._deny(None, None, identity, tool,
+                                          operation, args, code, "schema",
+                                          message=str(e), edges=edges))
+            self._edge(edges, "schema", "typed-schema", "pass")
         self._audit_rules(identity, tool, operation, args)
 
         near_misses = []
@@ -795,10 +911,13 @@ class CompiledToolPolicy:
             if rule["action"] != "CUSTOM":
                 continue
             if not _rule_matches_shape(rule, identity, tool, operation):
+                self._edge(edges, "custom", "custom[%d]" % i, "no-match")
                 continue
             if not _args_satisfy(rule, args, deny_semantics=False):
                 near_misses.append({"rule_index": i,
                                     "reason": "custom-arg-mismatch"})
+                self._edge(edges, "custom", "custom[%d]" % i, "no-match",
+                           "custom-arg-mismatch")
                 continue
             verdict, note = _authorizer_verdict(
                 rule["custom_authorizer"],
@@ -806,17 +925,20 @@ class CompiledToolPolicy:
                  "operation": operation, "args": dict(args),
                  "rule_index": i, "policy_name": self._doc["name"]})
             if verdict == "deny":
-                return self._deny(rule, i, identity, tool, operation,
-                                  args, CUSTOM_DENIED, "custom",
-                                  message=note)
+                return _finish(self._deny(rule, i, identity, tool, operation,
+                                          args, CUSTOM_DENIED, "custom",
+                                          message=note, edges=edges))
+            self._edge(edges, "custom", "custom[%d]" % i, "pass")
 
         # 2. DENY: missing attributes count as matches (fail-closed).
         for i, rule in indexed:
             if rule["action"] != "DENY":
                 continue
             if _rule_matches(rule, identity, tool, operation, args):
-                return self._deny(rule, i, identity, tool, operation,
-                                  args, CALL_DENIED, "authz")
+                return _finish(self._deny(rule, i, identity, tool, operation,
+                                          args, CALL_DENIED, "authz",
+                                          edges=edges))
+            self._edge(edges, "authz", "deny[%d]" % i, "no-match")
 
         # 3. ALLOW: constrained args must be present and satisfied.
         for i, rule in indexed:
@@ -829,18 +951,24 @@ class CompiledToolPolicy:
                         identity, tool, operation, args,
                         action="ALLOW", result="allowed",
                         code=None, rejection_layer=None))
-                    return CallDecision("ALLOW", i, None, alert, None,
-                                        near_misses)
+                    self._edge(edges, "authz", "allow[%d]" % i, "allow")
+                    return _finish(CallDecision("ALLOW", i, None, alert,
+                                                None, near_misses))
                 near_misses.append({"rule_index": i,
                                     "reason": "allow-arg-mismatch"})
+                self._edge(edges, "authz", "allow[%d]" % i, "no-match",
+                           "allow-arg-mismatch")
+                continue
+            self._edge(edges, "authz", "allow[%d]" % i, "no-match")
 
         # 4. Default deny (documented Istio divergence: fail closed).
         decision = self._deny(None, None, identity, tool, operation, args,
                               NO_ALLOW, "authz",
                               message="no rule allowed the call; default "
-                                      "deny")
+                                      "deny",
+                              edges=edges)
         decision.near_misses = near_misses
-        return decision
+        return _finish(decision)
 
 
 def compile_policy(doc):

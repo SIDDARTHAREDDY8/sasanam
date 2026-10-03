@@ -4499,6 +4499,38 @@ TAXONOMY = {
         "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
     },
+    'decision-trace-forgery': {
+        "domain": 'decision-trace',
+        "code": 'decision-trace-forgery',
+        "human": 'decision trace: the trace signature does not verify '
+                 'against the trace-signing key; the trace is forged or '
+                 'was signed by a different key; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'decision-trace-invalid': {
+        "domain": 'decision-trace',
+        "code": 'decision-trace-invalid',
+        "human": 'decision trace: the trace envelope or body is malformed '
+                 '(missing fields, bad hex, unknown format); refused '
+                 'instead of guessing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'decision-trace-replay-mismatch': {
+        "domain": 'decision-trace',
+        "code": 'decision-trace-replay-mismatch',
+        "human": 'decision trace: replay divergence -- the ordered edges '
+                 'fold to a different verdict than the recorded final '
+                 'decision, or the trace was evaluated against a different '
+                 'policy version/snapshot than the verifier trusts; '
+                 'recomputed evidence disagrees with the claim',
+        "severity": 'critical',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'decodetrust-binding-mismatch': {
         "domain": 'evcert',
         "code": 'decodetrust-binding-mismatch',

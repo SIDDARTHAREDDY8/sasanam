@@ -58,8 +58,10 @@ All refusals are LOUD: coded :class:`InvocationPipelineError`, never
 silent.
 """
 
+import copy
 import hashlib
 import json
+import marshal
 import math
 import re
 import time
@@ -458,6 +460,45 @@ def _filter_name(fn):
     return getattr(fn, "__name__", type(fn).__name__)
 
 
+def _filter_fingerprint(fn):
+    """Stable per-process fingerprint of the filter CALLABLE itself.
+
+    Binds (a) the filter's name, (b) its code object (marshal-dumped --
+    a same-named function with different code has a different
+    fingerprint), and (c) the callable's identity (``id`` -- a
+    same-code closure *instance* is a different object). The identity
+    component is stable for the object's lifetime; the stack holds the
+    filter tuple, so live filters cannot be garbage-collected and their
+    ids cannot be reused while the stack lives. A wholesale ``_filters``
+    replacement therefore always changes the drift digest, regardless
+    of names (F368).
+
+    ``id`` is a process-local value and the digest is never persisted,
+    so cross-process instability is not a concern.
+    """
+    name = _filter_name(fn)
+    code = getattr(fn, "__code__", None)
+    if code is not None:
+        try:
+            blob = marshal.dumps(code)
+        except Exception:  # noqa: BLE001
+            # Fallback: canonicalize the code attributes directly.
+            blob = _canonical((code.co_code, code.co_consts,
+                               code.co_names, code.co_varnames,
+                               code.co_argcount, code.co_flags))
+        code_sha = hashlib.sha256(blob).hexdigest()
+    else:
+        # Non-Python callables (functools.partial, C callables, objects
+        # with __call__): bind by object identity plus a type tag.
+        code_sha = None
+    return {
+        "name": name,
+        "kind": type(fn).__name__,
+        "code_sha256": code_sha,
+        "identity": "0x%x" % id(fn),
+    }
+
+
 def make_budget_filter(ledger):
     """Pre/post filter: reserve the declared cost before ``next()``,
     reconcile against the actual cost after, release on any refusal or
@@ -706,10 +747,14 @@ def _came_through_next(exc):
 
 
 def _stack_digest(name, filters, gate_holder):
+    # F368: the digest binds each filter's name, code object, and
+    # callable identity -- never names alone. A wholesale _filters
+    # replacement with same-named functions (or same-code closure
+    # instances) changes this digest and refuses coded at invoke time.
     return _digest({
         "format": PIPELINE_FORMAT,
         "name": name,
-        "filters": [_filter_name(fn) for fn in filters],
+        "filters": [_filter_fingerprint(fn) for fn in filters],
         "sequence_gate": gate_holder is not None,
     })
 
@@ -725,7 +770,11 @@ class FilterStack:
     live filter list on every call, so even a freeze-bypassing wholesale
     replacement of ``_filters`` is caught as ``toolcall-filter-frozen``
     (the ``CompiledToolPolicy`` drift-detection pattern) -- the pipeline
-    never decides under a mutated stack.
+    never decides under a mutated stack. The digest binds each filter's
+    name, code object, AND callable identity (F368): a replacement with
+    same-named but different-code functions, or with same-code closure
+    instances, changes the digest and refuses coded. The ``filters``
+    property still reports names only (execution order), not identity.
     """
 
     def __init__(self, filters, *, name="filter-stack", _gate_holder=None,
@@ -779,11 +828,16 @@ class FilterStack:
         return rule_set
 
     def audit_log(self):
-        """Copies of the signed per-call records (default stacks only)."""
+        """Copies of the signed per-call records (default stacks only).
+
+        Deep copies: mutating the returned entries (including the nested
+        ``record`` dict) cannot touch the stored log. (F369: the shallow
+        ``dict(entry)`` copy aliased the stored record.)
+        """
         if self._audit_fn is None:
             raise InvocationPipelineError(
                 "no audit filter in this stack", code=INVALID_CALL)
-        return [dict(entry) for entry in self._audit_fn.log]
+        return [copy.deepcopy(entry) for entry in self._audit_fn.log]
 
     # -- execution -----------------------------------------------------
 

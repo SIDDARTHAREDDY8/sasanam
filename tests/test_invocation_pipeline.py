@@ -155,6 +155,39 @@ class TestStackMechanics(unittest.TestCase):
             stack.invoke(lambda c: {"ok": 1}, ctx())
         self.assertEqual(cm.exception.code, "toolcall-filter-frozen")
 
+    def test_drift_same_name_replacement(self):
+        # F368: the drift digest binds code + identity, not names only --
+        # a wholesale _filters replacement with same-named functions
+        # refuses coded toolcall-filter-frozen (no new code minted).
+        def evil(context, nxt):
+            result = nxt(context)
+            return "EVIL:" + str(result)
+
+        evil.__name__ = passthrough.__name__
+        stack = IP.build_filter_stack([passthrough])
+        stack._filters = (evil,)  # noqa: SLF001
+        with self.assertRaises(IP.InvocationPipelineError) as cm:
+            stack.invoke(lambda c: {"ok": 1}, ctx())
+        self.assertEqual(cm.exception.code, "toolcall-filter-frozen")
+
+    def test_drift_same_code_different_instance(self):
+        # F368: same __code__, different closure instance -- the identity
+        # component of the fingerprint still moves the digest.
+        def _make(tag):
+            def tagged(context, nxt):
+                result = nxt(context)
+                return "TAG:%s:" % (tag,) + str(result)
+            return tagged
+
+        legit = _make("legit")
+        other = _make("evil")
+        self.assertIs(legit.__code__, other.__code__)
+        stack = IP.build_filter_stack([legit])
+        stack._filters = (other,)  # noqa: SLF001
+        with self.assertRaises(IP.InvocationPipelineError) as cm:
+            stack.invoke(lambda c: {"ok": 1}, ctx())
+        self.assertEqual(cm.exception.code, "toolcall-filter-frozen")
+
     def test_digest_stable(self):
         a = IP.build_filter_stack([passthrough], name="s")
         b = IP.build_filter_stack([passthrough], name="s")

@@ -8821,7 +8821,36 @@ when a lease is live at grant time regardless of the new lease's claimed
 of evicting the live record); (2) probe `lease-future-issued-preempts`
 flips to HELD; (3) adjacent batteries stay green.
 
-**Status: OPEN** (filed 2026-10-02, wave-295 independent red-team).
+**Status: CLOSED** (filed 2026-10-02, wave-295 independent red-team;
+closed 2026-10-02, wave-296 lane 1).
+
+**Closure record (2026-10-02, wave-296 lane 1):** implemented the
+close-when's queueing option -- the manager no longer keeps a single
+per-scope slot. `LeaseManager._leases` now maps scope -> list of
+granted, non-overlapping lease records; every grant is retained and a
+later grant can never evict an earlier one. `acquire` refuses coded
+`coord-lease-denied` when the new grant's `[issued_at, not_after)`
+overlaps any stored grant (no new decision codes; pin stays 1750);
+non-overlapping future-dated grants QUEUE alongside the live record.
+Lookups (`_live` / `_require_live` / `check_write`) resolve the single
+lease covering the queried instant (`issued_at <= checked_at <
+not_after`); `renew` refuses coded `coord-lease-denied` when the
+extension would steal a queued future grant's interval; `release`
+surrenders one interval by fencing token, leaving queued grants
+untouched. Reuse choice: `coord-lease-denied` for overlap (a grant
+that would collide with an existing grant is denied, matching the
+pre-existing denial semantics); `coord-lease-invalid` was not needed.
+Battery `evals/w296_f367_probes.py`: 0 BREAK / 12 HELD / 0 ERROR in
+staging and under `env -u GOV_DEPLOYMENT_MODE` (depth-1 green checks:
+`w295_redteam` 3 BREAK expected-open F368/F369/F370 / 0 ERROR --
+`lease-future-issued-preempts` now HELD via the coexistence branch;
+`w294_coord_lease` 0 BREAK / 0 ERROR). Residuals: the grant list is
+unbounded per scope (a compromised seed could spam acquires; the
+seed holder is already the compromised-host class -- documented,
+not fixed); synthetic-clock callers that relied on
+`_live(scope, t)` returning a future-issued lease for `t <
+issued_at` now get no-covering-lease (coded `coord-lease-expired`,
+same code as before).
 
 ## F368: invocation_pipeline invoke-time drift digest covers filter names only -- same-name replacement bypasses toolcall-filter-frozen (LOW)
 
@@ -8855,7 +8884,20 @@ coded `toolcall-filter-frozen`, while the unchanged stack's digest stays
 stable across invocations; (2) probe `pipeline-drift-samename` flips to
 HELD; (3) adjacent batteries stay green.
 
-**Status: OPEN** (filed 2026-10-02, wave-295 independent red-team).
+**Status: CLOSED** (filed 2026-10-02, wave-295 independent red-team;
+closed 2026-10-02, wave-296 lane 2). **Closure record:** the drift digest
+now binds each filter's name + code object (marshal-dumped SHA-256) +
+callable identity (`gov/invocation_pipeline.py::_filter_fingerprint`);
+a same-named different-code replacement AND a same-code closure-instance
+replacement both refuse coded `toolcall-filter-frozen` (code reused --
+the defect is a freeze-bypass, and that code is the freeze contract; no
+new codes minted, taxonomy pin 1750 unchanged). Red-first battery
+`evals/w296_f368_probes.py`: base 1 BREAK / 6 HELD attack probes (both
+sub-cases bypassed) -> 0 BREAK / 7 HELD / 0 ERROR fixed, identical under
+`env -u GOV_DEPLOYMENT_MODE`; depth-1 green checks `w295_redteam`
+(`pipeline-drift-samename` HELD, F367/F369/F370 probes still BREAK
+expected-open) and `w294_filter_pipeline` (0 BREAK) green; unit tests
+`test_invocation_pipeline` + `test_finding_lifecycle` 58/58 OK.
 
 ## F369: invocation_pipeline.audit_log() returns shallow copies aliasing the stored records (LOW)
 
@@ -8880,7 +8922,24 @@ the returned record (including nested dicts) does not affect subsequent
 `audit_log()` results; (2) probe `pipeline-audit-aliasing` flips to HELD;
 (3) adjacent batteries stay green.
 
-**Status: OPEN** (filed 2026-10-02, wave-295 independent red-team).
+**Status: CLOSED** (filed 2026-10-02, wave-295 independent red-team;
+closed 2026-10-02, wave-296 lane 3). **Closure record:**
+`FilterStack.audit_log` now returns `[copy.deepcopy(entry) for entry in
+self._audit_fn.log]`, so the nested `record` dict is an independent
+copy: mutating the returned record (scalars and nested lists) leaves
+the stored log byte-identical, while the canonical-signature contract
+is unchanged (tampering a returned record still fails signature
+verification, verified with `ed25519.verify` `is True` / `is False`
+checks). New red-first battery `evals/w296_f369_probes.py`: on the
+pristine wave-295 base, 1 BREAK (`audit-aliasing-record` reproduces:
+mutating the returned `record["outcome"]` rewrote the stored log) /
+8 HELD / 0 ERROR; the fixed tree is 0 BREAK / 9 HELD / 0 ERROR under
+both staging and `env -u GOV_DEPLOYMENT_MODE`. Depth-1 green checks:
+`w295_redteam` probe `pipeline-audit-aliasing` flips to HELD (3 BREAK
+remain: F367, F368, F370 still OPEN), `w294_filter_pipeline` 0 BREAK /
+30 HELD. Adjacent unit tests green. No new decision codes (correctness
+fix, no refusal path); taxonomy pin unchanged at 1750 (raw literals
+1750/1750/0/sorted).
 
 ## F370: tool_schemas call-time validation never name-checks dict keys nested in arg values -- credential-named keys pass both gates (LOW)
 
@@ -8919,18 +8978,48 @@ secret-shaped author-declared DEFAULTS are injected without the call-time
 secret check (`for_default=True` skips it) -- the schema author is
 trusted, so this is author misuse, not an attacker primitive.
 
-**Status: OPEN** (filed 2026-10-02, wave-295 independent red-team).
+**Status: CLOSED** (filed 2026-10-02, wave-295 independent red-team;
+closed 2026-10-02, wave-296 lane 4). **Closure record (2026-10-02, wave-296 lane 4):**
+- `_validate_value`'s dict branch now name-checks every dict key nested in
+  arg values against the module's existing credential-name gate
+  (`_is_credential_name`, the same bounded token list as the compile-time
+  gate) at call time; a match refuses coded
+  `toolcall-schema-secret-field`. No new code was minted: the nested key
+  is a field name, so the compile-time code's mechanism applies;
+  `toolcall-secret-scan-incomplete` does not apply because the check rides
+  the complete structural-validation walk (bounded by the compiled
+  schema's `MAX_NESTING_DEPTH`), so an incomplete-scan outcome cannot
+  occur.
+- Author-declared defaults skip the key check (`for_default`), mirroring
+  the secret-value gate's author-trust boundary; nested keys inside
+  defaults still refuse fail-closed at compile.
+- Post-fix battery `evals/w296_f370_probes.py`: red-first 5 BREAK on the
+  pristine base (the two close-when probes plus deep-4, list-of-dicts,
+  and key-before-value-shape coverage) -> **0 BREAK / 14 HELD / 0 ERROR**
+  on the fixed tree (staging and `env -u GOV_DEPLOYMENT_MODE`); the
+  w295 red-team's F370 probes flip HELD (3 BREAK remain: F367/F368/F369,
+  open this wave); w294_tool_schemas and w293_tool_rules re-pin 0 BREAK;
+  taxonomy pin 1750 unchanged.
 
 ## Renumber map (wave-293 merge)
 - Sweep lane (L6) filed F361-F363 at ~19:53 UTC — keeps the numbers (earliest-filed, wave-272 rule).
 - Independent red team (L4) filed its own F361 at ~19:57 UTC — renumbered to F364 (LOW, OPEN: revocation-demand coverage gap in verify_provenance).
 - F360 CLOSED by L1; F361-F363 CLOSED by L6.
-Next free finding: **F371**. **Open findings: F367, F368, F369, F370.** (F364 filed
+Next free finding: **F371**. **Open findings: none.** (F364 filed
 2026-10-02, wave-293 independent red-team as F361, renumbered F361->F364
 at the wave-293 merge -- the wave-293 sweep lane filed F361-F363 first
 at ~19:53 UTC and keeps them per the wave-272 earliest-filed rule;
-closed 2026-10-02, wave-294 lane 1; F367/F368/F369/F370 filed 2026-10-02,
-wave-295 independent red-team, OPEN)
+closed 2026-10-02, wave-294 lane 1; F367 filed 2026-10-02, wave-295
+independent red-team, closed 2026-10-02, wave-296 lane 1 (queueing
+design: non-overlapping grants retained, overlap refused coded
+coord-lease-denied; pin unchanged 1750); F368 closed 2026-10-02,
+wave-296 lane 2 (drift digest binds name + code object + callable
+identity; same-name replacement refuses coded toolcall-filter-frozen;
+pin unchanged 1750); F369 closed 2026-10-02, wave-296 lane 3
+(audit_log returns deep copies; pin unchanged 1750); F370 closed
+2026-10-02, wave-296 lane 4 (nested dict keys name-checked at call
+time; match refuses coded toolcall-schema-secret-field; pin
+unchanged 1750))
 
 ## Renumber map (wave-293 merge)
 - Sweep lane (L6) filed F361-F363 at ~19:53 UTC — keeps the numbers (earliest-filed, wave-272 rule).

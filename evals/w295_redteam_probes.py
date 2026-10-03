@@ -48,10 +48,10 @@ def _record(pid, verdict, note):
 
 _REPIN_EXPECT = {
     # name: (expected BREAKs, expected BREAK ids or None)
-    "w294_redteam_probes.py": (
-        3, ["tr-depth5-secret-bypass",
-            "tr-64kb-secret-bypass",
-            "ks-advance-record-not-atomic"]),
+    # Wave-296 merge: F365/F366 closed at the wave-295 merge, so the
+    # w294_redteam pins flip HELD and 0 BREAK is expected-open (the
+    # wave-295 lane-local tree had 3 BREAK expected-open).
+    "w294_redteam_probes.py": (0, None),
     "w294_coord_lease_probes.py": (0, None),
     "w294_filter_pipeline_probes.py": (0, None),
     "w294_tool_schemas_probes.py": (0, None),
@@ -100,7 +100,7 @@ def green_check():
 # Taxonomy pin (attack-only lane: gov/ is byte-identical, pin stays 1742)
 # ---------------------------------------------------------------------------
 
-TAXONOMY_PIN = 1750  # Wave-294 merge (F365, F366 filed OPEN); Wave-295 merge: pin 1742 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
+TAXONOMY_PIN = 1753  # Wave-294 merge (F365, F366 filed OPEN); Wave-295 merge: pin 1742 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
 
 
 def p_taxonomy_pin():

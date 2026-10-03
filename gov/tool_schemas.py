@@ -487,6 +487,24 @@ def _validate_value(field, value, where, for_default=False):
         if not isinstance(key, str):
             _refuse_invalid("%s: dict keys must be strings; got %s"
                             % (where, type(key).__name__))
+        # F370: the call-time credential-NAME gate for keys nested in arg
+        # values. The compile-time gate (_check_name, credential_gate)
+        # only sees DECLARED field names; dict keys inside arg values are
+        # attacker-controlled data, so they are name-checked here against
+        # the same bounded token list. Reuses toolcall-schema-secret-field
+        # (same mechanism: a field NAME that names a credential), NOT
+        # toolcall-secret-scan-incomplete: the check rides the complete
+        # structural-validation walk, which is bounded by the compiled
+        # schema's nesting depth (compile enforces MAX_NESTING_DEPTH), so
+        # every visited key is checked and an incomplete-scan outcome
+        # cannot occur. Author-declared defaults skip it (for_default),
+        # mirroring the secret-value gate's author-trust boundary.
+        if not for_default and _is_credential_name(key):
+            raise ToolSchemaError(
+                "tool-call refused: credential-named key %r nested in "
+                "arg %s; credentials travel in typed execution context, "
+                "never tool args" % (key, where),
+                code=SCHEMA_SECRET_FIELD)
     value_spec = field["value"]
     return {key: _validate_value(value_spec, item, "%s.%s" % (where, key))
             for key, item in value.items()}

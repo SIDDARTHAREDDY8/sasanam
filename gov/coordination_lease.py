@@ -204,10 +204,20 @@ def _lease_digest(lease):
 class LeaseManager:
     """In-memory lease registry for one coordinator plane.
 
-    ``_leases`` maps scope -> active lease record; ``_epochs`` maps
-    scope -> highest fencing token ever issued (monotonic across
-    generations, never reset -- this is what makes zombie writes
-    fail even after expiry and re-acquire).
+    ``_leases`` maps scope -> list of granted lease records (every
+    grant is retained; records are never evicted by a later grant --
+    F367). ``_epochs`` maps scope -> highest fencing token ever
+    issued (monotonic across generations, never reset -- this is
+    what makes zombie writes fail even after expiry and re-acquire).
+
+    Grants for one scope must not overlap in time: a new grant
+    whose ``[issued_at, not_after)`` overlaps any stored grant
+    refuses coded ``coord-lease-denied``. Non-overlapping grants
+    (including future-dated ones) QUEUE alongside the live record
+    instead of evicting it, so a future-dated ``issued_at`` can
+    never silently kill the currently-live lease's writes. Lookups
+    (``_live`` / ``_require_live``) resolve the single lease
+    covering the queried instant.
     """
 
     def __init__(self):
@@ -222,8 +232,13 @@ class LeaseManager:
 
         Refuses coded ``coord-lease-invalid`` for malformed inputs
         (including zero/negative/unbounded TTL); coded
-        ``coord-lease-denied`` when an unexpired lease already
-        covers the scope. Returns the signed lease dict.
+        ``coord-lease-denied`` when the new grant's
+        ``[issued_at, not_after)`` overlaps any already-granted
+        lease on the scope. Non-overlapping grants QUEUE: a
+        future-dated ``issued_at`` is granted alongside -- never
+        instead of -- the currently-live lease, so it cannot
+        silently evict the live holder's record (F367). Returns the
+        signed lease dict.
         """
         _check_scope(scope)
         _check_ttl(ttl_seconds)
@@ -236,14 +251,17 @@ class LeaseManager:
             issued_at = int(time.time())
         else:
             _check_ts(issued_at, "issued_at")
+        not_after = issued_at + ttl_seconds
 
-        live = self._live(scope, issued_at)
-        if live is not None:
-            _fail(LEASE_DENIED,
-                  "scope %r is leased to %r until %d (fencing token %d); "
-                  "authority is leased, never held" %
-                  (scope, live["holder_id"], live["not_after"],
-                   live["fencing_token"]))
+        for old in self._leases.get(scope, []):
+            if issued_at < old["not_after"] and \
+                    old["issued_at"] < not_after:
+                _fail(LEASE_DENIED,
+                      "scope %r overlaps the grant to %r covering "
+                      "[%d, %d) (fencing token %d); authority is "
+                      "leased, never held" %
+                      (scope, old["holder_id"], old["issued_at"],
+                       old["not_after"], old["fencing_token"]))
 
         authority_pubkey = ed25519.publickey(authority_seed).hex()
         token = self._epochs.get(scope, 0) + 1
@@ -251,14 +269,16 @@ class LeaseManager:
             "scope": scope,
             "holder_id": holder_id,
             "issued_at": issued_at,
-            "not_after": issued_at + ttl_seconds,
+            "not_after": not_after,
             "fencing_token": token,
             "authority_pubkey": authority_pubkey,
         }
         sig = ed25519.sign(authority_seed, _canonical(body)).hex()
         lease = dict(body)
         lease["signature"] = sig
-        self._leases[scope] = lease
+        # F367: the grant is RETAINED, never evicting. A future-dated
+        # non-overlapping grant queues alongside the live record.
+        self._leases.setdefault(scope, []).append(lease)
         self._epochs[scope] = token
         _emit_event("coord-lease-acquired",
                     {"scope": scope, "holder_id": holder_id,
@@ -276,7 +296,10 @@ class LeaseManager:
         fencing token: a stale token refuses coded
         ``coord-lease-fencing``; a wrong holder refuses coded
         ``coord-lease-invalid``; an expired lease refuses coded
-        ``coord-lease-expired`` (no renewal of the dead)."""
+        ``coord-lease-expired`` (no renewal of the dead). The
+        extension must not overlap a queued future grant on the
+        scope -- that refuses coded ``coord-lease-denied``
+        (F367: renewal cannot steal a queued future)."""
         _check_scope(scope)
         _check_token(fencing_token)
         _check_holder(holder_id)
@@ -304,18 +327,32 @@ class LeaseManager:
         if authority_pubkey != lease["authority_pubkey"]:
             _fail(LEASE_INVALID,
                   "renew denied: authority key mismatch")
+        new_not_after = lease["not_after"] + extra_seconds
+        for other in self._leases.get(scope, []):
+            if other is lease:
+                continue
+            if lease["issued_at"] < other["not_after"] and \
+                    other["issued_at"] < new_not_after:
+                _fail(LEASE_DENIED,
+                      "renew denied: extending to %d would overlap the "
+                      "queued grant to %r covering [%d, %d) (fencing "
+                      "token %d); renewal cannot steal a queued future" %
+                      (new_not_after, other["holder_id"],
+                       other["issued_at"], other["not_after"],
+                       other["fencing_token"]))
         body = {
             "scope": scope,
             "holder_id": holder_id,
             "issued_at": lease["issued_at"],
-            "not_after": lease["not_after"] + extra_seconds,
+            "not_after": new_not_after,
             "fencing_token": lease["fencing_token"],
             "authority_pubkey": authority_pubkey,
         }
         sig = ed25519.sign(authority_seed, _canonical(body)).hex()
         renewed = dict(body)
         renewed["signature"] = sig
-        self._leases[scope] = renewed
+        self._leases[scope].remove(lease)
+        self._leases[scope].append(renewed)
         _emit_event("coord-lease-renewed",
                     {"scope": scope, "holder_id": holder_id,
                      "not_after": renewed["not_after"],
@@ -359,25 +396,32 @@ class LeaseManager:
 
     def release(self, scope, fencing_token, holder_id):
         """Voluntarily surrender the lease; the scope becomes
-        acquirable again (the next generation takes a HIGHER
-        fencing token -- the epoch never resets). Requires the
-        current token and the holder."""
+        acquirable again for the surrendered interval (the next
+        generation takes a HIGHER fencing token -- the epoch never
+        resets). Requires the token and the holder of the granted
+        lease being surrendered; other queued grants on the scope
+        are untouched."""
         _check_scope(scope)
         _check_token(fencing_token)
         _check_holder(holder_id)
-        lease = self._leases.get(scope)
+        leases = self._leases.get(scope, [])
+        lease = None
+        for cand in leases:
+            if cand["fencing_token"] == fencing_token:
+                lease = cand
+                break
         if lease is None:
-            _fail(LEASE_INVALID, "release denied: no lease on scope %r"
-                                 % (scope,))
-        if fencing_token != lease["fencing_token"]:
+            if not leases:
+                _fail(LEASE_INVALID,
+                      "release denied: no lease on scope %r" % (scope,))
             _fail(LEASE_FENCING,
-                  "release denied: fencing token %d is not the current "
-                  "token %d" % (fencing_token, lease["fencing_token"]))
+                  "release denied: fencing token %d is not a granted "
+                  "token on scope %r" % (fencing_token, scope))
         if lease["holder_id"] != holder_id:
             _fail(LEASE_INVALID,
                   "release denied: holder %r is not the lease holder %r" %
                   (holder_id, lease["holder_id"]))
-        del self._leases[scope]
+        leases.remove(lease)
         _emit_event("coord-lease-released",
                     {"scope": scope, "holder_id": holder_id,
                      "fencing_token": fencing_token})
@@ -386,23 +430,30 @@ class LeaseManager:
     # -- helpers -----------------------------------------------------------
 
     def _live(self, scope, checked_at):
-        lease = self._leases.get(scope)
-        if lease is None:
-            return None
-        if checked_at >= lease["not_after"]:
-            return None
-        return lease
+        """The single granted lease covering ``checked_at``
+        (``issued_at <= checked_at < not_after``), or None. Grants
+        never overlap, so at most one lease covers any instant;
+        defensively the latest-issued covering lease wins."""
+        best = None
+        for lease in self._leases.get(scope, []):
+            if lease["issued_at"] <= checked_at < lease["not_after"]:
+                if best is None or lease["issued_at"] > best["issued_at"]:
+                    best = lease
+        return best
 
     def _require_live(self, scope, checked_at):
-        lease = self._leases.get(scope)
-        if lease is None:
+        leases = self._leases.get(scope, [])
+        if not leases:
             _fail(LEASE_EXPIRED,
                   "no live lease on scope %r" % (scope,))
-        if checked_at >= lease["not_after"]:
+        lease = self._live(scope, checked_at)
+        if lease is None:
+            holders = sorted({l["holder_id"] for l in leases})
             _fail(LEASE_EXPIRED,
-                  "lease on scope %r held by %r expired at %d; authority "
-                  "expires by default -- re-acquire" %
-                  (scope, lease["holder_id"], lease["not_after"]))
+                  "no granted lease on scope %r covers %d (holders "
+                  "on record: %s); authority expires by default -- "
+                  "re-acquire" %
+                  (scope, checked_at, ",".join(holders)))
         return lease
 
 
