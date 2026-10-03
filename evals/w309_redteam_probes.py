@@ -41,8 +41,13 @@ battery was written -- diagnosing-bugs loop):
 New findings filed by this lane: F394 (LOW, OPEN), claim
 2026-10-03T12:13:00Z. Wave-309 merge: F393 CLOSED (coded
 workflow-composed-plan-mismatch); F394 stays OPEN; pin 1829;
-footer open F394 / next F395. This battery's expected BREAKs:
-F394-op-retry-composed, F394-abort-composed (F394 OPEN).
+footer open F394 / next F395. Wave-310 lane A: F394 CLOSED via
+WorkflowComposer.retry_saga_unit (composer-level operator-retry
+API; no new codes; pin unchanged 1829); the F394 probes in this
+battery were updated from the direct-SagaManager call pattern to
+the supported composer-API call pattern (probe IDs and intent
+unchanged); footer open none / next F395. This battery's expected
+BREAKs: none.
 
 Run:
   mkdir -p /var/tmp/g309-rt && TMPDIR=/var/tmp/g309-rt \\
@@ -125,12 +130,12 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    # Wave-309 lane D footer: F394 filed OPEN by this lane.
-    if nxt != 395 or open_s != "F394":
+    # Wave-310 lane A footer: F394 CLOSED; no open findings.
+    if nxt != 395 or open_s != "none":
         return _record("footer-state", "BREAK",
                        "footer pins next F%d open '%s', want next F395 "
-                       "open 'F394'" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open F394 / next F395")
+                       "open 'none'" % (nxt, open_s))
+    _record("footer-state", "HELD", "footer pins open none / next F395")
 
 
 # ------------------------------------------------------------------
@@ -224,78 +229,124 @@ def _escalated_composed_saga(tag):
     return comp, sm, inst, calls
 
 
+def _escalated_composed_saga_fixable(tag):
+    """Drive a composed saga unit to escalation with a compensation
+    that fails transiently during the initial window (3 attempts) but
+    succeeds once the downstream is "fixed" (4th call onward).
+    Returns (comp, sm, instance, comp_calls). Used by the F394
+    operator-recovery probes: the operator path must re-drive the
+    compensation to a terminal state after the cause is fixed."""
+    wc, wf, saga, idem, comp, ws, sm, im, auth = _composed_scaffold(
+        tag, operator_ref=True)
+    calls = {"comp": 0}
+
+    def good_action(params):
+        return {"ok": True}, []
+
+    def bad_action(params):
+        raise RuntimeError("action boom")
+
+    def flaky_then_fixed(params):
+        calls["comp"] += 1
+        if calls["comp"] <= 3:
+            raise RuntimeError("downstream blip %d" % calls["comp"])
+        return {"recovered": True}
+
+    definition = saga.SagaDefinition([
+        saga.SagaStepDef(step_id="s1", action_op="a1", action_params={},
+                         compensation_op="c1", compensation_params={}),
+        saga.SagaStepDef(step_id="s2", action_op="a2", action_params={},
+                         compensation_op="c2", compensation_params={}),
+    ])
+    plan = wc.ComposedPlan([{
+        "kind": "saga", "name": "u1", "definition": definition,
+        "action_fns": {"s1": good_action, "s2": bad_action},
+        "comp_fns": {"s1": flaky_then_fixed, "s2": flaky_then_fixed},
+        "idem_key": "k1",
+    }])
+    try:
+        comp.execute(plan, run_id="R", authority=auth, at=AT)
+    except Exception:
+        pass
+    inst = comp._saga_instances["u1"]
+    return comp, sm, inst, calls
+
+
 # ------------------------------------------------------------------
-# F394 (LOW, OPEN): the F384 operator recovery path does not function
-# for composed sagas
+# F394 (LOW, CLOSED wave-310): the F384 operator recovery path did not
+# function for composed sagas. Closure direction: a composer-level
+# operator-retry API (WorkflowComposer.retry_saga_unit) re-establishes
+# the unit's execution prerequisites (retry execution context, step
+# authority verifier, nonce-scoped wrapper ops), delegates to the
+# saga manager's resolve_escalation, and tears everything down
+# deterministically. The supported operator path for a composed saga
+# is the composer API; calling the saga manager directly on a
+# composed instance still fails closed and coded. Probes updated from
+# the direct-SagaManager call pattern to the supported composer-API
+# call pattern (probe intent -- re-drive works after the downstream
+# is fixed -- unchanged).
 # ------------------------------------------------------------------
 
 def p_f394_op_retry_composed():
-    # After a composed saga escalates, the composer's finally block has
-    # removed the nonce-scoped wrapper ops AND the step authority
-    # verifiers. retry_compensation (the F384 recovery path) can never
-    # re-drive the compensation: it raises misleading
-    # workflow-saga-compensation-unauthorized ("revoked or unknown" --
-    # nothing was revoked), the fixed compensation is never invoked,
-    # and the saga stays escalated. Only manual attestation works.
-    comp, sm, inst, calls = _escalated_composed_saga("f394retry")
+    # F394 CLOSED: after a composed saga escalates, the operator
+    # re-drives via comp.retry_saga_unit("u1",
+    # {"action": "retry_compensation"}, at=AT). The composer re-establishes
+    # the prerequisites, so the fixed compensation is actually
+    # invoked and the saga reaches compensated. The misleading
+    # workflow-saga-compensation-unauthorized on this path is gone.
+    comp, sm, inst, calls = _escalated_composed_saga_fixable("f394retry")
     if inst.status != "escalated":
         return _record("F394-op-retry-composed", "ERROR",
                        "saga did not escalate; probe void")
     before = calls["comp"]
     try:
-        sm.retry_compensation(inst)
+        comp.retry_saga_unit("u1", {"action": "retry_compensation"}, at=AT)
     except Exception as e:  # noqa: BLE001
         code = getattr(e, "code", None)
-        if calls["comp"] != before:
-            return _record("F394-op-retry-composed", "ERROR",
-                           "comp invoked but retry still raised %r" % (code,))
-        if inst.status == "compensated":
-            return _record("F394-op-retry-composed", "HELD",
-                           "operator retry re-drove the compensation "
-                           "(F394 closed)")
-        return _record(
-            "F394-op-retry-composed", "BREAK",
-            "F394: retry_compensation raised %r; fixed compensation "
-            "never invoked (%d calls); saga still %r -- the F384 "
-            "operator recovery path does not function for composed "
-            "sagas (wrapper ops and step verifiers were removed "
-            "post-escalation)" % (code, calls["comp"], inst.status))
+        if code == "workflow-saga-compensation-unauthorized":
+            return _record("F394-op-retry-composed", "BREAK",
+                           "F394 regression: misleading "
+                           "workflow-saga-compensation-unauthorized "
+                           "on composer retry")
+        return _record("F394-op-retry-composed", "ERROR",
+                       "composer retry raised %r" % (code,))
     if inst.status == "compensated" and calls["comp"] > before:
         return _record("F394-op-retry-composed", "HELD",
-                       "operator retry re-drove the compensation "
-                       "(F394 closed)")
+                       "composer retry re-drove the compensation "
+                       "(%d->%d calls); saga compensated (F394 closed)"
+                       % (before, calls["comp"]))
     return _record("F394-op-retry-composed", "ERROR",
-                   "unexpected: status=%r calls=%d"
-                   % (inst.status, calls["comp"]))
+                   "unexpected: status=%r calls=%d->%d"
+                   % (inst.status, before, calls["comp"]))
 
 
 def p_f394_abort_composed():
-    # The second re-drive action, abort_and_compensate_all, fails the
-    # same way: the compensation op is unresolvable in this process.
-    comp, sm, inst, calls = _escalated_composed_saga("f394abort")
+    # F394 CLOSED: the second re-drive action,
+    # abort_and_compensate_all, now works through the composer API:
+    # the fixed compensation is re-driven (remaining attempt budget)
+    # and the saga reaches compensated.
+    comp, sm, inst, calls = _escalated_composed_saga_fixable("f394abort")
     if inst.status != "escalated":
         return _record("F394-abort-composed", "ERROR",
                        "saga did not escalate; probe void")
     before = calls["comp"]
     try:
-        sm.resolve_escalation(inst, {"action": "abort_and_compensate_all"})
+        comp.retry_saga_unit("u1",
+                             {"action": "abort_and_compensate_all"},
+                             at=AT)
     except Exception as e:  # noqa: BLE001
         code = getattr(e, "code", None)
-        if inst.status == "compensated" and calls["comp"] > before:
-            return _record("F394-abort-composed", "HELD",
-                           "abort_and_compensate_all re-drove the "
-                           "compensation (F394 closed)")
-        return _record(
-            "F394-abort-composed", "BREAK",
-            "F394: abort_and_compensate_all raised %r; compensation "
-            "never re-driven (%d calls); saga still %r"
-            % (code, calls["comp"], inst.status))
-    if inst.status == "compensated":
+        return _record("F394-abort-composed", "ERROR",
+                       "composer abort raised %r (calls %d->%d)"
+                       % (code, before, calls["comp"]))
+    if inst.status == "compensated" and calls["comp"] > before:
         return _record("F394-abort-composed", "HELD",
-                       "abort_and_compensate_all re-drove the "
-                       "compensation (F394 closed)")
+                       "composer abort_and_compensate_all re-drove the "
+                       "compensation (%d->%d calls); saga compensated "
+                       "(F394 closed)" % (before, calls["comp"]))
     return _record("F394-abort-composed", "ERROR",
-                   "unexpected: status=%r" % (inst.status,))
+                   "unexpected: status=%r calls=%d->%d"
+                   % (inst.status, before, calls["comp"]))
 
 
 def p_f394_direct_saga_retry_works():
