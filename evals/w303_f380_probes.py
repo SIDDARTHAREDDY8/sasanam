@@ -55,6 +55,8 @@ import unittest
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO not in sys.path:
     sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 
 from gov import delegation as dg
 from gov import delegation_revocation as rev
@@ -146,11 +148,11 @@ class BaseStateTest(unittest.TestCase):
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
         # Wave-303 F380 closure lane: F380 CLOSED; F381-F384 still OPEN.
         ok = (m_open and m_open[-1].strip()
-              == "F387"
-              and m_next and m_next[-1] == "F389")
+              == "F389"
+              and m_next and m_next[-1] == "F390")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F387 / next free F389")
+            "want open F389 / next free F390")
             == "HELD")
 
     def test_pin(self):
@@ -379,44 +381,17 @@ class HonestPathTest(unittest.TestCase):
 
 
 def _green_check(battery, expect):
-    if os.environ.get("GOV_SKIP_GREEN"):
-        return ("HELD", "skipped (depth-1)")
-    env = dict(os.environ, GOV_SKIP_GREEN="1")
-    tmp = "/var/tmp/g303-green-%s" % os.getpid()
-    os.makedirs(tmp, exist_ok=True)
-    env["TMPDIR"] = tmp
-    path = os.path.join(REPO, "evals", battery)
-    try:
-        out = subprocess.run(
-            [sys.executable, path], capture_output=True, text=True,
-            env=env, timeout=600)
-    except Exception as e:  # noqa: BLE001
-        return ("ERROR", "%s" % (e,))
-    if expect in (out.stdout + out.stderr):
-        summary = (out.stdout.strip().splitlines() or ["no output"])[0]
-        return ("HELD", summary)
-    return ("BREAK", (out.stdout.strip().splitlines() or ["no output"])[0])
+    # Exact-summary form, wave-305: delegates to evals/green_check.py
+    # (fail-closed contract). Returns (status, detail) as before.
+    return green_check.check_battery_result(
+        "green-check", os.path.join("evals", battery), repo=REPO,
+        expected_summary=expect)
 
 
 def _green_check_unittest(path, label):
-    if os.environ.get("GOV_SKIP_GREEN"):
-        return ("HELD", "skipped (depth-1)")
-    env = dict(os.environ, GOV_SKIP_GREEN="1")
-    tmp = "/var/tmp/g303-green-%s" % os.getpid()
-    os.makedirs(tmp, exist_ok=True)
-    env["TMPDIR"] = tmp
-    try:
-        out = subprocess.run(
-            [sys.executable, "-m", "unittest", path],
-            capture_output=True, text=True, env=env, timeout=600,
-            cwd=REPO)
-    except Exception as e:  # noqa: BLE001
-        return ("ERROR", "%s" % (e,))
-    combined = out.stdout + out.stderr
-    if out.returncode == 0 and "\nOK" in combined:
-        return ("HELD", "%s OK" % (label,))
-    tail = (combined.strip().splitlines() or ["no output"])[-1]
-    return ("BREAK", "%s: %s" % (label, tail))
+    # Unittest-suite form, wave-305: delegates to evals/green_check.py.
+    # Returns (status, detail) as before.
+    return green_check.check_unittest_result(label, path, repo=REPO)
 
 
 class GreenCheckTest(unittest.TestCase):

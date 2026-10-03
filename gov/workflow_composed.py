@@ -432,6 +432,25 @@ class WorkflowComposer:
         the manager could inherit or overwrite it."""
         self._saga._verifiers.pop(scoped_ref, None)
 
+    def _remove_saga_ops(self, scoped_tag, unit):
+        """Wave-305 hygiene: the nonce-scoped wrapper ops registered in
+        the process-global op registry must not outlive the unit either.
+        Stale entries are inert -- a post-completion invocation crashes
+        on the torn-down ``_exec_ctx`` (``TypeError``), and the 64-bit
+        nonce makes the names unguessable -- but the registry grows two
+        entries per step per instance, a slow leak and a stale-name
+        surface. Removal rides the same ``finally`` as the verifier
+        removal; ``pop`` is best-effort so a failed wrapper build leaves
+        nothing behind. Direct ``_OPS`` access mirrors the verifier
+        pattern (no public unregister exists; ``clear_ops()`` would nuke
+        unrelated registrations)."""
+        for step in unit["definition"].steps:
+            sid = step.step_id
+            _saga._OPS.pop("composed:%s:action:%s" % (scoped_tag, sid),
+                           None)
+            _saga._OPS.pop("composed:%s:comp:%s" % (scoped_tag, sid),
+                           None)
+
     def _check_plan_actor(self, actor):
         if self._plan_actor is None:
             self._plan_actor = actor
@@ -677,6 +696,12 @@ class WorkflowComposer:
             # authority checks); afterwards the composer's execution
             # context is torn down anyway.
             self._remove_saga_verifier(authority_ref)
+            # Wave-305: the nonce-scoped wrapper ops must not outlive
+            # the unit either -- same finally, same determinism. The
+            # wrapped ops are needed only while self._saga.run() (and
+            # the outbox drain above) execute; after the unit completes
+            # they are dead names in a shared process-global registry.
+            self._remove_saga_ops(scoped_tag, unit)
 
     def _drain_outbox_composed(self, instance, unit, ctx):
         # The idempotency key binds (unit idem_key, intent_id) -- never

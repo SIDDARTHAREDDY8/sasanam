@@ -59,8 +59,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for _p in (REPO, os.path.join(REPO, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
-
-SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 
 TAXONOMY_PIN = 1827  # Wave-303 merge pin; Wave-304 lane C: pin 1827 -> 1827 (+1 workflow-composed-replay-foreign)
 
@@ -114,13 +114,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    want_open = "F387"
-    if nxt != 389 or open_s != want_open:
+    want_open = "F389"
+    if nxt != 390 or open_s != want_open:
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F389 open %r)"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open F385,F386,F387 / next F389")
+            "footer pins open F389 / next F390")
 
 
 AT = 1_700_000_000
@@ -309,42 +309,11 @@ def p_f387_detached_resolution_refused():
 
 
 def _green_battery(path, label):
-    if SKIP_GREEN:
-        _record("green-%s" % label, "HELD",
-                "skipped (GOV_SKIP_GREEN=1); standalone run covers it")
-        return
-    env = dict(os.environ)
-    env["GOV_SKIP_GREEN"] = "1"
-    tmpd = os.path.join("/var/tmp", "g304-f387-green-%s" % label)
-    os.makedirs(tmpd, exist_ok=True)
-    env["TMPDIR"] = tmpd
-    try:
-        proc = subprocess.run(
-            [sys.executable, os.path.join(REPO, path)],
-            env=env, capture_output=True, text=True, timeout=600)
-    except Exception as e:  # noqa: BLE001
-        _record("green-%s" % label, "ERROR", "green check crashed: %r" % (e,))
-        return
-    out = (proc.stdout or "") + (proc.stderr or "")
-    m = re.search(r"(\d+) BREAK / (\d+) HELD / (\d+) ERROR", out)
-    if m:
-        b, h, e = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        if b or e:
-            _record("green-%s" % label, "BREAK",
-                    "%s regressed: %d BREAK / %d HELD / %d ERROR"
-                    % (path, b, h, e))
-        else:
-            _record("green-%s" % label, "HELD",
-                    "%s green: 0 BREAK / %d HELD / 0 ERROR" % (path, h))
-        return
-    # unittest-style batteries report "Ran N tests" + "OK".
-    mu = re.search(r"Ran (\d+) tests", out)
-    if mu and proc.returncode == 0 and re.search(r"^OK", out, re.M):
-        _record("green-%s" % label, "HELD",
-                "%s green: %s unittest tests OK" % (path, mu.group(1)))
-        return
-    _record("green-%s" % label, "ERROR",
-            "no verdict line in %s (rc=%d)" % (path, proc.returncode))
+    # Depth-1 adjacent green check, wave-305: delegates to
+    # evals/green_check.py (fail-closed contract). Any BREAK or ERROR in
+    # the child is a regression (no expected-open BREAKs here).
+    green_check.check_battery(_record, "green-%s" % label, path,
+                              repo=REPO)
 
 
 def main():

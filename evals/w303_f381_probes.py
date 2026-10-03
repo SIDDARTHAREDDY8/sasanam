@@ -36,6 +36,8 @@ import unittest
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO not in sys.path:
     sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 
 from gov import workflow_idempotency as idem
 
@@ -93,8 +95,8 @@ class BaseStateTest(unittest.TestCase):
             text = fh.read()
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-        ok = (m_open and m_open[-1].strip() == "F387"
-              and m_next and m_next[-1] == "F389")
+        ok = (m_open and m_open[-1].strip() == "F389"
+              and m_next and m_next[-1] == "F390")
         self.assertTrue(_expect_held(
             "footer-state", ok,
             "want open F386 / next free F387") == "HELD")
@@ -249,25 +251,14 @@ class EvictAuthorityTest(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 def _green_check_unittest(path, label):
-    if os.environ.get("GOV_SKIP_GREEN"):
-        return ("HELD", "skipped (depth-1)")
-    env = dict(os.environ, GOV_SKIP_GREEN="1")
-    env["PYTHONPATH"] = REPO + os.pathsep + env.get("PYTHONPATH", "")
-    tmp = "/var/tmp/g303-green-%s" % os.getpid()
-    os.makedirs(tmp, exist_ok=True)
-    env["TMPDIR"] = tmp
-    try:
-        out = subprocess.run(
-            [sys.executable, os.path.join(REPO, path)],
-            capture_output=True, text=True, env=env, timeout=600,
-            cwd=REPO)
-    except Exception as e:  # noqa: BLE001
-        return ("ERROR", "%s" % (e,))
-    combined = out.stdout + out.stderr
-    if out.returncode == 0 and "\nOK" in combined:
-        return ("HELD", "%s OK" % (label,))
-    tail = (combined.strip().splitlines() or ["no output"])[-1]
-    return ("BREAK", "%s: %s" % (label, tail))
+    # All three call sites are unittest-style (child prints "Ran N
+    # tests" + OK, exit 0). Wave-305: delegates to evals/green_check.py
+    # (fail-closed contract); the PYTHONPATH the old form set is
+    # preserved via extra_env. Returns (status, detail) as before.
+    return green_check.check_unittest_result(
+        label, path, repo=REPO,
+        extra_env={"PYTHONPATH": REPO + os.pathsep +
+                   os.environ.get("PYTHONPATH", "")})
 
 
 class GreenCheckTest(unittest.TestCase):

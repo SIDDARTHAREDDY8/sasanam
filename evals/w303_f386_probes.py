@@ -1,4 +1,5 @@
 """Wave-304 lane B battery: F386 closure probes vs the wave-303 merge.
+Wave-305 lane C addition: op-registry cleanup hygiene probes.
 
 Base: wave-303 merge c9138cc53888 (F380-F384 closed, F385/F386 open,
 pin 1827, footer open F385,F386 / next free F387).
@@ -95,13 +96,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
-    want_open = "F387"  # this lane: F386 CLOSED
-    if nxt != 389 or open_s != want_open:
+    want_open = "F389"  # this lane: F386 CLOSED
+    if nxt != 390 or open_s != want_open:
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F389 open %r)"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open F385 / next F387")
+            "footer pins open F389 / next F390")
 
 
 AT = 1_700_000_000
@@ -267,14 +268,20 @@ def p_f386_verifier_removed():
 def p_f386_op_names_scoped():
     # The process-global op registry must not keep plan-scoped
     # (unscoped) composed op names: every registered composed op name
-    # carries the installing composer's nonce.
+    # carries the installing composer's nonce (checked DURING
+    # execution via a spy), and -- wave-305 hygiene -- no scoped
+    # entries linger after the unit completes.
     h = _harness()
     saga = h["saga"]
     c1, c2 = h["composer"](), h["composer"]()
     h["ws"].start_run("probe", run_id="op-r1", authority=h["auth"], at=AT)
     h["ws"].start_run("probe", run_id="op-r2", authority=h["auth"], at=AT)
 
+    seen = {}
+
     def ok(i):
+        seen.setdefault("names", []).extend(
+            k for k in saga.registered_ops() if k.startswith("composed:"))
         return ({"r": 1}, [])
 
     def comp(i):
@@ -293,23 +300,28 @@ def p_f386_op_names_scoped():
     c1.execute(p1, run_id="op-r1", authority=h["auth"], at=AT)
     c2.execute(p2, run_id="op-r2", authority=h["auth"], at=AT)
     n1, n2 = c1._verifier_nonce, c2._verifier_nonce
-    unscoped = [k for k in saga.registered_ops()
+    during = seen.get("names", [])
+    unscoped = [k for k in during
                 if k.startswith("composed:") and n1 not in k
                 and n2 not in k]
     if unscoped:
         return _record("F386-op-names-scoped", "BREAK",
                        "unscoped composed op names registered: %r"
                        % (unscoped[:3],))
-    if saga.get_op("composed:%s:%s:sg:comp:s1"
-                   % (n1, p1.digest[:12])) is None:
+    if not any(n1 in k for k in during):
         return _record("F386-op-names-scoped", "BREAK",
-                       "c1's scoped op name missing")
-    if saga.get_op("composed:%s:%s:sg:comp:s1"
-                   % (n2, p2.digest[:12])) is None:
+                       "c1's scoped op names never visible during execution")
+    if not any(n2 in k for k in during):
         return _record("F386-op-names-scoped", "BREAK",
-                       "c2's scoped op name missing")
+                       "c2's scoped op names never visible during execution")
+    lingering = [k for k in saga.registered_ops()
+                 if k.startswith("composed:")]
+    if lingering:
+        return _record("F386-op-names-scoped", "BREAK",
+                       "scoped op names linger after completion: %r"
+                       % (lingering[:3],))
     _record("F386-op-names-scoped", "HELD",
-            "op names composer-scoped; no plan-wide registration")
+            "op names composer-scoped during execution, removed after")
 
 
 def p_f386_compensation_authority_intact():
@@ -436,12 +448,54 @@ def _green(pid, battery, expect_break_ids=()):
                 % (battery, len(breaks)))
 
 
+def p_w305_op_registry_stable():
+    # Wave-305 hygiene: the process-global op registry must not grow
+    # across composer-instance lifecycles. Ten executions of a 2-step
+    # saga unit must leave the registry exactly as it was found
+    # (pre-fix: +4 entries per execution, 40 after 10).
+    h = _harness()
+    saga = h["saga"]
+    wc = h["wc"]
+
+    def ok(i):
+        return ({"r": 1}, [])
+
+    def comp(i):
+        return {"u": 1}
+
+    before = len(saga.registered_ops())
+    for i in range(10):
+        c = h["composer"]()
+        run_id = "stab-r%d" % i
+        h["ws"].start_run("probe", run_id=run_id, authority=h["auth"],
+                          at=AT)
+        sd = h["sm"].define([saga.SagaStepDef("s1", "a1", {}, "c1"),
+                             saga.SagaStepDef("s2", "a2", {}, "c2")])
+        plan = wc.ComposedPlan([
+            {"kind": "saga", "name": "sg", "definition": sd,
+             "action_fns": {"s1": ok, "s2": ok},
+             "comp_fns": {"s1": comp, "s2": comp},
+             "idem_key": "stabk%d" % i}])
+        res = c.execute(plan, run_id=run_id, authority=h["auth"], at=AT)
+        if res["units"]["sg"]["status"] != "succeeded":
+            return _record("W305-op-registry-stable", "BREAK",
+                           "setup: execution %d not succeeded" % i)
+    after = len(saga.registered_ops())
+    if after != before:
+        return _record("W305-op-registry-stable", "BREAK",
+                       "registry grew %d -> %d across 10 executions"
+                       % (before, after))
+    _record("W305-op-registry-stable", "HELD",
+            "registry size stable across 10 instance lifecycles")
+
+
 def main():
     _safe("pin-taxonomy", p_taxonomy_pin)
     _safe("footer-state", p_footer_state)
     _safe("F386-verifier-collision", p_f386_verifier_collision)
     _safe("F386-verifier-removed", p_f386_verifier_removed)
     _safe("F386-op-names-scoped", p_f386_op_names_scoped)
+    _safe("W305-op-registry-stable", p_w305_op_registry_stable)
     _safe("F386-compensation-authority-intact",
            p_f386_compensation_authority_intact)
     _safe("F386-control-no-collision", p_f386_control_no_collision)

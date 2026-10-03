@@ -69,8 +69,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for _p in (REPO, os.path.join(REPO, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
-
-SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 
 TAXONOMY_PIN = 1827  # Wave-302 merge pin (1812 + 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
@@ -121,13 +121,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
-    want_open = "F387"  # wave-304 lane A: F385 CLOSED
-    if nxt != 389 or open_s != want_open:
+    want_open = "F389"  # wave-304 lane A: F385 CLOSED
+    if nxt != 390 or open_s != want_open:
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F389 open %r)"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open F387 / next F389")
+            "footer pins open F389 / next F390")
 
 
 AT = 1_700_000_000
@@ -512,31 +512,11 @@ def p_f379_closure_holds():
 def _green(pid, battery, expect_break_ids=()):
     """Depth-1 green check: run an adjacent battery's main with
     GOV_SKIP_GREEN=1 and record its verdict line. expect_break_ids is
-    the set of probe ids allowed to BREAK (expected-open findings)."""
-    if SKIP_GREEN:
-        _record(pid, "HELD", "green check skipped (GOV_SKIP_GREEN=1)")
-        return
-    env = dict(os.environ, GOV_SKIP_GREEN="1")
-    tmpd = tempfile.mkdtemp(prefix="g303-green-")
-    env["TMPDIR"] = tmpd
-    try:
-        proc = subprocess.run(
-            [sys.executable, os.path.join(REPO, "evals", battery)],
-            capture_output=True, text=True, timeout=600, env=env,
-            cwd=REPO)
-        out = proc.stdout + proc.stderr
-    except Exception as e:  # noqa: BLE001
-        _record(pid, "ERROR", "green check crashed: %r" % (e,))
-        return
-    breaks = re.findall(r"\[BREAK\] ([A-Za-z0-9_.\-]+)", out)
-    unexpected = [b for b in breaks if b not in expect_break_ids]
-    if unexpected:
-        _record(pid, "BREAK",
-                "%s: unexpected BREAKs %r" % (battery, unexpected))
-    else:
-        _record(pid, "HELD",
-                "%s: %d BREAK (all expected-open) / rest held"
-                % (battery, len(breaks)))
+    the set of probe ids allowed to BREAK (expected-open findings).
+    Wave-305: delegates to evals/green_check.py -- a broken dependency
+    battery fails the check loudly (ERROR), never "0 BREAKs"."""
+    green_check.check_battery(_record, pid, os.path.join("evals", battery),
+                              repo=REPO, expect_break_ids=expect_break_ids)
 
 
 W302_F38X_BREAKS = (

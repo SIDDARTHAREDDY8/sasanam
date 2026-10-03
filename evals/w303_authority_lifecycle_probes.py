@@ -48,8 +48,8 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO not in sys.path:
     sys.path.insert(0, REPO)
-
-SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 
 TAXONOMY_PIN = 1827  # Wave-302 merge pin 1820; wave-303 lane 6: pin 1820 -> 1823 (+3 authority-lifecycle-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
@@ -99,10 +99,10 @@ def p_footer_state():
 # Wave-304 lane A re-pin: F385 CLOSED; lane footer open F386 / next free F387.
     # Wave-303 merge footer: open F385,F386 / next F387.
     ok = (m_open and m_open[-1].strip()
-          == "F387"
-          and m_next and m_next[-1] == "F389")
+          == "F389"
+          and m_next and m_next[-1] == "F390")
     _record("footer-state", "HELD" if ok else "BREAK",
-            "want open F387 / next free F389")
+            "want open F389 / next free F390")
 
 
 def _al():
@@ -536,33 +536,12 @@ def p_ed25519_contract():
 
 def _green_check(name):
     """Depth-1 green check: the adjacent DelegationRevoker unit suite
-    runs with GOV_SKIP_GREEN=1 (no nested battery spawning)."""
-    if SKIP_GREEN:
-        _record("green-" + name, "HELD", "skipped via GOV_SKIP_GREEN=1")
-        return
-    path = os.path.join(REPO, "tests", "test_delegation_revoke.py")
-    if not os.path.exists(path):
-        _record("green-" + name, "HELD", "adjacent suite absent")
-        return
-    tmp = tempfile.mkdtemp(prefix="g303-green-")
-    env = dict(os.environ)
-    env["GOV_SKIP_GREEN"] = "1"
-    env["TMPDIR"] = tmp
-    env["GOV_DEPLOYMENT_MODE"] = "staging"
-    try:
-        cp = subprocess.run(
-            [sys.executable, "-m", "unittest",
-             "tests.test_delegation_revoke", "-v"],
-            cwd=REPO, env=env, capture_output=True, text=True,
-            timeout=300)
-        if cp.returncode == 0:
-            _record("green-" + name, "HELD",
-                    "test_delegation_revoke green")
-        else:
-            _record("green-" + name, "BREAK",
-                    "adjacent suite red:\n%s" % (cp.stderr[-2000:],))
-    except Exception as e:  # noqa: BLE001
-        _record("green-" + name, "ERROR", "green check crashed: %r" % (e,))
+    runs with GOV_SKIP_GREEN=1 (no nested battery spawning). Wave-305:
+    delegates to evals/green_check.py (fail-closed contract); the
+    staging env the old form set is preserved via extra_env."""
+    green_check.check_unittest(
+        _record, "green-" + name, "tests.test_delegation_revoke",
+        repo=REPO, extra_env={"GOV_DEPLOYMENT_MODE": "staging"})
 
 
 def main():

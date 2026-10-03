@@ -60,8 +60,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for _p in (REPO, os.path.join(REPO, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
-
-SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 
 # Wave-303 merge pin 1827; this lane mints no codes (red team only), so
 # the pin stays 1827. The merge-time sweep repoints to the wave-304 pin.
@@ -114,13 +114,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
-    want_open = "F387"  # this lane: F387 filed OPEN
-    if nxt != 389 or open_s != want_open:
+    want_open = "F389"  # this lane: F387 filed OPEN
+    if nxt != 390 or open_s != want_open:
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F389 open %r)"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open F387 / next F389")
+            "footer pins open F389 / next F390")
 
 
 AT = 1_700_000_000
@@ -704,30 +704,12 @@ def p_lc_forged_operator_authz_refuses():
 # ---------------------------------------------------------------------------
 
 def _green(pid, battery, expect_break_ids=()):
-    if SKIP_GREEN:
-        _record(pid, "HELD", "green check skipped (GOV_SKIP_GREEN=1)")
-        return
-    env = dict(os.environ, GOV_SKIP_GREEN="1")
-    tmpd = tempfile.mkdtemp(prefix="g304-green-")
-    env["TMPDIR"] = tmpd
-    try:
-        proc = subprocess.run(
-            [sys.executable, os.path.join(REPO, "evals", battery)],
-            capture_output=True, text=True, timeout=600, env=env,
-            cwd=REPO)
-        out = proc.stdout + proc.stderr
-    except Exception as e:  # noqa: BLE001
-        _record(pid, "ERROR", "green check crashed: %r" % (e,))
-        return
-    breaks = re.findall(r"\[BREAK\] ([A-Za-z0-9_.\-]+)", out)
-    unexpected = [b for b in breaks if b not in expect_break_ids]
-    if unexpected:
-        _record(pid, "BREAK",
-                "%s: unexpected BREAKs %r" % (battery, unexpected))
-    else:
-        _record(pid, "HELD",
-                "%s: %d BREAK (all expected) / rest held"
-                % (battery, len(breaks)))
+    """Depth-1 green check honoring GOV_SKIP_GREEN=1; this battery's own
+    green check honors the var. Wave-305: delegates to
+    evals/green_check.py -- a broken dependency battery fails the check
+    loudly (ERROR), never "0 BREAKs"."""
+    green_check.check_battery(_record, pid, os.path.join("evals", battery),
+                              repo=REPO, expect_break_ids=expect_break_ids)
 
 
 # The w303 closure batteries' footer-state probes are re-pinned to this

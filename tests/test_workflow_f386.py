@@ -207,14 +207,20 @@ class F386ClosureTests(unittest.TestCase):
     def test_op_names_scoped_to_composer(self):
         # The process-global op registry is keyed by unit tag; the tag
         # now carries the composer nonce, so the second composer's
-        # registration cannot shadow the first's wrapper ops.
+        # registration cannot shadow the first's wrapper ops. Scoping
+        # is observed DURING execution (wave-305 removes the entries on
+        # completion, so post-completion lookup finds nothing).
         c1, c2 = self._composer(), self._composer()
         self.store.start_run("probe", run_id="o1", authority=self.auth,
                              at=AT)
         self.store.start_run("probe", run_id="o2", authority=self.auth,
                              at=AT)
+        seen = {}
 
         def ok(i):
+            seen.setdefault("names", []).extend(
+                k for k in saga.registered_ops()
+                if k.startswith("composed:"))
             return ({"r": 1}, [])
 
         def comp(i):
@@ -226,14 +232,76 @@ class F386ClosureTests(unittest.TestCase):
         c1.execute(p1, run_id="o1", authority=self.auth, at=AT)
         c2.execute(p2, run_id="o2", authority=self.auth, at=AT)
         tag1, tag2 = p1.digest[:12], p2.digest[:12]
-        scoped1 = "composed:%s:%s:sg:comp:s1" % (c1._verifier_nonce, tag1)
-        scoped2 = "composed:%s:%s:sg:comp:s1" % (c2._verifier_nonce, tag2)
+        during = seen.get("names", [])
+        self.assertTrue(any(c1._verifier_nonce in k and tag1 in k
+                            for k in during),
+                        "c1's scoped op never visible during execution")
+        self.assertTrue(any(c2._verifier_nonce in k and tag2 in k
+                            for k in during),
+                        "c2's scoped op never visible during execution")
         unscoped = "composed:%s:sg:comp:s1" % tag1
-        self.assertIsNotNone(saga.get_op(scoped1))
-        self.assertIsNotNone(saga.get_op(scoped2))
-        self.assertIs(saga.get_op(scoped1) is saga.get_op(scoped2), False)
-        self.assertIsNone(saga.get_op(unscoped),
-                          "unscoped plan-wide op name still registered")
+        self.assertFalse(any(k == unscoped for k in during),
+                         "unscoped plan-wide op name registered")
+
+    # -- wave-305: deterministic op-registry cleanup ---------------------
+
+    def _scoped_ops(self, composer):
+        return [k for k in saga.registered_ops()
+                if composer._verifier_nonce in k]
+
+    def test_op_entries_removed_after_successful_unit(self):
+        c1 = self._composer()
+        self.store.start_run("probe", run_id="w1", authority=self.auth,
+                             at=AT)
+        plan = self._boom_plan(key="w1")
+        res = c1.execute(plan, run_id="w1", authority=self.auth, at=AT)
+        self.assertEqual(res["units"]["sg"]["status"], "compensated")
+        leftovers = self._scoped_ops(c1)
+        self.assertEqual(leftovers, [],
+                         "scoped op entries leaked: %r" % (leftovers,))
+
+    def test_op_entries_removed_after_failed_unit(self):
+        c1 = self._composer()
+        self.store.start_run("probe", run_id="w2", authority=self.auth,
+                             at=AT)
+
+        def bad_comp(i):
+            raise RuntimeError("compensation still broken")
+
+        plan = self._boom_plan(comp_fns={"s1": bad_comp, "s2": bad_comp,
+                                         "s3": bad_comp}, key="w2")
+        with self.assertRaises(wc.ComposedError):
+            c1.execute(plan, run_id="w2", authority=self.auth, at=AT)
+        leftovers = self._scoped_ops(c1)
+        self.assertEqual(leftovers, [],
+                         "scoped op entries leaked on failure: %r"
+                         % (leftovers,))
+
+    def test_op_registry_stable_across_executions(self):
+        # Wave-305: ten 2-step saga executions must leave the
+        # process-global registry exactly as found (pre-fix: +4 per
+        # execution, 40 after 10).
+        def ok(i):
+            return ({"r": 1}, [])
+
+        def comp(i):
+            return {"u": 1}
+
+        sd = self.sm.define([saga.SagaStepDef("s1", "a1", {}, "c1"),
+                             saga.SagaStepDef("s2", "a2", {}, "c2")])
+        before = len(saga.registered_ops())
+        for i in range(10):
+            c = self._composer()
+            run_id = "st%d" % i
+            self.store.start_run("probe", run_id=run_id,
+                                 authority=self.auth, at=AT)
+            plan = self._plan(sd, {"s1": ok, "s2": ok},
+                              {"s1": comp, "s2": comp}, key="stk%d" % i)
+            res = c.execute(plan, run_id=run_id, authority=self.auth,
+                            at=AT)
+            self.assertEqual(res["units"]["sg"]["status"], "succeeded")
+        self.assertEqual(len(saga.registered_ops()), before,
+                         "op registry grew across executions")
 
     # -- the compensation authority model is intact ---------------------
 

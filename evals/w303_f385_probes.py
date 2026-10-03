@@ -46,6 +46,8 @@ import unittest
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO not in sys.path:
     sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 
 from gov import decision_codes
 from gov import ed25519
@@ -272,7 +274,7 @@ class FooterStateTest(unittest.TestCase):
         # Anchor to the LAST matches: the footer, not historical entries.
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-        want_open, want_next = "F387", "F389"
+        want_open, want_next = "F389", "F390"
         self.assertTrue(_expect_held(
             "footer-state",
             m_open and m_open[-1].strip() == want_open
@@ -287,26 +289,22 @@ class FooterStateTest(unittest.TestCase):
 def _green_check_unittest(path, label):
     """Depth-1 green check: run an adjacent unittest module as a
     subprocess with GOV_SKIP_GREEN=1 (no recursion into other
-    batteries' green checks)."""
+    batteries' green checks). Wave-305: delegates to
+    evals/green_check.py (fail-closed contract); returns the same
+    "GREEN (...)"/"BREAK (...)"/"SKIPPED (...)"/"ERROR: ..." strings
+    as before."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return "SKIPPED (GOV_SKIP_GREEN=1)"
-    import subprocess
-    import tempfile
-    env = dict(os.environ, GOV_SKIP_GREEN="1")
-    tmpd = tempfile.mkdtemp(prefix="g304-f385-green-")
-    env["TMPDIR"] = tmpd
-    try:
-        proc = subprocess.run(
-            [sys.executable, "-m", "unittest", path],
-            capture_output=True, text=True, env=env, timeout=600,
-            cwd=REPO)
-    except Exception as e:  # noqa: BLE001
-        return "ERROR: %r" % (e,)
-    combined = proc.stdout + proc.stderr
-    if proc.returncode == 0 and "\nOK" in combined:
-        return "GREEN (%s OK)" % (label,)
-    tail = (combined.strip().splitlines() or ["no output"])[-1]
-    return "BREAK (%s: %s)" % (label, tail)
+    captured = []
+    green_check.check_unittest(
+        lambda pid, verdict, note: captured.append((verdict, note)),
+        label, path, repo=REPO)
+    verdict, note = captured[0]
+    if verdict == "HELD":
+        return "GREEN (%s)" % (note,)
+    if verdict == "ERROR":
+        return "ERROR: %s" % (note,)
+    return "BREAK (%s)" % (note,)
 
 
 class GreenCheckTest(unittest.TestCase):

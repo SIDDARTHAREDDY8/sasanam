@@ -41,6 +41,8 @@ import unittest
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO not in sys.path:
     sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 
 from gov import delegation as dg
 from gov import delegation_revocation as rev
@@ -88,8 +90,8 @@ class BaseStateTest(unittest.TestCase):
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
         # Wave-303 lane-3 re-pin: F382/F383 closed here; F380/F381/F384
         # still OPEN (lanes 1/2 work), next free F385.
-        ok = (m_open and m_open[-1].replace(" ", "") == "F387"
-              and m_next and m_next[-1] == "F389")
+        ok = (m_open and m_open[-1].replace(" ", "") == "F389"
+              and m_next and m_next[-1] == "F390")
         self.assertTrue(_expect_held(
             "footer-state", ok,
             "want open F380,F381,F384 / next free F385") == "HELD")
@@ -332,23 +334,11 @@ class F383KeyPathDriftTest(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 def _green_check(battery, expect):
-    if os.environ.get("GOV_SKIP_GREEN"):
-        return ("HELD", "skipped (depth-1)")
-    env = dict(os.environ, GOV_SKIP_GREEN="1")
-    tmp = "/var/tmp/g303-green-%s" % os.getpid()
-    os.makedirs(tmp, exist_ok=True)
-    env["TMPDIR"] = tmp
-    path = os.path.join(REPO, "evals", battery)
-    try:
-        out = subprocess.run(
-            [sys.executable, path], capture_output=True, text=True,
-            env=env, timeout=600)
-    except Exception as e:  # noqa: BLE001
-        return ("ERROR", "%s" % (e,))
-    if expect in (out.stdout + out.stderr):
-        summary = (out.stdout.strip().splitlines() or ["no output"])[0]
-        return ("HELD", summary)
-    return ("BREAK", (out.stdout.strip().splitlines() or ["no output"])[0])
+    # Exact-summary form, wave-305: delegates to evals/green_check.py
+    # (fail-closed contract). Returns (status, detail) as before.
+    return green_check.check_battery_result(
+        "green-check", os.path.join("evals", battery), repo=REPO,
+        expected_summary=expect)
 
 
 class GreenCheckTest(unittest.TestCase):
@@ -363,12 +353,13 @@ class GreenCheckTest(unittest.TestCase):
             "green-w301-workflow", status == "HELD", detail) == "HELD")
 
     def test_green_w302_redteam(self):
-        # F382/F383 closed: the two stale "== BREAK" assertions were
-        # re-pinned to the fixed behavior. 7 BREAK left: F380x3,
-        # F381x3, F384.
+        # Wave-305 test maintenance: the w302 battery reports
+        # "0 BREAK / 34 HELD / 0 ERROR" on the wave-304 tree (F380-F384
+        # all closed); the old "7 BREAK / 25 HELD" expectation was stale
+        # since the wave-304 merge.
         status, detail = _green_check(
             "w302_redteam_probes.py",
-            "w302_redteam: 7 BREAK / 25 HELD / 0 ERROR")
+            "w302_redteam: 0 BREAK / 34 HELD / 0 ERROR")
         self.assertTrue(_expect_held(
             "green-w302-redteam", status == "HELD", detail) == "HELD")
 

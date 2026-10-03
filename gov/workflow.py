@@ -403,7 +403,10 @@ class WorkflowStore:
         completes; otherwise it checkpoints as ``pending`` and a later
         call (the resume) completes it. No wall-clock sleeping happens
         inside the library -- ``now`` is an injected instant so the
-        wake is deterministic and testable.
+        wake is deterministic and testable. A completed sleep replays
+        only for the same ``wake_at``: a different wake_at is workflow
+        definition drift and refuses ``workflow-step-unauthorized``
+        (F387), exactly as ``run_step``'s sequence-slot path does.
         """
         self._check_step_args(run_id, seq, name)
         run = self._get_run(run_id)
@@ -424,6 +427,14 @@ class WorkflowStore:
                 _fail(WF_UNAUTHORIZED,
                       "step slot %d already completed as %r "
                       "(workflow definition drift)" % (seq, existing["name"]))
+            # F387 closure (same defect class as F383 in run_step):
+            # a completed sleep replays only for the same wake_at.
+            # Re-presenting a different wake_at is workflow definition
+            # drift and refuses coded.
+            if existing["inputs_digest"] != _digest({"wake_at": wake_at}):
+                _fail(WF_UNAUTHORIZED,
+                      "step slot %d already completed with different "
+                      "inputs (workflow definition drift)" % (seq,))
             return True, True
         if now >= wake_at:
             self._append({"type": "step", "schema": SCHEMA,
@@ -467,7 +478,10 @@ class WorkflowStore:
         the step checkpoints as ``pending`` and returns ``(None,
         False)``; a later call resumes it. If ``timeout_at`` is set and
         ``now >= timeout_at``, the step completes with
-        ``{"timeout": True}``.
+        ``{"timeout": True}``. A completed receive replays only for
+        the same ``event`` subscription: a different event is workflow
+        definition drift and refuses ``workflow-step-unauthorized``
+        (F387), exactly as ``run_step``'s sequence-slot path does.
         """
         self._check_step_args(run_id, seq, name)
         run = self._get_run(run_id)
@@ -489,6 +503,14 @@ class WorkflowStore:
                 _fail(WF_UNAUTHORIZED,
                       "step slot %d already completed as %r "
                       "(workflow definition drift)" % (seq, existing["name"]))
+            # F387 closure (same defect class as F383 in run_step):
+            # a completed receive replays only for the same event
+            # subscription. Re-presenting a different event is
+            # workflow definition drift and refuses coded.
+            if existing["inputs_digest"] != _digest({"event": event}):
+                _fail(WF_UNAUTHORIZED,
+                      "step slot %d already completed with different "
+                      "inputs (workflow definition drift)" % (seq,))
             return existing["outputs"], True
         for note in self._notifications:
             if note["run_id"] == run_id and note["event"] == event \

@@ -133,11 +133,11 @@ class BaseStateTest(unittest.TestCase):
         # Wave-303 merge re-pin: F380-F384 CLOSED; F385,F386 OPEN.
         # Expected footer: open F387 / next free F389.
         ok = (m_open and m_open[-1].strip()
-              == "F387"
-              and m_next and m_next[-1] == "F389")
+              == "F389"
+              and m_next and m_next[-1] == "F390")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F387 / next free F389")
+            "want open F389 / next free F390")
             == "HELD")
 
     def test_pin(self):
