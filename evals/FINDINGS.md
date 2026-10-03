@@ -9043,9 +9043,40 @@ not a list / an edge not a dict / an edge missing `"seq"` (reusing
 `_check_edges` post-signature is the natural fix); (2) the four F371
 probes flip to HELD; (3) adjacent batteries stay green.
 
-**Status: OPEN** (filed 2026-10-02, wave-297 independent red-team).
+**Status: CLOSED** (filed 2026-10-02, wave-297 independent red-team;
+closed 2026-10-03, wave-298 lane 1). **Closure record (2026-10-03,
+wave-298 lane 1):**
+- `gov/decision_trace.py::verify_trace` now validates every
+  post-signature dereferenced shape before touching it: `final_decision`
+  must be a dict containing `"verdict"`, and `_check_edges` (the same
+  validator `emit()` uses -- no second validation language) runs on
+  `body["edges"]` after the signature check; every malformed shape
+  refuses coded `decision-trace-invalid`. No new code minted. The
+  signature check still uses `is True`/`is False` (wave-243).
+- Red-first: pristine base `evals/w297_redteam_probes.py` showed
+  **4 BREAK / 43 HELD / 0 ERROR** (the four F371 probes: bare
+  `KeyError`/`TypeError` escapes) -> **0 BREAK / 47 HELD / 0 ERROR**
+  on the fixed tree, identical under staging and
+  `env -u GOV_DEPLOYMENT_MODE`; the four F371 probes
+  (`F371-signed-missing-verdict`, `F371-signed-final-not-dict`,
+  `F371-signed-edges-not-list`, `F371-signed-edge-missing-seq`) flip
+  HELD. Six new regression probes added to the battery (edge missing
+  outcome, duplicate seq, final_decision None, non-standard verdict
+  divergence -> replay-mismatch, empty-edges ALLOW claim -> replay-mismatch,
+  well-formed trace still verifies): battery final
+  **0 BREAK / 53 HELD / 0 ERROR** both modes.
+- New unit tests `tests/test_decision_trace_f371.py`: **13/13 OK**
+  (the four F371 shapes + three more malformed shapes refuse coded
+  `decision-trace-invalid`; divergence cases refuse coded
+  `decision-trace-replay-mismatch`; pre-signature malformed and forged
+  traces unchanged; `is True`/`is False` contract pinned).
+- Adjacent green: `w296_decision_trace` 0/22/0, `w297_supervision`
+  0/34/0, `w294_filter_pipeline` 0/30/0; adjacent unit suites
+  (decision_replay + decision_codes + approval_request +
+  approval_quorum) 90/90 OK. Taxonomy pin 1769 unchanged
+  (1769/1769/0 sorted, no new codes).
 
-Next free finding: **F372**. **Open findings: F371.** (F371 filed 2026-10-02, wave-297 independent red-team (LOW, OPEN: verify_trace post-signature shape assumptions crash uncoded); F364 filed
+Next free finding: **F372**. **Open findings: none.** (F371 filed 2026-10-02, wave-297 independent red-team (LOW, CLOSED 2026-10-03 wave-298 lane 1: verify_trace post-signature shape assumptions crash uncoded); F364 filed
 2026-10-02, wave-293 independent red-team as F361, renumbered F361->F364
 at the wave-293 merge -- the wave-293 sweep lane filed F361-F363 first
 at ~19:53 UTC and keeps them per the wave-272 earliest-filed rule;

@@ -288,6 +288,19 @@ def verify_trace(envelope, signer_pubkey_hex, expected_policy_version=None,
     if _ed25519.verify(pubkey, _canonical(body), sig) is not True:
         _fail(FORGERY, "trace signature does not verify: the trace is "
                        "forged or was signed by a different key")
+    # F371: every shape verify_trace dereferences AFTER the signature
+    # check must be validated first. A validly-signed malformed trace
+    # (compromised signer or buggy alternate signer) must refuse coded
+    # decision-trace-invalid, never crash uncoded. _check_edges is the
+    # same validator emit() uses -- reused post-signature, no second
+    # validation language.
+    final_decision = body["final_decision"]
+    if not isinstance(final_decision, dict):
+        _fail(INVALID, "final_decision must be a dict; got %r"
+              % (type(final_decision),))
+    if "verdict" not in final_decision:
+        _fail(INVALID, "final_decision missing required key 'verdict'")
+    edges = _check_edges(body["edges"])
     if expected_policy_version is not None and \
             body["policy_version"] != expected_policy_version:
         _fail(REPLAY_MISMATCH,
@@ -299,11 +312,11 @@ def verify_trace(envelope, signer_pubkey_hex, expected_policy_version=None,
         _fail(REPLAY_MISMATCH,
               "trace snapshot token does not match the expected token: "
               "the policy moved under this decision")
-    replayed = fold_edges(body["edges"])
-    if replayed != body["final_decision"]["verdict"]:
+    replayed = fold_edges(edges)
+    if replayed != final_decision["verdict"]:
         _fail(REPLAY_MISMATCH,
               "replay divergence: the ordered edges fold to %s but the "
               "trace records %s -- recomputed evidence disagrees with "
               "the claim"
-              % (replayed, body["final_decision"]["verdict"]))
+              % (replayed, final_decision["verdict"]))
     return body

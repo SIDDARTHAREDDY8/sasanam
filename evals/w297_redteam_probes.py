@@ -97,15 +97,16 @@ def _good_envelope(tracer=None, edges=None, verdict="DENY"):
 class DecisionTraceAttackTest(unittest.TestCase):
     def test_footer_state_matches_wave297(self):
         # Wave-297's own red team filed F371 (LOW, OPEN) after the
-        # base-state probe ran; the footer must now say so in its own
-        # words. (Merge re-pin: the base claim "open findings: none" is
-        # stale by design -- this wave filed F371.)
+        # base-state probe ran; wave-298 lane 1 CLOSED it. The footer
+        # must say so in its own words. (Merge re-pin: the base claim
+        # "open findings: none" is stale by design -- this wave filed
+        # F371. Lane-1 re-pin: F371 is now CLOSED.)
         path = os.path.join(os.path.dirname(
             os.path.dirname(os.path.abspath(__file__))), "evals",
             "FINDINGS.md")
         footer = open(path).read()[-4000:]
         ok = "Next free finding: **F372**" in footer \
-            and "Open findings: F371" in footer
+            and "Open findings: none" in footer
         self.assertTrue(_expect_held("footer-state", ok,
                                     "footer disagrees") == "HELD")
 
@@ -242,6 +243,81 @@ class DecisionTraceAttackTest(unittest.TestCase):
         _expect_coded("F371-signed-edge-missing-seq",
                       lambda: dt.verify_trace(bad, tracer.pubkey_hex),
                       {"decision-trace-invalid"})
+
+    def test_signed_trace_edge_missing_outcome(self):
+        # F371 close-when: an edge missing "outcome" post-signature
+        # must refuse coded invalid (via _check_edges reuse), not
+        # crash in fold_edges.
+        tracer = _tracer()
+        env = _good_envelope(tracer)
+        body = copy.deepcopy(env["trace"])
+        body["edges"] = [{"seq": 0, "layer": "l", "rule": "r"}]
+        bad = {"trace": body, "signature": tracer.sign_body(body),
+               "keyid": "decision-tracer"}
+        _expect_coded("F371-signed-edge-missing-outcome",
+                      lambda: dt.verify_trace(bad, tracer.pubkey_hex),
+                      {"decision-trace-invalid"})
+
+    def test_signed_trace_edge_duplicate_seq(self):
+        # F371 close-when: duplicate seqs post-signature refuse coded
+        # invalid via _check_edges reuse.
+        tracer = _tracer()
+        env = _good_envelope(tracer)
+        body = copy.deepcopy(env["trace"])
+        body["edges"] = [{"seq": 0, "layer": "l", "rule": "r",
+                          "outcome": "deny"},
+                         {"seq": 0, "layer": "l", "rule": "r2",
+                          "outcome": "pass"}]
+        bad = {"trace": body, "signature": tracer.sign_body(body),
+               "keyid": "decision-tracer"}
+        _expect_coded("F371-signed-edge-duplicate-seq",
+                      lambda: dt.verify_trace(bad, tracer.pubkey_hex),
+                      {"decision-trace-invalid"})
+
+    def test_signed_trace_final_decision_none(self):
+        # F371 close-when: final_decision None (not a dict)
+        # post-signature refuses coded invalid.
+        tracer = _tracer()
+        env = _good_envelope(tracer)
+        body = copy.deepcopy(env["trace"])
+        body["final_decision"] = None
+        bad = {"trace": body, "signature": tracer.sign_body(body),
+               "keyid": "decision-tracer"}
+        _expect_coded("F371-signed-final-none",
+                      lambda: dt.verify_trace(bad, tracer.pubkey_hex),
+                      {"decision-trace-invalid"})
+
+    def test_signed_trace_verdict_nonstandard_diverges(self):
+        # A signed trace with a well-formed but non-standard verdict
+        # must refuse coded replay-mismatch (divergence), never crash.
+        tracer = _tracer()
+        env = _good_envelope(tracer)
+        body = copy.deepcopy(env["trace"])
+        body["final_decision"] = {"verdict": "MAYBE", "code": None}
+        bad = {"trace": body, "signature": tracer.sign_body(body),
+               "keyid": "decision-tracer"}
+        _expect_coded("F371-signed-verdict-nonstandard",
+                      lambda: dt.verify_trace(bad, tracer.pubkey_hex),
+                      {"decision-trace-replay-mismatch"})
+
+    def test_signed_trace_empty_edges_allow_claim(self):
+        # Empty edges fold fail-closed DENY; a signed ALLOW claim on
+        # empty edges must refuse coded replay-mismatch.
+        tracer = _tracer()
+        env = _good_envelope(tracer, edges=[], verdict="ALLOW")
+        _expect_coded("F371-signed-empty-edges-allow-claim",
+                      lambda: dt.verify_trace(env, tracer.pubkey_hex),
+                      {"decision-trace-replay-mismatch"})
+
+    def test_wellformed_signed_trace_still_verifies(self):
+        # The fix must not break honest traces.
+        tracer = _tracer()
+        env = _good_envelope(tracer)
+        body = dt.verify_trace(env, tracer.pubkey_hex,
+                               expected_policy_version="p1",
+                               expected_snapshot_token="snap1")
+        self.assertTrue(_expect_held("F371-wellformed-verifies",
+                                    isinstance(body, dict)) == "HELD")
 
     def test_malformed_pubkey_invalid(self):
         env = _good_envelope()
