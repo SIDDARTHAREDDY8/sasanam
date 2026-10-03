@@ -6842,6 +6842,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['bundle'],
         "reverify_steps": ['re-parse-token'],
     },
+    'evidence-bundle-witness-checkpoint-invalid': {
+        "domain": 'evbundle',
+        "code": 'evidence-bundle-witness-checkpoint-invalid',
+        "human": 'sigstore bundle: the log-backed witness entry checkpoint '
+                 'does not verify -- bad signature, malformed checkpoint, '
+                 'or logId not naming the pinned witness key; the '
+                 'checkpoint signature is verified first, fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-entry'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
     'evidence-bundle-witness-expired': {
         "domain": 'evbundle',
         "code": 'evidence-bundle-witness-expired',
@@ -6850,6 +6861,17 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['witness-entry'],
         "reverify_steps": ['re-check-witness-time'],
+    },
+    'evidence-bundle-witness-inclusion-invalid': {
+        "domain": 'evbundle',
+        "code": 'evidence-bundle-witness-inclusion-invalid',
+        "human": 'sigstore bundle: the log-backed witness entry Merkle '
+                 'inclusion proof does not verify against the checkpoint '
+                 'root (or logIndex is outside the checkpoint tree_size); '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-entry'],
+        "reverify_steps": ['re-verify-witness-inclusion'],
     },
     'evidence-bundle-witness-key-unavailable': {
         "domain": 'evbundle',
@@ -16875,6 +16897,87 @@ TAXONOMY = {
                  'verification',
         "severity": 'high',
         "evidence_kinds_required": ['chain-bundle'],
+        "reverify_steps": ['recompute'],
+    },
+    'witness-log-checkpoint-malformed': {
+        "domain": 'witness',
+        "code": 'witness-log-checkpoint-malformed',
+        "human": 'witness log: the VERIFIED checkpoint document has bad '
+                 'fields (treeSize/rootHash/timestamp/logId); sizes and '
+                 'hashes are parsed only after the checkpoint signature '
+                 'verifies, fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
+    'witness-log-checkpoint-signature-invalid': {
+        "domain": 'witness',
+        "code": 'witness-log-checkpoint-signature-invalid',
+        "human": 'witness log: the checkpoint signature does not verify '
+                 'against the pinned witness key; the signature is '
+                 'verified FIRST, before any checkpoint field is parsed, '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
+    'witness-log-consistency-invalid': {
+        "domain": 'witness',
+        "code": 'witness-log-consistency-invalid',
+        "human": 'witness log: the consistency proof does not verify old '
+                 '-> new (the old tree is not a prefix of the new tree); '
+                 'both roots are recomputed from the proof, fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-consistency'],
+    },
+    'witness-log-empty': {
+        "domain": 'witness',
+        "code": 'witness-log-empty',
+        "human": 'witness log: checkpoint or proof requested on an empty '
+                 'log; fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'witness-log-inclusion-invalid': {
+        "domain": 'witness',
+        "code": 'witness-log-inclusion-invalid',
+        "human": 'witness log: the Merkle inclusion proof does not verify '
+                 'the leaf against the checkpoint root (wrong position, '
+                 'wrong size binding, or path does not recompute the '
+                 'root); fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-inclusion'],
+    },
+    'witness-log-index-out-of-range': {
+        "domain": 'witness',
+        "code": 'witness-log-index-out-of-range',
+        "human": 'witness log: leaf index or size argument outside the '
+                 'log; fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'witness-log-key-mismatch': {
+        "domain": 'witness',
+        "code": 'witness-log-key-mismatch',
+        "human": 'witness log: the checkpoint signer key is not this '
+                 "log's bound witness key; a log never co-signs for a "
+                 'foreign key, fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
+    'witness-log-malformed': {
+        "domain": 'witness',
+        "code": 'witness-log-malformed',
+        "human": 'witness log: malformed input -- non-bytes leaf, bad '
+                 'base64/hex, bad proof structure, or bad export; '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
         "reverify_steps": ['recompute'],
     },
     'workflow-approval-binding-invalid': {

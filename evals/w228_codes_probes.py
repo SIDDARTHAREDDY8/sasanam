@@ -156,6 +156,10 @@ _NON_CODES = frozenset([
     # Wave-311 merge: the sigstore-bundle witness kind discriminator
     # ("kind": WITNESS_KIND) -- a type tag, not a refusal code.
     "sasanam-witness",
+    # Wave-312 lane D: the witness-log entry body kind discriminator
+    # ("kind": WITNESS_ENTRY_BODY_KIND) -- a type tag, not a refusal
+    # code.
+    "sasanam-witness-log",
     # Wave-267 merge: gov/behavioral_sig_packs.py error-message prefixes
     # (function names, not decision codes).
     "enrich_event", "match_pack",

@@ -814,5 +814,125 @@ class TestCosignInterop(unittest.TestCase):
                 "cosign verify-blob ACCEPTED tampered bytes")
 
 
+class TestWitnessLogPath(unittest.TestCase):
+    """Wave-312: the log-backed witness path in seal/open.
+
+    seal_sigstore_bundle(..., witness_log=...) appends the entry's
+    canonical body to a real gov.witness_log.WitnessLog: logIndex is
+    the true tree position and inclusionProof carries a signed
+    checkpoint + Merkle audit path. open_sigstore_bundle verifies the
+    proof checkpoint-first when present; the offline fallback (no log)
+    verifies exactly as before.
+    """
+
+    def test_log_backed_seal_open(self):
+        from gov import evidence_sigstore, witness_log
+        signers = _signers(1)
+        witness = _witness()
+        stmt = evidence_intoto.build_statement(BUNDLE, CLAIMS)
+        env = evidence_intoto.seal_statement(stmt, signers)
+        wlog = witness_log.WitnessLog(witness.public_key)
+        b0 = evidence_sigstore.seal_sigstore_bundle(
+            env, signers, witness, witness_log=wlog,
+            integrated_time=T0)
+        b1 = evidence_sigstore.seal_sigstore_bundle(
+            env, signers, witness, witness_log=wlog,
+            integrated_time=T0)
+        e0 = b0["verificationMaterial"]["tlogEntries"][0]
+        e1 = b1["verificationMaterial"]["tlogEntries"][0]
+        self.assertEqual(e0["logIndex"], "0")
+        self.assertEqual(e1["logIndex"], "1")
+        for e, want_size in ((e0, 1), (e1, 2)):
+            self.assertIn("inclusionProof", e)
+            cp = e["inclusionProof"]["checkpoint"]
+            self.assertEqual(cp["treeSize"], want_size)
+            self.assertEqual(
+                cp["logId"],
+                hashlib.sha256(witness.public_key).hexdigest())
+        got = evidence_sigstore.open_sigstore_bundle(
+            b1, BUNDLE, _verifiers(signers),
+            _witness_verifier(witness), witness_validity=VALIDITY)
+        self.assertTrue(got["witness"]["log_backed"])
+        self.assertEqual(got["witness"]["tree_size"], 2)
+
+    def test_fallback_still_verifies(self):
+        from gov import evidence_sigstore
+        bundle = _sealed_bundle()
+        entry = bundle["verificationMaterial"]["tlogEntries"][0]
+        self.assertNotIn("inclusionProof", entry)
+        self.assertEqual(entry["logIndex"], "0")
+        got = _open(bundle)
+        self.assertFalse(got["witness"]["log_backed"])
+
+    def test_tampered_audit_path_refuses_coded(self):
+        from gov import evidence_sigstore
+        signers = _signers(1)
+        witness = _witness()
+        stmt = evidence_intoto.build_statement(BUNDLE, CLAIMS)
+        env = evidence_intoto.seal_statement(stmt, signers)
+        from gov import witness_log
+        wlog = witness_log.WitnessLog(witness.public_key)
+        evidence_sigstore.seal_sigstore_bundle(
+            env, signers, witness, witness_log=wlog,
+            integrated_time=T0)
+        bundle = evidence_sigstore.seal_sigstore_bundle(
+            env, signers, witness, witness_log=wlog,
+            integrated_time=T0)
+        bundle = copy.deepcopy(bundle)
+        path = (bundle["verificationMaterial"]["tlogEntries"][0]
+                ["inclusionProof"]["auditPath"])
+        h = bytearray(bytes.fromhex(path[0]["hash"]))
+        h[0] ^= 1
+        path[0]["hash"] = bytes(h).hex()
+        with self.assertRaises(_dsse.EnvelopeError) as ctx:
+            evidence_sigstore.open_sigstore_bundle(
+                bundle, BUNDLE, _verifiers(signers),
+                _witness_verifier(witness), witness_validity=VALIDITY)
+        self.assertEqual(
+            _reason(ctx.exception),
+            "evidence-bundle-witness-inclusion-invalid")
+
+    def test_tampered_checkpoint_signature_refuses_coded(self):
+        from gov import evidence_sigstore
+        from gov import witness_log
+        signers = _signers(1)
+        witness = _witness()
+        stmt = evidence_intoto.build_statement(BUNDLE, CLAIMS)
+        env = evidence_intoto.seal_statement(stmt, signers)
+        wlog = witness_log.WitnessLog(witness.public_key)
+        bundle = evidence_sigstore.seal_sigstore_bundle(
+            env, signers, witness, witness_log=wlog,
+            integrated_time=T0)
+        bundle = copy.deepcopy(bundle)
+        ip = bundle["verificationMaterial"]["tlogEntries"][0][
+            "inclusionProof"]
+        sig = bytearray(base64.b64decode(ip["checkpointSignature"]))
+        sig[0] ^= 1
+        ip["checkpointSignature"] = base64.b64encode(
+            bytes(sig)).decode("ascii")
+        with self.assertRaises(_dsse.EnvelopeError) as ctx:
+            evidence_sigstore.open_sigstore_bundle(
+                bundle, BUNDLE, _verifiers(signers),
+                _witness_verifier(witness), witness_validity=VALIDITY)
+        self.assertEqual(
+            _reason(ctx.exception),
+            "evidence-bundle-witness-checkpoint-invalid")
+
+    def test_wrong_type_witness_log_refuses(self):
+        from gov import evidence_sigstore
+        signers = _signers(1)
+        witness = _witness()
+        stmt = evidence_intoto.build_statement(BUNDLE, CLAIMS)
+        env = evidence_intoto.seal_statement(stmt, signers)
+        with self.assertRaises(_dsse.EnvelopeError) as ctx:
+            evidence_sigstore.seal_sigstore_bundle(
+                env, signers, witness, witness_log="not-a-log",
+                integrated_time=T0)
+        self.assertEqual(_reason(ctx.exception),
+                         "evidence-bundle-malformed")
+
+
 if __name__ == "__main__":
     unittest.main()
+
+

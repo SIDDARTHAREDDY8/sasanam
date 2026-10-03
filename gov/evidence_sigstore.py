@@ -38,9 +38,10 @@ Differences from a public-Sigstore bundle, stated honestly:
   its own authority ("keyid is a hint, never authority").
 - ``tlogEntries`` carries OUR OWN Rekor-pattern witness entry, issued
   by a local witness key -- NOT the public Rekor service ($0,
-  offline-first). The persistent, checkpoint-first witness LOG is
-  build-order step 4; this lane's entry is the entry SHAPE (no Merkle
-  inclusion proof yet -- omitted by design, documented as a residual).
+  offline-first). With ``witness_log=`` (a ``gov.witness_log.WitnessLog``)
+  the entry is log-backed: real ``logIndex`` plus a signed checkpoint +
+  Merkle inclusion proof (``gov/witness_log.py``, wave-312). Without it,
+  the entry is the offline-fallback shape (SET only).
 - The RFC 3161 token field is a CARRIER: an attached token must be
   well-formed, but it is not cryptographically verified in this lane
   (no TSA at $0); the bundle MUST verify without it. Token
@@ -54,8 +55,23 @@ Witness entry shape (Rekor-pattern)::
       "kindVersion": {"kind": "sasanam-witness", "version": "0.0.1"},
       "integratedTime": "<unix seconds, int64-as-string>",
       "inclusionPromise": {"signedEntryTimestamp": "<base64 SET>"},
-      "canonicalizedBody": "<base64 canonical JSON>"
+      "canonicalizedBody": "<base64 canonical JSON>",
+      "inclusionProof": {                     # log-backed path only
+        "checkpoint": {"logId": "<hex>", "treeSize": N,
+                       "rootHash": "<hex>", "timestamp": T},
+        "checkpointSignature": "<base64>",
+        "auditPath": [{"hash": "<hex>", "side": "left|right"}, ...]
+      }
     }
+
+``seal_sigstore_bundle(..., witness_log=None)`` selects the path: with
+a ``gov.witness_log.WitnessLog``, the canonical body is appended to
+the real log, ``logIndex`` is the true tree position, and
+``inclusionProof`` carries a signed checkpoint + Merkle audit path
+backed by real tree state (wave-312). Without it, the entry keeps the
+offline-fallback shape (``logIndex: "0"``, SET only) -- the bundle
+verifies either way, and the verifier checks the proof only when
+present.
 
 The canonicalized body binds (CVE-2026-22703 lesson -- artifact +
 signature + key, never "a valid entry" alone)::
@@ -120,12 +136,18 @@ pin is untouched):
 - ``evidence-bundle-witness-key-unavailable`` -- the witness verifier
   does not expose its public key (required for the logId binding;
   key-remote witness verifiers are unsupported in this lane).
+- ``evidence-bundle-witness-checkpoint-invalid`` -- the log-backed
+  entry's checkpoint does not verify (bad signature, malformed
+  checkpoint, or logId not naming the pinned witness key). The
+  checkpoint signature is verified FIRST; tree_size/root_hash are
+  parsed only from the verified checkpoint.
+- ``evidence-bundle-witness-inclusion-invalid`` -- the log-backed
+  entry's Merkle inclusion proof does not verify against the
+  checkpoint root (or logIndex is outside the checkpoint tree_size).
 
-Residuals (NOT in this lane): the persistent witness log with
-checkpoints and Merkle inclusion proofs (step 4); RFC 3161 token
-cryptographic verification (step 4, standalone verifier); the
-standalone CLI verifier itself (step 4 -- do NOT build it here);
-multi-entry bundles.
+Residuals (NOT in this lane): RFC 3161 token cryptographic
+verification (step 4, standalone verifier); the standalone CLI verifier
+itself (step 4 -- do NOT build it here); multi-entry bundles.
 
 Stdlib only. $0 spend. Synthetic/local testing.
 """
@@ -141,6 +163,7 @@ import time
 from gov import dsse_envelope as _dsse
 from gov import evidence_dsse as _edsse
 from gov import evidence_intoto as _intoto
+from gov import witness_log as _witness_log
 
 __all__ = [
     "SIGSTORE_BUNDLE_MEDIA_TYPE",
@@ -242,7 +265,8 @@ def _witness_body(payload_bytes, wire_signatures, primary_pub):
 
 
 def seal_sigstore_bundle(statement_envelope, signers, witness_signer,
-                         *, rfc3161_token=None, integrated_time=None):
+                         *, rfc3161_token=None, integrated_time=None,
+                         witness_log=None):
     """Wrap a sealed in-toto statement envelope in a Sigstore bundle.
 
     ``statement_envelope`` is the native DSSE envelope dict from
@@ -254,6 +278,14 @@ def seal_sigstore_bundle(statement_envelope, signers, witness_signer,
     is carried, not verified. ``integrated_time`` pins the witness
     clock (default: now).
 
+    ``witness_log`` (a ``gov.witness_log.WitnessLog``) selects the
+    log-backed witness path (wave-312): the entry's canonical body is
+    appended to the real log, ``logIndex`` is the real tree position,
+    and the entry carries an ``inclusionProof`` (signed checkpoint +
+    Merkle audit path) backed by real tree state. Without it, the
+    entry keeps the offline-fallback shape (``logIndex: "0"``, SET
+    only) -- the bundle verifies either way.
+
     The envelope is strict-parsed and its payloadType + statement shape
     are checked BEFORE anything is emitted: a malformed statement is
     never distributed. Returns the bundle dict.
@@ -261,6 +293,10 @@ def seal_sigstore_bundle(statement_envelope, signers, witness_signer,
     signers = _check_signers(signers, witness_signer)
     tokens = _check_token(rfc3161_token)
     integrated_time = _check_integrated_time(integrated_time)
+    if witness_log is not None and not isinstance(
+            witness_log, _witness_log.WitnessLog):
+        _malformed("witness_log must be a gov.witness_log.WitnessLog, "
+                   "got %s" % type(witness_log).__name__)
 
     # Strict-parse the envelope: malformed input refuses here, before
     # any bundle bytes are produced.
@@ -307,7 +343,6 @@ def seal_sigstore_bundle(statement_envelope, signers, witness_signer,
         _malformed("witness signer returned empty/non-bytes")
 
     witness_entry = {
-        "logIndex": "0",
         "logId": {"keyId": base64.b64encode(
             hashlib.sha256(witness_pub).digest()).decode("ascii")},
         "kindVersion": {"kind": WITNESS_KIND,
@@ -317,6 +352,28 @@ def seal_sigstore_bundle(statement_envelope, signers, witness_signer,
             bytes(set_sig)).decode("ascii")},
         "canonicalizedBody": base64.b64encode(canonical).decode("ascii"),
     }
+    if witness_log is not None:
+        # Log-backed path: the entry is really in the tree. logIndex
+        # is the true position; the inclusionProof binds it to a
+        # signed checkpoint (checkpoint signature verified FIRST by
+        # the verifier, sizes/hashes only from the checkpoint).
+        try:
+            log_index = witness_log.append(canonical)
+            sealed_cp = witness_log.sealed_checkpoint(integrated_time,
+                                                      witness_signer)
+            proof = witness_log.inclusion_proof(log_index)
+        except _witness_log.WitnessError as exc:
+            _malformed("witness log failed: [%s] %s"
+                       % (exc.code, exc.detail))
+        witness_entry["logIndex"] = str(log_index)
+        witness_entry["inclusionProof"] = {
+            "checkpoint": sealed_cp["checkpoint"],
+            "checkpointSignature": sealed_cp["signature"],
+            "auditPath": proof["path"],
+        }
+    else:
+        # Offline fallback: entry shape only, no tree behind it.
+        witness_entry["logIndex"] = "0"
 
     verification_material = {
         "publicKey": {
@@ -484,6 +541,45 @@ def _open_statement(native_envelope, expected_bundle_bytes, verifiers,
                                   code=code)
 
 
+def _check_log_inclusion(entry, leaf_bytes, log_index, witness_pub):
+    """Verify the entry's log-backed inclusionProof (when present).
+
+    Checkpoint-first: the checkpoint signature is verified against the
+    pinned witness key BEFORE anything is parsed; tree_size/root_hash
+    come ONLY from the verified checkpoint (sigstore-python#248 --
+    never from the proof envelope or the entry). Then the Merkle audit
+    path must recompute the checkpoint root for this leaf at
+    log_index. Refuses coded; returns the tree size.
+    """
+    ip = entry.get("inclusionProof")
+    if not isinstance(ip, dict):
+        _malformed("tlogEntries[0].inclusionProof must be an object")
+    try:
+        cp = _witness_log.verify_checkpoint(
+            {"checkpoint": ip.get("checkpoint"),
+             "signature": ip.get("checkpointSignature")},
+            witness_pub)
+    except _witness_log.WitnessError as exc:
+        _refuse("evidence-bundle-witness-checkpoint-invalid",
+                "log checkpoint rejected: [%s] %s" % (exc.code,
+                                                     exc.detail))
+    tree_size = cp["treeSize"]
+    root_hash = bytes.fromhex(cp["rootHash"])
+    if not 0 <= log_index < tree_size:
+        _refuse("evidence-bundle-witness-inclusion-invalid",
+                "logIndex %d outside checkpoint tree_size %d"
+                % (log_index, tree_size))
+    try:
+        _witness_log.verify_inclusion(leaf_bytes, log_index,
+                                     ip.get("auditPath"), tree_size,
+                                     root_hash)
+    except _witness_log.WitnessError as exc:
+        _refuse("evidence-bundle-witness-inclusion-invalid",
+                "inclusion proof rejected: [%s] %s" % (exc.code,
+                                                      exc.detail))
+    return tree_size, cp["rootHash"]
+
+
 def _check_witness(entries, wire_signatures, payload_bytes, vm,
                    witness_verifier, witness_validity):
     """Witness stage: exactly one entry of our kind, body bound to this
@@ -576,13 +672,28 @@ def _check_witness(entries, wire_signatures, payload_bytes, vm,
         _refuse("evidence-bundle-witness-signature-invalid",
                 "witness SET does not verify against the pinned key")
 
-    return {
+    witness_info = {
         "log_index": log_index,
         "integrated_time": integrated_time,
         "time_source": "sealer host clock (time.time) at seal",
         "validity_window": (not_before, not_after),
         "witness_key_id": hashlib.sha256(witness_pub).hexdigest()[:16],
     }
+
+    # Log-backed path: when the entry carries an inclusionProof, the
+    # checkpoint and Merkle proof are verified on top of the SET (the
+    # offline fallback has no proof and verifies exactly as before).
+    inclusion_proof = entry.get("inclusionProof")
+    if inclusion_proof is not None:
+        tree_size, root_hash = _check_log_inclusion(
+            entry, witnessed, int(log_index), witness_pub)
+        witness_info["log_backed"] = True
+        witness_info["tree_size"] = tree_size
+        witness_info["root_hash"] = root_hash
+    else:
+        witness_info["log_backed"] = False
+
+    return witness_info
 
 
 def open_sigstore_bundle(bundle, expected_bundle_bytes, verifiers,

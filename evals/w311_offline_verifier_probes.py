@@ -11,15 +11,18 @@ distribution), implementing the wave-310 lane B steal verdicts
   (canonical bundle bytes + inline verification bundle + compiled-in
   trust root pinned by SHA-256), zero network by construction, five
   negative tests + one known-good positive;
-  DepGuard-shaped typed failure taxonomy (11 codes, exit codes 40-44,
-  ordered parse -> crypto -> unsupported -> binding -> policy/temporal);
+  DepGuard-shaped typed failure taxonomy (16 codes, exit codes 40-44,
+  ordered parse -> crypto -> unsupported -> binding -> policy/temporal --
+  11 base codes from lane E plus the 5 wave-312 WITNESS_* codes slotted
+  into the existing categories);
   cosign air-gap UX (--offline / --trusted-root / --rfc3161-timestamp,
   no --private-infrastructure); SLSA VSA consumer procedure
   (PASSED != ALLOW); Witness policy binding (trust roots inside the
   signed policy, expired policy always fails); timestamp-authority
   isolation (each authority verified against its own key + validFor
-  only); Rekor v2 offline contract (no network; witness entries refused
-  until the witness step lands -- seam documented); TUF rotation
+  only); Rekor v2 offline contract (no network; witness entries are now
+  VERIFIED checkpoint-first by the wave-312 witness step -- unknown
+  entry kinds are still refused coded, never silently skipped); TUF rotation
   ceremony (no TUF client in the verifier; reviewed root refresh pinned
   by SHA-256; never silently fall back); clock as inspectable control
   (named time source, fail closed with no trusted time).
@@ -43,9 +46,11 @@ Third-party acceptance (probe thirdparty-accept): a stdlib-only script
 (evals/w311_thirdparty_accept.py) re-verifies a known-good bundle with
 NO Sasanam import (asserted via sys.modules in the child).
 
-No new decision codes are minted by this lane (the 11 verifier codes
-are the verifier's own taxonomy, not governance decisions); pin stays
-1841. No open findings expected: _EXPECTED_BREAKS is empty.
+No new decision codes are minted by the witness lane beyond the 10
+already registered (the 16 verifier codes -- 11 base + 5 WITNESS_* --
+are the verifier's own taxonomy, not governance decisions); pin is
+1851 after the witness-code registration. No open findings expected:
+_EXPECTED_BREAKS is empty.
 
 Run:
   mkdir -p /var/tmp/g311-ovf && TMPDIR=/var/tmp/g311-ovf \\
@@ -86,7 +91,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # No new decision codes minted by this lane (verifier taxonomy is the
 # verifier's own surface, not governance decisions); pin stays 1829.
-TAXONOMY_PIN = 1841  # wave-310 merge pin
+TAXONOMY_PIN = 1851  # wave-312: 1841 + 10 witness-log/evidence-bundle codes
 
 from gov.signing import Ed25519Signer, Ed25519Verifier
 from gov import evidence_verify_offline as v
@@ -294,9 +299,9 @@ def p_footer_state():
 
 def p_taxonomy_shape():
     codes = v.FAILURE_CODES
-    if len(codes) != 11:
+    if len(codes) != 16:
         return _record("taxonomy-shape", "BREAK",
-                       "want 11 codes, got %d" % len(codes))
+                       "want 16 codes, got %d" % len(codes))
     exits = sorted({c["exit"] for c in codes.values()})
     if exits != [40, 41, 42, 43, 44]:
         return _record("taxonomy-shape", "BREAK",
@@ -308,7 +313,8 @@ def p_taxonomy_shape():
                        "categories want %r" % (order,))
     # Ordered: every code's category must not regress vs the previous
     # code in dict order (parse -> crypto -> unsupported -> consistency
-    # -> policy).
+    # -> policy; the wave-312 WITNESS_* codes slot into the existing
+    # categories in that order).
     rank = {c: i for i, c in enumerate(order)}
     seq = [rank[c] for c in cats]
     if seq != sorted(seq):
@@ -319,7 +325,7 @@ def p_taxonomy_shape():
         if not c.get("reason") or not c.get("remedy"):
             return _record("taxonomy-shape", "BREAK",
                            "code %s missing reason/remedy" % k)
-    _record("taxonomy-shape", "HELD", "11 codes, exits 40-44, ordered")
+    _record("taxonomy-shape", "HELD", "16 codes, exits 40-44, ordered")
 
 
 def p_known_good_positive():
@@ -480,8 +486,9 @@ def p_neg_corrupted_timestamp_sig():
 
 
 def p_neg_witness_entries_present():
-    # The witness step has not landed: any witness entry is refused
-    # coded (the seam), never silently ignored.
+    # Unknown witness entry kinds are refused coded (never silently
+    # skipped) -- the landed witness step verifies the registered
+    # sasanam-witness-log/v1 kind; anything else still fails closed.
     vb, bb = _good_bundle()
     vb2 = copy.deepcopy(vb)
     vb2["witness_entries"] = [{"version": "rekor-v2-entry/v1",
