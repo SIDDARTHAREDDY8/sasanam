@@ -47,6 +47,15 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
 os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w270-redteam")
 
+import probe_lines  # noqa: E402  (canonical probe-line form)
+
+
+def _sanitize_pid(pid):
+    # D7: pids must match [A-Za-z0-9_.\-]; w270 names probes with a
+    # "family/slug" convention (e.g. evcert/...). Value-only rename
+    # at emit time ("/" -> "-").
+    return pid.replace("/", "-")
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
@@ -1358,29 +1367,53 @@ def _green_check():
 def main():
     held = brk = residual = errors = 0
     print("wave-270 red-team battery: %d probes" % len(PROBES))
+    mapped = []
     for pid, fn in PROBES:
         try:
             verdict, detail = fn()
         except Exception as exc:  # noqa: BLE001 -- probe bug
             verdict, detail = ("ERROR", "%s: %s"
                                % (type(exc).__name__, exc))
+        pid = _sanitize_pid(pid)
         if verdict == "HELD":
             held += 1
+            mapped.append((pid, "HELD", detail))
         elif verdict == "BREAK":
             brk += 1
+            mapped.append((pid, "BREAK", detail))
         elif verdict == "RESIDUAL":
+            # Wave-316 lane-3 decision (D1 lowercase-residual
+            # rationale, same as w269): RESIDUAL -> HELD with a
+            # "residual: " prefix (documented honest limit,
+            # exit-neutral in this battery).
             residual += 1
+            mapped.append((pid, "HELD", "residual: " + detail))
         else:
             errors += 1
-            verdict = "ERROR"
-        print("[%s] %s: %s" % (verdict, pid, detail))
+            mapped.append((pid, "ERROR", detail))
+    probe_lines.emit(mapped)
     print("---- green check (depth-1) ----")
+    gc_mapped = []
     for name, verdict, detail in _green_check():
-        print("[%s] %s: %s" % (verdict, name, detail))
-        if verdict == "BREAK":
-            brk += 1
-        elif verdict == "ERROR":
-            errors += 1
+        # The GOV_SKIP_GREEN skip marker is uppercase "SKIPPED" here
+        # -> SKIP (D1); other green-check verdicts are canonical.
+        # D7: pid class at emit (adjacent-battery paths contain "/").
+        pid = "green-check" if name == "green-check" else _sanitize_pid(name)
+        if verdict == "SKIPPED":
+            gc_mapped.append((pid, "SKIP", detail))
+        else:
+            gc_mapped.append((pid, verdict, detail))
+            if verdict == "BREAK":
+                brk += 1
+            elif verdict == "ERROR":
+                errors += 1
+    probe_lines.emit(gc_mapped)
+    mapped.extend(gc_mapped)
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        mapped, brk, held + residual, errors)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk, held + residual, errors))
     print("==== %d HELD / %d BREAK / %d RESIDUAL / %d ERROR ===="
           % (held, brk, residual, errors))
     return 1 if (brk or errors) else 0

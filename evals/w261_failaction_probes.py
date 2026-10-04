@@ -40,6 +40,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for _p in (REPO, os.path.join(REPO, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 try:
     from gov import failure_actions as fa  # noqa: E402
@@ -495,6 +497,22 @@ def green_check():
     return True
 
 
+# D1 verdict mapping (evals/SUMMARY_FORM_POLICIES.md), red-first: GAP -> BREAK.
+# Raw rows keep the battery's own vocabulary (count code and exit contract
+# untouched); the mapping happens here, at emission. Anything unexpected
+# fails closed as ERROR.
+def _mapped(rows):
+    out = []
+    for _name, _verdict, _detail in rows:
+        if _verdict == "GAP":
+            out.append((_name, "BREAK", "GAP: %s" % (_detail,)))
+        elif _verdict in ("HELD", "BREAK", "ERROR"):
+            out.append((_name, _verdict, _detail))
+        else:
+            out.append((_name, "ERROR",
+                        "unexpected verdict %r: %s" % (_verdict, _detail)))
+    return out
+
 def main():
     results = []
     if not HAVE_MODULE:
@@ -511,10 +529,13 @@ def main():
     held = sum(1 for _, v, _ in results if v == "HELD")
     brk = sum(1 for _, v, _ in results if v.startswith("BREAK"))
     gap = sum(1 for _, v, _ in results if v == "GAP")
-    for name, verdict, detail in results:
-        print("%-36s %-6s %s" % (name, verdict, detail))
-    print("HELD %d / BREAK %d / GAP %d of %d"
-          % (held, brk, gap, len(results)))
+    mapped = _mapped(results)
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        mapped, brk + gap, held, 0)
+    probe_lines.emit(mapped)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk + gap, held, 0))
     ok = green_check()
     return held, brk, gap, ok
 

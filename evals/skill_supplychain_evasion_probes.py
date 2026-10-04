@@ -76,6 +76,7 @@ from gov.tool_continuity import (  # noqa: E402
     ToolInventory,
     tool_definition_digest,
 )
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 RESULTS = []
 V1 = b"skill-bytes-version-one"
@@ -87,8 +88,9 @@ def _sha(b):
 
 
 def _record(name, verdict, detail):
+    # Wave-316 lane-3: append-only; emission happens once in main()
+    # via probe_lines.emit (canonical form).
     RESULTS.append((name, verdict, detail))
-    print("%-4s %-8s %s" % (name, verdict, detail))
 
 
 def _origin():
@@ -611,6 +613,18 @@ def main():
     n_held = sum(1 for _, v, _ in RESULTS if v == "HELD")
     n_exp = sum(1 for _, v, _ in RESULTS if v == "EXPECTED")
     n_err = sum(1 for _, v, _ in RESULTS if v == "ERROR")
+    # Wave-316 lane-3 decision (D1): EXPECTED -> HELD with an
+    # "expected: " prefix (demonstrated residual that is NOT a seam
+    # bug -- the check/use split persists at the consumer layer;
+    # exit-neutral in this battery).
+    mapped = [(n, "HELD", "expected: " + d) if v == "EXPECTED" else (n, v, d)
+              for n, v, d in RESULTS]
+    probe_lines.emit(mapped)
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        mapped, n_break, n_held + n_exp, n_err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (n_break, n_held + n_exp, n_err))
     print("----")
     print("%d BREAK / %d HELD / %d EXPECTED / %d ERROR"
           % (n_break, n_held, n_exp, n_err))

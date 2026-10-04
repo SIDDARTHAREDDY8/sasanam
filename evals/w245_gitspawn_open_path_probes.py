@@ -58,6 +58,8 @@ import traceback
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 HAVE_ST = False
 HAVE_SS = False
@@ -471,12 +473,35 @@ def _green_ok(green):
     return True
 
 
+# D1 verdict mapping (evals/SUMMARY_FORM_POLICIES.md), red-first: the
+# lowercase "gap" verdict is this battery's red phase (the exit contract is
+# rc=2 on any gap) and maps to BREAK. Raw RESULTS keep the lowercase
+# vocabulary (run_all() counts, and the adjacent green check's
+# "held=%d gap=%d errors=%d" string, are untouched); the mapping happens at
+# emission, following the w72 precedent. Unknown verdicts fall back to BREAK
+# (red-first, never greener).
+_VERDICT_MAP = {"held": "HELD", "gap": "BREAK", "error": "ERROR",
+                "stopped": "HELD"}
+
+
+def _note_of(row):
+    # D2 contract (w72 precedent): the note lives under detail["note"],
+    # falling back to detail["error"] for harness exceptions.
+    return row["detail"].get("note") or row["detail"].get("error", "")
+
 def main():
     held, gap, errors = run_all()
-    print("w245_gitspawn_open_path: %d held / %d gap / %d errors "
-          "of %d" % (held, gap, errors, len(PROBE_NAMES)))
-    for r in RESULTS:
-        print("  %s: %s %s" % (r["id"], r["verdict"], r["detail"]))
+    rows = [{"id": r["id"],
+             "verdict": _VERDICT_MAP.get(r["verdict"], "BREAK"),
+             "detail": r["detail"]} for r in RESULTS]
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        [(r["id"], r["verdict"], _note_of(r)) for r in rows],
+        gap, held, errors)
+    probe_lines.emit_dicts(rows, pid_key="id", note_getter=_note_of)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("w245_gitspawn_open_path: %d BREAK / %d HELD / %d ERROR"
+          % (gap, held, errors))
     green = green_check_adjacent()
     print("adjacent green check: %s" % (green,))
     rc = 0

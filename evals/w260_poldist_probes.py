@@ -16,16 +16,16 @@ the built capability -> filed as a finding F230+), ERROR (harness
 bug -- fix the harness, never the product).
 
 Probe roster:
-  poldist/forged-signature        forged Ed25519 signature refused
-  poldist/tampered-payload        payload bytes changed after signing
-  poldist/replayed-older-version  older version re-applied (rollback)
-  poldist/cross-topic-replay      topic-A bundle fed to topic-B subscriber
-  poldist/unsigned-bundle         no signature field at all
-  poldist/malformed-envelope      non-JSON / shape violations
-  poldist/version-skip            gap forward (documented handling)
-  poldist/duplicate-delivery      same version+payload re-applied
-  poldist/equivocation            same version, different payload
-  poldist/taxonomy-pin            refusal vocabulary pin
+  poldist-forged-signature        forged Ed25519 signature refused
+  poldist-tampered-payload        payload bytes changed after signing
+  poldist-replayed-older-version  older version re-applied (rollback)
+  poldist-cross-topic-replay      topic-A bundle fed to topic-B subscriber
+  poldist-unsigned-bundle         no signature field at all
+  poldist-malformed-envelope      non-JSON / shape violations
+  poldist-version-skip            gap forward (documented handling)
+  poldist-duplicate-delivery      same version+payload re-applied
+  poldist-equivocation            same version, different payload
+  poldist-taxonomy-pin            refusal vocabulary pin
 """
 
 import hashlib
@@ -37,6 +37,9 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 try:
     from gov import policy_distribution as pd  # noqa: E402
@@ -91,7 +94,7 @@ def _code(result):
     return mc.get("code")
 
 
-@probe("poldist/forged-signature")
+@probe("poldist-forged-signature")
 def _p_forged_signature():
     gap = _require_module()
     if gap:
@@ -113,7 +116,7 @@ def _p_forged_signature():
             % (_outcome(res), _code(res)))
 
 
-@probe("poldist/tampered-payload")
+@probe("poldist-tampered-payload")
 def _p_tampered_payload():
     gap = _require_module()
     if gap:
@@ -130,7 +133,7 @@ def _p_tampered_payload():
             % (_outcome(res), _code(res)))
 
 
-@probe("poldist/replayed-older-version")
+@probe("poldist-replayed-older-version")
 def _p_replayed_older():
     gap = _require_module()
     if gap:
@@ -148,7 +151,7 @@ def _p_replayed_older():
             % (_outcome(res), _code(res)))
 
 
-@probe("poldist/cross-topic-replay")
+@probe("poldist-cross-topic-replay")
 def _p_cross_topic():
     gap = _require_module()
     if gap:
@@ -164,7 +167,7 @@ def _p_cross_topic():
             % (_outcome(res), _code(res)))
 
 
-@probe("poldist/unsigned-bundle")
+@probe("poldist-unsigned-bundle")
 def _p_unsigned():
     gap = _require_module()
     if gap:
@@ -180,7 +183,7 @@ def _p_unsigned():
             % (_outcome(res), _code(res)))
 
 
-@probe("poldist/malformed-envelope")
+@probe("poldist-malformed-envelope")
 def _p_malformed():
     gap = _require_module()
     if gap:
@@ -205,7 +208,7 @@ def _p_malformed():
             "poldist-bundle-malformed")
 
 
-@probe("poldist/version-skip")
+@probe("poldist-version-skip")
 def _p_version_skip():
     gap = _require_module()
     if gap:
@@ -224,7 +227,7 @@ def _p_version_skip():
             % (_outcome(res), _code(res), res.get("gap")))
 
 
-@probe("poldist/duplicate-delivery")
+@probe("poldist-duplicate-delivery")
 def _p_duplicate():
     gap = _require_module()
     if gap:
@@ -241,7 +244,7 @@ def _p_duplicate():
             % (_outcome(res), _code(res)))
 
 
-@probe("poldist/equivocation")
+@probe("poldist-equivocation")
 def _p_equivocation():
     gap = _require_module()
     if gap:
@@ -268,7 +271,7 @@ def _p_equivocation():
             % (_outcome(res), _code(res)))
 
 
-@probe("poldist/taxonomy-pin")
+@probe("poldist-taxonomy-pin")
 def _p_taxonomy_pin():
     gap = _require_module()
     if gap:
@@ -316,8 +319,26 @@ def _green_check():
     return notes
 
 
+# D1 verdict mapping (evals/SUMMARY_FORM_POLICIES.md), red-first: GAP -> BREAK.
+# BASELINE is defined by these batteries as "known-open finding reproduced"
+# (dead in practice: no probe returns it) and maps to BREAK as well. Raw rows
+# keep the battery's own vocabulary (count code and exit contract untouched);
+# the mapping happens here, at emission. Anything else fails closed as ERROR.
+def _mapped(rows):
+    out = []
+    for _name, _verdict, _detail in rows:
+        if _verdict in ("GAP", "BASELINE"):
+            out.append((_name, "BREAK", "%s: %s" % (_verdict, _detail)))
+        elif _verdict in ("HELD", "BREAK", "ERROR"):
+            out.append((_name, _verdict, _detail))
+        else:
+            out.append((_name, "ERROR",
+                        "unexpected verdict %r: %s" % (_verdict, _detail)))
+    return out
+
 def main():
     held = gaps = breaks = errors = 0
+    rows = []
     for name, fn in _PROBES:
         try:
             verdict, detail = fn()
@@ -332,12 +353,17 @@ def main():
             breaks += 1
         else:
             errors += 1
-        print("%-8s %-55s %s" % (verdict, name, detail))
+        rows.append((name, verdict, detail))
+    mapped = _mapped(rows)
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        mapped, breaks + gaps, held, errors)
+    probe_lines.emit(mapped)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
     print("-" * 79)
     for name, note in _green_check():
         print("green-check %-45s %s" % (name, note))
-    print("HELD %d / GAP %d / BREAK %d / ERROR %d over %d probes"
-          % (held, gaps, breaks, errors, len(_PROBES)))
+    print("%d BREAK / %d HELD / %d ERROR" % (breaks + gaps, held, errors))
     return 1 if (breaks or errors) else 0
 
 

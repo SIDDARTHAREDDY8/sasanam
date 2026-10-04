@@ -44,6 +44,8 @@ import sys
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
+sys.path.insert(0, os.path.join(_REPO_ROOT, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 try:
     from gov import policy_compile as pc
@@ -54,6 +56,21 @@ except ImportError:
 
 _RESULTS = []
 _PROBE_FNS = {}
+
+
+# D1 verdict mapping (evals/SUMMARY_FORM_POLICIES.md): probe rows record
+# HELD/GAP/BREAK/ERROR and the depth-1 green checks record HELD/ERROR/SKIP;
+# the canonical emission vocabulary is BREAK/HELD/ERROR/SKIP, mapped
+# red-first (GAP->BREAK). Probe logic, verdict computation and count code
+# are untouched -- only the print loop below maps. The green-check pid is
+# renamed value-only ("green <label>" -> "green_<label>") so it stays
+# inside the pid character class.
+_VERDICT_MAP = {
+    "PASS": "HELD", "HELD": "HELD", "GREEN": "HELD",
+    "FAIL": "BREAK", "BROKEN": "BREAK", "GAP": "BREAK", "RED": "BREAK",
+    "BREAK": "BREAK",
+    "ERROR": "ERROR", "SKIP": "SKIP", "SKIPPED": "SKIP",
+}
 
 
 def _probe(name):
@@ -454,16 +471,24 @@ def main():
     brk = sum(1 for _, v, _ in rows if v == "BREAK")
     err = sum(1 for _, v, _ in rows if v == "ERROR")
     print("== w217 compile-once battery: %d probes ==" % len(rows))
-    for name, verdict, detail in rows:
-        print("[%s] %s: %s" % (verdict, name, detail))
+    final = [(n, _VERDICT_MAP[v], d) for n, v, d in rows]
+    final += [("green_" + label, _VERDICT_MAP[v], d)
+              for label, v, d in _green_check()]
+    probe_lines.emit(final)
+    brk_c = sum(1 for _, v, _ in final if v == "BREAK")
+    held_c = sum(1 for _, v, _ in final if v == "HELD")
+    err_c = sum(1 for _, v, _ in final if v == "ERROR")
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        final, brk_c, held_c, err_c)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % ("; ".join(_coh_diags)))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk_c, held_c, err_c))
     print("-- %d HELD / %d GAP / %d BREAK / %d ERROR" % (held, gap, brk,
                                                         err))
     # determinism: second pass must be verdict-identical
     rows2 = [(_PROBE_FNS[n]()) for n in names]
     det = all(a[1] == b[1] for a, b in zip(rows, rows2))
     print("-- determinism: %s" % ("PASS" if det else "FAIL"))
-    for label, verdict, detail in _green_check():
-        print("[%s] green %s: %s" % (verdict, label, detail))
     if brk or err or not det:
         return 1
     return 0

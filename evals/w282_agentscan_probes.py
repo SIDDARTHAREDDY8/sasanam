@@ -516,8 +516,19 @@ def p_adjacent_green():
          os.path.join(REPO, "evals", "skill_supplychain_evasion_probes.py")],
         capture_output=True, text=True, env=env, timeout=600)
     out = p.stdout + p.stderr
-    breaks = [ln.split()[0] for ln in out.splitlines()
-              if "BREAK" in ln and ln.split()[0].startswith("e")]
+    # D8 (wave-316 lane 3): skill_supplychain_evasion now emits canonical
+    # bracketed probe lines ([BREAK] e7: ...); the old columnar form
+    # (e7 BREAK...) is kept for backward compatibility.
+    def _pid_of(ln):
+        toks = ln.split()
+        if not toks:
+            return ""
+        if toks[0].startswith("[") and len(toks) > 1:
+            # Canonical: "[BREAK] e7: note" -> pid is second token, minus colon.
+            return toks[1].rstrip(":")
+        return toks[0]
+    breaks = [_pid_of(ln) for ln in out.splitlines()
+              if "BREAK" in ln and _pid_of(ln).startswith("e")]
     if p.returncode == 1 and breaks == ["e7"]:
         return ("HELD", "adjacent: only pre-existing e7 BREAK (base-identical)")
     tail = out[-200:]

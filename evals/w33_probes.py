@@ -55,6 +55,8 @@ sys.path.insert(0, str(REPO_ROOT))
 # on the dev-key opt-in process-wide); dev keys are enabled per-probe
 # with _env()+_dev_keys() instead, and restored afterwards.
 sys.path.insert(0, str(REPO_ROOT / "tests"))
+sys.path.insert(0, str(REPO_ROOT / "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 import harness  # noqa: E402
 from gov import log as log_mod  # noqa: E402
@@ -677,6 +679,21 @@ def sit_p7_fetch_head_variant():
 # Runner
 # --------------------------------------------------------------------------
 
+# D1 verdict mapping for the HOLD/MISS vocabulary
+# (evals/SUMMARY_FORM_POLICIES.md): "stopped" (attack stopped) -> HELD,
+# "break" -> BREAK, "error" -> ERROR, "residual" -> HELD with a
+# "residual: " note prefix. Red-first: an unmapped verdict maps to BREAK.
+_VERDICT_MAP = {"stopped": "HELD", "break": "BREAK", "error": "ERROR",
+                "residual": "HELD"}
+
+
+def _note_of(row):
+    # D2 contract for the w72 family: the note lives under
+    # detail["note"], falling back to detail["error"] for harness
+    # exceptions (which record {"error": ...} with no "note").
+    return row["detail"].get("note") or row["detail"].get("error", "")
+
+
 def main(argv=None):
     only = (argv or [])[1:]
     for sid in sorted(SITUATIONS):
@@ -684,14 +701,20 @@ def main(argv=None):
                 sid.startswith(o) for o in only):
             continue
         SITUATIONS[sid]()
-    counts = {}
-    for r in RESULTS:
-        counts[r["verdict"]] = counts.get(r["verdict"], 0) + 1
-    print("wave-33 probes: %d situations" % len(RESULTS))
-    for r in RESULTS:
-        note = r["detail"].get("note") or r["detail"].get("error") or ""
-        print("  %-60s %-8s %s" % (r["id"], r["verdict"], note))
-    print("verdicts: %s" % json.dumps(counts, sort_keys=True))
+    rows = [{"id": r["id"],
+             "verdict": _VERDICT_MAP.get(r["verdict"], "BREAK"),
+             "detail": r["detail"]} for r in RESULTS]
+    probe_lines.emit_dicts(rows, pid_key="id", note_getter=_note_of)
+    brk = sum(1 for r in rows if r["verdict"] == "BREAK")
+    held = sum(1 for r in rows if r["verdict"] == "HELD")
+    err = sum(1 for r in rows if r["verdict"] == "ERROR")
+    print("w33 battery: %d BREAK / %d HELD / %d ERROR"
+          % (brk, held, err))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        [(r["id"], r["verdict"], _note_of(r)) for r in rows], brk, held, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    # The old main returned 0 unconditionally; preserve it exactly.
     return 0
 
 

@@ -75,6 +75,8 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -474,18 +476,32 @@ def _green_check():
     for rel in adj:
         path = os.path.join(REPO, rel)
         if not os.path.exists(path):
-            _RESULTS.append(("green:" + rel, "HELD",
+            # D7 pid class: ':' and '/' are outside [A-Za-z0-9_.\-].
+            _RESULTS.append(("green_" + rel.replace("/", "_"), "HELD",
                              "battery absent (lane not merged)"))
             continue
         env = dict(os.environ, GOV_SKIP_GREEN="1")
         r = subprocess.run([sys.executable, path], capture_output=True,
                            text=True, env=env, timeout=600)
         ok = r.returncode == 0
-        _RESULTS.append(("green:" + os.path.basename(rel),
+        _RESULTS.append(("green_" + os.path.basename(rel),
                          "HELD" if ok else "ERROR",
                          "adjacent battery %s"
                          % ("green" if ok else
                             "RED: " + (r.stdout + r.stderr)[-300:])))
+
+
+# D1 verdict mapping (evals/SUMMARY_FORM_POLICIES.md), red-first: GAP -> BREAK.
+# Raw records keep the battery's own vocabulary (count code and exit contract
+# untouched); the mapping happens at emission.
+def _mapped(rows):
+    out = []
+    for name, verdict, detail in rows:
+        if verdict == "GAP":
+            out.append((name, "BREAK", "GAP: %s" % (detail,)))
+        else:
+            out.append((name, verdict, detail))
+    return out
 
 
 def main():
@@ -498,15 +514,19 @@ def main():
     _PROBE_FNS["determinism"]()
     n_held = n_gap = n_err = 0
     for name, verdict, detail in _RESULTS:
-        print("%-32s %-6s %s" % (name, verdict, detail))
         if verdict == "HELD":
             n_held += 1
         elif verdict == "GAP":
             n_gap += 1
         else:
             n_err += 1
-    print("w213 scan-gate: held=%d gap=%d errors=%d" % (n_held, n_gap,
-                                                       n_err))
+    mapped = _mapped(_RESULTS)
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        mapped, n_gap, n_held, n_err)
+    probe_lines.emit(mapped)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (n_gap, n_held, n_err))
     bad = any(v not in ("HELD",) for _, v, _ in _RESULTS)
     return 2 if bad else 0
 

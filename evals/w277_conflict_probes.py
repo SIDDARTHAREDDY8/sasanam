@@ -51,6 +51,7 @@ sys.path.insert(0, REPO)
 
 import gov.instruction_provenance as prov  # noqa: E402
 import gov.rail_verdict as rv               # noqa: E402
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 TAXONOMY_PIN = 1900 # Wave-276 merge pin; this battery adds no codes.; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).; Wave-286 merge: pin 1641 -> 1660; Wave-287 merge: pin 1660 -> 1684 (+7 tsa-* +7 evidence-provenance +10 trustvec-*) (+1 manifest-regex-unsafe +1 keyset-pin-key-invalid +6 receipt-* +11 toolcall-*).; Wave-288 merge: pin 1684 -> 1700 (+16: 1 toolcall-exception-scope-mismatch +1 toolcall-regex-unsafe +1 toolcall-invalid-call +7 admission-* +6 posture-*); Wave-289 merge: pin 1700 -> 1706 (+6 challenge-*); Wave-293 merge: pin 1730 -> 1730 (renumber F361->F364, no new codes). Wave-294 merge: pin 1730 -> 1742 (+12: 4 coord-lease-* + 4 toolcall/toolfilter-* + 4 toolcall-schema-*); Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*); Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*)
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
@@ -636,27 +637,39 @@ def _green_checks():
 def main():
     print("w277 graded-conflict battery: %d probes (TMPDIR=%s)"
           % (len(_PROBES), _TMP))
-    failures = 0
+    # Wave-316 lane-3 decision (D1 PASS/FAIL rationale): ok -> HELD,
+    # FAIL -> BREAK. Exit-equivalence: old `1 if failures else 0` ==
+    # new `0 if (brk==0 and err==0)` -- failures counted probe
+    # mismatches plus green checks not in (HELD, SKIP); brk counts
+    # exactly those, err is always 0.
+    mapped = []
     for pid, expected, fn in _PROBES:
         _run(pid, expected, fn)
     for pid, expected, verdict, ok, note in _RESULTS:
-        flag = "ok " if ok else "FAIL"
-        if not ok:
-            failures += 1
-        print("[%s] %-34s expected=%-5s got=%-5s %s"
-              % (flag, pid, expected, verdict, note))
+        mapped.append((pid, "HELD" if ok else "BREAK",
+                       "expected=%s got=%s %s" % (expected, verdict, note)))
+    probe_lines.emit(mapped)
     print("--- green checks (depth-1) ---")
+    gc_mapped = []
     for name, verdict, note in _green_checks():
-        print("[%s] %s %s" % ("ok " if verdict in ("HELD", "SKIP") else "FAIL",
-                              name, note))
-        if verdict not in ("HELD", "SKIP"):
-            failures += 1
+        # Green checks already record canonical verdicts.
+        gc_mapped.append((name, verdict, note))
+    probe_lines.emit(gc_mapped)
+    mapped.extend(gc_mapped)
+    brk = sum(1 for _, v, _ in mapped if v == "BREAK")
+    hld = sum(1 for _, v, _ in mapped if v == "HELD")
+    err = sum(1 for _, v, _ in mapped if v == "ERROR")
+    _coh_ok, _coh_diags = probe_lines.check_coherence(mapped, brk, hld, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk, hld, err))
     n_break = sum(1 for r in _RESULTS if r[2] == "BREAK")
     n_held = sum(1 for r in _RESULTS if r[2] == "HELD")
     n_err = sum(1 for r in _RESULTS if r[2] == "ERROR")
+    failures = brk  # == old mismatch+green-failure count, by construction
     print("probes: %d BREAK / %d HELD / %d ERROR; mismatches: %d"
           % (n_break, n_held, n_err, failures))
-    return 1 if failures else 0
+    return 0 if (brk == 0 and err == 0) else 1
 
 
 if __name__ == "__main__":

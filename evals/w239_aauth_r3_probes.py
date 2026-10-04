@@ -68,6 +68,8 @@ import traceback
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 HAVE_NEW_API = False
 try:
@@ -277,14 +279,21 @@ def main():
     gap = sum(1 for v, _ in results.values() if v == "GAP")
     brk = sum(1 for v, _ in results.values() if v == "BREAK")
     err = sum(1 for v, _ in results.values() if v == "ERROR")
-    for name in PROBE_NAMES:
-        verdict, detail = results[name]
-        line = "%-38s %s" % (name, verdict)
-        if detail:
-            line += "  (%s)" % detail.strip().splitlines()[0]
-        print(line)
-    print("%d HELD / %d GAP / %d BREAK / %d ERROR (%.1fs)" % (
-        held, gap, brk, err, time.time() - t0))
+    # D1 verdict mapping (evals/SUMMARY_FORM_POLICIES.md), red-first:
+    # GAP -> BREAK. Raw results keep the battery's own vocabulary (count code
+    # and exit contract untouched); the mapping happens here, at emission.
+    mapped = [(name,
+               "BREAK" if results[name][0] == "GAP" else results[name][0],
+               ("GAP: %s" % (results[name][1],))
+               if results[name][0] == "GAP" else results[name][1])
+              for name in PROBE_NAMES]
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        mapped, brk + gap, held, err)
+    probe_lines.emit(mapped)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR (%.1fs)"
+          % (brk + gap, held, err, time.time() - t0))
     return 0 if (brk == 0 and err == 0) else 2
 
 

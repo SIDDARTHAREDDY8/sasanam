@@ -66,6 +66,8 @@ except OSError:
     pass
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 sys.path.insert(0, REPO)
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
@@ -90,6 +92,19 @@ except Exception as exc:  # noqa: BLE001 - pristine run has no module
 
 _RESULTS = []
 
+
+# D1 verdict mapping (evals/SUMMARY_FORM_POLICIES.md): this battery
+# records HELD/GAP/BREAK/ERROR on probes and PASS/SKIP/FAIL on its
+# depth-1 green checks; the canonical emission vocabulary is
+# BREAK/HELD/ERROR/SKIP, mapped red-first (PASS->HELD, GAP/FAIL->BREAK).
+# Probe logic, verdict computation and count code are untouched -- only
+# the print loop below maps.
+_VERDICT_MAP = {
+    "PASS": "HELD", "HELD": "HELD", "GREEN": "HELD",
+    "FAIL": "BREAK", "BROKEN": "BREAK", "GAP": "BREAK",
+    "RED": "BREAK", "BREAK": "BREAK",
+    "ERROR": "ERROR", "SKIP": "SKIP", "SKIPPED": "SKIP",
+}
 
 def _record(name, verdict, detail=""):
     _RESULTS.append((name, verdict, detail))
@@ -532,14 +547,25 @@ def main():
     gap = sum(1 for _, v in first if v == "GAP")
     brk = sum(1 for _, v in first if v == "BREAK")
     err = sum(1 for _, v in first if v == "ERROR")
+    final = [(n, _VERDICT_MAP[v], d) for n, v, d in _RESULTS]
+    # Green-check pids are renamed value-only ("/" -> "_") so every
+    # emitted pid stays inside [A-Za-z0-9_.-] (D7).
+    final += [(n.replace("/", "_"), _VERDICT_MAP[s], d)
+              for n, s, d in green]
+    probe_lines.emit(final)
+    brk_c = sum(1 for _, v, _ in final if v == "BREAK")
+    held_c = sum(1 for _, v, _ in final if v == "HELD")
+    err_c = sum(1 for _, v, _ in final if v == "ERROR")
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        final, brk_c, held_c, err_c)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % ("; ".join(_coh_diags)))
+    print("%d BREAK / %d HELD / %d ERROR"
+          % (brk_c, held_c, err_c))
     print("w222 display-attestation probes: %d HELD / %d GAP / %d BREAK / "
           "%d ERROR (%d probes, determinism %s)"
           % (held, gap, brk, err, len(first),
              "PASS" if det_ok else "FAIL"))
-    for name, verdict, detail in _RESULTS:
-        print("  %-48s %s %s" % (name, verdict, detail))
-    for name, status, detail in green:
-        print("  %-48s %s %s" % (name, status, detail))
     if not _IMPORT_OK:
         print("import failed (pristine): %r" % (_IMPORT_ERR,))
     if brk or err or not det_ok:

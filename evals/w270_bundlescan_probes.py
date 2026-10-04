@@ -418,9 +418,13 @@ def _green_check():
             [sys.executable, adj], capture_output=True, text=True,
             env=env, timeout=600, cwd=REPO_ROOT)
         lines = p.stdout.splitlines()
+        # D8 (wave-316 lane 3): w221_admission_probes now emits canonical
+        # bracketed probe lines ([BREAK]/[ERROR]); the old bare "BREAK "
+        # prefixes are kept for backward compatibility.
         bad = [l for l in lines
                if l.startswith("BREAK ") or l.startswith("MISMATCH")
-               or l.startswith("ERROR ")]
+               or l.startswith("ERROR ") or l.startswith("[BREAK]")
+               or l.startswith("[ERROR]")]
         ok = not bad and p.returncode == 0
         results.append(("green-check:w221_admission_probes",
                         "HELD" if ok else "BREAK",

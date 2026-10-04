@@ -93,6 +93,7 @@ from gov import canary as cy  # noqa: E402
 from gov.canary import (CanaryMint, CanaryRegistry,  # noqa: E402
                         CanaryTripHalt, plant_canaries)  # noqa: E402
 from gov import rare_token as rt  # noqa: E402
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 PRINCIPAL = "user-1"
 AGENT_ID = "agent-n1"
@@ -207,14 +208,33 @@ def _leaks_value(evs, registry):
 
 def _main():
     held = broke = fps = expected = errors = 0
+    _results = []
 
-    def record(name, verdict, expect, ok):
-        print("  %-4s %-58s %-22s %s"
-              % (name, verdict, expect,
-                 "HELD" if ok else
-                 ("FP!" if expect == "silent" else
-                  ("EXPECTED" if expect.startswith("EXPECTED")
-                   else "BREAK"))))
+    def record(name, verdict_detail, expect, ok):
+        # Wave-316 lane-3 decision (D1): EXPECTED -> HELD with an
+        # "expected: " note prefix (pinned unavoidable miss, documented
+        # accepted limitation -- exit-neutral in this battery). Here
+        # EXPECTED is a property of the probe's expectation (the
+        # "EXPECTED miss" expect string), not of ok: n4 hardcodes
+        # ok=True and the old code tallied it in `expected`
+        # unconditionally. FP -> BREAK with an "FP: " prefix (red by
+        # this battery's own exit contract). Probe logic untouched;
+        # only the recorded verdict vocabulary changes.
+        if expect.startswith("EXPECTED"):
+            _results.append((name, "HELD",
+                             "expected: " + verdict_detail))
+        elif ok:
+            _results.append((name, "HELD", verdict_detail))
+        elif expect == "silent":
+            _results.append((name, "BREAK", "FP: " + verdict_detail))
+        else:
+            _results.append((name, "BREAK", verdict_detail))
+
+    def record_error(name, exc):
+        # Probe/instrumentation failure: ERROR (was printed as BREAK/
+        # FP!/EXPECTED by the old ad-hoc word while counted as an
+        # error -- now coherent).
+        _results.append((name, "ERROR", "ERROR %r" % (exc,)))
 
     # --- n1: case-mangled hit trips (normalized seam) ---
     try:
@@ -238,7 +258,7 @@ def _main():
                "normalized trip", ok)
         held, broke = (held + 1, broke) if ok else (held, broke + 1)
     except Exception as e:  # noqa: BLE001
-        record("n1", "ERROR %r" % (e,), "normalized trip", False)
+        record_error("n1", e)
         errors += 1
 
     # --- n2: whitespace/punctuation-stuffed hit trips ---
@@ -258,7 +278,7 @@ def _main():
                "normalized trip", ok)
         held, broke = (held + 1, broke) if ok else (held, broke + 1)
     except Exception as e:  # noqa: BLE001
-        record("n2", "ERROR %r" % (e,), "normalized trip", False)
+        record_error("n2", e)
         errors += 1
 
     # --- n3: leet-substituted hit trips ---
@@ -279,7 +299,7 @@ def _main():
                "normalized trip", ok)
         held, broke = (held + 1, broke) if ok else (held, broke + 1)
     except Exception as e:  # noqa: BLE001
-        record("n3", "ERROR %r" % (e,), "normalized trip", False)
+        record_error("n3", e)
         errors += 1
 
     # --- n4: fully paraphrased canary still misses (EXPECTED) ---
@@ -298,7 +318,7 @@ def _main():
                "matching)" % (hit is not None,), "EXPECTED miss", True)
         expected += 1
     except Exception as e:  # noqa: BLE001
-        record("n4", "ERROR %r" % (e,), "EXPECTED miss", False)
+        record_error("n4", e)
         errors += 1
 
     # --- n5: benign no-canary content stays silent ---
@@ -318,7 +338,7 @@ def _main():
         else:
             fps += 1
     except Exception as e:  # noqa: BLE001
-        record("n5", "ERROR %r" % (e,), "silent", False)
+        record_error("n5", e)
         errors += 1
 
     # --- n6: canary-adjacent normalized near misses stay silent ---
@@ -339,7 +359,7 @@ def _main():
         else:
             fps += 1
     except Exception as e:  # noqa: BLE001
-        record("n6", "ERROR %r" % (e,), "silent", False)
+        record_error("n6", e)
         errors += 1
 
     # --- n7: normalized hit, NO recorded read -> unobserved_canary_egress ---
@@ -368,7 +388,7 @@ def _main():
                "unobserved_canary_egress", ok)
         held, broke = (held + 1, broke) if ok else (held, broke + 1)
     except Exception as e:  # noqa: BLE001
-        record("n7", "ERROR %r" % (e,), "unobserved_canary_egress", False)
+        record_error("n7", e)
         errors += 1
 
     # --- n8: normalized hit AFTER recorded read -> canary_trip only ---
@@ -398,9 +418,16 @@ def _main():
                "canary_trip only", ok)
         held, broke = (held + 1, broke) if ok else (held, broke + 1)
     except Exception as e:  # noqa: BLE001
-        record("n8", "ERROR %r" % (e,), "canary_trip only", False)
+        record_error("n8", e)
         errors += 1
 
+    probe_lines.emit(_results)
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        _results, broke + fps, held + expected, errors)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR"
+          % (broke + fps, held + expected, errors))
     print("canary_normalized_match_probes: "
           "%d HELD / %d BREAK / %d FP / %d EXPECTED / %d ERROR"
           % (held, broke, fps, expected, errors))

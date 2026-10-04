@@ -46,6 +46,8 @@ import traceback
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 HAVE_SD = False
 try:
@@ -201,8 +203,23 @@ def main():
     results = [_run_probe(n) for n in PROBE_NAMES]
     held = sum(1 for _, s, _ in results if s == "HELD")
     gap = sum(1 for _, s, _ in results if s == "GAP")
-    for name, status, note in results:
-        print("%-32s %-5s %s" % (name, status, note))
+    # D1 (evals/SUMMARY_FORM_POLICIES.md), red-first: GAP->BREAK. Note the
+    # battery's own exit contract below is red only on FAIL/ERROR -- the
+    # mapping is redder than the exit code on a pure-GAP (pristine) run,
+    # which the red-first rule permits (it forbids green-washing, and the
+    # battery's own conclusion calls the gap GENUINE RED).
+    _map = {"HELD": "HELD", "GAP": "BREAK", "FAIL": "BREAK",
+            "BREAK": "BREAK", "ERROR": "ERROR"}
+    final = [(n, _map[s], note) for n, s, note in results]
+    probe_lines.emit(final)
+    brk_c = sum(1 for _, v, _ in final if v == "BREAK")
+    held_c = sum(1 for _, v, _ in final if v == "HELD")
+    err_c = sum(1 for _, v, _ in final if v == "ERROR")
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        final, brk_c, held_c, err_c)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % ("; ".join(_coh_diags)))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk_c, held_c, err_c))
     print("%d/%d HELD  GAP %d/%d" % (held, len(results), gap,
                                     len(results)))
     if gap:

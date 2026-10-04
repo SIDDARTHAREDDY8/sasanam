@@ -49,9 +49,25 @@ import tempfile
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(REPO_ROOT, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 sys.path.insert(0, REPO_ROOT)
 
 _records = []
+
+
+# D1 verdict mapping (evals/SUMMARY_FORM_POLICIES.md): this battery
+# records PASS/FAIL/HELD/BROKEN/GAP/RED/GREEN/ERROR/SKIP; the
+# canonical emission vocabulary is BREAK/HELD/ERROR/SKIP, mapped
+# red-first (PASS/GREEN->HELD, FAIL/BROKEN/GAP/RED->BREAK). Probe
+# logic, verdict computation and count code are untouched -- only
+# the print loop below maps.
+_VERDICT_MAP = {
+    "PASS": "HELD", "HELD": "HELD", "GREEN": "HELD",
+    "FAIL": "BREAK", "BROKEN": "BREAK", "GAP": "BREAK",
+    "RED": "BREAK", "BREAK": "BREAK",
+    "ERROR": "ERROR", "SKIP": "SKIP", "SKIPPED": "SKIP",
+}
 
 
 def _record(name, verdict, detail):
@@ -569,14 +585,24 @@ def main():
     gv, gd = _green_check_adjacent()
     _record("green_check_adjacent_units", gv, gd)
     print("== c2pa-provenance battery ==")
-    for n, v, d in _records:
-        print("[%s] %s -- %s" % (v, n, d))
+    final = [(n, _VERDICT_MAP[v], d) for n, v, d in _records]
+    probe_lines.emit(final)
     npass = sum(1 for _, v, _ in _records if v in ("PASS", "HELD"))
     # GAP counts as failing: a red-first battery that cannot hold its
     # probes on the pristine tree must exit nonzero.
     nfail = sum(1 for _, v, _ in _records
                 if v in ("FAIL", "BROKEN", "ERROR", "GAP"))
     nskip = sum(1 for _, v, _ in _records if v == "SKIP")
+    brk = sum(1 for _, v, _ in final if v == "BREAK")
+    held = sum(1 for _, v, _ in final if v == "HELD")
+    err = sum(1 for _, v, _ in final if v == "ERROR")
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        final, brk, held, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s"
+              % ("; ".join(_coh_diags)))
+    print("%d BREAK / %d HELD / %d ERROR"
+          % (brk, held, err))
     print("PASS=%d FAIL/ERROR/GAP=%d SKIP=%d" % (npass, nfail, nskip))
     return 0 if nfail == 0 else 1
 

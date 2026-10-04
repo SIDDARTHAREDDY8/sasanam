@@ -798,7 +798,10 @@ def _green_checks():
         return
     checks = [
         # (battery, expected_break_probe_or_None, must_have_no_break)
-        ("evals/w281_redteam_probes.py", "f309-shield-detail-echo", False),
+        # Wave-316 re-pin: F309 CLOSED -- w281's f309-shield-detail-echo
+        # probe HELDs on the current tree (0 BREAK / 29 HELD / 0 ERROR),
+        # so no BREAK is expected from this child anymore.
+        ("evals/w281_redteam_probes.py", None, True),
         ("evals/w280_redteam_probes.py", None, True),
         ("evals/w281_f306_probes.py", None, True),
         ("evals/w281_f307_probes.py", None, True),

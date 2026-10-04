@@ -64,6 +64,7 @@ from pathlib import Path  # noqa: E402
 import gov.approvals as approvals  # noqa: E402
 from gov.executor import ToolExecutor  # noqa: E402
 from gov.policy import PolicyEngine  # noqa: E402
+import probe_lines  # noqa: E402  (canonical probe-line form)
 from gov.log import ActionLog  # noqa: E402
 
 # The toxic-agent-flow shape: a user instruction plus a retrieved
@@ -411,26 +412,43 @@ def green_check():
 
 def main():
     print("== w279 F300 closure battery ==")
-    mismatches = 0
+    # Wave-316 lane-3 decision (D1 PASS/FAIL rationale): ok -> HELD,
+    # MISMATCH -> BREAK. Exit-equivalence: old `1 if mismatches else
+    # 0` == new `0 if (brk==0 and err==0)` since every mismatch maps
+    # to BREAK and nothing maps to ERROR.
+    mapped = []
     for name, expected, fn in PROBES:
         try:
             verdict, detail = fn()
         except Exception as e:  # noqa: BLE001 - a probe error is a break
             verdict, detail = "BREAK", "probe raised: %r" % (e,)
-        mark = "ok" if verdict == expected else "MISMATCH"
-        if verdict != expected:
-            mismatches += 1
-        print("[%s] %-32s expected=%s got=%s :: %s"
-              % (mark, name, expected, verdict, detail))
+        ok = (verdict == expected)
+        mapped.append((name, "HELD" if ok else "BREAK",
+                       "expected=%s got=%s :: %s" % (expected, verdict,
+                                                     detail)))
+    probe_lines.emit(mapped)
     print("-- green checks (depth-1) --")
+    gc_mapped = []
     for name, verdict, detail in green_check():
-        print("[%s] green %-28s %s :: %s"
-              % ("ok" if verdict == "HELD" else "MISMATCH", name, verdict,
-                 detail))
-        if verdict != "HELD":
-            mismatches += 1
-    print("mismatches: %d" % mismatches)
-    return 1 if mismatches else 0
+        # Green checks already record canonical verdicts; the
+        # GOV_SKIP_GREEN skip carries a sentence pid -- normalize to
+        # the class-conforming "green-check" pid with a SKIP verdict
+        # (D1; exit-neutral as before).
+        if name.startswith("GOV_SKIP_GREEN=1"):
+            gc_mapped.append(("green-check", "SKIP", name))
+        else:
+            gc_mapped.append((name, verdict, detail))
+    probe_lines.emit(gc_mapped)
+    mapped.extend(gc_mapped)
+    brk = sum(1 for _, v, _ in mapped if v == "BREAK")
+    hld = sum(1 for _, v, _ in mapped if v == "HELD")
+    err = sum(1 for _, v, _ in mapped if v == "ERROR")
+    _coh_ok, _coh_diags = probe_lines.check_coherence(mapped, brk, hld, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk, hld, err))
+    print("mismatches: %d" % brk)
+    return 0 if (brk == 0 and err == 0) else 1
 
 
 if __name__ == "__main__":

@@ -35,6 +35,8 @@ import traceback
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
+sys.path.insert(0, os.path.join(_REPO_ROOT, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 _RESULTS = []
 _PROBE_FNS = {}
@@ -359,11 +361,18 @@ def main():
     gap = sum(1 for _, v, _ in rows if v == "GAP")
     brk = sum(1 for _, v, _ in rows if v == "BREAK")
     err = sum(1 for _, v, _ in rows if v == "ERROR")
-    print("== w216 verdict-binding battery: %d probes ==" % len(rows))
-    for name, verdict, detail in rows:
-        print("[%s] %s: %s" % (verdict, name, detail))
-    print("-- %d HELD / %d GAP / %d BREAK / %d ERROR" % (held, gap, brk,
-                                                         err))
+    # D1 verdict mapping (evals/SUMMARY_FORM_POLICIES.md), red-first:
+    # GAP -> BREAK. Raw rows keep the battery's own vocabulary (count code
+    # and exit contract untouched); the mapping happens here, at emission.
+    mapped = [(name, "BREAK", "GAP: %s" % (detail,))
+              if verdict == "GAP" else (name, verdict, detail)
+              for name, verdict, detail in rows]
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        mapped, brk + gap, held, err)
+    probe_lines.emit(mapped)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk + gap, held, err))
     # determinism: second pass must be verdict-identical
     rows2 = [(_PROBE_FNS[n]()) for n in names]
     det = all(a[1] == b[1] for a, b in zip(rows, rows2))

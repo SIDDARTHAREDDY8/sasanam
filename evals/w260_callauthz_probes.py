@@ -37,6 +37,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for _p in (REPO, os.path.join(REPO, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 try:
     from gov import call_enforcement as ce  # noqa: E402
@@ -559,12 +561,30 @@ def _green_check():
     return notes
 
 
+# D1 verdict mapping (evals/SUMMARY_FORM_POLICIES.md), red-first: GAP -> BREAK.
+# BASELINE is defined by these batteries as "known-open finding reproduced"
+# (dead in practice: no probe returns it) and maps to BREAK as well. Raw rows
+# keep the battery's own vocabulary (count code and exit contract untouched);
+# the mapping happens here, at emission. Anything else fails closed as ERROR.
+def _mapped(rows):
+    out = []
+    for _name, _verdict, _detail in rows:
+        if _verdict in ("GAP", "BASELINE"):
+            out.append((_name, "BREAK", "%s: %s" % (_verdict, _detail)))
+        elif _verdict in ("HELD", "BREAK", "ERROR"):
+            out.append((_name, _verdict, _detail))
+        else:
+            out.append((_name, "ERROR",
+                        "unexpected verdict %r: %s" % (_verdict, _detail)))
+    return out
+
 def main():
     if len(decision_codes.TAXONOMY) != TAXONOMY_PIN:
         print("PIN MISMATCH: taxonomy has %d keys, pin is %d" %
               (len(decision_codes.TAXONOMY), TAXONOMY_PIN))
         return 2
     held = breaks = gaps = errors = 0
+    rows = []
     for name, fn in _PROBES:
         try:
             verdict, detail = fn()
@@ -579,12 +599,17 @@ def main():
             gaps += 1
         else:
             errors += 1
-        print("%-8s %-28s %s" % (verdict, name, detail))
+        rows.append((name, verdict, detail))
+    mapped = _mapped(rows)
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        mapped, breaks + gaps, held, errors)
+    probe_lines.emit(mapped)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
     print("-" * 79)
     for name, note in _green_check():
         print("green-check %-45s %s" % (name, note))
-    print("HELD %d / BREAK %d / GAP %d / ERROR %d over %d probes" %
-          (held, breaks, gaps, errors, len(_PROBES)))
+    print("%d BREAK / %d HELD / %d ERROR" % (breaks + gaps, held, errors))
     return 1 if (breaks or errors) else 0
 
 

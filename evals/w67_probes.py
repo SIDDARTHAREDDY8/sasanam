@@ -55,6 +55,8 @@ sys.path.insert(0, str(REPO_ROOT))
 # on the dev-key opt-in process-wide); dev keys are enabled per-probe
 # with _env()+_dev_keys() instead, and restored afterwards.
 sys.path.insert(0, str(REPO_ROOT / "tests"))
+sys.path.insert(0, str(REPO_ROOT / "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 import harness  # noqa: E402
 from gov import log as log_mod  # noqa: E402
@@ -530,18 +532,41 @@ def sit_legit_loop_regression():
                     "drains with token_id; cumulative budget intact"}
 
 
+# D1 verdict mapping for the HOLD/MISS vocabulary
+# (evals/SUMMARY_FORM_POLICIES.md): "stopped" (attack stopped) -> HELD,
+# "break" -> BREAK, "error" -> ERROR, "residual" -> HELD with a
+# "residual: " note prefix. Red-first: an unmapped verdict maps to BREAK.
+_VERDICT_MAP = {"stopped": "HELD", "break": "BREAK", "error": "ERROR",
+                "residual": "HELD"}
+
+
+def _note_of(row):
+    # D2 contract for the w72 family: the note lives under
+    # detail["note"], falling back to detail["error"] for harness
+    # exceptions (which record {"error": ...} with no "note").
+    return row["detail"].get("note") or row["detail"].get("error", "")
+
+
 def _main():
     for sid in sorted(SITUATIONS):
         SITUATIONS[sid]()
-    stopped = [r for r in RESULTS if r["verdict"] == "stopped"]
-    broken = [r for r in RESULTS if r["verdict"] not in ("stopped",)]
-    print("wave-67 probes: %d stopped / %d total"
-          % (len(stopped), len(RESULTS)))
-    for r in RESULTS:
-        print("  %-55s %s" % (r["id"], r["verdict"]))
-        if r["verdict"] != "stopped":
-            print("    %r" % (r["detail"],))
-    return 0 if not broken else 1
+    rows = [{"id": r["id"],
+             "verdict": _VERDICT_MAP.get(r["verdict"], "BREAK"),
+             "detail": r["detail"]} for r in RESULTS]
+    probe_lines.emit_dicts(rows, pid_key="id", note_getter=_note_of)
+    brk = sum(1 for r in rows if r["verdict"] == "BREAK")
+    held = sum(1 for r in rows if r["verdict"] == "HELD")
+    err = sum(1 for r in rows if r["verdict"] == "ERROR")
+    print("w67 battery: %d BREAK / %d HELD / %d ERROR"
+          % (brk, held, err))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        [(r["id"], r["verdict"], _note_of(r)) for r in rows], brk, held, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    # Exit-equivalent to the old `0 if not broken else 1`: broken counted
+    # every non-"stopped" verdict, i.e. break + error == brk + err here
+    # (no sit function records "residual" as a verdict).
+    return 1 if (brk or err) else 0
 
 
 if __name__ == "__main__":

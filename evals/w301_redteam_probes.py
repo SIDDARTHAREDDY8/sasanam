@@ -123,16 +123,13 @@ class BaseStateTest(unittest.TestCase):
             text = fh.read()
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-        # Wave-302 lane 1 re-pin: F379 CLOSED by this lane.
-        # Merged footer: open findings: none / next free F380.
-                # Wave-303 lane 4 re-pin: F384 CLOSED by this lane.
-# Wave-304 lane A re-pin: F385 CLOSED; lane footer open F386 / next free F387.
-        # Wave-303 merge re-pin: open F385,F386 / next free F387.
-        ok = (m_open and m_open[-1].strip().lower() == "f394"
-              and m_next and m_next[-1] == "F395")
+        # Wave-316 re-pin: wave-315 merge footer -- open F398, F399,
+        # F400 / next free F401 (F393-F397 all CLOSED).
+        ok = (m_open and m_open[-1].strip().lower() == "f398, f399, f400"
+              and m_next and m_next[-1] == "F401")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F386 / next free F387") == "HELD")
+            "want open F398, F399, F400 / next free F401") == "HELD")
 
     def test_pin(self):
         lits = _literals()

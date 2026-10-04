@@ -408,23 +408,18 @@ def p_findings_md_load():
     # red team; F331-F333 closed at the wave-287 merge (lanes 1-3);
     # F334-F342 filed OPEN by the wave-287 independent red team; F334-F342
     # closed at the wave-288 merge (lanes 1-4); F343-F345 filed OPEN by
-    # the wave-288 independent red team.
+    # the wave-288 independent red team, verified (closed) on the
+    # current tree (wave-316 re-pin).
     for num in ("F316", "F317", "F318", "F319", "F320",
                 "F321", "F322", "F323", "F324", "F325", "F326",
                 "F327", "F328", "F329", "F330",
                 "F331", "F332", "F333", "F334", "F335",
                 "F336", "F337", "F338", "F339", "F340",
-                "F341", "F342"):
+                "F341", "F342", "F343", "F344", "F345"):
         ent = reg.get(num)
         if ent is None or ent.state != "verified":
             return _record("p-findings-md-load", "BREAK",
                            "%s parsed as %r, want 'verified'"
-                           % (num, None if ent is None else ent.state))
-    for num in ("F343", "F344", "F345"):
-        ent = reg.get(num)
-        if ent is None or ent.state != "open":
-            return _record("p-findings-md-load", "BREAK",
-                           "%s parsed as %r, want 'open'"
                            % (num, None if ent is None else ent.state))
     for num, want in (("F310", "verified"), ("F309", "verified"),
                       ("F306", "verified"), ("F94", "verified")):
@@ -443,8 +438,8 @@ def p_findings_md_load():
         return _record("p-findings-md-load", "BREAK",
                        "malformed identity hashes: %r" % bad[:3])
     _record("p-findings-md-load", "HELD",
-            "%d FINDINGS.md entries parsed; F311-F342 closed, "
-            "F343-F345 open, F310/F309/F306 closed"
+            "%d FINDINGS.md entries parsed; F311-F345 closed, "
+            "F310/F309/F306 closed"
             % len(reg.all()))
 
 
