@@ -1,14 +1,14 @@
 """Wave-327 independent red-team battery.
 
-Base: 542c5cee (wave-326 merge). Footer: open F410, F411, F412 / next F413.
-Pin: 2035.
+Base: 542c5cee (wave-326 merge). Footer: open F412 / next F413.
+Pin: 2044.
 
 P1  wave-326 seams: standing_verdicts / knowledge_ingest / background_scan.
 P2  F410 re-probe (w326_tufaudit T4c/T4d -- must still BREAK; lane 2 owns it).
 P3  F411 re-probe (w326_redteam P3a -- must still BREAK; lane 1 owns it).
 P4  regression: F409 (HELD), F408/F407/F406 (HELD).
 P5  corruption-survivor probe + prior batteries in child mode.
-P6  pin 2035 + footer state.
+P6  pin 2044 + footer state.
 
 gov/ is byte-identical to base: this battery changes no product code and
 files findings only (from F412). No new decision codes from this lane.
@@ -28,8 +28,8 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
-TAXONOMY_PIN = 2035  # Wave-326 merge: pin 2020 -> 2035 (+1 f409 +7 standing +7 sched).
-FOOTER_OPEN = "F410, F411, F412"  # F409 CLOSED; F410 (LOW, TUF) + F411 (MEDIUM, identity) + F412 (LOW, standing) OPEN.
+TAXONOMY_PIN = 2044  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).
+FOOTER_OPEN = "F412"  # F409/F410/F411 CLOSED; F412 (LOW, standing-conflict) OPEN.
 FOOTER_NEXT = "F413"  # Next free finding number.
 
 _results = []
@@ -547,7 +547,7 @@ def _p5a():
     corruption markers. (The needle is built dynamically so this file's
     own documentation does not self-match.)
     """
-    needle = "2035" + "OLD"
+    needles = ["2035" + "OLD", "2044" + "OLD"]
     hits = []
     for dirpath, dirnames, filenames in os.walk(REPO):
         # Skip .git and derived bytecode caches (not source literals).
@@ -561,8 +561,9 @@ def _p5a():
                     blob = fh.read()
             except OSError:
                 continue
-            if needle.encode("ascii") in blob:
-                hits.append(os.path.relpath(p, REPO))
+            for needle in needles:
+                if needle.encode("ascii") in blob:
+                    hits.append(os.path.relpath(p, REPO))
     if hits:
         return _break("P5a-pin-repoint-corruption-survivor",
                       "corruption survivors: %r" % (hits[:5],))
@@ -676,23 +677,23 @@ def _p5g():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2035-sorted")
+@probe("P6a-pin-taxonomy-2044-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
-    if TAXONOMY_PIN != 2035:
-        return _break("P6a-pin-taxonomy-2035-sorted",
-                      "TAXONOMY_PIN is %r, want 2035" % (TAXONOMY_PIN,))
-    if len(codes) != 2035 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-2035-sorted",
+    if TAXONOMY_PIN != 2044:
+        return _break("P6a-pin-taxonomy-2044-sorted",
+                      "TAXONOMY_PIN is %r, want 2044" % (TAXONOMY_PIN,))
+    if len(codes) != 2044 or codes != sorted(codes):
+        return _break("P6a-pin-taxonomy-2044-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    if len(set(codes)) != 2035:
-        return _break("P6a-pin-taxonomy-2035-sorted",
+    if len(set(codes)) != 2044:
+        return _break("P6a-pin-taxonomy-2044-sorted",
                       "duplicate codes in TAXONOMY")
-    return _held("P6a-pin-taxonomy-2035-sorted", "2035/2035/0 sorted")
+    return _held("P6a-pin-taxonomy-2044-sorted", "2044/2044/0 sorted")
 
 
-@probe("P6b-footer-open-f410-f411-f412-next-f413")
+@probe("P6b-footer-open-f412-next-f413")
 def _p6b():
     text = open(os.path.join(REPO, "evals/FINDINGS.md")).read()
     opens = re.findall(r"\*\*Open findings:\s*([^*]+?)\.\*\*", text)
@@ -700,13 +701,13 @@ def _p6b():
     open_line = opens[-1].strip() if opens else ""
     next_free = nexts[-1].strip() if nexts else ""
     if open_line != FOOTER_OPEN:
-        return _break("P6b-footer-open-f410-f411-f412-next-f413",
+        return _break("P6b-footer-open-f412-next-f413",
                       "open findings %r, want %r" % (open_line, FOOTER_OPEN))
     if next_free != FOOTER_NEXT:
-        return _break("P6b-footer-open-f410-f411-f412-next-f413",
+        return _break("P6b-footer-open-f412-next-f413",
                       "next free %r, want %r" % (next_free, FOOTER_NEXT))
-    return _held("P6b-footer-open-f410-f411-f412-next-f413",
-                 "footer open F410, F411, F412 / next F413")
+    return _held("P6b-footer-open-f412-next-f413",
+                 "footer open F412 / next F413")
 
 
 # ---------------------------------------------------------------------------
