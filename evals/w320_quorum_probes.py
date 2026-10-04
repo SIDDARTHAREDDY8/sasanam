@@ -46,7 +46,7 @@ QuorumCollector.collect / evaluate / QuorumGate.check):
       what it does not own).
   gate-enforces-registered: operation registered sensitive, quorum unmet ->
       coded quorum-insufficient; quorum met -> allowed.
-  pin-taxonomy / footer-state: standard pins (1964; open F406 / next F407).
+  pin-taxonomy / footer-state: standard pins (1964; open none / next F407).
 """
 
 import os
@@ -71,7 +71,7 @@ from gov import ed25519 as _ed  # noqa: E402
 TAXONOMY_PIN = 1964  # Wave-320 lane 3: pin 1933 -> 1945 (+12 quorum-*)
 
 FOOTER_NEXT = "F407"
-FOOTER_OPEN = "F406"
+FOOTER_OPEN = "none"
 
 PROBES = []
 

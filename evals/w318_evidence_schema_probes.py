@@ -269,9 +269,9 @@ def p_footer_state():
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
     m_open = re.findall(r"Open findings: ([^.]*)\.", text)
     ok = (m_next and m_next[-1] == "F407"
-          and m_open and m_open[-1].strip() == "F406")
+          and m_open and m_open[-1].strip() == "none")
     _record("footer-state", "HELD" if ok else "BREAK",
-            "open F406 / next F407" if ok else "footer drift")
+            "open none / next F407" if ok else "footer drift")
 
 
 def p_verifier_taxonomy_shape():

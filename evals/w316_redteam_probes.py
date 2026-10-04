@@ -574,12 +574,12 @@ def _footer():
 
 @probe("P5-footer-state")
 def _p5_footer():
-    """Footer: open F406 / next F407 (F405 CLOSED 2026-10-04 wave-320 lane 1)."""
+    """Footer: open none / next F407 (F406 CLOSED 2026-10-04 wave-322 lane 1)."""
     got = _footer()
-    if got != (407, "F406"):
+    if got != (407, "none"):
         return _break("P5-footer-state", "footer is %r" % (got,))
     return _held("P5-footer-state",
-                 "open F406 / next F407")
+                 "open none / next F407")
 
 
 @probe("P5-pin-taxonomy-1964-sorted")

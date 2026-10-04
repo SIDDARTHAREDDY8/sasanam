@@ -57,7 +57,7 @@ from gov import vsa_packet as vp  # noqa: E402
 TAXONOMY_PIN = 1964  # Wave-318 lane 3: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1934 -> 1934 (+1 grantneg-registry-withdrawn)
 
 FOOTER_NEXT = "F407"
-FOOTER_OPEN = "F406"
+FOOTER_OPEN = "none"
 
 _results = []
 PROBES = []

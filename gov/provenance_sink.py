@@ -282,12 +282,83 @@ _NEGATION_CUES_NORM = frozenset(
     _strip_apostrophes(c) for c in _NEGATION_CUES)
 
 
+#: The contraction-cue family eligible for near-miss matching (F406),
+#: apostrophe-stripped like _NEGATION_CUES_NORM. Full-word cues ("never",
+#: "refuse", "prohibit", ...) are excluded by design: the long ones gain
+#: nothing (single-edit collisions with ordinary words are rare) and the
+#: short ones ("no", "not", "nor") are a minefield ("do"~"no", "now"~"no",
+#: "note"~"not" are all distance 1 -- admitting them would refuse
+#: ordinary authorizations such as "please do email X"). The F406 defect
+#: class is contraction typos, so the contraction family is the whole
+#: near-miss base.
+_CONTRACTION_CUES_NORM = frozenset({
+    "dont", "doesnt", "didnt", "cant", "wont", "shouldnt", "wouldnt",
+    "couldnt", "mustnt", "isnt", "arent", "wasnt", "werent", "havent",
+    "hasnt", "hadnt", "cannot", "dnt",
+})
+
+
+def _edits1_indel_transpose(word):
+    """All strings at insert/delete/transpose-only edit distance exactly 1
+    from ``word`` (F406). Substitution is deliberately excluded: the
+    finding's typo classes are transposition ("dnot"), doubling ("cannt",
+    one deletion away from "cant") and syncope ("cnt", one insertion away
+    from "cant"); substitution typos are out of the finding's class, and
+    admitting substitution is where the worst false positive lives
+    ("want" is one substitution from "wont", and "I want to email X" is
+    the language's canonical authorization phrasing)."""
+    out = set()
+    for i in range(len(word)):
+        out.add(word[:i] + word[i + 1 :])  # deletion (doubling/syncope)
+    for i in range(len(word) + 1):
+        for c in "abcdefghijklmnopqrstuvwxyz":
+            out.add(word[:i] + c + word[i:])  # insertion
+    for i in range(len(word) - 1):
+        out.add(word[:i] + word[i + 1] + word[i] + word[i + 2 :])  # transpose
+    out.discard(word)
+    return out
+
+
+#: Tokens that are never near-miss negation cues even when
+#: orthographically adjacent to one (F406). "want" is distance 1
+#: (deletion of "s") from "wasnt" and "can" is distance 1 (deletion of
+#: "t") from "cant"; both are anti-negation modals -- "I want to email
+#: X" / "I can email X" assert the volition/possibility of X, the
+#: semantic opposite of a prohibition. Treating them as negation would
+#: invert the language's most common authorization phrasings. Verified
+#: by census: no other modal ("will", "would", "must", "should", "may",
+#: "shall", "might", "could") is within distance 1 of any contraction
+#: cue, and no variant collides with _AUTHORIZATION_VERBS or
+#: _POSITIVE_PREDICATES.
+_NEAR_MISS_EXCLUSIONS = frozenset({"want", "can"})
+
+
+#: Precomputed near-miss cue set (F406): every insert/delete/transpose
+#: distance-1 variant of the contraction family, minus exact cues (they
+#: keep their existing path) and minus the anti-negation exclusions.
+#: 3013 strings on the current cue list (3017 raw variants minus "can"/"want"
+#: exclusions and "dnt"/"dont", already exact cues). Per-clause matching stays O(1)
+#: set membership, exactly like the exact-cue path -- no per-call edit
+#: computation. Known fail-closed collisions are documented in
+#: SPEC.md (wave-322 lane 1): "don" (name Don), "won", "ant", "cat",
+#: "dot", "rent", "dent", "cannon" -- each refuses a genuine send rather
+#: than allowing a prohibited one, the safe direction (F404/F405
+#: precedent).
+_NEAR_MISS_CUES_NORM = frozenset(
+    v
+    for cue in _CONTRACTION_CUES_NORM
+    for v in _edits1_indel_transpose(cue)
+    if v not in _NEGATION_CUES_NORM and v not in _NEAR_MISS_EXCLUSIONS
+)
+
+
 def _clause_negated(clause):
     """True iff the clause carries a negation cue (F398; F405:
     apostrophe-normalized, so "dont"/"dnt"/"can't"/smart-quote variants
-    all discount)."""
+    all discount; F406: single-edit near-misses of the contraction
+    family -- "dnot", "odnt", "cannt", "cnt", "wnt" -- discount too)."""
     norm = _strip_apostrophes(clause.lower())
-    return any(tok in _NEGATION_CUES_NORM
+    return any(tok in _NEGATION_CUES_NORM or tok in _NEAR_MISS_CUES_NORM
                for tok in _WORD.findall(norm))
 
 

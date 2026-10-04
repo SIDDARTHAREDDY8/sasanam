@@ -36,7 +36,7 @@ OCIRegistryClient.push_evidence / discover_referrers / pull_and_verify):
   oci-artifact-type-gated: manifest with a foreign artifactType -> pull with
       the expected Sasanam artifactType refuses coded
       oci-artifact-type-mismatch.
-  pin-taxonomy / footer-state: standard pins (1964; open F406 / next F407).
+  pin-taxonomy / footer-state: standard pins (1964; open none / next F407).
 """
 
 import json
@@ -452,9 +452,9 @@ def p_pin_taxonomy():
 def p_footer_state():
     with open(os.path.join(REPO, "evals", "FINDINGS.md")) as f:
         text = f.read()
-    assert "Open findings: F406." in text, "footer must show open F406"
+    assert "Open findings: none." in text, "footer must show open none"
     assert "Next free finding: **F407**" in text, "next free must be F407"
-    _record("footer-state", "HELD", "open F406 / next F407")
+    _record("footer-state", "HELD", "open none / next F407")
 
 
 def green_check():

@@ -121,12 +121,12 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    # Wave-321 repoint: footer open F406 / next F407 (F406 filed OPEN).
-    if nxt != 407 or open_s != "F406":
+    # Wave-322 lane 1 repoint: footer open none / next F407 (F406 CLOSED).
+    if nxt != 407 or open_s != "none":
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F407 "
-                       "open 'F406')" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open F406 / next F407")
+                       "open 'none')" % (nxt, open_s))
+    _record("footer-state", "HELD", "footer pins open none / next F407")
 
 
 class _RubberStampManager:

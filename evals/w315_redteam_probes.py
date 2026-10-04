@@ -906,7 +906,7 @@ def _pin():
                  "1964/1964/0 unique sorted on source literals")
 
 
-@probe("footer-open-F406-next-F407")
+@probe("footer-open-none-next-F407")
 def _footer():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     text = open(path).read()
@@ -915,16 +915,16 @@ def _footer():
         r"Next free finding: \*\*(F\d+)\*\*\. \*\*Open findings: ([^*]*)\*\*",
         text)
     if not feet:
-        return _error("footer-open-F406-next-F407",
+        return _error("footer-open-none-next-F407",
                       "no footer parsed")
     num, opens = feet[-1]
     opens = opens.strip().lower().rstrip(".")
-    if num != "F407" or opens != "f406":
-        return _break("footer-open-F406-next-F407",
-                      "footer is %s / %s, want F407 / f406"
+    if num != "F407" or opens != "none":
+        return _break("footer-open-none-next-F407",
+                      "footer is %s / %s, want F407 / none"
                       % (num, opens))
-    return _held("footer-open-F406-next-F407",
-                 "footer: open F406 / next F407")
+    return _held("footer-open-none-next-F407",
+                 "footer: open none / next F407")
 
 
 # ---------------------------------------------------------------------------

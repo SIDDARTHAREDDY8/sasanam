@@ -13,7 +13,7 @@ P2 (11): break-first refusal probes -- forged signature, wrong pinned
 P3 (2): contract probes -- verify_keyed_bundle returns False (not
     raises) on a forged bundle (assert `is False`); the empty-hint
     spike shape ({"publicKey": {}}) is accepted, as cosign proved.
-P4 (2): regressions -- footer open F406 / next F407; pin taxonomy
+P4 (2): regressions -- footer open none / next F407; pin taxonomy
     1964/1964/0 sorted on source literals (this lane registers no
     taxonomy codes).
 
@@ -47,7 +47,7 @@ from gov import evidence_intoto as _intoto  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
 TAXONOMY_PIN = 1964
-FOOTER_OPEN = "F406"
+FOOTER_OPEN = "none"
 FOOTER_NEXT = "F407"
 
 _results = []
@@ -416,7 +416,7 @@ def _p4b():
     ok = (m_open and m_open[-1].strip() == FOOTER_OPEN
           and m_next and m_next[-1] == FOOTER_NEXT)
     if ok:
-        return _held("P4-footer-state", "open F406 / next F407")
+        return _held("P4-footer-state", "open none / next F407")
     return _break("P4-footer-state",
                   "got %r / %r" % (m_open[-1] if m_open else None,
                                    m_next[-1] if m_next else None))
