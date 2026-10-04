@@ -408,6 +408,17 @@ _SECURITY_PAYLOAD_FIELDS = (
     # digests fail verification automatically after the upgrade --
     # queued items must be decided or drained before upgrading.
     "attested_identity",
+    # Wave-320 (m-of-n operation approval): the quorum state for the
+    # operation ({"policy_id", "version", "counted", "m", "executable",
+    # "code"}) is integrity-bound from birth. Advisory: the queue records
+    # quorum state but never gates on it -- enforcement lives in
+    # gov.quorum_approval.QuorumGate for explicitly registered sensitive
+    # operations. FAIL-CLOSED UPGRADE (same precedent as
+    # F34/F38/R11/D1/wave-24/F101/F103): records queued BEFORE this
+    # change do not carry this field, so their digests fail verification
+    # automatically after the upgrade -- queued items must be decided or
+    # drained before upgrading.
+    "quorum_state",
     # Wave-279 (F300): the instruction-provenance section
     # ({"text", "code"} rendered by
     # gov.instruction_provenance.render_provenance_section) is
@@ -3590,7 +3601,15 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
               # record (see _SECURITY_PAYLOAD_FIELDS); verified:false
               # never gates the decision. Explicit None when the
               # deployment carries no workload identity -- never omitted.
-              attested_identity=None):
+              attested_identity=None,
+              # Wave-320: the m-of-n quorum state for the operation
+              # ({"policy_id", "version", "counted", "m", "executable",
+              # "code"} as produced by gov.quorum_approval), or None.
+              # Stamped MAC-bound on the record (see
+              # _SECURITY_PAYLOAD_FIELDS). Advisory: the queue records
+              # quorum state but never gates on it. Explicit None when
+              # the operation is not quorum-gated -- never omitted.
+              quorum_state=None):
         """Store a pending approval; returns the approval id.
 
         ``approval_request`` (wave-297, opt-in): a signed approval
@@ -3884,6 +3903,17 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             # identity -- never omitted. Advisory: verified:false never
             # gates; the deterministic policy layer stays canonical.
             "attested_identity": attested_identity_claim,
+            # Wave-320 (m-of-n operation approval): the quorum state
+            # ({"policy_id", "version", "counted", "m", "executable",
+            # "code"}), MAC-bound via _SECURITY_PAYLOAD_FIELDS. JSON-safe
+            # deep copy so caller-side mutation after queue() cannot
+            # alter the sealed record. None when the operation is not
+            # quorum-gated -- never omitted. Advisory: recorded, never
+            # gating.
+            "quorum_state": (
+                json.loads(json.dumps(quorum_state,
+                                      ensure_ascii=True, default=str))
+                if quorum_state is not None else None),
             # Wave-279 (F300): the instruction-provenance section
             # ({"text", "code"}), MAC-bound via _SECURITY_PAYLOAD_FIELDS.
             # None when no provenance context is installed or the grant

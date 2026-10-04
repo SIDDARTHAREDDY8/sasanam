@@ -309,7 +309,7 @@ class DelegatedApprovalContractTest(unittest.TestCase):
                 m = pat.match(line.rstrip("\n"))
                 if m:
                     lits.append(m.group(1))
-        self.assertEqual(len(lits), 1933)  #Wave-312 lane D: pin 1841 -> 1851 (+10: 8 witness-log-* + 2 evidence-bundle-witness-*); Wave-319 merge: pin 1906 -> 1933 (+27)
+        self.assertEqual(len(lits), 1945)  #Wave-312 lane D: pin 1841 -> 1851 (+10: 8 witness-log-* + 2 evidence-bundle-witness-*); Wave-319 merge: pin 1906 -> 1933 (+27)
         new = [c for c in lits
                if c.startswith("delegation-approval-")]
         self.assertEqual(new, ["delegation-approval-chain-mismatch",

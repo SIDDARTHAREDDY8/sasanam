@@ -77,7 +77,7 @@ from gov.witness_log import WitnessLog  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 from gov import evidence_verify_offline as EVO  # noqa: E402
 
-TAXONOMY_PIN = 1933 # Wave-314 lane 2: pin 1869 -> 1869 (+6 witness-rekor-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*)
+TAXONOMY_PIN = 1945 # Wave-314 lane 2: pin 1869 -> 1869 (+6 witness-rekor-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 3: pin 1933 -> 1945 (+12 quorum-*)
 
 _NOW = 1798765432
 _SEED_A = bytes(range(32))
