@@ -440,13 +440,13 @@ def p_artifact_type_gated():
 def p_pin_taxonomy():
     import gov.guac_graph as gg
     pin = gg.TAXONOMY_PIN
-    assert pin == 2012, "want 1991, got %d" % pin
+    assert pin == 2018, "want 2018, got %d" % pin
     from gov import decision_codes as dc
     codes = sorted(dc.TAXONOMY.keys())
-    assert len(codes) == len(set(codes)) == 2012, \
-        "taxonomy not 2012/unique: %d" % len(codes)
+    assert len(codes) == len(set(codes)) == 2018, \
+        "taxonomy not 2018/unique: %d" % len(codes)
     assert codes == sorted(codes), "taxonomy not sorted"
-    _record("pin-taxonomy-2012-sorted", "HELD", "2012/2012/0 sorted")
+    _record("pin-taxonomy-2018-sorted", "HELD", "2018/2018/0 sorted")
 
 
 

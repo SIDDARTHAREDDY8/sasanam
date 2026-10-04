@@ -8589,6 +8589,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['identity-document'],
         "reverify_steps": ['recompute'],
     },
+    'identity-issuer-key-retired': {
+        "domain": 'identity',
+        "code": 'identity-issuer-key-retired',
+        "human": 'the federated identity token was signed by a retired '
+                 'issuer key outside the rotation grace window; the agent '
+                 'must re-authenticate for a token from the current key, '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'identity-mint-refused': {
         "domain": 'attested-identity',
         "code": 'identity-mint-refused',
@@ -8690,6 +8701,26 @@ TAXONOMY = {
         "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
     },
+    'identity-token-issuer-unknown': {
+        "domain": 'identity',
+        "code": 'identity-token-issuer-unknown',
+        "human": 'the federated identity token names an issuer (or issuer '
+                 'key) this deployment has not pinned; unknown issuers are '
+                 'never silently accepted, refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-token-key-binding-mismatch': {
+        "domain": 'identity',
+        "code": 'identity-token-key-binding-mismatch',
+        "human": 'the federated identity token is bound to a different '
+                 'agent public key than the caller presented (possible '
+                 'stolen token); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'identity-token-malformed': {
         "domain": 'identity',
         "code": 'identity-token-malformed',
@@ -8710,12 +8741,42 @@ TAXONOMY = {
         "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
     },
+    'identity-token-replayed': {
+        "domain": 'identity',
+        "code": 'identity-token-replayed',
+        "human": 'the federated identity token nonce was already '
+                 'presented (replay); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-token-required': {
+        "domain": 'identity',
+        "code": 'identity-token-required',
+        "human": 'this deployment authenticates agent identity with '
+                 'short-lived signed tokens and the mint named no token; '
+                 'self-asserted minting is refused where token '
+                 'authentication is required, fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'identity-token-tampered': {
         "domain": 'identity',
         "code": 'identity-token-tampered',
         "human": 'the identity token signature did not verify (payload '
                  'forged or corrupt); refused fail-closed',
         "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-token-ttl-exceeded': {
+        "domain": 'identity',
+        "code": 'identity-token-ttl-exceeded',
+        "human": 'the federated identity token lifetime exceeds this '
+                 'verifier TTL ceiling (long-lived token); short-lived '
+                 'tokens bound the theft window, refused fail-closed',
+        "severity": 'medium',
         "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
     },

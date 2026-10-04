@@ -24,7 +24,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2012  # 1990 + 1 witness-alert-wrapper-error
+TAXONOMY_PIN = 2018  # 1990 + 1 witness-alert-wrapper-error; Wave-325 lane 2: pin 2012 -> 2018 (+6 federated-identity-*: identity-issuer-key-retired + identity-token-issuer-unknown + identity-token-key-binding-mismatch + identity-token-replayed + identity-token-required + identity-token-ttl-exceeded)
 
 _results = []
 
@@ -677,18 +677,18 @@ def _p17():
 # P11: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P11-pin-taxonomy-2012-sorted")
+@probe("P11-pin-taxonomy-2018-sorted")
 def _p11():
     from gov import decision_codes as dc
     import re
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     codes = re.findall(r'"code":\s*["\']([^"\']+)["\']', src)
-    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2012, (
+    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2018, (
         len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
     assert "witness-alert-wrapper-error" in dc.TAXONOMY
-    _held("P11-pin-taxonomy-2012-sorted", "2012/2012/0 sorted")
+    _held("P11-pin-taxonomy-2018-sorted", "2018/2018/0 sorted")
 
 
 @probe("P12-footer-state")

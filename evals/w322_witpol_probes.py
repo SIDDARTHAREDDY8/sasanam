@@ -18,7 +18,7 @@ P3 (3): contract probes -- verify returns the verified VALUES (dict),
     change breaks); trust anchor authority (doc-declared signers do not
     count, only the anchor's do).
 P4 (2): regressions -- footer open none / next F409; pin taxonomy
-    2012/2012/0 sorted on source literals.
+    2018/2018/0 sorted on source literals.
 
 
 
@@ -51,7 +51,7 @@ from gov import checkpoint_note as CN  # noqa: E402
 from gov.witness_log import WitnessLog  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
-TAXONOMY_PIN = 2012
+TAXONOMY_PIN = 2018
 
 
 FOOTER_OPEN = "none"
@@ -534,7 +534,7 @@ def _p3c():
 # P4: regressions
 # ---------------------------------------------------------------------------
 
-@probe("P4-pin-taxonomy-2012-sorted")
+@probe("P4-pin-taxonomy-2018-sorted")
 
 
 def _p4a():
@@ -542,11 +542,11 @@ def _p4a():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2012
+    ok = (len(lits) == TAXONOMY_PIN == 2018
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P4-pin-taxonomy-2012-sorted", "2012/2012/0 sorted")
-    return _break("P4-pin-taxonomy-2012-sorted",
+        return _held("P4-pin-taxonomy-2018-sorted", "2018/2018/0 sorted")
+    return _break("P4-pin-taxonomy-2018-sorted",
 
 
                   "got %d literals" % (len(lits),))

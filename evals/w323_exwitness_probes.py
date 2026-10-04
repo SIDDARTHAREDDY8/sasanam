@@ -19,7 +19,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2012  # 1976 + 8 export-witness-*
+TAXONOMY_PIN = 2018  # 1976 + 8 export-witness-*; Wave-325 lane 2: pin 2012 -> 2018 (+6 federated-identity-*: identity-issuer-key-retired + identity-token-issuer-unknown + identity-token-key-binding-mismatch + identity-token-replayed + identity-token-required + identity-token-ttl-exceeded)
 
 
 
@@ -566,7 +566,7 @@ def _p5b():
 # P6: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-2012-sorted")
+@probe("P6-pin-taxonomy-2018-sorted")
 
 
 def _p6a():
@@ -574,10 +574,10 @@ def _p6a():
     n = len(DC.TAXONOMY)
     codes = sorted(DC.TAXONOMY.keys())
     if n == TAXONOMY_PIN and list(DC.TAXONOMY.keys()) == codes:
-        _held("P6-pin-taxonomy-2012-sorted", "2012/2012/0 sorted")
+        _held("P6-pin-taxonomy-2018-sorted", "2018/2018/0 sorted")
     else:
-        _break("P6-pin-taxonomy-2012-sorted",
-               "want 2012/2012/0 sorted, got %d (sorted=%s)"
+        _break("P6-pin-taxonomy-2018-sorted",
+               "want 2018/2018/0 sorted, got %d (sorted=%s)"
 
 
                % (n, list(DC.TAXONOMY.keys()) == codes))

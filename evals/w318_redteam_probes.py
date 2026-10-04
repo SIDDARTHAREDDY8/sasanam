@@ -36,7 +36,7 @@ P7 (2): F403 re-probe on the CLOSED tree -- the 3-file standalone
 P8 (2): decision_bom level-3 fallback divergence risk -- an unknown
     ladder mode in the standalone path refuses (stricter, never
     looser); the pin test fails loudly on drift, never silently.
-P9 (3): regressions -- footer, pin taxonomy 2012/2012/0 sorted, the
+P9 (3): regressions -- footer, pin taxonomy 2018/2018/0 sorted, the
 
 
     wave-317 producer USER/TOOL grading pin.
@@ -865,7 +865,7 @@ def _p9_footer():
                  "footer pins open none / next F409")
 
 
-@probe("P9-pin-taxonomy-2012-sorted")
+@probe("P9-pin-taxonomy-2018-sorted")
 
 
 def _p9_pin():
@@ -875,14 +875,14 @@ def _p9_pin():
                                             "decision_codes.py"),
                                encoding="utf-8").read())
     except Exception as exc:  # noqa: BLE001
-        return _error("P9-pin-taxonomy-2012-sorted", "%r" % (exc,))
-    if len(lits) != 2012 or len(set(lits)) != 2012:
-        return _break("P9-pin-taxonomy-2012-sorted",
+        return _error("P9-pin-taxonomy-2018-sorted", "%r" % (exc,))
+    if len(lits) != 2018 or len(set(lits)) != 2018:
+        return _break("P9-pin-taxonomy-2018-sorted",
                       "got %d literals / %d unique (want 1991/1991)"
                       % (len(lits), len(set(lits))))
     if lits != sorted(lits):
-        return _break("P9-pin-taxonomy-2012-sorted", "literals not sorted")
-    return _held("P9-pin-taxonomy-2012-sorted", "2012/2012/0 sorted")
+        return _break("P9-pin-taxonomy-2018-sorted", "literals not sorted")
+    return _held("P9-pin-taxonomy-2018-sorted", "2018/2018/0 sorted")
 
 
 
