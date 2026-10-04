@@ -17916,6 +17916,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['jail-policy', 'measurement'],
         "reverify_steps": ['recompute'],
     },
+    'witness-alert-wrapper-error': {
+        "domain": 'witness',
+        "code": 'witness-alert-wrapper-error',
+        "human": 'witness monitor alerting wrapper: the wrapper itself hit '
+                 'an unexpected error (malformed monitor verdict, broken '
+                 'dependency, bad config, corrupt alert state); the error '
+                 'is alerted LOUD before propagating -- never silent',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
     'witness-checkpoint-stale': {
         "domain": 'witness',
         "code": 'witness-checkpoint-stale',

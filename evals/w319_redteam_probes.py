@@ -20,8 +20,8 @@ P3 (6): F405 -- the F404 closure's negation-cue vocabulary missed
     P3 probes now assert the coded provenance-critical-arg-refused HELD.
 P4 (2): w318 green-check depth-1 discipline -- the three w318 batteries'
     green checks honor GOV_SKIP_GREEN; their spawned children do too.
-P5 (3): regressions -- footer open none / next F408; pin taxonomy
-    1990/1990/0 sorted; F404 still closed (out-of-vocabulary
+P5 (3): regressions -- footer open none / next F409; pin taxonomy
+    1991/1991/0 sorted; F404 still closed (out-of-vocabulary
     prohibitions refuse).
 
 Result contract: each probe prints [HELD]/[BREAK]/[ERROR]. Exit 0 iff
@@ -94,9 +94,9 @@ def _error(pid, note):
     return (pid, "ERROR", probe_lines.first_line(note)[:160])
 
 
-TAXONOMY_PIN = 1990  # Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*)
+TAXONOMY_PIN = 1991  # Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*)
 FOOTER_OPEN = "none"
-FOOTER_NEXT = "F408"
+FOOTER_NEXT = "F409"
 
 NOW = datetime(2026, 10, 4, 4, 0, 0, tzinfo=timezone.utc)
 
@@ -753,7 +753,7 @@ GREEN_EVALS = [
     # (name, path, expected (break, held, error)) -- depth-1: children run
     # with GOV_SKIP_GREEN=1 and never spawn their own green checks.
     # Wave-322 merge: all footer-state probes re-pinned to open F407 /
-    # next F408; all children run clean.
+    # next F409; all children run clean.
     ("w318-evidence", "evals/w318_evidence_schema_probes.py", (0, 18, 0)),
     ("w318-trustroot", "evals/w318_trustroot_probes.py", (0, 12, 0)),
     ("w318-redteam", "evals/w318_redteam_probes.py", (0, 26, 0)),

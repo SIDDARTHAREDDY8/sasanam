@@ -574,34 +574,34 @@ def _footer():
 
 @probe("P5-footer-state")
 def _p5_footer():
-    """Footer: open none / next F408 (F406 CLOSED 2026-10-04 wave-322 lane 1)."""
+    """Footer: open none / next F409 (F406 CLOSED 2026-10-04 wave-322 lane 1)."""
     got = _footer()
     if got != (408, "F407"):
         return _break("P5-footer-state", "footer is %r" % (got,))
     return _held("P5-footer-state",
-                 "open none / next F408")
+                 "open none / next F409")
 
 
-@probe("P5-pin-taxonomy-1990-sorted")
+@probe("P5-pin-taxonomy-1991-sorted")
 def _p5_pin():
-    """Taxonomy pin 1990/1990/0 on raw source literals, sorted, unique
+    """Taxonomy pin 1991/1991/0 on raw source literals, sorted, unique
     (wave-260 lesson: assert on literals, not the deduped dict)."""
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    if len(lits) != 1990:
-        return _break("P5-pin-taxonomy-1990-sorted",
-                      "literals %d != pin 1990" % len(lits))
+    if len(lits) != 1991:
+        return _break("P5-pin-taxonomy-1991-sorted",
+                      "literals %d != pin 1991" % len(lits))
     if len(set(lits)) != len(lits):
-        return _break("P5-pin-taxonomy-1990-sorted",
+        return _break("P5-pin-taxonomy-1991-sorted",
                       "duplicate code literals in source")
     if sorted(lits) != lits:
-        return _break("P5-pin-taxonomy-1990-sorted", "literals not sorted")
-    if len(DC.TAXONOMY) != 1990:
-        return _break("P5-pin-taxonomy-1990-sorted",
+        return _break("P5-pin-taxonomy-1991-sorted", "literals not sorted")
+    if len(DC.TAXONOMY) != 1991:
+        return _break("P5-pin-taxonomy-1991-sorted",
                       "TAXONOMY dict has %d" % len(DC.TAXONOMY))
-    return _held("P5-pin-taxonomy-1990-sorted", "1990/1990/0 sorted")
+    return _held("P5-pin-taxonomy-1991-sorted", "1991/1991/0 sorted")
 
 
 def _run_battery(path, expect, break_must_contain=None):

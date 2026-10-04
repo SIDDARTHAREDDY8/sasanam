@@ -36,7 +36,7 @@ P7 (2): F403 re-probe on the CLOSED tree -- the 3-file standalone
 P8 (2): decision_bom level-3 fallback divergence risk -- an unknown
     ladder mode in the standalone path refuses (stricter, never
     looser); the pin test fails loudly on drift, never silently.
-P9 (3): regressions -- footer, pin taxonomy 1990/1990/0 sorted, the
+P9 (3): regressions -- footer, pin taxonomy 1991/1991/0 sorted, the
     wave-317 producer USER/TOOL grading pin.
 
 Result contract: each probe prints [HELD]/[BREAK]/[ERROR]. Exit 0 iff
@@ -837,33 +837,33 @@ def _p8b():
 # P9: regressions -- footer, pin
 # ---------------------------------------------------------------------------
 
-@probe("P9-footer-open-F407-next-F408")
+@probe("P9-footer-open-F407-next-F409")
 def _p9_footer():
     try:
         text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                     encoding="utf-8").read()
     except Exception as exc:  # noqa: BLE001
-        return _error("P9-footer-open-F407-next-F408", "%r" % (exc,))
+        return _error("P9-footer-open-F407-next-F409", "%r" % (exc,))
     m = list(re.finditer(
         r"Next free finding: \*\*F(\d+)\*\*\. \*\*Open findings: ([^*]*)\*\*",
         text))
     if not m:
-        return _error("P9-footer-open-F407-next-F408",
+        return _error("P9-footer-open-F407-next-F409",
                       "no footer line found")
     last = m[-1]
     nxt, opens = last.group(1), last.group(2)
     if nxt != "408" or opens.strip().lower().rstrip(".") != "f407":
-        return _break("P9-footer-open-F407-next-F408",
+        return _break("P9-footer-open-F407-next-F409",
                       "footer pins next=%s open=%s (want 408 / F407)"
                       % (nxt, opens))
     if "## F407" not in text:
-        return _break("P9-footer-open-F407-next-F408",
+        return _break("P9-footer-open-F407-next-F409",
                       "F407 entry missing from FINDINGS.md")
-    return _held("P9-footer-open-F407-next-F408",
-                 "footer pins open none / next F408")
+    return _held("P9-footer-open-F407-next-F409",
+                 "footer pins open none / next F409")
 
 
-@probe("P9-pin-taxonomy-1990-sorted")
+@probe("P9-pin-taxonomy-1991-sorted")
 def _p9_pin():
     try:
         lits = re.findall(r'"code":\s*\'([^\']+)\'',
@@ -871,14 +871,14 @@ def _p9_pin():
                                             "decision_codes.py"),
                                encoding="utf-8").read())
     except Exception as exc:  # noqa: BLE001
-        return _error("P9-pin-taxonomy-1990-sorted", "%r" % (exc,))
-    if len(lits) != 1990 or len(set(lits)) != 1990:
-        return _break("P9-pin-taxonomy-1990-sorted",
-                      "got %d literals / %d unique (want 1990/1973)"
+        return _error("P9-pin-taxonomy-1991-sorted", "%r" % (exc,))
+    if len(lits) != 1991 or len(set(lits)) != 1991:
+        return _break("P9-pin-taxonomy-1991-sorted",
+                      "got %d literals / %d unique (want 1991/1991)"
                       % (len(lits), len(set(lits))))
     if lits != sorted(lits):
-        return _break("P9-pin-taxonomy-1990-sorted", "literals not sorted")
-    return _held("P9-pin-taxonomy-1990-sorted", "1990/1990/0 sorted")
+        return _break("P9-pin-taxonomy-1991-sorted", "literals not sorted")
+    return _held("P9-pin-taxonomy-1991-sorted", "1991/1991/0 sorted")
 
 
 # ---------------------------------------------------------------------------

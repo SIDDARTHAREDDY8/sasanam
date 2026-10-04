@@ -33,7 +33,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 1990 # wave-314 merge: pin 1863 -> 1878 (+9 provenance-* +6 witness-rekor-*); wave-315 merge: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1934 -> 1934 (+1 grantneg-registry-withdrawn)
+TAXONOMY_PIN = 1991 # wave-314 merge: pin 1863 -> 1878 (+9 provenance-* +6 witness-rekor-*); wave-315 merge: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1934 -> 1934 (+1 grantneg-registry-withdrawn)
 
 from gov import provenance_labels as PL
 from gov import provenance_sink as PS
@@ -883,7 +883,7 @@ def _p4_gate_code():
 # pin + footer
 # ---------------------------------------------------------------------------
 
-@probe("pin-taxonomy-1990-sorted")
+@probe("pin-taxonomy-1991-sorted")
 def _pin():
     import json as _json
     from gov import decision_codes as _dc
@@ -894,19 +894,19 @@ def _pin():
     lits = _re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += _re.findall(r'"code":\s*"([^"]+)"', src)
     if len(lits) != TAXONOMY_PIN:
-        return _break("pin-taxonomy-1990-sorted",
+        return _break("pin-taxonomy-1991-sorted",
                       "taxonomy literals %d != pin %d"
                       % (len(lits), TAXONOMY_PIN))
     if len(set(lits)) != len(lits):
-        return _break("pin-taxonomy-1990-sorted",
+        return _break("pin-taxonomy-1991-sorted",
                       "duplicate code literals in source")
     if sorted(lits) != lits:
-        return _break("pin-taxonomy-1990-sorted", "literals not sorted")
-    return _held("pin-taxonomy-1990-sorted",
-                 "1990/1990/0 unique sorted on source literals")
+        return _break("pin-taxonomy-1991-sorted", "literals not sorted")
+    return _held("pin-taxonomy-1991-sorted",
+                 "1991/1991/0 unique sorted on source literals")
 
 
-@probe("footer-open-F407-next-F408")
+@probe("footer-open-F407-next-F409")
 def _footer():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     text = open(path).read()
@@ -915,16 +915,16 @@ def _footer():
         r"Next free finding: \*\*(F\d+)\*\*\. \*\*Open findings: ([^*]*)\*\*",
         text)
     if not feet:
-        return _error("footer-open-F407-next-F408",
+        return _error("footer-open-F407-next-F409",
                       "no footer parsed")
     num, opens = feet[-1]
     opens = opens.strip().lower().rstrip(".")
-    if num != "F408" or opens != "f407":
-        return _break("footer-open-F407-next-F408",
-                      "footer is %s / %s, want F408 / F407"
+    if num != "F409" or opens != "f407":
+        return _break("footer-open-F407-next-F409",
+                      "footer is %s / %s, want F409 / F407"
                       % (num, opens))
-    return _held("footer-open-F407-next-F408",
-                 "footer: open none / next F408")
+    return _held("footer-open-F407-next-F409",
+                 "footer: open none / next F409")
 
 
 # ---------------------------------------------------------------------------

@@ -36,7 +36,7 @@ OCIRegistryClient.push_evidence / discover_referrers / pull_and_verify):
   oci-artifact-type-gated: manifest with a foreign artifactType -> pull with
       the expected Sasanam artifactType refuses coded
       oci-artifact-type-mismatch.
-  pin-taxonomy / footer-state: standard pins (1964; open none / next F408).
+  pin-taxonomy / footer-state: standard pins (1964; open none / next F409).
 """
 
 import json
@@ -440,21 +440,21 @@ def p_artifact_type_gated():
 def p_pin_taxonomy():
     import gov.guac_graph as gg
     pin = gg.TAXONOMY_PIN
-    assert pin == 1990, "want 1990, got %d" % pin
+    assert pin == 1991, "want 1991, got %d" % pin
     from gov import decision_codes as dc
     codes = sorted(dc.TAXONOMY.keys())
-    assert len(codes) == len(set(codes)) == 1990, \
-        "taxonomy not 1990/unique: %d" % len(codes)
+    assert len(codes) == len(set(codes)) == 1991, \
+        "taxonomy not 1991/unique: %d" % len(codes)
     assert codes == sorted(codes), "taxonomy not sorted"
-    _record("pin-taxonomy-1990-sorted", "HELD", "1990/1990/0 sorted")
+    _record("pin-taxonomy-1991-sorted", "HELD", "1991/1991/0 sorted")
 
 
 def p_footer_state():
     with open(os.path.join(REPO, "evals", "FINDINGS.md")) as f:
         text = f.read()
     assert "Open findings: none." in text, "footer must show open none"
-    assert "Next free finding: **F408**" in text, "next free must be F408"
-    _record("footer-state", "HELD", "open none / next F408")
+    assert "Next free finding: **F409**" in text, "next free must be F409"
+    _record("footer-state", "HELD", "open none / next F409")
 
 
 def green_check():

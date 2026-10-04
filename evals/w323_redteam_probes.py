@@ -27,8 +27,8 @@ Attacks the wave-322 NEW surfaces break-first (base 0b03472b):
       shipped tallies (child-mode, GOV_SKIP_GREEN=1; every tally below
       was verified by direct child run, never "corrected" to
       parent-with-green numbers).
-  P6  Pin/footer -- 1990/1990/0 sorted on source literals; footer open
-      none / next F408 (F406 and F407 both closed).
+  P6  Pin/footer -- 1991/1991/0 sorted on source literals; footer open
+      none / next F409 (F406 and F407 both closed).
 
 Result: no genuine new findings from this campaign -- every attack
 refuses coded or is held as documented caller-trust/design behavior.
@@ -68,9 +68,9 @@ from tests.keyfixture import provision_test_key  # noqa: E402
 
 provision_test_key()
 
-TAXONOMY_PIN = 1990
+TAXONOMY_PIN = 1991
 FOOTER_OPEN = "none"
-FOOTER_NEXT = "F408"
+FOOTER_NEXT = "F409"
 
 _results = []
 _PROBES = []
@@ -936,17 +936,17 @@ def green_check():
 # P6: pin + footer
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-1990-sorted")
+@probe("P6-pin-taxonomy-1991-sorted")
 def _p6a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 1990
+    ok = (len(lits) == TAXONOMY_PIN == 1991
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P6-pin-taxonomy-1990-sorted", "1990/1990/0 sorted")
-    return _break("P6-pin-taxonomy-1990-sorted",
+        return _held("P6-pin-taxonomy-1991-sorted", "1991/1991/0 sorted")
+    return _break("P6-pin-taxonomy-1991-sorted",
                   "got %d literals" % (len(lits),))
 
 

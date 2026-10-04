@@ -34,8 +34,8 @@ P7 (2): F399 seam -- the escalate-terminal ratchet fires at the 4th
     budget-inert by design.
 P8 (1): F403 re-probe -- decision_packet standalone offline import still
     broken on the OPEN tree (lane 1 owns the closure; not closed here).
-P9 (2): regressions -- footer (open none / next F408; F405 closed),
-    pin taxonomy 1990/1990/0 sorted.
+P9 (2): regressions -- footer (open none / next F409; F405 closed),
+    pin taxonomy 1991/1991/0 sorted.
 P10 (3): robustness acceptance gaming -- enum budget respected,
     string without markers fails closed, attacker>benign bits fails.
 
@@ -890,34 +890,34 @@ def _p8():
 # P9: regressions -- footer, pin
 # ---------------------------------------------------------------------------
 
-@probe("P9-footer-open-F407-next-F408")
+@probe("P9-footer-open-F407-next-F409")
 def _p9_footer():
     import re as _re
     try:
         text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                     encoding="utf-8").read()
     except Exception as exc:  # noqa: BLE001
-        return _error("P9-footer-open-F407-next-F408", "%r" % (exc,))
+        return _error("P9-footer-open-F407-next-F409", "%r" % (exc,))
     m = list(_re.finditer(
         r"Next free finding: \*\*F(\d+)\*\*\. \*\*Open findings: ([^*]*)\*\*",
         text))
     if not m:
-        return _error("P9-footer-open-none-next-F408",
+        return _error("P9-footer-open-none-next-F409",
                       "no footer line found")
     last = m[-1]
     nxt, opens = last.group(1), last.group(2)
     if nxt != "408" or opens.strip().lower().rstrip(".") != "none":
-        return _break("P9-footer-open-none-next-F408",
+        return _break("P9-footer-open-none-next-F409",
                       "footer pins next=%s open=%s (want 408 / none)"
                       % (nxt, opens))
     if "## F407" not in text:
-        return _break("P9-footer-open-none-next-F408",
+        return _break("P9-footer-open-none-next-F409",
                       "F407 entry missing from FINDINGS.md")
-    return _held("P9-footer-open-none-next-F408",
-                 "footer pins open none / next F408")
+    return _held("P9-footer-open-none-next-F409",
+                 "footer pins open none / next F409")
 
 
-@probe("P9-pin-taxonomy-1990-sorted")
+@probe("P9-pin-taxonomy-1991-sorted")
 def _p9_pin():
     try:
         lits = re.findall(r'"code":\s*\'([^\']+)\'',
@@ -925,14 +925,14 @@ def _p9_pin():
                                             "decision_codes.py"),
                                encoding="utf-8").read())
     except Exception as exc:  # noqa: BLE001
-        return _error("P9-pin-taxonomy-1990-sorted", "%r" % (exc,))
-    if len(lits) != 1990 or len(set(lits)) != 1990:
-        return _break("P9-pin-taxonomy-1990-sorted",
-                      "got %d literals / %d unique (want 1990/1916)"
+        return _error("P9-pin-taxonomy-1991-sorted", "%r" % (exc,))
+    if len(lits) != 1991 or len(set(lits)) != 1991:
+        return _break("P9-pin-taxonomy-1991-sorted",
+                      "got %d literals / %d unique (want 1991/1991)"
                       % (len(lits), len(set(lits))))
     if lits != sorted(lits):
-        return _break("P9-pin-taxonomy-1990-sorted", "literals not sorted")
-    return _held("P9-pin-taxonomy-1990-sorted", "1990/1990/0 sorted")
+        return _break("P9-pin-taxonomy-1991-sorted", "literals not sorted")
+    return _held("P9-pin-taxonomy-1991-sorted", "1991/1991/0 sorted")
 
 
 # ---------------------------------------------------------------------------
@@ -1037,7 +1037,7 @@ GREEN_EVALS = [
     # (name, path, expected (break, held, error)) -- depth-1: children run
     # with GOV_SKIP_GREEN=1 and never spawn their own green checks.
     # Wave-322 merge: footer-state probes re-pinned to open F407 /
-    # next F408; all children now run clean.
+    # next F409; all children now run clean.
     ("w315-redteam", "evals/w315_redteam_probes.py", (0, 39, 0)),
     ("w316-transform", "evals/w316_transform_probes.py", (0, 20, 0)),
     ("w315-vsa", "evals/w315_vsa_probes.py", (0, 20, 0)),

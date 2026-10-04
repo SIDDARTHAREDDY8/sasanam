@@ -19,7 +19,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 1990  # 1976 + 8 export-witness-*
+TAXONOMY_PIN = 1991  # 1976 + 8 export-witness-*
 
 _results = []
 
@@ -564,25 +564,25 @@ def _p5b():
 # P6: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-1990-sorted")
+@probe("P6-pin-taxonomy-1991-sorted")
 def _p6a():
     from gov import decision_codes as DC
     n = len(DC.TAXONOMY)
     codes = sorted(DC.TAXONOMY.keys())
     if n == TAXONOMY_PIN and list(DC.TAXONOMY.keys()) == codes:
-        _held("P6-pin-taxonomy-1990-sorted", "1990/1990/0 sorted")
+        _held("P6-pin-taxonomy-1991-sorted", "1991/1991/0 sorted")
     else:
-        _break("P6-pin-taxonomy-1990-sorted",
-               "want 1990/1990/0 sorted, got %d (sorted=%s)"
+        _break("P6-pin-taxonomy-1991-sorted",
+               "want 1991/1991/0 sorted, got %d (sorted=%s)"
                % (n, list(DC.TAXONOMY.keys()) == codes))
 
 
 @probe("P6-footer-state")
 def _p6b():
     src = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
-    if ("Next free finding: **F408**" in src
+    if ("Next free finding: **F409**" in src
             and "Open findings: none." in src):
-        _held("P6-footer-state", "open none / next F408")
+        _held("P6-footer-state", "open none / next F409")
     else:
         _break("P6-footer-state", "footer mismatch")
 

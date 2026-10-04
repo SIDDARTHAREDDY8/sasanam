@@ -23,7 +23,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 1990  # 1976 + 5 witness-monitor-*
+TAXONOMY_PIN = 1991  # 1976 + 5 witness-monitor-*
 
 _results = []
 
@@ -652,9 +652,9 @@ def _p17():
 def _p18():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Next free finding: **F408**. **Open findings: none.**" in text, \
+    assert "Next free finding: **F409**. **Open findings: none.**" in text, \
         "footer mismatch"
-    _held("P18-footer-state", "open none / next F408")
+    _held("P18-footer-state", "open none / next F409")
 
 
 # ---------------------------------------------------------------------------

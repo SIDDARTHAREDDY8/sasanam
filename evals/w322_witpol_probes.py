@@ -17,8 +17,8 @@ P3 (3): contract probes -- verify returns the verified VALUES (dict),
     never soft False; canonicalization (key order irrelevant, value
     change breaks); trust anchor authority (doc-declared signers do not
     count, only the anchor's do).
-P4 (2): regressions -- footer open none / next F408; pin taxonomy
-    1990/1990/0 sorted on source literals.
+P4 (2): regressions -- footer open none / next F409; pin taxonomy
+    1991/1991/0 sorted on source literals.
 
 Result contract: each probe prints [HELD]/[BREAK]/[ERROR]. Exit 0 iff
 no ERROR and no unexpected BREAK. On the OPEN tree (module absent) the
@@ -49,9 +49,9 @@ from gov import checkpoint_note as CN  # noqa: E402
 from gov.witness_log import WitnessLog  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
-TAXONOMY_PIN = 1990
+TAXONOMY_PIN = 1991
 FOOTER_OPEN = "none"
-FOOTER_NEXT = "F408"
+FOOTER_NEXT = "F409"
 
 _results = []
 _PROBES = []
@@ -530,17 +530,17 @@ def _p3c():
 # P4: regressions
 # ---------------------------------------------------------------------------
 
-@probe("P4-pin-taxonomy-1990-sorted")
+@probe("P4-pin-taxonomy-1991-sorted")
 def _p4a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 1990
+    ok = (len(lits) == TAXONOMY_PIN == 1991
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P4-pin-taxonomy-1990-sorted", "1990/1990/0 sorted")
-    return _break("P4-pin-taxonomy-1990-sorted",
+        return _held("P4-pin-taxonomy-1991-sorted", "1991/1991/0 sorted")
+    return _break("P4-pin-taxonomy-1991-sorted",
                   "got %d literals" % (len(lits),))
 
 
@@ -553,7 +553,7 @@ def _p4b():
     ok = (m_open and m_open[-1].strip() == FOOTER_OPEN
           and m_next and m_next[-1] == FOOTER_NEXT)
     if ok:
-        return _held("P4-footer-state", "open none / next F408")
+        return _held("P4-footer-state", "open none / next F409")
     return _break("P4-footer-state",
                   "got %r / %r" % (m_open[-1] if m_open else None,
                                    m_next[-1] if m_next else None))

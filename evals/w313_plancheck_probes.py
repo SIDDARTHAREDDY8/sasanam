@@ -90,7 +90,7 @@ from gov import workflow_routing as wr  # noqa: E402
 from gov import workflow_idempotency as idem  # noqa: E402
 from gov import workflow_composed as wc  # noqa: E402
 
-TAXONOMY_PIN = 1990 # wave-313 lane E: +6 plan-policy-* codes; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1933 -> 1934 (+1 grantneg-registry-withdrawn)
+TAXONOMY_PIN = 1991 # wave-313 lane E: +6 plan-policy-* codes; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1933 -> 1934 (+1 grantneg-registry-withdrawn)
 
 _SA = hashlib.sha256(b"w313pp-battery").digest()
 _PA = ed25519.publickey(_SA).hex()
@@ -646,12 +646,12 @@ def footer_state():
     # This lane files no findings. Footer lines repeat through history;
     # the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F408**" in text
+    ok = ("Next free finding: **F409**" in text
           and m_open and m_open[-1].strip() == "none")
     if ok:
-        _record("footer-state", "HELD", "footer: open none / next F408")
+        _record("footer-state", "HELD", "footer: open none / next F409")
     else:
-        _record("footer-state", "BREAK", "footer mismatch vs open none / next F408")
+        _record("footer-state", "BREAK", "footer mismatch vs open none / next F409")
 
 
 PROBES = [happy_observation, happy_egress_declared,
