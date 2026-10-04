@@ -39,7 +39,7 @@ Probe map:
       byte-for-byte proof the verifier's witness step consumes our
       receipts (that step's acceptance of seal output is pinned by the
       w311/w312 batteries).
-  pin-taxonomy / footer-state: standard pins (1946; open none / next F406).
+  pin-taxonomy / footer-state: standard pins (1946; open F406 / next F407).
 
 Deterministic across 2 runs; $0 spend; synthetic/local. Stdlib only
 apart from gov/witness_rekor.py + gov/witness_log.py (real product
@@ -321,13 +321,13 @@ def footer_state():
     # This lane files no findings. Footer lines repeat through history;
     # the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F406**" in text
-          and m_open and m_open[-1].strip() == "none")
+    ok = ("Next free finding: **F407**" in text
+          and m_open and m_open[-1].strip() == "F406")
     if ok:
-        _record("footer-state", "HELD", "footer: open none / next F406")
+        _record("footer-state", "HELD", "footer: open F406 / next F407")
     else:
         _record("footer-state", "BREAK",
-                "footer mismatch vs open none / next F406")
+                "footer mismatch vs open F406 / next F407")
 
 
 PROBES = [anchor_verify_roundtrip, replay_across_bundles,
