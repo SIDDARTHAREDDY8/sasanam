@@ -11714,6 +11714,46 @@ class ToolExecutor:
             _prov_section = (
                 _instruction_provenance.render_provenance_section(
                     prov_req, prov_decision))
+        # Wave-320 (grant wiring): the require_approval path consumes
+        # presented grants. The wave-319 advisory check ran only on the
+        # direct-allow path; a grant presented with a queued call was
+        # silently dropped. Run the same advisory check at queue time
+        # (tighten-only, never loosens the deterministic policy):
+        #   - "refused" -> deny loudly here, before the human ever sees
+        #     the approval request (a forged/stolen/expired/scope-wrong
+        #     grant must not reach a human for rubber-stamping);
+        #   - "verified" -> bind the grant MAC-covered into the approval
+        #     record (presented_grant=) for the sweep-time re-verification;
+        #   - "absent"/"not-applicable" -> bind explicit None; the
+        #     existing policy path is unchanged (advisory-only-tighten).
+        # The presenter is the F42 session-authenticated caller, so a
+        # grant presented by a different identity than its audience
+        # refuses here (grantneg-audience-mismatch) -- the wave-320
+        # residual-(1) closure on the queue path.
+        _presented_grant_queue_status = None
+        if _presented_grant is not None:
+            (_presented_grant_queue_status,
+             _presented_grant_queue_detail) = (
+                grant_negotiation.advisory_check(
+                    getattr(self, "_grant_registry", None), tool,
+                    _presented_grant, identity.agent_id, args=kwargs))
+            if _presented_grant_queue_status == "refused":
+                _grant_deny_entry = self.log.append(_base({
+                    "decision": "denied",
+                    "policy_id": "grant-advisory",
+                    "flag": ("grantneg_"
+                             + _presented_grant_queue_detail["code"]
+                             .replace("-", "_")),
+                    "matched_rules": [],
+                    "reason": ("Refusing to queue: the presented grant "
+                               "failed verification (%s): %s"
+                               % (_presented_grant_queue_detail["code"],
+                                  _presented_grant_queue_detail["reason"])),
+                }))
+                return {"status": "denied",
+                        "reason": _grant_deny_entry["reason"],
+                        "policy_id": "grant-advisory",
+                        "seq": _grant_deny_entry["seq"]}
         approval_id = self.approvals.queue(
             approval_action, decision, provenance,
             # F12: the preview is built from the SAME redacted args that
@@ -11812,7 +11852,13 @@ class ToolExecutor:
             attested_identity=(
                 {"document": self._agent_svid,
                  "presented_selectors": self._agent_svid_selectors}
-                if self._agent_svid is not None else None))
+                if self._agent_svid is not None else None),
+            # Wave-320 (grant wiring): the queue-time verified grant,
+            # MAC-bound into the record; None when no grant was
+            # presented or the advisory outcome was not verified.
+            presented_grant=(
+                _presented_grant
+                if _presented_grant_queue_status == "verified" else None))
         entry = self.log.append(_base({
             "decision": "queued_pending",
             "policy_id": decision.policy_id,
@@ -12550,6 +12596,55 @@ class ToolExecutor:
                         "verify under any key epoch)." % aid,
                         "approval_integrity_violation")
                 continue
+            # Wave-320 (grant wiring): re-verify the MAC-bound queued
+            # grant. The grant was verified at queue time; the sweep
+            # re-verifies because (a) the grant may have expired during
+            # the human-approval delay (expiry-as-revocation), (b) the
+            # human-edited args may have broken scope binding, and
+            # (c) the registry may have been withdrawn after queueing.
+            # A swapped or stripped grant breaks the F38 MAC above
+            # (integrity violation) before this check runs. The
+            # presenter is the MAC-bound record agent_id (the queued
+            # caller), and the args are the MAC-bound (possibly
+            # human-edited) args about to execute. Refuse loudly on
+            # any failure -- a queued grant must verify at execution;
+            # never silently downgrade to the no-grant path.
+            _queued_grant = rec.get("presented_grant")
+            if _queued_grant is not None:
+                (_grant_sweep_status,
+                 _grant_sweep_detail) = grant_negotiation.advisory_check(
+                    getattr(self, "_grant_registry", None), rec["tool"],
+                    _queued_grant, rec["agent_id"], args=rec["args"])
+                if _grant_sweep_status == "refused":
+                    _refuse(
+                        "Approval %s refused: its queued grant failed "
+                        "re-verification at execution (%s: %s) -- the "
+                        "grant expired, its scope no longer covers the "
+                        "args, or it does not verify; refusing "
+                        "fail-closed." % (
+                            aid, _grant_sweep_detail["code"],
+                            _grant_sweep_detail["reason"]),
+                        ("grantneg_"
+                         + _grant_sweep_detail["code"].replace("-", "_")),
+                        policy_id="grantneg-execution-refused",
+                        extra={"code": _grant_sweep_detail["code"]})
+                    continue
+                if _grant_sweep_status == "not-applicable":
+                    # The registry is not installed or the tool is no
+                    # longer registered (withdrawn after queue time).
+                    # A queued grant must verify at execution; refusing
+                    # loudly rather than silently downgrading. Drain the
+                    # queue before withdrawing the registry.
+                    _refuse(
+                        "Approval %s refused: its queued grant cannot be "
+                        "re-verified -- the grant registry is not "
+                        "installed or the tool is no longer registered "
+                        "(grantneg-registry-withdrawn). Drain the queue "
+                        "before withdrawing the registry." % aid,
+                        "grantneg_registry_withdrawn",
+                        policy_id="grantneg-execution-refused",
+                        extra={"code": "grantneg-registry-withdrawn"})
+                    continue
             # Wave-24 (D1 bridges): bridge-queued records are
             # FOREIGN-EXECUTED — the bridge's runtime executes on its
             # side after our human decides, so our own sweep must never

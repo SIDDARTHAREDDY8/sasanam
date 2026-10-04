@@ -478,6 +478,16 @@ _SECURITY_PAYLOAD_FIELDS = (
     # breaks the record digest (fail closed). Same fail-closed
     # upgrade precedent as the fields above.
     "provenance_segments",
+    # Wave-320 (grant wiring): the presented tool-call grant, bound
+    # at queue time after a verified advisory check and re-verified
+    # at the approved sweep. MAC-bound from birth so a swapped or
+    # stripped grant between queue and execution breaks the record
+    # digest (fail closed). FAIL-CLOSED UPGRADE (same precedent as
+    # the fields above): records queued before this change do not
+    # carry this field, so their digests fail verification after
+    # the upgrade -- queued items must be decided or drained before
+    # upgrading.
+    "presented_grant",
 )
 
 
@@ -3590,7 +3600,15 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
               # record (see _SECURITY_PAYLOAD_FIELDS); verified:false
               # never gates the decision. Explicit None when the
               # deployment carries no workload identity -- never omitted.
-              attested_identity=None):
+              attested_identity=None,
+              # Wave-320 (grant wiring): the presented tool-call grant
+              # (a grant dict or grant chain), queue-time verified by
+              # the executor's advisory check. Stamped MAC-bound on the
+              # record (see _SECURITY_PAYLOAD_FIELDS) and re-verified
+              # at the approved sweep. Explicit None when no grant was
+              # presented or the advisory outcome was not verified --
+              # never omitted.
+              presented_grant=None):
         """Store a pending approval; returns the approval id.
 
         ``approval_request`` (wave-297, opt-in): a signed approval
@@ -3908,6 +3926,17 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 json.loads(json.dumps(provenance_segments,
                                       ensure_ascii=True, default=str))
                 if provenance_segments is not None else None),
+            # Wave-320 (grant wiring): the presented tool-call grant,
+            # queue-time verified by the executor's advisory check.
+            # Deep-copied JSON-safe so the record owns its bytes and
+            # the MAC covers the field (a swapped or stripped grant
+            # breaks approval_digest_ok -- fail closed). None means
+            # no grant was presented or the advisory outcome was not
+            # verified; the sweep only re-verifies when not None.
+            "presented_grant": (
+                json.loads(json.dumps(presented_grant,
+                                      ensure_ascii=True, default=str))
+                if presented_grant is not None else None),
             # Wave-280 (HumanLayer ADAPT): the declared 4-tier stakes
             # of the request -- the registry's authority (see
             # gov.human_approval_contract), not agent framing.
