@@ -9,7 +9,7 @@ is CLOSED (lane 1, wave-326 merge) so P2a must be HELD; F408's P17
 must stay HELD. P3 attacks the federated-identity / threshold-VSA /
 offline-verifier seams. P4 is the regression section (F409 HELD;
 F408/F407/F406 HELD). P5 runs prior batteries in child mode
-(GOV_SKIP_GREEN=1). P6 pins the taxonomy (2044) and the footer state.
+(GOV_SKIP_GREEN=1). P6 pins the taxonomy (2045) and the footer state.
 
 Filed finding: F411 (MEDIUM) -- federated-mode mint_identity accepts
 an unverified dict token_claims, bypassing token authentication
@@ -19,7 +19,7 @@ F410 at 11:19:59 UTC). Probe P3a demonstrates it and is the single
 EXPECTED BREAK.
 
 Footer note (wave-305 lesson): the FINDINGS.md footer is now
-"open F412 / next F413". The P5 expected tallies below are the
+"open none / next F413". The P5 expected tallies below are the
 post-merge tallies with all footer-state probes swept to the final
 footer.
 
@@ -41,8 +41,8 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
-TAXONOMY_PIN = 2044  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*)
-FOOTER_OPEN = "F412"  # F409/F410/F411 CLOSED; F412 (LOW, standing-conflict) OPEN.
+TAXONOMY_PIN = 2045  # Wave-327 merge: pin 2035 -> 2045 (+9 policy-channel-*)
+FOOTER_OPEN = "none"  # F409/F410/F411/F412 CLOSED; no open findings.
 FOOTER_NEXT = "F413"  # Next free finding number.
 
 _results = []
@@ -822,7 +822,7 @@ def _parse_tally(text):
 
 
 # Post-merge tallies: all footer-state probes swept to the final footer
-# ("open F412 / next F413"), so the child tallies are the clean
+# ("open none / next F413"), so the child tallies are the clean
 # post-closure counts (F409 HELD everywhere). Child mode (GOV_SKIP_GREEN=1).
 _GREEN_EVALS = [
     ("w325-resid", "evals/w325_resid_probes.py", (0, 23, 0)),
@@ -906,17 +906,17 @@ def _p5f():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2044-sorted")
+@probe("P6a-pin-taxonomy-2045-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
-    if TAXONOMY_PIN != 2044:
-        return _break("P6a-pin-taxonomy-2044-sorted",
-                      "TAXONOMY_PIN is %r, want 2044" % (TAXONOMY_PIN,))
-    if len(codes) != 2044 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-2044-sorted",
+    if TAXONOMY_PIN != 2045:
+        return _break("P6a-pin-taxonomy-2045-sorted",
+                      "TAXONOMY_PIN is %r, want 2045" % (TAXONOMY_PIN,))
+    if len(codes) != 2045 or codes != sorted(codes):
+        return _break("P6a-pin-taxonomy-2045-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    return _held("P6a-pin-taxonomy-2044-sorted", "2044/2044/0 sorted")
+    return _held("P6a-pin-taxonomy-2045-sorted", "2045/2045/0 sorted")
 
 
 @probe("P6b-footer-open-f411-next-f412")
@@ -933,8 +933,8 @@ def _p6b():
     if next_free != FOOTER_NEXT:
         return _break("P6b-footer-open-f411-next-f412",
                       "next free %r, want %r" % (next_free, FOOTER_NEXT))
-    return _held("P6b-footer-open-f412-next-f413",
-                 "footer open F412 / next F413")
+    return _held("P6b-footer-open-none-next-f413",
+                 "footer open none / next F413")
 
 
 # ---------------------------------------------------------------------------

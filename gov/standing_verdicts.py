@@ -15,6 +15,9 @@ This module is the standing layer that ``gov/advisory_binding.py`` (advisory
   (origin, collector, known_since) and a justification;
 - conflicting advisories resolve newest-wins by ``known_since`` with the
   conflict itself journaled -- never silent;
+- conflict resolution is ATOMIC: the conflict record and the winner's
+  knowledge are a single journal entry (one append), so no crash window
+  can leave a standing-less conflict as the tip (F412);
 - blast-radius queries: which artifacts share a compromised
   origin/collector.
 
@@ -156,6 +159,15 @@ def _check_knowledge(knowledge):
     }
 
 
+def _provenance_matches(entry_origin, entry_collector, origin, collector):
+    """AND-semantics provenance match for one advisory's provenance."""
+    if origin is not None and entry_origin != origin:
+        return False
+    if collector is not None and entry_collector != collector:
+        return False
+    return True
+
+
 class StandingStore(object):
     """Append-only standing-verdict store backed by a JSON-lines journal."""
 
@@ -203,7 +215,21 @@ class StandingStore(object):
                 # smuggles a malformed knowledge payload refuses loudly on
                 # load instead of poisoning the index.
                 _check_knowledge(entry)
-            self._tips[_check_digest(entry.get("artifact_digest"))] = seq
+                self._tips[_check_digest(entry.get("artifact_digest"))] = seq
+            elif "asserted_standing" in entry:
+                # Single-entry conflict shape (F412 fix): the conflict
+                # record carries the winner's full knowledge. Validate
+                # the knowledge payload like any knowledge entry, then
+                # it becomes the tip.
+                _check_knowledge(entry)
+                self._tips[_check_digest(entry.get("artifact_digest"))] = seq
+            # else: legacy two-append conflict shape (pre-F412): the
+            # conflict metadata was journaled first and the winner's
+            # knowledge second. The winner's entry, if journaled, sets
+            # the tip when replayed. If the crash landed between the two
+            # appends, the tip deliberately stays at the pre-conflict
+            # knowledge: the conflict is preserved in the audit trail
+            # but the store is never wedged (F412).
         elif kind == _KIND_UNATTACHED:
             pass  # recorded, never a standing
         else:
@@ -225,6 +251,24 @@ class StandingStore(object):
             os.fsync(fh.fileno())
         self._replay(entry)
         return dict(entry)
+
+    def _tip_entry(self, digest):
+        """The current tip journal entry for a digest, or None.
+
+        Refuses coded (never a bare KeyError downstream) if the tip is
+        not a valid knowledge record -- a journal shape the loader
+        should already have rejected. Defense in depth (F412).
+        """
+        tip_seq = self._tips.get(digest)
+        if tip_seq is None:
+            return None
+        tip = self._by_seq.get(tip_seq)
+        if not isinstance(tip, dict) or "asserted_standing" not in tip:
+            _refuse("supplychain-standing-journal-corrupt",
+                    "journal tip for %s (seq %s) is not a valid knowledge "
+                    "record; refusing rather than guessing" % (digest,
+                                                               tip_seq))
+        return tip
 
     # -- inventory ----------------------------------------------------
 
@@ -287,7 +331,7 @@ class StandingStore(object):
             })
 
         tip_seq = self._tips.get(digest)
-        tip = self._by_seq.get(tip_seq) if tip_seq is not None else None
+        tip = self._tip_entry(digest)
         current = tip["asserted_standing"] if tip is not None else None
 
         is_flip = current is not None and \
@@ -328,7 +372,16 @@ class StandingStore(object):
                 % (digest, supersedes, tip_seq, parent_seq))
 
     def _resolve_conflict(self, incoming, tip):
-        """Newest-wins by known_since; the conflict is journaled."""
+        """Newest-wins by known_since; the conflict is journaled.
+
+        ATOMICITY (F412): the conflict record and the winner's knowledge
+        are journaled as a SINGLE journal entry -- one ``_append`` (one
+        write + fsync). There is no crash window between two appends in
+        which the journal tip could be a standing-less conflict record.
+        The entry carries the winner's full knowledge fields (so it is a
+        valid tip: ``asserted_standing`` et al.) alongside the conflict
+        metadata (``winner_*`` / ``loser_*``) for the audit trail.
+        """
         digest = incoming["artifact_digest"]
         if incoming["known_since"] > tip["known_since"]:
             winner, loser = incoming, tip
@@ -343,30 +396,25 @@ class StandingStore(object):
                        tip["asserted_standing"],
                        incoming["asserted_standing"]))
         # The winner attaches at the current tip to keep the chain linear;
-        # its original parent is preserved for the audit trail. The
-        # conflict entry takes self._next_seq, so the winner's seq is
-        # deterministically self._next_seq + 1 (single writer, no other
-        # appends in between).
+        # its original parent is preserved for the audit trail.
         winner_entry = dict(winner)
         winner_entry["original_supersedes"] = winner_entry["supersedes"]
         winner_entry["supersedes"] = tip["seq"]
-        self._append({
-            "kind": _KIND_CONFLICT,
-            "code": "supplychain-standing-conflict",
-            "artifact_digest": digest,
-            "winner_seq": self._next_seq + 1,
-            "winner_known_since": winner["known_since"],
-            "winner_standing": winner["asserted_standing"],
-            "winner_justification": winner["justification"],
-            "loser_known_since": loser["known_since"],
-            "loser_standing": loser["asserted_standing"],
-            "loser_justification": loser["justification"],
-            "loser_origin": loser["origin"],
-            "loser_collector": loser["collector"],
-            "detail": "concurrent advisories for %s resolved "
-                      "newest-wins by known_since" % digest,
-        })
-        return self._append(dict(winner_entry, kind=_KIND_KNOWLEDGE))
+        entry = dict(winner_entry, kind=_KIND_CONFLICT)
+        entry["code"] = "supplychain-standing-conflict"
+        entry["winner_seq"] = self._next_seq
+        entry["winner_known_since"] = winner["known_since"]
+        entry["winner_standing"] = winner["asserted_standing"]
+        entry["winner_justification"] = winner["justification"]
+        entry["loser_known_since"] = loser["known_since"]
+        entry["loser_standing"] = loser["asserted_standing"]
+        entry["loser_justification"] = loser["justification"]
+        entry["loser_origin"] = loser["origin"]
+        entry["loser_collector"] = loser["collector"]
+        entry["detail"] = ("concurrent advisories for %s resolved "
+                           "newest-wins by known_since" % digest)
+        # Single atomic append: conflict record + winner knowledge.
+        return self._append(entry)
 
     # -- queries ------------------------------------------------------
 
@@ -378,11 +426,11 @@ class StandingStore(object):
         chain -- never a refusal, never an invented verdict.
         """
         _check_digest(digest)
-        tip_seq = self._tips.get(digest)
-        if tip_seq is None:
+        tip = self._tip_entry(digest)
+        if tip is None:
             return {"digest": digest, "standing": _UNKNOWN,
                     "chain": [], "tip_seq": None}
-        tip = self._by_seq[tip_seq]
+        tip_seq = tip["seq"]
         chain = []
         seq = tip_seq
         while seq is not None:
@@ -420,23 +468,24 @@ class StandingStore(object):
         hits = set()
         for entry in self._entries:
             if entry.get("kind") == _KIND_KNOWLEDGE:
-                if origin is not None and entry.get("origin") != origin:
-                    continue
-                if collector is not None \
-                        and entry.get("collector") != collector:
-                    continue
-                hits.add(entry["artifact_digest"])
+                if _provenance_matches(entry.get("origin"),
+                                       entry.get("collector"),
+                                       origin, collector):
+                    hits.add(entry["artifact_digest"])
             elif entry.get("kind") == _KIND_CONFLICT:
-                # The conflict record cites the loser's provenance; a
-                # blast-radius query must see losing knowledge too, with
-                # the SAME and-semantics as the knowledge branch above.
-                if origin is not None \
-                        and entry.get("loser_origin") != origin:
-                    continue
-                if collector is not None \
-                        and entry.get("loser_collector") != collector:
-                    continue
-                hits.add(entry["artifact_digest"])
+                # A conflict entry carries BOTH the winner's knowledge
+                # (single-entry shape, F412) and the loser's provenance.
+                # Blast-radius matches each half independently with the
+                # same AND-semantics as the knowledge branch: the pair
+                # must match within one advisory's provenance.
+                if _provenance_matches(entry.get("origin"),
+                                       entry.get("collector"),
+                                       origin, collector):
+                    hits.add(entry["artifact_digest"])
+                elif _provenance_matches(entry.get("loser_origin"),
+                                         entry.get("loser_collector"),
+                                         origin, collector):
+                    hits.add(entry["artifact_digest"])
         return sorted(hits)
 
     # -- introspection --------------------------------------------------
