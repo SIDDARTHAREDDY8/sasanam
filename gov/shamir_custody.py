@@ -404,6 +404,17 @@ def distribute(shards, assignments, transcript=None):
     required (two shards to one custodian defeats threshold custody).
     Writes are atomic 0600; an existing file at any target refuses the
     whole distribution before anything is written.
+
+    Path aliases are resolved before the pre-flight: ``os.path.realpath``
+    collapses symlink aliases, and a (device, inode, basename) check on the
+    parent directories collapses directory-level aliases that realpath
+    cannot see (bind mounts). An aliased pair therefore refuses before any
+    write. Honest residual limit: on a case-insensitive filesystem two
+    assignments differing only in filename case still collide at the FS
+    layer after the pre-flight; the write loop then refuses LOUD and coded
+    on the second write (fail-closed), but a partial distribution is
+    possible there -- keep shard filenames case-distinct.
+
     Returns the manifest {custodian_id: {"path": ..., "index": ...}}.
     """
     _check_shards(shards)
@@ -421,11 +432,23 @@ def distribute(shards, assignments, transcript=None):
         if not isinstance(path, str) or not path:
             _fail("custody-shamir-distribute-refused",
                   "paths must be non-empty strings")
-    paths = [os.path.abspath(p) for p in assignments.values()]
+    # Resolve path aliases BEFORE the pre-flight: abspath() keeps symlink
+    # spellings distinct, so an aliased assignment pair would pass the
+    # distinctness check and the write loop would refuse LOUD only after
+    # the first shard hit the disk (F414). realpath() collapses symlink
+    # aliases; the (dev, ino, basename) key additionally collapses
+    # directory-level aliases realpath cannot see (bind mounts). Any path
+    # that cannot be resolved refuses coded, never guessed.
+    try:
+        paths = [os.path.realpath(p) for p in assignments.values()]
+    except (OSError, ValueError) as exc:
+        _fail("custody-shamir-distribute-refused",
+              "cannot resolve assignment path: %s" % (exc,))
     if len(set(paths)) != len(paths):
         _fail("custody-shamir-distribute-refused",
-              "two custodians share one shard path")
+              "two custodians share one shard path (after alias resolution)")
     # Pre-flight: refuse before writing anything.
+    seen_dirs = set()
     for path in paths:
         parent = os.path.dirname(path)
         if not os.path.isdir(parent):
@@ -434,6 +457,16 @@ def distribute(shards, assignments, transcript=None):
         if os.path.exists(path):
             _fail("custody-shamir-distribute-refused",
                   "refusing to overwrite existing shard file: %r" % (path,))
+        try:
+            pst = os.stat(parent)
+        except OSError as exc:
+            _fail("custody-shamir-distribute-refused",
+                  "cannot stat parent dir %r: %s" % (parent, exc))
+        dir_key = (pst.st_dev, pst.st_ino, os.path.basename(path))
+        if dir_key in seen_dirs:
+            _fail("custody-shamir-distribute-refused",
+                  "two custodians share one shard path (directory alias)")
+        seen_dirs.add(dir_key)
     manifest = {}
     for (custodian, _), shard, path in zip(assignments.items(), shards, paths):
         _atomic_write(path, serialize_shard(shard))
