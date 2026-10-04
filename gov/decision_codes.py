@@ -18024,6 +18024,58 @@ TAXONOMY = {
         "evidence_kinds_required": ['witness-log'],
         "reverify_steps": ['recompute'],
     },
+    'witness-monitor-fetch-failed': {
+        "domain": 'witness',
+        "code": 'witness-monitor-fetch-failed',
+        "human": 'witness monitor: no checkpoint bytes were available this '
+                 'run (the fetch failed before verification); the failure '
+                 'counter persists and the run refuses -- alert from the '
+                 '3rd consecutive failure',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
+    'witness-monitor-stale': {
+        "domain": 'witness',
+        "code": 'witness-monitor-stale',
+        "human": 'witness monitor: the head advanced but the required '
+                 'consistency evidence is absent; the monitor refuses '
+                 'LOUD instead of silently stalling (the missing-fringe '
+                 'edge); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
+    'witness-monitor-state-corrupt': {
+        "domain": 'witness',
+        "code": 'witness-monitor-state-corrupt',
+        "human": 'witness monitor: the durable state file is missing '
+                 'fields, not valid JSON, or the wrong shape; a corrupt '
+                 'state is a hard stop, never a silent re-baseline',
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
+    'witness-monitor-state-mismatch': {
+        "domain": 'witness',
+        "code": 'witness-monitor-state-mismatch',
+        "human": 'witness monitor: the caller last_seen disagrees with the '
+                 'durable head (replay guard); the run refuses without '
+                 'advancing state -- hard stop fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
+    'witness-monitor-state-missing': {
+        "domain": 'witness',
+        "code": 'witness-monitor-state-missing',
+        "human": 'witness monitor: the caller expected durable state '
+                 '(last_seen given) but no state file exists; refusing to '
+                 're-baseline silently -- hard stop fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
     'witness-note-malformed': {
         "domain": 'witness',
         "code": 'witness-note-malformed',
