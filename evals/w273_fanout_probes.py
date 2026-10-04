@@ -246,7 +246,7 @@ def red_c02_pin():
     # codes). Expectation pin only -- taxonomy pin value itself is the
     # lane lead's job.
     if len(codes) == 2035 and len(set(codes)) == 2035:
-        situation("c02", "pin 203520272035/", "HELD")
+        situation("c02", "pin 2035/2035/0", "HELD")
 
 
     else:

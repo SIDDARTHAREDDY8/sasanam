@@ -27,7 +27,7 @@ Probe map (public seams only):
  P4: regression -- the depth-1 green check re-runs the four wave-320
      batteries (w320_redteam 0/30/0, w320_quorum 0/18/0,
      w320_grantwiring 0/10/0, w319_redteam 0/24/0).
- P5 (2): pin taxonomy 203520212035/ sorted on source literals; footer
+ P5 (2): pin taxonomy 2035/2035/0 sorted on source literals; footer
      open none / next F409.
 
 
@@ -751,8 +751,8 @@ def p5_pin_taxonomy_sorted():
     ok = (len(lits) == TAXONOMY_PIN == 2035
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P5-pin-taxonomy-20352021", True, "203520212035/ sorted")
-    return _break("P5-pin-taxonomy-20352021",
+        return _held("P5-pin-taxonomy-2035-sorted", True, "2035/2035/0 sorted")
+    return _break("P5-pin-taxonomy-2035-sorted",
 
 
                   "got %d literals" % (len(lits),))

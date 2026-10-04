@@ -152,7 +152,7 @@ def p_taxonomy_pin():
             ok = False
     # delegation-expired is reused, not re-minted (lane-6 precedent).
     if ok:
-        _record("pin-taxonomy", "HELD", "203520272035/ sorted")
+        _record("pin-taxonomy", "HELD", "2035/2035/0 sorted")
 
 
     else:

@@ -566,7 +566,7 @@ def _p5b():
 # P6: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-20352027")
+@probe("P6-pin-taxonomy-2035-sorted")
 
 
 def _p6a():
@@ -574,10 +574,10 @@ def _p6a():
     n = len(DC.TAXONOMY)
     codes = sorted(DC.TAXONOMY.keys())
     if n == TAXONOMY_PIN and list(DC.TAXONOMY.keys()) == codes:
-        _held("P6-pin-taxonomy-20352027", "203520272035/ sorted")
+        _held("P6-pin-taxonomy-2035-sorted", "2035/2035/0 sorted")
     else:
-        _break("P6-pin-taxonomy-20352027",
-               "want 203520272035/0 sorted, got %d (sorted=%s)"
+        _break("P6-pin-taxonomy-2035-sorted",
+               "want 2035/2035/00 sorted, got %d (sorted=%s)"
 
 
                % (n, list(DC.TAXONOMY.keys()) == codes))

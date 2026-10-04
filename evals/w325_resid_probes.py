@@ -717,7 +717,7 @@ def _p18():
 # Pin + footer state probes.
 # ---------------------------------------------------------------------------
 
-@probe("P19-pin-taxonomy-20352027")
+@probe("P19-pin-taxonomy-2035-sorted")
 def _p19():
     from gov import decision_codes as DC
     import re
@@ -735,7 +735,7 @@ def _p19():
         entry = DC.TAXONOMY[code]
         assert entry["domain"] == "witness", entry
         assert entry["severity"] == "medium", entry
-    _held("P19-pin-taxonomy-20352027", "203520272035/ sorted; new codes ok")
+    _held("P19-pin-taxonomy-2035-sorted", "2035/2035/0 sorted; new codes ok")
 
 
 @probe("P20-footer-open-F409-next-F410")

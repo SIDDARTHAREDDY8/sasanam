@@ -374,7 +374,7 @@ def pin_taxonomy():
     ok = (len(keys) == TAXONOMY_PIN == 2035 and len(mine) == 9
           and keys == sorted(keys) and len(set(keys)) == len(keys))
     _held("pin-taxonomy", ok,
-          "taxonomy 203520272035/ sorted, 9 wave-314 codes present"
+          "taxonomy 2035/2035/0 sorted, 9 wave-314 codes present"
 
 
           if ok else "taxonomy pin mismatch")

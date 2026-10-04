@@ -446,7 +446,7 @@ def p_pin_taxonomy():
     assert len(codes) == len(set(codes)) == 2035, \
         "taxonomy not 2021/unique: %d" % len(codes)
     assert codes == sorted(codes), "taxonomy not sorted"
-    _record("pin-taxonomy-20352021", "HELD", "203520212035/ sorted")
+    _record("pin-taxonomy-2035-sorted", "HELD", "2035/2035/0 sorted")
 
 
 

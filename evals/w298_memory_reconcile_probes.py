@@ -90,7 +90,7 @@ def p_taxonomy_pin():
                  "memory-reconcile-conflict-unresolved"):
         if want not in lits:
             return _record("pin-taxonomy", "BREAK", "missing code %s" % want)
-    _record("pin-taxonomy", "HELD", "203520272035/ sorted")
+    _record("pin-taxonomy", "HELD", "2035/2035/0 sorted")
 
 
 

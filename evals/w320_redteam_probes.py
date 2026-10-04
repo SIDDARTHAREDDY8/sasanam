@@ -20,7 +20,7 @@ P4 (3): F405 re-probe (CLOSED wave-320 lane 1) -- apostrophe-less negation
 P5 (3): wave-319 follow-up spot-check -- 3 of the 70 touched batteries
     re-run beyond their pin probes (w314_provsink, w303_f385, w297_redteam).
 P6 (2): regressions -- footer open none / next F409; pin taxonomy
-    203520212035/ sorted on source literals.
+    2035/2035/0 sorted on source literals.
 
 
 
@@ -701,7 +701,7 @@ def _p5c():
 # P6: regressions (pin + footer)
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-20352021")
+@probe("P6-pin-taxonomy-2035-sorted")
 
 
 def _p6a():
@@ -712,9 +712,9 @@ def _p6a():
     ok = (len(lits) == TAXONOMY_PIN == 2035
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P6-pin-taxonomy-20352021",
-                     "203520212035/ sorted")
-    return _break("P6-pin-taxonomy-20352021",
+        return _held("P6-pin-taxonomy-2035-sorted",
+                     "2035/2035/0 sorted")
+    return _break("P6-pin-taxonomy-2035-sorted",
 
 
                  "got %d literals" % (len(lits),))

@@ -380,7 +380,7 @@ def _p16():
 # P17/P18: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P17-pin-taxonomy-20352021")
+@probe("P17-pin-taxonomy-2035-sorted")
 def _p17():
     from gov import decision_codes as dc
     import re
@@ -392,7 +392,7 @@ def _p17():
                                      len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
     assert len(dc.TAXONOMY) == TAXONOMY_PIN
-    _held("P17-pin-taxonomy-20352021",
+    _held("P17-pin-taxonomy-2035-sorted",
           "%d/%d/0 sorted" % (TAXONOMY_PIN, TAXONOMY_PIN))
 
 

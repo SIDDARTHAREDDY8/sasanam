@@ -14,7 +14,7 @@ P3 (2): contract probes -- verify_keyed_bundle returns False (not
     raises) on a forged bundle (assert `is False`); the empty-hint
     spike shape ({"publicKey": {}}) is accepted, as cosign proved.
 P4 (2): regressions -- footer open none / next F409; pin taxonomy
-    203520212035/ sorted on source literals (this lane registers no
+    2035/2035/0 sorted on source literals (this lane registers no
 
 
     taxonomy codes).
@@ -397,7 +397,7 @@ def _p3b():
 # P4: regressions
 # ---------------------------------------------------------------------------
 
-@probe("P4-pin-taxonomy-20352021")
+@probe("P4-pin-taxonomy-2035-sorted")
 
 
 def _p4a():
@@ -408,8 +408,8 @@ def _p4a():
     ok = (len(lits) == TAXONOMY_PIN == 2035
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P4-pin-taxonomy-20352021", "203520212035/ sorted")
-    return _break("P4-pin-taxonomy-20352021",
+        return _held("P4-pin-taxonomy-2035-sorted", "2035/2035/0 sorted")
+    return _break("P4-pin-taxonomy-2035-sorted",
 
 
                   "got %d literals" % (len(lits),))

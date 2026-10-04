@@ -72,7 +72,7 @@ def p_taxonomy_pin():
         if code not in lits:
             return _record("pin-taxonomy", "BREAK",
                            "missing literal %r" % (code,))
-    _record("pin-taxonomy", "HELD", "203520272035/ sorted, rebuild codes")
+    _record("pin-taxonomy", "HELD", "2035/2035/0 sorted, rebuild codes")
 
 
 

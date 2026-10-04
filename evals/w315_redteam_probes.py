@@ -885,7 +885,7 @@ def _p4_gate_code():
 # pin + footer
 # ---------------------------------------------------------------------------
 
-@probe("pin-taxonomy-20352027")
+@probe("pin-taxonomy-2035-sorted")
 
 
 def _pin():
@@ -898,16 +898,16 @@ def _pin():
     lits = _re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += _re.findall(r'"code":\s*"([^"]+)"', src)
     if len(lits) != TAXONOMY_PIN:
-        return _break("pin-taxonomy-20352027",
+        return _break("pin-taxonomy-2035-sorted",
                       "taxonomy literals %d != pin %d"
                       % (len(lits), TAXONOMY_PIN))
     if len(set(lits)) != len(lits):
-        return _break("pin-taxonomy-20352027",
+        return _break("pin-taxonomy-2035-sorted",
                       "duplicate code literals in source")
     if sorted(lits) != lits:
-        return _break("pin-taxonomy-20352027", "literals not sorted")
-    return _held("pin-taxonomy-20352027",
-                 "203520272035/ unique sorted on source literals")
+        return _break("pin-taxonomy-2035-sorted", "literals not sorted")
+    return _held("pin-taxonomy-2035-sorted",
+                 "2035/2035/0 unique sorted on source literals")
 
 
 

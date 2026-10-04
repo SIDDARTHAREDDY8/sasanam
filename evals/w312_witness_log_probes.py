@@ -299,7 +299,7 @@ def p_pin_taxonomy():
     if len(new) != 10:
         return _record("pin-taxonomy", "BREAK",
                        "want 10 new witness codes, got %d" % len(new))
-    _record("pin-taxonomy", "HELD", "203520272035/ sorted, +10 witness codes")
+    _record("pin-taxonomy", "HELD", "2035/2035/0 sorted, +10 witness codes")
 
 
 

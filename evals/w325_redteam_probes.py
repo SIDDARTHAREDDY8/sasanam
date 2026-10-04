@@ -899,17 +899,17 @@ def _p5e():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-20352021")
+@probe("P6a-pin-taxonomy-2035-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
     if TAXONOMY_PIN != 2035:
-        return _break("P6a-pin-taxonomy-20352021",
+        return _break("P6a-pin-taxonomy-2035-sorted",
                       "TAXONOMY_PIN is %r, want 2021" % (TAXONOMY_PIN,))
     if len(codes) != 2035 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-20352021",
+        return _break("P6a-pin-taxonomy-2035-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    return _held("P6a-pin-taxonomy-20352021", "203520212035/ sorted")
+    return _held("P6a-pin-taxonomy-2035-sorted", "2035/2035/0 sorted")
 
 
 @probe("P6b-footer-open-f409-next-f410")

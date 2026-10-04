@@ -287,7 +287,7 @@ def p_pin_taxonomy():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "203520272035/ sorted")
+    _record("pin-taxonomy", "HELD", "2035/2035/0 sorted")
 
 
 

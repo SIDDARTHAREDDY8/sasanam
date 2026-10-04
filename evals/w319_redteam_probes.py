@@ -21,7 +21,7 @@ P3 (6): F405 -- the F404 closure's negation-cue vocabulary missed
 P4 (2): w318 green-check depth-1 discipline -- the three w318 batteries'
     green checks honor GOV_SKIP_GREEN; their spawned children do too.
 P5 (3): regressions -- footer open none / next F409; pin taxonomy
-    203520272035/ sorted; F404 still closed (out-of-vocabulary
+    2035/2035/0 sorted; F404 still closed (out-of-vocabulary
 
 
     prohibitions refuse).

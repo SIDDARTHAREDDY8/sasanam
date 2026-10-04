@@ -412,7 +412,7 @@ def _p16():
           "valid token verifies with the bound claims")
 
 
-@probe("P17-pin-taxonomy-20352027")
+@probe("P17-pin-taxonomy-2035-sorted")
 def _p17():
     import re
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -422,7 +422,7 @@ def _p17():
         "want %d/%d/0, got %d/%d" % (TAXONOMY_PIN, TAXONOMY_PIN,
                                      len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
-    _held("P17-pin-taxonomy-20352027",
+    _held("P17-pin-taxonomy-2035-sorted",
           "%d/%d/0 sorted" % (TAXONOMY_PIN, TAXONOMY_PIN))
 
 

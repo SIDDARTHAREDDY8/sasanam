@@ -677,7 +677,7 @@ def _p17():
 # P11: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P11-pin-taxonomy-20352021")
+@probe("P11-pin-taxonomy-2035-sorted")
 def _p11():
     from gov import decision_codes as dc
     import re
@@ -688,7 +688,7 @@ def _p11():
         len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
     assert "witness-alert-wrapper-error" in dc.TAXONOMY
-    _held("P11-pin-taxonomy-20352021", "203520212035/ sorted")
+    _held("P11-pin-taxonomy-2035-sorted", "2035/2035/0 sorted")
 
 
 @probe("P12-footer-state")

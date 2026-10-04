@@ -477,7 +477,7 @@ def _p14():
 # P15: regressions -- pin taxonomy + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P15-pin-taxonomy-20352021")
+@probe("P15-pin-taxonomy-2035-sorted")
 
 
 def _p15():
@@ -488,9 +488,9 @@ def _p15():
     ok = (len(lits) == TAXONOMY_PIN == 2035
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        _held("P15-pin-taxonomy-20352021", "203520212035/ sorted")
+        _held("P15-pin-taxonomy-2035-sorted", "2035/2035/0 sorted")
     else:
-        _break("P15-pin-taxonomy-20352021",
+        _break("P15-pin-taxonomy-2035-sorted",
 
 
                "got %d literals" % (len(lits),))
