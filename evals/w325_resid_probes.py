@@ -738,14 +738,14 @@ def _p19():
     _held("P19-pin-taxonomy-2020-sorted", "2020/2020/0 sorted; new codes ok")
 
 
-@probe("P20-footer-open-none-next-F409")
+@probe("P20-footer-open-F409-next-F410")
 def _p20():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     src = open(path, encoding="utf-8").read()
-    assert "Next free finding: **F409**" in src, "next-free footer"
-    assert "**Open findings: none.**" in src, "open-none footer"
-    _held("P20-footer-open-none-next-F409",
-          "footer unchanged: open none / next F409 (hardening, no new)")
+    assert "Next free finding: **F410**" in src, "next-free footer"
+    assert "**Open findings: F409.**" in src, "open-F409 footer"
+    _held("P20-footer-open-F409-next-F410",
+          "footer: open F409 / next F410 (F409 filed by lane 4)")
 
 
 # ---------------------------------------------------------------------------

@@ -586,9 +586,9 @@ def _p6a():
 @probe("P6-footer-state")
 def _p6b():
     src = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
-    if ("Next free finding: **F409**" in src
-            and "Open findings: none." in src):
-        _held("P6-footer-state", "open none / next F409")
+    if ("Next free finding: **F410**" in src
+            and "Open findings: F409." in src):
+        _held("P6-footer-state", "open F409 / next F410")
     else:
         _break("P6-footer-state", "footer mismatch")
 

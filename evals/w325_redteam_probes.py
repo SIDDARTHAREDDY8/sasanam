@@ -821,11 +821,11 @@ _GREEN_EVALS = [
     # next F409"; the true footer is now "open F409 / next F410"). The
     # merge updates those footer probes per the wave-305 lesson; the
     # single BREAK in each child is that probe and nothing else.
-    ("w324-alert", "evals/w324_alert_probes.py", (1, 17, 0)),
-    ("w324-offver", "evals/w324_offver_probes.py", (1, 31, 0)),
-    ("w324-vsa", "evals/w324_vsa_probes.py", (1, 21, 0)),
-    ("w324-redteam", "evals/w324_redteam_probes.py", (1, 40, 0)),
-    ("w323-redteam", "evals/w323_redteam_probes.py", (1, 41, 0)),
+    ("w324-alert", "evals/w324_alert_probes.py", (0, 18, 0)),
+    ("w324-offver", "evals/w324_offver_probes.py", (0, 32, 0)),
+    ("w324-vsa", "evals/w324_vsa_probes.py", (0, 22, 0)),
+    ("w324-redteam", "evals/w324_redteam_probes.py", (0, 41, 0)),
+    ("w323-redteam", "evals/w323_redteam_probes.py", (0, 42, 0)),
 ]
 
 
@@ -898,17 +898,17 @@ def _p5e():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2012-sorted")
+@probe("P6a-pin-taxonomy-2020-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
-    if TAXONOMY_PIN != 2012:
-        return _break("P6a-pin-taxonomy-2012-sorted",
-                      "TAXONOMY_PIN is %r, want 2012" % (TAXONOMY_PIN,))
-    if len(codes) != 2012 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-2012-sorted",
+    if TAXONOMY_PIN != 2020:
+        return _break("P6a-pin-taxonomy-2020-sorted",
+                      "TAXONOMY_PIN is %r, want 2020" % (TAXONOMY_PIN,))
+    if len(codes) != 2020 or codes != sorted(codes):
+        return _break("P6a-pin-taxonomy-2020-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    return _held("P6a-pin-taxonomy-2012-sorted", "2012/2012/0 sorted")
+    return _held("P6a-pin-taxonomy-2020-sorted", "2020/2020/0 sorted")
 
 
 @probe("P6b-footer-open-f409-next-f410")
