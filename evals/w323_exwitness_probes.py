@@ -19,7 +19,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 1991  # 1976 + 8 export-witness-*
+TAXONOMY_PIN = 2012  # 1976 + 8 export-witness-*
 
 
 
@@ -566,7 +566,7 @@ def _p5b():
 # P6: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-1991-sorted")
+@probe("P6-pin-taxonomy-2012-sorted")
 
 
 def _p6a():
@@ -574,10 +574,10 @@ def _p6a():
     n = len(DC.TAXONOMY)
     codes = sorted(DC.TAXONOMY.keys())
     if n == TAXONOMY_PIN and list(DC.TAXONOMY.keys()) == codes:
-        _held("P6-pin-taxonomy-1991-sorted", "1991/1991/0 sorted")
+        _held("P6-pin-taxonomy-2012-sorted", "2012/2012/0 sorted")
     else:
-        _break("P6-pin-taxonomy-1991-sorted",
-               "want 1991/1991/0 sorted, got %d (sorted=%s)"
+        _break("P6-pin-taxonomy-2012-sorted",
+               "want 2012/2012/0 sorted, got %d (sorted=%s)"
 
 
                % (n, list(DC.TAXONOMY.keys()) == codes))

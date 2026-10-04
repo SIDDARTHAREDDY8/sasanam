@@ -24,7 +24,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 1991  # 1990 + 1 witness-alert-wrapper-error
+TAXONOMY_PIN = 2012  # 1990 + 1 witness-alert-wrapper-error
 
 _results = []
 
@@ -677,18 +677,18 @@ def _p17():
 # P11: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P11-pin-taxonomy-1991-sorted")
+@probe("P11-pin-taxonomy-2012-sorted")
 def _p11():
     from gov import decision_codes as dc
     import re
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     codes = re.findall(r'"code":\s*["\']([^"\']+)["\']', src)
-    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 1991, (
+    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2012, (
         len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
     assert "witness-alert-wrapper-error" in dc.TAXONOMY
-    _held("P11-pin-taxonomy-1991-sorted", "1991/1991/0 sorted")
+    _held("P11-pin-taxonomy-2012-sorted", "2012/2012/0 sorted")
 
 
 @probe("P12-footer-state")

@@ -20,7 +20,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 1991  # 1967 + 3 witness-publish-*/witness-checkpoint-*
+TAXONOMY_PIN = 2012  # 1967 + 3 witness-publish-*/witness-checkpoint-*
 
 
 
@@ -477,7 +477,7 @@ def _p14():
 # P15: regressions -- pin taxonomy + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P15-pin-taxonomy-1991-sorted")
+@probe("P15-pin-taxonomy-2012-sorted")
 
 
 def _p15():
@@ -485,12 +485,12 @@ def _p15():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 1991
+    ok = (len(lits) == TAXONOMY_PIN == 2012
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        _held("P15-pin-taxonomy-1991-sorted", "1991/1991/0 sorted")
+        _held("P15-pin-taxonomy-2012-sorted", "2012/2012/0 sorted")
     else:
-        _break("P15-pin-taxonomy-1991-sorted",
+        _break("P15-pin-taxonomy-2012-sorted",
 
 
                "got %d literals" % (len(lits),))

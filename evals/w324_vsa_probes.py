@@ -21,7 +21,7 @@ sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 
-TAXONOMY_PIN = 1995  # 1995 + 5 vsa-threshold-*
+TAXONOMY_PIN = 2012  # 1995 + 5 vsa-threshold-*
 
 _results = []
 
@@ -380,7 +380,7 @@ def _p16():
 # P17/P18: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P17-pin-taxonomy-1995-sorted")
+@probe("P17-pin-taxonomy-2012-sorted")
 def _p17():
     from gov import decision_codes as dc
     import re
@@ -392,7 +392,7 @@ def _p17():
                                      len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
     assert len(dc.TAXONOMY) == TAXONOMY_PIN
-    _held("P17-pin-taxonomy-1995-sorted",
+    _held("P17-pin-taxonomy-2012-sorted",
           "%d/%d/0 sorted" % (TAXONOMY_PIN, TAXONOMY_PIN))
 
 
@@ -400,9 +400,9 @@ def _p17():
 def _p18():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Next free finding: **F408**. **Open findings: none.**" in text, \
+    assert "Next free finding: **F409**. **Open findings: none.**" in text, \
         "footer mismatch"
-    _held("P18-footer-state", "open none / next F408")
+    _held("P18-footer-state", "open none / next F409")
 
 
 # ---------------------------------------------------------------------------
