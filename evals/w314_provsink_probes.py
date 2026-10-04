@@ -75,7 +75,7 @@ import probe_lines  # noqa: E402  (canonical probe-line emission)
 from gov import provenance_labels as PL  # noqa: E402
 from gov import provenance_sink as PS  # noqa: E402
 
-TAXONOMY_PIN = 1976 # Wave-314 lane 1: pin 1863 -> 1872 (+9 provenance-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1933 -> 1934 (+1 grantneg-registry-withdrawn)
+TAXONOMY_PIN = 1977 # Wave-314 lane 1: pin 1863 -> 1872 (+9 provenance-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1933 -> 1934 (+1 grantneg-registry-withdrawn)
 
 _results = []
 _seg_n = [0]
@@ -369,24 +369,23 @@ def pin_taxonomy():
                       "provenance-sink-redacted",
                       "provenance-sink-refused",
                       "provenance-sink-unknown-tool")]
-    ok = (len(keys) == TAXONOMY_PIN == 1976 and len(mine) == 9
+    ok = (len(keys) == TAXONOMY_PIN == 1977 and len(mine) == 9
           and keys == sorted(keys) and len(set(keys)) == len(keys))
     _held("pin-taxonomy", ok,
-          "taxonomy 1976/1976/0 sorted, 9 wave-314 codes present"
+          "taxonomy 1977/1977/0 sorted, 9 wave-314 codes present"
           if ok else "taxonomy pin mismatch")
 
 
 def footer_state():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
-    # Wave-316 merge footer: F403 OPEN (F398/F399/F400 CLOSED); next F404.
-    # This lane files no findings. Footer lines repeat through history;
-    # the LAST one is current.
+    # Wave-323 lane 1: F407 CLOSED; no open findings; next F408.
+    # Footer lines repeat through history; the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
     ok = ("Next free finding: **F408**" in text
-          and m_open and m_open[-1].strip() == "F407")
+          and m_open and m_open[-1].strip() == "none")
     _held("footer-state", ok,
-          "footer: open F407 / next F408" if ok
-          else "footer mismatch vs open F407 / next F408")
+          "footer: open none / next F408" if ok
+          else "footer mismatch vs open none / next F408")
 
 
 PROBES = [label_roundtrip, label_tamper_content, label_tamper_trust,

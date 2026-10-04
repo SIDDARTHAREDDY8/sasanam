@@ -39,7 +39,7 @@ Probe map:
       byte-for-byte proof the verifier's witness step consumes our
       receipts (that step's acceptance of seal output is pinned by the
       w311/w312 batteries).
-  pin-taxonomy / footer-state: standard pins (1964; open F407 / next F408).
+  pin-taxonomy / footer-state: standard pins (1964; open none / next F408).
 
 Deterministic across 2 runs; $0 spend; synthetic/local. Stdlib only
 apart from gov/witness_rekor.py + gov/witness_log.py (real product
@@ -77,7 +77,7 @@ from gov.witness_log import WitnessLog  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 from gov import evidence_verify_offline as EVO  # noqa: E402
 
-TAXONOMY_PIN = 1976 # Wave-314 lane 2: pin 1869 -> 1869 (+6 witness-rekor-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1933 -> 1934 (+1 grantneg-registry-withdrawn)
+TAXONOMY_PIN = 1977 # Wave-314 lane 2: pin 1869 -> 1869 (+6 witness-rekor-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1933 -> 1934 (+1 grantneg-registry-withdrawn)
 
 _NOW = 1798765432
 _SEED_A = bytes(range(32))
@@ -322,12 +322,12 @@ def footer_state():
     # the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
     ok = ("Next free finding: **F408**" in text
-          and m_open and m_open[-1].strip() == "F407")
+          and m_open and m_open[-1].strip() == "none")
     if ok:
-        _record("footer-state", "HELD", "footer: open F407 / next F408")
+        _record("footer-state", "HELD", "footer: open none / next F408")
     else:
         _record("footer-state", "BREAK",
-                "footer mismatch vs open F407 / next F408")
+                "footer mismatch vs open none / next F408")
 
 
 PROBES = [anchor_verify_roundtrip, replay_across_bundles,

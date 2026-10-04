@@ -12,14 +12,21 @@ Attacks the wave-321 NEW surfaces break-first:
       (provenance-critical-arg-refused); a silent ALLOW is a BREAK.
   P4  Regression -- the four wave-321 batteries must match their shipped
       tallies (child-mode, GOV_SKIP_GREEN=1).
-  P5  Pin/footer -- 1976/1976/0 sorted on source literals; footer open
-      open F407 / next F408 (F406 closed, F407 filed; see evals/FINDINGS.md).
+  P5  Pin/footer -- 1977/1977/0 sorted on source literals; footer
+      open none / next F408 (F406 closed, F407 closed; see
+      evals/FINDINGS.md).
 
-F407 (LOW, OPEN): malformed referrers JSON from the untrusted registry
-(200 with a JSON array/string body, non-dict subject, non-string entry
-digest) escapes discover_referrers/pull_and_verify as an UNCODED
-AttributeError/TypeError instead of a coded oci-* refusal -- a contract
-violation on the fail-closed path (fail-closed, availability-only).
+F407 (LOW, CLOSED 2026-10-04 wave-323 lane 1): malformed referrers JSON
+from the untrusted registry (200 with a JSON array/string/null body,
+non-dict subject, non-string entry digest) now refuses with the coded
+oci-referrers-malformed refusal -- discover_referrers validates the
+response shape before dereferencing any field. Spec-review hardening:
+the tag-schema fallback refuses coded on a non-list tag document, and
+parse_manifest validates digest fields are strings before the regex
+sees them (non-string subject/layer digests refuse coded
+oci-manifest-malformed). The seven P2-malformed-* probes assert the
+coded refusals; an uncoded exception escaping here is a BREAK (F407
+reopened).
 
 Stdlib only. No in-repo git subprocesses.
 """
@@ -49,8 +56,8 @@ from tests.keyfixture import provision_test_key  # noqa: E402
 
 provision_test_key()
 
-TAXONOMY_PIN = 1976
-FOOTER_OPEN = "F407"
+TAXONOMY_PIN = 1977
+FOOTER_OPEN = "none"
 FOOTER_NEXT = "F408"
 
 _results = []
@@ -589,10 +596,12 @@ def _p2_determinism():
 
 
 def _p2_malformed_referrer(pid, body, note):
-    """F407 probes: malformed referrers JSON must be a CODED refusal.
+    """F407 probes: malformed referrers JSON must refuse CODED.
 
-    On the open tree these escape as uncoded AttributeError/TypeError --
-    that is the break (filed F407, LOW, OPEN).
+    F407 CLOSED 2026-10-04 wave-323 lane 1: discover_referrers validates
+    the response shape before dereferencing any field; every malformed
+    shape refuses with the coded oci-referrers-malformed refusal. An
+    uncoded exception escaping here is a BREAK (F407 reopened).
     """
     ev = b'{"decision": "deny", "seq": 7}'
     sd = oci.digest_of(ev)
@@ -601,10 +610,13 @@ def _p2_malformed_referrer(pid, body, note):
     try:
         _p2_client(routes).pull_and_verify(sd)
     except oci.OCIRefusal as exc:
-        return _held(pid, "%s: coded refusal %s" % (note, exc.code))
+        if exc.code == "oci-referrers-malformed":
+            return _held(pid, "%s: coded refusal %s" % (note, exc.code))
+        return _break(pid, "%s: coded but wrong code %s, want "
+                      "oci-referrers-malformed" % (note, exc.code))
     except oci.OCIError as exc:
-        return _held(pid, "%s: operational error (fail-closed): %s"
-                     % (note, exc))
+        return _break(pid, "%s: operational error, want coded refusal: %s"
+                      % (note, exc))
     except Exception as exc:  # noqa: BLE001
         return _break(pid, "%s: UNCODED %s: %s"
                       % (note, type(exc).__name__, exc))
@@ -639,6 +651,69 @@ def _p2_mal_entry():
         "P2-malformed-entry-digest",
         b'{"manifests": [{"digest": 12345, "mediaType": "m"}]}',
         "referrers entry digest as int")
+
+
+@probe("P2-malformed-referrers-null")
+def _p2_mal_null():
+    return _p2_malformed_referrer(
+        "P2-malformed-referrers-null", b'null',
+        "referrers 200 with JSON null body")
+
+
+def _p2_malformed_discovery(pid, routes, note, want_code):
+    """F407-hardening probes (wave-323 lane 1): malformed shapes on the
+    referrers-discovery fallback path and in served manifests must also
+    refuse coded. An uncoded exception escaping here is a BREAK."""
+    ev = b'{"decision": "deny", "seq": 7}'
+    sd = oci.digest_of(ev)
+    try:
+        _p2_client(routes).pull_and_verify(sd)
+    except oci.OCIRefusal as exc:
+        if exc.code == want_code:
+            return _held(pid, "%s: coded refusal %s" % (note, exc.code))
+        return _break(pid, "%s: coded but wrong code %s, want %s"
+                      % (note, exc.code, want_code))
+    except Exception as exc:  # noqa: BLE001
+        return _break(pid, "%s: UNCODED %s: %s"
+                      % (note, type(exc).__name__, exc))
+    return _break(pid, "%s: silently returned, want coded refusal" % (note,))
+
+
+@probe("P2-malformed-tag-list")
+def _p2_mal_taglist():
+    ev = b'{"decision": "deny", "seq": 7}'
+    sd = oci.digest_of(ev)
+    routes = {("GET", "/v2/sasanam/evidence/referrers/" + sd):
+              (404, {}, b""),
+              ("GET", "/v2/sasanam/evidence/tags/list"):
+              (200, {}, b'{"tags": 123}')}
+    return _p2_malformed_discovery(
+        "P2-malformed-tag-list", routes,
+        "tag list as int", "oci-referrers-malformed")
+
+
+@probe("P2-malformed-manifest-int-digest")
+def _p2_mal_manifest_digest():
+    import json as _json
+    ev = b'{"decision": "deny", "seq": 7}'
+    sd = oci.digest_of(ev)
+    bad_manifest = _json.dumps(
+        {"schemaVersion": 2, "mediaType": "m", "artifactType": "a",
+         "subject": {"digest": 12345},
+         "layers": [{"digest": sd}]}).encode("utf-8")
+    md = oci.digest_of(bad_manifest)
+    routes = {("GET", "/v2/sasanam/evidence/referrers/" + sd):
+              (200, {}, _json.dumps(
+                  {"subject": {"digest": sd},
+                   "manifests": [{"mediaType": "m", "artifactType": "a",
+                                  "digest": md, "size": len(bad_manifest)}]}
+              ).encode("utf-8")),
+              ("GET", "/v2/sasanam/evidence/manifests/" + md):
+              (200, {}, bad_manifest)}
+    return _p2_malformed_discovery(
+        "P2-malformed-manifest-int-digest", routes,
+        "served manifest with int subject digest",
+        "oci-manifest-malformed")
 
 
 # ---------------------------------------------------------------------------
@@ -756,17 +831,17 @@ def green_check():
         _record("green-" + n, v, note)
 
 
-@probe("P4-pin-taxonomy-1976-sorted")
+@probe("P4-pin-taxonomy-1977-sorted")
 def _p5a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 1976
+    ok = (len(lits) == TAXONOMY_PIN == 1977
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P4-pin-taxonomy-1976-sorted", "1976/1976/0 sorted")
-    return _break("P4-pin-taxonomy-1976-sorted",
+        return _held("P4-pin-taxonomy-1977-sorted", "1977/1977/0 sorted")
+    return _break("P4-pin-taxonomy-1977-sorted",
                   "got %d literals" % (len(lits),))
 
 

@@ -42,8 +42,8 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 1976 #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*)
-FOOTER_OPEN = "F407"
+TAXONOMY_PIN = 1977 #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*)
+FOOTER_OPEN = "none"
 FOOTER_NEXT = "F408"
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
@@ -1162,7 +1162,8 @@ def _p_footer_state():
     if not footers:
         raise _Break("footer-state: no footer line found")
     last = footers[-1]
-    if "Open findings: F407." not in last:
+    # F407 CLOSED 2026-10-04 wave-323 lane 1: no open findings remain.
+    if "Open findings: none." not in last:
         raise _Break("footer-state: open findings present: %s" % last[:80])
     if FOOTER_NEXT not in last:
         raise _Break("footer-state: next is not %s: %s" %

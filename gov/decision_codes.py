@@ -10490,6 +10490,18 @@ TAXONOMY = {
         "evidence_kinds_required": ['digest'],
         "reverify_steps": ['recompute'],
     },
+    'oci-referrers-malformed': {
+        "domain": 'oci',
+        "code": 'oci-referrers-malformed',
+        "human": 'OCI distribution: the referrers discovery response is not '
+                 'well-formed (non-object referrers body, non-object '
+                 'subject, non-string entry digest, or non-list tag list); '
+                 'the registry is untrusted, its bytes are validated before '
+                 'any field is dereferenced; refused fail-closed',
+        "severity": 'low',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
     'oci-referrers-unavailable': {
         "domain": 'oci',
         "code": 'oci-referrers-unavailable',

@@ -140,11 +140,103 @@ class TestDecisionCodes(unittest.TestCase):
         for code in ("oci-artifact-type-mismatch",
                      "oci-blob-digest-mismatch",
                      "oci-manifest-malformed",
+                     "oci-referrers-malformed",
                      "oci-referrers-unavailable",
                      "oci-subject-mismatch"):
             self.assertIn(code, dc.TAXONOMY)
             self.assertEqual(dc.TAXONOMY[code]["code"], code)
             self.assertEqual(dc.TAXONOMY[code]["domain"], "oci")
+
+
+class TestDiscoverReferrersShape(unittest.TestCase):
+    """F407 (closed wave-323 lane 1): discover_referrers validates the
+    referrers response shape before dereferencing any field. Every
+    malformed shape refuses with the coded oci-referrers-malformed
+    refusal -- no uncoded AttributeError/TypeError may escape."""
+
+    def _client_with_body(self, body):
+        c = oci.OCIRegistryClient("http://127.0.0.1:9", "repo")
+        c._request = lambda method, path: (200, {}, body)  # noqa: E731
+        return c
+
+    def _sd(self):
+        return "sha256:" + "ab" * 32
+
+    def _assert_malformed(self, body):
+        c = self._client_with_body(body)
+        with self.assertRaises(oci.OCIRefusal) as ctx:
+            c.discover_referrers(self._sd())
+        self.assertEqual(ctx.exception.code, "oci-referrers-malformed")
+
+    def test_array_body_refuses_coded(self):
+        self._assert_malformed(b'["not", "an", "object"]')
+
+    def test_string_body_refuses_coded(self):
+        self._assert_malformed(b'"just a string"')
+
+    def test_null_body_refuses_coded(self):
+        self._assert_malformed(b"null")
+
+    def test_non_dict_subject_refuses_coded(self):
+        self._assert_malformed(
+            b'{"subject": "not-a-dict", "manifests": []}')
+
+    def test_non_string_entry_digest_refuses_coded(self):
+        self._assert_malformed(
+            b'{"manifests": [{"digest": 12345, "mediaType": "m"}]}')
+
+    def test_absent_subject_still_ignored_not_refused(self):
+        # Falsy/absent subject keeps the pre-F407 ignore semantics.
+        c = self._client_with_body(b'{"manifests": []}')
+        self.assertEqual(c.discover_referrers(self._sd()),
+                         ([], "referrers-api"))
+
+    def test_missing_digest_entry_filtered_not_refused(self):
+        # An entry without a digest is unusable, not malformed: it is
+        # filtered, matching the pre-F407 behavior.
+        c = self._client_with_body(b'{"manifests": [{"mediaType": "m"}]}')
+        self.assertEqual(c.discover_referrers(self._sd()),
+                         ([], "referrers-api"))
+
+    def test_non_list_tag_list_refuses_coded(self):
+        # F407-hardening: the fallback tag document is registry-
+        # controlled; a non-list tag list refuses coded instead of
+        # raising TypeError on `in`.
+        c = oci.OCIRegistryClient("http://127.0.0.1:9", "repo")
+        sd = self._sd()
+
+        def req(method, path):
+            if "referrers" in path:
+                return (404, {}, b"")
+            return (200, {}, b'{"tags": 123}')
+        c._request = req  # noqa: E731
+        with self.assertRaises(oci.OCIRefusal) as ctx:
+            c.discover_referrers(sd)
+        self.assertEqual(ctx.exception.code, "oci-referrers-malformed")
+
+
+class TestParseManifestShape(unittest.TestCase):
+    """F407-hardening: parse_manifest validates digest fields are
+    strings before the regex sees them."""
+
+    def _manifest(self, subject_digest, layer_digest):
+        import json as _json
+        return _json.dumps(
+            {"schemaVersion": 2, "mediaType": "m", "artifactType": "a",
+             "subject": {"digest": subject_digest},
+             "layers": [{"digest": layer_digest}]}).encode("utf-8")
+
+    def test_int_subject_digest_refuses_coded(self):
+        sd = "sha256:" + "ab" * 32
+        with self.assertRaises(oci.OCIRefusal) as ctx:
+            oci.parse_manifest(self._manifest(12345, sd))
+        self.assertEqual(ctx.exception.code, "oci-manifest-malformed")
+
+    def test_int_layer_digest_refuses_coded(self):
+        sd = "sha256:" + "ab" * 32
+        with self.assertRaises(oci.OCIRefusal) as ctx:
+            oci.parse_manifest(self._manifest(sd, 12345))
+        self.assertEqual(ctx.exception.code, "oci-manifest-malformed")
 
 
 class TestPayloadVerifierHook(unittest.TestCase):

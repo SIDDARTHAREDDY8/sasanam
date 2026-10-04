@@ -180,14 +180,18 @@ def parse_manifest(manifest_bytes):
     subject = doc.get("subject")
     if not isinstance(subject, dict):
         _refuse("oci-manifest-malformed", "manifest subject missing")
-    if not _DIGEST_RE.match(subject.get("digest") or ""):
+    # F407-hardening (wave-323 lane 1): the digest must be a string
+    # BEFORE the regex sees it -- a non-string digest is malformed, not
+    # a TypeError.
+    if (not isinstance(subject.get("digest"), str)
+            or not _DIGEST_RE.match(subject.get("digest"))):
         _refuse("oci-manifest-malformed", "subject digest malformed")
     layers = doc.get("layers")
     if not isinstance(layers, list) or not layers:
         _refuse("oci-manifest-malformed", "manifest layers missing/empty")
     for layer in layers:
-        if not isinstance(layer, dict) or not _DIGEST_RE.match(
-                layer.get("digest") or ""):
+        digest = layer.get("digest") if isinstance(layer, dict) else None
+        if not isinstance(digest, str) or not _DIGEST_RE.match(digest):
             _refuse("oci-manifest-malformed", "layer descriptor malformed")
     return doc
 
@@ -353,22 +357,42 @@ class OCIRegistryClient(object):
                 doc = json.loads(body.decode("utf-8"))
             except Exception:  # noqa: BLE001
                 doc = {}
-            resp_subject = (doc.get("subject") or {}).get("digest")
-            if resp_subject is not None and resp_subject != subject_digest:
+            # F407 (closed wave-323 lane 1): the registry is untrusted
+            # storage, so the response shape is validated BEFORE any
+            # field is dereferenced. Every violation refuses with the
+            # coded oci-referrers-malformed refusal -- no uncoded
+            # AttributeError/TypeError may escape to the caller.
+            if not isinstance(doc, dict):
+                _refuse("oci-referrers-malformed",
+                        "referrers response is not a JSON object")
+            resp_subject = doc.get("subject") or {}
+            if not isinstance(resp_subject, dict):
+                _refuse("oci-referrers-malformed",
+                        "referrers subject is not an object")
+            resp_digest = resp_subject.get("digest")
+            if resp_digest is not None and resp_digest != subject_digest:
                 return ([], "referrers-api")
             entries = doc.get("manifests")
             if not isinstance(entries, list):
                 entries = doc.get("referrers")
             if not isinstance(entries, list):
                 entries = []
-            return ([{"mediaType": e.get("mediaType"),
-                      "artifactType": e.get("artifactType"),
-                      "digest": e.get("digest"),
-                      "size": e.get("size")}
-                     for e in entries
-                     if isinstance(e, dict)
-                     and _DIGEST_RE.match(e.get("digest") or "")],
-                    "referrers-api")
+            descriptors = []
+            for e in entries:
+                if not isinstance(e, dict):
+                    continue
+                digest = e.get("digest")
+                if digest is not None and not isinstance(digest, str):
+                    _refuse("oci-referrers-malformed",
+                            "referrers entry digest is not a string")
+                if not (isinstance(digest, str)
+                        and _DIGEST_RE.match(digest)):
+                    continue
+                descriptors.append({"mediaType": e.get("mediaType"),
+                                    "artifactType": e.get("artifactType"),
+                                    "digest": digest,
+                                    "size": e.get("size")})
+            return (descriptors, "referrers-api")
         if status != 404:
             raise OCIError("referrers lookup failed: HTTP %d" % status)
         # Spec-mandated fallback: tag schema.
@@ -380,6 +404,12 @@ class OCIRegistryClient(object):
                 tags = json.loads(body.decode("utf-8")).get("tags") or []
             except Exception:  # noqa: BLE001
                 tags = []
+            # F407-hardening (wave-323 lane 1): the tag list is
+            # registry-controlled; a non-list is malformed, not a
+            # TypeError on `in`.
+            if not isinstance(tags, list):
+                _refuse("oci-referrers-malformed",
+                        "registry tag list is not a list")
         if tag not in tags:
             return ([], "tag-fallback")
         manifest_bytes = self.get_manifest(tag)
