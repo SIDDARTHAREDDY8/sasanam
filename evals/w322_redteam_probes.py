@@ -12,7 +12,7 @@ Attacks the wave-321 NEW surfaces break-first:
       (provenance-critical-arg-refused); a silent ALLOW is a BREAK.
   P4  Regression -- the four wave-321 batteries must match their shipped
       tallies (child-mode, GOV_SKIP_GREEN=1).
-  P5  Pin/footer -- 2020/2020/0 sorted on source literals; footer
+  P5  Pin/footer -- 2027/2027/0 sorted on source literals; footer
       open none / next F409 (F406 closed, F407 closed; see
 
 
@@ -58,7 +58,7 @@ from tests.keyfixture import provision_test_key  # noqa: E402
 
 provision_test_key()
 
-TAXONOMY_PIN = 2020
+TAXONOMY_PIN = 2027  # Wave-326 lane 2: pin 2020 -> 2027 (+7: 6 supplychain-standing-* + 1 supplychain-feed-outside-trust-boundary)
 
 
 FOOTER_OPEN = "F409"
@@ -835,7 +835,7 @@ def green_check():
         _record("green-" + n, v, note)
 
 
-@probe("P4-pin-taxonomy-2020-sorted")
+@probe("P4-pin-taxonomy-2027-sorted")
 
 
 def _p5a():
@@ -843,11 +843,11 @@ def _p5a():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2020
+    ok = (len(lits) == TAXONOMY_PIN == 2027
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P4-pin-taxonomy-2020-sorted", "2020/2020/0 sorted")
-    return _break("P4-pin-taxonomy-2020-sorted",
+        return _held("P4-pin-taxonomy-2027-sorted", "2027/2027/0 sorted")
+    return _break("P4-pin-taxonomy-2027-sorted",
 
 
                   "got %d literals" % (len(lits),))

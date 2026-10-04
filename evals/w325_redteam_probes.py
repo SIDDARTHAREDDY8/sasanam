@@ -35,7 +35,7 @@ import w324_offver_probes as _wo  # noqa: E402
 import w324_vsa_probes as _wv  # noqa: E402
 import w322_redteam_probes as _w322  # noqa: E402
 
-TAXONOMY_PIN = 2020  # Wave-324 repoint; assert every pin equals this.; Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening + 6 federated-identity-*)
+TAXONOMY_PIN = 2027  # Wave-324 repoint; assert every pin equals this.; Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening + 6 federated-identity-*); Wave-326 lane 2: pin 2020 -> 2027 (+7: 6 supplychain-standing-* + 1 supplychain-feed-outside-trust-boundary)
 FOOTER_OPEN = "F409"  # F409 filed OPEN by this lane (wave-325 lane 4).
 FOOTER_NEXT = "F410"  # Next free finding number.
 
@@ -898,17 +898,17 @@ def _p5e():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2020-sorted")
+@probe("P6a-pin-taxonomy-2027-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
-    if TAXONOMY_PIN != 2020:
-        return _break("P6a-pin-taxonomy-2020-sorted",
-                      "TAXONOMY_PIN is %r, want 2020" % (TAXONOMY_PIN,))
-    if len(codes) != 2020 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-2020-sorted",
+    if TAXONOMY_PIN != 2027:
+        return _break("P6a-pin-taxonomy-2027-sorted",
+                      "TAXONOMY_PIN is %r, want 2027" % (TAXONOMY_PIN,))
+    if len(codes) != 2027 or codes != sorted(codes):
+        return _break("P6a-pin-taxonomy-2027-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    return _held("P6a-pin-taxonomy-2020-sorted", "2020/2020/0 sorted")
+    return _held("P6a-pin-taxonomy-2027-sorted", "2027/2027/0 sorted")
 
 
 @probe("P6b-footer-open-f409-next-f410")

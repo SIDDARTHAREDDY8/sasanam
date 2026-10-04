@@ -40,7 +40,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2020  # 2012 + witness-alert-queue-overflow +; Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening (witness-alert-queue-overflow + export-witness-policy-version-below-minimum) + 6 federated-identity-*)
+TAXONOMY_PIN = 2027  # 2012 + witness-alert-queue-overflow +; Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening (witness-alert-queue-overflow + export-witness-policy-version-below-minimum) + 6 federated-identity-*); Wave-326 lane 2: pin 2020 -> 2027 (+7: 6 supplychain-standing-* + 1 supplychain-feed-outside-trust-boundary)
 # export-witness-policy-version-below-minimum
 
 
@@ -717,7 +717,7 @@ def _p18():
 # Pin + footer state probes.
 # ---------------------------------------------------------------------------
 
-@probe("P19-pin-taxonomy-2020-sorted")
+@probe("P19-pin-taxonomy-2027-sorted")
 def _p19():
     from gov import decision_codes as DC
     import re
@@ -726,7 +726,7 @@ def _p19():
     codes = re.findall(r'"code":\s*["\']([^"\']+)["\']', src)
     # Uniqueness on raw source literals (the wave-260 lesson: the
     # deduped dict cannot see duplicate literals).
-    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2020, (
+    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2027, (
         len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
     for code in ("witness-alert-queue-overflow",
@@ -735,7 +735,7 @@ def _p19():
         entry = DC.TAXONOMY[code]
         assert entry["domain"] == "witness", entry
         assert entry["severity"] == "medium", entry
-    _held("P19-pin-taxonomy-2020-sorted", "2020/2020/0 sorted; new codes ok")
+    _held("P19-pin-taxonomy-2027-sorted", "2027/2027/0 sorted; new codes ok")
 
 
 @probe("P20-footer-open-F409-next-F410")
