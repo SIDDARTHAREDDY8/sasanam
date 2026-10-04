@@ -67,9 +67,9 @@ Negative design rules (2026 Sigstore CVEs, wave-310 research):
   oneof, hint, keyid, envelope shape, single-signature, PAE signature,
   and (in the evidence variant) subject-digest binding all pass.
 
-Coded refusal reasons (bundle-scoped codes, NOT taxonomy decision
-codes -- like the other evidence modules, this module does not register
-in ``gov/decision_codes.py``, so the taxonomy pin is untouched):
+Coded refusal reasons (``sigstore-keyed-*`` taxonomy decision codes,
+registered in ``gov/decision_codes.py`` like every other evidence
+module):
 
 - ``sigstore-keyed-malformed`` -- bundle/envelope shape violations (not
   a dict, bad base64, missing fields, bad key types).

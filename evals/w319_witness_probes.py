@@ -37,7 +37,7 @@ Probe map:
   policy-fail-closed: verifier policy with witness_consistency but the
       bundle carries no consistency evidence -> witness-consistency-missing
       (optional-but-fail-closed: configured means required).
-  pin-taxonomy / footer-state: standard pins (1946; open F406 / next F407).
+  pin-taxonomy / footer-state: standard pins (1964; open F406 / next F407).
 
 Deterministic across 2 runs; $0 spend; synthetic/local. Stdlib only
 apart from gov/witness_consistency.py + gov/witness_log.py +
@@ -74,7 +74,7 @@ from gov.witness_log import WitnessLog  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 from gov import checkpoint_note as CN  # noqa: E402
 
-TAXONOMY_PIN = 1951  # Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1933 -> 1934 (+1 grantneg-registry-withdrawn)
+TAXONOMY_PIN = 1964  # Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1933 -> 1934 (+1 grantneg-registry-withdrawn)
 
 _NOW = 1798765432
 _SEED_OP = bytes(range(32))

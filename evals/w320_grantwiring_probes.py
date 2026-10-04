@@ -32,7 +32,7 @@ ApprovalQueue.decide / ToolExecutor.execute_approved):
   human-edited-args-break-scope: the human edits the recipient at
       decide() time -> the grant no longer covers the call ->
       sweep refuses (grantneg-scope-mismatch).
-  pin-taxonomy / footer-state: standard pins (1946; open F406 / next F407).
+  pin-taxonomy / footer-state: standard pins (1964; open F406 / next F407).
 """
 
 import hashlib
@@ -288,11 +288,11 @@ def p_pin_taxonomy():
     import re
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == 1951 and len(set(lits)) == len(lits)
+    ok = (len(lits) == 1964 and len(set(lits)) == len(lits)
           and lits == sorted(lits)
-          and len(dc.TAXONOMY) == 1951)
-    return _held("pin-taxonomy-1951-sorted", ok,
-                 "1951/1951/0 sorted" if ok
+          and len(dc.TAXONOMY) == 1964)
+    return _held("pin-taxonomy-1964-sorted", ok,
+                 "1964/1964/0 sorted" if ok
                  else "taxonomy drift: %d literals" % len(lits))
 
 
@@ -320,7 +320,7 @@ PROBES = [
     ("expired-between-queue-and-execution",
      p_expired_between_queue_and_execution),
     ("human-edited-args-break-scope", p_human_edited_args_break_scope),
-    ("pin-taxonomy-1951-sorted", p_pin_taxonomy),
+    ("pin-taxonomy-1964-sorted", p_pin_taxonomy),
     ("footer-state", p_footer_state),
 ]
 

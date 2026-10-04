@@ -15181,6 +15181,131 @@ TAXONOMY = {
         "evidence_kinds_required": ['gate-record'],
         "reverify_steps": ['recompute'],
     },
+    'sigstore-keyed-envelope': {
+        "domain": 'evbundle',
+        "code": 'sigstore-keyed-envelope',
+        "human": 'keyed sigstore bundle: dsseEnvelope shape violations;'
+                 'refused at parse, fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-parse-bundle', 're-verify-signature'],
+    },
+    'sigstore-keyed-hint-mismatch': {
+        "domain": 'evbundle',
+        "code": 'sigstore-keyed-hint-mismatch',
+        "human": 'keyed sigstore bundle: verificationMaterial.publicKey hint'
+                 'is neither empty nor the pinned key fingerprint; refused,'
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-parse-bundle', 're-verify-signature'],
+    },
+    'sigstore-keyed-keyid-mismatch': {
+        "domain": 'evbundle',
+        "code": 'sigstore-keyed-keyid-mismatch',
+        "human": 'keyed sigstore bundle: DSSE keyid is neither empty nor'
+                 'absent (hint-consistency MUST); refused, fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-parse-bundle', 're-verify-signature'],
+    },
+    'sigstore-keyed-malformed': {
+        "domain": 'evbundle',
+        "code": 'sigstore-keyed-malformed',
+        "human": 'keyed sigstore bundle: bundle/envelope shape violations (not'
+                 'a dict, bad base64, missing fields, bad key types); refused'
+                 'at parse, fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-parse-bundle', 're-verify-signature'],
+    },
+    'sigstore-keyed-media-type': {
+        "domain": 'evbundle',
+        "code": 'sigstore-keyed-media-type',
+        "human": 'keyed sigstore bundle: mediaType is not the pinned v0.3'
+                 'value; refused, fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-parse-bundle', 're-verify-signature'],
+    },
+    'sigstore-keyed-message-signature-unexpected': {
+        "domain": 'evbundle',
+        "code": 'sigstore-keyed-message-signature-unexpected',
+        "human": 'keyed sigstore bundle: bundle carries a messageSignature'
+                 '(v0.3 content oneof is message_signature XOR dsse_envelope);'
+                 'refused, fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-parse-bundle', 're-verify-signature'],
+    },
+    'sigstore-keyed-multi-signature': {
+        "domain": 'evbundle',
+        "code": 'sigstore-keyed-multi-signature',
+        "human": 'keyed sigstore bundle: signatures list length != 1 (exactly'
+                 'one signature per envelope); refused, fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-parse-bundle', 're-verify-signature'],
+    },
+    'sigstore-keyed-payload-type': {
+        "domain": 'evbundle',
+        "code": 'sigstore-keyed-payload-type',
+        "human": 'keyed sigstore bundle: payloadType is not the auditor-pinned'
+                 'value; refused, fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-parse-bundle', 're-verify-signature'],
+    },
+    'sigstore-keyed-signature-invalid': {
+        "domain": 'evbundle',
+        "code": 'sigstore-keyed-signature-invalid',
+        "human": 'keyed sigstore bundle: the single Ed25519 signature does not'
+                 'verify over PAE(payloadType, payload) under the pinned key;'
+                 'refused, fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-parse-bundle', 're-verify-signature'],
+    },
+    'sigstore-keyed-subject-mismatch': {
+        "domain": 'evbundle',
+        "code": 'sigstore-keyed-subject-mismatch',
+        "human": 'keyed sigstore bundle: in-toto statement subject digest does'
+                 'not name the caller-expected evidence digest'
+                 '(artifact+signature+key binding); refused, fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-parse-bundle', 're-verify-signature'],
+    },
+    'sigstore-keyed-timestamp-unexpected': {
+        "domain": 'evbundle',
+        "code": 'sigstore-keyed-timestamp-unexpected',
+        "human": 'keyed sigstore bundle: non-empty timestampVerificationData'
+                 'on an offline bundle; refused, fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-parse-bundle', 're-verify-signature'],
+    },
+    'sigstore-keyed-tlog-unexpected': {
+        "domain": 'evbundle',
+        "code": 'sigstore-keyed-tlog-unexpected',
+        "human": 'keyed sigstore bundle: non-empty tlogEntries on an offline'
+                 'bundle; refused, fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-parse-bundle', 're-verify-signature'],
+    },
+    'sigstore-keyed-verification-material': {
+        "domain": 'evbundle',
+        "code": 'sigstore-keyed-verification-material',
+        "human": 'keyed sigstore bundle: verificationMaterial is not the'
+                 'form-(1) oneof (missing publicKey, or'
+                 'x509CertificateChain/certificate/publicKeyIdentifier'
+                 'present, or non-hint keys inside publicKey); refused, fail-'
+                 'closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-parse-bundle', 're-verify-signature'],
+    },
     'single-use-issuer-revoked': {
         "domain": 'single_use',
         "code": 'single-use-issuer-revoked',

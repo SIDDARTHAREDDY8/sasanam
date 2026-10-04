@@ -10787,7 +10787,7 @@ fall to the context min, never to USER; cross-sentence anaphora
 ("Never email X. Actually, go ahead") is out of scope and fails
 closed.
 
-## F399: provenance_gate constructs a fresh ProvenanceSink per call -- the REPLAN_BUDGET escalate-terminal ratchet, quarantine set, and consumed-declassification set are dead state at the executor seam (LOW, OPEN)
+## F399: provenance_gate constructs a fresh ProvenanceSink per call -- the REPLAN_BUDGET escalate-terminal ratchet, quarantine set, and consumed-declassification set are dead state at the executor seam (LOW, CLOSED 2026-10-03 wave-316 lane 1)
 
 **Cells:** wave-315 independent red-team (lane 3, this lane), claim 2026-10-03T21:21:00Z.
 Standing regression pins: `evals/w315_redteam_probes.py` (probes
@@ -10843,7 +10843,7 @@ and `test_seam_per_context_isolation` shows no cross-context bleed;
 tree); `P2-budget-reset-fresh-context` stays HELD. No new decision
 codes; pin unchanged 1888.)
 
-## F400: w280_redteam error-path tally defect -- lowercase "error" recorded but only uppercase "ERROR" counted, so a genuine battery error prints a probe line, misses the tally, and exits 0 (LOW, OPEN)
+## F400: w280_redteam error-path tally defect -- lowercase "error" recorded but only uppercase "ERROR" counted, so a genuine battery error prints a probe line, misses the tally, and exits 0 (LOW, CLOSED 2026-10-03 wave-316 lane 2)
 
 Filed 2026-10-03, wave-315 lane 1 (summary-form migration, worker 6 D9) as F398; renumbered F398->F400 at the wave-315 merge per the wave-272 earliest-filed rule (wave-315 independent red-team lane 3 filed F398 at 21:19:40Z and F399 at 21:21:00Z and keeps both).
 
@@ -10865,7 +10865,7 @@ fix itself landed in the wave-315 summary-form migration. No new
 codes; pin unchanged 1888.)
 
 
-## F401: w310_redteam's F394 probes ERROR on the base tree -- stale after the wave-313 F397 closure (LOW, OPEN)
+## F401: w310_redteam's F394 probes ERROR on the base tree -- stale after the wave-313 F397 closure (LOW, CLOSED 2026-10-04 wave-316 merge)
 
 **Cells:** wave-316 independent red-team (lane 5, this lane), claim 2026-10-03T23:25:20Z.
 Standing regression pins: `evals/w316_redteam_probes.py` (probe
@@ -10898,7 +10898,7 @@ batteries stay green.
 
 **Status: CLOSED** (filed 2026-10-03, wave-316 independent red-team lane 5; closed 2026-10-04, wave-316 merge: wave-316 lane 3's pre-existing-rot pin (worker 5) updated both probes to pass a non-stale `at=AT + 1` per the F397 contract (wave-313 lane A); `evals/w310_redteam_probes.py` runs 0 BREAK / 19 HELD / 0 ERROR on the merged tree; the product was never defective -- the probes were stale after the F397 closure. No new codes; pin unchanged 1900.)
 
-## F402: w283_defectdojo's p-findings-md-load BREAKs -- it expects F343/F344/F345 OPEN, but all three were CLOSED at the wave-289 merge (LOW, OPEN)
+## F402: w283_defectdojo's p-findings-md-load BREAKs -- it expects F343/F344/F345 OPEN, but all three were CLOSED at the wave-289 merge (LOW, CLOSED 2026-10-04 wave-316 merge)
 
 **Cells:** wave-316 independent red-team (lane 5, this lane), claim 2026-10-03T23:25:20Z.
 Standing regression pins: `evals/w316_redteam_probes.py` (probe
