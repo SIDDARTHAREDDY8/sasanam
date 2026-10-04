@@ -224,10 +224,17 @@ def scenario_he_1b():
 # ---------------------------------------------------------------------------
 # HE-2: fat-fingered approval — the operator intends to approve the benign
 # queued request but approves the dangerous one instead.
-# Expected: the wrongly-approved action executes WITH full attribution
-# (approval_decision names the decider; executed args are integrity-bound
-# to exactly what was approved); the benign request stays pending; risk
-# ordering surfaced the dangerous item first.
+# Expected (wave-317): the approval goes through WITH full attribution
+# (approval_decision names the decider; the benign request stays pending;
+# risk ordering surfaced the dangerous item first), BUT the wrongly-approved
+# action does NOT execute — the provenance sink (live in the standard flow
+# since wave-317) refuses the untrusted-influenced send at execution time
+# with coded provenance-sink-execution-refused, even though a human approved
+# it. Defense in depth: the sink is a separate trust layer from approval,
+# and approval alone is not a declassification (declassification requires
+# the explicit single-use provenance-declassify token). The human error is
+# the fat-fingered approval itself, so a backstop that deferred to the
+# erroneous approval would be no backstop.
 # ---------------------------------------------------------------------------
 def scenario_he_2():
     checks = {}
@@ -294,13 +301,32 @@ def scenario_he_2():
 
     done = ex.execute_approved()
     entries = ctx["read_log"]()
-    checks["dangerous_executed"] = any(
+    # Wave-317: the provenance sink refuses the untrusted-influenced send
+    # at execution time, even though a human approved it. The send must NOT
+    # execute (defense in depth against the fat-fingered approval).
+    checks["dangerous_not_executed"] = not any(
         e.get("event") == "tool_call"
         and e.get("decision") == "approved_executed"
         and e.get("approval_id") == dangerous_id
         for e in entries)
-    assert checks["dangerous_executed"], \
-        "wrongly-approved request did not execute: %r" % (done,)
+    assert checks["dangerous_not_executed"], \
+        "wrongly-approved untrusted-influenced send executed despite " \
+        "the live provenance sink: %r" % (done,)
+    # The refusal is coded and attributable: approval_execution_refused
+    # with the provenance-sink policy id, naming the approval.
+    sink_refusals = [
+        e for e in entries
+        if e.get("event") == "approval_execution_refused"
+        and e.get("approval_id") == dangerous_id
+        and e.get("policy_id") == "provenance-sink-execution-refused"]
+    checks["dangerous_refused_by_sink"] = (
+        len(sink_refusals) == 1
+        and sink_refusals[0].get("flag") == "provenance_sink_refused"
+        and sink_refusals[0].get("decision") == "refused")
+    assert checks["dangerous_refused_by_sink"], \
+        "no coded provenance-sink refusal for the wrongly-approved " \
+        "send: %r" % ([e for e in entries
+                       if e.get("event") == "approval_execution_refused"],)
 
     # Full attribution: the approval_decision names the decider and the
     # intended (wrong) target.
@@ -313,27 +339,22 @@ def scenario_he_2():
         and benign_id in decisions[0].get("reason", ""))
     assert checks["approval_decision_attributed"], \
         "approval_decision not fully attributed: %r" % (decisions,)
-    # Args integrity: what executed is EXACTLY what was approved. The audit
-    # log stores send_email bodies in redacted summary form (DLP), so the
-    # comparison is against the APPROVED record's args (same summary form),
-    # and the summary's byte length binds it to the approved content.
+    # Refusal attribution: the sink refusal names the refused tool and the
+    # approval it was queued under, and the approved record's args are
+    # intact (the refusal did not mutate what was approved). This replaces
+    # the pre-wave-317 executed-args-match check: nothing executes now, so
+    # the integrity property moves to the refusal record.
     approved_record = q.get(dangerous_id)
     approved_args = approved_record["args"]
-    executed = [e for e in entries
-                if e.get("event") == "tool_call"
-                and e.get("decision") in ("execution_authorized",
-                                          "approved_executed")
-                and e.get("approval_id") == dangerous_id]
-    checks["executed_args_match_approved"] = (
-        len(executed) >= 1
-        and all(e.get("args", {}) == approved_args for e in executed)
+    checks["refusal_attributed"] = (
+        sink_refusals[0].get("tool") == "send_email"
         and approved_args.get("to") == dangerous_args["to"]
         and approved_args.get("subject") == dangerous_args["subject"]
         and approved_args.get("body", {}).get("bytes")
         == len(dangerous_args["body"]))
-    assert checks["executed_args_match_approved"], \
-        "executed args differ from approved args: %r vs %r" % (
-            [e.get("args") for e in executed], approved_args)
+    assert checks["refusal_attributed"], \
+        "sink refusal not attributable to the approved send: %r vs %r" % (
+            sink_refusals[0], approved_args)
     # The benign request is still pending — the error did not launder it.
     checks["benign_still_pending"] = q.get(benign_id)["status"] == "pending"
     assert checks["benign_still_pending"], \
