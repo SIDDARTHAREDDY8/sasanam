@@ -14,20 +14,19 @@ P2 (6): the NEW trust-root refresh surface (gov/trust_root_refresh.py) --
     OLD key after rotation refuses; rotation reviewed after the old root
     expired refuses; evil-key rotation refuses; pre-rotation bundle under
     the rotated tip fails closed (documented limitation).
-P3 (6): F405 -- the F404 closure's negation-cue vocabulary misses
-    apostrophe-less variants ("dont", "dnt", "cant", ...). A user
-    prohibition with a common typo binds the attacker's critical-arg
-    value at USER and ALLOWs the prohibited send. Same defect class as
-    F398/F404. Filed as F405 (MEDIUM, OPEN) 2026-10-04T04:09:00Z.
+P3 (6): F405 -- the F404 closure's negation-cue vocabulary missed
+    apostrophe-less variants ("dont", "dnt", "cant", ...). CLOSED
+    wave-320 lane 1 (apostrophe-normalized negation detection); the six
+    P3 probes now assert the coded provenance-critical-arg-refused HELD.
 P4 (2): w318 green-check depth-1 discipline -- the three w318 batteries'
     green checks honor GOV_SKIP_GREEN; their spawned children do too.
-P5 (3): regressions -- footer open F405 / next F406; pin taxonomy
-    1906/1906/0 sorted; F404 still closed (out-of-vocabulary
+P5 (3): regressions -- footer open none / next F406; pin taxonomy
+    1946/1946/0 sorted; F404 still closed (out-of-vocabulary
     prohibitions refuse).
 
 Result contract: each probe prints [HELD]/[BREAK]/[ERROR]. Exit 0 iff
-no ERROR and no unexpected BREAK. The three P3 F405 probes are the
-expected BREAKs (open finding); everything else must HOLD.
+no ERROR and no unexpected BREAK. Zero BREAKs expected: F405 is closed;
+everything must HOLD.
 
 Depth-1 green check honoring GOV_SKIP_GREEN; no in-repo git
 subprocesses; deterministic (fixed clock); stdlib only.
@@ -95,7 +94,7 @@ def _error(pid, note):
     return (pid, "ERROR", probe_lines.first_line(note)[:160])
 
 
-TAXONOMY_PIN = 1933  # Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*)
+TAXONOMY_PIN = 1946  # Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*)
 FOOTER_OPEN = "none"
 FOOTER_NEXT = "F406"
 

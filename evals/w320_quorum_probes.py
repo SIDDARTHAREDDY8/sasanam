@@ -46,7 +46,7 @@ QuorumCollector.collect / evaluate / QuorumGate.check):
       what it does not own).
   gate-enforces-registered: operation registered sensitive, quorum unmet ->
       coded quorum-insufficient; quorum met -> allowed.
-  pin-taxonomy / footer-state: standard pins (1945; open F405 / next F406).
+  pin-taxonomy / footer-state: standard pins (1946; open none / next F406).
 """
 
 import os
@@ -68,10 +68,10 @@ from gov import decision_codes as dc  # noqa: E402
 from gov import quorum_approval as qa  # noqa: E402  (RED-FIRST: ImportError on open tree)
 from gov import ed25519 as _ed  # noqa: E402
 
-TAXONOMY_PIN = 1945  # Wave-320 lane 3: pin 1933 -> 1945 (+12 quorum-*)
+TAXONOMY_PIN = 1946  # Wave-320 lane 3: pin 1933 -> 1945 (+12 quorum-*)
 
 FOOTER_NEXT = "F406"
-FOOTER_OPEN = "F405"
+FOOTER_OPEN = "none"
 
 PROBES = []
 
