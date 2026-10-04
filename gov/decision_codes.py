@@ -11840,6 +11840,89 @@ TAXONOMY = {
         "evidence_kinds_required": ['policy'],
         "reverify_steps": ['recompute'],
     },
+    'policy-channel-activation-failed': {
+        "domain": 'policy',
+        "code": 'policy-channel-activation-failed',
+        "human": 'policy channel: an orphaned activation tmp shows a crash '
+                 'mid-activation; the previous policy stays in force, '
+                 'reported loud',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy', 'record'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-channel-feed-escape': {
+        "domain": 'policy',
+        "code": 'policy-channel-feed-escape',
+        "human": 'policy channel: a feed file escapes the feed directory '
+                 'trust boundary; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy', 'record'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-channel-malformed': {
+        "domain": 'policy',
+        "code": 'policy-channel-malformed',
+        "human": 'policy channel: the policy envelope or document is '
+                 'malformed; refused, never applied',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-channel-rollback': {
+        "domain": 'policy',
+        "code": 'policy-channel-rollback',
+        "human": 'policy channel: the document version is not newer than '
+                 'the applied floor; replay refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy', 'record'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-channel-stale': {
+        "domain": 'policy',
+        "code": 'policy-channel-stale',
+        "human": 'policy channel: no refresh within the staleness budget; '
+                 'the last verified policy is served loudly, never silently '
+                 'trusted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy', 'record'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-channel-superseded': {
+        "domain": 'policy',
+        "code": 'policy-channel-superseded',
+        "human": 'policy channel: the document version was revoked; it is '
+                 'never re-applied',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy', 'record'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-channel-unknown-policy': {
+        "domain": 'policy',
+        "code": 'policy-channel-unknown-policy',
+        "human": 'policy channel: the document names a policy this channel '
+                 'does not serve; refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-channel-unsigned': {
+        "domain": 'policy',
+        "code": 'policy-channel-unsigned',
+        "human": 'policy channel: the document signature does not verify '
+                 'under the pinned feed key; refused, never applied',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-channel-version-skip': {
+        "domain": 'policy',
+        "code": 'policy-channel-version-skip',
+        "human": 'policy channel: the document version jumps beyond the '
+                 'bounded skip window; refused (freeze/DoS bound)',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy', 'record'],
+        "reverify_steps": ['recompute'],
+    },
     'policy-ci-companion-missing': {
         "domain": 'policy',
         "code": 'policy-ci-companion-missing',

@@ -119,7 +119,7 @@ The honest read: **the OSS enforcement-engine + audit-log space is taken** — b
 - **EY:** 64% of companies over $1B revenue have **lost >$1M to AI failures**.
 - **McKinsey / Deloitte:** 62% experimenting with agents; **14% production-ready**.
 - **Forrester:** 75% of firms building DIY agentic architectures will fail.
-- **Marketsandmarkets (paid report; treat directionally):** agentic AI **security** $1.65B (2026) → $13.52B (2032), 42% CAGR; AI **governance** ~$1.1B (2026) → $13.1B (2035), 31.4% CAGR — governance entering budget cycles earlier via compliance. Enterprises with governance platforms are 3.4x more likely to achieve high-value AI outcomes.
+- **Marketsandmarkets (paid report; treat directionally):** agentic AI **security** $1.65B (2026) → $13.52B (2032), 42% CAGR; AI **governance** ~$1.1B (2026) → $13.1B (2044), 31.4% CAGR — governance entering budget cycles earlier via compliance. Enterprises with governance platforms are 3.4x more likely to achieve high-value AI outcomes.
 - Tracked AI incidents: 233 in 2024, **+56.4% YoY**.
 
 ### Compliance drivers (real, dated, checkable)
