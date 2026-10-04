@@ -18,20 +18,22 @@ Probe map (public seams only):
      once, tampered spiffe_id (documented residual: keys are the anchor),
      gate advisory-absent, gate digest-swap, gate veto persistence,
      gate re-registration reset.
- P3 (8): F405 residuals -- five BREAK probes file F406 (MEDIUM, OPEN):
-     orthographic near-misses of negation cues (transposed letters,
-     doubled letters, vowel syncope) evade negation detection and the
-     prohibited send ALLOWs. Three HELD: "do'nt" IS covered by the F405
+ P3 (8): F405 residuals -- the five F406 standing probes (filed MEDIUM,
+     OPEN 2026-10-04) now assert the coded refusal after the wave-322
+     lane 1 closure: orthographic near-misses of negation cues
+     (transposed letters, doubled letters, vowel syncope) discount at
+     the _clause_negated choke point. Three HELD: "do'nt" IS covered by the F405
      normalization (corrects the R1 prose); semantic negation (R4)
      refuses; genuine authorization still ALLOWs.
  P4: regression -- the depth-1 green check re-runs the four wave-320
      batteries (w320_redteam 0/30/0, w320_quorum 0/18/0,
      w320_grantwiring 0/10/0, w319_redteam 0/24/0).
- P5 (2): pin taxonomy 1973/1973/0 sorted on source literals; footer
-     open F406 / next F407.
+ P5 (2): pin taxonomy 1964/1964/0 sorted on source literals; footer
+     open none / next F407 (F406 closed 2026-10-04 wave-322 lane 1).
 
-Expected: 5 BREAK / 31 HELD / 0 ERROR (the 5 BREAKs are the F406
-standing probes).
+Expected: 0 BREAK / 36 HELD / 0 ERROR (the 5 F406 standing probes now
+assert the coded refusal -- a silent ALLOW is a BREAK meaning F406
+reopened).
 """
 
 import hashlib
@@ -65,8 +67,8 @@ from gov.approvals import approval_digest_ok  # noqa: E402
 import gov.provenance_sink as PS  # noqa: E402
 import gov.provenance_labels as PL  # noqa: E402
 
-TAXONOMY_PIN = 1973
-FOOTER_OPEN = "F406"
+TAXONOMY_PIN = 1964
+FOOTER_OPEN = "none"
 FOOTER_NEXT = "F407"
 
 _results = []
@@ -666,12 +668,18 @@ def _p3_gate(user_content):
 
 
 def _p3_break_probe(pid, phrase):
+    # F406 CLOSED 2026-10-04 wave-322 lane 1: near-miss negation cues
+    # (transposed/doubled/syncopated contractions) now discount at the
+    # _clause_negated choke point. The probe asserts the coded refusal;
+    # a silent ALLOW is a BREAK (finding reopened).
     v = _p3_gate(phrase)
     if v.verdict == "ALLOW":
-        return _break(pid, "silent ALLOW: %r" % (phrase,))
-    return _held(pid, False,
-                 "no longer a break (verdict=%r) -- F406 probe needs "
-                 "updating, see wave-306 lesson" % (v.verdict,))
+        return _break(pid, "F406 reopened: silent ALLOW: %r" % (phrase,))
+    ok = v.code == "provenance-critical-arg-refused"
+    return _held(pid, ok,
+                 "near-miss prohibition refuses coded"
+                 if ok else "%r decision=%r code=%r"
+                 % (phrase, v.verdict, v.code))
 
 
 def p3_near_miss_dnot_transposed():
@@ -738,11 +746,11 @@ def p5_pin_taxonomy_sorted():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 1973
+    ok = (len(lits) == TAXONOMY_PIN == 1964
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P5-pin-taxonomy-1973-sorted", True, "1973/1973/0 sorted")
-    return _break("P5-pin-taxonomy-1973-sorted",
+        return _held("P5-pin-taxonomy-1964-sorted", True, "1964/1964/0 sorted")
+    return _break("P5-pin-taxonomy-1964-sorted",
                   "got %d literals" % (len(lits),))
 
 
@@ -754,7 +762,7 @@ def p5_footer_state():
     ok = (m_open and m_open[-1].strip() == FOOTER_OPEN
           and m_next and m_next[-1] == FOOTER_NEXT)
     if ok:
-        return _held("P5-footer-state", True, "open F406 / next F407")
+        return _held("P5-footer-state", True, "open none / next F407")
     return _break("P5-footer-state",
                   "got %r / %r" % (m_open[-1] if m_open else None,
                                    m_next[-1] if m_next else None))
@@ -881,12 +889,9 @@ def main():
     for name, verdict, note in _results:
         print("[%s] %s: %s" % (verdict, name, note))
     print("RESULT: %d BREAK / %d HELD / %d ERROR" % (b, h, e))
-    # 5 BREAKs are the F406 standing probes; nothing else may break.
-    expect_breaks = {"P3-near-miss-dnot-transposed",
-                     "P3-near-miss-odnt-transposed",
-                     "P3-near-miss-cannt-doubled",
-                     "P3-near-miss-cnt-syncope",
-                     "P3-near-miss-wnt-syncope"}
+    # F406 CLOSED 2026-10-04 wave-322 lane 1: the five near-miss probes now
+    # assert the coded refusal (see _p3_break_probe). Nothing may break.
+    expect_breaks = set()
     got_breaks = {n for n, v, _ in _results if v == "BREAK"}
     probes_ok = (got_breaks == expect_breaks and e == 0)
     if not probes_ok:

@@ -447,11 +447,11 @@ def footer_state():
     # Footer lines repeat through history; the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
     ok = ("Next free finding: **F407**" in text
-          and m_open and m_open[-1].strip() == "F406")
+          and m_open and m_open[-1].strip() == "none")
     if ok:
-        _record("footer-state", "HELD", "footer: open F406 / next F407")
+        _record("footer-state", "HELD", "footer: open none / next F407")
     else:
-        _record("footer-state", "BREAK", "footer mismatch vs open F406 / next F407")
+        _record("footer-state", "BREAK", "footer mismatch vs open none / next F407")
 
 
 PROBES = [corpus_schema, corpus_deterministic_replay,
