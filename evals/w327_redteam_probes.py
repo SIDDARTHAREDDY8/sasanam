@@ -477,31 +477,33 @@ def _p1o():
 
 
 # ---------------------------------------------------------------------------
-# P2: F410 re-probe (w326_tufaudit T4c/T4d -- must still BREAK; lane 2 owns it).
+# P2: F410 re-probe (w326_tufaudit T4c/T4d -- CLOSED by wave-327 lane 2;
+# must now be HELD).
 # ---------------------------------------------------------------------------
 
-@probe("P2a-f410-t4c-still-open")
+@probe("P2a-f410-t4c-closed")
 def _p2a():
-    """F410 (LOW, OPEN): pruned pre-rotation slots wedge the client."""
+    """F410 (LOW, CLOSED wave-327 lane 2): pruned pre-rotation slots now recover."""
     verdict, note = _w326tuf._p4c()  # 2-tuple convention in that battery
-    return ("P2a-f410-t4c-still-open", verdict, note)
+    return ("P2a-f410-t4c-closed", verdict, note)
 
 
-@probe("P2b-f410-t4d-still-open")
+@probe("P2b-f410-t4d-closed")
 def _p2b():
-    """F410 (LOW, OPEN): a single pruned slot wedges the client."""
+    """F410 (LOW, CLOSED wave-327 lane 2): a single pruned slot now recovers."""
     verdict, note = _w326tuf._p4d()  # 2-tuple convention in that battery
-    return ("P2b-f410-t4d-still-open", verdict, note)
+    return ("P2b-f410-t4d-closed", verdict, note)
 
 
 # ---------------------------------------------------------------------------
-# P3: F411 re-probe (w326_redteam P3a -- must still BREAK; lane 1 owns it).
+# P3: F411 re-probe (w326_redteam P3a -- CLOSED by wave-327 lane 1;
+# must now be HELD).
 # ---------------------------------------------------------------------------
 
-@probe("P3a-f411-dict-token-claims-bypass-still-open")
+@probe("P3a-f411-dict-token-claims-bypass-closed")
 def _p3a():
-    """F411 (MEDIUM, OPEN): forged dict token_claims bypass token auth."""
-    return _relabel("P3a-f411-dict-token-claims-bypass-still-open",
+    """F411 (MEDIUM, CLOSED wave-327 lane 1): forged dict token_claims refused."""
+    return _relabel("P3a-f411-dict-token-claims-bypass-closed",
                     _w326rt._p3a)
 
 
@@ -583,25 +585,17 @@ def _parse_tally(text):
     return None
 
 
-# Post-filing tallies on the wave-327 tree (footer open F410, F411, F412 /
-# next F413; F412 filed by this lane). Every BREAK below except the three
-# finding probes (F412 P1f, F410 T4c/T4d, F411 P3a) is wave-305-class
-# footer-state drift from the F412 filing -- the merge sweeps those probes:
-# - w326-standing (1,13,0): P11 footer probe
-# - w326-sched (1,17,0): P16 footer probe
-# - w326-tufaudit (2,16,0): T4c/T4d = F410 (OPEN)
-# - w326-redteam (8,28,0): P3a = F411 (OPEN) + 7 footer drift
-#   (P6b + 6 green children, each with 1 footer BREAK)
-# - w325-redteam (6,40,0): 6 footer drift (5 green children + P6b)
-# - w324-alert (1,17,0): P12 footer probe
+# Post-merge tallies on the wave-327 tree (footer open F412 / next F413;
+# F410 CLOSED by lane 2, F411 CLOSED by lane 1, F412 filed OPEN by lane 4).
+# The only expected BREAK is the F412 finding probe (P1f).
 # Child mode (GOV_SKIP_GREEN=1).
 _GREEN_EVALS = [
-    ("w326-standing", "evals/w326_standing_probes.py", (1, 13, 0)),
-    ("w326-sched", "evals/w326_sched_probes.py", (1, 17, 0)),
-    ("w326-tufaudit", "evals/w326_tufaudit_probes.py", (2, 16, 0)),
-    ("w326-redteam", "evals/w326_redteam_probes.py", (8, 28, 0)),
-    ("w325-redteam", "evals/w325_redteam_probes.py", (6, 40, 0)),
-    ("w324-alert", "evals/w324_alert_probes.py", (1, 17, 0)),
+    ("w326-standing", "evals/w326_standing_probes.py", (0, 14, 0)),
+    ("w326-sched", "evals/w326_sched_probes.py", (0, 18, 0)),
+    ("w326-tufaudit", "evals/w326_tufaudit_probes.py", (0, 18, 0)),
+    ("w326-redteam", "evals/w326_redteam_probes.py", (0, 36, 0)),
+    ("w325-redteam", "evals/w325_redteam_probes.py", (0, 46, 0)),
+    ("w324-alert", "evals/w324_alert_probes.py", (0, 18, 0)),
 ]
 
 
@@ -714,10 +708,7 @@ def _p6b():
 # Main.
 # ---------------------------------------------------------------------------
 
-_EXPECTED_BREAKS = {"P1f-f412-conflict-crash-wedges-store",
-                    "P2a-f410-t4c-still-open",
-                    "P2b-f410-t4d-still-open",
-                    "P3a-f411-dict-token-claims-bypass-still-open"}
+_EXPECTED_BREAKS = {"P1f-f412-conflict-crash-wedges-store"}
 
 
 def main(argv):
@@ -738,7 +729,7 @@ def main(argv):
     got_breaks = {pid for pid, v, n in _results if v == "BREAK"}
     mismatch = got_breaks ^ _EXPECTED_BREAKS
     print("w327_redteam battery: %d BREAK / %d HELD / %d ERROR "
-          "(4 BREAK expected: P1f/F412, P2a/F410, P2b/F410, P3a/F411)"
+          "(1 BREAK expected: P1f/F412)"
           % (breaks, len(_results) - breaks - errors, errors))
     if mismatch:
         print("BREAK-SET MISMATCH: %r" % (sorted(mismatch),))

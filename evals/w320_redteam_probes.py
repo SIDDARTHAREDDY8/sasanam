@@ -65,7 +65,7 @@ TAXONOMY_PIN = 2044#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lo
 
 
 FOOTER_OPEN = "F412"
-FOOTER_NEXT = "F412"
+FOOTER_NEXT = "F413"
 
 _NOW = datetime(2026, 10, 4, 5, 0, 0, tzinfo=timezone.utc)
 _NOW_INT = 1759554000

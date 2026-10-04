@@ -46,7 +46,7 @@ TAXONOMY_PIN = 2044 #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-
 
 
 FOOTER_OPEN = "F412"
-FOOTER_NEXT = "F412"
+FOOTER_NEXT = "F413"
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 

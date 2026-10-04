@@ -468,14 +468,14 @@ def _p2a():
     _held("P2a-pin-taxonomy-2044", "taxonomy matches pin")
 
 
-@probe("P2b-footer-open-f410-f411")
+@probe("P2b-footer-open-f412")
 def _p2b():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
-    assert "Next free finding: **F412**" in text, "footer next-free wrong"
-    assert "Open findings: F410, F411" in text, "footer open set wrong"
-    _held("P2b-footer-open-f410-f411", "footer open F410, F411 / next F412")
+    assert "Next free finding: **F413**" in text, "footer next-free wrong"
+    assert "Open findings: F412" in text, "footer open set wrong"
+    _held("P2b-footer-open-f412", "footer open F412 / next F413")
 
 
 # ---------------------------------------------------------------------------

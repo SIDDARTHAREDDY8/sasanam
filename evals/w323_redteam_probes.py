@@ -74,7 +74,7 @@ TAXONOMY_PIN = 2044#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lo
 
 
 FOOTER_OPEN = "F412"  # F409/F410/F411 CLOSED; F412 (LOW, standing-conflict) OPEN.
-FOOTER_NEXT = "F412"
+FOOTER_NEXT = "F413"
 
 _results = []
 _PROBES = []

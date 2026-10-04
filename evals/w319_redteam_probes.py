@@ -100,7 +100,7 @@ TAXONOMY_PIN = 2044  # Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-
 
 
 FOOTER_OPEN = "F412"
-FOOTER_NEXT = "F412"
+FOOTER_NEXT = "F413"
 
 NOW = datetime(2026, 10, 4, 4, 0, 0, tzinfo=timezone.utc)
 

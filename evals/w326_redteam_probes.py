@@ -43,7 +43,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 
 TAXONOMY_PIN = 2044  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*)
 FOOTER_OPEN = "F412"  # F409/F410/F411 CLOSED; F412 (LOW, standing-conflict) OPEN.
-FOOTER_NEXT = "F412"  # Next free finding number.
+FOOTER_NEXT = "F413"  # Next free finding number.
 
 _results = []
 _PROBES = []
