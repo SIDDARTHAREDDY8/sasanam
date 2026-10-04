@@ -66,8 +66,8 @@ import gov.provenance_sink as PS  # noqa: E402
 import gov.provenance_labels as PL  # noqa: E402
 
 TAXONOMY_PIN = 1964
-FOOTER_OPEN = "F406"
-FOOTER_NEXT = "F407"
+FOOTER_OPEN = "F406, F407"
+FOOTER_NEXT = "F408"
 
 _results = []
 

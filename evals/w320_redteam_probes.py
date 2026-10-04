@@ -60,8 +60,8 @@ from tests.keyfixture import scrub_key_env, provision_test_key  # noqa: E402
 from evals import probe_lines  # noqa: E402
 
 TAXONOMY_PIN = 1964
-FOOTER_OPEN = "F406"
-FOOTER_NEXT = "F407"
+FOOTER_OPEN = "F406, F407"
+FOOTER_NEXT = "F408"
 
 _NOW = datetime(2026, 10, 4, 5, 0, 0, tzinfo=timezone.utc)
 _NOW_INT = 1759554000

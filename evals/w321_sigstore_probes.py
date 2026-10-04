@@ -47,8 +47,8 @@ from gov import evidence_intoto as _intoto  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
 TAXONOMY_PIN = 1964
-FOOTER_OPEN = "F406"
-FOOTER_NEXT = "F407"
+FOOTER_OPEN = "F406, F407"
+FOOTER_NEXT = "F408"
 
 _results = []
 _PROBES = []
