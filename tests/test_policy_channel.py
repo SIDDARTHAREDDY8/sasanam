@@ -282,6 +282,64 @@ class ChannelTest(unittest.TestCase):
         self.assertTrue(rep["stale"])
         self.assertEqual(rep["code"], "policy-channel-stale")
 
+    # -- F413: feed iteration is numeric on version, not filename --------
+
+    def test_feed_files_sorted_numerically_by_version(self):
+        # The docstring promises "(version, name) pairs ... sorted by
+        # version"; filename order would put v10 before v2.
+        for v in (1, 2, 10):
+            self._write(_doc(v, self.seed), v)
+        self.assertEqual(
+            pc._feed_files(self.cfg),
+            [(1, "agent-policy.v1.json"),
+             (2, "agent-policy.v2.json"),
+             (10, "agent-policy.v10.json")])
+
+    def test_multi_digit_feed_applies_in_window_before_skip_refusal(self):
+        # F413a: feed {v1, v2, v10}, floor v1 -- v2 applies first, then
+        # v10 refuses coded policy-channel-version-skip (no stuck floor).
+        for v in (1, 2, 10):
+            self._write(_doc(v, self.seed), v)
+        pc.poll(self.cfg, self.state, now=1700000001)
+        rep = pc.poll(self.cfg, self.state, now=1700000001)
+        self.assertEqual(pc.current_version(self.cfg, self.state), 2)
+        self.assertEqual(rep["code"], "policy-channel-version-skip")
+
+    def test_intermediate_revocation_not_silently_dropped(self):
+        # F413b: feed {v9 (revokes=[12]), v10}, floor v8 -- v9's
+        # revocation of v12 is recorded; a later v12 refuses coded
+        # policy-channel-superseded (the established revocation code;
+        # close-when allows no new codes).
+        for v in (4, 8):
+            self._write(_doc(v, self.seed), v)
+        self._write(_doc(9, self.seed, revokes=[12]), 9)
+        self._write(_doc(10, self.seed), 10)
+        pc.poll(self.cfg, self.state, now=1700000001)
+        self.assertEqual(pc.current_version(self.cfg, self.state), 10)
+        revoked = pc._load_state(self.state)["revoked_versions"]
+        self.assertIn(12, revoked)
+        self._write(_doc(12, self.seed), 12)
+        rep2 = pc.poll(self.cfg, self.state, now=1700000001)
+        self.assertEqual(rep2["code"], "policy-channel-superseded")
+        self.assertEqual(pc.current_version(self.cfg, self.state), 10)
+
+    def test_duplicate_version_filenames_resolve_deterministically(self):
+        # "pol.v02.json" and "pol.v2.json" both parse to version 2: the
+        # stable sort keeps filename order, the first applies, the rest
+        # skip as already-held history -- no guess, no crash.
+        self._write(_doc(2, self.seed), 2)
+        shutil.copy(
+            os.path.join(self.feed, "agent-policy.v2.json"),
+            os.path.join(self.feed, "agent-policy.v02.json"))
+        self.assertEqual(
+            pc._feed_files(self.cfg),
+            [(2, "agent-policy.v02.json"),
+             (2, "agent-policy.v2.json")])
+        rep = pc.poll(self.cfg, self.state, now=1700000001)
+        self.assertEqual(pc.current_version(self.cfg, self.state), 2)
+        self.assertTrue(rep["applied"])
+        self.assertIsNone(rep["code"])
+
 
 if __name__ == "__main__":
     unittest.main()

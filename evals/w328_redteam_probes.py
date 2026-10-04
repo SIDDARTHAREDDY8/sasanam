@@ -1,7 +1,8 @@
 """Wave-328 independent red-team battery.
 
 Base: 54cdac0d (wave-327 merge). Footer: open F412, F413 / next F414
-(F413 filed by this lane).
+(F413 filed by this lane). Wave-329 lane 1 closed F413: footer is now
+open none / next F414; P1b/P1c are HELD.
 Pin: 2056.
 
 P1  wave-327 policy-channel seams (unsigned, ordering, revocation,
@@ -32,8 +33,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
 TAXONOMY_PIN = 2056  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).; Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*)
-FOOTER_OPEN = "F413"  # F409/F410/F411 CLOSED; F412 (LOW, standing-conflict)
-# OPEN; F413 (LOW, policy-channel version ordering) OPEN (filed this lane).
+FOOTER_OPEN = "none"  # F409/F410/F411/F412/F413 all CLOSED (F413 CLOSED
+# 2026-10-04 wave-329 lane 1). No open findings.
 FOOTER_NEXT = "F414"  # Next free finding number.
 
 _results = []
@@ -170,14 +171,17 @@ def _p1a():
 
 @probe("P1b-f413-feed-version-ordering")
 def _p1b():
-    """F413a: _feed_files must order by VERSION, not filename.
+    """F413 (CLOSED 2026-10-04 wave-329 lane 1): _feed_files ordered by
+    FILENAME, not version.
 
-    Feed {v1, v2, v10}, floor v1, max_skip 4: v2 is a valid in-window
-    update and v10 is out-of-window. Correct behavior applies v2, then
-    refuses v10 coded. The base tree sorts filenames ("pol.v10.json" <
-    "pol.v2.json"), tries v10 first, hits version-skip, stops the poll,
-    and never applies v2 -- the agent stays on v1 despite an applicable
-    update sitting in the feed.
+    On the open tree, a feed holding {v1, v2, v10} with the floor at v1
+    (max_skip 4) tried v10 first (filename sort: "pol.v10.json" <
+    "pol.v2.json"), hit coded policy-channel-version-skip, stopped the
+    poll, and never applied the valid in-window v2 -- the agent stayed
+    on v1 despite an applicable update sitting in the feed.
+
+    The fix sorts feed files numerically by parsed version, so v2 is
+    applied first and only then is v10 refused coded version-skip.
     """
     fx = _pfresh()
     pc = fx["pc"]
@@ -201,12 +205,19 @@ def _p1b():
 
 @probe("P1c-f413-intermediate-revocation-recorded")
 def _p1c():
-    """F413b: an intermediate version's revokes must not be silently dropped.
+    """F413 (CLOSED 2026-10-04 wave-329 lane 1): an intermediate version's
+    revokes were silently dropped.
 
-    Feed {v9 (revokes=[12]), v10}, floor v8: v9's revocation of v12 must
-    be recorded even though v10 sorts first by filename. The base tree
-    applies v10, silently skips v9, leaves revoked=[] -- and a later
-    validly-signed v12 applies even though the publisher revoked it.
+    On the open tree, a feed holding {v9 (revokes=[12]), v10} with the
+    floor at v8 applied v10 first (filename sort), then skipped v9 with
+    a bare continue -- no report note, no warning -- leaving
+    revoked_versions=[]; a later validly-signed v12 then APPLIED even
+    though the publisher had revoked it.
+
+    The fix applies versions in numeric order, so v9's revokes=[12]
+    are merged before v10 applies, and a later v12 refuses coded
+    policy-channel-superseded (the established revocation refusal;
+    the close-when allowed no new codes).
     """
     fx = _pfresh()
     pc = fx["pc"]
@@ -701,7 +712,7 @@ def _p6a():
     return _held("P6a-pin-taxonomy-2056-sorted", "2056/2056/0 sorted")
 
 
-@probe("P6b-footer-open-f413-next-f414")
+@probe("P6b-footer-open-none-next-f414")
 def _p6b():
     text = open(os.path.join(REPO, "evals/FINDINGS.md")).read()
     opens = re.findall(r"\*\*Open findings:\s*([^*]+?)\.\*\*", text)
@@ -709,27 +720,22 @@ def _p6b():
     open_line = opens[-1].strip() if opens else ""
     next_free = nexts[-1].strip() if nexts else ""
     if open_line != FOOTER_OPEN:
-        return _break("P6b-footer-open-f413-next-f414",
+        return _break("P6b-footer-open-none-next-f414",
                       "open findings %r, want %r" % (open_line, FOOTER_OPEN))
     if next_free != FOOTER_NEXT:
-        return _break("P6b-footer-open-f413-next-f414",
+        return _break("P6b-footer-open-none-next-f414",
                       "next free %r, want %r" % (next_free, FOOTER_NEXT))
-    return _held("P6b-footer-open-f413-next-f414",
-                 "footer open F413 / next F414")
+    return _held("P6b-footer-open-none-next-f414",
+                 "footer open none / next F414")
 
 
 # ---------------------------------------------------------------------------
 # Main.
 # ---------------------------------------------------------------------------
 
-# F412 CLOSED by wave-328 lane 1 (P2a flips to HELD); the footer cascade
-# from the F413 filing was resolved by the merge re-pin, so the five P5x
-# IDs are removed per the wave-305 lesson. Only the open F413 probes
-# remain expected BREAKs.
-_EXPECTED_BREAKS = {
-    "P1b-f413-feed-version-ordering",
-    "P1c-f413-intermediate-revocation-recorded",
-}
+# F413 CLOSED by wave-329 lane 1 (P1b/P1c flip to HELD); the expected
+# BREAK set is emptied per the wave-305 lesson (no open findings remain).
+_EXPECTED_BREAKS = set()
 
 
 def main(argv):
@@ -750,7 +756,7 @@ def main(argv):
     got_breaks = {pid for pid, v, n in _results if v == "BREAK"}
     mismatch = got_breaks ^ _EXPECTED_BREAKS
     print("w328_redteam battery: %d BREAK / %d HELD / %d ERROR "
-          "(2 BREAKs expected: P1b/P1c/F413 open)"
+          "(0 BREAKs expected: F413 closed 2026-10-04 wave-329 lane 1)"
           % (breaks, len(_results) - breaks - errors, errors))
     if mismatch:
         print("BREAK-SET MISMATCH: %r" % (sorted(mismatch),))

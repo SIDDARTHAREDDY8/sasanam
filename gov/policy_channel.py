@@ -141,7 +141,15 @@ def _resolve_in_feed(name, config):
 
 
 def _feed_files(config):
-    """(version, name) pairs for this policy, sorted by version."""
+    """(version, name) pairs for this policy, sorted by version.
+
+    The sort is numeric on the parsed version (F413): filename order
+    ("pol.v10.json" < "pol.v2.json") is not semantic order. Ties are
+    impossible for well-formed publisher output (one filename shape per
+    version), but the sort is stable over the filename-sorted input so
+    even duplicate-version filenames resolve deterministically -- the
+    first applies, the rest are skipped as already-held history.
+    """
     found = []
     for name in sorted(os.listdir(config.feed_dir)):
         if not name.startswith(config.policy_name + ".v"):
@@ -152,6 +160,7 @@ def _feed_files(config):
         if not mid.isdigit():
             continue
         found.append((int(mid), name))
+    found.sort(key=lambda pair: pair[0])
     return found
 
 
