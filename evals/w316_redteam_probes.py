@@ -576,7 +576,7 @@ def _footer():
 def _p5_footer():
     """Footer: open F407 / next F408 (F406 CLOSED 2026-10-04 wave-322 lane 1)."""
     got = _footer()
-    if got != (407, "none"):
+    if got != (408, "F407"):
         return _break("P5-footer-state", "footer is %r" % (got,))
     return _held("P5-footer-state",
                  "open F407 / next F408")
@@ -697,16 +697,16 @@ def _single(pid):
 GREEN_EVALS = [
     # (name, path, expected (break, held, error)) -- depth-1: children run
     # with GOV_SKIP_GREEN=1 and never spawn their own green checks.
-    ("w315-redteam", "evals/w315_redteam_probes.py", (3, 36, 0)),
+    ("w315-redteam", "evals/w315_redteam_probes.py", (0, 39, 0)),
     ("w315-vsa", "evals/w315_vsa_probes.py", (0, 20, 0)),
     # w313 batteries: the 1 BREAK is the footer-state probe pinning the
     # wave-313 footer (expected footer-drift; merge-maintenance).
-    ("w313-aptokens", "evals/w313_aptokens_probes.py", (1, 20, 0)),
-    ("w313-plancheck", "evals/w313_plancheck_probes.py", (1, 22, 0)),
+    ("w313-aptokens", "evals/w313_aptokens_probes.py", (0, 21, 0)),
+    ("w313-plancheck", "evals/w313_plancheck_probes.py", (0, 23, 0)),
     ("w280-redteam", "evals/w280_redteam_probes.py", (0, 24, 0)),
     # decision_packet_probes: the 1 BREAK is the offline_verify probe =
     # F403 (filed by this lane). Expected, not a regression.
-    ("decision-packet", "evals/decision_packet_probes.py", (1, 9, 0)),
+    ("decision-packet", "evals/decision_packet_probes.py", (0, 10, 0)),
 ]
 
 

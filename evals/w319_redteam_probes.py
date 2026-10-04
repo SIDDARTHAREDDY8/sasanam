@@ -752,20 +752,15 @@ def _p5c():
 GREEN_EVALS = [
     # (name, path, expected (break, held, error)) -- depth-1: children run
     # with GOV_SKIP_GREEN=1 and never spawn their own green checks.
-    # Ground truth measured on the wave-318 tree 2026-10-04, THEN shifted
-    # by this lane's F405 filing (footer open F405 / next F406): every
-    # battery with a footer-state probe now carries its footer-drift
-    # BREAK. w316-redteam carries 4 (its own footer probe + three child
-    # green-eval footer probes). The wave-319 merge coordinator's
-    # standard sweep re-pins all footers; these expectations are valid
-    # only on this lane tree.
-    ("w318-evidence", "evals/w318_evidence_schema_probes.py", (1, 17, 0)),
-    ("w318-trustroot", "evals/w318_trustroot_probes.py", (1, 11, 0)),
-    ("w318-redteam", "evals/w318_redteam_probes.py", (1, 25, 0)),
-    ("w317-redteam", "evals/w317_redteam_probes.py", (1, 37, 0)),
-    ("w317-producer", "evals/w317_producer_probes.py", (1, 11, 0)),
-    ("w316-redteam", "evals/w316_redteam_probes.py", (4, 27, 0)),
-    ("w315-redteam", "evals/w315_redteam_probes.py", (1, 38, 0)),
+    # Wave-322 merge: all footer-state probes re-pinned to open F407 /
+    # next F408; all children run clean.
+    ("w318-evidence", "evals/w318_evidence_schema_probes.py", (0, 18, 0)),
+    ("w318-trustroot", "evals/w318_trustroot_probes.py", (0, 12, 0)),
+    ("w318-redteam", "evals/w318_redteam_probes.py", (0, 26, 0)),
+    ("w317-redteam", "evals/w317_redteam_probes.py", (0, 38, 0)),
+    ("w317-producer", "evals/w317_producer_probes.py", (0, 12, 0)),
+    ("w316-redteam", "evals/w316_redteam_probes.py", (0, 31, 0)),
+    ("w315-redteam", "evals/w315_redteam_probes.py", (0, 39, 0)),
 ]
 
 

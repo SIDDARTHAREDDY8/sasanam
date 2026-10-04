@@ -890,31 +890,31 @@ def _p8():
 # P9: regressions -- footer, pin
 # ---------------------------------------------------------------------------
 
-@probe("P9-footer-open-none-next-F407")
+@probe("P9-footer-open-F407-next-F408")
 def _p9_footer():
     import re as _re
     try:
         text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                     encoding="utf-8").read()
     except Exception as exc:  # noqa: BLE001
-        return _error("P9-footer-open-none-next-F407", "%r" % (exc,))
+        return _error("P9-footer-open-F407-next-F408", "%r" % (exc,))
     m = list(_re.finditer(
         r"Next free finding: \*\*F(\d+)\*\*\. \*\*Open findings: ([^*]*)\*\*",
         text))
     if not m:
-        return _error("P9-footer-open-none-next-F407",
+        return _error("P9-footer-open-F407-next-F408",
                       "no footer line found")
     last = m[-1]
     nxt, opens = last.group(1), last.group(2)
-    if nxt != "407" or opens.strip().lower().rstrip(".") != "none":
-        return _break("P9-footer-open-none-next-F407",
-                      "footer pins next=%s open=%s (want 407 / none)"
+    if nxt != "408" or opens.strip().lower().rstrip(".") != "f407":
+        return _break("P9-footer-open-F407-next-F408",
+                      "footer pins next=%s open=%s (want 408 / F407)"
                       % (nxt, opens))
-    if "## F405" not in text:
-        return _break("P9-footer-open-none-next-F407",
-                      "F405 entry missing from FINDINGS.md")
-    return _held("P9-footer-open-none-next-F407",
-                 "footer pins open F407 / next F408 (F404 closed)")
+    if "## F407" not in text:
+        return _break("P9-footer-open-F407-next-F408",
+                      "F407 entry missing from FINDINGS.md")
+    return _held("P9-footer-open-F407-next-F408",
+                 "footer pins open F407 / next F408")
 
 
 @probe("P9-pin-taxonomy-1976-sorted")
@@ -1036,16 +1036,12 @@ def _single(pid):
 GREEN_EVALS = [
     # (name, path, expected (break, held, error)) -- depth-1: children run
     # with GOV_SKIP_GREEN=1 and never spawn their own green checks.
-    # The 1 BREAK in w315-redteam / w314-provsink is each battery's
-    # footer-state probe pinning the F404-open footer (expected
-    # footer-drift from wave-318 lane 1 closing F404; merge-maintenance,
-    # verified to be only the footer probe). w316-transform's 1 BREAK is
-    # its stale footer probe (pins next=F404/open=none from an earlier
-    # wave); still the only break there.
-    ("w315-redteam", "evals/w315_redteam_probes.py", (1, 38, 0)),
-    ("w316-transform", "evals/w316_transform_probes.py", (1, 19, 0)),
+    # Wave-322 merge: footer-state probes re-pinned to open F407 /
+    # next F408; all children now run clean.
+    ("w315-redteam", "evals/w315_redteam_probes.py", (0, 39, 0)),
+    ("w316-transform", "evals/w316_transform_probes.py", (0, 20, 0)),
     ("w315-vsa", "evals/w315_vsa_probes.py", (0, 20, 0)),
-    ("w314-provsink", "evals/w314_provsink_probes.py", (1, 22, 0)),
+    ("w314-provsink", "evals/w314_provsink_probes.py", (0, 23, 0)),
     # decision_packet_probes: F403 CLOSED at the wave-317 merge, so the
     # offline_verify probe holds now; expectation corrected to 0/10/0
     # (the 1/9/0 dated from the F403-open tree).

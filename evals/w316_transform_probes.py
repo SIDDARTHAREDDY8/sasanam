@@ -41,7 +41,7 @@ from gov.provenance_labels import TrustLevel as T
 NOW = 1790000000  # fixed "now" for token verification
 ISSUER = "w316-probe-approver"
 
-EXPECTED_PIN = 1973  # Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 merge: pin 1906 -> 1933 (+27)
+EXPECTED_PIN = 1976  # Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 merge: pin 1906 -> 1933 (+27)
 
 PROBES = []
 
@@ -447,7 +447,7 @@ def p20():
         return ("ERROR", "footer line unparseable")
     nxt = int(m.group(1))
     open_s = opens.group(1).strip()
-    if nxt == 406 and open_s == "F407":
+    if nxt == 408 and open_s == "F407":
         return _held("footer pins open F407 / next F408")
     return _break("footer is F%d / %s" % (nxt, open_s))
 
