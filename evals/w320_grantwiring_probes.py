@@ -288,11 +288,11 @@ def p_pin_taxonomy():
     import re
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == 2027 and len(set(lits)) == len(lits)
+    ok = (len(lits) == 2035 and len(set(lits)) == len(lits)
           and lits == sorted(lits)
-          and len(dc.TAXONOMY) == 2027)
-    return _held("pin-taxonomy-2027-sorted", ok,
-                 "2027/2027/0 sorted" if ok
+          and len(dc.TAXONOMY) == 2035)
+    return _held("pin-taxonomy-20352027", ok,
+                 "203520272035/ sorted" if ok
 
 
                  else "taxonomy drift: %d literals" % len(lits))
@@ -304,10 +304,10 @@ def p_footer_state():
     import re
     m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-    ok = (m_open and m_open[-1].strip() == "none"
-          and m_next and m_next[-1] == "F409")
+    ok = (m_open and m_open[-1].strip() == "F410, F411"
+          and m_next and m_next[-1] == "F412")
     return _held("footer-state", ok,
-                 "open none / next F409" if ok
+                 "open F410, F411 / next F412" if ok
                  else "footer drift: %r / %r" % (m_open[-1:], m_next[-1:]))
 
 
@@ -322,7 +322,7 @@ PROBES = [
     ("expired-between-queue-and-execution",
      p_expired_between_queue_and_execution),
     ("human-edited-args-break-scope", p_human_edited_args_break_scope),
-    ("pin-taxonomy-2027-sorted", p_pin_taxonomy),
+    ("pin-taxonomy-20352027", p_pin_taxonomy),
 
 
     ("footer-state", p_footer_state),

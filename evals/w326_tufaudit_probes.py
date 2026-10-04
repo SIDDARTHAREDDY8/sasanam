@@ -43,7 +43,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 from gov import bundle_refresh as br  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
-TAXONOMY_PIN = 2020  # repo footer pin; re-point only if codes are added.
+TAXONOMY_PIN = 2035  # repo footer pin; re-point only if codes are added.
 
 
 # ---------------------------------------------------------------------------

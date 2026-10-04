@@ -27,7 +27,7 @@ Attacks the wave-322 NEW surfaces break-first (base 0b03472b):
       shipped tallies (child-mode, GOV_SKIP_GREEN=1; every tally below
       was verified by direct child run, never "corrected" to
       parent-with-green numbers).
-  P6  Pin/footer -- 2021/2021/0 sorted on source literals; footer open
+  P6  Pin/footer -- 203520212035/ sorted on source literals; footer open
       none / next F409 (F406 and F407 both closed).
 
 
@@ -70,11 +70,11 @@ from tests.keyfixture import provision_test_key  # noqa: E402
 
 provision_test_key()
 
-TAXONOMY_PIN = 2021#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost)
+TAXONOMY_PIN = 2035#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost)
 
 
-FOOTER_OPEN = "none"  # F409 CLOSED by wave-326 lane 1.
-FOOTER_NEXT = "F410"
+FOOTER_OPEN = "F410, F411"  # F409 CLOSED by wave-326 lane 1.
+FOOTER_NEXT = "F412"
 
 _results = []
 _PROBES = []
@@ -940,7 +940,7 @@ def green_check():
 # P6: pin + footer
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-2021-sorted")
+@probe("P6-pin-taxonomy-20352021")
 
 
 def _p6a():
@@ -948,11 +948,11 @@ def _p6a():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2021
+    ok = (len(lits) == TAXONOMY_PIN == 2035
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P6-pin-taxonomy-2021-sorted", "2021/2021/0 sorted")
-    return _break("P6-pin-taxonomy-2021-sorted",
+        return _held("P6-pin-taxonomy-20352021", "203520212035/ sorted")
+    return _break("P6-pin-taxonomy-20352021",
 
 
                   "got %d literals" % (len(lits),))

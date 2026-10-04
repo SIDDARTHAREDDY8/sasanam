@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 from keyfixture import provision_test_key  # noqa: E402  (test key material)
 
-TAXONOMY_PIN = 2027  # 2012 + 6 federated-identity codes; Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening (witness-alert-queue-overflow + export-witness-policy-version-below-minimum) + 6 federated-identity-*); Wave-326 lane 2: pin 2020 -> 2027 (+7: 6 supplychain-standing-* + 1 supplychain-feed-outside-trust-boundary)
+TAXONOMY_PIN = 2035  # 2012 + 6 federated-identity codes; Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening (witness-alert-queue-overflow + export-witness-policy-version-below-minimum) + 6 federated-identity-*); Wave-326 lane 2: pin 2020 -> 2027 (+7: 6 supplychain-standing-* + 1 supplychain-feed-outside-trust-boundary)
 
 _results = []
 
@@ -412,7 +412,7 @@ def _p16():
           "valid token verifies with the bound claims")
 
 
-@probe("P17-pin-taxonomy-2027-sorted")
+@probe("P17-pin-taxonomy-20352027")
 def _p17():
     import re
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -422,7 +422,7 @@ def _p17():
         "want %d/%d/0, got %d/%d" % (TAXONOMY_PIN, TAXONOMY_PIN,
                                      len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
-    _held("P17-pin-taxonomy-2027-sorted",
+    _held("P17-pin-taxonomy-20352027",
           "%d/%d/0 sorted" % (TAXONOMY_PIN, TAXONOMY_PIN))
 
 
@@ -430,9 +430,9 @@ def _p17():
 def _p18():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Next free finding: **F410**. **Open findings: F409.**" in text, \
+    assert "Next free finding: **F412**. **Open findings: F409.**" in text, \
         "footer mismatch"
-    _held("P18-footer-state", "open F409 / next F410")
+    _held("P18-footer-state", "open F410, F411 / next F412")
 
 
 @probe("P19-nondict-token-claims-coded")

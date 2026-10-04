@@ -45,7 +45,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2027  # Wave-326 lane 3: pin 2020 -> 2027 (+7 supplychain-scan-*/supplychain-standing-lapsed)
+TAXONOMY_PIN = 2035  # Wave-326 lane 3: pin 2020 -> 2027 (+7 supplychain-scan-*/supplychain-standing-lapsed)
 
 
 _results = []
@@ -472,7 +472,7 @@ def _p14():
 # Pin + footer state probes.
 # ---------------------------------------------------------------------------
 
-@probe("P15-pin-taxonomy-2027-sorted")
+@probe("P15-pin-taxonomy-20352027")
 def _p15():
     from gov import decision_codes as DC
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -481,7 +481,7 @@ def _p15():
         r'\"code\":\s*[\"\']([^\"\']+)[\"\']', src)
     # Uniqueness on raw source literals (the wave-260 lesson: the
     # deduped dict cannot see duplicate literals).
-    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2027, (
+    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2035, (
         len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
     for code in ("supplychain-scan-malformed",
@@ -494,15 +494,15 @@ def _p15():
         assert code in DC.TAXONOMY, "new code %r not registered" % code
         entry = DC.TAXONOMY[code]
         assert entry["domain"] == "supplychain", entry
-    _held("P15-pin-taxonomy-2027-sorted", "2027/2027/0 sorted; new codes ok")
+    _held("P15-pin-taxonomy-20352027", "203520272035/ sorted; new codes ok")
 
 
 @probe("P16-footer-open-F409-next-F410")
 def _p16():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     src = open(path, encoding="utf-8").read()
-    assert "Next free finding: **F410**" in src, "next-free footer"
-    assert "**Open findings: F409.**" in src, "open-F409 footer"
+    assert "Next free finding: **F412**" in src, "next-free footer"
+    assert "**Open findings: F410, F411.**" in src, "open-F409 footer"
     _held("P16-footer-open-F409-next-F410",
           "footer: open F409 / next F410 (F409 filed by wave-325 lane 4)")
 

@@ -28,7 +28,7 @@ from gov import ed25519 as ed  # noqa: E402
 from gov import knowledge_ingest as ki  # noqa: E402
 from gov import standing_verdicts as sv  # noqa: E402
 
-TAXONOMY_PIN = 2027  # 2020 + 7 standing-verdict codes (wave-326 lane 2)
+TAXONOMY_PIN = 2035  # 2020 + 7 standing-verdict codes (wave-326 lane 2)
 
 _results = []
 
@@ -391,7 +391,7 @@ def _p9():
         _cleanup(root)
 
 
-@probe("P10-pin-taxonomy-2027-sorted")
+@probe("P10-pin-taxonomy-20352027")
 def _p10():
     import re
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -401,7 +401,7 @@ def _p10():
         "want %d/%d/0, got %d/%d" % (TAXONOMY_PIN, TAXONOMY_PIN,
                                     len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
-    _held("P10-pin-taxonomy-2027-sorted",
+    _held("P10-pin-taxonomy-20352027",
           "%d/%d/0 sorted" % (TAXONOMY_PIN, TAXONOMY_PIN))
 
 
@@ -409,9 +409,9 @@ def _p10():
 def _p11():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Next free finding: **F410**. **Open findings: F409.**" in text, \
+    assert "Next free finding: **F412**. **Open findings: F409.**" in text, \
         "footer mismatch"
-    _held("P11-footer-state", "open F409 / next F410")
+    _held("P11-footer-state", "open F410, F411 / next F412")
 
 
 # ---------------------------------------------------------------------------
