@@ -41,7 +41,7 @@ ApprovalQueue.queue(..., attested_identity=...)):
       not gating) with verified:false + the typed code on the record.
   approval-no-claim: queue without attested_identity -> claim None, no
       behavior change.
-  pin-taxonomy / footer-state: standard pins (1914; open none / next F405).
+  pin-taxonomy / footer-state: standard pins (1914; open F405 / next F406).
 """
 
 import os
@@ -61,10 +61,10 @@ from gov import decision_codes as dc  # noqa: E402
 from gov import workload_identity as ai  # noqa: E402
 from gov import ed25519 as _ed  # noqa: E402
 
-TAXONOMY_PIN = 1914  # Wave-319 lane 2: pin 1906 -> 1914 (+8 identity-*)
+TAXONOMY_PIN = 1933  # Wave-319 lane 2: pin 1906 -> 1914 (+8 identity-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*)
 
-FOOTER_NEXT = "F405"
-FOOTER_OPEN = "none"
+FOOTER_NEXT = "F406"
+FOOTER_OPEN = "F405"
 
 _results = []
 PROBES = []

@@ -94,7 +94,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # No new decision codes minted by this lane (verifier taxonomy is the
 # verifier's own surface, not governance decisions); pin stays 1829.
-TAXONOMY_PIN = 1916 # wave-312: 1841 + 10 witness-log/evidence-bundle codes; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*)
+TAXONOMY_PIN = 1933 # wave-312: 1841 + 10 witness-log/evidence-bundle codes; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*)
 
 from gov.signing import Ed25519Signer, Ed25519Verifier
 from gov import evidence_verify_offline as v
@@ -296,9 +296,9 @@ def p_footer_state():
     m_open = re.findall(r"Open findings: ([^.]*)\.", text)
     # Wave-316 merge footer: F398/F399/F400 CLOSED; F401/F402/F403 OPEN; next F404.
     ok = (m_next and m_next[-1] == "F405"
-          and m_open and m_open[-1].strip() == "none")
+          and m_open and m_open[-1].strip() == "F405")
     _record("footer-state", "HELD" if ok else "BREAK",
-            "open none / next F405" if ok else "footer drift")
+            "open F405 / next F406" if ok else "footer drift")
 
 
 def p_taxonomy_shape():

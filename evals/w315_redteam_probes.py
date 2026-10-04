@@ -33,7 +33,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 1916 # wave-314 merge: pin 1863 -> 1878 (+9 provenance-* +6 witness-rekor-*); wave-315 merge: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*)
+TAXONOMY_PIN = 1933 # wave-314 merge: pin 1863 -> 1878 (+9 provenance-* +6 witness-rekor-*); wave-315 merge: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*)
 
 from gov import provenance_labels as PL
 from gov import provenance_sink as PS
@@ -924,7 +924,7 @@ def _footer():
                       "footer is %s / %s, want F405 / F404"
                       % (num, opens))
     return _held("footer-F404-open-next-F405",
-                 "footer: open none / next F405")
+                 "footer: open F405 / next F406")
 
 
 # ---------------------------------------------------------------------------

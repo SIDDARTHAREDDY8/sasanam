@@ -34,7 +34,7 @@ P7 (2): F399 seam -- the escalate-terminal ratchet fires at the 4th
     budget-inert by design.
 P8 (1): F403 re-probe -- decision_packet standalone offline import still
     broken on the OPEN tree (lane 1 owns the closure; not closed here).
-P9 (2): regressions -- footer (open none / next F405; F404 closed),
+P9 (2): regressions -- footer (open F405 / next F406; F404 closed),
     pin taxonomy 1916/1916/0 sorted.
 P10 (3): robustness acceptance gaming -- enum budget respected,
     string without markers fails closed, attacker>benign bits fails.
@@ -890,31 +890,31 @@ def _p8():
 # P9: regressions -- footer, pin
 # ---------------------------------------------------------------------------
 
-@probe("P9-footer-F405-next-none-open")
+@probe("P9-footer-F405-open-next-F406")
 def _p9_footer():
     import re as _re
     try:
         text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                     encoding="utf-8").read()
     except Exception as exc:  # noqa: BLE001
-        return _error("P9-footer-F405-next-none-open", "%r" % (exc,))
+        return _error("P9-footer-F405-open-next-F406", "%r" % (exc,))
     m = list(_re.finditer(
         r"Next free finding: \*\*F(\d+)\*\*\. \*\*Open findings: ([^*]*)\*\*",
         text))
     if not m:
-        return _error("P9-footer-F405-next-none-open",
+        return _error("P9-footer-F405-open-next-F406",
                       "no footer line found")
     last = m[-1]
     nxt, opens = last.group(1), last.group(2)
-    if nxt != "405" or opens.strip().lower().rstrip(".") != "none":
-        return _break("P9-footer-F405-next-none-open",
-                      "footer pins next=%s open=%s (want 405 / none)"
+    if nxt != "406" or opens.strip().lower().rstrip(".") != "f405":
+        return _break("P9-footer-F405-open-next-F406",
+                      "footer pins next=%s open=%s (want 406 / F405)"
                       % (nxt, opens))
-    if "## F404" not in text:
-        return _break("P9-footer-F405-next-none-open",
-                      "F404 entry missing from FINDINGS.md")
-    return _held("P9-footer-F405-next-none-open",
-                 "footer pins open none / next F405 (F404 closed)")
+    if "## F405" not in text:
+        return _break("P9-footer-F405-open-next-F406",
+                      "F405 entry missing from FINDINGS.md")
+    return _held("P9-footer-F405-open-next-F406",
+                 "footer pins open F405 / next F406 (F404 closed)")
 
 
 @probe("P9-pin-taxonomy-1900-sorted")
@@ -926,7 +926,7 @@ def _p9_pin():
                                encoding="utf-8").read())
     except Exception as exc:  # noqa: BLE001
         return _error("P9-pin-taxonomy-1900-sorted", "%r" % (exc,))
-    if len(lits) != 1916 or len(set(lits)) != 1916:
+    if len(lits) != 1933 or len(set(lits)) != 1933:
         return _break("P9-pin-taxonomy-1900-sorted",
                       "got %d literals / %d unique (want 1916/1916)"
                       % (len(lits), len(set(lits))))

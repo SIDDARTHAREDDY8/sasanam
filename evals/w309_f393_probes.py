@@ -42,7 +42,7 @@ import green_check
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-309 pin: lane A minted workflow-composed-plan-mismatch.
-TAXONOMY_PIN = 1916 #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*)
+TAXONOMY_PIN = 1933 #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*)
 
 PLAN_MISMATCH = "workflow-composed-plan-mismatch"
 
@@ -105,7 +105,7 @@ def p_footer_state():
         return _record("footer-state", "BREAK",
                        "footer pins next F%d open '%s', want next F404 "
                        "open 'none'" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open none / next F405")
+    _record("footer-state", "HELD", "footer pins open F405 / next F406")
 
 
 # ------------------------------------------------------------------

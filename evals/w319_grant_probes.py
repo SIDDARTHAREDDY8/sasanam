@@ -47,7 +47,7 @@ verify_chain / advisory_check / ToolExecutor.call):
   executor-advisory-tightens: executor call with a registered risky tool
       and a forged grant -> denied with the coded refusal; the same call
       with no grant proceeds (advisory, never loosens).
-  pin-taxonomy / footer-state: standard pins (1914; open none / next F405).
+  pin-taxonomy / footer-state: standard pins (1914; open F405 / next F406).
 """
 
 import os
@@ -67,10 +67,10 @@ import probe_lines  # noqa: E402  (canonical probe-line emission)
 from gov import decision_codes as dc  # noqa: E402
 from gov import grant_negotiation as gn  # noqa: E402
 
-TAXONOMY_PIN = 1915  # Wave-319 lane 1: pin 1906 -> 1915 (+9 grantneg-*)
+TAXONOMY_PIN = 1933  # Wave-319 lane 1: pin 1906 -> 1915 (+9 grantneg-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*)
 
-FOOTER_NEXT = "F405"
-FOOTER_OPEN = "none"
+FOOTER_NEXT = "F406"
+FOOTER_OPEN = "F405"
 
 _results = []
 PROBES = []

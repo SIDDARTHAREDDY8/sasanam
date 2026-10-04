@@ -37,7 +37,7 @@ Probe map:
   policy-fail-closed: verifier policy with witness_consistency but the
       bundle carries no consistency evidence -> witness-consistency-missing
       (optional-but-fail-closed: configured means required).
-  pin-taxonomy / footer-state: standard pins (1916; open none / next F405).
+  pin-taxonomy / footer-state: standard pins (1916; open F405 / next F406).
 
 Deterministic across 2 runs; $0 spend; synthetic/local. Stdlib only
 apart from gov/witness_consistency.py + gov/witness_log.py +
@@ -74,7 +74,7 @@ from gov.witness_log import WitnessLog  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 from gov import checkpoint_note as CN  # noqa: E402
 
-TAXONOMY_PIN = 1916  # Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*)
+TAXONOMY_PIN = 1933  # Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*)
 
 _NOW = 1798765432
 _SEED_OP = bytes(range(32))
@@ -454,13 +454,13 @@ def footer_state():
     # This lane files no findings. Footer lines repeat through history;
     # the LAST one is current (w314 convention).
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F405**" in text
-          and m_open and m_open[-1].strip() == "none")
+    ok = ("Next free finding: **F406**" in text
+          and m_open and m_open[-1].strip() == "F405")
     if ok:
-        _record("footer-state", "HELD", "footer: open none / next F405")
+        _record("footer-state", "HELD", "footer: open F405 / next F406")
     else:
         _record("footer-state", "BREAK",
-                "footer mismatch vs open none / next F405")
+                "footer mismatch vs open F405 / next F406")
 
 
 PROBES = [consistency_only_grew, consistency_fork_detected,

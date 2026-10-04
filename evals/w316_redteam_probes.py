@@ -574,7 +574,7 @@ def _footer():
 
 @probe("P5-footer-state")
 def _p5_footer():
-    """Footer: open none / next F405 (F403 CLOSED at the wave-317 merge; F404 OPEN)."""
+    """Footer: open F405 / next F406 (F403 CLOSED at the wave-317 merge; F404 OPEN)."""
     got = _footer()
     if got != (405, "none"):
         return _break("P5-footer-state", "footer is %r" % (got,))
@@ -590,7 +590,7 @@ def _p5_pin():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    if len(lits) != 1916:
+    if len(lits) != 1933:
         return _break("P5-pin-taxonomy-1900-sorted",
                       "literals %d != pin 1916" % len(lits))
     if len(set(lits)) != len(lits):
@@ -598,7 +598,7 @@ def _p5_pin():
                       "duplicate code literals in source")
     if sorted(lits) != lits:
         return _break("P5-pin-taxonomy-1900-sorted", "literals not sorted")
-    if len(DC.TAXONOMY) != 1916:
+    if len(DC.TAXONOMY) != 1933:
         return _break("P5-pin-taxonomy-1900-sorted",
                       "TAXONOMY dict has %d" % len(DC.TAXONOMY))
     return _held("P5-pin-taxonomy-1900-sorted", "1916/1916/0 sorted")

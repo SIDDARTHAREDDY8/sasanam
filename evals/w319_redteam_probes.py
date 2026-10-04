@@ -95,7 +95,7 @@ def _error(pid, note):
     return (pid, "ERROR", probe_lines.first_line(note)[:160])
 
 
-TAXONOMY_PIN = 1906  # Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*)
+TAXONOMY_PIN = 1933  # Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*)
 FOOTER_OPEN = "F405"
 FOOTER_NEXT = "F406"
 
