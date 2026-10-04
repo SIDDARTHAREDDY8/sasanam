@@ -454,9 +454,9 @@ def p_pin_taxonomy():
 def p_footer_state():
     with open(os.path.join(REPO, "evals", "FINDINGS.md")) as f:
         text = f.read()
-    assert "Open findings: F410, F411." in text, "footer must show open none"
+    assert "Open findings: F411." in text, "footer must show open none"
     assert "Next free finding: **F412**" in text, "next free must be F410"
-    _record("footer-state", "HELD", "open F410, F411 / next F412")
+    _record("footer-state", "HELD", "open F411 / next F412")
 
 
 def green_check():
