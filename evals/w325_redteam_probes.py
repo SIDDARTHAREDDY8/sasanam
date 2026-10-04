@@ -35,7 +35,7 @@ import w324_offver_probes as _wo  # noqa: E402
 import w324_vsa_probes as _wv  # noqa: E402
 import w322_redteam_probes as _w322  # noqa: E402
 
-TAXONOMY_PIN = 2012  # Wave-324 repoint; assert every pin equals this.
+TAXONOMY_PIN = 2020  # Wave-324 repoint; assert every pin equals this.; Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening + 6 federated-identity-*)
 FOOTER_OPEN = "F409"  # F409 filed OPEN by this lane (wave-325 lane 4).
 FOOTER_NEXT = "F410"  # Next free finding number.
 

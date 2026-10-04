@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 from keyfixture import provision_test_key  # noqa: E402  (test key material)
 
-TAXONOMY_PIN = 2018  # 2012 + 6 federated-identity codes
+TAXONOMY_PIN = 2020  # 2012 + 6 federated-identity codes; Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening (witness-alert-queue-overflow + export-witness-policy-version-below-minimum) + 6 federated-identity-*)
 
 _results = []
 
@@ -412,7 +412,7 @@ def _p16():
           "valid token verifies with the bound claims")
 
 
-@probe("P17-pin-taxonomy-2018-sorted")
+@probe("P17-pin-taxonomy-2020-sorted")
 def _p17():
     import re
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -422,7 +422,7 @@ def _p17():
         "want %d/%d/0, got %d/%d" % (TAXONOMY_PIN, TAXONOMY_PIN,
                                      len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
-    _held("P17-pin-taxonomy-2018-sorted",
+    _held("P17-pin-taxonomy-2020-sorted",
           "%d/%d/0 sorted" % (TAXONOMY_PIN, TAXONOMY_PIN))
 
 

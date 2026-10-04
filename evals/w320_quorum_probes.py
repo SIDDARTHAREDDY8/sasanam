@@ -68,7 +68,7 @@ from gov import decision_codes as dc  # noqa: E402
 from gov import quorum_approval as qa  # noqa: E402  (RED-FIRST: ImportError on open tree)
 from gov import ed25519 as _ed  # noqa: E402
 
-TAXONOMY_PIN = 2018  # Wave-320 lane 3: pin 1933 -> 1945 (+12 quorum-*); Wave-325 lane 2: pin 2012 -> 2018 (+6 federated-identity-*: identity-issuer-key-retired + identity-token-issuer-unknown + identity-token-key-binding-mismatch + identity-token-replayed + identity-token-required + identity-token-ttl-exceeded)
+TAXONOMY_PIN = 2020  # Wave-320 lane 3: pin 1933 -> 1945 (+12 quorum-*); Wave-325 lane 2: pin 2012 -> 2018 (+6 federated-identity-*: identity-issuer-key-retired + identity-token-issuer-unknown + identity-token-key-binding-mismatch + identity-token-replayed + identity-token-required + identity-token-ttl-exceeded); Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening (witness-alert-queue-overflow + export-witness-policy-version-below-minimum) + 6 federated-identity-*)
 
 
 
