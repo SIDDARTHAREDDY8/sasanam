@@ -64,7 +64,7 @@ from evals import probe_lines  # noqa: E402
 TAXONOMY_PIN = 2035#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost)
 
 
-FOOTER_OPEN = "F410"
+FOOTER_OPEN = "F412"
 FOOTER_NEXT = "F412"
 
 _NOW = datetime(2026, 10, 4, 5, 0, 0, tzinfo=timezone.utc)
@@ -729,7 +729,7 @@ def _p6b():
     ok = (m_open and m_open[-1].strip() == FOOTER_OPEN
           and m_next and m_next[-1] == FOOTER_NEXT)
     if ok:
-        return _held("P6-footer-state", "open F410 / next F412")
+        return _held("P6-footer-state", "open F412 / next F413")
     return _break("P6-footer-state",
                  "got %r / %r" % (m_open[-1] if m_open else None,
                                   m_next[-1] if m_next else None))

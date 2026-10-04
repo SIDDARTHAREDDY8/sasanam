@@ -99,7 +99,7 @@ class BaseStateTest(unittest.TestCase):
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
         # Wave-316 merge footer: F398/F399/F400 CLOSED; F401/F402/F403 OPEN; next F404.
-        ok = (m_open and m_open[-1].strip() == "F410, F411"
+        ok = (m_open and m_open[-1].strip() == "F411"
               and m_next and m_next[-1] == "F412")
         self.assertTrue(_expect_held(
             "footer-state", ok,

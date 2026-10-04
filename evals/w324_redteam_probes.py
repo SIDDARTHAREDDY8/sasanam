@@ -76,7 +76,7 @@ from tests.keyfixture import provision_test_key  # noqa: E402
 provision_test_key()
 
 TAXONOMY_PIN = 2035  # Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost)
-FOOTER_OPEN = "F410"  # F409 CLOSED by wave-326 lane 1.
+FOOTER_OPEN = "F412"  # F409/F410/F411 CLOSED; F412 (LOW, standing-conflict) OPEN.
 FOOTER_NEXT = "F412"
 
 _results = []

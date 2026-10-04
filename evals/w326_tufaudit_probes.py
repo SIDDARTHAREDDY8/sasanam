@@ -652,16 +652,16 @@ def main():
     for name, verdict, detail in results:
         print("  [%s] %s: %s" % (verdict, name, detail))
     # Expected BREAKs are the filed findings; anything else is a failure.
-    expected_breaks = {"T4c-post-rotation-pruned-v1-wedges",
-                       "T4d-post-rotation-gap-wedges"}
+    # (F410 closed wave-327 lane 2: the post-rotation bootstrap now
+    # tolerates pruned slots, so T4c/T4d hold.)
+    expected_breaks = set()
     actual_breaks = {n for n, v, _ in results if v == "BREAK"}
     ok = (errors == 0 and actual_breaks == expected_breaks)
     if not ok:
         print("MISMATCH: expected breaks %s, got %s, errors %d" % (
             sorted(expected_breaks), sorted(actual_breaks), errors))
         return 1
-    print("all probes match expectations "
-          "(2 expected BREAKs = filed F410 variants)")
+    print("all probes match expectations (0 expected BREAKs: F410 closed)")
     return 0
 
 

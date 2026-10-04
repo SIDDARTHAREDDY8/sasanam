@@ -19,7 +19,7 @@ F410 at 11:19:59 UTC). Probe P3a demonstrates it and is the single
 EXPECTED BREAK.
 
 Footer note (wave-305 lesson): the FINDINGS.md footer is now
-"open F410 / next F412". The P5 expected tallies below are the
+"open F412 / next F413". The P5 expected tallies below are the
 post-merge tallies with all footer-state probes swept to the final
 footer.
 
@@ -42,7 +42,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
 TAXONOMY_PIN = 2035  # Wave-326 merge: pin 2020 -> 2035 (+15: 1 witness-alert-state-lost + 7 standing-* + 7 scan-*).
-FOOTER_OPEN = "F410"  # F409 CLOSED (wave-326 lane 1); F411 CLOSED (wave-327 lane 1); F410 (LOW, TUF) OPEN.
+FOOTER_OPEN = "F412"  # F409/F410/F411 CLOSED; F412 (LOW, standing-conflict) OPEN.
 FOOTER_NEXT = "F412"  # Next free finding number.
 
 _results = []
@@ -822,7 +822,7 @@ def _parse_tally(text):
 
 
 # Post-merge tallies: all footer-state probes swept to the final footer
-# ("open F410 / next F412"), so the child tallies are the clean
+# ("open F412 / next F413"), so the child tallies are the clean
 # post-closure counts (F409 HELD everywhere). Child mode (GOV_SKIP_GREEN=1).
 _GREEN_EVALS = [
     ("w325-resid", "evals/w325_resid_probes.py", (0, 23, 0)),
@@ -919,7 +919,7 @@ def _p6a():
     return _held("P6a-pin-taxonomy-2035-sorted", "2035/2035/0 sorted")
 
 
-@probe("P6b-footer-open-f410-f411-next-f412")
+@probe("P6b-footer-open-f411-next-f412")
 def _p6b():
     text = open(os.path.join(REPO, "evals/FINDINGS.md")).read()
     import re
@@ -928,13 +928,13 @@ def _p6b():
     open_line = opens[-1].strip() if opens else ""
     next_free = nexts[-1].strip() if nexts else ""
     if open_line != FOOTER_OPEN:
-        return _break("P6b-footer-open-f410-f411-next-f412",
+        return _break("P6b-footer-open-f411-next-f412",
                       "open findings %r, want %r" % (open_line, FOOTER_OPEN))
     if next_free != FOOTER_NEXT:
-        return _break("P6b-footer-open-f410-f411-next-f412",
+        return _break("P6b-footer-open-f411-next-f412",
                       "next free %r, want %r" % (next_free, FOOTER_NEXT))
-    return _held("P6b-footer-open-f410-f411-next-f412",
-                 "footer open F410 / next F412")
+    return _held("P6b-footer-open-f412-next-f413",
+                 "footer open F412 / next F413")
 
 
 # ---------------------------------------------------------------------------

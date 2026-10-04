@@ -309,33 +309,47 @@ class PostRotationFloorAuditTest(AuditRepo):
         self.assertIn("pre-rotation", rep.reason.lower())
 
 
-class F410KnownIssueTest(AuditRepo):
-    """F410 (OPEN): the post-rotation bootstrap scans timestamp slots
-    from v1 and breaks on the first miss, so a repository that does not
-    serve a contiguous history from v1 wedges the client permanently.
+class F410RegressionTest(AuditRepo):
+    """F410 (CLOSED wave-327 lane 2): the post-rotation bootstrap
+    tolerates a bounded run of consecutive clean timestamp-slot misses
+    instead of breaking on the first one, so a repository that prunes
+    old slots (or leaves gaps) no longer wedges the client.
 
-    These tests pin the CURRENT wedged behavior. When F410 is closed
-    they must be rewritten to assert recovery (timestamp v5 trusted).
+    These tests pin the FIXED behavior: recovery to the highest
+    new-key-signed timestamp >= the pre-rotation floor. The floor
+    itself is still enforced (see PostRotationFloorAuditTest).
     """
 
-    def test_pruned_pre_rotation_slots_wedge(self):
+    def test_pruned_pre_rotation_slots_recover(self):
         r = self._refresher()
         self.assertEqual(r.refresh().state, "trusted")
         self._rotate([4, 5])
         for v in (1, 2, 3):
             self.files.pop(("timestamp", v))
         rep = r.refresh()
-        self.assertEqual(rep.state, "suspended")
-        self.assertIn("no timestamp version verifies", rep.reason)
-        # A second cycle does not self-heal: the wedge is permanent.
+        self.assertEqual(rep.state, "trusted")
+        self.assertEqual(rep.versions.get("timestamp"), 5)
+        # A second cycle stays trusted: no permanent wedge.
         rep2 = r.refresh()
-        self.assertEqual(rep2.state, "suspended")
+        self.assertEqual(rep2.state, "trusted")
 
-    def test_single_gap_wedges(self):
+    def test_single_gap_recovers(self):
         r = self._refresher()
         self.assertEqual(r.refresh().state, "trusted")
         self._rotate([4, 5])
         self.files.pop(("timestamp", 3))
+        rep = r.refresh()
+        self.assertEqual(rep.state, "trusted")
+        self.assertEqual(rep.versions.get("timestamp"), 5)
+
+    def test_miss_bound_still_suspends(self):
+        # Withholding past the miss bound suspends fail-closed, exactly
+        # as withholding everything does (no unbounded fetching).
+        r = self._refresher()
+        self.assertEqual(r.refresh().state, "trusted")
+        self._rotate([4, 5])
+        for v in (1, 2, 3, 4, 5):
+            self.files.pop(("timestamp", v))
         rep = r.refresh()
         self.assertEqual(rep.state, "suspended")
         self.assertIn("no timestamp version verifies", rep.reason)

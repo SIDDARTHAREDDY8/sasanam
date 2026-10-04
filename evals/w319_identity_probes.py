@@ -66,7 +66,7 @@ TAXONOMY_PIN = 2035  # Wave-319 lane 2: pin 1906 -> 1914 (+8 identity-*); Wave-3
 
 
 FOOTER_NEXT = "F412"
-FOOTER_OPEN = "F410"
+FOOTER_OPEN = "F412"
 
 _results = []
 PROBES = []

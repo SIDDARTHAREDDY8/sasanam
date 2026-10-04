@@ -207,6 +207,16 @@ DEFAULT_MAX_LENGTH = {
     "targets": 1024 * 1024,
 }
 
+#: Bound on consecutive clean timestamp-slot misses tolerated by the
+#: post-rotation bootstrap before it stops scanning (F410). A pruned
+#: repository may drop old timestamp slots or leave gaps; the bootstrap
+#: continues past misses instead of breaking on the first one. The
+#: bound keeps a hostile repository from forcing unbounded fetching:
+#: past the bound the client suspends (fail closed), exactly as if the
+#: repository withheld everything. Transport failures are not misses
+#: and still stop the scan immediately.
+POST_ROTATION_MAX_CONSECUTIVE_MISSES = 32
+
 
 def seal_role(role, doc, signers):
     """Seal ``doc`` as a signed ``role`` envelope; returns wire bytes.
@@ -1001,14 +1011,39 @@ class BundleRefresher(object):
         exploit the skipping: only versions signed under the new root's
         keys verify, and anything below the floor is a loud rollback
         refusal. Withholding just suspends (fail closed).
+
+        F410: a pruned repository may drop old timestamp slots or leave
+        gaps, so clean misses do not end the scan -- the bootstrap
+        tolerates a bounded run of consecutive misses (see
+        ``POST_ROTATION_MAX_CONSECUTIVE_MISSES``) instead of breaking on
+        the first one. The scan still starts at v1 rather than at the
+        floor: a below-floor version that verifies under the new root
+        is a loud rollback refusal, and slots below the floor can never
+        contribute to ``best``. Transport failures stop the scan
+        immediately -- the client's view of the repository is
+        unreliable, so it keeps the best version seen so far.
         """
         floor = (self._rotation_floor or {}).get("timestamp")
         version = 1
         best = None
+        misses = 0
         while True:
-            wire, _failed = self._fetch_one("timestamp", version)
+            wire, failed = self._fetch_one("timestamp", version)
             if wire is None:
-                break
+                if failed:
+                    # Transport error (warned loudly inside _fetch_one):
+                    # stop with the best version seen so far.
+                    break
+                misses += 1
+                if misses > POST_ROTATION_MAX_CONSECUTIVE_MISSES:
+                    self._warn("post-rotation bootstrap: %d consecutive "
+                               "timestamp misses (v%d..v%d); stopping the "
+                               "scan" % (misses, version - misses + 1,
+                                         version))
+                    break
+                version += 1
+                continue
+            misses = 0
             where = ("timestamp v%d fetch (post-rotation bootstrap)"
                      % version)
             try:
