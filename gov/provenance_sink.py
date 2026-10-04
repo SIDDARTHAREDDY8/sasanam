@@ -49,6 +49,7 @@ Stdlib only.
 
 import hashlib
 import json
+import re
 import time
 
 try:
@@ -211,6 +212,67 @@ class SinkVerdict(object):
 def _canon(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"),
                       ensure_ascii=True, default=str)
+
+
+#: Deterministic negation vocabulary for the F398 critical-arg fix.
+#: A critical-arg value that occurs inside a negated clause is not an
+#: authorizing mention -- mention is not authorization. This is a
+#: conservative floor, not an NLP claim: anything not recognized as
+#: negated is still judged by the ordinary trust rules, and anything
+#: recognized as negated simply stops contributing trust (fail closed).
+#: Tokens are lowercased, punctuation-stripped, apostrophes preserved.
+_NEGATION_CUES = frozenset({
+    "never", "not", "no", "none", "nobody", "nothing", "neither", "nor",
+    "without", "cannot",
+    "don't", "doesn't", "didn't", "can't", "won't", "shouldn't",
+    "wouldn't", "couldn't", "mustn't", "isn't", "aren't", "wasn't",
+    "weren't", "haven't", "hasn't", "hadn't",
+    "refuse", "refuses", "refused",
+    "prohibit", "prohibits", "prohibited",
+    "forbid", "forbids", "forbidden", "forbade",
+    "block", "blocks", "blocked",
+    "avoid", "avoided",
+    "exclude", "excludes", "excluded",
+    "disallow", "disallows", "disallowed",
+    "stop", "stopped", "stopping",
+    "deny", "denies", "denied",
+    "reject", "rejects", "rejected",
+    "halt", "halts", "halted",
+})
+
+#: Clause boundaries for negation scoping. A period splits only when
+#: followed by whitespace, so values like "mallory@evil.com" and
+#: "v1.2" are never torn apart; contrastive conjunctions start a new
+#: clause so "you may email X but never cc Y" judges X and Y
+#: independently (per-mention).
+_CLAUSE_SPLIT = re.compile(
+    r"[!?;\n]+|\.(?=\s)|\b(?:but|however|yet|although|though)\b",
+    re.IGNORECASE)
+
+_WORD = re.compile(r"[a-zA-Z']+")
+
+
+def _clause_negated(clause):
+    """True iff the clause carries a negation cue (F398)."""
+    return any(tok in _NEGATION_CUES
+               for tok in _WORD.findall(clause.lower()))
+
+
+def _affirmative_mention(content, text):
+    """True iff ``text`` occurs in ``content`` in at least one clause
+    with no negation cue (F398). A negated occurrence -- a prohibition,
+    a "don't", a "never" -- is not an authorizing mention and is
+    discounted everywhere it appears."""
+    if not content or not text:
+        return False
+    start = 0
+    for match in _CLAUSE_SPLIT.finditer(content):
+        clause = content[start:match.start()]
+        if text in clause and not _clause_negated(clause):
+            return True
+        start = match.end()
+    tail = content[start:]
+    return text in tail and not _clause_negated(tail)
 
 
 def _coerce_segment(raw):
@@ -452,9 +514,12 @@ class ProvenanceSink(object):
 
     def _bind_arg(self, value, graded):
         """Bind one arg value to a trust level, in precedence order:
-        (1) the value appears in a live user/system segment -> USER;
-        (2) else the trust of the most-recent live segment containing
-        it; (3) else the context min. Deterministic (trajectory order
+        (1) the value appears AFFIRMATIVELY in a live user/system
+        segment -> USER; (2) else the trust of the most-recent live
+        segment containing it affirmatively; (3) else the context min.
+        A negated occurrence (a prohibition: "never email X") is not an
+        authorizing mention -- mention is not authorization -- and is
+        discounted in both rules (F398). Deterministic (trajectory order
         is the tiebreak)."""
         text = value if isinstance(value, str) else _canon(value)
         if not text:
@@ -462,10 +527,11 @@ class ProvenanceSink(object):
         live = [(s, t) for s, t, _ in graded
                 if s.segment_id not in self._quarantined]
         for s, t in live:
-            if t >= T.USER and text in (s.content or ""):
+            if t >= T.USER and _affirmative_mention(s.content or "",
+                                                    text):
                 return T.USER
         for s, t in reversed(live):
-            if text in (s.content or ""):
+            if _affirmative_mention(s.content or "", text):
                 return t
         return min((t for _, t in live), default=T.UNTRUSTED)
 
