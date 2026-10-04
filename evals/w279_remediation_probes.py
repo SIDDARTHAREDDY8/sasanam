@@ -416,7 +416,7 @@ def probe_no_new_decision_codes():
     name = "no-new-decision-codes"
     try:
         from gov import decision_codes as dc  # noqa: E402
-        if len(dc.TAXONOMY) != 1973:  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*); Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*); Wave-313 lane B: pin 1851 -> 1857 (+6 approval-token-*)
+        if len(dc.TAXONOMY) != 1976:  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*); Wave-299 merge: pin 1780 -> 1797 (+17 codes: 4 delegation-* + 4 delegation-ticket-* + 3 supervision-capability-* + 3 delegation-revocation-* + 3 delegation-identity-*); Wave-313 lane B: pin 1851 -> 1857 (+6 approval-token-*)
             return _broken(name, "taxonomy pin moved: %d (wave-280 merge pin was 1541; wave-281 lane 9 adds 10 guardplugin-*)"
                            % len(dc.TAXONOMY))
         return _held(name, "pin stays 1579; no new refusal idioms")

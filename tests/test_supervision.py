@@ -64,7 +64,7 @@ class TestSupervisionDecisions(unittest.TestCase):
                      "supervision-invalid",
                      "supervision-undeclared-child"):
             self.assertIn(code, dc.TAXONOMY)
-        self.assertEqual(len(dc.TAXONOMY), 1973)  #Wave-312 lane D: pin 1841 -> 1851 (+10: 8 witness-log-* + 2 evidence-bundle-witness-*); Wave-313 lane B: pin 1851 -> 1857 (+6 approval-token-*); Wave-319 merge: pin 1906 -> 1933 (+27)
+        self.assertEqual(len(dc.TAXONOMY), 1976)  #Wave-312 lane D: pin 1841 -> 1851 (+10: 8 witness-log-* + 2 evidence-bundle-witness-*); Wave-313 lane B: pin 1851 -> 1857 (+6 approval-token-*); Wave-319 merge: pin 1906 -> 1933 (+27)
 
     def test_code_literals_sorted_unique(self):
         lits = [c for c in dc.TAXONOMY]

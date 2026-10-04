@@ -34,8 +34,8 @@ P7 (2): F399 seam -- the escalate-terminal ratchet fires at the 4th
     budget-inert by design.
 P8 (1): F403 re-probe -- decision_packet standalone offline import still
     broken on the OPEN tree (lane 1 owns the closure; not closed here).
-P9 (2): regressions -- footer (open none / next F407; F405 closed),
-    pin taxonomy 1964/1964/0 sorted.
+P9 (2): regressions -- footer (open F407 / next F408; F405 closed),
+    pin taxonomy 1976/1976/0 sorted.
 P10 (3): robustness acceptance gaming -- enum budget respected,
     string without markers fails closed, attacker>benign bits fails.
 
@@ -914,10 +914,10 @@ def _p9_footer():
         return _break("P9-footer-open-none-next-F407",
                       "F405 entry missing from FINDINGS.md")
     return _held("P9-footer-open-none-next-F407",
-                 "footer pins open none / next F407 (F404 closed)")
+                 "footer pins open F407 / next F408 (F404 closed)")
 
 
-@probe("P9-pin-taxonomy-1900-sorted")
+@probe("P9-pin-taxonomy-1976-sorted")
 def _p9_pin():
     try:
         lits = re.findall(r'"code":\s*\'([^\']+)\'',
@@ -925,14 +925,14 @@ def _p9_pin():
                                             "decision_codes.py"),
                                encoding="utf-8").read())
     except Exception as exc:  # noqa: BLE001
-        return _error("P9-pin-taxonomy-1900-sorted", "%r" % (exc,))
-    if len(lits) != 1964 or len(set(lits)) != 1964:
-        return _break("P9-pin-taxonomy-1900-sorted",
-                      "got %d literals / %d unique (want 1964/1916)"
+        return _error("P9-pin-taxonomy-1976-sorted", "%r" % (exc,))
+    if len(lits) != 1976 or len(set(lits)) != 1976:
+        return _break("P9-pin-taxonomy-1976-sorted",
+                      "got %d literals / %d unique (want 1976/1916)"
                       % (len(lits), len(set(lits))))
     if lits != sorted(lits):
-        return _break("P9-pin-taxonomy-1900-sorted", "literals not sorted")
-    return _held("P9-pin-taxonomy-1900-sorted", "1964/1964/0 sorted")
+        return _break("P9-pin-taxonomy-1976-sorted", "literals not sorted")
+    return _held("P9-pin-taxonomy-1976-sorted", "1976/1976/0 sorted")
 
 
 # ---------------------------------------------------------------------------

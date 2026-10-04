@@ -19,8 +19,8 @@ P4 (3): F405 re-probe (CLOSED wave-320 lane 1) -- apostrophe-less negation
     variants now assert the coded provenance-critical-arg-refused HELD.
 P5 (3): wave-319 follow-up spot-check -- 3 of the 70 touched batteries
     re-run beyond their pin probes (w314_provsink, w303_f385, w297_redteam).
-P6 (2): regressions -- footer open none / next F407; pin taxonomy
-    1964/1964/0 sorted on source literals.
+P6 (2): regressions -- footer open F407 / next F408; pin taxonomy
+    1976/1976/0 sorted on source literals.
 
 Result contract: each probe prints [HELD]/[BREAK]/[ERROR]. Exit 0 iff
 no ERROR and no unexpected BREAK. Zero BREAKs expected: F405 is closed
@@ -59,9 +59,9 @@ from tests.keyfixture import scrub_key_env, provision_test_key  # noqa: E402
 
 from evals import probe_lines  # noqa: E402
 
-TAXONOMY_PIN = 1964
-FOOTER_OPEN = "none"
-FOOTER_NEXT = "F407"
+TAXONOMY_PIN = 1976
+FOOTER_OPEN = "F407"
+FOOTER_NEXT = "F408"
 
 _NOW = datetime(2026, 10, 4, 5, 0, 0, tzinfo=timezone.utc)
 _NOW_INT = 1759554000
@@ -697,18 +697,18 @@ def _p5c():
 # P6: regressions (pin + footer)
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-1964-sorted")
+@probe("P6-pin-taxonomy-1976-sorted")
 def _p6a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 1964
+    ok = (len(lits) == TAXONOMY_PIN == 1976
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P6-pin-taxonomy-1964-sorted",
-                     "1964/1964/0 sorted")
-    return _break("P6-pin-taxonomy-1964-sorted",
+        return _held("P6-pin-taxonomy-1976-sorted",
+                     "1976/1976/0 sorted")
+    return _break("P6-pin-taxonomy-1976-sorted",
                  "got %d literals" % (len(lits),))
 
 
@@ -721,7 +721,7 @@ def _p6b():
     ok = (m_open and m_open[-1].strip() == FOOTER_OPEN
           and m_next and m_next[-1] == FOOTER_NEXT)
     if ok:
-        return _held("P6-footer-state", "open none / next F407")
+        return _held("P6-footer-state", "open F407 / next F408")
     return _break("P6-footer-state",
                  "got %r / %r" % (m_open[-1] if m_open else None,
                                   m_next[-1] if m_next else None))

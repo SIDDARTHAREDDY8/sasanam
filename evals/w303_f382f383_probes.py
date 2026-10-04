@@ -50,7 +50,7 @@ from gov import delegation_revocation as rev
 from gov import ed25519 as _ed25519
 from gov import workflow as wf
 
-TAXONOMY_PIN = 1973 # Wave-302 merge pin 1820; this lane mints no codes.; Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1934 -> 1934 (+1 grantneg-registry-withdrawn)
+TAXONOMY_PIN = 1976 # Wave-302 merge pin 1820; this lane mints no codes.; Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1934 -> 1934 (+1 grantneg-registry-withdrawn)
 
 _results = []
 
@@ -91,7 +91,7 @@ class BaseStateTest(unittest.TestCase):
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
         # Wave-316 re-pin: wave-315 merge footer -- open F398, F399,
         # F400 / next free F401 (F393-F397 all CLOSED).
-        ok = (m_open and m_open[-1].replace(" ", "") == "none"
+        ok = (m_open and m_open[-1].replace(" ", "") == "F407"
               and m_next and m_next[-1] == "F407")
         self.assertTrue(_expect_held(
             "footer-state", ok,
@@ -99,8 +99,8 @@ class BaseStateTest(unittest.TestCase):
 
     def test_taxonomy_pin(self):
         self.assertTrue(_expect_held(
-            "taxonomy-pin", TAXONOMY_PIN == 1973,
-            "TAXONOMY_PIN=%s, want 1973" % (TAXONOMY_PIN,)) == "HELD")
+            "taxonomy-pin", TAXONOMY_PIN == 1976,
+            "TAXONOMY_PIN=%s, want 1976" % (TAXONOMY_PIN,)) == "HELD")
 
 
 # ---------------------------------------------------------------------------

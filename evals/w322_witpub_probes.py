@@ -20,7 +20,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 1967  # 1967 + 3 witness-publish-*/witness-checkpoint-*
+TAXONOMY_PIN = 1976  # 1967 + 3 witness-publish-*/witness-checkpoint-*
 
 _results = []
 
@@ -475,18 +475,18 @@ def _p14():
 # P15: regressions -- pin taxonomy + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P15-pin-taxonomy-1967-sorted")
+@probe("P15-pin-taxonomy-1976-sorted")
 def _p15():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 1967
+    ok = (len(lits) == TAXONOMY_PIN == 1976
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        _held("P15-pin-taxonomy-1967-sorted", "1967/1967/0 sorted")
+        _held("P15-pin-taxonomy-1976-sorted", "1976/1976/0 sorted")
     else:
-        _break("P15-pin-taxonomy-1967-sorted",
+        _break("P15-pin-taxonomy-1976-sorted",
                "got %d literals" % (len(lits),))
 
 
@@ -499,7 +499,7 @@ def _p15b():
     opens = re.findall(r"Open findings: (F\d+|none)\.", text)
     nexts = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
     if opens and nexts and opens[-1] == "F406" and nexts[-1] == "F407":
-        _held("P15-footer-state", "open F406 / next F407")
+        _held("P15-footer-state", "open F407 / next F408")
     else:
         _break("P15-footer-state", "footer=%r next=%r"
                % (opens[-1] if opens else None,

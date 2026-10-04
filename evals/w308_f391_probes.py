@@ -71,7 +71,7 @@ import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 import probe_lines  # noqa: E402  (canonical probe-line form)
 
 # Wave-307 merge pin 1827; this lane mints +1 coord-lease-manager-mismatch.
-TAXONOMY_PIN = 1973 #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1933 -> 1934 (+1 grantneg-registry-withdrawn)
+TAXONOMY_PIN = 1976 #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1933 -> 1934 (+1 grantneg-registry-withdrawn)
 LEASE_MISMATCH = "coord-lease-manager-mismatch"
 
 _results = []
@@ -108,7 +108,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1973/1973/0 sorted")
+    _record("pin-taxonomy", "HELD", "1976/1976/0 sorted")
 
 
 def p_footer_state():
@@ -121,12 +121,12 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    # Wave-322 lane 1 repoint: footer open none / next F407 (F406 CLOSED).
+    # Wave-322 lane 1 repoint: footer open F407 / next F408 (F406 CLOSED).
     if nxt != 407 or open_s != "none":
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F407 "
+                       "footer drift: next F%d open %r (want next F408 "
                        "open 'none')" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open none / next F407")
+    _record("footer-state", "HELD", "footer pins open F407 / next F408")
 
 
 class _RubberStampManager:

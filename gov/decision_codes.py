@@ -17834,6 +17834,16 @@ TAXONOMY = {
         "evidence_kinds_required": ['witness-log'],
         "reverify_steps": ['re-verify-witness-checkpoint'],
     },
+    'witness-checkpoint-unknown-origin': {
+        "domain": 'witness',
+        "code": 'witness-checkpoint-unknown-origin',
+        "human": 'witness checkpoint publication: the note origin is not '
+                 'in the pinned allowed origins; the note is not this '
+                 "log's checkpoint; refused fail-closed",
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
     'witness-config-cwd-autoload': {
         "domain": 'witness',
         "code": 'witness-config-cwd-autoload',
@@ -18108,6 +18118,26 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['witness-log'],
         "reverify_steps": ['recompute'],
+    },
+    'witness-publish-quorum-unmet': {
+        "domain": 'witness',
+        "code": 'witness-publish-quorum-unmet',
+        "human": 'witness checkpoint publication: publish-time cosigning '
+                 'fell below quorum_k; the checkpoint was not published; '
+                 'refused fail-closed at the source',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
+    'witness-publish-rollback': {
+        "domain": 'witness',
+        "code": 'witness-publish-rollback',
+        "human": 'witness checkpoint publication: the checkpoint tree '
+                 'size is older than the caller-tracked last seen head; '
+                 'a rollback is never accepted; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
     },
     'witness-quorum-unmet': {
         "domain": 'witness',

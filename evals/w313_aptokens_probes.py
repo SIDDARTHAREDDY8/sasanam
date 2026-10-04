@@ -73,7 +73,7 @@ import probe_lines  # noqa: E402  (canonical probe-line emission)
 
 from gov import approval_tokens as AT  # noqa: E402
 
-TAXONOMY_PIN = 1973 # Wave-313 lane B: pin 1851 -> 1857 (+6 approval-token-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1933 -> 1934 (+1 grantneg-registry-withdrawn)
+TAXONOMY_PIN = 1976 # Wave-313 lane B: pin 1851 -> 1857 (+6 approval-token-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1933 -> 1934 (+1 grantneg-registry-withdrawn)
 
 _NOW = 1798765432
 _BENIGN = {"to": "teammate@synthetic.local", "body": "weekly report"}
@@ -441,13 +441,13 @@ def footer_state():
     # This lane files no findings. Footer lines repeat through history;
     # the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F407**" in text
-          and m_open and m_open[-1].strip() == "none")
+    ok = ("Next free finding: **F408**" in text
+          and m_open and m_open[-1].strip() == "F407")
     if ok:
-        _record("footer-state", "HELD", "footer: open none / next F407")
+        _record("footer-state", "HELD", "footer: open F407 / next F408")
     else:
         _record("footer-state", "BREAK",
-                "footer mismatch vs open none / next F407")
+                "footer mismatch vs open F407 / next F408")
 
 
 PROBES = [issue_verify_roundtrip, refuse_tampered,
