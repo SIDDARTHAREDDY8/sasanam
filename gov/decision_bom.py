@@ -60,8 +60,22 @@ BOM keeps the compact single-algorithm form.
 import hashlib
 import json
 # Wave-198: the ladder mode vocabulary (stdlib-only, no
-# import cycle).
-from .mode_ledger import LADDER_MODES
+# import cycle). Standalone fallback idiom (F403): the documented
+# offline story copies only decision_packet.py + decision_bom.py +
+# ed25519.py, so mode_ledger.py may not be importable at all. The
+# ladder vocabulary is a closed three-mode set; mirror it here rather
+# than fail the import. The mirrored constant is pinned against
+# gov/mode_ledger.py::LADDER_MODES by test_standalone_ladder_vocab so
+# vocabulary drift fails loudly. In-repo behavior is unchanged (level
+# 1 always wins when the package is importable); offline behavior can
+# only ever be stricter (a future unknown mode refuses), never looser.
+try:
+    from .mode_ledger import LADDER_MODES
+except ImportError:  # standalone/offline: mode_ledger.py beside this file
+    try:
+        from mode_ledger import LADDER_MODES
+    except ImportError:
+        LADDER_MODES = ("observe", "warn", "deny")
 
 
 BOM_VERSION = 1

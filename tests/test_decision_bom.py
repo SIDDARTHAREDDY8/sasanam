@@ -29,6 +29,10 @@ build/verify path.
 import copy
 import hashlib
 import os
+import shutil
+import subprocess
+import sys
+import tempfile
 import unittest
 
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
@@ -355,6 +359,44 @@ class PacketBomSectionTest(unittest.TestCase):
         ok, reason = dp.verify_decision_packet(resealed)
         self.assertFalse(ok)
         self.assertIn("bill_of_materials", reason)
+
+
+class TestStandaloneLadderVocab(unittest.TestCase):
+    """F403: the standalone fallback vocabulary must mirror
+    gov/mode_ledger.py::LADDER_MODES exactly, so the documented
+    offline story (decision_packet.py + decision_bom.py + ed25519.py,
+    no mode_ledger.py) can never silently diverge from in-repo
+    behavior. Drift fails loudly here.
+
+    NOTE: in-repo, level 1 of the fallback (the real mode_ledger)
+    always wins, so comparing decision_bom.LADDER_MODES in-process is
+    vacuous. This test drives the REAL level-3 fallback: it copies
+    decision_bom.py to a temp dir with no mode_ledger.py beside it and
+    reads back the bound constant in a subprocess."""
+
+    def test_standalone_ladder_vocab(self):
+        from gov.mode_ledger import LADDER_MODES as live
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        tmp = tempfile.mkdtemp(prefix="f403-vocab-")
+        try:
+            shutil.copy(os.path.join(repo, "gov", "decision_bom.py"),
+                        os.path.join(tmp, "decision_bom.py"))
+            script = (
+                "import sys\n"
+                "sys.path.insert(0, %r)\n"
+                "import decision_bom as bom\n"
+                "print(','.join(bom.LADDER_MODES))\n"
+            ) % tmp
+            p = subprocess.run(
+                [sys.executable, "-c", script], capture_output=True,
+                text=True, timeout=60, cwd=tmp)
+            self.assertEqual(p.returncode, 0, p.stderr[-500:])
+            standalone = tuple(p.stdout.strip().split(","))
+            self.assertEqual(standalone, tuple(live),
+                             "standalone fallback %r != mode_ledger %r"
+                             % (standalone, tuple(live)))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":

@@ -52,7 +52,7 @@ Probe map:
   sink-fn-body-indirection: the wave-313 lane-E deferred case -- the
       call is gated by its REAL tool identity (http_post), not the
       plan's declared name.
-  pin-taxonomy / footer-state: standard pins (1900; open F403 / next
+  pin-taxonomy / footer-state: standard pins (1900; open none / next
       F404). This lane files no findings.
 """
 
@@ -383,10 +383,10 @@ def footer_state():
     # the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
     ok = ("Next free finding: **F404**" in text
-          and m_open and m_open[-1].strip() == "F403")
+          and m_open and m_open[-1].strip() == "none")
     _held("footer-state", ok,
-          "footer: open F403 / next F404" if ok
-          else "footer mismatch vs open F403 / next F404")
+          "footer: open none / next F404" if ok
+          else "footer mismatch vs open none / next F404")
 
 
 PROBES = [label_roundtrip, label_tamper_content, label_tamper_trust,
