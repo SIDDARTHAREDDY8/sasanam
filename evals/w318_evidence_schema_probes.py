@@ -43,7 +43,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 # This lane mints no governance decision codes (the verifier taxonomy is
 # the verifier's own surface); the decision-code pin moved 1900 -> 1906 at
 # the wave-318 merge via lane 3's six trust-root-* codes.
-TAXONOMY_PIN = 1933  # Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*)
+TAXONOMY_PIN = 1934  # Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1933 -> 1934 (+1 grantneg-registry-withdrawn)
 # The verifier gains one typed code (EXTENSION_SCHEMA_INVALID): 16 -> 17.
 # Wave-318 lane 3 adds six trust-root-* chain codes: 17 -> 23.
 # Wave-318 merge: verifier taxonomy 16 -> 23.
@@ -259,7 +259,7 @@ def p_pin_taxonomy():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1933/1933/0 sorted")
+    _record("pin-taxonomy", "HELD", "1934/1934/0 sorted")
 
 
 def p_footer_state():

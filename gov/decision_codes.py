@@ -7893,6 +7893,18 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'signature', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'grantneg-registry-withdrawn': {
+        "domain": 'grantneg',
+        "code": 'grantneg-registry-withdrawn',
+        "human": 'grant negotiation: the approval record carries a grant '
+                 'that cannot be re-verified at execution -- the grant '
+                 'registry is not installed or the tool is no longer '
+                 'registered (registry withdrawn after queue time); '
+                 'refused fail-closed, never silently downgraded',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
     'grantneg-scope-mismatch': {
         "domain": 'grantneg',
         "code": 'grantneg-scope-mismatch',
