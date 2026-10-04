@@ -171,6 +171,9 @@ _NON_CODES = frozenset([
     # prefixes (function names in human ValueError messages, not decision
     # codes).
     "args_digest", "proposal_digest_of",
+    # Wave-321 merge: gov/sigstore_bundle.py error-message prefix
+    # (function name in a human ValueError message, not a decision code).
+    "open_keyed_bundle",
 ])
 
 
