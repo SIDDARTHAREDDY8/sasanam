@@ -21,14 +21,17 @@ What it adds:
    Two notes from one key at the same size with different roots refuse
    ``witness-consistency-fork-detected`` -- RFC 6962's gossip rule:
    conflicting STHs are cryptographic proof of log misbehavior.
-2. **Witness cosignatures (C2SP pattern)** -- :func:`cosign_note` lets a
-   third-party witness countersign the same checkpoint note bytes
-   (``-- <key name> base64(keyID || signature)`` lines, signature type
-   0x01 over the note text); :func:`require_cosignatures` accepts the
-   log head only with >=k distinct valid cosignatures from the
-   policy-pinned witness set. Unknown keys are ignored per the
-   signed-note collision rules; a CONFIGURED witness's bad signature
-   refuses ``witness-cosignature-invalid``, never an accept.
+2. **Witness cosignatures (C2SP pattern)** -- :func:`cosign_note_v1`
+   lets a third-party witness countersign with a cosignature/v1
+   (0x04) line: a 76-byte ``keyID(4) || u64BE timestamp(8) || sig(64)``
+   blob whose signature is over the domain-separated cosignature
+   statement, the production Rekor v2 format. :func:`cosign_note`
+   keeps the legacy 0x01 form (signature over the note text).
+   :func:`require_cosignatures` accepts the log head only with >=k
+   distinct valid cosignatures from the policy-pinned witness set.
+   Unknown keys are ignored per the signed-note collision rules; a
+   CONFIGURED witness's bad signature refuses
+   ``witness-cosignature-invalid``, never an accept.
 3. **Checkpoint freshness** -- :func:`check_freshness`: the note carries
    its issuance time as a ``timestamp <unix>`` extension line
    (spec-allowed; surfaced explicitly by the parser). A missing/
@@ -329,16 +332,48 @@ def _note_text_of(note):
 
 
 def cosign_note(note, key_name, signer):
-    """Append a witness cosignature line to a checkpoint note.
+    """Append a legacy 0x01 witness cosignature line to a checkpoint note.
 
     The witness signs the SAME note text (the bytes before the blank
-    separator) -- every signature on the note, operator and witnesses
-    alike, is over the identical text, the C2SP cosigning model.
-    Returns the new note bytes.
+    separator) -- every 0x01 signature on the note, operator and
+    witnesses alike, is over the identical text. New deployments
+    should prefer :func:`cosign_note_v1` (cosignature/v1, the
+    production Rekor v2 witness format). Returns the new note bytes.
     """
     _check_key_name(key_name)
     text = _note_text_of(note)
     line = _signature_line(key_name, signer, text)
+    data = bytes(note if not isinstance(note, str) else note.encode("utf-8"))
+    if not data.endswith(b"\n"):
+        _refuse(WITNESS_NOTE_MALFORMED,
+                "note text must end with a newline")
+    return data + line.encode("utf-8") + b"\n"
+
+
+def cosign_note_v1(note, key_name, signer, *, timestamp=None):
+    """Append a cosignature/v1 (0x04) witness line to a checkpoint note.
+
+    The witness signs the domain-separated cosignature statement
+    (``cosignature/v1\\ntime <ts>\\n<origin>\\n<size>\\n<root>\\n``),
+    NOT the note text -- the C2SP tlog-cosignature production format:
+    76-byte ``keyID(4) || u64BE timestamp(8) || sig(64)`` lines, as
+    served by Rekor v2. ``timestamp`` defaults to now; pass it
+    explicitly for deterministic emission (the publisher passes its
+    checkpoint timestamp, so same head + same timestamp -> same
+    bytes). Returns the new note bytes.
+    """
+    cn = _cn()
+    _check_key_name(key_name)
+    _check_signer(signer, "cosign_v1")
+    if timestamp is None:
+        timestamp = int(time.time())
+    fields = cn.parse_checkpoint(note)
+    try:
+        line = cn.emit_cosignature_line(
+            key_name, signer, fields["origin"], fields["tree_size"],
+            fields["root_hash"], timestamp)
+    except ValueError as exc:
+        _refuse(WITNESS_NOTE_MALFORMED, "cosign_v1: %s" % (exc,))
     data = bytes(note if not isinstance(note, str) else note.encode("utf-8"))
     if not data.endswith(b"\n"):
         _refuse(WITNESS_NOTE_MALFORMED,

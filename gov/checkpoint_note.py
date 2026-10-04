@@ -82,8 +82,10 @@ What this does NOT do (honest boundaries):
   same-(origin, size)-different-root; full consistency-proof
   verification between checkpoints of different sizes is the
   monitor's job.
-- Only Ed25519 (signature type 0x01) is implemented. Other C2SP
-  signature types are refused at verifier-key parse time.
+- Ed25519 checkpoint signatures (0x01, over the note text) and Ed25519
+  cosignature/v1 witness cosignatures (0x04, over the domain-separated
+  cosignature statement, C2SP tlog-cosignature) are implemented. Other
+  C2SP signature types are refused at verifier-key parse time.
 """
 
 import base64
@@ -123,6 +125,7 @@ def _ed():
     return _ed25519
 
 SIG_TYPE_ED25519 = 0x01
+SIG_TYPE_ED25519_COSIGNATURE_V1 = 0x04
 EM_DASH = "\u2014"
 
 CHECKPOINT_ORIGIN_EMPTY = "checkpoint-origin-empty"
@@ -200,8 +203,10 @@ def parse_vkey(vkey):
     """Parse a verifier-key string, strictly.
 
     The embedded key ID MUST recompute from (name, sig type, pubkey);
-    a vkey that does not is corrupt configuration. Only Ed25519
-    (0x01) is supported. Raises ValueError on any failure.
+    a vkey that does not is corrupt configuration. Ed25519 (0x01,
+    signatures over the note text) and Ed25519 cosignature/v1 (0x04,
+    witness cosignatures over the domain-separated cosignature
+    statement) are supported. Raises ValueError on any failure.
     """
     if not isinstance(vkey, str):
         raise ValueError("vkey must be a string")
@@ -226,7 +231,7 @@ def parse_vkey(vkey):
     if len(blob) < 2:
         raise ValueError("vkey key material too short")
     sig_type, pubkey = blob[0], blob[1:]
-    if sig_type != SIG_TYPE_ED25519:
+    if sig_type not in (SIG_TYPE_ED25519, SIG_TYPE_ED25519_COSIGNATURE_V1):
         raise ValueError("unsupported signature type 0x%02x" % sig_type)
     if len(pubkey) != 32:
         raise ValueError("Ed25519 public key must be 32 bytes")
@@ -429,6 +434,65 @@ def emit_checkpoint(origin, tree_size, root_hash, key_name, seed):
     return text_bytes + b"\n" + sig_line.encode("utf-8")
 
 
+def cosignature_v1_statement(origin, tree_size, root_hash, timestamp):
+    """The domain-separated statement a cosignature/v1 (0x04) signs.
+
+    C2SP tlog-cosignature: ``cosignature/v1\\ntime <ts>\\n<origin>\\
+    n<size>\\n<root hash>\\n`` -- timestamp-bound ("as of the specified
+    time, the consistent tree head with the largest size the cosigner
+    has observed"). ``root_hash`` is the 32-byte tree root, base64
+    exactly as in the checkpoint body; ``timestamp`` is a u64 unix
+    time, decimal in the statement. The single constructor both
+    emitters and verifiers use, so the two can never diverge.
+    """
+    if not isinstance(origin, str) or origin == "":
+        raise ValueError("origin must be a non-empty string")
+    if (not isinstance(tree_size, int) or isinstance(tree_size, bool)
+            or tree_size < 0):
+        raise ValueError("tree_size must be a non-negative int")
+    root = bytes(root_hash)
+    if len(root) != 32:
+        raise ValueError("root_hash must be 32 bytes")
+    if (not isinstance(timestamp, int) or isinstance(timestamp, bool)
+            or not 0 <= timestamp < 1 << 64):
+        raise ValueError("timestamp must be a u64")
+    return ("cosignature/v1\ntime %d\n%s\n%d\n%s\n" % (
+        timestamp, origin, tree_size,
+        base64.b64encode(root).decode("ascii"))).encode("utf-8")
+
+
+def emit_cosignature_line(key_name, signer, origin, tree_size, root_hash,
+                          timestamp):
+    """Emit a cosignature/v1 (0x04) witness signature line (no newline).
+
+    The blob is ``keyID(4) || u64BE timestamp(8) || sig(64)`` = 76
+    bytes; the signature is over :func:`cosignature_v1_statement`, NOT
+    the note text -- the production Rekor v2 witness-line format.
+    ``signer`` exposes ``.public_key`` (32 bytes, attribute) and
+    ``.sign(bytes)`` (64 bytes); signer misuse is ValueError (signer
+    configuration, not a product refusal).
+    """
+    _check_emission_name("key_name", key_name)
+    try:
+        pub = bytes(signer.public_key)
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError("signer.public_key must be 32 bytes: %s" % (exc,))
+    if len(pub) != 32:
+        raise ValueError("signer public key must be 32 bytes")
+    statement = cosignature_v1_statement(origin, tree_size, root_hash,
+                                         timestamp)
+    try:
+        sig = bytes(signer.sign(statement))
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError("signer.sign() failed: %s" % (exc,))
+    if len(sig) != 64:
+        raise ValueError("signer must return a 64-byte Ed25519 signature")
+    key_id = derive_key_id(key_name, SIG_TYPE_ED25519_COSIGNATURE_V1, pub)
+    blob = key_id + int(timestamp).to_bytes(8, "big") + sig
+    return "%s %s %s" % (
+        EM_DASH, key_name, base64.b64encode(blob).decode("ascii"))
+
+
 # ---------------------------------------------------------------------------
 # Verification.
 # ---------------------------------------------------------------------------
@@ -443,6 +507,14 @@ def verify_checkpoint(note, vkeys):
     failure and never an accept. A KNOWN key's signature that fails
     verification rejects the whole note. If no known key's signature
     verifies, the note is rejected.
+
+    Signature semantics follow the vkey's signature type: 0x01
+    (Ed25519) verifies over the note text with a 68-byte blob
+    (keyID(4)||sig(64)); 0x04 (cosignature/v1) verifies over the
+    domain-separated cosignature statement rebuilt from the note's
+    (origin, size, root) plus the u64BE timestamp embedded in its
+    76-byte blob (keyID(4)||time(8)||sig(64)). A known key's blob of
+    the wrong length for its type fails closed.
 
     Returns the parsed checkpoint fields plus ``verified_by`` (the key
     names that verified). Extension lines, if present, are returned
@@ -464,9 +536,31 @@ def verify_checkpoint(note, vkeys):
             "no signature from a known key verifies")
     verified_by = []
     for vkey, sig in known:
+        stype = vkey["signature_type"]
+        # sig["signature"] is the blob minus the 4-byte key ID (split
+        # off by _split_note): 0x01 -> sig(64); 0x04 -> time(8)||sig(64).
+        body = sig["signature"]
+        if stype == SIG_TYPE_ED25519_COSIGNATURE_V1:
+            if len(body) != 72:
+                raise CheckpointNoteError(
+                    CHECKPOINT_KNOWN_SIGNATURE_INVALID,
+                    "cosignature/v1 line from known key %r has wrong "
+                    "length; note rejected" % (vkey["name"],))
+            ts = int.from_bytes(body[0:8], "big")
+            signed = cosignature_v1_statement(
+                fields["origin"], fields["tree_size"], fields["root_hash"],
+                ts)
+            sig_bytes = body[8:]
+        else:  # SIG_TYPE_ED25519: parse_vkey admits no other type.
+            if len(body) != 64:
+                raise CheckpointNoteError(
+                    CHECKPOINT_KNOWN_SIGNATURE_INVALID,
+                    "signature line from known key %r has wrong length; "
+                    "note rejected" % (vkey["name"],))
+            signed = note_text
+            sig_bytes = body
         try:
-            good = _ed().verify(vkey["public_key"], note_text,
-                                   sig["signature"])
+            good = _ed().verify(vkey["public_key"], signed, sig_bytes)
         except Exception:
             good = False
         if not good:

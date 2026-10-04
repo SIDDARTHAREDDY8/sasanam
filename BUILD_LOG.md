@@ -16,7 +16,7 @@
 
 **Gates:** F75 35/35; registry GREEN; matrix SHIP-GATE GREEN (3216/3216); realistic 7/7; canonical 8/8 shards green (memory < 2GB → sharded per F186 lesson; shard 06 showed 1 unreproducible failure in 1785 tests, green on 3 isolated re-runs — environmental flake, documented); AMSB 90.00 / FINAL C / FP 0.0% (new scorecards deleted by exact filename). `evals/artifacts/wave23_b2/battery_100_results.json` restored from HEAD. No `.orig`/scratch files.
 
-**Footer: open F406 / next F407. Pin: 1964. Taxonomy: 1964/1964/0 sorted. Verifier: 33.**
+**Footer: open F406 / next F407. Pin: 1967. Taxonomy: 1967/1967/0 sorted. Verifier: 33.**
 
 ## 2026-10-04 — Wave-320 merge: F405 CLOSED; grants wired through the approval queue; m-of-n quorum approval; independent red team (no new findings); evidence-distribution prospectus
 
