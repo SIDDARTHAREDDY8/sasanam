@@ -48,7 +48,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2044  # Wave-326 merge pin; wave-327 lane 3 repoints to 2044 (+9 policy-channel-*)
+TAXONOMY_PIN = 2047  # Wave-326 merge pin; wave-327 lane 3 repoints to 2044 (+9 policy-channel-*); Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned)
 
 _results = []
 
@@ -295,7 +295,7 @@ def _p1g():
     # And the version bump fires the policy-change trigger.
     rec = {"digest": "d", "delegations_version": 1,
            "scan_interval_seconds": 3600, "next_scan_at": 10**12}
-    trigger, _missed = background_scan._evaluate_triggers(
+    trigger, _missed, _total = background_scan._evaluate_triggers(
         rec, digest_now="d", deleg_version_now=2, now=10**12 - 1)
     assert trigger == "policy-change", "trigger=%r" % (trigger,)
     _held("P1g-scanner-trigger-fires", "policy bump -> policy-change trigger")
@@ -460,12 +460,12 @@ def _p1o():
 # P2: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P2a-pin-taxonomy-2044")
+@probe("P2a-pin-taxonomy-2047")
 def _p2a():
     from gov.decision_codes import TAXONOMY
     assert len(TAXONOMY) == TAXONOMY_PIN, \
         "taxonomy %d != pin %d" % (len(TAXONOMY), TAXONOMY_PIN)
-    _held("P2a-pin-taxonomy-2044", "taxonomy matches pin")
+    _held("P2a-pin-taxonomy-2047", "taxonomy matches pin")
 
 
 @probe("P2b-footer-open-f412")

@@ -709,6 +709,28 @@ TAXONOMY = {
         "evidence_kinds_required": ['advisory', 'refusal-record'],
         "reverify_steps": ['recompute'],
     },
+    'advisory-input-unpinned': {
+        "domain": 'authority',
+        "code": 'advisory-input-unpinned',
+        "human": 'advisory input: the presented pinned advisory is a '
+                 'hand-built dict, not a bind_advisory_input-sealed '
+                 'PinnedAdvisory; refused fail-closed, never trusted on '
+                 'shape alone',
+        "severity": 'high',
+        "evidence_kinds_required": ['advisory', 'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'advisory-version-tie': {
+        "domain": 'authority',
+        "code": 'advisory-version-tie',
+        "human": 'advisory supersede: two presented advisories share the '
+                 'same version; the survivor would be order-dependent; '
+                 'refused fail-closed, the feed must not contain '
+                 'same-version conflicts',
+        "severity": 'medium',
+        "evidence_kinds_required": ['advisory', 'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'aggregate-budget-already-charged': {
         "domain": 'budget',
         "code": 'aggregate-budget-already-charged',
@@ -16341,6 +16363,17 @@ TAXONOMY = {
         "severity": 'high',
         "evidence_kinds_required": ['metadata', 'digest'],
         "reverify_steps": ['recompute'],
+    },
+    'supplychain-scan-already-registered': {
+        "domain": 'supplychain',
+        "code": 'supplychain-scan-already-registered',
+        "human": 'background scan: the skill is already registered; '
+                 're-registration is refused fail-closed to protect scan '
+                 'history (TTL/interval changes go through '
+                 'update_skill_registration)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['scan-report'],
+        "reverify_steps": ['register'],
     },
     'supplychain-scan-content-mismatch': {
         "domain": 'supplychain',

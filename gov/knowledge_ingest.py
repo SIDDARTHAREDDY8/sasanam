@@ -29,9 +29,14 @@ Two accepted input shapes (``schema`` field selects):
     - ``collector``   <- the feed config's collector name
     - ``known_since`` <- ``osv.published`` (RFC 3339) parsed to unix epoch
     - ``justification`` <- ``osv.summary`` + ``osv.details`` (truncated)
-    - ``asserted_standing`` <- envelope value, default ``quarantined``
-      (an OSV record says "vulnerable", not "revoked"; revocation needs a
-      native advisory)
+    - ``asserted_standing`` <- envelope value, default ``quarantined``.
+      The OSV record itself only says "vulnerable", never "revoked": a
+      "revoked" (or "trusted") assertion in an OSV envelope is the feed
+      operator's signed judgment, not the OSV record's claim. The trust
+      anchor is the feed-key signature over the envelope -- any standing
+      the feed key signs is accepted as the operator's assertion and
+      recorded as such, so an auditor always sees whose judgment moved
+      the standing (origin "osv.dev", the feed's collector).
     - ``affected_packages`` <- ``osv.affected[].package`` as
       ``"ecosystem:name"`` strings (first 8; the advisory's own claim
       about which packages it affects, so an auditor can reconstruct
