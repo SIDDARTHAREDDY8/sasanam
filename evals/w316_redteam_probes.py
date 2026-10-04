@@ -582,9 +582,9 @@ def _p5_footer():
                  "open F412 / next F413")
 
 
-@probe("P5-pin-taxonomy-2044-sorted")
+@probe("P5-pin-taxonomy-2052-sorted")
 def _p5_pin():
-    """Taxonomy pin 2044/2044/0 on raw source literals, sorted, unique
+    """Taxonomy pin 2052/2052/0 on raw source literals, sorted, unique
 
 
     (wave-260 lesson: assert on literals, not the deduped dict)."""
@@ -592,18 +592,18 @@ def _p5_pin():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    if len(lits) != 2044:
-        return _break("P5-pin-taxonomy-2044-sorted",
+    if len(lits) != 2052:
+        return _break("P5-pin-taxonomy-2052-sorted",
                       "literals %d != pin 2027" % len(lits))
     if len(set(lits)) != len(lits):
-        return _break("P5-pin-taxonomy-2044-sorted",
+        return _break("P5-pin-taxonomy-2052-sorted",
                       "duplicate code literals in source")
     if sorted(lits) != lits:
-        return _break("P5-pin-taxonomy-2044-sorted", "literals not sorted")
-    if len(DC.TAXONOMY) != 2044:
-        return _break("P5-pin-taxonomy-2044-sorted",
+        return _break("P5-pin-taxonomy-2052-sorted", "literals not sorted")
+    if len(DC.TAXONOMY) != 2052:
+        return _break("P5-pin-taxonomy-2052-sorted",
                       "TAXONOMY dict has %d" % len(DC.TAXONOMY))
-    return _held("P5-pin-taxonomy-2044-sorted", "2044/2044/0 sorted")
+    return _held("P5-pin-taxonomy-2052-sorted", "2052/2052/0 sorted")
 
 
 

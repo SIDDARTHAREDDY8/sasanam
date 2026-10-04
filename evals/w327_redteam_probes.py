@@ -1,14 +1,14 @@
 """Wave-327 independent red-team battery.
 
 Base: 542c5cee (wave-326 merge). Footer: open F412 / next F413.
-Pin: 2044.
+Pin: 2052.
 
 P1  wave-326 seams: standing_verdicts / knowledge_ingest / background_scan.
 P2  F410 re-probe (w326_tufaudit T4c/T4d -- must still BREAK; lane 2 owns it).
 P3  F411 re-probe (w326_redteam P3a -- must still BREAK; lane 1 owns it).
 P4  regression: F409 (HELD), F408/F407/F406 (HELD).
 P5  corruption-survivor probe + prior batteries in child mode.
-P6  pin 2044 + footer state.
+P6  pin 2052 + footer state.
 
 gov/ is byte-identical to base: this battery changes no product code and
 files findings only (from F412). No new decision codes from this lane.
@@ -28,7 +28,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
-TAXONOMY_PIN = 2044  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).
+TAXONOMY_PIN = 2052  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).
 FOOTER_OPEN = "F412"  # F409/F410/F411 CLOSED; F412 (LOW, standing-conflict) OPEN.
 FOOTER_NEXT = "F413"  # Next free finding number.
 
@@ -671,20 +671,20 @@ def _p5g():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2044-sorted")
+@probe("P6a-pin-taxonomy-2052-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
-    if TAXONOMY_PIN != 2044:
-        return _break("P6a-pin-taxonomy-2044-sorted",
-                      "TAXONOMY_PIN is %r, want 2044" % (TAXONOMY_PIN,))
-    if len(codes) != 2044 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-2044-sorted",
+    if TAXONOMY_PIN != 2052:
+        return _break("P6a-pin-taxonomy-2052-sorted",
+                      "TAXONOMY_PIN is %r, want 2052" % (TAXONOMY_PIN,))
+    if len(codes) != 2052 or codes != sorted(codes):
+        return _break("P6a-pin-taxonomy-2052-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    if len(set(codes)) != 2044:
-        return _break("P6a-pin-taxonomy-2044-sorted",
+    if len(set(codes)) != 2052:
+        return _break("P6a-pin-taxonomy-2052-sorted",
                       "duplicate codes in TAXONOMY")
-    return _held("P6a-pin-taxonomy-2044-sorted", "2044/2044/0 sorted")
+    return _held("P6a-pin-taxonomy-2052-sorted", "2052/2052/0 sorted")
 
 
 @probe("P6b-footer-open-f412-next-f413")

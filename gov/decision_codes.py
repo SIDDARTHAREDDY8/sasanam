@@ -4529,6 +4529,80 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
     },
+    'custody-shamir-bad-params': {
+        "domain": 'custody',
+        "code": 'custody-shamir-bad-params',
+        "human": 'shamir custody: ceremony parameters invalid (t/n range, '
+                 't=1 refused, secret below the 128-bit floor, bad ceremony id)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['record'],
+        "reverify_steps": ['recompute'],
+    },
+    'custody-shamir-ceremony-mismatch': {
+        "domain": 'custody',
+        "code": 'custody-shamir-ceremony-mismatch',
+        "human": 'shamir custody: reconstruction set spans more than one '
+                 'ceremony; shards from different ceremonies never mix',
+        "severity": 'high',
+        "evidence_kinds_required": ['record'],
+        "reverify_steps": ['recompute'],
+    },
+    'custody-shamir-commitment-mismatch': {
+        "domain": 'custody',
+        "code": 'custody-shamir-commitment-mismatch',
+        "human": 'shamir custody: reconstructed secret does not match the '
+                 'shard commitment (corrupt shard or wrong-secret mix); '
+                 'no secret returned',
+        "severity": 'high',
+        "evidence_kinds_required": ['record'],
+        "reverify_steps": ['recompute'],
+    },
+    'custody-shamir-distribute-refused': {
+        "domain": 'custody',
+        "code": 'custody-shamir-distribute-refused',
+        "human": 'shamir custody: distribution refused (duplicate custodian '
+                 'or path, missing parent dir, or existing shard file); '
+                 'nothing was written',
+        "severity": 'medium',
+        "evidence_kinds_required": ['record'],
+        "reverify_steps": ['recompute'],
+    },
+    'custody-shamir-duplicate-share': {
+        "domain": 'custody',
+        "code": 'custody-shamir-duplicate-share',
+        "human": 'shamir custody: reconstruction set contains a duplicate '
+                 'share index; interpolation would be unsound',
+        "severity": 'high',
+        "evidence_kinds_required": ['record'],
+        "reverify_steps": ['recompute'],
+    },
+    'custody-shamir-insufficient-shares': {
+        "domain": 'custody',
+        "code": 'custody-shamir-insufficient-shares',
+        "human": 'shamir custody: fewer than t shards supplied; the module '
+                 'never outputs a guess below threshold',
+        "severity": 'medium',
+        "evidence_kinds_required": ['record'],
+        "reverify_steps": ['recompute'],
+    },
+    'custody-shamir-share-malformed': {
+        "domain": 'custody',
+        "code": 'custody-shamir-share-malformed',
+        "human": 'shamir custody: shard fails shape validation (missing '
+                 'keys, bad index, length mismatch, bad encoding)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['record'],
+        "reverify_steps": ['recompute'],
+    },
+    'custody-shamir-transcript-corrupt': {
+        "domain": 'custody',
+        "code": 'custody-shamir-transcript-corrupt',
+        "human": 'shamir custody: ceremony transcript fails hash-chain '
+                 'replay; no event is appended to a broken chain',
+        "severity": 'high',
+        "evidence_kinds_required": ['record'],
+        "reverify_steps": ['recompute'],
+    },
     'decision-code-digest-malformed': {
         "domain": 'decision_codes',
         "code": 'decision-code-digest-malformed',
