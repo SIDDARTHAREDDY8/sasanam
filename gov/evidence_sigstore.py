@@ -13,8 +13,7 @@ Bundle wire shape (Sigstore Bundle v0.3 protobuf JSON)::
     {
       "mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
       "verificationMaterial": {
-        "publicKey": {"rawBytes": "<base64 32-byte Ed25519>",
-                      "keyDetails": "PKIX_ED25519"},
+        "publicKey": {"hint": "<hex sha256(DER(SPKI))>"},
         "tlogEntries": [ <witness entry> ],
         "timestampVerificationData": {          # optional, see below
           "rfc3161Timestamps": [{"signedTimestamp": "<base64>"}]
@@ -31,11 +30,17 @@ Differences from a public-Sigstore bundle, stated honestly:
 
 - The DSSE signatures are base64 (the Sigstore protobuf JSON mapping),
   not our native hex -- this is the interop surface cosign parses.
-- ``verificationMaterial.publicKey`` carries our raw Ed25519 key, not a
-  Fulcio X.509 certificate. The key is informational/interop (the key an
-  auditor would pin); verification uses the caller-supplied verifier
-  set, exactly like ``gov/evidence_dsse.py`` -- the bundle never names
-  its own authority ("keyid is a hint, never authority").
+- ``verificationMaterial.publicKey`` is the Bundle v0.3 form (1)
+  ``PublicKeyIdentifier``: ``{"hint": ...}`` ONLY, the hex
+  ``sha256(DER(SPKI))`` fingerprint (the OSSF model-signing convention,
+  shared with ``gov.sigstore_bundle.key_hint``). The raw key travels
+  out-of-band, pinned by the auditor; the witness binding resolves the
+  primary key from the caller-pinned verifier set
+  (``_resolve_primary_key``) -- never from an in-band bundle field.
+  (Wave-329: the wave-311 shape embedded
+  ``{"rawBytes": ..., "keyDetails": ...}`` where the proto allows only
+  ``hint``; strict protobuf-JSON parsers reject unknown fields, so the
+  old shape forked the wire format from the interop shape.)
 - ``tlogEntries`` carries OUR OWN Rekor-pattern witness entry, issued
   by a local witness key -- NOT the public Rekor service ($0,
   offline-first). With ``witness_log=`` (a ``gov.witness_log.WitnessLog``)
@@ -116,7 +121,17 @@ pin is untouched):
 - ``evidence-bundle-malformed`` -- bundle/envelope/token shape
   violations (bad mediaType, bad base64, missing fields, bad token
   shape, non-numeric time, missing validity window).
-- ``evidence-bundle-signature-invalid`` -- DSSE threshold not met.
+- ``evidence-bundle-verification-material`` -- verificationMaterial is
+  not the Bundle v0.3 form-(1) shape: missing ``publicKey``, or unknown
+  fields inside ``publicKey`` (``PublicKeyIdentifier`` has only
+  ``hint``), or a non-string hint. Unknown fields are refused because
+  strict protobuf-JSON parsers reject them.
+- ``evidence-bundle-hint-mismatch`` -- the hint is neither empty nor
+  the authenticated primary key's fingerprint: it names a key that did
+  not authenticate this bundle.
+- ``evidence-bundle-signature-invalid`` -- DSSE threshold not met, or
+  no pinned verifier authenticates the primary signature (the witness
+  binding cannot be checked fail-closed).
 - ``evidence-bundle-payload-type-refused`` -- envelope payloadType is
   not ``application/vnd.in-toto+json``.
 - ``evidence-bundle-predicate-refused`` -- statement ``_type`` /
@@ -163,6 +178,7 @@ import time
 from gov import dsse_envelope as _dsse
 from gov import evidence_dsse as _edsse
 from gov import evidence_intoto as _intoto
+from gov import sigstore_bundle as _sigbundle
 from gov import witness_log as _witness_log
 
 __all__ = [
@@ -376,10 +392,16 @@ def seal_sigstore_bundle(statement_envelope, signers, witness_signer,
         witness_entry["logIndex"] = "0"
 
     verification_material = {
-        "publicKey": {
-            "rawBytes": base64.b64encode(primary_pub).decode("ascii"),
-            "keyDetails": _ED25519_KEY_DETAILS,
-        },
+        # Bundle v0.3 form (1): PublicKeyIdentifier carries ONLY hint.
+        # The raw key travels out-of-band, pinned by the auditor (the
+        # open caller's verifier set); the witness binding resolves the
+        # primary key from that set (see _resolve_primary_key), never
+        # from an in-band bundle field. A strict protobuf-JSON parser
+        # rejects unknown fields inside PublicKeyIdentifier, so embedding
+        # rawBytes here would fork our wire shape from the interop shape
+        # (wave-329: fixed from the wave-311 {"rawBytes","keyDetails"}
+        # deviation documented in gov/sigstore_bundle.py).
+        "publicKey": {"hint": _sigbundle.key_hint(primary_pub)},
         "tlogEntries": [witness_entry],
     }
     if tokens:
@@ -580,7 +602,85 @@ def _check_log_inclusion(entry, leaf_bytes, log_index, witness_pub):
     return tree_size, cp["rootHash"]
 
 
-def _check_witness(entries, wire_signatures, payload_bytes, vm,
+def _resolve_primary_key(native_envelope, payload_bytes, verifiers):
+    """Return the 32-byte key that authenticated the FIRST envelope signature.
+
+    The witness entry binds the primary (signers[0] at seal) key. The
+    bundle no longer names that key in-band -- Bundle v0.3 form (1)
+    carries only the hint -- so it is resolved from the caller-pinned
+    verifier set: the key that actually verified signatures[0]. This is
+    strictly stronger than trusting an in-band value: the binding is to
+    the authenticated key. Refuses coded
+    ``evidence-bundle-signature-invalid`` when no pinned verifier
+    authenticates the primary signature (fail-closed: an unresolvable
+    primary means the witness binding cannot be checked).
+    """
+    sigs = native_envelope.get("signatures") or []
+    if not sigs:
+        _malformed("envelope carries no signatures")
+    first = sigs[0]
+    try:
+        first_sig = bytes.fromhex(first["sig"])
+    except (ValueError, TypeError, KeyError, AttributeError):
+        _malformed("primary signature is not hex")
+    first_kid = first.get("keyid")
+    payload_type = native_envelope.get("payloadType")
+    if not isinstance(payload_type, str) or not payload_type:
+        _malformed("envelope payloadType missing")
+    pae_bytes = _dsse.pae(payload_type, payload_bytes)
+    cands = list(verifiers)
+    # keyid narrows the search (unauthenticated hint); a misconfigured
+    # keyid falls back to try-all -- authentication is never weakened.
+    narrowed = [v for v in cands
+                if first_kid is None
+                or getattr(v, "key_id", None) == first_kid]
+    ordered = narrowed + [v for v in cands if v not in narrowed]
+    for verifier in ordered:
+        pub = getattr(verifier, "public_key", None)
+        if not isinstance(pub, (bytes, bytearray)) or len(pub) != 32:
+            continue
+        try:
+            ok = verifier.verify(pae_bytes, first_sig)
+        except Exception:  # noqa: BLE001
+            continue
+        if ok is True:
+            return bytes(pub)
+    _refuse("evidence-bundle-signature-invalid",
+            "no pinned verifier authenticates the primary signature")
+
+
+def _check_verification_material(vm, primary_pub):
+    """Enforce the Bundle v0.3 form-(1) shape on verificationMaterial.
+
+    ``publicKey`` must be a PublicKeyIdentifier: the ``hint`` field
+    ONLY. Unknown fields are refused -- strict protobuf-JSON parsers
+    (protojson default, as sigstore-go/cosign use) reject them, so
+    accepting them would fork our wire shape from the interop shape.
+    The hint is informational, never authority: empty (the spike-proven
+    cosign ``{"publicKey": {}}`` shape) or the authenticated primary
+    key's fingerprint. Anything else names a key that did not
+    authenticate this bundle.
+    """
+    pk = vm.get("publicKey") if isinstance(vm, dict) else None
+    if not isinstance(pk, dict):
+        _refuse("evidence-bundle-verification-material",
+                "verificationMaterial.publicKey must be an object "
+                "(Bundle v0.3 form (1): PublicKeyIdentifier)")
+    unknown = set(pk) - {"hint"}
+    if unknown:
+        _refuse("evidence-bundle-verification-material",
+                "verificationMaterial.publicKey carries unknown fields %s "
+                "(PublicKeyIdentifier has only 'hint')" % sorted(unknown))
+    hint = pk.get("hint", "")
+    if not isinstance(hint, str):
+        _refuse("evidence-bundle-verification-material",
+                "verificationMaterial.publicKey.hint must be a string")
+    if hint not in ("", _sigbundle.key_hint(primary_pub)):
+        _refuse("evidence-bundle-hint-mismatch",
+                "hint does not name the authenticated primary key")
+
+
+def _check_witness(entries, wire_signatures, payload_bytes, primary_pub,
                    witness_verifier, witness_validity):
     """Witness stage: exactly one entry of our kind, body bound to this
     bundle's artifact/signature/key, SET verified, time window honored."""
@@ -638,22 +738,19 @@ def _check_witness(entries, wire_signatures, payload_bytes, vm,
                 "logId.keyId does not name the pinned witness key")
 
     # Binding (CVE-2026-22703): recompute the canonical body from the
-    # VERIFIED envelope fields and require byte-equality with the
-    # witnessed bytes. The primary key comes from the bundle's own
-    # verificationMaterial -- this checks the entry describes THIS
-    # bundle; the SET below checks who witnessed it.
-    pubkey_field = (vm.get("publicKey") if isinstance(vm, dict) else None)
-    if not isinstance(pubkey_field, dict):
-        _malformed("verificationMaterial.publicKey must be an object")
-    primary_b64 = pubkey_field.get("rawBytes")
-    _b64_decode(primary_b64, "verificationMaterial.publicKey.rawBytes")
+    # VERIFIED envelope fields and the AUTHENTICATED primary key, and
+    # require byte-equality with the witnessed bytes. The primary key
+    # is the key that verified the first envelope signature against the
+    # caller-pinned set -- never an in-band bundle field (Bundle v0.3
+    # form (1) carries only the hint); the SET below checks who
+    # witnessed it.
     recomputed = _canonical_json(_witness_body(
         payload_bytes,
         [{"keyid": e["keyid"], "sig": base64.b64encode(e["sig"]).decode(
             "ascii")} if e["keyid"] is not None else
          {"sig": base64.b64encode(e["sig"]).decode("ascii")}
          for e in wire_signatures],
-        base64.b64decode(primary_b64)))
+        primary_pub))
     witnessed = _b64_decode(entry.get("canonicalizedBody"),
                             "tlogEntries[0].canonicalizedBody")
     if witnessed != recomputed:
@@ -748,9 +845,19 @@ def open_sigstore_bundle(bundle, expected_bundle_bytes, verifiers,
     statement = _open_statement(native_envelope, expected_bundle_bytes,
                                 verifiers, threshold)
 
+    # Primary key: the pinned key that authenticated the first envelope
+    # signature (signers[0] at seal). Resolved AFTER the threshold
+    # passed, so the witness binds the authenticated key, never an
+    # in-band claim.
+    primary_pub = _resolve_primary_key(native_envelope, payload_bytes,
+                                       verifiers)
+
+    # Bundle v0.3 form-(1) verificationMaterial: spec-shape, interop.
+    _check_verification_material(vm, primary_pub)
+
     # Witness stage: binding, time window, SET.
     witness_info = _check_witness(entries, wire_signatures, payload_bytes,
-                                  vm, witness_verifier,
+                                  primary_pub, witness_verifier,
                                   (not_before, not_after))
 
     # key_ids: which verifier keys actually signed (recomputed here so
