@@ -138,6 +138,21 @@ class TestTrustRoot(unittest.TestCase):
         self.assertEqual(v.checks[0]["step"], "trust-root-pin")
         self.assertEqual(v.checks[0]["result"], "pass")
 
+    def test_accepts_valid_floor(self):
+        v = OV._Verifier(self._root(min_policy_version=3), 1)
+        v.pin_trust_root()
+        self.assertEqual(v.min_policy_version, 3)
+
+    def test_no_floor_defaults_to_none(self):
+        v = OV._Verifier(self._root(), 1)
+        v.pin_trust_root()
+        self.assertIsNone(v.min_policy_version)
+
+    def test_rejects_bad_floor(self):
+        for bad in ("3", 0, -1, True, 2.5):
+            self._expect(self._root(min_policy_version=bad),
+                         "offline-verify-trust-root-invalid")
+
 
 class TestPackageParse(unittest.TestCase):
     def _root(self):

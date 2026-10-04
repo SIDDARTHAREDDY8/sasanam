@@ -312,5 +312,153 @@ class MainTests(unittest.TestCase):
         self.assertEqual(alert["last_code"], "witness-alert-wrapper-error")
 
 
+class QueueOverflowTests(unittest.TestCase):
+    """Wave-325 residual 1: the webhook queue bound drop is LOUD."""
+
+    def _sink(self, d, n_lines, fail=True):
+        qp = os.path.join(d, "queue.jsonl")
+        sink = ma.WebhookAlertSink("http://127.0.0.1:9/none", qp)
+        if fail:
+            sink._post = lambda alert: False
+        with open(qp, "w", encoding="utf-8") as fh:
+            for i in range(n_lines):
+                fh.write(json.dumps({"alert_id": "q-%d" % i}) + "\n")
+        return sink, qp
+
+    def _records(self, qp):
+        with open(qp, encoding="utf-8") as fh:
+            return [json.loads(ln) for ln in fh.read().splitlines()
+                    if ln.strip()]
+
+    def test_overflow_emits_coded_record_with_exact_count(self):
+        d = _tmpdir()
+        sink, qp = self._sink(d, ma._MAX_QUEUE_LINES + 5)
+        delivered, remaining = sink.drain_queue()
+        self.assertEqual((delivered, remaining), (0, ma._MAX_QUEUE_LINES))
+        over = [r for r in self._records(qp)
+                if r.get("alert_kind") == "queue-overflow"]
+        self.assertEqual(len(over), 1)
+        self.assertEqual(over[0]["last_code"],
+                         "witness-alert-queue-overflow")
+        self.assertEqual(over[0]["dropped_alerts"], 5)
+
+    def test_overflow_keeps_queue_bounded(self):
+        d = _tmpdir()
+        sink, qp = self._sink(d, ma._MAX_QUEUE_LINES + 3)
+        sink.drain_queue()
+        recs = self._records(qp)
+        self.assertLessEqual(len(recs), ma._MAX_QUEUE_LINES + 1)
+
+    def test_no_overflow_record_when_under_cap(self):
+        d = _tmpdir()
+        sink, qp = self._sink(d, 10)
+        delivered, remaining = sink.drain_queue()
+        self.assertEqual((delivered, remaining), (0, 10))
+        recs = self._records(qp)
+        self.assertEqual(len(recs), 10)
+        self.assertFalse([r for r in recs
+                          if r.get("alert_kind") == "queue-overflow"])
+
+    def test_overflow_record_is_retryable(self):
+        # The overflow record lives in the durable file sink: the next
+        # drain with a working webhook delivers it.
+        d = _tmpdir()
+        sink, qp = self._sink(d, ma._MAX_QUEUE_LINES + 2)
+        sink.drain_queue()
+        posted = []
+        sink._post = lambda alert: posted.append(alert) or True
+        delivered, remaining = sink.drain_queue()
+        kinds = [a.get("alert_kind") for a in posted]
+        self.assertIn("queue-overflow", kinds)
+        self.assertEqual(remaining, 0)
+
+
+class LastResortTests(unittest.TestCase):
+    """Wave-325 residual 2: the last-resort channel."""
+
+    def test_wrapper_error_emitted_defaults_true(self):
+        exc = ma.AlertWrapperError("some-code", "detail")
+        self.assertTrue(exc.emitted)
+
+    def test_last_resort_writes_stderr_and_file(self):
+        import io
+        import contextlib
+        d = _tmpdir()
+        lr = os.path.join(d, "last-resort.jsonl")
+        raw = {"monitor_id": "m1", "last_resort_path": lr}
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            ma._last_resort(raw, "witness-alert-wrapper-error", "boom")
+        self.assertIn("LAST-RESORT", buf.getvalue())
+        with open(lr, encoding="utf-8") as fh:
+            recs = [json.loads(ln) for ln in fh.read().splitlines()
+                    if ln.strip()]
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["kind"], "last-resort")
+        self.assertEqual(recs[0]["code"], "witness-alert-wrapper-error")
+        self.assertEqual(recs[0]["detail"], "boom")
+
+    def test_last_resort_never_raises(self):
+        # Unwritable path + broken stderr: still no raise.
+        d = _tmpdir()
+        qdir = os.path.join(d, "qdir")
+        os.makedirs(qdir)
+        raw = {"monitor_id": "m1", "last_resort_path": qdir}
+        ma._last_resort(raw, "code", "detail")  # must not raise
+
+    def test_announce_reannounces_and_clears(self):
+        d = _tmpdir()
+        lr = os.path.join(d, "last-resort.jsonl")
+        rec = {"alert_id": "witmon-alert/m1/last-resort/1/1",
+               "kind": "last-resort", "monitor_id": "m1", "ts": 1,
+               "code": "witness-alert-wrapper-error", "detail": "disk full"}
+        with open(lr, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec) + "\n")
+        sink = ma.MemoryAlertSink()
+        cfg = {"monitor_id": "m1", "last_resort_path": lr}
+        n = ma._announce_last_resort(sink, cfg, 1234)
+        self.assertEqual(n, 1)
+        self.assertEqual(len(sink.alerts), 1)
+        alert = sink.alerts[0]
+        self.assertEqual(alert["alert_kind"], "wrapper-error")
+        self.assertEqual(alert["alert_id"], rec["alert_id"])
+        self.assertIn("witness-alert-wrapper-error", alert["last_detail"])
+        with open(lr, encoding="utf-8") as fh:
+            self.assertEqual(fh.read().strip(), "")
+
+    def test_announce_corrupt_file_is_loud(self):
+        d = _tmpdir()
+        lr = os.path.join(d, "last-resort.jsonl")
+        with open(lr, "w", encoding="utf-8") as fh:
+            fh.write("not json {{{{\n")
+        sink = ma.MemoryAlertSink()
+        cfg = {"monitor_id": "m1", "last_resort_path": lr}
+        n = ma._announce_last_resort(sink, cfg, 1234)
+        self.assertEqual(n, 1)
+        self.assertEqual(sink.alerts[0]["alert_kind"], "wrapper-error")
+        self.assertIn("last-resort", sink.alerts[0]["last_detail"])
+        with open(lr, encoding="utf-8") as fh:
+            self.assertEqual(fh.read().strip(), "")
+
+    def test_announce_missing_file_is_quiet(self):
+        sink = ma.MemoryAlertSink()
+        cfg = {"monitor_id": "m1",
+               "last_resort_path": "/nonexistent-dir-xyz/lr.jsonl"}
+        n = ma._announce_last_resort(sink, cfg, 1234)
+        self.assertEqual(n, 0)
+        self.assertEqual(sink.alerts, [])
+
+    def test_config_rejects_bad_last_resort_path(self):
+        bad = {"monitor_id": "m", "state_path": "s", "alert_state_path": "a",
+               "policy_inputs": {"policy_id": "p", "policy_version": 1},
+               "witness_set": {}, "allowed_origins": [],
+               "last_resort_path": ""}
+        with self.assertRaises(ma.AlertWrapperError):
+            ma._check_config(bad)
+        bad["last_resort_path"] = 123
+        with self.assertRaises(ma.AlertWrapperError):
+            ma._check_config(bad)
+
+
 if __name__ == "__main__":
     unittest.main()

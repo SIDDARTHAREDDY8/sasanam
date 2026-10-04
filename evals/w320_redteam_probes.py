@@ -20,7 +20,7 @@ P4 (3): F405 re-probe (CLOSED wave-320 lane 1) -- apostrophe-less negation
 P5 (3): wave-319 follow-up spot-check -- 3 of the 70 touched batteries
     re-run beyond their pin probes (w314_provsink, w303_f385, w297_redteam).
 P6 (2): regressions -- footer open none / next F409; pin taxonomy
-    2012/2012/0 sorted on source literals.
+    2014/2014/0 sorted on source literals.
 
 
 
@@ -61,7 +61,7 @@ from tests.keyfixture import scrub_key_env, provision_test_key  # noqa: E402
 
 from evals import probe_lines  # noqa: E402
 
-TAXONOMY_PIN = 2012
+TAXONOMY_PIN = 2014
 
 
 FOOTER_OPEN = "none"
@@ -701,7 +701,7 @@ def _p5c():
 # P6: regressions (pin + footer)
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-2012-sorted")
+@probe("P6-pin-taxonomy-2014-sorted")
 
 
 def _p6a():
@@ -709,12 +709,12 @@ def _p6a():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2012
+    ok = (len(lits) == TAXONOMY_PIN == 2014
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P6-pin-taxonomy-2012-sorted",
-                     "2012/2012/0 sorted")
-    return _break("P6-pin-taxonomy-2012-sorted",
+        return _held("P6-pin-taxonomy-2014-sorted",
+                     "2014/2014/0 sorted")
+    return _break("P6-pin-taxonomy-2014-sorted",
 
 
                  "got %d literals" % (len(lits),))

@@ -112,7 +112,7 @@ import json
 import os
 
 # ---------------------------------------------------------------------------
-# Codes (registered centrally in gov/decision_codes.py; pin 2012).
+# Codes (registered centrally in gov/decision_codes.py; pin 2014).
 # ---------------------------------------------------------------------------
 
 OFFLINE_VERIFY_MALFORMED = "offline-verify-malformed"
@@ -306,6 +306,9 @@ class _Verifier(object):
         self.now = now
         self.checks = []
         self.facts = {}
+        # Auditor-pinned policy-version floor, validated by
+        # pin_trust_root (None = no floor, back-compat).
+        self.min_policy_version = None
         # Set by verify_evidence_bundle before check_bundle_digest when the
         # package source is a live bundle directory.
         self._dir = None
@@ -444,6 +447,18 @@ class _Verifier(object):
             self._fail(OFFLINE_VERIFY_TRUST_ROOT_INVALID, "trust-root-pin",
                        "trust_root.anchor_log_pubkey_hex must be 64-hex "
                        "(the anchor log key is pinned, never defaulted)")
+        # Optional auditor-pinned policy-version floor (the
+        # policy-currency consumer for verifier_inputs()["policy_version"]).
+        # A bad floor is a bad trust root: fail closed here, not
+        # downstream.
+        floor = root.get("min_policy_version")
+        if floor is not None and (isinstance(floor, bool)
+                                  or not isinstance(floor, int)
+                                  or floor < 1):
+            self._fail(OFFLINE_VERIFY_TRUST_ROOT_INVALID, "trust-root-pin",
+                       "trust_root.min_policy_version must be an int >= 1 "
+                       "or absent")
+        self.min_policy_version = floor
         digest = hashlib.sha256(_canonical(root)).hexdigest()
         self.facts["trust_root_digest"] = digest
         self.facts["anchor_log_pubkey"] = akey.lower()
@@ -783,7 +798,8 @@ class _Verifier(object):
                   "policy_threshold": self.trust_root["policy_threshold"]}
         try:
             summary = EW.verify_witness_layer(
-                layer, anchor, bundle_digest=digest, now=self.now)
+                layer, anchor, bundle_digest=digest, now=self.now,
+                min_policy_version=self.min_policy_version)
         except Exception as exc:  # noqa: BLE001
             code = getattr(exc, "code", None)
             # Preserve the inner coded reason: the auditor sees exactly
@@ -860,7 +876,8 @@ class _Verifier(object):
                   "policy_threshold": self.trust_root["policy_threshold"]}
         try:
             decoded = EW.decode_small_carrier(
-                carrier, layer["policy"], anchor, now=self.now)
+                carrier, layer["policy"], anchor, now=self.now,
+                min_policy_version=self.min_policy_version)
         except Exception as exc:  # noqa: BLE001
             code = getattr(exc, "code", None)
             self._fail(OFFLINE_VERIFY_WITNESS_LAYER_INVALID,
@@ -879,7 +896,10 @@ def verify_evidence_bundle(path_or_bytes, trust_root, *, now=None):
     ``witness_layer.json`` and optionally ``small_carrier.bin``) or
     the JSON bytes of a ``sasanam-offline-evidence-package/v1``
     package. ``trust_root``: the caller-pinned trust root
-    (``policy_signers``/``policy_threshold``/``anchor_log_pubkey_hex``).
+    (``policy_signers``/``policy_threshold``/``anchor_log_pubkey_hex``,
+    plus the optional ``min_policy_version`` floor -- the
+    policy-currency consumer: a verified policy below the floor
+    refuses with ``export-witness-policy-version-below-minimum``).
     ``now``: int unix time -- required; no trusted time, fail closed.
 
     Returns the itemized ``VerificationReport`` dict (``verdict:

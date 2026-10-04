@@ -80,7 +80,7 @@ import json
 import os
 
 # ---------------------------------------------------------------------------
-# Codes (registered centrally in gov/decision_codes.py; pin 2012).
+# Codes (registered centrally in gov/decision_codes.py; pin 2014).
 
 # ---------------------------------------------------------------------------
 
@@ -89,6 +89,8 @@ EXPORT_WITNESS_BUNDLE_MISMATCH = "export-witness-bundle-mismatch"
 EXPORT_WITNESS_CARRIER_OVERSIZE = "export-witness-carrier-oversize"
 EXPORT_WITNESS_CHECKPOINT_INVALID = "export-witness-checkpoint-invalid"
 EXPORT_WITNESS_POLICY_INVALID = "export-witness-policy-invalid"
+EXPORT_WITNESS_POLICY_VERSION_BELOW_MINIMUM = \
+    "export-witness-policy-version-below-minimum"
 EXPORT_WITNESS_PROOF_MISMATCH = "export-witness-proof-mismatch"
 EXPORT_WITNESS_STALE = "export-witness-stale"
 EXPORT_WITNESS_VKEY_MISMATCH = "export-witness-vkey-mismatch"
@@ -552,7 +554,33 @@ def _check_freshness(times, max_staleness, now):
                 "(now %d)" % (newest, max_staleness, now))
 
 
-def verify_witness_layer(layer, trust_anchor, *, bundle_digest, now=None):
+def _check_policy_version_floor(policy_version, min_policy_version):
+    """Enforce the auditor-pinned policy-version floor.
+
+    ``policy_version`` is the ``verifier_inputs()["policy_version"]``
+    of the verified policy. ``min_policy_version`` is the auditor's
+    floor (None = no floor, back-compat). A bad floor is malformed
+    (the auditor's own input is programmer error); a policy below a
+    good floor refuses with
+    ``export-witness-policy-version-below-minimum``.
+    """
+    if min_policy_version is None:
+        return
+    if (isinstance(min_policy_version, bool)
+            or not isinstance(min_policy_version, int)
+            or min_policy_version < 1):
+        _refuse(EXPORT_WITNESS_MALFORMED,
+                "min_policy_version must be an int >= 1 or null")
+    if policy_version < min_policy_version:
+        _refuse(EXPORT_WITNESS_POLICY_VERSION_BELOW_MINIMUM,
+                "verified policy version %d is below the auditor-pinned "
+                "minimum %d -- policy is stale, refused"
+                % (policy_version, min_policy_version))
+
+
+
+def verify_witness_layer(layer, trust_anchor, *, bundle_digest, now=None,
+                        min_policy_version=None):
     """Verify the export witness layer offline.
 
     ``layer``: the dict from :func:`build_witness_layer` (or its
@@ -561,7 +589,12 @@ def verify_witness_layer(layer, trust_anchor, *, bundle_digest, now=None):
     embedded in the layer). ``bundle_digest``: 64-char hex sha256 of
     the bundle artifact the auditor holds -- the transplant check.
     ``now``: int unix time for the freshness check (caller-supplied;
-    no trusted-now by default).
+    no trusted-now by default). ``min_policy_version``: optional
+    auditor-pinned floor for the verified policy's version -- the
+    policy-currency consumer for ``verifier_inputs()["policy_version"]``
+    (the wave-325 residual); a stale policy refuses with
+    ``export-witness-policy-version-below-minimum``. Omit it and no
+    floor is enforced (back-compat).
 
     Returns the verified summary dict. Raises
     :class:`ExportWitnessError` (coded) on any failure -- never a
@@ -614,6 +647,11 @@ def verify_witness_layer(layer, trust_anchor, *, bundle_digest, now=None):
     except Exception as exc:  # noqa: BLE001
         _refuse(EXPORT_WITNESS_POLICY_INVALID,
                 "verified policy yields no verifier inputs: %s" % (exc,))
+    # 4b. Policy currency: the auditor's pinned floor consumes
+    # verifier_inputs()["policy_version"] -- a stale policy is a
+    # coded refusal, not a silent pass (the wave-325 residual).
+    _check_policy_version_floor(inputs["policy_version"],
+                                min_policy_version)
     if layer.get("log_vkey") != verified["log"]["vkey"]:
         _refuse(EXPORT_WITNESS_VKEY_MISMATCH,
                 "embedded log_vkey != verified policy log vkey")
@@ -717,7 +755,8 @@ def encode_small_carrier(layer, *, exported_at):
     return blob
 
 
-def decode_small_carrier(blob, policy_doc, trust_anchor, *, now=None):
+def decode_small_carrier(blob, policy_doc, trust_anchor, *, now=None,
+                       min_policy_version=None):
     """Decode and verify a small-carrier blob offline.
 
     ``policy_doc`` is the sealed policy document (it travels with the
@@ -726,7 +765,10 @@ def decode_small_carrier(blob, policy_doc, trust_anchor, *, now=None):
     and size cap, the policy against the anchor, the freshness
     statement against the policy (id, version, staleness bound), the
     checkpoint's operator + quorum cosignatures, and the cosignature
-    timestamps against ``now``.
+    timestamps against ``now``. ``min_policy_version`` is the optional
+    auditor-pinned floor for the verified policy's version (same
+    semantics as :func:`verify_witness_layer`); omit it for
+    back-compat.
 
     Returns ``{checkpoint, freshness, policy_id, policy_version}``.
     Raises :class:`ExportWitnessError` (coded) on any failure.
@@ -788,6 +830,11 @@ def decode_small_carrier(blob, policy_doc, trust_anchor, *, now=None):
     except Exception as exc:  # noqa: BLE001
         _refuse(EXPORT_WITNESS_POLICY_INVALID,
                 "verified policy yields no verifier inputs: %s" % (exc,))
+    # Policy currency: the auditor's pinned floor consumes
+    # verifier_inputs()["policy_version"] (same seam as
+    # verify_witness_layer).
+    _check_policy_version_floor(inputs["policy_version"],
+                                min_policy_version)
     try:
         cos = wc.require_cosignatures(
             note, operator_vkeys=[verified["log"]["vkey"]],

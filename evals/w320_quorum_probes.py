@@ -68,7 +68,7 @@ from gov import decision_codes as dc  # noqa: E402
 from gov import quorum_approval as qa  # noqa: E402  (RED-FIRST: ImportError on open tree)
 from gov import ed25519 as _ed  # noqa: E402
 
-TAXONOMY_PIN = 2012  # Wave-320 lane 3: pin 1933 -> 1945 (+12 quorum-*)
+TAXONOMY_PIN = 2014  # Wave-320 lane 3: pin 1933 -> 1945 (+12 quorum-*)
 
 
 

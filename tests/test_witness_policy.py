@@ -330,5 +330,25 @@ class TestRotationComposition(unittest.TestCase):
                          "witness-policy-duplicate-witness")
 
 
+class TestTrustAnchorUnknownField(unittest.TestCase):
+    """Wave-325 residual 3: the trust anchor fails closed on unknown
+    fields, consistent with every other policy level."""
+
+    def test_unknown_field_refused(self):
+        doc = _seal(_body())
+        bad = _anchor()
+        bad["note"] = "a stray field that must not be silently ignored"
+        with self.assertRaises(WP.WitnessPolicyError) as ctx:
+            WP.verify_policy_document(doc, bad, _NOW)
+        self.assertEqual(ctx.exception.code,
+                         "witness-policy-unknown-field")
+
+    def test_clean_anchor_still_verifies(self):
+        doc = _seal(_body())
+        got = WP.verify_policy_document(doc, _anchor(), _NOW)
+        self.assertEqual(got["version"], 1)
+        self.assertEqual(len(got["policy_signers"]), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

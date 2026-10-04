@@ -242,5 +242,99 @@ class TestSmallCarrier(unittest.TestCase):
                          "export-witness-carrier-oversize")
 
 
+def _sealed_v3():
+    """A sealed policy identical to _sealed() but with version=3."""
+    p1, p2 = _signer(_SEED_P1), _signer(_SEED_P2)
+    body = {
+        "schema": "witness-policy/v1",
+        "policy_id": "sasanam-witness-policy",
+        "version": 3,
+        "issued_at": _NOW - 1000,
+        "expires_at": _NOW + 86400 * 90,
+        "threshold": 2,
+        "log": {"name": "op", "vkey": _op_vkey()},
+        "witnesses": [
+            {"name": "w1", "vkey": _wit_vkey("w1", _SEED_W1),
+             "operator": "w1-op", "contact": "w1@x.org",
+             "not_before": _NOW - 100000, "not_after": _NOW + 100000,
+             "status": "usable"},
+            {"name": "w2", "vkey": _wit_vkey("w2", _SEED_W2),
+             "operator": "w2-op", "contact": "w2@x.org",
+             "not_before": _NOW - 100000, "not_after": _NOW + 100000,
+             "status": "usable"},
+        ],
+        "policy_signers": [{"key_id": s.public_key.hex(),
+                            "public_key": s.public_key.hex()}
+                           for s in (p1, p2)],
+        "policy_threshold": 2,
+        "max_checkpoint_staleness_seconds": 10800,
+    }
+    return WP.seal_policy(body, [p1, p2])
+
+
+def _layer_v3():
+    leaves = _leaves()
+    return EW.build_witness_layer(
+        _DIGEST, checkpoint=_note(leaves), policy_doc=_sealed_v3(),
+        trust_anchor=_anchor(),
+        consistency_proof=EW.make_consistency_proof(leaves, 3),
+        inclusion_proofs=[EW.make_inclusion_proof(leaves, 0)],
+        now=_NOW)
+
+
+class TestPolicyVersionFloor(unittest.TestCase):
+    """Wave-325 residual 4: verifier_inputs()["policy_version"] is
+    consumed by the auditor-pinned floor."""
+
+    def test_floor_above_version_refuses_coded(self):
+        layer = _layer_v3()
+        with self.assertRaises(EW.ExportWitnessError) as ctx:
+            EW.verify_witness_layer(layer, _anchor(),
+                                    bundle_digest=_DIGEST, now=_NOW,
+                                    min_policy_version=5)
+        self.assertEqual(ctx.exception.code,
+                         "export-witness-policy-version-below-minimum")
+
+    def test_floor_equal_or_below_verifies(self):
+        layer = _layer_v3()
+        out = EW.verify_witness_layer(layer, _anchor(),
+                                      bundle_digest=_DIGEST, now=_NOW,
+                                      min_policy_version=3)
+        self.assertEqual(out["policy_version"], 3)
+        out = EW.verify_witness_layer(layer, _anchor(),
+                                      bundle_digest=_DIGEST, now=_NOW,
+                                      min_policy_version=1)
+        self.assertEqual(out["policy_version"], 3)
+
+    def test_no_floor_is_back_compat(self):
+        layer = _layer_v3()
+        out = EW.verify_witness_layer(layer, _anchor(),
+                                      bundle_digest=_DIGEST, now=_NOW)
+        self.assertEqual(out["policy_version"], 3)
+
+    def test_bad_floor_type_is_malformed(self):
+        layer = _layer_v3()
+        for bad in ("3", 0, True, 2.5):
+            with self.assertRaises(EW.ExportWitnessError) as ctx:
+                EW.verify_witness_layer(layer, _anchor(),
+                                        bundle_digest=_DIGEST, now=_NOW,
+                                        min_policy_version=bad)
+            self.assertEqual(ctx.exception.code,
+                             "export-witness-malformed")
+
+    def test_carrier_floor_refuses_coded(self):
+        layer = _layer_v3()
+        doc = _sealed_v3()
+        blob = EW.encode_small_carrier(layer, exported_at=_NOW - 10)
+        with self.assertRaises(EW.ExportWitnessError) as ctx:
+            EW.decode_small_carrier(blob, doc, _anchor(), now=_NOW,
+                                    min_policy_version=5)
+        self.assertEqual(ctx.exception.code,
+                         "export-witness-policy-version-below-minimum")
+        out = EW.decode_small_carrier(blob, doc, _anchor(), now=_NOW,
+                                      min_policy_version=3)
+        self.assertEqual(out["policy_version"], 3)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -31,16 +31,28 @@ third-party library):
   (default) appends JSON-lines alerts, fsync'd. :class:`WebhookAlertSink`
   POSTs JSON via ``urllib``; a delivery failure (exception or non-2xx)
   never crashes the monitor loop -- the alert is appended to a durable
-  queue file and retried on subsequent runs. :class:`MemoryAlertSink`
-  exists for tests.
+  queue file and retried on subsequent runs. The queue is bounded at
+  ``_MAX_QUEUE_LINES`` lines; when a drain finds the file longer than
+  the cap, the oldest lines beyond the cap are NOT retried -- but the
+  drop is never silent: a coded ``witness-alert-queue-overflow`` record
+  carrying the exact drop count is appended to the durable file sink,
+  so the overflow itself is LOUD and counted.
+  :class:`MemoryAlertSink` exists for tests.
 * **Unknown/ambiguous states alert LOUD.** A corrupt alert state, a
   monitor_id mismatch, a malformed ``monitor_step`` return, or any
   unexpected exception raises the coded
   ``witness-alert-wrapper-error`` and emits it through the sink before
-  propagating -- never silently.
+  propagating -- never silently. When the sink itself is broken (no
+  channel left), the failure takes the last-resort channel instead: a
+  structured ``LAST-RESORT`` record to stderr AND an fsync'd append to
+  the configured ``last_resort_path``; the next tick with a working
+  sink re-announces it LOUD (as a ``wrapper-error`` alert) before any
+  heartbeat resumes, then clears the file. A corrupt/unreadable
+  status file is itself announced LOUD, never ignored.
 
 Alert payload: ``alert_id``, ``alert_kind`` (``failure-alert`` |
-``heartbeat``), ``monitor_id``, ``ts``, ``consecutive_failures``,
+``heartbeat`` | ``wrapper-error`` | ``queue-overflow``), ``monitor_id``,
+``ts``, ``consecutive_failures``,
 ``last_code``, ``last_detail``, ``head`` (``{size, root}``),
 ``head_age_seconds`` (seconds since the trusted head last advanced --
 during an outage the head is frozen so the age grows, which is exactly
@@ -48,10 +60,11 @@ what the operator needs to see), ``policy_id``, ``policy_version``.
 
 Exit codes for the cron entry point: 0 = healthy run (a heartbeat may
 have been emitted); 2 = monitor refusal (alerted per the rules above);
-1 = wrapper error (alerted LOUD when the sink is usable).
+1 = wrapper error (alerted LOUD when the sink is usable; otherwise
+recorded on the last-resort channel).
 
 Only ``gov/decision_codes.py`` is touched besides this new module (the
-one ``witness-alert-*`` registration). ``gov/witness_monitor.py``,
+two ``witness-alert-*`` registrations). ``gov/witness_monitor.py``,
 ``gov/witness_publish.py`` and ``gov/witness_policy.py`` are consumed
 read-only, never modified.
 """
@@ -73,14 +86,23 @@ WITNESS_ALERT_WRAPPER_ERROR = "witness-alert-wrapper-error"
 _ALERT_STATE_VERSION = 1
 _DEFAULT_HEARTBEAT_INTERVAL_S = 86400  # one day
 _MAX_QUEUE_LINES = 10000  # operational bound on the webhook retry queue
+WITNESS_ALERT_QUEUE_OVERFLOW = "witness-alert-queue-overflow"
+_overflow_seq = 0  # process-local sequence for overflow alert ids
 
 
 class AlertWrapperError(Exception):
-    """A coded wrapper failure. Always alerted LOUD before propagating."""
+    """A coded wrapper failure.
 
-    def __init__(self, code, detail=""):
+    Always alerted LOUD before propagating -- except when the sink
+    itself cannot carry it, in which case ``emitted`` is False and the
+    caller's last-resort channel (stderr + durable status file, see
+    :func:`_last_resort`) applies.
+    """
+
+    def __init__(self, code, detail="", emitted=True):
         self.code = code
         self.detail = detail
+        self.emitted = emitted
         super().__init__("[%s] %s" % (code, detail) if detail else
                          "[%s]" % (code,))
 
@@ -214,7 +236,15 @@ class WebhookAlertSink(AlertSink):
 
     def drain_queue(self):
         """Best-effort retry of queued alerts. Returns
-        ``(delivered, remaining)``. Failures stay queued."""
+        ``(delivered, remaining)``. Failures stay queued.
+
+        When the queue file holds more than ``_MAX_QUEUE_LINES`` lines,
+        the oldest beyond the cap cannot be retried (the queue is
+        bounded); the drop is never silent -- a coded
+        ``witness-alert-queue-overflow`` record carrying the exact drop
+        count is appended to the (durable) file sink after the atomic
+        replace, so the next drain retries it like any queued alert.
+        """
         path = self._file.queue_path
         try:
             with open(path, "r", encoding="utf-8") as fh:
@@ -225,6 +255,12 @@ class WebhookAlertSink(AlertSink):
             # The queue exists but is unreadable: report it as remaining
             # without crashing the monitor run.
             return (0, -1)
+        overflow = len(lines) - _MAX_QUEUE_LINES
+        if overflow < 0:
+            overflow = 0
+        # Bound the queue; the oldest beyond the cap are NOT retried.
+        # Their count is reported LOUD via the overflow record below --
+        # never dropped silently (the wave-325 residual).
         remaining = []
         delivered = 0
         for line in lines[-_MAX_QUEUE_LINES:]:
@@ -240,8 +276,6 @@ class WebhookAlertSink(AlertSink):
                 delivered += 1
             else:
                 remaining.append(line)
-        # Bound the queue; oldest beyond the cap are dropped and the
-        # drop is documented in the module docstring (operational note).
         remaining = remaining[-_MAX_QUEUE_LINES:]
         tmp = path + ".drain.%d.tmp" % (os.getpid(),)
         with open(tmp, "w", encoding="utf-8") as fh:
@@ -250,7 +284,36 @@ class WebhookAlertSink(AlertSink):
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, path)
+        if overflow:
+            # The drop itself is an alert: durable (file sink), coded,
+            # counted. Best-effort -- a sink failure here must not crash
+            # the drain.
+            try:
+                self._emit_overflow_record(overflow)
+            except Exception:  # noqa: BLE001
+                pass
         return (delivered, len(remaining))
+
+    def _emit_overflow_record(self, dropped):
+        """Append the coded queue-overflow record to the file sink."""
+        global _overflow_seq
+        _overflow_seq += 1
+        now_s = int(time.time())
+        record = {
+            "alert_id": "witmon-alert/queue-overflow/%d/%d/%d"
+                        % (now_s, os.getpid(), _overflow_seq),
+            "alert_kind": "queue-overflow",
+            "monitor_id": "webhook-queue",
+            "ts": now_s,
+            "dropped_alerts": dropped,
+            "queue_cap": _MAX_QUEUE_LINES,
+            "last_code": WITNESS_ALERT_QUEUE_OVERFLOW,
+            "last_detail": "webhook alert queue exceeded %d lines; "
+                           "%d oldest queued alert(s) dropped -- the "
+                           "drop is reported here, never silent"
+                           % (_MAX_QUEUE_LINES, dropped),
+        }
+        self._file.emit(record)
 
 
 class MemoryAlertSink(AlertSink):
@@ -463,6 +526,11 @@ def _check_config(cfg):
         raise AlertWrapperError(WITNESS_ALERT_WRAPPER_ERROR,
                                 "config['fetch_timeout_s'] must be a "
                                 "positive number or null")
+    lrp = cfg.get("last_resort_path")
+    if lrp is not None and (not isinstance(lrp, str) or not lrp):
+        raise AlertWrapperError(WITNESS_ALERT_WRAPPER_ERROR,
+                                "config['last_resort_path'] must be a "
+                                "non-empty string or null")
     return cfg
 
 
@@ -617,11 +685,14 @@ def _heartbeat_alert(cfg, alert_state, now_s):
     }
 
 
-def _emit_loud(sink, cfg, now_s, code, detail):
-    """Emit a wrapper-error alert LOUD. Never raises for sink problems
-    (the file sink raising -- e.g. disk full -- is the one case that
-    propagates, because there is nowhere left to record it)."""
-    alert = {
+def _wrapper_error_alert(cfg, now_s, code, detail):
+    """Build (not emit) the wrapper-error alert dict.
+
+    Factored out of :func:`_emit_loud` so the last-resort
+    re-announcement (:func:`_announce_last_resort`) can construct the
+    identical alert shape without the raise.
+    """
+    return {
         "alert_id": "witmon-alert/%s/wrapper-error/%d"
                     % (cfg.get("monitor_id", "unknown"), now_s),
         "alert_kind": "wrapper-error",
@@ -635,6 +706,16 @@ def _emit_loud(sink, cfg, now_s, code, detail):
         "policy_id": None,
         "policy_version": None,
     }
+
+
+def _emit_loud(sink, cfg, now_s, code, detail):
+    """Emit a wrapper-error alert LOUD. Propagates
+    :class:`AlertWrapperError` with ``emitted=False`` when the sink
+    itself cannot carry the alert (e.g. disk full, unwritable queue
+    path) -- the caller must then use the last-resort channel
+    (:func:`_last_resort`), because there is nowhere left to record
+    it through the sink."""
+    alert = _wrapper_error_alert(cfg, now_s, code, detail)
     try:
         sink.emit(alert)
     except AlertWrapperError:
@@ -643,7 +724,148 @@ def _emit_loud(sink, cfg, now_s, code, detail):
         raise AlertWrapperError(WITNESS_ALERT_WRAPPER_ERROR,
                                 "cannot emit loud alert: %s: %s; original: "
                                 "[%s] %s" % (type(exc).__name__, exc, code,
-                                             detail))
+                                             detail),
+                                emitted=False)
+
+
+# ---------------------------------------------------------------------------
+# Last-resort channel: a wrapper failure the sink could not carry.
+# ---------------------------------------------------------------------------
+
+def _last_resort(raw, code, detail):
+    """Last-resort channel for wrapper failures with no usable sink.
+
+    Writes a structured JSON record (``LAST-RESORT`` prefix) to stderr
+    AND appends it (fsync'd) to the configured ``last_resort_path``.
+    The next tick with a working sink re-announces it LOUD before any
+    heartbeat (:func:`_announce_last_resort`). Best-effort: never
+    raises. The file only grows while the sink stays broken; the first
+    working tick clears it.
+    """
+    now_s = int(time.time())
+    monitor_id = (raw.get("monitor_id") if isinstance(raw, dict)
+                  else None) or "unknown"
+    record = {
+        "alert_id": "witmon-alert/%s/last-resort/%d/%d"
+                    % (monitor_id, now_s, os.getpid()),
+        "kind": "last-resort",
+        "monitor_id": monitor_id,
+        "ts": now_s,
+        "code": code,
+        "detail": detail,
+    }
+    line = (json.dumps(record, sort_keys=True, separators=(",", ":"))
+            + "\n").encode("utf-8")
+    try:
+        stream = getattr(sys.stderr, "buffer", None)
+        if stream is not None:
+            stream.write(b"LAST-RESORT " + line)
+        else:
+            # Text-mode stderr (e.g. captured by a supervisor): the
+            # record still goes out, decoded.
+            sys.stderr.write("LAST-RESORT " + line.decode("utf-8"))
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    path = raw.get("last_resort_path") if isinstance(raw, dict) else None
+    if not path:
+        return
+    try:
+        _append_line(path, line)
+    except Exception as exc:  # noqa: BLE001 -- stderr is all that is left
+        try:
+            sys.stderr.write("last-resort file %r unwritable: %s: %s\n"
+                             % (path, type(exc).__name__, exc))
+            sys.stderr.flush()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _emit_announcement(sink, alert):
+    """Emit one re-announcement LOUD.
+
+    Raises :class:`AlertWrapperError` with ``emitted=False`` when the
+    sink cannot carry it -- the record stays pending for the following
+    tick (dedupe by the stable alert_id prevents double-announce).
+    """
+    try:
+        sink.emit(alert)
+    except AlertWrapperError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise AlertWrapperError(
+            WITNESS_ALERT_WRAPPER_ERROR,
+            "cannot re-announce last-resort record: %s: %s"
+            % (type(exc).__name__, exc),
+            emitted=False)
+
+
+def _clear_last_resort(path):
+    """Atomically clear the last-resort file (tmp + fsync + replace)."""
+    tmp = path + ".clear.%d.tmp" % (os.getpid(),)
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
+def _announce_last_resort(sink, cfg, now_s):
+    """Re-announce pending last-resort records LOUD through the sink.
+
+    Runs at tick start -- before the webhook drain and before any
+    heartbeat -- so the next tick with a working sink surfaces the
+    prior loud failure first. Each record is re-emitted as a
+    ``wrapper-error`` alert carrying the original code/detail, keeping
+    the record's stable ``alert_id`` (dedupe: a crash between announce
+    and clear cannot double-announce). A corrupt or unreadable status
+    file is itself announced LOUD (never silently ignored), then
+    cleared. Returns the number of announcements emitted.
+    """
+    path = cfg.get("last_resort_path")
+    if not path:
+        return 0
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            lines = [ln for ln in fh.read().splitlines() if ln.strip()]
+    except FileNotFoundError:
+        return 0
+    except OSError as exc:
+        alert = _wrapper_error_alert(
+            cfg, now_s, WITNESS_ALERT_WRAPPER_ERROR,
+            "last-resort file %r unreadable: %s: %s -- refusing to "
+            "ignore it" % (path, type(exc).__name__, exc))
+        _emit_announcement(sink, alert)
+        _clear_last_resort(path)
+        return 1
+    records = []
+    corrupt = 0
+    for ln in lines:
+        try:
+            obj = json.loads(ln)
+        except ValueError:
+            corrupt += 1
+            continue
+        if isinstance(obj, dict) and obj.get("kind") == "last-resort":
+            records.append(obj)
+        else:
+            corrupt += 1
+    for rec in records:
+        alert = _wrapper_error_alert(
+            cfg, now_s, rec.get("code") or WITNESS_ALERT_WRAPPER_ERROR,
+            "re-announced last-resort failure (first recorded at ts=%s): "
+            "[%s] %s" % (rec.get("ts"), rec.get("code"), rec.get("detail")))
+        if rec.get("alert_id"):
+            alert["alert_id"] = rec["alert_id"]
+        _emit_announcement(sink, alert)
+    if corrupt:
+        alert = _wrapper_error_alert(
+            cfg, now_s, WITNESS_ALERT_WRAPPER_ERROR,
+            "last-resort file %r held %d unparseable line(s): refused "
+            "to ignore" % (path, corrupt))
+        _emit_announcement(sink, alert)
+    if records or corrupt:
+        _clear_last_resort(path)
+    return len(records) + (1 if corrupt else 0)
 
 
 # ---------------------------------------------------------------------------
@@ -657,7 +879,10 @@ def run_monitor_once(cfg):
     Returns ``{"healthy": bool, "consecutive_failures": int,
     "alerted": bool, "exit_code": int}``. Raises
     :class:`AlertWrapperError` (after a LOUD alert when the sink is
-    usable) on wrapper errors.
+    usable; with ``emitted=False`` when the sink itself could not carry
+    it) on wrapper errors. A pending last-resort record from a prior
+    failed tick is re-announced LOUD first, before the webhook drain
+    and before any heartbeat.
     """
     raw = dict(cfg)
     now_raw = raw.get("now")
@@ -666,8 +891,9 @@ def run_monitor_once(cfg):
              else int(time.time()))
     # Build the sink BEFORE config validation: a broken config must
     # still alert LOUD through a usable sink. If the sink itself is
-    # broken there is no channel, and the error propagates un-emitted
-    # (documented; nothing else can be done).
+    # broken there is no sink channel; the error propagates un-emitted
+    # (emitted=False) and the caller uses the last-resort channel
+    # (stderr + last_resort_path) instead.
     try:
         sink = _build_sink(raw)
     except AlertWrapperError:
@@ -677,12 +903,17 @@ def run_monitor_once(cfg):
     except AlertWrapperError as exc:
         if sink is not None:
             _emit_loud(sink, raw, now_s, exc.code, exc.detail)
+        else:
+            # No sink channel at all: mark the failure un-emitted so the
+            # caller takes the last-resort channel (stderr + status file).
+            exc.emitted = False
         raise
     if sink is None:
         raise AlertWrapperError(
             WITNESS_ALERT_WRAPPER_ERROR,
             "alert sink configuration is invalid and there is no "
-            "channel to alert through")
+            "channel to alert through",
+            emitted=False)
     wm = _monitor_mod()
     threshold = cfg.get("alert_after_failures")
     if threshold is None:
@@ -691,6 +922,11 @@ def run_monitor_once(cfg):
     def _loud(code, detail):
         _emit_loud(sink, cfg, now_s, code, detail)
         raise AlertWrapperError(code, detail)
+
+    # Re-announce a prior tick's last-resort failure LOUD, first: a
+    # recovered sink surfaces what the broken sink could not say,
+    # before any heartbeat resumes.
+    _announce_last_resort(sink, cfg, now_s)
 
     # Drain the webhook retry queue first (best effort; failures stay
     # queued). A drain problem never blocks the monitor run.
@@ -865,9 +1101,19 @@ def main(argv):
     try:
         outcome = run_monitor_once(cfg)
     except AlertWrapperError as exc:
+        # A wrapper failure the sink could not carry (emitted=False)
+        # takes the last-resort channel: structured record to stderr
+        # and the durable status file, re-announced by the next tick.
+        if not getattr(exc, "emitted", True):
+            _last_resort(cfg, exc.code, exc.detail)
         print("wrapper error: %s" % (exc,), file=sys.stderr)
         return 1
     except Exception as exc:  # noqa: BLE001 -- truly unexpected
+        # Never emitted through the sink: last-resort it too. The record
+        # code is the registered wrapper-error code (the detail carries
+        # the exception type) -- no unregistered strings in code fields.
+        _last_resort(cfg, WITNESS_ALERT_WRAPPER_ERROR,
+                     "unexpected %s: %s" % (type(exc).__name__, exc))
         print("unexpected error: %s: %s" % (type(exc).__name__, exc),
               file=sys.stderr)
         return 1

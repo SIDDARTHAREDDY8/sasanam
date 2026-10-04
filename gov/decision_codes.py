@@ -7357,6 +7357,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['witness-log'],
         "reverify_steps": ['recompute'],
     },
+    'export-witness-policy-version-below-minimum': {
+        "domain": 'witness',
+        "code": 'export-witness-policy-version-below-minimum',
+        "human": 'offline export witness layer: the verified witness '
+                 'policy is below the auditor-pinned minimum policy '
+                 'version (policy-currency floor) -- the policy is '
+                 'stale; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
     'export-witness-proof-mismatch': {
         "domain": 'witness',
         "code": 'export-witness-proof-mismatch',
@@ -18137,6 +18148,17 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['jail-policy', 'measurement'],
         "reverify_steps": ['recompute'],
+    },
+    'witness-alert-queue-overflow': {
+        "domain": 'witness',
+        "code": 'witness-alert-queue-overflow',
+        "human": 'witness monitor webhook alert queue: the retry queue '
+                 'exceeded its bound and the oldest queued alerts were '
+                 'dropped -- the drop itself is reported LOUD with the '
+                 'exact count, never silent',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
     },
     'witness-alert-wrapper-error': {
         "domain": 'witness',

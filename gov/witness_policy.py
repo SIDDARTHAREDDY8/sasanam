@@ -384,6 +384,10 @@ def _check_trust_anchor(anchor):
     if not isinstance(anchor, dict):
         _refuse(WITNESS_POLICY_MALFORMED,
                 "trust_anchor must be a mapping")
+    # The anchor is a trust root: unknown fields fail closed, exactly
+    # like every other policy level (the wave-325 residual).
+    _no_unknown(anchor, frozenset(["policy_signers", "policy_threshold"]),
+                "trust_anchor")
     raw = anchor.get("policy_signers")
     if not isinstance(raw, (list, tuple)) or not raw:
         _refuse(WITNESS_POLICY_MALFORMED,

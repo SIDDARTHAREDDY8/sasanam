@@ -23,7 +23,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2012  # 1976 + 5 witness-monitor-*
+TAXONOMY_PIN = 2014  # 1976 + 5 witness-monitor-*
 
 
 
