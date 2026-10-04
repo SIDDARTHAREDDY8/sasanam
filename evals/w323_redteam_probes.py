@@ -31,6 +31,7 @@ Attacks the wave-322 NEW surfaces break-first (base 0b03472b):
       none / next F409 (F406 and F407 both closed).
 
 
+
 Result: no genuine new findings from this campaign -- every attack
 refuses coded or is held as documented caller-trust/design behavior.
 F407's 4 probes now assert the coded refusal (CLOSED). gov/ is byte-identical to
@@ -70,6 +71,7 @@ from tests.keyfixture import provision_test_key  # noqa: E402
 provision_test_key()
 
 TAXONOMY_PIN = 1991
+
 
 FOOTER_OPEN = "none"
 FOOTER_NEXT = "F409"
@@ -940,6 +942,7 @@ def green_check():
 
 @probe("P6-pin-taxonomy-1991-sorted")
 
+
 def _p6a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
@@ -950,6 +953,7 @@ def _p6a():
     if ok:
         return _held("P6-pin-taxonomy-1991-sorted", "1991/1991/0 sorted")
     return _break("P6-pin-taxonomy-1991-sorted",
+
 
                   "got %d literals" % (len(lits),))
 

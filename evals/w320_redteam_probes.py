@@ -23,6 +23,7 @@ P6 (2): regressions -- footer open none / next F409; pin taxonomy
     1991/1991/0 sorted on source literals.
 
 
+
 Result contract: each probe prints [HELD]/[BREAK]/[ERROR]. Exit 0 iff
 no ERROR and no unexpected BREAK. Zero BREAKs expected: F405 is closed
 and every surface must HOLD.
@@ -61,6 +62,7 @@ from tests.keyfixture import scrub_key_env, provision_test_key  # noqa: E402
 from evals import probe_lines  # noqa: E402
 
 TAXONOMY_PIN = 1991
+
 
 FOOTER_OPEN = "none"
 FOOTER_NEXT = "F409"
@@ -701,6 +703,7 @@ def _p5c():
 
 @probe("P6-pin-taxonomy-1991-sorted")
 
+
 def _p6a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
@@ -712,6 +715,7 @@ def _p6a():
         return _held("P6-pin-taxonomy-1991-sorted",
                      "1991/1991/0 sorted")
     return _break("P6-pin-taxonomy-1991-sorted",
+
 
                  "got %d literals" % (len(lits),))
 

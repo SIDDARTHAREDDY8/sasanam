@@ -248,6 +248,7 @@ def red_c02_pin():
     if len(codes) == 1991 and len(set(codes)) == 1991:
         situation("c02", "pin 1991/1991/0", "HELD")
 
+
     else:
         situation("c02", "pin drift: %d/%d" % (len(codes),
                                                len(set(codes))), "BREAK")

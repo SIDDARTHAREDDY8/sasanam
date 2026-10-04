@@ -44,6 +44,7 @@ ISSUER = "w316-probe-approver"
 EXPECTED_PIN = 1991  # Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 merge: pin 1906 -> 1933 (+27)
 
 
+
 PROBES = []
 
 

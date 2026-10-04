@@ -71,6 +71,7 @@ from gov import ed25519 as _ed  # noqa: E402
 TAXONOMY_PIN = 1991  # Wave-320 lane 3: pin 1933 -> 1945 (+12 quorum-*)
 
 
+
 FOOTER_NEXT = "F409"
 FOOTER_OPEN = "none"
 

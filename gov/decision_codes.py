@@ -18061,6 +18061,59 @@ TAXONOMY = {
         "evidence_kinds_required": ['vsa-packet', 'signature'],
         "reverify_steps": ['replay-vsa-consumer'],
     },
+    'vsa-threshold-below-quorum': {
+        "domain": 'vsa',
+        "code": 'vsa-threshold-below-quorum',
+        "human": 'threshold VSA: fewer distinct valid verifier signatures '
+                 'than the packet threshold (or the consumer minimum); '
+                 'duplicate signatures from one verifier count once; '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['vsa-packet', 'signature'],
+        "reverify_steps": ['replay-vsa-consumer'],
+    },
+    'vsa-threshold-policy-stale': {
+        "domain": 'vsa',
+        "code": 'vsa-threshold-policy-stale',
+        "human": 'threshold VSA: the attested policy id/version is below '
+                 'the consumer currency floor; a VSA under a superseded '
+                 'policy is not silently accepted; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['vsa-packet', 'signature'],
+        "reverify_steps": ['replay-vsa-consumer'],
+    },
+    'vsa-threshold-signature-invalid': {
+        "domain": 'vsa',
+        "code": 'vsa-threshold-signature-invalid',
+        "human": 'threshold VSA: an attestation signature does not verify '
+                 'over the common statement plus the signer identity '
+                 'descriptor -- forgery or transplant signal; refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['vsa-packet', 'signature'],
+        "reverify_steps": ['replay-vsa-consumer'],
+    },
+    'vsa-threshold-signer-unpinned': {
+        "domain": 'vsa',
+        "code": 'vsa-threshold-signer-unpinned',
+        "human": 'threshold VSA: the attestation names a verifier (or a '
+                 'key for a verifier) the consumer has not pinned; '
+                 'consumers accept only specific (signer, verifier) pairs; '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['vsa-packet', 'signature'],
+        "reverify_steps": ['replay-vsa-consumer'],
+    },
+    'vsa-threshold-verdict-not-passed': {
+        "domain": 'vsa',
+        "code": 'vsa-threshold-verdict-not-passed',
+        "human": 'threshold VSA: the quorum verdict is not PASSED; a '
+                 'non-passing attestation quorum is evidence input, never '
+                 'an authorization; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['vsa-packet', 'signature'],
+        "reverify_steps": ['replay-vsa-consumer'],
+    },
     'wall_proof_unreadable': {
         "domain": 'platform',
         "code": 'wall_proof_unreadable',

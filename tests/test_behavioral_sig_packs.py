@@ -27,6 +27,7 @@ TAXONOMY_PIN = 1991 # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* +
 
 
 
+
 def _keys():
     seed = ed25519.generate_seed()
     return seed, ed25519.publickey(seed)

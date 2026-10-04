@@ -22,6 +22,7 @@ sys.path.insert(0, REPO)
 TAXONOMY_PIN = 1991  # 1976 + 8 export-witness-*
 
 
+
 _results = []
 
 
@@ -567,6 +568,7 @@ def _p5b():
 
 @probe("P6-pin-taxonomy-1991-sorted")
 
+
 def _p6a():
     from gov import decision_codes as DC
     n = len(DC.TAXONOMY)
@@ -576,6 +578,7 @@ def _p6a():
     else:
         _break("P6-pin-taxonomy-1991-sorted",
                "want 1991/1991/0 sorted, got %d (sorted=%s)"
+
 
                % (n, list(DC.TAXONOMY.keys()) == codes))
 

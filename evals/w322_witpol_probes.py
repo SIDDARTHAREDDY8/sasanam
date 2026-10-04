@@ -21,6 +21,7 @@ P4 (2): regressions -- footer open none / next F409; pin taxonomy
     1991/1991/0 sorted on source literals.
 
 
+
 Result contract: each probe prints [HELD]/[BREAK]/[ERROR]. Exit 0 iff
 no ERROR and no unexpected BREAK. On the OPEN tree (module absent) the
 top-level import fails with ImportError before any probe runs -- the
@@ -51,6 +52,7 @@ from gov.witness_log import WitnessLog  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
 TAXONOMY_PIN = 1991
+
 
 FOOTER_OPEN = "none"
 FOOTER_NEXT = "F409"
@@ -534,6 +536,7 @@ def _p3c():
 
 @probe("P4-pin-taxonomy-1991-sorted")
 
+
 def _p4a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
@@ -544,6 +547,7 @@ def _p4a():
     if ok:
         return _held("P4-pin-taxonomy-1991-sorted", "1991/1991/0 sorted")
     return _break("P4-pin-taxonomy-1991-sorted",
+
 
                   "got %d literals" % (len(lits),))
 

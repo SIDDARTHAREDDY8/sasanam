@@ -294,6 +294,7 @@ def p_pin_taxonomy():
     return _held("pin-taxonomy-1991-sorted", ok,
                  "1991/1991/0 sorted" if ok
 
+
                  else "taxonomy drift: %d literals" % len(lits))
 
 
@@ -322,6 +323,7 @@ PROBES = [
      p_expired_between_queue_and_execution),
     ("human-edited-args-break-scope", p_human_edited_args_break_scope),
     ("pin-taxonomy-1991-sorted", p_pin_taxonomy),
+
 
     ("footer-state", p_footer_state),
 ]
