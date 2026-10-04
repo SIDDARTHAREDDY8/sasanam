@@ -37,7 +37,7 @@ Probe map:
   policy-fail-closed: verifier policy with witness_consistency but the
       bundle carries no consistency evidence -> witness-consistency-missing
       (optional-but-fail-closed: configured means required).
-  pin-taxonomy / footer-state: standard pins (1946; open none / next F406).
+  pin-taxonomy / footer-state: standard pins (1946; open F406 / next F407).
 
 Deterministic across 2 runs; $0 spend; synthetic/local. Stdlib only
 apart from gov/witness_consistency.py + gov/witness_log.py +
@@ -454,13 +454,13 @@ def footer_state():
     # This lane files no findings. Footer lines repeat through history;
     # the LAST one is current (w314 convention).
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F406**" in text
-          and m_open and m_open[-1].strip() == "none")
+    ok = ("Next free finding: **F407**" in text
+          and m_open and m_open[-1].strip() == "F406")
     if ok:
-        _record("footer-state", "HELD", "footer: open none / next F406")
+        _record("footer-state", "HELD", "footer: open F406 / next F407")
     else:
         _record("footer-state", "BREAK",
-                "footer mismatch vs open none / next F406")
+                "footer mismatch vs open F406 / next F407")
 
 
 PROBES = [consistency_only_grew, consistency_fork_detected,

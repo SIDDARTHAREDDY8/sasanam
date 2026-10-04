@@ -19,7 +19,7 @@ P4 (3): F405 re-probe (CLOSED wave-320 lane 1) -- apostrophe-less negation
     variants now assert the coded provenance-critical-arg-refused HELD.
 P5 (3): wave-319 follow-up spot-check -- 3 of the 70 touched batteries
     re-run beyond their pin probes (w314_provsink, w303_f385, w297_redteam).
-P6 (2): regressions -- footer open none / next F406; pin taxonomy
+P6 (2): regressions -- footer open F406 / next F407; pin taxonomy
     1946/1946/0 sorted on source literals.
 
 Result contract: each probe prints [HELD]/[BREAK]/[ERROR]. Exit 0 iff
@@ -60,8 +60,8 @@ from tests.keyfixture import scrub_key_env, provision_test_key  # noqa: E402
 from evals import probe_lines  # noqa: E402
 
 TAXONOMY_PIN = 1946
-FOOTER_OPEN = "none"
-FOOTER_NEXT = "F406"
+FOOTER_OPEN = "F406"
+FOOTER_NEXT = "F407"
 
 _NOW = datetime(2026, 10, 4, 5, 0, 0, tzinfo=timezone.utc)
 _NOW_INT = 1759554000
@@ -721,7 +721,7 @@ def _p6b():
     ok = (m_open and m_open[-1].strip() == FOOTER_OPEN
           and m_next and m_next[-1] == FOOTER_NEXT)
     if ok:
-        return _held("P6-footer-state", "open none / next F406")
+        return _held("P6-footer-state", "open F406 / next F407")
     return _break("P6-footer-state",
                  "got %r / %r" % (m_open[-1] if m_open else None,
                                   m_next[-1] if m_next else None))
