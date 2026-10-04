@@ -27,7 +27,7 @@ What the battery pins:
    (custody-shamir-ceremony-mismatch).
 10. Transcript: chain verifies; tampering refuses coded
     custody-shamir-transcript-corrupt; never appends to a broken chain.
-11. Pin 2052 + footer open F412 / next F413.
+11. Pin 2056 + footer open F413 / next F414.
 
 Staging default is set at module level (the harness refuses the declared
 ungoverned_ack in production mode).
@@ -44,10 +44,10 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2052  # Wave-327 merge pin 2044; wave-328 lane 3 repoints to 2052 (+8 custody-shamir-*)
+TAXONOMY_PIN = 2056  # Wave-327 merge pin 2056; wave-328 lane 3 repoints to 2044 (+8 custody-shamir-*); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*)
 
-FOOTER_OPEN = "F412"
-FOOTER_NEXT = "F413"
+FOOTER_OPEN = "F413"
+FOOTER_NEXT = "F414"
 
 _results = []
 
@@ -417,23 +417,23 @@ def _p11():
     src = open(os.path.join(REPO, "gov", "decision_codes.py")).read()
     codes = re.findall(r'"code":\s*["\']([^"\']+)["\']', src)
     if len(codes) != TAXONOMY_PIN or len(set(codes)) != TAXONOMY_PIN:
-        return _break("P11-pin-taxonomy-2052-sorted",
-                      "want 2052/2052 got %d/%d" % (len(codes), len(set(codes))))
+        return _break("P11-pin-taxonomy-2056-sorted",
+                      "want 2056/2056 got %d/%d" % (len(codes), len(set(codes))))
     if codes != sorted(codes):
-        return _break("P11-pin-taxonomy-2052-sorted", "not sorted")
+        return _break("P11-pin-taxonomy-2056-sorted", "not sorted")
     if len(dc.TAXONOMY) != TAXONOMY_PIN:
-        return _break("P11-pin-taxonomy-2052-sorted", "TAXONOMY dict size drift")
-    _held("P11-pin-taxonomy-2052-sorted", "2052/2052/0 sorted unique")
+        return _break("P11-pin-taxonomy-2056-sorted", "TAXONOMY dict size drift")
+    _held("P11-pin-taxonomy-2056-sorted", "2056/2056/0 sorted unique")
     # Footer state.
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
     m = None
     for line in text.splitlines():
         if "Next free finding" in line:
             m = line
-    if m is None or "F413" not in m or "F412" not in m:
-        _break("P11-footer-open-F412-next-F413", "footer line wrong: %r" % (m,))
+    if m is None or "F413" not in m or "F414" not in m:
+        _break("P11-footer-open-F413-next-F414", "footer line wrong: %r" % (m,))
     else:
-        _held("P11-footer-open-F412-next-F413", "footer open F412 / next F413")
+        _held("P11-footer-open-F413-next-F414", "footer open F413 / next F414")
 
 
 # ---------------------------------------------------------------------------

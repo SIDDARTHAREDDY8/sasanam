@@ -48,7 +48,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2047  # Wave-326 merge pin; wave-327 lane 3 repoints to 2044 (+9 policy-channel-*); Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned)
+TAXONOMY_PIN = 2056  # Wave-326 merge pin; wave-327 lane 3 repoints to 2044 (+9 policy-channel-*); Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*)
 
 _results = []
 
@@ -460,22 +460,22 @@ def _p1o():
 # P2: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P2a-pin-taxonomy-2052")
+@probe("P2a-pin-taxonomy-2056")
 def _p2a():
     from gov.decision_codes import TAXONOMY
     assert len(TAXONOMY) == TAXONOMY_PIN, \
         "taxonomy %d != pin %d" % (len(TAXONOMY), TAXONOMY_PIN)
-    _held("P2a-pin-taxonomy-2052", "taxonomy matches pin")
+    _held("P2a-pin-taxonomy-2056", "taxonomy matches pin")
 
 
-@probe("P2b-footer-open-f412")
+@probe("P2b-footer-open-f413")
 def _p2b():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
-    assert "Next free finding: **F413**" in text, "footer next-free wrong"
-    assert "Open findings: F412" in text, "footer open set wrong"
-    _held("P2b-footer-open-f412", "footer open F412 / next F413")
+    assert "Next free finding: **F414**" in text, "footer next-free wrong"
+    assert "Open findings: F413" in text, "footer open set wrong"
+    _held("P2b-footer-open-f413", "footer open F413 / next F414")
 
 
 # ---------------------------------------------------------------------------

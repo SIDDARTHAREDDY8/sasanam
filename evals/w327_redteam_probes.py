@@ -1,14 +1,14 @@
 """Wave-327 independent red-team battery.
 
 Base: 542c5cee (wave-326 merge). Footer: open F412 / next F413.
-Pin: 2052.
+Pin: 2056.
 
 P1  wave-326 seams: standing_verdicts / knowledge_ingest / background_scan.
 P2  F410 re-probe (w326_tufaudit T4c/T4d -- must still BREAK; lane 2 owns it).
 P3  F411 re-probe (w326_redteam P3a -- must still BREAK; lane 1 owns it).
 P4  regression: F409 (HELD), F408/F407/F406 (HELD).
 P5  corruption-survivor probe + prior batteries in child mode.
-P6  pin 2052 + footer state.
+P6  pin 2056 + footer state.
 
 gov/ is byte-identical to base: this battery changes no product code and
 files findings only (from F412). No new decision codes from this lane.
@@ -28,9 +28,9 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
-TAXONOMY_PIN = 2052  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).
-FOOTER_OPEN = "F412"  # F409/F410/F411 CLOSED; F412 (LOW, standing-conflict) OPEN.
-FOOTER_NEXT = "F413"  # Next free finding number.
+TAXONOMY_PIN = 2056  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).; Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*)
+FOOTER_OPEN = "F413"  # F409/F410/F411 CLOSED; F412 (LOW, standing-conflict) OPEN.
+FOOTER_NEXT = "F414"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -197,14 +197,19 @@ def _p1e():
 
 @probe("P1f-f412-conflict-crash-wedges-store")
 def _p1f():
-    """F412: _resolve_conflict's two journal appends are not atomic.
+    """F412 (CLOSED 2026-10-04 wave-328 lane 1): _resolve_conflict's two
+    journal appends were not atomic.
 
     A crash between the conflict-entry append and the winner-entry append
-    leaves the conflict entry as the tip. On reload, standing_of and
-    attach_knowledge raise an UNCODED KeyError ('asserted_standing') --
-    the store is permanently wedged: no read or write can proceed, and
-    every reload replays the same poisoned tip. Recovery needs manual
+    left the conflict entry as the tip. On reload, standing_of and
+    attach_knowledge raised an UNCODED KeyError ('asserted_standing') --
+    the store was permanently wedged: no read or write could proceed, and
+    every reload replayed the same poisoned tip. Recovery needed manual
     journal surgery.
+
+    The fix journals the conflict and the winner's knowledge as a SINGLE
+    entry; this probe replays the legacy crash shape and now expects a
+    clean recovery (or a coded refusal), never the wedge.
     """
     s, sv = _fresh_store("w327-p1f-")
     s.register_artifact(_D1, "probe")
@@ -549,7 +554,7 @@ def _p5a():
     corruption markers. (The needle is built dynamically so this file's
     own documentation does not self-match.)
     """
-    needles = ["2035" + "OLD", "2044" + "OLD"]
+    needles = ["2035" + "OLD", "2056" + "OLD"]
     hits = []
     for dirpath, dirnames, filenames in os.walk(REPO):
         # Skip .git and derived bytecode caches (not source literals).
@@ -671,20 +676,20 @@ def _p5g():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2052-sorted")
+@probe("P6a-pin-taxonomy-2056-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
-    if TAXONOMY_PIN != 2052:
-        return _break("P6a-pin-taxonomy-2052-sorted",
-                      "TAXONOMY_PIN is %r, want 2052" % (TAXONOMY_PIN,))
-    if len(codes) != 2052 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-2052-sorted",
+    if TAXONOMY_PIN != 2056:
+        return _break("P6a-pin-taxonomy-2056-sorted",
+                      "TAXONOMY_PIN is %r, want 2056" % (TAXONOMY_PIN,))
+    if len(codes) != 2056 or codes != sorted(codes):
+        return _break("P6a-pin-taxonomy-2056-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    if len(set(codes)) != 2052:
-        return _break("P6a-pin-taxonomy-2052-sorted",
+    if len(set(codes)) != 2056:
+        return _break("P6a-pin-taxonomy-2056-sorted",
                       "duplicate codes in TAXONOMY")
-    return _held("P6a-pin-taxonomy-2052-sorted", "2052/2052/0 sorted")
+    return _held("P6a-pin-taxonomy-2056-sorted", "2056/2056/0 sorted")
 
 
 @probe("P6b-footer-open-f412-next-f413")
@@ -708,7 +713,7 @@ def _p6b():
 # Main.
 # ---------------------------------------------------------------------------
 
-_EXPECTED_BREAKS = {"P1f-f412-conflict-crash-wedges-store"}
+_EXPECTED_BREAKS = set()  # F412 CLOSED 2026-10-04 wave-328 lane 1 (merge: lane-2 version had it expected; fixed).
 
 
 def main(argv):
@@ -729,7 +734,7 @@ def main(argv):
     got_breaks = {pid for pid, v, n in _results if v == "BREAK"}
     mismatch = got_breaks ^ _EXPECTED_BREAKS
     print("w327_redteam battery: %d BREAK / %d HELD / %d ERROR "
-          "(1 BREAK expected: P1f/F412)"
+          "(0 BREAKs expected: F412 closed 2026-10-04 wave-328 lane 1)"
           % (breaks, len(_results) - breaks - errors, errors))
     if mismatch:
         print("BREAK-SET MISMATCH: %r" % (sorted(mismatch),))

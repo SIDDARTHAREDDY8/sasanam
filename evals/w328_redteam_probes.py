@@ -2,7 +2,7 @@
 
 Base: 54cdac0d (wave-327 merge). Footer: open F412, F413 / next F414
 (F413 filed by this lane).
-Pin: 2044.
+Pin: 2056.
 
 P1  wave-327 policy-channel seams (unsigned, ordering, revocation,
     feed escape, canonicalization, replay).
@@ -11,7 +11,7 @@ P2  F412 re-probe (standing-conflict crash wedge -- must still BREAK;
 P3  F410/F411 closure-regression probes (all must stay HELD).
 P4  regression: F409/F408/F407/F406 (all must stay HELD).
 P5  file-integrity probe + prior batteries in child mode.
-P6  pin 2044 + footer state.
+P6  pin 2056 + footer state.
 
 gov/ is byte-identical to base: this battery changes no product code and
 files findings only (from F413). No new decision codes from this lane.
@@ -31,8 +31,8 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
-TAXONOMY_PIN = 2044  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).
-FOOTER_OPEN = "F412, F413"  # F409/F410/F411 CLOSED; F412 (LOW, standing-conflict)
+TAXONOMY_PIN = 2056  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).; Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*)
+FOOTER_OPEN = "F413"  # F409/F410/F411 CLOSED; F412 (LOW, standing-conflict)
 # OPEN; F413 (LOW, policy-channel version ordering) OPEN (filed this lane).
 FOOTER_NEXT = "F414"  # Next free finding number.
 
@@ -516,7 +516,7 @@ def _p5a():
     and no pin literal may carry a corruption suffix. (Needles are built
     dynamically so this file's own documentation does not self-match.)
     """
-    needles = ["2035" + "OLD", "2044" + "OLD"]
+    needles = ["2035" + "OLD", "2056" + "OLD"]
     empty = []
     corrupt = []
     bad_pin = []
@@ -579,24 +579,20 @@ def _parse_tally(text):
 # The expected BREAKs are the open-finding probes: P1b/P1c (F413, this
 # battery) and P2a (F412). Child mode (GOV_SKIP_GREEN=1).
 #
-# NOTE (footer cascade, 2026-10-04): filing F413 changes the FINDINGS.md
-# footer to "open F412, F413 / next F414", which BREAKs the older
-# batteries' footer-state probes (they pin the wave-327 footer). That
-# cascades into their green P5x probes, so P5b/P5c/P5e/P5f/P5g currently
-# report tally mismatches -- EXPECTED, documented, not a regression.
-# The wave-328 merge coordinator's wave-305 sweep re-pins the older
-# footer probes below, after which these five flip back to HELD (and
-# the coordinator removes them from _EXPECTED_BREAKS per the wave-305
-# lesson). Footer probes to re-pin:
-#   evals/w327_redteam_probes.py  P6b (FOOTER_OPEN/FOOTER_NEXT)
-#   evals/w327_polchan_probes.py  footer assertion (~line 476)
-#   evals/w326_redteam_probes.py  footer probe (~line 927, FOOTER_NEXT)
+# NOTE (merge resolution, 2026-10-04): the wave-328 merge re-pinned all
+# footer-state probes to the merged footer (open F413 / next F414; F412
+# CLOSED by lane 1, F413 OPEN filed by lane 4). The P5x green-chain probes
+# are HELD again; the five cascade IDs were removed from _EXPECTED_BREAKS
+# per the wave-305 lesson. Footer probes re-pinned:
+#   evals/w327_redteam_probes.py  P6b + _EXPECTED_BREAKS emptied (F412 closed)
+#   evals/w327_polchan_probes.py  P2b (now P2b-footer-open-f413)
+#   evals/w326_redteam_probes.py  P1a/P1h rewritten (lane 2 hardening)
 #   evals/w326_standing_probes.py P11-footer-state
-#   evals/w326_sched_probes.py    footer assertion (~line 504)
+#   evals/w326_sched_probes.py    footer assertion
 # plus transitively w325_redteam / w324_alert / w325_resid / w325_dexid /
 # w324_offver / w324_vsa (grandchildren in the green chains).
 _GREEN_EVALS = [
-    ("w327-redteam", "evals/w327_redteam_probes.py", (1, 31, 0)),
+    ("w327-redteam", "evals/w327_redteam_probes.py", (0, 32, 0)),
     ("w327-polchan", "evals/w327_polchan_probes.py", (0, 18, 0)),
     ("w326-tufaudit", "evals/w326_tufaudit_probes.py", (0, 18, 0)),
     ("w326-redteam", "evals/w326_redteam_probes.py", (0, 36, 0)),
@@ -689,23 +685,23 @@ def _p5g():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2044-sorted")
+@probe("P6a-pin-taxonomy-2056-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
-    if TAXONOMY_PIN != 2044:
-        return _break("P6a-pin-taxonomy-2044-sorted",
-                      "TAXONOMY_PIN is %r, want 2044" % (TAXONOMY_PIN,))
-    if len(codes) != 2044 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-2044-sorted",
+    if TAXONOMY_PIN != 2056:
+        return _break("P6a-pin-taxonomy-2056-sorted",
+                      "TAXONOMY_PIN is %r, want 2056" % (TAXONOMY_PIN,))
+    if len(codes) != 2056 or codes != sorted(codes):
+        return _break("P6a-pin-taxonomy-2056-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    if len(set(codes)) != 2044:
-        return _break("P6a-pin-taxonomy-2044-sorted",
+    if len(set(codes)) != 2056:
+        return _break("P6a-pin-taxonomy-2056-sorted",
                       "duplicate codes in TAXONOMY")
-    return _held("P6a-pin-taxonomy-2044-sorted", "2044/2044/0 sorted")
+    return _held("P6a-pin-taxonomy-2056-sorted", "2056/2056/0 sorted")
 
 
-@probe("P6b-footer-open-f412-f413-next-f414")
+@probe("P6b-footer-open-f413-next-f414")
 def _p6b():
     text = open(os.path.join(REPO, "evals/FINDINGS.md")).read()
     opens = re.findall(r"\*\*Open findings:\s*([^*]+?)\.\*\*", text)
@@ -713,31 +709,26 @@ def _p6b():
     open_line = opens[-1].strip() if opens else ""
     next_free = nexts[-1].strip() if nexts else ""
     if open_line != FOOTER_OPEN:
-        return _break("P6b-footer-open-f412-f413-next-f414",
+        return _break("P6b-footer-open-f413-next-f414",
                       "open findings %r, want %r" % (open_line, FOOTER_OPEN))
     if next_free != FOOTER_NEXT:
-        return _break("P6b-footer-open-f412-f413-next-f414",
+        return _break("P6b-footer-open-f413-next-f414",
                       "next free %r, want %r" % (next_free, FOOTER_NEXT))
-    return _held("P6b-footer-open-f412-f413-next-f414",
-                 "footer open F412, F413 / next F414")
+    return _held("P6b-footer-open-f413-next-f414",
+                 "footer open F413 / next F414")
 
 
 # ---------------------------------------------------------------------------
 # Main.
 # ---------------------------------------------------------------------------
 
+# F412 CLOSED by wave-328 lane 1 (P2a flips to HELD); the footer cascade
+# from the F413 filing was resolved by the merge re-pin, so the five P5x
+# IDs are removed per the wave-305 lesson. Only the open F413 probes
+# remain expected BREAKs.
 _EXPECTED_BREAKS = {
     "P1b-f413-feed-version-ordering",
     "P1c-f413-intermediate-revocation-recorded",
-    "P2a-f412-conflict-crash-wedges-store",
-    # Footer cascade from the F413 filing (see _GREEN_EVALS note): the
-    # older batteries' footer-state probes pin the wave-327 footer, so
-    # their child-mode tallies shift until the merge re-pins them.
-    "P5b-green-w327-redteam",
-    "P5c-green-w327-polchan",
-    "P5e-green-w326-redteam",
-    "P5f-green-w326-standing",
-    "P5g-green-w326-sched",
 }
 
 
@@ -759,8 +750,7 @@ def main(argv):
     got_breaks = {pid for pid, v, n in _results if v == "BREAK"}
     mismatch = got_breaks ^ _EXPECTED_BREAKS
     print("w328_redteam battery: %d BREAK / %d HELD / %d ERROR "
-          "(8 BREAKs expected: P1b/P1c/F413, P2a/F412, "
-          "P5b/P5c/P5e/P5f/P5g footer cascade)"
+          "(2 BREAKs expected: P1b/P1c/F413 open)"
           % (breaks, len(_results) - breaks - errors, errors))
     if mismatch:
         print("BREAK-SET MISMATCH: %r" % (sorted(mismatch),))

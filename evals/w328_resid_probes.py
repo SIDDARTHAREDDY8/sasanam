@@ -47,7 +47,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2047  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*); Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned)
+TAXONOMY_PIN = 2056  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*); Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*)
 
 
 _results = []
@@ -446,7 +446,7 @@ def _r7():
 # Pin + footer probes.
 # ---------------------------------------------------------------------------
 
-@probe("P8-pin-taxonomy-2047-sorted")
+@probe("P8-pin-taxonomy-2056-sorted")
 def _p8():
     from gov import decision_codes as DC
     codes = sorted(DC.TAXONOMY)
@@ -459,17 +459,17 @@ def _p8():
             "advisory-input-unpinned": "authority"}
     for code, domain in sorted(want.items()):
         assert DC.TAXONOMY[code]["domain"] == domain, code
-    _held("P8-pin-taxonomy-2047-sorted", "2047/2047/0 sorted; new codes ok")
+    _held("P8-pin-taxonomy-2056-sorted", "2056/2056/0 sorted; new codes ok")
 
 
 @probe("P9-footer-open-F412-next-F413")
 def _p9():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     src = open(path, encoding="utf-8").read()
-    assert "Next free finding: **F413**" in src, "next-free footer"
-    assert "**Open findings: F412.**" in src, "open-F412 footer"
+    assert "Next free finding: **F414**" in src, "next-free footer"
+    assert "**Open findings: F413.**" in src, "open-F413 footer"
     _held("P9-footer-open-F412-next-F413",
-          "footer: open F412 / next F413 (F412 filed by wave-327 lane 4)")
+          "footer: open F413 / next F414 (F413 filed by wave-328 lane 4; F412 closed)")
 
 
 # ---------------------------------------------------------------------------

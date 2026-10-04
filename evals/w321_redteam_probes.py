@@ -27,7 +27,7 @@ Probe map (public seams only):
  P4: regression -- the depth-1 green check re-runs the four wave-320
      batteries (w320_redteam 0/30/0, w320_quorum 0/18/0,
      w320_grantwiring 0/10/0, w319_redteam 0/24/0).
- P5 (2): pin taxonomy 2052/2052/0 sorted on source literals; footer
+ P5 (2): pin taxonomy 2056/2056/0 sorted on source literals; footer
      open none / next F409.
 
 
@@ -67,11 +67,11 @@ from gov.approvals import approval_digest_ok  # noqa: E402
 import gov.provenance_sink as PS  # noqa: E402
 import gov.provenance_labels as PL  # noqa: E402
 
-TAXONOMY_PIN = 2052#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost)
+TAXONOMY_PIN = 2056#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*)
 
 
-FOOTER_OPEN = "F412"
-FOOTER_NEXT = "F413"
+FOOTER_OPEN = "F413"
+FOOTER_NEXT = "F414"
 
 _results = []
 
@@ -748,11 +748,11 @@ def p5_pin_taxonomy_sorted():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2052
+    ok = (len(lits) == TAXONOMY_PIN == 2056
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P5-pin-taxonomy-2052-sorted", True, "2052/2052/0 sorted")
-    return _break("P5-pin-taxonomy-2052-sorted",
+        return _held("P5-pin-taxonomy-2056-sorted", True, "2056/2056/0 sorted")
+    return _break("P5-pin-taxonomy-2056-sorted",
 
 
                   "got %d literals" % (len(lits),))

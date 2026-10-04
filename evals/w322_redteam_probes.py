@@ -12,7 +12,7 @@ Attacks the wave-321 NEW surfaces break-first:
       (provenance-critical-arg-refused); a silent ALLOW is a BREAK.
   P4  Regression -- the four wave-321 batteries must match their shipped
       tallies (child-mode, GOV_SKIP_GREEN=1).
-  P5  Pin/footer -- 2052/2052/0 sorted on source literals; footer
+  P5  Pin/footer -- 2056/2056/0 sorted on source literals; footer
       open none / next F409 (F406 closed, F407 closed; see
 
 
@@ -58,11 +58,11 @@ from tests.keyfixture import provision_test_key  # noqa: E402
 
 provision_test_key()
 
-TAXONOMY_PIN = 2052#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost)
+TAXONOMY_PIN = 2056#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*)
 
 
-FOOTER_OPEN = "F412"
-FOOTER_NEXT = "F413"
+FOOTER_OPEN = "F413"
+FOOTER_NEXT = "F414"
 
 _results = []
 
@@ -835,7 +835,7 @@ def green_check():
         _record("green-" + n, v, note)
 
 
-@probe("P4-pin-taxonomy-2052-sorted")
+@probe("P4-pin-taxonomy-2056-sorted")
 
 
 def _p5a():
@@ -843,11 +843,11 @@ def _p5a():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2052
+    ok = (len(lits) == TAXONOMY_PIN == 2056
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P4-pin-taxonomy-2052-sorted", "2052/2052/0 sorted")
-    return _break("P4-pin-taxonomy-2052-sorted",
+        return _held("P4-pin-taxonomy-2056-sorted", "2056/2056/0 sorted")
+    return _break("P4-pin-taxonomy-2056-sorted",
 
 
                   "got %d literals" % (len(lits),))

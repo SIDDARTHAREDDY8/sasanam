@@ -20,7 +20,7 @@ P4 (3): F405 re-probe (CLOSED wave-320 lane 1) -- apostrophe-less negation
 P5 (3): wave-319 follow-up spot-check -- 3 of the 70 touched batteries
     re-run beyond their pin probes (w314_provsink, w303_f385, w297_redteam).
 P6 (2): regressions -- footer open none / next F409; pin taxonomy
-    2052/2052/0 sorted on source literals.
+    2056/2056/0 sorted on source literals.
 
 
 
@@ -61,11 +61,11 @@ from tests.keyfixture import scrub_key_env, provision_test_key  # noqa: E402
 
 from evals import probe_lines  # noqa: E402
 
-TAXONOMY_PIN = 2052#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost)
+TAXONOMY_PIN = 2056#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*)
 
 
-FOOTER_OPEN = "F412"
-FOOTER_NEXT = "F413"
+FOOTER_OPEN = "F413"
+FOOTER_NEXT = "F414"
 
 _NOW = datetime(2026, 10, 4, 5, 0, 0, tzinfo=timezone.utc)
 _NOW_INT = 1759554000
@@ -701,7 +701,7 @@ def _p5c():
 # P6: regressions (pin + footer)
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-2052-sorted")
+@probe("P6-pin-taxonomy-2056-sorted")
 
 
 def _p6a():
@@ -709,12 +709,12 @@ def _p6a():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2052
+    ok = (len(lits) == TAXONOMY_PIN == 2056
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P6-pin-taxonomy-2052-sorted",
-                     "2052/2052/0 sorted")
-    return _break("P6-pin-taxonomy-2052-sorted",
+        return _held("P6-pin-taxonomy-2056-sorted",
+                     "2056/2056/0 sorted")
+    return _break("P6-pin-taxonomy-2056-sorted",
 
 
                  "got %d literals" % (len(lits),))

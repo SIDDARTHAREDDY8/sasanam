@@ -14,7 +14,7 @@ P3 (2): contract probes -- verify_keyed_bundle returns False (not
     raises) on a forged bundle (assert `is False`); the empty-hint
     spike shape ({"publicKey": {}}) is accepted, as cosign proved.
 P4 (2): regressions -- footer open none / next F409; pin taxonomy
-    2052/2052/0 sorted on source literals (this lane registers no
+    2056/2056/0 sorted on source literals (this lane registers no
 
 
     taxonomy codes).
@@ -48,11 +48,11 @@ from gov import sigstore_bundle as SB  # noqa: E402
 from gov import evidence_intoto as _intoto  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
-TAXONOMY_PIN = 2052#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost)
+TAXONOMY_PIN = 2056#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*)
 
 
-FOOTER_OPEN = "F412"
-FOOTER_NEXT = "F413"
+FOOTER_OPEN = "F413"
+FOOTER_NEXT = "F414"
 
 _results = []
 _PROBES = []
@@ -397,7 +397,7 @@ def _p3b():
 # P4: regressions
 # ---------------------------------------------------------------------------
 
-@probe("P4-pin-taxonomy-2052-sorted")
+@probe("P4-pin-taxonomy-2056-sorted")
 
 
 def _p4a():
@@ -405,11 +405,11 @@ def _p4a():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2052
+    ok = (len(lits) == TAXONOMY_PIN == 2056
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P4-pin-taxonomy-2052-sorted", "2052/2052/0 sorted")
-    return _break("P4-pin-taxonomy-2052-sorted",
+        return _held("P4-pin-taxonomy-2056-sorted", "2056/2056/0 sorted")
+    return _break("P4-pin-taxonomy-2056-sorted",
 
 
                   "got %d literals" % (len(lits),))

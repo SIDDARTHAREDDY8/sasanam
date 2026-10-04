@@ -36,9 +36,9 @@ import w324_offver_probes as _wo  # noqa: E402
 import w324_vsa_probes as _wv  # noqa: E402
 import w322_redteam_probes as _w322  # noqa: E402
 
-TAXONOMY_PIN = 2052  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*)
-FOOTER_OPEN = "F412"  # F409/F410/F411 CLOSED; F412 (LOW, standing-conflict) OPEN.
-FOOTER_NEXT = "F413"  # Next free finding number.
+TAXONOMY_PIN = 2056  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*)
+FOOTER_OPEN = "F413"  # F409/F410/F411 CLOSED; F412 (LOW, standing-conflict) OPEN.
+FOOTER_NEXT = "F414"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -899,17 +899,17 @@ def _p5e():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2052-sorted")
+@probe("P6a-pin-taxonomy-2056-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
-    if TAXONOMY_PIN != 2052:
-        return _break("P6a-pin-taxonomy-2052-sorted",
+    if TAXONOMY_PIN != 2056:
+        return _break("P6a-pin-taxonomy-2056-sorted",
                       "TAXONOMY_PIN is %r, want 2021" % (TAXONOMY_PIN,))
-    if len(codes) != 2052 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-2052-sorted",
+    if len(codes) != 2056 or codes != sorted(codes):
+        return _break("P6a-pin-taxonomy-2056-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    return _held("P6a-pin-taxonomy-2052-sorted", "2052/2052/0 sorted")
+    return _held("P6a-pin-taxonomy-2056-sorted", "2056/2056/0 sorted")
 
 
 @probe("P6b-footer-open-f409-next-f410")
@@ -917,7 +917,7 @@ def _p6b():
     text = open(os.path.join(REPO, "evals/FINDINGS.md")).read()
     import re
     # The file carries one footer line per wave; the LAST one is current.
-    # Footer form: "Next free finding: **F413**. **Open findings: F412.**"
+    # Footer form: "Next free finding: **F414**. **Open findings: F413.**"
     opens = re.findall(r"\*\*Open findings:\s*([^*]+?)\.\*\*", text)
     nexts = re.findall(r"Next free finding:\s*\*\*([^*]+?)\*\*", text)
     open_line = opens[-1].strip() if opens else ""
