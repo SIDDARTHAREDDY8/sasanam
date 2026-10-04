@@ -1613,274 +1613,38 @@ def main(argv=None):
 
 
 # ---------------------------------------------------------------------------
-# Landlock LSM tier (wave-266).
+# Landlock LSM tier -- moved to gov/landlock_jail.py (wave-331 lane 3).
 #
-# Pattern ADAPTED from the wave-265 NVIDIA OpenShell teardown (prospectus
-# §3.4: OpenShell confines tools with the Landlock LSM + seccomp-BPF).
-# Pattern only — no vendored code; the ruleset below is written against
-# the kernel ABI documented in linux/landlock.h and was verified
-# empirically on this tree's kernels (ABI 8). Stdlib only (ctypes for the
-# three syscalls, which have no libc wrappers).
-#
-# Design (mirrors the existing opt-in hardened layers):
-#   * use_landlock / require_landlock constructor flags with the same
-#     fail-closed require_* semantics as the other layers;
-#   * the ruleset is built PARENT-side (the child must never widen its own
-#     cage) and handed to the child over pass_fds; the child calls
-#     restrict_self() BEFORE the seccomp filter installs (the BPF
-#     allowlist does not cover the Landlock syscalls);
-#   * default-deny policy: the jail root is read-only, one designated
-#     scratch subdir is read-write (no execute — write-then-execute
-#     stays impossible), and only a fixed system allowlist mirroring the
-#     pivot layer's read-only staging set is readable+executable. Rules
-#     pin inodes, so they survive pivot_root;
-#   * unavailability with use_landlock and no require_landlock degrades
-#     gracefully with a machine-coded warning; require_landlock refuses
-#     fail-closed; a ruleset build/apply failure ALWAYS refuses
-#     fail-closed (the tool never runs under the weak tier while the
-#     deployment asked for the strong one).
-#
-# Honest residuals (documented, not gaps): Landlock cannot restrict
-# stat/chdir (kernel limitation, noted in linux/landlock.h); nothing in
-# the jail root is executable or writable (read-only by design); this
-# lane adds no seccomp-BPF of its own (next tier); Linux-only mechanism
-# (landlock_available() gates on sys.platform, not just posix).
+# The tier lived here since wave-266; wave-331 extracted it verbatim into
+# gov.landlock_jail (same logic, same fail-closed contract) and added the
+# standalone restrict_fs()/landlock_supported() API there. Everything
+# below is a compatibility re-export so gov.sandbox keeps its historical
+# attribute paths (batteries and unit tests address sbmod.landlock_*).
 # ---------------------------------------------------------------------------
-
-_LANDLOCK_CREATE_RULESET_VERSION = 0x1
-_LANDLOCK_RULE_PATH_BENEATH = 1
-
-# Filesystem rights, linux/landlock.h (bits 0-14; REFER is always
-# implicitly handled by the kernel; TRUNCATE exists since ABI 3).
-_LANDLOCK_FS_EXECUTE = 0x1
-_LANDLOCK_FS_WRITE_FILE = 0x2
-_LANDLOCK_FS_READ_FILE = 0x4
-_LANDLOCK_FS_READ_DIR = 0x8
-_LANDLOCK_FS_TRUNCATE = 0x4000
-
-_LANDLOCK_ABI_CACHE = {"version": None}
-_LANDLOCK_AVAILABLE_CACHE = {"available": None}
-
-# System allowlist, mirroring the pivot layer's read-only staging set.
-# /etc is read-only (not just ld.so.cache): the dynamic linker, NSS, and
-# distro symlinks out of /usr (e.g. /usr/lib/python3.12/sitecustomize.py
-# -> /etc/python3.12/sitecustomize.py) all resolve under it. Sensitive
-# files stay protected by Unix permissions + privdrop.
-_LANDLOCK_DEFAULT_SYSTEM_RO = ("usr", "bin", "lib", "lib64", "sbin", "etc")
-
-_LANDLOCK_SCRATCH_NAME_DEFAULT = "scratch"
-
-
-class _LandlockRulesetAttr(ctypes.Structure):
-    _fields_ = [("handled_access_fs", ctypes.c_uint64),
-                ("handled_access_net", ctypes.c_uint64)]
-
-
-class _LandlockPathBeneathAttr(ctypes.Structure):
-    _pack_ = 1
-    _fields_ = [("allowed_access", ctypes.c_uint64),
-                ("parent_fd", ctypes.c_int32)]
-
-
-def _landlock_syscall_numbers():
-    """(create, add_rule, restrict_self) syscall numbers for this arch.
-
-    Raises KeyError when unresolvable — callers treat that as
-    "unavailable", never as a silent bypass.
-    """
-    return (_syscall_number("landlock_create_ruleset"),
-            _syscall_number("landlock_add_rule"),
-            _syscall_number("landlock_restrict_self"))
-
-
-def _landlock_syscall(nr, *args):
-    """Raw Landlock syscall. Raises OSError on failure."""
-    libc = ctypes.CDLL("libc.so.6", use_errno=True)
-    libc.syscall.restype = ctypes.c_long
-    ret = libc.syscall(nr, *args)
-    if ret < 0:
-        raise OSError(ctypes.get_errno(),
-                      "landlock syscall %d failed" % (nr,))
-    return ret
-
-
-def landlock_abi_version():
-    """Kernel Landlock ABI version, or 0 when the syscalls are absent."""
-    if _LANDLOCK_ABI_CACHE["version"] is None:
-        version = 0
-        try:
-            nr_create, _, _ = _landlock_syscall_numbers()
-            v = _landlock_syscall(nr_create, None, 0,
-                                  _LANDLOCK_CREATE_RULESET_VERSION)
-            if 1 <= v <= 64:
-                version = int(v)
-        except (OSError, KeyError):
-            version = 0
-        _LANDLOCK_ABI_CACHE["version"] = version
-    return _LANDLOCK_ABI_CACHE["version"]
-
-
-def _landlock_enforcement_probe():
-    """Forked child: does restrict_self() actually confine?
-
-    The syscalls can be wired while the LSM is disabled; then
-    restrict_self() succeeds and confines nothing. The only reliable
-    detector is empirical: confine a child with a deny-all ruleset and
-    check that opening ordinary files fails EACCES. Probed once per
-    process; the parent is never confined (same pattern as
-    netns_available()).
-    """
-    pid = os.fork()
-    if pid == 0:  # child
-        try:
-            nr_create, _, nr_restrict = _landlock_syscall_numbers()
-            attr = _LandlockRulesetAttr(
-                _LANDLOCK_FS_EXECUTE | _LANDLOCK_FS_WRITE_FILE
-                | _LANDLOCK_FS_READ_FILE | _LANDLOCK_FS_READ_DIR, 0)
-            rs = _landlock_syscall(nr_create, ctypes.byref(attr),
-                                   ctypes.sizeof(attr), 0)
-            _landlock_syscall(nr_restrict, rs, 0)
-            os.close(rs)
-            # Deny-all is active: at least one open must fail EACCES,
-            # and none may succeed.
-            enforced = False
-            for probe_path in ("/etc/hostname", "/proc/version",
-                               "/etc/passwd"):
-                try:
-                    fd = os.open(probe_path, os.O_RDONLY)
-                except OSError as e:
-                    if e.errno == errno.EACCES:
-                        enforced = True
-                else:
-                    os.close(fd)
-                    os._exit(1)  # opened: NOT confined
-            os._exit(0 if enforced else 1)
-        except BaseException:
-            os._exit(1)
-    _, status = os.waitpid(pid, 0)
-    return os.waitstatus_to_exitcode(status) == 0
-
-
-def landlock_available():
-    """True when this kernel actually enforces Landlock confinement."""
-    if _LANDLOCK_AVAILABLE_CACHE["available"] is None:
-        available = False
-        # Landlock is a Linux-only mechanism; the posix check alone would
-        # let other Unixes reach the syscall-number parse below, which can
-        # only fail its way to False.
-        if (sys.platform.startswith("linux") and landlock_abi_version() >= 1):
-            available = _landlock_enforcement_probe()
-        _LANDLOCK_AVAILABLE_CACHE["available"] = available
-    return _LANDLOCK_AVAILABLE_CACHE["available"]
-
-
-def _landlock_add_path_rule(ruleset_fd, path, allowed_access):
-    """Grant allowed_access on the hierarchy (or file) at path."""
-    _, nr_add, _ = _landlock_syscall_numbers()
-    is_dir = os.path.isdir(path)
-    if not is_dir:
-        # Directory-only rights are invalid on file rules (EINVAL).
-        allowed_access &= ~_LANDLOCK_FS_READ_DIR
-    flags = os.O_PATH | (os.O_DIRECTORY if is_dir else 0)
-    fd = os.open(path, flags)
-    try:
-        attr = _LandlockPathBeneathAttr(allowed_access, fd)
-        _landlock_syscall(nr_add, ruleset_fd, _LANDLOCK_RULE_PATH_BENEATH,
-                          ctypes.byref(attr), 0)
-    finally:
-        os.close(fd)
-
-
-def landlock_build_ruleset(*, jail_root, scratch_name, argv0, extra_ro=()):
-    """Build (not yet apply) the Landlock ruleset for one call.
-
-    Returns the ruleset fd, owned by the caller (pass it to the child
-    over pass_fds; the child calls restrict_self() then closes it).
-    Raises OSError when the ruleset cannot be built — the caller must
-    refuse fail-closed.
-    """
-    abi = landlock_abi_version()
-    if abi < 1:
-        raise OSError(errno.ENOSYS, "landlock unavailable on this kernel")
-    nr_create, _, _ = _landlock_syscall_numbers()
-    handled_fs = (_LANDLOCK_FS_EXECUTE | _LANDLOCK_FS_WRITE_FILE
-                  | _LANDLOCK_FS_READ_FILE | _LANDLOCK_FS_READ_DIR)
-    if abi >= 3:
-        handled_fs |= _LANDLOCK_FS_TRUNCATE
-    attr = _LandlockRulesetAttr(handled_fs, 0)
-    # The net-rights field exists since ABI 4; size the struct the
-    # kernel understands.
-    attr_size = ctypes.sizeof(attr) if abi >= 4 else 8
-    rs = _landlock_syscall(nr_create, ctypes.byref(attr), attr_size, 0)
-    try:
-        read_only = _LANDLOCK_FS_READ_FILE | _LANDLOCK_FS_READ_DIR
-        rx = read_only | _LANDLOCK_FS_EXECUTE
-        seen = set()
-
-        def _grant(path, access):
-            real = os.path.realpath(path)
-            if real in seen:
-                return
-            seen.add(real)
-            _landlock_add_path_rule(rs, real, access)
-
-        # The jail root: readable, never writable (tool output goes to
-        # the scratch subdir).
-        _grant(jail_root, read_only)
-        # Designated scratch: read-write (no execute — write-then-
-        # execute stays impossible), truncate where the ABI has it.
-        scratch_access = read_only | _LANDLOCK_FS_WRITE_FILE
-        if abi >= 3:
-            scratch_access |= _LANDLOCK_FS_TRUNCATE
-        _grant(os.path.join(jail_root, scratch_name), scratch_access)
-        # System allowlist. Missing entries are skipped (distro
-        # variance); the interpreter's own directory is always covered
-        # so the child can still exec.
-        for name in _LANDLOCK_DEFAULT_SYSTEM_RO:
-            path = os.path.join("/", name)
-            if os.path.isdir(path):
-                _grant(path, rx)
-        for exe_dir in (os.path.dirname(os.path.realpath(argv0)),
-                        os.path.dirname(os.path.realpath(sys.executable))):
-            if os.path.isdir(exe_dir):
-                _grant(exe_dir, rx)
-        # Venv interpreters: site.py reads pyvenv.cfg (next to the
-        # unresolved executable's parent dir) at startup. Grant that
-        # single file read-only when present — nothing else from the
-        # venv is needed under -I.
-        for exe in (argv0, sys.executable):
-            cfg = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(exe))),
-                "pyvenv.cfg")
-            if os.path.isfile(cfg):
-                _grant(cfg, read_only)
-        # Operator widening (explicit absolute paths only).
-        for path in extra_ro:
-            if not os.path.isabs(path):
-                raise OSError(errno.EINVAL,
-                              "landlock_extra_ro must be absolute: %r"
-                              % (path,))
-            if os.path.isdir(path):
-                _grant(path, rx)
-            elif os.path.isfile(path):
-                _grant(path, read_only)
-            else:
-                raise OSError(errno.ENOENT,
-                              "landlock_extra_ro not found: %r" % (path,))
-    except BaseException:
-        try:
-            os.close(rs)
-        except OSError:
-            pass
-        raise
-    return rs
-
-
-def _landlock_restrict_self(ruleset_fd):
-    """Activate the ruleset for the calling thread. Raises OSError."""
-    _, _, nr_restrict = _landlock_syscall_numbers()
-    _landlock_syscall(nr_restrict, ruleset_fd, 0)
-
+from gov.landlock_jail import (
+    _LANDLOCK_ABI_CACHE,
+    _LANDLOCK_AVAILABLE_CACHE,
+    _LANDLOCK_CREATE_RULESET_VERSION,
+    _LANDLOCK_DEFAULT_SYSTEM_RO,
+    _LANDLOCK_FS_EXECUTE,
+    _LANDLOCK_FS_READ_DIR,
+    _LANDLOCK_FS_READ_FILE,
+    _LANDLOCK_FS_TRUNCATE,
+    _LANDLOCK_FS_WRITE_FILE,
+    _LANDLOCK_RULE_PATH_BENEATH,
+    _LANDLOCK_SCRATCH_NAME_DEFAULT,
+    _LandlockPathBeneathAttr,
+    _LandlockRulesetAttr,
+    _landlock_add_path_rule,
+    _landlock_enforcement_probe,
+    _landlock_restrict_self,
+    _landlock_syscall,
+    _landlock_syscall_numbers,
+    landlock_abi_version,
+    landlock_available,
+    landlock_build_ruleset,
+    landlock_supported,
+)
 
 class SandboxError(RuntimeError):
     """Raised when the sandbox refuses to run.
