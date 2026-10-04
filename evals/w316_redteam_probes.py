@@ -12,12 +12,14 @@ P3 (4): summary-form migration coherence -- the F400 error-path fix, the
 P4 (3): lane-5 filings -- F401 (w310 F394 stale probes -- CLOSED at the
     wave-316 merge), F402 (w283 F343 stale expectation -- CLOSED at the
     wave-316 merge), F403 (decision_packet.py standalone offline import
-    broken -- OPEN).
+    broken -- CLOSED in wave-317 lane 1: decision_bom.py gained the
+    standalone fallback idiom; offline story still exactly the three
+    documented files).
 P5 (6): regressions -- footer, pin, adjacent batteries.
 
 Result contract: each probe prints [HELD]/[BREAK]/[ERROR]. Exit 0 iff no
-BREAK and no ERROR. One BREAK is EXPECTED on the merged tree: the F403
-open-finding probe (F398/F399/F400/F401/F402 CLOSED at the wave-316 merge).
+BREAK and no ERROR. On the F403-closed tree no BREAK is expected
+(F398/F399/F400/F401/F402/F403 all CLOSED).
 
 Depth-1 green check honoring GOV_SKIP_GREEN; no in-repo git subprocesses;
 deterministic (fixed seeds, fixed clock); stdlib only.
@@ -510,10 +512,11 @@ def _p4_f402():
 
 @probe("P4-f403-decision-packet-offline")
 def _p4_f403():
-    """F403 (LOW, product, OPEN): decision_packet.py cannot be imported
-    standalone -- decision_bom.py's unguarded `from .mode_ledger import
-    LADDER_MODES` defeats the offline-verification contract asserted by
-    the green-phase offline_verify probe."""
+    """F403 (LOW, product, CLOSED in wave-317 lane 1): decision_packet.py
+    could not be imported standalone -- decision_bom.py's unguarded
+    `from .mode_ledger import LADDER_MODES` defeated the offline-verification
+    contract asserted by the green-phase offline_verify probe. The probe
+    now asserts the fixed behavior (PASS)."""
     try:
         verdict, note = dpp.probe_offline_verify()
     except AssertionError as exc:
@@ -550,12 +553,12 @@ def _footer():
 
 @probe("P5-footer-state")
 def _p5_footer():
-    """Footer: open F403 / next F404 (F398/F399/F400 CLOSED at the wave-316 merge)."""
+    """Footer: open none / next F404 (F398/F399/F400 CLOSED at the wave-316 merge)."""
     got = _footer()
-    if got != (404, "F403"):
+    if got != (404, "none"):
         return _break("P5-footer-state", "footer is %r" % (got,))
     return _held("P5-footer-state",
-                 "open F403 / next F404")
+                 "open none / next F404")
 
 
 @probe("P5-pin-taxonomy-1900-sorted")
