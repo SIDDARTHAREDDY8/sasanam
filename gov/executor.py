@@ -1127,7 +1127,50 @@ class ToolExecutor:
                  discovery_tool_map=None,
                  discovery_mcp_map=None,
                  discovery_observe_one=None,
-                 discovery_pin_path=None):
+                 discovery_pin_path=None,
+                 # Workload identity (wave-319, SPIFFE-semantics steal):
+                 # the attested identity document for this executor's
+                 # agent, minted by the deployment's launch path for
+                 # audience "governance:approval-queue"
+                 # (gov.workload_identity.mint_document), the
+                 # launch-path-attested selectors it was minted for,
+                 # and a gov.workload_identity.DocumentVerifier bound
+                 # to the deployment's issuer keys. Appended LAST so
+                 # no existing positional caller can misalign. Opt-in:
+                 # all-None (default) = pre-wave-319 behavior, zero
+                 # change. When agent_svid is set, the verifier and
+                 # selectors are REQUIRED (fail-fast TypeError) and
+                 # the verifier is installed write-once on the
+                 # approval queue; call() attaches the document at
+                 # queue time and the queue stamps the ADVISORY claim
+                 # MAC-bound on the record (verified:false never
+                 # gates -- the deterministic policy layer stays
+                 # canonical).
+                 agent_svid=None,
+                 agent_svid_selectors=None,
+                 attested_identity_verifier=None):
+        # Wave-319 (workload identity): fail fast on a half-configured
+        # attested-identity wiring -- a document with no verifier (or no
+        # attested selectors) would otherwise queue unverifiable claims.
+        if agent_svid is not None:
+            if attested_identity_verifier is None:
+                raise TypeError(
+                    "agent_svid requires attested_identity_verifier: a "
+                    "gov.workload_identity.DocumentVerifier bound to the "
+                    "deployment's issuer keys")
+            if not isinstance(agent_svid_selectors, dict):
+                raise TypeError(
+                    "agent_svid requires agent_svid_selectors: the "
+                    "launch-path-attested facts the document was minted "
+                    "for")
+        self._agent_svid = agent_svid
+        self._agent_svid_selectors = agent_svid_selectors
+        self._attested_identity_verifier = attested_identity_verifier
+        if agent_svid is not None:
+            from . import workload_identity as _wi
+            approvals.set_attested_identity_verifier(
+                attested_identity_verifier,
+                _wi.APPROVAL_QUEUE_AUDIENCE)
         # Wave-196 lane C: the provisioner registry (None = legacy
         # issuance behavior) and the per-provisioner mint counters used
         # for max_mints_per_run budgets. Counters live per executor
@@ -11761,7 +11804,15 @@ class ToolExecutor:
             # MAC-bound from birth; None when the call carried no
             # provenance context (the sweep skips -- unchanged).
             provenance_segments=self._build_provenance_segments(
-                justification, identity))
+                justification, identity),
+            # Wave-319: the agent's attested workload identity document
+            # (advisory claim, MAC-bound; verified:false never gates).
+            # None when the deployment carries no workload identity --
+            # the queue stamps an explicit None (additive skip).
+            attested_identity=(
+                {"document": self._agent_svid,
+                 "presented_selectors": self._agent_svid_selectors}
+                if self._agent_svid is not None else None))
         entry = self.log.append(_base({
             "decision": "queued_pending",
             "policy_id": decision.policy_id,

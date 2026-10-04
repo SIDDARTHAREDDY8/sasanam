@@ -8406,6 +8406,27 @@ TAXONOMY = {
         "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
     },
+    'identity-attested': {
+        "domain": 'attested-identity',
+        "code": 'identity-attested',
+        "human": 'workload identity: the identity document verified -- '
+                 'minted by a trusted issuer for the presented selectors, '
+                 'unexpired, presented for its audience (never evidence '
+                 'of node/platform integrity)',
+        "severity": 'low',
+        "evidence_kinds_required": ['identity-document', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-audience-mismatch': {
+        "domain": 'attested-identity',
+        "code": 'identity-audience-mismatch',
+        "human": 'workload identity: the document names a different '
+                 'audience than the one presented for -- no token '
+                 'passthrough; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['identity-document'],
+        "reverify_steps": ['recompute'],
+    },
     'identity-claim-mismatch': {
         "domain": 'attested-identity',
         "code": 'identity-claim-mismatch',
@@ -8454,12 +8475,51 @@ TAXONOMY = {
         "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
     },
+    'identity-expired': {
+        "domain": 'attested-identity',
+        "code": 'identity-expired',
+        "human": 'workload identity: the document is past its not_after -- '
+                 'expiry is the revocation mechanism; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['identity-document'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-forged': {
+        "domain": 'attested-identity',
+        "code": 'identity-forged',
+        "human": 'workload identity: the document signature does not '
+                 'verify under the trust domain\'s issuer key, the issuer '
+                 'is unknown, or the document is malformed -- refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['identity-document'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-mint-refused': {
+        "domain": 'attested-identity',
+        "code": 'identity-mint-refused',
+        "human": 'workload identity: the mint request was not mintable -- '
+                 'unrecognized selectors, empty audience, excessive TTL, '
+                 'or malformed inputs; no document issued',
+        "severity": 'medium',
+        "evidence_kinds_required": ['identity-document'],
+        "reverify_steps": ['recompute'],
+    },
     'identity-mismatch': {
         "domain": 'agent_card',
         "code": 'identity-mismatch',
         "human": 'agent card: the recomputed value does not match the claimed value',
         "severity": 'critical',
         "evidence_kinds_required": ['agent-card', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-not-yet-valid': {
+        "domain": 'attested-identity',
+        "code": 'identity-not-yet-valid',
+        "human": 'workload identity: the document is before its '
+                 'not_before -- refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['identity-document'],
         "reverify_steps": ['recompute'],
     },
     'identity-policy-refused': {
@@ -8508,6 +8568,16 @@ TAXONOMY = {
         "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
     },
+    'identity-selector-mismatch': {
+        "domain": 'attested-identity',
+        "code": 'identity-selector-mismatch',
+        "human": 'workload identity: the re-attested workload facts do '
+                 'not match the document\'s selectors -- a stolen document '
+                 'presented by a different workload; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['identity-document'],
+        "reverify_steps": ['recompute'],
+    },
     'identity-token-audience-mismatch': {
         "domain": 'identity',
         "code": 'identity-token-audience-mismatch',
@@ -8553,6 +8623,17 @@ TAXONOMY = {
                  'forged or corrupt); refused fail-closed',
         "severity": 'high',
         "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-untrusted-domain': {
+        "domain": 'attested-identity',
+        "code": 'identity-untrusted-domain',
+        "human": 'workload identity: the document\'s trust domain is '
+                 'foreign with no federation record, or the federated '
+                 'document exceeds the federation TTL bound -- trust is '
+                 'never implicit; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['identity-document', 'trust-config'],
         "reverify_steps": ['recompute'],
     },
     'identity_key_of': {

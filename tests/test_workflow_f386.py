@@ -384,8 +384,8 @@ class F386ClosureTests(unittest.TestCase):
                   encoding="utf-8") as fh:
             src = fh.read()
         lits = re.findall(r'"code":\s*\'([a-z][a-z0-9-_.]*)\'', src)
-        self.assertEqual(len(lits), 1915)  #Wave-312 lane D: pin 1841 -> 1851 (+10: 8 witness-log-* + 2 evidence-bundle-witness-*); Wave-319 lane 1: pin 1906 -> 1915 (+9 grantneg-*)
-        self.assertEqual(len(set(lits)), 1915)  #Wave-312 lane D: pin 1841 -> 1851 (+10: 8 witness-log-* + 2 evidence-bundle-witness-*); Wave-319 lane 1: pin 1906 -> 1915 (+9 grantneg-*)
+        self.assertEqual(len(lits), 1914)  #Wave-312 lane D: pin 1841 -> 1851 (+10: 8 witness-log-* + 2 evidence-bundle-witness-*)
+        self.assertEqual(len(set(lits)), 1914)  #Wave-312 lane D: pin 1841 -> 1851 (+10: 8 witness-log-* + 2 evidence-bundle-witness-*)
         self.assertEqual(lits, sorted(lits))
 
 

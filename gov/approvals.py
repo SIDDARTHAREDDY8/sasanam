@@ -395,6 +395,19 @@ _SECURITY_PAYLOAD_FIELDS = (
     # automatically after the upgrade - queued items must be decided
     # or drained before upgrading.
     "delegation_receipt",
+    # Wave-319 (workload identity): the attested-identity claim
+    # ({"spiffe_id", "trust_domain", "audience", "verified", "code",
+    # "expires_at"}) rendered by the queue from the verified workload
+    # identity document. The claim names the attested workload behind
+    # the action on the human's decision record, so post-queue claim
+    # tampering (flipping verified, swapping spiffe_id) breaks the MAC.
+    # ADVISORY ONLY: verified:false never gates the decision -- the
+    # deterministic policy layer stays canonical. FAIL-CLOSED UPGRADE
+    # (same precedent as F34/F38/R11/D1/wave-24/F101/F103/H3): records
+    # queued BEFORE this change do not carry this field, so their
+    # digests fail verification automatically after the upgrade --
+    # queued items must be decided or drained before upgrading.
+    "attested_identity",
     # Wave-279 (F300): the instruction-provenance section
     # ({"text", "code"} rendered by
     # gov.instruction_provenance.render_provenance_section) is
@@ -2912,6 +2925,15 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # never be swapped (see _identity_verifier_sealed).
         self._identity_verifier = None
         self._identity_verifier_sealed = False
+        # Wave-319 (workload identity): the workload-identity document
+        # verifier installed by the deployment (see
+        # set_attested_identity_verifier). None = no attested-identity
+        # claims are verified: queue() stamps attested_identity=None
+        # and any passed document is refused as a deployment
+        # misconfiguration (fail-closed, never silently unverified).
+        self._attested_identity_verifier = None
+        self._attested_identity_audience = None
+        self._attested_identity_sealed = False
         # Wave-134 (row-11): executor-installed post-decision hook
         # (see set_decision_hook). None = no hook: decide() behavior
         # unchanged. Write-once, F31 pattern.
@@ -2993,6 +3015,86 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 % type(verifier).__name__)
         self._identity_verifier = verifier
         self._identity_verifier_sealed = True
+
+    def set_attested_identity_verifier(self, verifier, audience):
+        """Wave-319: install the workload-identity document verifier.
+
+        ``verifier``: a ``gov.workload_identity.DocumentVerifier`` bound
+        to the deployment's issuer keys (and federation policy).
+        ``audience``: the audience documents must name for the queue
+        (normally ``workload_identity.APPROVAL_QUEUE_AUDIENCE``).
+
+        F31-pattern WRITE-ONCE: the first call installs the verifier and
+        seals the slot; every later call raises. A verifier swap after
+        the executor is constructed can no longer re-point the claim
+        verification at attacker-chosen keys.
+
+        When installed, ``queue(..., attested_identity=...)`` verifies
+        the document against this verifier and stamps the outcome
+        (advisory, MAC-bound) on the record. When absent, any passed
+        document is refused as a deployment misconfiguration --
+        fail-closed, never silently stamped unverified.
+        """
+        if getattr(self, "_attested_identity_sealed", False):
+            raise IdentityVerifierAlreadySetError(
+                "attested-identity verifier is write-once: a verifier is "
+                "already installed; refusing to swap it out")
+        if not isinstance(audience, str) or not audience:
+            raise TypeError("audience must be a non-empty string")
+        self._attested_identity_verifier = verifier
+        self._attested_identity_audience = audience
+        self._attested_identity_sealed = True
+
+    def _render_attested_identity_claim(self, attested_identity):
+        """Wave-319: verify a workload identity document ADVISORY and
+        render the MAC-bound claim.
+
+        Returns None when no document was passed (explicit None, never
+        omitted). Otherwise returns {"spiffe_id", "trust_domain",
+        "audience", "verified", "code", "expires_at"} from the
+        installed verifier's verdict -- verified:false never gates the
+        queueing; the deterministic policy layer stays canonical.
+
+        Fail-closed on deployment misconfiguration: a passed document
+        with no installed verifier raises TypeError (never silently
+        stamped unverified), and a malformed wrapper raises TypeError.
+        """
+        if attested_identity is None:
+            return None
+        if self._attested_identity_verifier is None:
+            raise TypeError(
+                "queue() refused: attested_identity passed but no "
+                "attested-identity verifier installed on this queue -- "
+                "install one via set_attested_identity_verifier() or do "
+                "not pass workload identity documents")
+        if not isinstance(attested_identity, dict):
+            raise TypeError(
+                "queue() refused: attested_identity must be a "
+                "{\"document\", \"presented_selectors\"} dict or None, "
+                "got %s" % type(attested_identity).__name__)
+        document = attested_identity.get("document")
+        presented = attested_identity.get("presented_selectors")
+        if not isinstance(document, dict) \
+                or not isinstance(presented, dict):
+            raise TypeError(
+                "queue() refused: attested_identity needs a \"document\" "
+                "dict and a \"presented_selectors\" dict")
+        from . import workload_identity as _wi
+        verdict = self._attested_identity_verifier.verify(
+            document, audience=self._attested_identity_audience,
+            presented_selectors=presented)
+        claim = {
+            "spiffe_id": verdict.spiffe_id,
+            "trust_domain": verdict.trust_domain,
+            "audience": verdict.audience,
+            "verified": bool(verdict.verified),
+            "code": verdict.code,
+            "expires_at": verdict.expires_at,
+        }
+        # JSON-safe deep copy (same defensive idiom as the other
+        # MAC-bound seams): caller-side mutation after queue() cannot
+        # reach the record.
+        return json.loads(json.dumps(claim, sort_keys=True, default=str))
 
     def set_decision_hook(self, hook):
         """Wave-134 (row-11): install the executor's post-decision hook.
@@ -3479,7 +3581,16 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
               # context. Stamped MAC-bound on the record (see
               # _SECURITY_PAYLOAD_FIELDS); explicit None, never
               # omitted.
-              provenance_segments=None):
+              provenance_segments=None,
+              # Wave-319: the workload identity document for the acting
+              # agent ({"document": <workload-identity doc>,
+              # "presented_selectors": <re-attested facts>}), or None.
+              # Verified ADVISORY at queue time against the installed
+              # attested-identity verifier and stamped MAC-bound on the
+              # record (see _SECURITY_PAYLOAD_FIELDS); verified:false
+              # never gates the decision. Explicit None when the
+              # deployment carries no workload identity -- never omitted.
+              attested_identity=None):
         """Store a pending approval; returns the approval id.
 
         ``approval_request`` (wave-297, opt-in): a signed approval
@@ -3673,6 +3784,14 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             instruction_provenance = {"text": _ip_text, "code": _ip_code}
         # F42: every authority field below comes from the authenticated
         # caller object or the queue itself — never from action[].
+        # Wave-319 (workload identity): the attested-identity claim is
+        # OBSERVABILITY, not authority -- the verification outcome is
+        # recorded MAC-bound (see _SECURITY_PAYLOAD_FIELDS) but never
+        # gates the decision. A passed document with no installed
+        # verifier is a deployment misconfiguration: refused fail-closed
+        # (TypeError), never silently stamped unverified.
+        attested_identity_claim = self._render_attested_identity_claim(
+            attested_identity)
         record = {
             "id": uuid.uuid4().hex[:8],
             "ts": _utcnow(),
@@ -3758,6 +3877,13 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             # None for direct (non-delegated) calls — never ambiguous,
             # never omitted.
             "delegation_receipt": delegation_receipt,
+            # Wave-319: the workload-identity claim
+            # ({"spiffe_id", "trust_domain", "audience", "verified",
+            # "code", "expires_at"}), MAC-bound via _SECURITY_PAYLOAD_FIELDS.
+            # Explicit None when the deployment carries no workload
+            # identity -- never omitted. Advisory: verified:false never
+            # gates; the deterministic policy layer stays canonical.
+            "attested_identity": attested_identity_claim,
             # Wave-279 (F300): the instruction-provenance section
             # ({"text", "code"}), MAC-bound via _SECURITY_PAYLOAD_FIELDS.
             # None when no provenance context is installed or the grant

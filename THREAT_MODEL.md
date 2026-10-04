@@ -83,8 +83,17 @@ OWASP ASI04, LLM07. *Status: NOT mitigated (no pinning).*
 
 **T11 — Identity spoofing.**
 Agents self-declare `agent_id`/`role`/`principal`; the log trusts the claim.
-SPIFFE/SPIRE vocabulary (workload identity, attestation) is the direction;
-today we need at least executor-minted identities. *Status: NOT mitigated.*
+Wave-319 lane 2 built the workload-identity document model
+(`gov/workload_identity.py`, SPIFFE semantics: `spiffe://` IDs, short-lived
+Ed25519-signed documents, mandatory audience binding, explicit trust-domain
+federation, selector re-check at verify); the verification outcome rides the
+approval record as an ADVISORY MAC-bound claim (never gating). **Unit42
+negative rule (load-bearing): a verified document means "minted by a trusted
+issuer for these selectors, unexpired, presented for its audience" -- it is
+NEVER evidence that the node or platform is intact. Node compromise = all
+node-scoped identities compromised; pin identity grants to strong selectors
+and short TTLs.** *Status: partially mitigated (attested documents exist;
+approval gating is a later wave).*
 
 **T12 — Secrets in logs / approvals.**
 Logged args and result summaries can contain credentials; the approval queue
