@@ -112,6 +112,12 @@ from . import target_match as _target_match
 # role / renewal policy). Read at mint time only when a registry is
 # configured; otherwise mint_identity behaves exactly as before.
 from . import provisioner as _provisioner
+# Wave-325 lane 2 (federated agent identity, dex pattern without the
+# dex server): the token issuer/verifier. Read at mint time only when
+# a verifier is configured; otherwise mint_identity behaves exactly
+# as before. Stdlib-only, no import cycle (leaf: ed25519/signing/
+# identity only).
+from . import federated_identity as _federated_identity
 # Wave-198 (graduation ladder): the per-rule-per-window warn digest
 # aggregator (R1 warn-fatigue). Stdlib-only, no import cycle.
 from . import mode_ledger as _mode_ledger
@@ -1148,7 +1154,20 @@ class ToolExecutor:
                  # canonical).
                  agent_svid=None,
                  agent_svid_selectors=None,
-                 attested_identity_verifier=None):
+                 attested_identity_verifier=None,
+                 # Federated agent identity (wave-325 lane 2, dex
+                 # pattern without the dex server): a
+                 # gov.federated_identity.TokenVerifier holding the
+                 # deployment's PINNED issuer keys, constructed by the
+                 # deployment in the operator trust domain (it owns the
+                 # issuer registry and the replay cache). Appended LAST
+                 # so no existing positional caller can misalign.
+                 # Opt-in: None (default) = pre-wave-325 behavior, zero
+                 # change. When set, tokenless mint_identity REFUSES
+                 # fail-closed (identity-token-required) and a string
+                 # token_claims is verified before any other claim
+                 # check; the dict token_claims path is unchanged.
+                 token_verifier=None):
         # Wave-319 (workload identity): fail fast on a half-configured
         # attested-identity wiring -- a document with no verifier (or no
         # attested selectors) would otherwise queue unverifiable claims.
@@ -1166,6 +1185,17 @@ class ToolExecutor:
         self._agent_svid = agent_svid
         self._agent_svid_selectors = agent_svid_selectors
         self._attested_identity_verifier = attested_identity_verifier
+        # Wave-325 lane 2 (federated agent identity): fail fast on a
+        # misconfigured verifier -- a non-verifier value would
+        # otherwise explode with AttributeError at mint time.
+        if (token_verifier is not None
+                and not isinstance(
+                    token_verifier,
+                    _federated_identity.TokenVerifier)):
+            raise ValueError(
+                "token_verifier must be a "
+                "gov.federated_identity.TokenVerifier")
+        self._token_verifier = token_verifier
         if agent_svid is not None:
             from . import workload_identity as _wi
             approvals.set_attested_identity_verifier(
@@ -2593,6 +2623,40 @@ class ToolExecutor:
             raise IdentityMintLimitError(
                 "identity mint budget exhausted for run %s (%d)" %
                 (self.run_id, _MAX_IDENTITY_MINTS_PER_RUN))
+        # Wave-325 lane 2 (federated agent identity, dex pattern):
+        # when a TokenVerifier is configured, issuance is token-gated.
+        # Tokenless minting REFUSES fail-closed (identity-token-
+        # required); a string token_claims is verified against the
+        # deployment's pinned issuers and replaced by the verified
+        # claim set before ANY other claim check, so the pre-existing
+        # token-agreement checks below bind the verified identity.
+        # A dict token_claims takes the legacy path unchanged. The gate
+        # sits after the mint budget check (budgets still hold in
+        # federated mode) and before the registry lookup, so a refused
+        # token never reaches the registry.
+        if self._token_verifier is not None:
+            if token_claims is None:
+                raise IdentityTokenError(
+                    "no identity token presented: this deployment "
+                    "authenticates agent identity with short-lived "
+                    "signed tokens (gov/federated_identity.py); "
+                    "self-asserted minting is refused where the "
+                    "deployment requires token authentication",
+                    code="identity-token-required")
+            if isinstance(token_claims, str):
+                # A raw token string is verified against the
+                # deployment's pinned issuers; the verified claim set
+                # replaces it. Verification failures surface as
+                # IdentityTokenError (the seam's documented exception,
+                # carrying the federated-identity decision code) so
+                # callers see one refusal type.
+                try:
+                    token_claims = self._token_verifier.verify_token(
+                        token_claims)
+                except _federated_identity.FederatedIdentityError as e:
+                    raise IdentityTokenError(
+                        "federated identity token verification failed: "
+                        "%s" % (e,), code=e.code) from e
         if self._principal_registry is not None:
             try:
                 self._principal_registry.check_identity(
@@ -2738,8 +2802,12 @@ class ToolExecutor:
             tok_ok, tok_reason = _decision_packet.check_token_claims(
                 token_claims)
             if not tok_ok:
+                # Wave-325 lane 2: the claim-set refusal carries the
+                # machine code (identity-token-malformed covers a
+                # non-dict or structurally bad claim set).
                 raise IdentityTokenError(
-                    "identity token rejected: %s" % tok_reason)
+                    "identity token rejected: %s" % tok_reason,
+                    code="identity-token-malformed")
             for _claim, _want, _field in (
                     ("sub", agent_id, "agent_id"),
                     ("role", role, "role"),

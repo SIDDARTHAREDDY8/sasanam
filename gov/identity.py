@@ -71,7 +71,15 @@ class IdentityTokenError(Exception):
     itself is the deployment dex client's job (verified against the
     pinned issuer JWKS before the claim set reaches this seam); this
     enforces the claim policy on what was presented.
+
+    ``code`` is the optional machine decision code (wave-325 lane 2:
+    the federated-mode ``identity-token-required`` refusal carries
+    one); None = legacy un-coded refusal.
     """
+
+    def __init__(self, message, code=None):
+        super().__init__(message)
+        self.code = code
 
 
 # F50: one-time loud disclosure that identity is self-asserted when no

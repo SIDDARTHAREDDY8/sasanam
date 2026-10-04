@@ -27,7 +27,7 @@ Attacks the wave-322 NEW surfaces break-first (base 0b03472b):
       shipped tallies (child-mode, GOV_SKIP_GREEN=1; every tally below
       was verified by direct child run, never "corrected" to
       parent-with-green numbers).
-  P6  Pin/footer -- 2014/2014/0 sorted on source literals; footer open
+  P6  Pin/footer -- 2018/2018/0 sorted on source literals; footer open
       none / next F409 (F406 and F407 both closed).
 
 
@@ -70,7 +70,7 @@ from tests.keyfixture import provision_test_key  # noqa: E402
 
 provision_test_key()
 
-TAXONOMY_PIN = 2014
+TAXONOMY_PIN = 2018
 
 
 FOOTER_OPEN = "none"
@@ -940,7 +940,7 @@ def green_check():
 # P6: pin + footer
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-2014-sorted")
+@probe("P6-pin-taxonomy-2018-sorted")
 
 
 def _p6a():
@@ -948,11 +948,11 @@ def _p6a():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2014
+    ok = (len(lits) == TAXONOMY_PIN == 2018
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P6-pin-taxonomy-2014-sorted", "2014/2014/0 sorted")
-    return _break("P6-pin-taxonomy-2014-sorted",
+        return _held("P6-pin-taxonomy-2018-sorted", "2018/2018/0 sorted")
+    return _break("P6-pin-taxonomy-2018-sorted",
 
 
                   "got %d literals" % (len(lits),))
