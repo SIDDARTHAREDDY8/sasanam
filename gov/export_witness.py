@@ -80,7 +80,7 @@ import json
 import os
 
 # ---------------------------------------------------------------------------
-# Codes (registered centrally in gov/decision_codes.py; pin 2047).
+# Codes (registered centrally in gov/decision_codes.py; pin 2052).
 
 # ---------------------------------------------------------------------------
 

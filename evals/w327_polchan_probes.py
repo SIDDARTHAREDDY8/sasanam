@@ -460,12 +460,12 @@ def _p1o():
 # P2: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P2a-pin-taxonomy-2047")
+@probe("P2a-pin-taxonomy-2052")
 def _p2a():
     from gov.decision_codes import TAXONOMY
     assert len(TAXONOMY) == TAXONOMY_PIN, \
         "taxonomy %d != pin %d" % (len(TAXONOMY), TAXONOMY_PIN)
-    _held("P2a-pin-taxonomy-2047", "taxonomy matches pin")
+    _held("P2a-pin-taxonomy-2052", "taxonomy matches pin")
 
 
 @probe("P2b-footer-open-f412")

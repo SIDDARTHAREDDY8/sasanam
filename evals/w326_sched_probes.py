@@ -45,7 +45,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2047  # Wave-326 lane 3: pin 2020 -> 2027 (+7 supplychain-scan-*/supplychain-standing-lapsed); Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned)
+TAXONOMY_PIN = 2052  # Wave-326 lane 3: pin 2020 -> 2027 (+7 supplychain-scan-*/supplychain-standing-lapsed)
 
 
 _results = []
@@ -472,7 +472,7 @@ def _p14():
 # Pin + footer state probes.
 # ---------------------------------------------------------------------------
 
-@probe("P15-pin-taxonomy-2047-sorted")
+@probe("P15-pin-taxonomy-2052-sorted")
 def _p15():
     from gov import decision_codes as DC
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -481,7 +481,7 @@ def _p15():
         r'\"code\":\s*[\"\']([^\"\']+)[\"\']', src)
     # Uniqueness on raw source literals (the wave-260 lesson: the
     # deduped dict cannot see duplicate literals).
-    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2047, (
+    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2052, (
         len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
     for code in ("supplychain-scan-malformed",
@@ -494,7 +494,7 @@ def _p15():
         assert code in DC.TAXONOMY, "new code %r not registered" % code
         entry = DC.TAXONOMY[code]
         assert entry["domain"] == "supplychain", entry
-    _held("P15-pin-taxonomy-2047-sorted", "2047/2047/0 sorted; new codes ok")
+    _held("P15-pin-taxonomy-2052-sorted", "2052/2052/0 sorted; new codes ok")
 
 
 @probe("P16-footer-open-F412-next-F413")

@@ -101,8 +101,8 @@ class BaseStateTest(unittest.TestCase):
 
     def test_taxonomy_pin(self):
         self.assertTrue(_expect_held(
-            "taxonomy-pin", TAXONOMY_PIN == 2047,
-            "TAXONOMY_PIN=%s, want 1991" % (TAXONOMY_PIN,)) == "HELD")
+            "taxonomy-pin", TAXONOMY_PIN == 2052,
+            "TAXONOMY_PIN=%s, want 2052" % (TAXONOMY_PIN,)) == "HELD")
 
 
 

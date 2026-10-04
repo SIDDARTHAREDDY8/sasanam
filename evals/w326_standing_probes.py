@@ -391,7 +391,7 @@ def _p9():
         _cleanup(root)
 
 
-@probe("P10-pin-taxonomy-2047-sorted")
+@probe("P10-pin-taxonomy-2052-sorted")
 def _p10():
     import re
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -401,7 +401,7 @@ def _p10():
         "want %d/%d/0, got %d/%d" % (TAXONOMY_PIN, TAXONOMY_PIN,
                                     len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
-    _held("P10-pin-taxonomy-2047-sorted",
+    _held("P10-pin-taxonomy-2052-sorted",
           "%d/%d/0 sorted" % (TAXONOMY_PIN, TAXONOMY_PIN))
 
 
