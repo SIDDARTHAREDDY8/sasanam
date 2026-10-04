@@ -37,8 +37,8 @@ import w324_vsa_probes as _wv  # noqa: E402
 import w322_redteam_probes as _w322  # noqa: E402
 
 TAXONOMY_PIN = 2058  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*)
-FOOTER_OPEN = "F414"  # F409/F410/F411/F412/F413 CLOSED; F414 (LOW, shamir-distribute symlink alias) OPEN.
-FOOTER_NEXT = "F415"  # Next free finding number.
+FOOTER_OPEN = "F415, F416"  # F409-F414 CLOSED; F415/F416 (LOW, uncoded int() crashes) OPEN (wave-330 lane 3).
+FOOTER_NEXT = "F417"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -912,24 +912,24 @@ def _p6a():
     return _held("P6a-pin-taxonomy-2058-sorted", "2058/2058/0 sorted")
 
 
-@probe("P6b-footer-open-f414-next-f415")
+@probe("P6b-footer-open-f415-f416-next-f417")
 def _p6b():
     text = open(os.path.join(REPO, "evals/FINDINGS.md")).read()
     import re
     # The file carries one footer line per wave; the LAST one is current.
-    # Footer form: "Next free finding: **F415**. **Open findings: F414.**"
+    # Footer form: "Next free finding: **F417**. **Open findings: F415, F416.**"
     opens = re.findall(r"\*\*Open findings:\s*([^*]+?)\.\*\*", text)
     nexts = re.findall(r"Next free finding:\s*\*\*([^*]+?)\*\*", text)
     open_line = opens[-1].strip() if opens else ""
     next_free = nexts[-1].strip() if nexts else ""
     if open_line != FOOTER_OPEN:
-        return _break("P6b-footer-open-f414-next-f415",
+        return _break("P6b-footer-open-f415-f416-next-f417",
                       "open findings %r, want %r" % (open_line, FOOTER_OPEN))
     if next_free != FOOTER_NEXT:
-        return _break("P6b-footer-open-f414-next-f415",
+        return _break("P6b-footer-open-f415-f416-next-f417",
                       "next free %r, want %r" % (next_free, FOOTER_NEXT))
-    return _held("P6b-footer-open-f414-next-f415",
-                 "footer open F414 / next F415")
+    return _held("P6b-footer-open-f415-f416-next-f417",
+                 "footer open F415, F416 / next F417")
 
 
 # ---------------------------------------------------------------------------

@@ -1,8 +1,7 @@
 """Wave-329 independent red-team battery.
 
-Base: dd034c36 (wave-328 merge). Footer: open none / next F415
-(F413 CLOSED by wave-329 lane 1; F414 filed by wave-329 lane 3, CLOSED by
-wave-330 lane 1). Pin: 2058.
+Base: dd034c36 (wave-328 merge). Footer: open F415, F416 / next F417
+(F413/F414 CLOSED; F415/F416 filed by wave-330 lane 3, LOW, OPEN). Pin: 2058.
 
 P1  wave-328 seams not yet broken: Shamir custody (share forgery,
     ceremony mixing, duplicates, length drift, commitment games,
@@ -40,8 +39,8 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2058  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).; Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*)
-FOOTER_OPEN = "none"  # F413 CLOSED wave-329 lane 1; F414 (LOW, shamir distribute symlink alias) CLOSED wave-330 lane 1.
-FOOTER_NEXT = "F415"  # Next free finding number.
+FOOTER_OPEN = "F415, F416"  # F409-F414 CLOSED; F415/F416 (LOW, uncoded int() crashes) OPEN (wave-330 lane 3).
+FOOTER_NEXT = "F417"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -806,9 +805,10 @@ def _p5a():
                  "2058/2058/0 sorted unique on raw source literals")
 
 
-@probe("P5b-footer-open-none-next-f415")
+@probe("P5b-footer-open-f415-f416-next-f417")
 def _p5b():
-    """Footer: open none; next free F415 (F414 CLOSED wave-330 lane 1)."""
+    """Footer: open F415, F416; next free F417 (F414 CLOSED wave-330 lane 1;
+    F415/F416 OPEN filed wave-330 lane 3)."""
     footer = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
     # The footer is a long paragraph with historical "Next free" entries;
     # the live one is the LAST.
@@ -816,18 +816,18 @@ def _p5b():
                           r"\*\*Open findings: ([^*]*)\.\*\*",
                           footer))
     if not ms:
-        return _break("P5b-footer-open-none-next-f415",
+        return _break("P5b-footer-open-f415-f416-next-f417",
                       "footer line not found")
     m = ms[-1]
     if m.group(1) != "F" + FOOTER_NEXT[1:]:
-        return _break("P5b-footer-open-none-next-f415",
+        return _break("P5b-footer-open-f415-f416-next-f417",
                       "next=%r, want F%s" % (m.group(1), FOOTER_NEXT[1:]))
     opens = m.group(2).strip()
     if opens != FOOTER_OPEN:
-        return _break("P5b-footer-open-none-next-f415",
+        return _break("P5b-footer-open-f415-f416-next-f417",
                       "open=%r, want %r" % (opens, FOOTER_OPEN))
-    return _held("P5b-footer-open-none-next-f415",
-                 "footer open none / next F415")
+    return _held("P5b-footer-open-f415-f416-next-f417",
+                 "footer open F415, F416 / next F417")
 
 
 # ---------------------------------------------------------------------------
@@ -880,41 +880,25 @@ def _run_child(battery, marker, fmt, timeout=600):
 
 # Every BREAK below is a genuinely open finding, not the wave-305-class
 # footer cascade: the F414 closure re-pins child footer-state probes to
-# open none / next F415 at the wave-330 merge. Until that sweep, the
+# open F415, F416 / next F417 at the wave-330 merge. Until that sweep, the
 # closure's own cascade (child probes still pinning open F414) is listed
 # per battery below. This probe fails LOUD on any break OUTSIDE the
 # cascade (a genuine regression).
 _CHILD_CASCADE = {
-    # F414 CLOSED 2026-10-04 wave-330 lane 1: child footer-state probes
-    # still pin open F414 / next F415 and BREAK on this tree. The
-    # wave-330 merge sweep re-pins them to open none / next F415 and
-    # empties these sets again (wave-305 class).
-    # Verified 2026-10-04 by direct child runs on this tree: every BREAK
-    # below is a footer-state probe (or a tally probe shifted solely by
-    # a grandchild footer BREAK); w328_shamir and w326_tufaudit are
-    # fully green. No ERRORs anywhere.
-    "w328_redteam_probes.py": {
-        "P5b-green-w327-redteam", "P5c-green-w327-polchan",
-        "P5e-green-w326-redteam", "P5f-green-w326-standing",
-        "P5g-green-w326-sched", "P6b-footer-open-f414-next-f415",
-    },
-    "w328_resid_probes.py": {"P9-footer-open-F412-next-F413"},
+    # F414 CLOSED 2026-10-04 wave-330 lane 1; F415/F416 OPEN filed
+    # 2026-10-04 wave-330 lane 3. The wave-330 merge sweep re-pinned all
+    # child footer-state probes to open F415, F416 / next F417, so every
+    # cascade set is EMPTY again (wave-305 class). Any child BREAK below
+    # is a genuine regression.
+    "w328_redteam_probes.py": set(),
+    "w328_resid_probes.py": set(),
     "w328_shamir_probes.py": set(),
-    "w327_redteam_probes.py": {
-        "P5b-green-w326-standing", "P5c-green-w326-sched",
-        "P5e-green-w326-redteam", "P5f-green-w325-redteam",
-        "P5g-green-w324-alert", "P6b-footer-open-f414-next-f415",
-    },
-    "w327_polchan_probes.py": {"P2b-footer-open-f413"},
+    "w327_redteam_probes.py": set(),
+    "w327_polchan_probes.py": set(),
     "w326_tufaudit_probes.py": set(),
-    "w326_redteam_probes.py": {
-        "P5a-green-w325-resid", "P5b-green-w325-dexid",
-        "P5c-green-w325-redteam", "P5d-green-w324-alert",
-        "P5e-green-w324-offver", "P5f-green-w324-vsa",
-        "P6b-footer-open-f414-next-f415",
-    },
-    "w326_standing_probes.py": {"P11-footer-state"},
-    "w326_sched_probes.py": {"P16-footer-open-F412-next-F413"},
+    "w326_redteam_probes.py": set(),
+    "w326_standing_probes.py": set(),
+    "w326_sched_probes.py": set(),
 }
 
 _CHILD_TALLIES = (

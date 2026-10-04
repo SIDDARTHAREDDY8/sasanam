@@ -33,9 +33,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
 TAXONOMY_PIN = 2058  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).; Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*)
-FOOTER_OPEN = "F414"  # F409/F410/F411/F412/F413 all CLOSED (F413 CLOSED
-# 2026-10-04 wave-329 lane 1). F414 (LOW, shamir-distribute symlink alias) OPEN (wave-329 lane 3).
-FOOTER_NEXT = "F415"  # Next free finding number.
+FOOTER_OPEN = "F415, F416"  # F409-F414 CLOSED; F415/F416 (LOW, uncoded int() crashes) OPEN (wave-330 lane 3).
+FOOTER_NEXT = "F417"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -590,13 +589,13 @@ def _parse_tally(text):
 # The expected BREAKs are the open-finding probes: P1b/P1c (F413, this
 # battery) and P2a (F412). Child mode (GOV_SKIP_GREEN=1).
 #
-# NOTE (merge resolution, 2026-10-04): the wave-328 merge re-pinned all
-# footer-state probes to the merged footer (open F413 / next F414; F412
-# CLOSED by lane 1, F413 OPEN filed by lane 4). The P5x green-chain probes
-# are HELD again; the five cascade IDs were removed from _EXPECTED_BREAKS
+# NOTE (merge resolution, 2026-10-04): the wave-330 merge re-pinned all
+# footer-state probes to the merged footer (open F415, F416 / next F417; F414
+# CLOSED by lane 1, F415/F416 OPEN filed by lane 3). The P5x green-chain probes
+# are HELD again; the cascade sets were emptied (wave-305 class).
 # per the wave-305 lesson. Footer probes re-pinned:
 #   evals/w327_redteam_probes.py  P6b + _EXPECTED_BREAKS emptied (F412 closed)
-#   evals/w327_polchan_probes.py  P2b (now P2b-footer-open-f413)
+#   evals/w327_polchan_probes.py  P2b (now P2b-footer-open-f415-f416)
 #   evals/w326_redteam_probes.py  P1a/P1h rewritten (lane 2 hardening)
 #   evals/w326_standing_probes.py P11-footer-state
 #   evals/w326_sched_probes.py    footer assertion
@@ -712,7 +711,7 @@ def _p6a():
     return _held("P6a-pin-taxonomy-2058-sorted", "2058/2058/0 sorted")
 
 
-@probe("P6b-footer-open-f414-next-f415")
+@probe("P6b-footer-open-f415-f416-next-f417")
 def _p6b():
     text = open(os.path.join(REPO, "evals/FINDINGS.md")).read()
     opens = re.findall(r"\*\*Open findings:\s*([^*]+?)\.\*\*", text)
@@ -720,13 +719,13 @@ def _p6b():
     open_line = opens[-1].strip() if opens else ""
     next_free = nexts[-1].strip() if nexts else ""
     if open_line != FOOTER_OPEN:
-        return _break("P6b-footer-open-f414-next-f415",
+        return _break("P6b-footer-open-f415-f416-next-f417",
                       "open findings %r, want %r" % (open_line, FOOTER_OPEN))
     if next_free != FOOTER_NEXT:
-        return _break("P6b-footer-open-f414-next-f415",
+        return _break("P6b-footer-open-f415-f416-next-f417",
                       "next free %r, want %r" % (next_free, FOOTER_NEXT))
-    return _held("P6b-footer-open-f414-next-f415",
-                 "footer open F414 / next F415")
+    return _held("P6b-footer-open-f415-f416-next-f417",
+                 "footer open F415, F416 / next F417")
 
 
 # ---------------------------------------------------------------------------
