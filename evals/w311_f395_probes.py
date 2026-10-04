@@ -106,11 +106,11 @@ def p_footer_state():
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
         # Wave-313 lane A footer: F397 CLOSED; no open findings.
-    if nxt != 404 or open_s != "none":
+    if nxt != 405 or open_s != "F404":
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d (want F398), open '%s' "
                        "(want 'none')" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open none / next F404")
+    _record("footer-state", "HELD", "footer pins open F404 / next F405")
 
 
 def _seed(s):

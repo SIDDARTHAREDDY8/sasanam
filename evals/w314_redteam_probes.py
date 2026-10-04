@@ -43,8 +43,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 1900 #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*)
-FOOTER_OPEN = "none"
-FOOTER_NEXT = "F404"
+FOOTER_OPEN = "F404"
+FOOTER_NEXT = "F405"
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 

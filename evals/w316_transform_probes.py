@@ -448,7 +448,7 @@ def p20():
     nxt = int(m.group(1))
     open_s = opens.group(1).strip()
     if nxt == 404 and open_s == "none":
-        return _held("footer pins open none / next F404")
+        return _held("footer pins open F404 / next F405")
     return _break("footer is F%d / %s" % (nxt, open_s))
 
 

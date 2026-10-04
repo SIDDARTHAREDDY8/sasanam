@@ -121,13 +121,13 @@ def p_footer_state():
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
     # Wave-312 merge footer: F396 CLOSED (lane A); F397 OPEN (lane C).
     # Wave-312 merge footer: F396 CLOSED (lane A); F397 OPEN (lane C).
-    want_open = "none"
-    if nxt != 404 or open_s != want_open:
+    want_open = "F404"
+    if nxt != 405 or open_s != want_open:
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F404 open 'none')"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open none / next F404")
+            "footer pins open F404 / next F405")
 
 
 AT = 1_700_000_000

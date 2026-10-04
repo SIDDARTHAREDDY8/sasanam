@@ -52,8 +52,8 @@ from gov import provenance_sink as PS  # noqa: E402
 
 TAXONOMY_PIN = 1900  # Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*)
 
-FOOTER_NEXT = "F404"
-FOOTER_OPEN = "F403"
+FOOTER_NEXT = "F405"
+FOOTER_OPEN = "F404"
 
 _results = []
 PROBES = []

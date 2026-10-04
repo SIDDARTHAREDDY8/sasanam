@@ -805,31 +805,31 @@ def _p8():
 # P9: regressions -- footer, pin
 # ---------------------------------------------------------------------------
 
-@probe("P9-footer-F403-F404-open-next-F405")
+@probe("P9-footer-F404-open-next-F405")
 def _p9_footer():
     import re as _re
     try:
         text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                     encoding="utf-8").read()
     except Exception as exc:  # noqa: BLE001
-        return _error("P9-footer-F403-F404-open-next-F405", "%r" % (exc,))
+        return _error("P9-footer-F404-open-next-F405", "%r" % (exc,))
     m = list(_re.finditer(
         r"Next free finding: \*\*F(\d+)\*\*\. \*\*Open findings: ([^*]*)\*\*",
         text))
     if not m:
-        return _error("P9-footer-F403-F404-open-next-F405",
+        return _error("P9-footer-F404-open-next-F405",
                       "no footer line found")
     last = m[-1]
     nxt, opens = last.group(1), last.group(2)
-    if nxt != "405" or opens != "F403, F404.":
-        return _break("P9-footer-F403-F404-open-next-F405",
-                      "footer pins next=%s open=%s (want 405 / F403, F404.)"
+    if nxt != "405" or opens != "F404.":
+        return _break("P9-footer-F404-open-next-F405",
+                      "footer pins next=%s open=%s (want 405 / F404.)"
                       % (nxt, opens))
     if "## F404" not in text:
-        return _break("P9-footer-F403-F404-open-next-F405",
+        return _break("P9-footer-F404-open-next-F405",
                       "F404 entry missing from FINDINGS.md")
-    return _held("P9-footer-F403-F404-open-next-F405",
-                 "footer pins open F403, F404 / next F405")
+    return _held("P9-footer-F404-open-next-F405",
+                 "footer pins open F404 / next F405")
 
 
 @probe("P9-pin-taxonomy-1900-sorted")
