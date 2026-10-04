@@ -14,7 +14,7 @@ P3 (2): contract probes -- verify_keyed_bundle returns False (not
     raises) on a forged bundle (assert `is False`); the empty-hint
     spike shape ({"publicKey": {}}) is accepted, as cosign proved.
 P4 (2): regressions -- footer open none / next F408; pin taxonomy
-    1990/1990/0 sorted on source literals (this lane registers no
+    1995/1995/0 sorted on source literals (this lane registers no
     taxonomy codes).
 
 Result contract: each probe prints [HELD]/[BREAK]/[ERROR]. Exit 0 iff
@@ -46,7 +46,7 @@ from gov import sigstore_bundle as SB  # noqa: E402
 from gov import evidence_intoto as _intoto  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
-TAXONOMY_PIN = 1990
+TAXONOMY_PIN = 1995
 FOOTER_OPEN = "none"
 FOOTER_NEXT = "F408"
 
@@ -393,17 +393,17 @@ def _p3b():
 # P4: regressions
 # ---------------------------------------------------------------------------
 
-@probe("P4-pin-taxonomy-1990-sorted")
+@probe("P4-pin-taxonomy-1995-sorted")
 def _p4a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 1990
+    ok = (len(lits) == TAXONOMY_PIN == 1995
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P4-pin-taxonomy-1990-sorted", "1990/1990/0 sorted")
-    return _break("P4-pin-taxonomy-1990-sorted",
+        return _held("P4-pin-taxonomy-1995-sorted", "1995/1995/0 sorted")
+    return _break("P4-pin-taxonomy-1995-sorted",
                   "got %d literals" % (len(lits),))
 
 

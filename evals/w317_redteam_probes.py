@@ -35,7 +35,7 @@ P7 (2): F399 seam -- the escalate-terminal ratchet fires at the 4th
 P8 (1): F403 re-probe -- decision_packet standalone offline import still
     broken on the OPEN tree (lane 1 owns the closure; not closed here).
 P9 (2): regressions -- footer (open none / next F408; F405 closed),
-    pin taxonomy 1990/1990/0 sorted.
+    pin taxonomy 1995/1995/0 sorted.
 P10 (3): robustness acceptance gaming -- enum budget respected,
     string without markers fails closed, attacker>benign bits fails.
 
@@ -917,7 +917,7 @@ def _p9_footer():
                  "footer pins open none / next F408")
 
 
-@probe("P9-pin-taxonomy-1990-sorted")
+@probe("P9-pin-taxonomy-1995-sorted")
 def _p9_pin():
     try:
         lits = re.findall(r'"code":\s*\'([^\']+)\'',
@@ -925,14 +925,14 @@ def _p9_pin():
                                             "decision_codes.py"),
                                encoding="utf-8").read())
     except Exception as exc:  # noqa: BLE001
-        return _error("P9-pin-taxonomy-1990-sorted", "%r" % (exc,))
-    if len(lits) != 1990 or len(set(lits)) != 1990:
-        return _break("P9-pin-taxonomy-1990-sorted",
-                      "got %d literals / %d unique (want 1990/1916)"
+        return _error("P9-pin-taxonomy-1995-sorted", "%r" % (exc,))
+    if len(lits) != 1995 or len(set(lits)) != 1995:
+        return _break("P9-pin-taxonomy-1995-sorted",
+                      "got %d literals / %d unique (want 1995/1916)"
                       % (len(lits), len(set(lits))))
     if lits != sorted(lits):
-        return _break("P9-pin-taxonomy-1990-sorted", "literals not sorted")
-    return _held("P9-pin-taxonomy-1990-sorted", "1990/1990/0 sorted")
+        return _break("P9-pin-taxonomy-1995-sorted", "literals not sorted")
+    return _held("P9-pin-taxonomy-1995-sorted", "1995/1995/0 sorted")
 
 
 # ---------------------------------------------------------------------------

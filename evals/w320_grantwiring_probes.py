@@ -288,11 +288,11 @@ def p_pin_taxonomy():
     import re
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == 1990 and len(set(lits)) == len(lits)
+    ok = (len(lits) == 1995 and len(set(lits)) == len(lits)
           and lits == sorted(lits)
-          and len(dc.TAXONOMY) == 1990)
-    return _held("pin-taxonomy-1990-sorted", ok,
-                 "1990/1990/0 sorted" if ok
+          and len(dc.TAXONOMY) == 1995)
+    return _held("pin-taxonomy-1995-sorted", ok,
+                 "1995/1995/0 sorted" if ok
                  else "taxonomy drift: %d literals" % len(lits))
 
 
@@ -320,7 +320,7 @@ PROBES = [
     ("expired-between-queue-and-execution",
      p_expired_between_queue_and_execution),
     ("human-edited-args-break-scope", p_human_edited_args_break_scope),
-    ("pin-taxonomy-1990-sorted", p_pin_taxonomy),
+    ("pin-taxonomy-1995-sorted", p_pin_taxonomy),
     ("footer-state", p_footer_state),
 ]
 
