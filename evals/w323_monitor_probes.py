@@ -654,9 +654,9 @@ def _p17():
 def _p18():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Next free finding: **F409**. **Open findings: none.**" in text, \
+    assert "Next free finding: **F410**. **Open findings: F409.**" in text, \
         "footer mismatch"
-    _held("P18-footer-state", "open none / next F409")
+    _held("P18-footer-state", "open F409 / next F410")
 
 
 # ---------------------------------------------------------------------------

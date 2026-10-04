@@ -64,8 +64,8 @@ from evals import probe_lines  # noqa: E402
 TAXONOMY_PIN = 2020
 
 
-FOOTER_OPEN = "none"
-FOOTER_NEXT = "F409"
+FOOTER_OPEN = "F409"
+FOOTER_NEXT = "F410"
 
 _NOW = datetime(2026, 10, 4, 5, 0, 0, tzinfo=timezone.utc)
 _NOW_INT = 1759554000

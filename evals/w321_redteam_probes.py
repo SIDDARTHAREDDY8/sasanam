@@ -70,8 +70,8 @@ import gov.provenance_labels as PL  # noqa: E402
 TAXONOMY_PIN = 2020
 
 
-FOOTER_OPEN = "none"
-FOOTER_NEXT = "F409"
+FOOTER_OPEN = "F409"
+FOOTER_NEXT = "F410"
 
 _results = []
 
@@ -766,7 +766,7 @@ def p5_footer_state():
     ok = (m_open and m_open[-1].strip() == FOOTER_OPEN
           and m_next and m_next[-1] == FOOTER_NEXT)
     if ok:
-        return _held("P5-footer-state", True, "open none / next F409")
+        return _held("P5-footer-state", True, "open F409 / next F410")
     return _break("P5-footer-state",
                   "got %r / %r" % (m_open[-1] if m_open else None,
                                    m_next[-1] if m_next else None))

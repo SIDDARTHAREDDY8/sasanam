@@ -51,8 +51,8 @@ from gov.signing import Ed25519Signer  # noqa: E402
 TAXONOMY_PIN = 2020
 
 
-FOOTER_OPEN = "none"
-FOOTER_NEXT = "F409"
+FOOTER_OPEN = "F409"
+FOOTER_NEXT = "F410"
 
 _results = []
 _PROBES = []

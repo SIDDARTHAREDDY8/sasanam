@@ -61,8 +61,8 @@ provision_test_key()
 TAXONOMY_PIN = 2020
 
 
-FOOTER_OPEN = "none"
-FOOTER_NEXT = "F409"
+FOOTER_OPEN = "F409"
+FOOTER_NEXT = "F410"
 
 _results = []
 
