@@ -12,7 +12,7 @@ Attacks the wave-321 NEW surfaces break-first:
       (provenance-critical-arg-refused); a silent ALLOW is a BREAK.
   P4  Regression -- the four wave-321 batteries must match their shipped
       tallies (child-mode, GOV_SKIP_GREEN=1).
-  P5  Pin/footer -- 2044/2044/0 sorted on source literals; footer
+  P5  Pin/footer -- 2045/2045/0 sorted on source literals; footer
       open none / next F409 (F406 closed, F407 closed; see
 
 
@@ -58,10 +58,10 @@ from tests.keyfixture import provision_test_key  # noqa: E402
 
 provision_test_key()
 
-TAXONOMY_PIN = 2044#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost)
+TAXONOMY_PIN = 2045#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost)
 
 
-FOOTER_OPEN = "F412"
+FOOTER_OPEN = "none"  # F409/F410/F411/F412 CLOSED; no open findings.
 FOOTER_NEXT = "F413"
 
 _results = []
@@ -835,7 +835,7 @@ def green_check():
         _record("green-" + n, v, note)
 
 
-@probe("P4-pin-taxonomy-2044-sorted")
+@probe("P4-pin-taxonomy-2045-sorted")
 
 
 def _p5a():
@@ -843,11 +843,11 @@ def _p5a():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2044
+    ok = (len(lits) == TAXONOMY_PIN == 2045
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P4-pin-taxonomy-2044-sorted", "2044/2044/0 sorted")
-    return _break("P4-pin-taxonomy-2044-sorted",
+        return _held("P4-pin-taxonomy-2045-sorted", "2045/2045/0 sorted")
+    return _break("P4-pin-taxonomy-2045-sorted",
 
 
                   "got %d literals" % (len(lits),))

@@ -16430,6 +16430,14 @@ TAXONOMY = {
         "evidence_kinds_required": ['advisory', 'refusal-record'],
         "reverify_steps": ['recompute'],
     },
+    'supplychain-standing-journal-corrupt': {
+        "domain": 'supplychain',
+        "code": 'supplychain-standing-journal-corrupt',
+        "human": 'supplychain: a standing-verdict journal tip is not a valid knowledge record; refusing rather than guessing at the standing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'supplychain-standing-knowledge-unattached': {
         "domain": 'supplychain',
         "code": 'supplychain-standing-knowledge-unattached',

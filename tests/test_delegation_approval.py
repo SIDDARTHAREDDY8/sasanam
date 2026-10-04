@@ -309,7 +309,7 @@ class DelegatedApprovalContractTest(unittest.TestCase):
                 m = pat.match(line.rstrip("\n"))
                 if m:
                     lits.append(m.group(1))
-        self.assertEqual(len(lits), 2044)  #Wave-312 lane D: pin 1841 -> 1851 (+10: 8 witness-log-* + 2 evidence-bundle-witness-*); Wave-319 merge: pin 1906 -> 1933 (+27); Wave-325 lane 2: pin 2012 -> 2018 (+6 federated-identity-*: identity-issuer-key-retired + identity-token-issuer-unknown + identity-token-key-binding-mismatch + identity-token-replayed + identity-token-required + identity-token-ttl-exceeded)
+        self.assertEqual(len(lits), 2045)  #Wave-312 lane D: pin 1841 -> 1851 (+10: 8 witness-log-* + 2 evidence-bundle-witness-*); Wave-319 merge: pin 1906 -> 1933 (+27); Wave-325 lane 2: pin 2012 -> 2018 (+6 federated-identity-*: identity-issuer-key-retired + identity-token-issuer-unknown + identity-token-key-binding-mismatch + identity-token-replayed + identity-token-required + identity-token-ttl-exceeded)
         new = [c for c in lits
                if c.startswith("delegation-approval-")]
         self.assertEqual(new, ["delegation-approval-chain-mismatch",

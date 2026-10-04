@@ -123,10 +123,17 @@ class StandingStoreTests(unittest.TestCase):
         # Concurrent write: supersedes=None, the same parent the tip saw
         # (the tip is the first knowledge entry, parent None), with a
         # different standing -> conflict, newest wins.
+        before = len(store.journal_entries())
         entry = store.attach_knowledge(_knowledge(
             standing="revoked", justification="newer knowledge",
             known_since=300, supersedes=None))
-        self.assertEqual(entry["kind"], "knowledge")
+        # F412: the resolution is a SINGLE atomic journal entry -- the
+        # conflict record carrying the winner's knowledge.
+        self.assertEqual(entry["kind"], "conflict")
+        self.assertEqual(len(store.journal_entries()), before + 1)
+        self.assertEqual(entry["asserted_standing"], "revoked")
+        self.assertEqual(entry["supersedes"], 1)  # attaches at the tip
+        self.assertEqual(entry["original_supersedes"], None)
         self.assertEqual(store.standing_of(D1)["standing"], "revoked")
         kinds = [e["kind"] for e in store.journal_entries()]
         self.assertIn("conflict", kinds)
@@ -213,6 +220,100 @@ class StandingStoreTests(unittest.TestCase):
                     if e["kind"] == "conflict"][0]
         self.assertEqual(conflict["loser_justification"], "looks fine")
         self.assertEqual(conflict["winner_justification"], "cve-2026-1")
+
+    def _legacy_conflict_entry(self, store):
+        """The pre-F412 two-append conflict shape: metadata only, no
+        asserted_standing. Appending just this simulates the crash
+        between _resolve_conflict's two appends."""
+        return store._append({
+            "kind": "conflict",
+            "code": "supplychain-standing-conflict",
+            "artifact_digest": D1,
+            "winner_seq": store._next_seq + 1,
+            "winner_known_since": 300,
+            "winner_standing": "revoked",
+            "winner_justification": "cve-2026-1",
+            "loser_known_since": 200,
+            "loser_standing": "quarantined",
+            "loser_justification": "j2",
+            "loser_origin": "o2",
+            "loser_collector": "c2",
+            "detail": "simulated crash between the two appends",
+        })
+
+    def test_f412_crash_window_recovers_not_wedged(self):
+        # F412: a crash between the legacy two appends left the
+        # standing-less conflict entry as the tip and wedged the store
+        # with an uncoded KeyError. Now the tip stays at the
+        # pre-conflict knowledge: the store recovers, never wedges.
+        d = _tmpdir(self)
+        path = os.path.join(d, "j.jsonl")
+        store = sv.StandingStore(path)
+        store.register_artifact(D1, "inv")
+        store.attach_knowledge(_knowledge(standing="trusted"))
+        e2 = store.attach_knowledge(_knowledge(
+            standing="quarantined", justification="j2", known_since=200,
+            supersedes=1))
+        self._legacy_conflict_entry(store)  # the crash: no winner entry
+        # "New process": reload from the journal.
+        store2 = sv.StandingStore(path)
+        got = store2.standing_of(D1)  # must not raise, coded or otherwise
+        self.assertEqual(got["standing"], "quarantined")
+        self.assertEqual(got["tip_seq"], e2["seq"])
+        # The conflict is still in the audit trail.
+        kinds = [e["kind"] for e in store2.journal_entries()]
+        self.assertIn("conflict", kinds)
+        # And new knowledge can still attach at the pre-conflict tip.
+        e4 = store2.attach_knowledge(_knowledge(
+            standing="revoked", justification="after crash",
+            known_since=400, supersedes=e2["seq"]))
+        self.assertEqual(e4["kind"], "knowledge")
+        self.assertEqual(store2.standing_of(D1)["standing"], "revoked")
+
+    def test_f412_legacy_completed_conflict_reloads(self):
+        # Pre-F412 journals where BOTH appends landed must still reload
+        # with the winner as the tip.
+        d = _tmpdir(self)
+        path = os.path.join(d, "j.jsonl")
+        store = sv.StandingStore(path)
+        store.register_artifact(D1, "inv")
+        store.attach_knowledge(_knowledge(standing="trusted"))
+        e2 = store.attach_knowledge(_knowledge(
+            standing="quarantined", justification="j2", known_since=200,
+            supersedes=1))
+        self._legacy_conflict_entry(store)
+        # The second append (the winner's knowledge) landed: tip moves.
+        winner = store._append(dict(
+            _knowledge(standing="revoked", justification="cve-2026-1",
+                       known_since=300, supersedes=e2["seq"]),
+            kind="knowledge"))
+        store2 = sv.StandingStore(path)
+        got = store2.standing_of(D1)
+        self.assertEqual(got["standing"], "revoked")
+        self.assertEqual(got["tip_seq"], winner["seq"])
+
+    def test_f412_tip_guard_refuses_coded_never_keyerror(self):
+        # Defense in depth: if a tip entry ever lacks asserted_standing,
+        # both read and write paths refuse with a code, never a bare
+        # KeyError. (Unreachable via _load; injected white-box.)
+        d = _tmpdir(self)
+        store = sv.StandingStore(os.path.join(d, "j.jsonl"))
+        store.register_artifact(D1, "inv")
+        store.attach_knowledge(_knowledge(standing="trusted"))
+        bad_seq = 99
+        store._tips[D1] = bad_seq
+        store._by_seq[bad_seq] = {"seq": bad_seq, "kind": "knowledge",
+                                  "artifact_digest": D1}  # no standing
+        with self.assertRaises(sv.StandingError) as ctx:
+            store.standing_of(D1)
+        self.assertEqual(ctx.exception.code,
+                         "supplychain-standing-journal-corrupt")
+        with self.assertRaises(sv.StandingError) as ctx:
+            store.attach_knowledge(_knowledge(
+                standing="revoked", justification="j", known_since=200,
+                supersedes=1))
+        self.assertEqual(ctx.exception.code,
+                         "supplychain-standing-journal-corrupt")
 
     def test_blast_radius_and_semantics_with_conflict(self):
         d = _tmpdir(self)
