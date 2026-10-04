@@ -697,18 +697,18 @@ def _p5c():
 # P6: regressions (pin + footer)
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-1977-sorted")
+@probe("P6-pin-taxonomy-1984-sorted")
 def _p6a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 1977
+    ok = (len(lits) == TAXONOMY_PIN == 1984
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P6-pin-taxonomy-1977-sorted",
-                     "1977/1977/0 sorted")
-    return _break("P6-pin-taxonomy-1977-sorted",
+        return _held("P6-pin-taxonomy-1984-sorted",
+                     "1984/1984/0 sorted")
+    return _break("P6-pin-taxonomy-1984-sorted",
                  "got %d literals" % (len(lits),))
 
 

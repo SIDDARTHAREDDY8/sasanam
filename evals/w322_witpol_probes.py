@@ -530,17 +530,17 @@ def _p3c():
 # P4: regressions
 # ---------------------------------------------------------------------------
 
-@probe("P4-pin-taxonomy-1977-sorted")
+@probe("P4-pin-taxonomy-1984-sorted")
 def _p4a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 1977
+    ok = (len(lits) == TAXONOMY_PIN == 1984
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P4-pin-taxonomy-1977-sorted", "1977/1977/0 sorted")
-    return _break("P4-pin-taxonomy-1977-sorted",
+        return _held("P4-pin-taxonomy-1984-sorted", "1984/1984/0 sorted")
+    return _break("P4-pin-taxonomy-1984-sorted",
                   "got %d literals" % (len(lits),))
 
 
