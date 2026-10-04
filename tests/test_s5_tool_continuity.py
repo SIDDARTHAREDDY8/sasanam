@@ -289,7 +289,7 @@ class TestDeferredEffect(unittest.TestCase):
         done = run["executor"].execute_approved()
         self.assertEqual(
             done, [],
-            "stale (2020) approval was EXECUTED. done=%r" % (done,))
+            "stale (2021) approval was EXECUTED. done=%r" % (done,))
 
     def test_pinned_tool_provider_outage_fails_closed(self):
         # Integration hardening (wave-89): a previously-pinned tool

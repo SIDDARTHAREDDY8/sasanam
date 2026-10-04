@@ -9,8 +9,9 @@ the taxonomy-pin/footer-state probes.
 Filed finding: F409 (LOW) -- alert-state deletion during a healthy window
 reuses incident_seq, so the next outage's early failure alerts dedupe-
 collide with the previous outage's alerts and are silently dropped
-(delayed alerting, never fully silent). Probe P1a demonstrates it and is
-the one EXPECTED BREAK in this battery.
+(delayed alerting, never fully silent). Probe P1a demonstrated it (EXPECTED
+BREAK on the wave-324 tree); F409 was closed by wave-326 lane 1 and P1a now
+HELDs.
 
 Every probe is deterministic (fixed seeds, fixed timestamps). The green
 check runs adjacent batteries in child mode (GOV_SKIP_GREEN=1) and honors
@@ -35,8 +36,8 @@ import w324_offver_probes as _wo  # noqa: E402
 import w324_vsa_probes as _wv  # noqa: E402
 import w322_redteam_probes as _w322  # noqa: E402
 
-TAXONOMY_PIN = 2020  # Wave-324 repoint; assert every pin equals this.; Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening + 6 federated-identity-*)
-FOOTER_OPEN = "F409"  # F409 filed OPEN by this lane (wave-325 lane 4).
+TAXONOMY_PIN = 2021  # Wave-324 repoint; assert every pin equals this.; Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening + 6 federated-identity-*); Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost)
+FOOTER_OPEN = "none"  # F409 CLOSED by wave-326 lane 1.
 FOOTER_NEXT = "F410"  # Next free finding number.
 
 _results = []
@@ -898,17 +899,17 @@ def _p5e():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2020-sorted")
+@probe("P6a-pin-taxonomy-2021-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
-    if TAXONOMY_PIN != 2020:
-        return _break("P6a-pin-taxonomy-2020-sorted",
-                      "TAXONOMY_PIN is %r, want 2020" % (TAXONOMY_PIN,))
-    if len(codes) != 2020 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-2020-sorted",
+    if TAXONOMY_PIN != 2021:
+        return _break("P6a-pin-taxonomy-2021-sorted",
+                      "TAXONOMY_PIN is %r, want 2021" % (TAXONOMY_PIN,))
+    if len(codes) != 2021 or codes != sorted(codes):
+        return _break("P6a-pin-taxonomy-2021-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    return _held("P6a-pin-taxonomy-2020-sorted", "2020/2020/0 sorted")
+    return _held("P6a-pin-taxonomy-2021-sorted", "2021/2021/0 sorted")
 
 
 @probe("P6b-footer-open-f409-next-f410")
@@ -928,7 +929,7 @@ def _p6b():
         return _break("P6b-footer-open-f409-next-f410",
                       "next free %r, want %r" % (next_free, FOOTER_NEXT))
     return _held("P6b-footer-open-f409-next-f410",
-                 "footer open F409 / next F410")
+                 "footer open none / next F410")
 
 
 # ---------------------------------------------------------------------------
@@ -951,7 +952,7 @@ def main(argv):
         elif verdict == "ERROR":
             errors += 1
     print("w325_redteam battery: %d BREAK / %d HELD / %d ERROR "
-          "(1 BREAK expected: P1a/F409)"
+          "(0 BREAK expected: F409 closed)"
           % (breaks, len(_results) - breaks - errors, errors))
     return 0 if errors == 0 else 1
 

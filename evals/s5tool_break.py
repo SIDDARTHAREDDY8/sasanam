@@ -209,7 +209,7 @@ def probe_stale_approval_replay():
     done = run["executor"].execute_approved()
     if done == []:
         return ("CONTROL",
-                "stale (2020) approval refused at sweep — TTL guard holds")
+                "stale (2021) approval refused at sweep — TTL guard holds")
     return ("REGRESSION", "stale approval EXECUTED: %r" % (done,))
 
 

@@ -18221,6 +18221,19 @@ TAXONOMY = {
         "evidence_kinds_required": ['witness-log'],
         "reverify_steps": ['re-verify-witness-checkpoint'],
     },
+    'witness-alert-state-lost': {
+        "domain": 'witness',
+        "code": 'witness-alert-state-lost',
+        "human": 'witness monitor alerting wrapper: the alert-state file '
+                 'was missing while the monitor state shows prior history '
+                 '-- the incident/dedupe history is lost; the loss is '
+                 'alerted LOUD and the new outage uses a timestamp-bound '
+                 'incident identity that cannot dedupe-collide with any '
+                 'earlier outage\'s alerts',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
     'witness-alert-wrapper-error': {
         "domain": 'witness',
         "code": 'witness-alert-wrapper-error',

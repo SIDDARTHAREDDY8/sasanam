@@ -112,7 +112,7 @@ def demonstrate_pristine_gap():
     try:
         _lg.load_skill_content(pinset, {"old": data}, "old")
         out.append(("D1 expired-pin loads at forced entry",
-                    "GAP SHOWN", "load_skill_content ACCEPTED a pin from 2020"))
+                    "GAP SHOWN", "load_skill_content ACCEPTED a pin from 2021"))
     except _lg.ArtifactRefused as e:
         out.append(("D1 expired-pin loads at forced entry",
                     "UNEXPECTEDLY HELD", str(e)))

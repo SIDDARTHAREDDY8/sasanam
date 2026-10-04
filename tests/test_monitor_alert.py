@@ -8,6 +8,7 @@ behaviors red-first.
 
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -156,7 +157,8 @@ class AlertIdTests(unittest.TestCase):
     def test_failure_alert_id_stable(self):
         cfg = {"monitor_id": "m1"}
         st = {"head": None, "last_advanced_ts": None, "policy_id": "p",
-              "policy_version": 2, "incident_seq": 7}
+              "policy_version": 2, "incident_seq": 7,
+              "incident_first_failure_ts": 500}
         a1 = ma._failure_alert(cfg, st, 3, "c", "d", 1000)
         a2 = ma._failure_alert(cfg, st, 3, "c", "d", 2000)
         # Same count -> same id (crash-retry dedupes); ts differs.
@@ -169,7 +171,8 @@ class AlertIdTests(unittest.TestCase):
         cfg = {"monitor_id": "m1"}
         st = {"head": {"size": 5, "root": "ab" * 32},
               "last_advanced_ts": 900, "policy_id": "p",
-              "policy_version": 2, "incident_seq": 7}
+              "policy_version": 2, "incident_seq": 7,
+              "incident_first_failure_ts": 500}
         a = ma._failure_alert(cfg, st, 3, "witness-monitor-stale",
                               "detail", 1000)
         self.assertEqual(a["head_age_seconds"], 100)
@@ -180,9 +183,111 @@ class AlertIdTests(unittest.TestCase):
     def test_head_age_none_before_first_advance(self):
         cfg = {"monitor_id": "m1"}
         st = {"head": None, "last_advanced_ts": None, "policy_id": "p",
-              "policy_version": 1, "incident_seq": 7}
+              "policy_version": 1, "incident_seq": 7,
+              "incident_first_failure_ts": 500}
         a = ma._failure_alert(cfg, st, 3, "c", "d", 1000)
         self.assertIsNone(a["head_age_seconds"])
+
+
+class F409ClosureTests(unittest.TestCase):
+    """F409: alert-state loss between incidents must not dedupe-collide.
+
+    The incident identity binds (incident_seq, first-failure timestamp),
+    and a missing alert-state file against a monitor with history emits
+    a LOUD coded alert instead of silently re-baselining.
+    """
+
+    def _st(self, seq, first_ts):
+        return {"head": None, "last_advanced_ts": None, "policy_id": "p",
+                "policy_version": 1, "incident_seq": seq,
+                "incident_first_failure_ts": first_ts}
+
+    def test_same_seq_different_first_ts_different_id(self):
+        # The F409 core: two outages sharing incident_seq (alert state
+        # was lost between them) still get distinct alert ids because
+        # the first-failure timestamps differ.
+        cfg = {"monitor_id": "m1"}
+        a1 = ma._failure_alert(cfg, self._st(1, 1000), 3, "c", "d", 1000)
+        a2 = ma._failure_alert(cfg, self._st(1, 2000), 3, "c", "d", 2000)
+        self.assertNotEqual(a1["alert_id"], a2["alert_id"])
+        self.assertIn("i1-1000/3", a1["alert_id"])
+        self.assertIn("i1-2000/3", a2["alert_id"])
+
+    def test_same_outage_same_id_crash_retry(self):
+        # Within one outage the (seq, first_ts) pair is stable, so a
+        # crash-retry reuses the id and dedupes (no double alert).
+        cfg = {"monitor_id": "m1"}
+        a1 = ma._failure_alert(cfg, self._st(2, 1500), 3, "c", "d", 1500)
+        a2 = ma._failure_alert(cfg, self._st(2, 1500), 3, "c", "d", 1600)
+        self.assertEqual(a1["alert_id"], a2["alert_id"])
+
+    def test_failure_alert_refuses_without_first_ts(self):
+        # Defensive: a failure alert with no bound first-failure
+        # timestamp would be a weak id -- refuse LOUD, never emit it.
+        cfg = {"monitor_id": "m1"}
+        with self.assertRaises(ma.AlertWrapperError):
+            ma._failure_alert(cfg, self._st(1, None), 3, "c", "d", 1000)
+
+    def test_new_alert_state_first_ts_none(self):
+        st = ma._new_alert_state("m1")
+        self.assertIsNone(st["incident_first_failure_ts"])
+        self.assertEqual(st["incident_seq"], 0)
+
+    def test_alert_state_shape_rejects_bad_first_ts(self):
+        base = ma._new_alert_state("m1")
+        for bad in ("1000", 1.5, True, -1):
+            st = dict(base, incident_first_failure_ts=bad)
+            with self.assertRaises(ma.AlertWrapperError):
+                ma._alert_state_shape(st, "test")
+        # None and valid ints pass.
+        ma._alert_state_shape(dict(base, incident_first_failure_ts=None),
+                              "test")
+        ma._alert_state_shape(dict(base, incident_first_failure_ts=0),
+                              "test")
+
+    def test_old_format_state_migration_no_keyerror(self):
+        # Pre-F409 alert states lack incident_first_failure_ts entirely.
+        # The migration check must use .get() (no KeyError), and
+        # _failure_alert must refuse coded (not KeyError) on a missing key.
+        old = {"head": None, "last_advanced_ts": None, "policy_id": "p",
+               "policy_version": 1, "incident_seq": 1,
+               "consecutive_failures": 3}
+        self.assertNotIn("incident_first_failure_ts", old)
+        # The migration expression from run_monitor_once:
+        self.assertIsNone(old.get("incident_first_failure_ts"))
+        # _failure_alert on a keyless state: coded refusal, not KeyError.
+        with self.assertRaises(ma.AlertWrapperError):
+            ma._failure_alert({"monitor_id": "m1"}, old, 3, "c", "d", 1000)
+
+    def test_monitor_has_history(self):
+        d = tempfile.mkdtemp(prefix="f409-history-")
+        self.addCleanup(shutil.rmtree, d, True)
+        sp = os.path.join(d, "monitor_state.json")
+
+        # Missing file -> no history (fresh install, not loss).
+        self.assertFalse(ma._monitor_has_history({"state_path": sp}))
+
+        # A head means prior healthy runs.
+        with open(sp, "w") as fh:
+            json.dump({"last_seen": {"size": 3, "root": "ab" * 32},
+                       "consecutive_failures": 0}, fh)
+        self.assertTrue(ma._monitor_has_history({"state_path": sp}))
+
+        # A nonzero failure count means prior failures, even with no head.
+        with open(sp, "w") as fh:
+            json.dump({"last_seen": None, "consecutive_failures": 2}, fh)
+        self.assertTrue(ma._monitor_has_history({"state_path": sp}))
+
+        # No head and zero failures -> no history.
+        with open(sp, "w") as fh:
+            json.dump({"last_seen": None, "consecutive_failures": 0}, fh)
+        self.assertFalse(ma._monitor_has_history({"state_path": sp}))
+
+        # Corrupt/unreadable -> False (the monitor's own LOUD refusal
+        # handles it later; we never raise here).
+        with open(sp, "w") as fh:
+            fh.write("not json{")
+        self.assertFalse(ma._monitor_has_history({"state_path": sp}))
 
 
 class ConfigTests(unittest.TestCase):

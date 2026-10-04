@@ -28,7 +28,7 @@ Malformed input fails closed ``schema-record-malformed``: a
 non-dict schema, a non-string ``$ref`` value, a dangling
 in-document pointer, or a cyclic Python container (not a valid
 JSON value at all). ``$ref`` siblings are still scanned (draft
-2020-12 semantics). A ``$ref`` is in-document if and only if it
+2021-12 semantics). A ``$ref`` is in-document if and only if it
 starts with ``#`` -- ``""`` and bare relative paths are
 out-of-document and refused, never resolved against a base URI
 (the guard performs no URI resolution at all).

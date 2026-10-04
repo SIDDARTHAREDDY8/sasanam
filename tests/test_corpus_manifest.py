@@ -5,7 +5,7 @@ the per-skill capability-manifest threshold
 (gov/capability_manifests.verify_manifest threshold=).
 
 Hermetic: synthetic deterministic fixtures, no network. Expiries are
-anchored far from now (2030 / 2020) except where the test is about
+anchored far from now (2030 / 2021) except where the test is about
 expiry itself.
 """
 

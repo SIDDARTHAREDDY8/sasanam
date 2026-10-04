@@ -24,7 +24,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2020  # 1990 + 1 witness-alert-wrapper-error; Wave-325 lane 2: pin 2012 -> 2018 (+6 federated-identity-*: identity-issuer-key-retired + identity-token-issuer-unknown + identity-token-key-binding-mismatch + identity-token-replayed + identity-token-required + identity-token-ttl-exceeded); Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening (witness-alert-queue-overflow + export-witness-policy-version-below-minimum) + 6 federated-identity-*)
+TAXONOMY_PIN = 2021  # 1990 + 1 witness-alert-wrapper-error; Wave-325 lane 2: pin 2012 -> 2018 (+6 federated-identity-*: identity-issuer-key-retired + identity-token-issuer-unknown + identity-token-key-binding-mismatch + identity-token-replayed + identity-token-required + identity-token-ttl-exceeded); Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening (witness-alert-queue-overflow + export-witness-policy-version-below-minimum) + 6 federated-identity-*); Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost)
 
 _results = []
 
@@ -194,7 +194,7 @@ def _p2():
         assert a["last_code"] == "witness-monitor-fetch-failed", a
         assert a["monitor_id"] == MID, a
         assert a["policy_id"] == "test" and a["policy_version"] == 1, a
-        assert a["alert_id"] == "witmon-alert/%s/failure/i1/3" % (MID,), a
+        assert a["alert_id"] == "witmon-alert/%s/failure/i1-1798765432/3" % (MID,), a
         # No healthy run yet: head datum absent -> age None (honest).
         assert a["head"] is None and a["head_age_seconds"] is None, a
     finally:
@@ -305,7 +305,7 @@ def _p5():
         # state records the decided-but-unemitted alert id.
         st = ma.load_alert_state(cfg["alert_state_path"], MID)
         assert st["consecutive_failures"] == 3, st
-        assert st["last_alert_id"] == "witmon-alert/%s/failure/i1/3" % (MID,), st
+        assert st["last_alert_id"] == "witmon-alert/%s/failure/i1-1798765432/3" % (MID,), st
         mstate = mods[1].load_monitor_state(cfg["state_path"])
         assert mstate["consecutive_failures"] == 3, mstate
         # Retry tick: count advances to 4, exactly one new alert, and
@@ -589,7 +589,7 @@ def _p15():
         fails = [a for a in new if a["alert_kind"] == "failure-alert"]
         assert len(fails) == 1, new
         assert fails[0]["alert_id"] == \
-            "witmon-alert/%s/failure/i2/3" % (MID,), fails[0]
+            "witmon-alert/%s/failure/i2-1798766332/3" % (MID,), fails[0]
     finally:
         ma._build_sink = orig_build
     _held("P15-second-outage-not-deduped",
@@ -677,18 +677,18 @@ def _p17():
 # P11: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P11-pin-taxonomy-2020-sorted")
+@probe("P11-pin-taxonomy-2021-sorted")
 def _p11():
     from gov import decision_codes as dc
     import re
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     codes = re.findall(r'"code":\s*["\']([^"\']+)["\']', src)
-    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2020, (
+    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2021, (
         len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
     assert "witness-alert-wrapper-error" in dc.TAXONOMY
-    _held("P11-pin-taxonomy-2020-sorted", "2020/2020/0 sorted")
+    _held("P11-pin-taxonomy-2021-sorted", "2021/2021/0 sorted")
 
 
 @probe("P12-footer-state")
@@ -696,8 +696,8 @@ def _p12():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     src = open(path, encoding="utf-8").read()
     assert "Next free finding: **F410**" in src, "next-free footer"
-    assert "**Open findings: F409.**" in src, "open-none footer"
-    _held("P12-footer-state", "open F409 / next F410")
+    assert "**Open findings: none.**" in src, "open-none footer"
+    _held("P12-footer-state", "open none / next F410")
 
 
 # ---------------------------------------------------------------------------

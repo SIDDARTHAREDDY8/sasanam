@@ -89,7 +89,7 @@ class TestApprovalExpiry(ApprovalAbuseBase):
         done = run["executor"].execute_approved()
         self.assertEqual(
             done, [],
-            "T5/R8: an approval decided in 2020 was still EXECUTED "
+            "T5/R8: an approval decided in 2021 was still EXECUTED "
             "(approvals never expire). executed=%r" % (done,),
         )
 

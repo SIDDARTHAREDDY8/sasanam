@@ -83,6 +83,12 @@ import urllib.request
 
 WITNESS_ALERT_WRAPPER_ERROR = "witness-alert-wrapper-error"
 
+# F409: the alert-state file was lost while the monitor has history.
+# Emitted LOUD when a fresh alert state meets a monitor with prior
+# history; the new outage's incident identity is timestamp-bound so it
+# cannot dedupe-collide with any earlier outage's alerts.
+WITNESS_ALERT_STATE_LOST = "witness-alert-state-lost"
+
 _ALERT_STATE_VERSION = 1
 _DEFAULT_HEARTBEAT_INTERVAL_S = 86400  # one day
 _MAX_QUEUE_LINES = 10000  # operational bound on the webhook retry queue
@@ -351,6 +357,14 @@ def _alert_state_shape(state, where):
             raise AlertWrapperError(WITNESS_ALERT_WRAPPER_ERROR,
                                     "%s: %s must be a non-negative int"
                                     % (where, key))
+    # F409: the outage's incident identity is timestamp-bound (see
+    # _failure_alert). None until the first failure of an outage.
+    fts = state.get("incident_first_failure_ts")
+    if fts is not None and (isinstance(fts, bool) or not isinstance(fts, int)
+                            or fts < 0):
+        raise AlertWrapperError(WITNESS_ALERT_WRAPPER_ERROR,
+                                "%s: incident_first_failure_ts must be a "
+                                "non-negative int or null" % (where,))
     lat = state.get("last_advanced_ts")
     if lat is not None and (isinstance(lat, bool) or not isinstance(lat,
                                                                    int)
@@ -381,7 +395,12 @@ def _new_alert_state(monitor_id):
             # healthy -> failing transition so a later outage's alerts
             # never dedupe against an earlier outage's (the alert id
             # carries it; a crash-retry within one outage keeps it).
+            # F409: the incident identity is additionally bound to the
+            # outage's first-failure timestamp, so even a lost alert
+            # state (incident_seq restarting at 1) cannot produce an
+            # alert id byte-identical to an earlier outage's.
             "incident_seq": 0,
+            "incident_first_failure_ts": None,
             "last_alert_id": None,
             "last_heartbeat_ts": 0,
             "last_advanced_ts": None,
@@ -646,10 +665,23 @@ def _resolve_failures(wm, exc, cfg, alert_state):
 def _failure_alert(cfg, alert_state, failures, code, detail, now_s):
     head = alert_state["head"]
     last_adv = alert_state["last_advanced_ts"]
+    # F409: the incident identity binds (incident_seq, first-failure
+    # timestamp). Two outages can share an incident_seq only if the
+    # alert state was lost between them, and then their first-failure
+    # timestamps differ -- so the id can never byte-collide with an
+    # earlier outage's alert and be dropped by sink dedupe.
+    first_ts = alert_state.get("incident_first_failure_ts")
+    if first_ts is None:
+        # Defensive: the bump site always sets this before any failure
+        # alert is built. A None here means a programmer error --
+        # refuse LOUD rather than emit a weak id.
+        raise AlertWrapperError(WITNESS_ALERT_WRAPPER_ERROR,
+                                "failure alert with no incident "
+                                "first-failure timestamp: refusing")
     alert = {
-        "alert_id": "witmon-alert/%s/failure/i%d/%d"
+        "alert_id": "witmon-alert/%s/failure/i%d-%d/%d"
                     % (cfg["monitor_id"], alert_state["incident_seq"],
-                       failures),
+                       first_ts, failures),
         "alert_kind": "failure-alert",
         "monitor_id": cfg["monitor_id"],
         "ts": now_s,
@@ -872,6 +904,33 @@ def _announce_last_resort(sink, cfg, now_s):
 # The wrapper run.
 # ---------------------------------------------------------------------------
 
+def _monitor_has_history(cfg):
+    """Best-effort check: does the monitor's own state file show prior
+    history (a head, or a nonzero failure count)?
+
+    Used by the F409 alert-state-loss detector: a missing alert-state
+    file is a fresh install when the monitor never ran, but state LOSS
+    when the monitor has history. Never raises -- an unreadable or
+    corrupt monitor state is the monitor's own LOUD refusal later in
+    the tick; here we only answer "is there evidence of history".
+    """
+    try:
+        with open(cfg["state_path"], "r", encoding="utf-8") as fh:
+            raw = fh.read()
+    except OSError:
+        return False
+    try:
+        mstate = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        return False
+    if not isinstance(mstate, dict):
+        return False
+    if mstate.get("last_seen") is not None:
+        return True
+    cf = mstate.get("consecutive_failures")
+    return (isinstance(cf, int) and not isinstance(cf, bool) and cf > 0)
+
+
 def run_monitor_once(cfg):
     """Run one cron tick: fetch, monitor_step, alert/heartbeat per the
     rules, persist state atomically.
@@ -939,13 +998,35 @@ def run_monitor_once(cfg):
     # The configured policy identity rides in every alert, including
     # failure alerts on runs where the monitor never got far enough to
     # report it (e.g. fetch failures on the first-ever run).
+    alert_state_missing = not os.path.exists(cfg["alert_state_path"])
     try:
         alert_state = load_alert_state(cfg["alert_state_path"],
                                        cfg["monitor_id"])
     except AlertWrapperError as exc:
         _loud(exc.code, exc.detail)
+    if alert_state_missing and _monitor_has_history(cfg):
+        # F409: the alert-state file is gone but the monitor has prior
+        # history -- the incident_seq/dedupe history is lost, not a
+        # fresh install. Alert LOUD (coded) so the loss is visible, then
+        # continue: the new outage's incident identity is
+        # timestamp-bound (see _failure_alert) and cannot
+        # dedupe-collide with any earlier outage's alerts. The fresh
+        # state is persisted by the normal paths below, so this fires
+        # exactly once per loss, not every tick.
+        _emit_loud(sink, cfg, now_s, WITNESS_ALERT_STATE_LOST,
+                   "alert state %r was missing while the monitor state "
+                   "shows prior history: incident/dedupe history lost; "
+                   "continuing with a timestamp-bound incident identity"
+                   % (cfg["alert_state_path"],))
     alert_state["policy_id"] = cfg["policy_inputs"]["policy_id"]
     alert_state["policy_version"] = cfg["policy_inputs"]["policy_version"]
+    if (alert_state.get("incident_first_failure_ts") is None
+            and alert_state["consecutive_failures"] > 0):
+        # Pre-F409 alert state (no timestamp bound) mid-outage: bind
+        # now as the incident's first-failure timestamp (best-effort).
+        # Old-format ids carry no timestamp, so they cannot collide
+        # with the new timestamp-bound ids.
+        alert_state["incident_first_failure_ts"] = now_s
 
     # The monitor treats last_seen=None + no state file as a first run
     # and would silently re-baseline. If our mirror has a trusted head
@@ -1010,9 +1091,13 @@ def run_monitor_once(cfg):
                       "re-baseline silently" % (failures, mirror_prev))
             # New outage (healthy -> failing): bump the incident
             # sequence so this outage's alerts never dedupe against a
-            # prior outage's.
+            # prior outage's. F409: also bind the outage's
+            # first-failure timestamp into the incident identity, so
+            # even a lost alert state (sequence restarting at 1)
+            # cannot replay an earlier outage's alert ids.
             if alert_state["consecutive_failures"] == 0:
                 alert_state["incident_seq"] += 1
+                alert_state["incident_first_failure_ts"] = now_s
             alert_state["consecutive_failures"] = failures
             alert_state["last_code"] = code
             alert_state["last_detail"] = getattr(exc, "detail", "")
