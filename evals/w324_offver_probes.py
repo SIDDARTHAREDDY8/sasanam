@@ -872,7 +872,7 @@ def _p6b():
         text = f.read()
     if "Next free finding: **F412**" in text \
             and "Open findings: none" in text:
-        _held("P6-footer-state", "open F410, F411 / next F412")
+        _held("P6-footer-state", "open F410 / next F412")
     else:
         _break("P6-footer-state", "footer mismatch")
 

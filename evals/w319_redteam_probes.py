@@ -99,7 +99,7 @@ def _error(pid, note):
 TAXONOMY_PIN = 2035  # Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-325 lane 2: pin 2012 -> 2018 (+6 federated-identity-*: identity-issuer-key-retired + identity-token-issuer-unknown + identity-token-key-binding-mismatch + identity-token-replayed + identity-token-required + identity-token-ttl-exceeded); Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening (witness-alert-queue-overflow + export-witness-policy-version-below-minimum) + 6 federated-identity-*); Wave-326 lane 2: pin 2020 -> 2027 (+7: 6 supplychain-standing-* + 1 supplychain-feed-outside-trust-boundary)
 
 
-FOOTER_OPEN = "F410, F411"
+FOOTER_OPEN = "F410"
 FOOTER_NEXT = "F412"
 
 NOW = datetime(2026, 10, 4, 4, 0, 0, tzinfo=timezone.utc)

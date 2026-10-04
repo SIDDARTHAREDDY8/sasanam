@@ -37,7 +37,7 @@ import w324_vsa_probes as _wv  # noqa: E402
 import w322_redteam_probes as _w322  # noqa: E402
 
 TAXONOMY_PIN = 2035  # Wave-324 repoint; assert every pin equals this.; Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening + 6 federated-identity-*); Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost)
-FOOTER_OPEN = "F410, F411"  # F409 CLOSED by wave-326 lane 1.
+FOOTER_OPEN = "F410"  # F409 CLOSED by wave-326 lane 1.
 FOOTER_NEXT = "F412"  # Next free finding number.
 
 _results = []
@@ -819,7 +819,7 @@ def _parse_tally(text):
 _GREEN_EVALS = [
     # Tallies are post-F409-filing: each battery's footer-state probe
     # breaks once (it was written for the pre-filing footer "open none /
-    # next F409"; the true footer is now "open F410, F411 / next F412"). The
+    # next F409"; the true footer is now "open F410 / next F412"). The
     # merge updates those footer probes per the wave-305 lesson; the
     # single BREAK in each child is that probe and nothing else.
     ("w324-alert", "evals/w324_alert_probes.py", (0, 18, 0)),
@@ -917,7 +917,7 @@ def _p6b():
     text = open(os.path.join(REPO, "evals/FINDINGS.md")).read()
     import re
     # The file carries one footer line per wave; the LAST one is current.
-    # Footer form: "Next free finding: **F412**. **Open findings: F410, F411.**"
+    # Footer form: "Next free finding: **F412**. **Open findings: F410.**"
     opens = re.findall(r"\*\*Open findings:\s*([^*]+?)\.\*\*", text)
     nexts = re.findall(r"Next free finding:\s*\*\*([^*]+?)\*\*", text)
     open_line = opens[-1].strip() if opens else ""

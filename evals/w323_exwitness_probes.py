@@ -587,8 +587,8 @@ def _p6a():
 def _p6b():
     src = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
     if ("Next free finding: **F412**" in src
-            and "Open findings: F410, F411." in src):
-        _held("P6-footer-state", "open F410, F411 / next F412")
+            and "Open findings: F410." in src):
+        _held("P6-footer-state", "open F410 / next F412")
     else:
         _break("P6-footer-state", "footer mismatch")
 

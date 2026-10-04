@@ -70,7 +70,7 @@ import gov.provenance_labels as PL  # noqa: E402
 TAXONOMY_PIN = 2035#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost)
 
 
-FOOTER_OPEN = "F410, F411"
+FOOTER_OPEN = "F410"
 FOOTER_NEXT = "F412"
 
 _results = []
@@ -766,7 +766,7 @@ def p5_footer_state():
     ok = (m_open and m_open[-1].strip() == FOOTER_OPEN
           and m_next and m_next[-1] == FOOTER_NEXT)
     if ok:
-        return _held("P5-footer-state", True, "open F410, F411 / next F412")
+        return _held("P5-footer-state", True, "open F410 / next F412")
     return _break("P5-footer-state",
                   "got %r / %r" % (m_open[-1] if m_open else None,
                                    m_next[-1] if m_next else None))

@@ -61,7 +61,7 @@ provision_test_key()
 TAXONOMY_PIN = 2035#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost)
 
 
-FOOTER_OPEN = "F410, F411"
+FOOTER_OPEN = "F410"
 FOOTER_NEXT = "F412"
 
 _results = []

@@ -696,8 +696,8 @@ def _p12():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     src = open(path, encoding="utf-8").read()
     assert "Next free finding: **F412**" in src, "next-free footer"
-    assert "**Open findings: F410, F411.**" in src, "open-none footer"
-    _held("P12-footer-state", "open F410, F411 / next F412")
+    assert "**Open findings: F410.**" in src, "open-none footer"
+    _held("P12-footer-state", "open F410 / next F412")
 
 
 # ---------------------------------------------------------------------------

@@ -25,15 +25,19 @@ configuration. The wire format is JWT-*shaped* (three dot-separated
 base64url parts, ``alg: EdDSA``) for operator familiarity, but it is
 not a JWT and must never be presented to a JWT library as one.
 
-Composition: :meth:`TokenVerifier.verify_token` returns a verified
-claim dict carrying exactly ``{iss, sub, aud, iat, exp, jti,
-principal, role, agent_scope}`` -- the claim set
-:func:`gov.decision_packet.check_token_claims` requires -- so the
-output feeds ``ToolExecutor.mint_identity(token_claims=...)`` and the
-decision-packet token seam UNCHANGED. Failures raise
-:class:`FederatedIdentityError` (with a machine ``.code``); the
-verifier NEVER returns False/None on failure, so a forgotten
-return-value check cannot become an accept.
+Composition: :meth:`TokenVerifier.verify_token` returns a
+:class:`VerifiedTokenClaims` (a ``dict`` subclass) carrying exactly
+``{iss, sub, aud, iat, exp, jti, principal, role, agent_scope}`` --
+the claim set :func:`gov.decision_packet.check_token_claims`
+requires -- so the output feeds
+``ToolExecutor.mint_identity(token_claims=...)`` and the
+decision-packet token seam UNCHANGED. In federated mode the executor
+honors ONLY this sealed type (or the raw token string, which it
+verifies itself); a plain-dict ``token_claims`` is unverified by
+construction and is refused coded ``identity-token-tampered``
+(F411). Failures raise :class:`FederatedIdentityError` (with a
+machine ``.code``); the verifier NEVER returns False/None on
+failure, so a forgotten return-value check cannot become an accept.
 
 Trust model (explicit): whoever holds an issuer private key can mint
 tokens for any identity. Issuer keys are deployment-held secrets with
@@ -254,6 +258,41 @@ class TokenIssuer:
 # Verifier side (rotation-aware).
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Verified claim set: the non-forgeable provenance marker (F411).
+# ---------------------------------------------------------------------------
+
+class VerifiedTokenClaims(dict):
+    """A token claim set VERIFIED by a :class:`TokenVerifier`.
+
+    This is a plain ``dict`` subclass carrying exactly the verified
+    claims (``{iss, sub, aud, iat, exp, jti, principal, role,
+    agent_scope}``), plus the producing verifier recorded on
+    :attr:`verified_by`. It is the ONLY claim-set type
+    ``ToolExecutor.mint_identity`` honors in federated mode (alongside
+    the raw token string, which the executor verifies itself): a
+    plain-dict ``token_claims`` is unverified by construction and is
+    refused coded ``identity-token-tampered`` (F411 -- a forged dict
+    took "the legacy path unchanged" and minted arbitrary identities
+    without a valid token).
+
+    Construction is NOT part of the public composition surface: build
+    one only via :meth:`TokenVerifier.verify_token`. The executor
+    additionally requires ``verified_by is`` its own configured
+    verifier, so a sealed set from any other verifier instance proves
+    nothing about this deployment's pinned issuers.
+    """
+
+    def __init__(self, claims, verifier):
+        super().__init__(claims)
+        self._verified_by = verifier
+
+    @property
+    def verified_by(self):
+        """The :class:`TokenVerifier` that produced this claim set."""
+        return self._verified_by
+
+
 class TokenVerifier:
     """The relying-party side: verifies tokens against PINNED issuers.
 
@@ -348,7 +387,12 @@ class TokenVerifier:
             "key %r is not a pinned key for issuer %r" % (kid, issuer_id))
 
     def verify_token(self, token, now=None, expected_key_binding=None):
-        """Verify a token string. Returns the verified claim dict.
+        """Verify a token string. Returns a :class:`VerifiedTokenClaims`.
+
+        The returned claim set carries exactly ``{iss, sub, aud, iat,
+        exp, jti, principal, role, agent_scope}`` and records this
+        verifier as its producer, so a relying party can distinguish
+        it from an unverified plain dict (F411).
 
         Raises :class:`FederatedIdentityError` (with ``.code``) on any
         failure -- never returns a falsy "invalid" that a caller could
@@ -418,7 +462,8 @@ class TokenVerifier:
                 raise FederatedIdentityError(
                     "identity-token-key-binding-mismatch",
                     "token is bound to a different agent key")
-        return {name: claims[name] for name in VERIFIED_CLAIMS}
+        return VerifiedTokenClaims(
+            {name: claims[name] for name in VERIFIED_CLAIMS}, self)
 
     def _check_claims(self, payload, ref):
         for name in ("sub", "principal", "role", "jti", "agent_scope"):
@@ -521,7 +566,7 @@ class TokenBackedPrincipalRegistry:
     def present_token(self, token, now=None):
         """Verify and cache the token authorizing subsequent mints.
 
-        Returns the verified claim dict. Raises
+        Returns the :class:`VerifiedTokenClaims`. Raises
         :class:`FederatedIdentityError` on any verification failure; a
         failed presentation does NOT replace the previously presented
         token (use :meth:`clear_token` to revoke -- a failed

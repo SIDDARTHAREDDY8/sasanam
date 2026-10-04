@@ -45,7 +45,7 @@ sys.path.insert(0, REPO)
 TAXONOMY_PIN = 2035 #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-325 lane 2: pin 2012 -> 2018 (+6 federated-identity-*: identity-issuer-key-retired + identity-token-issuer-unknown + identity-token-key-binding-mismatch + identity-token-replayed + identity-token-required + identity-token-ttl-exceeded); Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening (witness-alert-queue-overflow + export-witness-policy-version-below-minimum) + 6 federated-identity-*); Wave-326 lane 2: pin 2020 -> 2027 (+7: 6 supplychain-standing-* + 1 supplychain-feed-outside-trust-boundary)
 
 
-FOOTER_OPEN = "F410, F411"
+FOOTER_OPEN = "F410"
 FOOTER_NEXT = "F412"
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
@@ -1165,7 +1165,7 @@ def _p_footer_state():
         raise _Break("footer-state: no footer line found")
     last = footers[-1]
     # F407 CLOSED 2026-10-04 wave-323 lane 1: no open findings remain.
-    if "Open findings: F410, F411." not in last:
+    if "Open findings: F410." not in last:
         raise _Break("footer-state: open findings present: %s" % last[:80])
     if FOOTER_NEXT not in last:
         raise _Break("footer-state: next is not %s: %s" %

@@ -457,7 +457,7 @@ def footer_state():
     # the LAST one is current (w314 convention).
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
     ok = ("Next free finding: **F412**" in text
-          and m_open and m_open[-1].strip() == "F410, F411")
+          and m_open and m_open[-1].strip() == "F410")
     if ok:
         _record("footer-state", "HELD", "footer: open none / next F409")
     else:

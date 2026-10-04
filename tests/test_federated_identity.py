@@ -21,7 +21,8 @@ from gov import ed25519 as _ed
 from gov import federated_identity as fi
 from gov.federated_identity import (FederatedIdentityError, TokenIssuer,
                                     TokenVerifier,
-                                    TokenBackedPrincipalRegistry)
+                                    TokenBackedPrincipalRegistry,
+                                    VerifiedTokenClaims)
 from gov.identity import (IdentityTokenError, UnregisteredPrincipalError,
                           UnregisteredRoleError)
 
@@ -454,6 +455,84 @@ class ExecutorFederatedModeTest(unittest.TestCase):
     def test_token_verifier_type_checked_at_construction(self):
         with self.assertRaises(ValueError):
             self._executor(token_verifier=object())
+
+
+class F411ClosureTest(ExecutorFederatedModeTest):
+    """F411: a plain-dict token_claims is unverified by construction and
+    must never mint in federated mode. Only VerifiedTokenClaims from
+    the deployment's own verifier (or the raw token string) is honored.
+    """
+
+    def test_forged_dict_refused_coded(self):
+        # F411's exact reproduction: a forged dict with no signature
+        # anywhere minted attacker-agent/admin/victim-principal.
+        import time as _time
+        ex = self._executor(token_verifier=_verifier())
+        now = _time.time()
+        forged = {"iss": "test-issuer", "sub": "attacker-agent",
+                  "aud": AUD, "iat": int(now), "exp": int(now) + 300,
+                  "jti": "f411-forged", "principal": "victim-principal",
+                  "role": "admin", "agent_scope": "all"}
+        with self.assertRaises(IdentityTokenError) as ctx:
+            ex.mint_identity("attacker-agent", "admin",
+                             "victim-principal", token_claims=forged)
+        self.assertEqual(ctx.exception.code, "identity-token-tampered")
+
+    def test_verifier_produced_claims_still_mint(self):
+        # The documented composition survives: verify_token's output
+        # feeds mint_identity unchanged.
+        v = _verifier()
+        ex = self._executor(token_verifier=v)
+        claims = v.verify_token(self._live_issue())
+        self.assertIsInstance(claims, VerifiedTokenClaims)
+        ident = ex.mint_identity("agent-7", "reader", "ops",
+                                 token_claims=claims)
+        self.assertEqual(ident.agent_id, "agent-7")
+        self.assertEqual(ident.role, "reader")
+        self.assertEqual(ident.principal, "ops")
+
+    def test_sealed_claims_from_other_verifier_refused(self):
+        # A sealed set proves nothing about THIS deployment's pinned
+        # issuers: verified_by is bound by identity, not by shape.
+        v1, v2 = _verifier(), _verifier()
+        ex = self._executor(token_verifier=v1)
+        foreign = v2.verify_token(self._live_issue())
+        self.assertIsNot(foreign.verified_by, v1)
+        with self.assertRaises(IdentityTokenError) as ctx:
+            ex.mint_identity("agent-7", "reader", "ops",
+                             token_claims=foreign)
+        self.assertEqual(ctx.exception.code, "identity-token-tampered")
+
+    def test_verify_token_marks_provenance(self):
+        v = _verifier()
+        claims = v.verify_token(self._live_issue())
+        self.assertIs(claims.verified_by, v)
+        # Still a dict for every existing consumer (registry, packet
+        # seam, _mcp_token_claims defensive copy).
+        self.assertIsInstance(claims, dict)
+        self.assertEqual(claims["sub"], "agent-7")
+        self.assertEqual(dict(claims)["role"], "reader")
+
+    def test_registry_present_token_returns_sealed(self):
+        v = _verifier()
+        reg = TokenBackedPrincipalRegistry(v)
+        claims = reg.present_token(self._live_issue())
+        self.assertIsInstance(claims, VerifiedTokenClaims)
+        self.assertTrue(reg.check_identity("ops", "reader", "agent-7"))
+
+    def test_non_federated_dict_path_unchanged(self):
+        # No verifier configured: the legacy dict path is byte-identical
+        # (the F411 gate only exists in federated mode).
+        import time as _time
+        ex = self._executor()
+        now = _time.time()
+        legacy = {"iss": "whatever", "sub": "agent-7", "aud": AUD,
+                  "iat": int(now), "exp": int(now) + 300,
+                  "jti": "legacy", "principal": "ops", "role": "reader",
+                  "agent_scope": "read"}
+        ident = ex.mint_identity("agent-7", "reader", "ops",
+                                 token_claims=legacy)
+        self.assertEqual(ident.agent_id, "agent-7")
 
 
 if __name__ == "__main__":

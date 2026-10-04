@@ -19,7 +19,7 @@ F410 at 11:19:59 UTC). Probe P3a demonstrates it and is the single
 EXPECTED BREAK.
 
 Footer note (wave-305 lesson): the FINDINGS.md footer is now
-"open F410, F411 / next F412". The P5 expected tallies below are the
+"open F410 / next F412". The P5 expected tallies below are the
 post-merge tallies with all footer-state probes swept to the final
 footer.
 
@@ -42,7 +42,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
 TAXONOMY_PIN = 2035  # Wave-326 merge: pin 2020 -> 2035 (+15: 1 witness-alert-state-lost + 7 standing-* + 7 scan-*).
-FOOTER_OPEN = "F410, F411"  # F409 CLOSED (lane 1); F410 (LOW, TUF) + F411 (MEDIUM, identity) OPEN.
+FOOTER_OPEN = "F410"  # F409 CLOSED (wave-326 lane 1); F411 CLOSED (wave-327 lane 1); F410 (LOW, TUF) OPEN.
 FOOTER_NEXT = "F412"  # Next free finding number.
 
 _results = []
@@ -463,12 +463,15 @@ def _fi_executor(verifier):
 
 @probe("P3a-f411-dict-token-claims-bypass")
 def _p3a():
-    """F411 (MEDIUM, OPEN; filed as F410, renumbered at the wave-326 merge):
+    """F411 (MEDIUM, CLOSED 2026-10-04 wave-327 lane 1; filed as F410,
+    renumbered at the wave-326 merge):
     federated-mode mint_identity verifies string tokens but TRUSTS a dict
     token_claims as pre-verified (only shape-checked; signatures never
     verified). verify_token returns a plain dict, so the executor cannot
     distinguish verified from forged. Any in-process caller mints any
-    identity without a valid token. EXPECTED BREAK until closed."""
+    identity without a valid token. CLOSED: the executor honors only
+    VerifiedTokenClaims from its own verifier (or the token string);
+    a plain dict is refused coded identity-token-tampered."""
     import time as _time
     from gov.executor import IdentityTokenError
     fi, iss, v = _fi_setup()
@@ -819,7 +822,7 @@ def _parse_tally(text):
 
 
 # Post-merge tallies: all footer-state probes swept to the final footer
-# ("open F410, F411 / next F412"), so the child tallies are the clean
+# ("open F410 / next F412"), so the child tallies are the clean
 # post-closure counts (F409 HELD everywhere). Child mode (GOV_SKIP_GREEN=1).
 _GREEN_EVALS = [
     ("w325-resid", "evals/w325_resid_probes.py", (0, 23, 0)),
@@ -931,7 +934,7 @@ def _p6b():
         return _break("P6b-footer-open-f410-f411-next-f412",
                       "next free %r, want %r" % (next_free, FOOTER_NEXT))
     return _held("P6b-footer-open-f410-f411-next-f412",
-                 "footer open F410, F411 / next F412")
+                 "footer open F410 / next F412")
 
 
 # ---------------------------------------------------------------------------
@@ -954,7 +957,7 @@ def main(argv):
         elif verdict == "ERROR":
             errors += 1
     print("w326_redteam battery: %d BREAK / %d HELD / %d ERROR "
-          "(1 BREAK expected: P3a/F411)"
+          "(0 BREAK expected: F411 closed 2026-10-04 wave-327 lane 1)"
           % (breaks, len(_results) - breaks - errors, errors))
     return 0 if errors == 0 else 1
 

@@ -1166,7 +1166,10 @@ class ToolExecutor:
                  # change. When set, tokenless mint_identity REFUSES
                  # fail-closed (identity-token-required) and a string
                  # token_claims is verified before any other claim
-                 # check; the dict token_claims path is unchanged.
+                 # check; a dict token_claims is honored only as
+                 # VerifiedTokenClaims from this verifier (wave-327
+                 # lane 1, F411) -- a plain dict is refused coded
+                 # identity-token-tampered.
                  token_verifier=None):
         # Wave-319 (workload identity): fail fast on a half-configured
         # attested-identity wiring -- a document with no verifier (or no
@@ -2598,6 +2601,15 @@ class ToolExecutor:
         defense-in-depth twin of the packet verifier's token check:
         issuance refuses a bad token even before any packet exists.
 
+        Wave-327 lane 1 (F411): in federated mode a plain-dict
+        ``token_claims`` is unverified by construction and is REFUSED
+        coded ``identity-token-tampered`` -- the only claim-set type
+        honored is
+        ``gov.federated_identity.VerifiedTokenClaims`` produced by this
+        deployment's own verifier (or the raw token string, which the
+        executor verifies). Non-federated mode keeps the legacy path
+        byte-identical.
+
         Wave-196 lane C (step-ca steal): when a
         ``provisioner_registry`` is configured, ``provisioner`` names
         the issuance authority and the mint is checked against its
@@ -2630,10 +2642,19 @@ class ToolExecutor:
         # deployment's pinned issuers and replaced by the verified
         # claim set before ANY other claim check, so the pre-existing
         # token-agreement checks below bind the verified identity.
-        # A dict token_claims takes the legacy path unchanged. The gate
-        # sits after the mint budget check (budgets still hold in
-        # federated mode) and before the registry lookup, so a refused
-        # token never reaches the registry.
+        # Wave-327 lane 1 (F411): a PLAIN DICT token_claims is
+        # unverified by construction -- no signature was ever checked
+        # -- and is REFUSED fail-closed, coded like the forged-string
+        # case (identity-token-tampered). The only claim-set type
+        # honored in federated mode is VerifiedTokenClaims produced by
+        # THIS deployment's own verifier (verified_by checked by
+        # identity, not by shape); a sealed set from any other
+        # verifier instance proves nothing about this deployment's
+        # pinned issuers. Callers present the token string and the
+        # executor verifies it. The gate sits after the mint budget
+        # check (budgets still hold in federated mode) and before the
+        # registry lookup, so a refused token never reaches the
+        # registry.
         if self._token_verifier is not None:
             if token_claims is None:
                 raise IdentityTokenError(
@@ -2657,6 +2678,24 @@ class ToolExecutor:
                     raise IdentityTokenError(
                         "federated identity token verification failed: "
                         "%s" % (e,), code=e.code) from e
+            elif isinstance(token_claims,
+                            _federated_identity.VerifiedTokenClaims):
+                if token_claims.verified_by is not self._token_verifier:
+                    raise IdentityTokenError(
+                        "identity token claims were verified by a "
+                        "different TokenVerifier than this deployment's; "
+                        "present the token string so this deployment "
+                        "verifies it against its pinned issuers",
+                        code="identity-token-tampered")
+                # Trusted: produced by this deployment's own verifier.
+            elif isinstance(token_claims, dict):
+                raise IdentityTokenError(
+                    "federated mode requires a verified identity token: "
+                    "a plain-dict token_claims is unverified (no "
+                    "signature was checked); present the token string "
+                    "(the executor verifies it) or a VerifiedTokenClaims "
+                    "from this deployment's TokenVerifier",
+                    code="identity-token-tampered")
         if self._principal_registry is not None:
             try:
                 self._principal_registry.check_identity(
