@@ -61,6 +61,9 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 from gov import decision_codes  # noqa: E402 (taxonomy pin below)
 
@@ -681,6 +684,22 @@ def _green_check_adjacent():
             "adjacent w261 battery rc=%d %s" % (proc.returncode, tail[0]))
 
 
+# D1 verdict mapping (evals/SUMMARY_FORM_POLICIES.md), red-first: GAP -> BREAK.
+# Raw rows keep the battery's own vocabulary (count code and exit contract
+# untouched); the mapping happens here, at emission. Anything unexpected
+# fails closed as ERROR.
+def _mapped(rows):
+    out = []
+    for _name, _verdict, _detail in rows:
+        if _verdict == "GAP":
+            out.append((_name, "BREAK", "GAP: %s" % (_detail,)))
+        elif _verdict in ("HELD", "BREAK", "ERROR"):
+            out.append((_name, _verdict, _detail))
+        else:
+            out.append((_name, "ERROR",
+                        "unexpected verdict %r: %s" % (_verdict, _detail)))
+    return out
+
 def main():
     results = []
     for name, fn in _PROBES:
@@ -690,13 +709,20 @@ def main():
             verdict, detail = ("ERROR", "%r" % (exc,))
         results.append((name, verdict, detail))
     held = sum(1 for _, v, _ in results if v == "HELD")
+    gap = sum(1 for _, v, _ in results if v == "GAP")
+    brk = sum(1 for _, v, _ in results if v == "BREAK")
+    err = sum(1 for _, v, _ in results if v == "ERROR")
     print("w262 alert-discipline probes: %d/%d HELD "
           "(GOV_DEPLOYMENT_MODE=%s)" % (
               held, len(results),
               os.environ.get("GOV_DEPLOYMENT_MODE", "<unset>")))
-    for name, verdict, detail in results:
-        print("  [%s] %s %s" % (verdict, name,
-                                ("-- " + detail) if detail else ""))
+    mapped = _mapped(results)
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        mapped, brk + gap, held, err)
+    probe_lines.emit(mapped)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk + gap, held, err))
     gverdict, gdetail = _green_check_adjacent()
     print("  [%s] green_check_adjacent_w261 -- %s" % (gverdict, gdetail))
     bad = [r for r in results if r[1] != "HELD"]

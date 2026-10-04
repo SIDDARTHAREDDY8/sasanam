@@ -66,6 +66,7 @@ sys.path.insert(0, REPO)
 
 from gov.policy import PolicyEngine  # noqa: E402
 from gov.decision_contract import Request  # noqa: E402
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 _SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -679,21 +680,27 @@ def _run_once():
 
 
 def main():
+    # Wave-316 lane-3 correction: this battery records no "FP" verdict
+    # (its probes return BREAK/HELD/ERROR only; "FP" appears solely in
+    # prose about false-positive *rates*). Verdicts are already
+    # canonical -- the migration is the print loop only.
     first = _run_once()
     second = _run_once()
-    breaks = held = errors = 0
-    print("%-4s %-6s %s" % ("ID", "VERDICT", "DETAIL"))
+    results = []
     for (name, v1, d1), (_n2, v2, _d2) in zip(first, second):
         if v1 != v2:
             v1, d1 = "ERROR", \
                 "%s nondeterministic: %r then %r" % (name, v1, v2)
-        print("%-4s %-6s %s" % (name, v1, d1))
-        if v1 == "BREAK":
-            breaks += 1
-        elif v1 == "HELD":
-            held += 1
-        else:
-            errors += 1
+        results.append((name, v1, d1))
+    probe_lines.emit(results)
+    breaks = sum(1 for _, v, _ in results if v == "BREAK")
+    held = sum(1 for _, v, _ in results if v == "HELD")
+    errors = sum(1 for _, v, _ in results if v == "ERROR")
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        results, breaks, held, errors)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (breaks, held, errors))
     print("breaks=%d held=%d errors=%d" % (breaks, held, errors))
     if breaks:
         print("BREAK: %s" % ", ".join(n for n, v, _ in first

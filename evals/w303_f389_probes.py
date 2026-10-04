@@ -49,6 +49,7 @@ if REPO not in sys.path:
     sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 from gov import decision_codes
 from gov import ed25519
@@ -217,5 +218,83 @@ class GreenCheckTest(unittest.TestCase):
             "adjacent suite not green: %r" % (result,))
 
 
+_TEST_CLASSES = (F389SuspendHoldershipTests, PinTest, RepinTest,
+                 FooterStateTest, GreenCheckTest)
+
+_gc_returns = []
+
+
+def _install_gc_capture():
+    # Capture _green_check_unittest's return so the GreenCheckTest can
+    # be recorded as SKIP (not just assert-pass) when GOV_SKIP_GREEN=1.
+    global _green_check_unittest
+    _orig = _green_check_unittest
+
+    def _captured(path, label):
+        r = _orig(path, label)
+        _gc_returns.append(r)
+        return r
+
+    globals()["_green_check_unittest"] = _captured
+
+
+def _run_test(test_cls, test):
+    """Run one unittest test; return a (pid, verdict, note) triple.
+
+    Wave-316 lane-3: the suite runs programmatically (no
+    TextTestRunner -- its failure tracebacks would trip the shared
+    green_check's fail-closed TRACEBACK_RE in parent batteries).
+    Probe tests record one _expect_held entry each; its name is the
+    pid. A failed assertion -> BREAK, an unexpected exception ->
+    ERROR. GreenCheckTest maps the helper's SKIPPED/GREEN/else to
+    SKIP/HELD/BREAK (D1).
+    """
+    method = test.id().split(".")[-1]
+    mark = len(_results)
+    res = unittest.TestResult()
+    test.run(res)
+    new = _results[mark:]
+    if test_cls.__name__ == "GreenCheckTest":
+        gc = _gc_returns[-1] if _gc_returns else ""
+        if gc.startswith("SKIPPED"):
+            return ("green-check", "SKIP", gc)
+        if gc.startswith("GREEN"):
+            return ("green-check", "HELD", gc)
+        return ("green-check", "BREAK", gc or "green check failed")
+    if len(new) == 1:
+        name, status, detail = new[0]
+        if res.errors:
+            return (name, "ERROR", detail)
+        if res.failures:
+            return (name, "BREAK", detail)
+        return (name, status, detail)
+    pid = "%s.%s" % (test_cls.__name__, method)
+    problems = res.errors + res.failures
+    if problems:
+        tb = problems[0][1].strip().splitlines()
+        note = tb[-1] if tb else "failed"
+        return (pid, "ERROR" if res.errors else "BREAK",
+                probe_lines.first_line(note))
+    return (pid, "HELD", "pass")
+
+
+def main():
+    _install_gc_capture()
+    loader = unittest.TestLoader()
+    results = []
+    for test_cls in _TEST_CLASSES:
+        for test in loader.loadTestsFromTestCase(test_cls):
+            results.append(_run_test(test_cls, test))
+    probe_lines.emit(results)
+    brk = sum(1 for _, v, _ in results if v == "BREAK")
+    hld = sum(1 for _, v, _ in results if v == "HELD")
+    err = sum(1 for _, v, _ in results if v == "ERROR")
+    _coh_ok, _coh_diags = probe_lines.check_coherence(results, brk, hld, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk, hld, err))
+    return 0 if (brk == 0 and err == 0) else 1
+
+
 if __name__ == "__main__":
-    unittest.main()
+    sys.exit(main())

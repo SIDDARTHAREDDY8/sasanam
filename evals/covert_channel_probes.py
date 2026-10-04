@@ -98,6 +98,7 @@ from gov.executor import ToolExecutor  # noqa: E402
 from gov.policy import PolicyEngine  # noqa: E402
 from gov.log import ActionLog, read_entries  # noqa: E402
 from gov.approvals import ApprovalQueue  # noqa: E402
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 # The seam exists iff the ledger carries the row-20 IO API. Pre-seam this
 # is False and the attack probes must BREAK (red-first demonstration).
@@ -404,6 +405,18 @@ _PROBES = [("a", probe_a), ("b", probe_b), ("c", probe_c),
            ("g", probe_g), ("h", probe_h)]
 
 
+def _map_verdict(verdict, detail):
+    # Wave-316 lane-3 decision (D1): EXPECTED -> HELD with an
+    # "expected: " prefix (pinned ceiling, exit-neutral in this
+    # battery); FP -> BREAK with an "FP: " prefix (red by this
+    # battery's own exit contract).
+    if verdict == "EXPECTED":
+        return "HELD", "expected: " + detail
+    if verdict == "FP":
+        return "BREAK", "FP: " + detail
+    return verdict, detail
+
+
 def _main():
     print("seam present: %s (expect_red=%s)" % (HAVE_SEAM, not HAVE_SEAM))
     results = []
@@ -417,8 +430,16 @@ def _main():
         else:
             verdict, detail = v1, d1
         results.append((name, verdict, detail))
-        print("[%s] %s: %s" % (verdict, name, detail))
+    mapped = [(name,) + _map_verdict(v, d) for name, v, d in results]
+    probe_lines.emit(mapped)
     n = lambda s: sum(1 for _, v, _ in results if v == s)
+    mn = lambda s: sum(1 for _, v, _ in mapped if v == s)
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        mapped, mn("BREAK"), mn("HELD"), mn("ERROR"))
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR"
+          % (mn("BREAK"), mn("HELD"), mn("ERROR")))
     print("---")
     print("RESULT break=%d held=%d fp=%d expected=%d error=%d"
           % (n("BREAK"), n("HELD"), n("FP"), n("EXPECTED"), n("ERROR")))

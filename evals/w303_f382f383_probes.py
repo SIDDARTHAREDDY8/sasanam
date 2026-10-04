@@ -89,13 +89,13 @@ class BaseStateTest(unittest.TestCase):
         import re
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-        # Wave-303 lane-3 re-pin: F382/F383 closed here; F380/F381/F384
-        # still OPEN (lanes 1/2 work), next free F385.
-        ok = (m_open and m_open[-1].replace(" ", "") == "F394"
-              and m_next and m_next[-1] == "F395")
+        # Wave-316 re-pin: wave-315 merge footer -- open F398, F399,
+        # F400 / next free F401 (F393-F397 all CLOSED).
+        ok = (m_open and m_open[-1].replace(" ", "") == "F398,F399,F400"
+              and m_next and m_next[-1] == "F401")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F394 / next free F395") == "HELD")
+            "want open F398, F399, F400 / next free F401") == "HELD")
 
     def test_taxonomy_pin(self):
         self.assertTrue(_expect_held(

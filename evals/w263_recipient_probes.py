@@ -39,6 +39,8 @@ import tempfile
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 from gov import decision_codes  # noqa: E402
 from gov import encrypted_envelopes as ee  # noqa: E402
@@ -542,6 +544,26 @@ def _green_check():
     return notes
 
 
+# D1 verdict mapping (evals/SUMMARY_FORM_POLICIES.md), red-first: GAP -> BREAK.
+# N/A ("not applicable in this mode", e.g. no threshold recipient type
+# pre-fix) maps to SKIP -- the exact semantic match for "probe not run in
+# this mode". Raw rows keep the battery's own vocabulary (count code and exit
+# contract untouched); the mapping happens here, at emission. Anything
+# unexpected fails closed as ERROR.
+def _mapped(rows):
+    out = []
+    for _name, _verdict, _detail in rows:
+        if _verdict == "GAP":
+            out.append((_name, "BREAK", "GAP: %s" % (_detail,)))
+        elif _verdict == "N/A":
+            out.append((_name, "SKIP", "N/A: %s" % (_detail,)))
+        elif _verdict in ("HELD", "BREAK", "ERROR"):
+            out.append((_name, _verdict, _detail))
+        else:
+            out.append((_name, "ERROR",
+                        "unexpected verdict %r: %s" % (_verdict, _detail)))
+    return out
+
 def main():
     pin_ok = (len(decision_codes.TAXONOMY) == TAXONOMY_PIN)
     if not pin_ok:
@@ -549,8 +571,8 @@ def main():
               (len(decision_codes.TAXONOMY), TAXONOMY_PIN))
     gaps = held = nab = 0
     breaks = errors = 0
+    rows = []
     for mode in ("legacy", "plugin"):
-        print("== mode: %s ==" % mode)
         for name, fn in _PROBES:
             if mode == "plugin" and not _HAVE_RP:
                 verdict, detail = ("ERROR",
@@ -572,14 +594,17 @@ def main():
                 breaks += 1
             else:
                 errors += 1
-            print("%-8s [%-6s] %-28s %s" %
-                  (verdict, mode, name, detail))
+            rows.append(("%s_%s" % (mode, name), verdict, detail))
+    mapped = _mapped(rows)
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        mapped, breaks + gaps, held, errors)
+    probe_lines.emit(mapped)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
     print("-" * 79)
     for name, note in _green_check():
         print("green-check %-45s %s" % (name, note))
-    print("HELD %d / GAP %d / N-A %d / BREAK %d / ERROR %d over %d "
-          "probe-runs" % (held, gaps, nab, breaks, errors,
-                          len(_PROBES) * 2))
+    print("%d BREAK / %d HELD / %d ERROR" % (breaks + gaps, held, errors))
     if not pin_ok:
         return 2
     return 1 if (breaks or errors) else 0

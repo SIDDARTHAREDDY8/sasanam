@@ -192,7 +192,10 @@ def _composed_scaffold(tag, operator_ref=False):
 # (pinned in w310_f394_probes). Probes updated from the
 # direct-SagaManager call pattern to the supported composer-API
 # call pattern (probe intent -- re-drive works after the downstream
-# is fixed -- unchanged).
+# is fixed -- unchanged). Wave-316: retry calls moved to at=AT + 1
+# per the F397 contract (wave-313 lane A) -- retry_saga_unit refuses
+# a stale at (the escalation's logical instant) coded
+# workflow-saga-resolution-invalid.
 # ------------------------------------------------------------------
 
 def _escalated_composed_saga_fixable(tag):
@@ -242,17 +245,20 @@ def p_f394_op_retry_composed():
     # F394 CLOSED: after a composed saga escalates, the operator
     # re-drives via the supported composer API
     # comp.retry_saga_unit("u1", {"action": "retry_compensation"},
-    # at=AT). The composer re-establishes the prerequisites, so the
-    # fixed compensation is actually invoked and the saga reaches
+    # at=AT + 1). The composer re-establishes the prerequisites, so
+    # the fixed compensation is actually invoked and the saga reaches
     # compensated. The misleading
     # workflow-saga-compensation-unauthorized on this path is gone.
+    # Wave-316: at=AT + 1 per the F397 contract (wave-313 lane A --
+    # stale at refused coded workflow-saga-resolution-invalid).
     comp, sm, inst, calls = _escalated_composed_saga_fixable("f394retry")
     if inst.status != "escalated":
         return _record("F394-op-retry-composed", "ERROR",
                        "saga did not escalate; probe void")
     before = calls["comp"]
     try:
-        comp.retry_saga_unit("u1", {"action": "retry_compensation"}, at=AT)
+        comp.retry_saga_unit("u1", {"action": "retry_compensation"},
+                             at=AT + 1)
     except Exception as e:  # noqa: BLE001
         code = getattr(e, "code", None)
         if code == "workflow-saga-compensation-unauthorized":
@@ -277,6 +283,8 @@ def p_f394_abort_composed():
     # abort_and_compensate_all, now works through the composer API:
     # the fixed compensation is re-driven (remaining attempt budget)
     # and the saga reaches compensated.
+    # Wave-316: at=AT + 1 per the F397 contract (wave-313 lane A --
+    # stale at refused coded workflow-saga-resolution-invalid).
     comp, sm, inst, calls = _escalated_composed_saga_fixable("f394abort")
     if inst.status != "escalated":
         return _record("F394-abort-composed", "ERROR",
@@ -285,7 +293,7 @@ def p_f394_abort_composed():
     try:
         comp.retry_saga_unit("u1",
                              {"action": "abort_and_compensate_all"},
-                             at=AT)
+                             at=AT + 1)
     except Exception as e:  # noqa: BLE001
         code = getattr(e, "code", None)
         if code == "workflow-saga-compensation-unauthorized":

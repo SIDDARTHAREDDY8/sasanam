@@ -48,6 +48,8 @@ import traceback
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 from gov import decision_packet as dp  # noqa: E402
 from gov import decision_bom as bom_mod  # noqa: E402
@@ -299,6 +301,29 @@ def _run_all():
     return results
 
 
+# D1 verdict mapping (evals/SUMMARY_FORM_POLICIES.md), red-first: GAP -> BREAK.
+# The verdict token is the first word of the recorded verdict string; the
+# original first line is kept verbatim as the note (evidence preserved), with
+# any multi-line detail collapsed to its first line (" // "-joined).
+# Unknown tokens fail closed as ERROR (loud, never silent). Raw results keep
+# the battery's own vocabulary (count code and exit contract untouched); the
+# mapping happens at emission.
+_VERDICT_TOKEN_MAP = {"HELD": "HELD", "GAP": "BREAK", "BREAK": "BREAK",
+                      "ERROR": "ERROR"}
+
+
+def _split_row(name, v):
+    first = probe_lines.first_line(v)
+    tok = (first.split(":")[0].split() or [""])[0]
+    mapped = _VERDICT_TOKEN_MAP.get(tok)
+    if mapped is None:
+        return {"probe_id": name, "verdict": "ERROR",
+                "note": "unparseable verdict string: %r" % (first,)}
+    _, _, rest = v.partition("\n")
+    rest_first = probe_lines.first_line(rest).strip()
+    note = first if not rest_first else first + " // " + rest_first
+    return {"probe_id": name, "verdict": mapped, "note": note}
+
 def main():
     t0 = time.time()
     results = _run_all()
@@ -309,14 +334,16 @@ def main():
     gap = sum(1 for name in PROBE_NAMES if _v(name).startswith("GAP"))
     brk = sum(1 for name in PROBE_NAMES if _v(name).startswith("BREAK"))
     err = sum(1 for name in PROBE_NAMES if _v(name).startswith("ERROR"))
-    for name in PROBE_NAMES:
-        verdict = results.get(name, "ERROR: missing")
-        first = verdict.split("\n")[0]
-        print("%-42s %s" % (name, first))
-        if "\n" in verdict:
-            print(verdict.split("\n", 1)[1])
-    print("summary: %d HELD / %d GAP / %d BREAK / %d ERROR (%.1fs)"
-          % (held, gap, brk, err, time.time() - t0))
+    rows = [_split_row(name, results.get(name, "ERROR: missing"))
+            for name in PROBE_NAMES]
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        [(r["probe_id"], r["verdict"], r["note"]) for r in rows],
+        brk + gap, held, err)
+    probe_lines.emit_dicts(rows)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR (%.1fs)"
+          % (brk + gap, held, err, time.time() - t0))
     # Exit 0 only when every probe HELD. Genuine red (module absent) is
     # exit 2: the absence is the expected pre-implementation state, not a
     # passing suite.

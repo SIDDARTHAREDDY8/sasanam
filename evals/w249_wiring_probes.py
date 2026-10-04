@@ -17,6 +17,8 @@ Stdlib only. No in-repo git subprocesses.
 import json
 import os
 
+import probe_lines  # canonical probe-line form
+
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 import sys
@@ -106,18 +108,58 @@ class WiringProbes(unittest.TestCase):
             "GAP: pin_from_refresher missing from gov.skill_update")
 
 
+def _run_one(test):
+    """Run one unittest test; return a (pid, verdict, note) triple.
+
+    Wave-316 lane-3 decision (D1): a failed assertion demonstrates the
+    wiring GAP -> BREAK; an unexpected exception is a probe problem ->
+    ERROR. The battery's own summary lumps both as GAP (red either
+    way); the split keeps the canonical vocabulary honest.
+    """
+    result = unittest.TestResult()
+    test.run(result)
+    pid = test.id().split(".")[-1]
+    if result.wasSuccessful():
+        return (pid, "HELD", "pass")
+    notes = []
+    for _t, tb in result.failures + result.errors:
+        tail = tb.strip().splitlines()
+        notes.append(tail[-1] if tail else "?")
+    verdict = "ERROR" if result.errors else "BREAK"
+    return (pid, verdict, probe_lines.first_line("; ".join(notes)))
+
+
+def _map_green_check(status, note):
+    # Wave-316 lane-3 decision (D1): RED -> BREAK, SKIPPED -> SKIP,
+    # GREEN -> HELD. The green check is informational in this battery
+    # (the old exit ignored it); its line is emitted but excluded
+    # from the exit computation.
+    if status == "SKIPPED":
+        return ("green-check", "SKIP", note)
+    if status == "RED":
+        return ("green-check", "BREAK", note)
+    return ("green-check", "HELD", note)
+
+
 def main():
     loader = unittest.TestLoader()
     suite = loader.loadTestsFromTestCase(WiringProbes)
-    runner = unittest.TextTestRunner(verbosity=1)
-    result = runner.run(suite)
-    held = result.testsRun - len(result.failures) - len(result.errors)
-    gap = len(result.failures) + len(result.errors)
+    results = [_run_one(test) for test in suite]
+    probe_lines.emit(results)
+    held = sum(1 for _, v, _ in results if v == "HELD")
+    brk = sum(1 for _, v, _ in results if v == "BREAK")
+    errors = sum(1 for _, v, _ in results if v == "ERROR")
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        results, brk, held, errors)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk, held, errors))
     print("summary: %d HELD / %d GAP / %d total"
-          % (held, gap, result.testsRun))
+          % (held, brk + errors, len(results)))
     gc_status, gc_note = _green_check()
-    print("green_check: %s: %s" % (gc_status, gc_note))
-    return 0 if result.wasSuccessful() else 1
+    gc_pid, gc_verdict, gc_note = _map_green_check(gc_status, gc_note)
+    probe_lines.emit([(gc_pid, gc_verdict, gc_note)])
+    return 0 if (brk == 0 and errors == 0) else 1
 
 
 if __name__ == "__main__":

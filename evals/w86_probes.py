@@ -96,6 +96,9 @@ sys.path.insert(0, str(REPO_ROOT))
 # in production. This battery is a test harness, not a deployment.
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
+sys.path.insert(0, str(REPO_ROOT / "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
+
 import gov.delegation_tokens as dt_mod  # noqa: E402
 from gov import policy_change as pc_mod  # noqa: E402
 from gov.approvals import ApprovalQueue  # noqa: E402
@@ -1354,6 +1357,22 @@ def sit_revocation_propagates_to_descendants():
                     "revoked parent invalidates the descendant chain"}
 
 
+# D1 verdict mapping for the HOLD/MISS vocabulary
+# (evals/SUMMARY_FORM_POLICIES.md): "stopped" (attack stopped) -> HELD,
+# "break" -> BREAK, "error" -> ERROR, "residual" -> HELD with a
+# "residual: " note prefix. Red-first: an unmapped verdict maps to BREAK
+# (never greener than the old exit, which folded unknowns into "break").
+_VERDICT_MAP = {"stopped": "HELD", "break": "BREAK", "error": "ERROR",
+                "residual": "HELD"}
+
+
+def _note_of(row):
+    # D2 contract for the w72 family: the note lives under
+    # detail["note"], falling back to detail["error"] for harness
+    # exceptions (which record {"error": ...} with no "note").
+    return row["detail"].get("note") or row["detail"].get("error", "")
+
+
 def main():
     for sid in sorted(SITUATIONS):
         SITUATIONS[sid]()
@@ -1361,16 +1380,33 @@ def main():
     for r in RESULTS:
         v = r["verdict"]
         counts[v if v in counts else "break"] += 1
+    rows = []
     for r in RESULTS:
-        print("%-58s %s  %s" % (r["id"], r["verdict"],
-                                r["detail"].get("note", "")))
-    print("w86 battery: %d STOPPED / %d RESIDUAL / %d BREAK|ERROR"
-          % (counts["stopped"], counts["residual"], counts["break"]))
+        detail = r["detail"]
+        if r["verdict"] == "residual":
+            detail = dict(detail)
+            detail["note"] = "residual: " + detail.get("note", "")
+        rows.append({"id": r["id"],
+                     "verdict": _VERDICT_MAP.get(r["verdict"], "BREAK"),
+                     "detail": detail})
+    probe_lines.emit_dicts(rows, pid_key="id", note_getter=_note_of)
+    brk = sum(1 for r in rows if r["verdict"] == "BREAK")
+    held = sum(1 for r in rows if r["verdict"] == "HELD")
+    err = sum(1 for r in rows if r["verdict"] == "ERROR")
+    print("w86 battery: %d BREAK / %d HELD / %d ERROR"
+          % (brk, held, err))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        [(r["id"], r["verdict"], _note_of(r)) for r in rows], brk, held, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
     out = {"battery": "redteam.identity_w86", "counts": counts,
            "probes": RESULTS}
     (REPO_ROOT / "evals" / "w86_results.json").write_text(
         json.dumps(out, indent=2), encoding="utf-8")
-    return 1 if counts["break"] else 0
+    # Exit-equivalent to the old `1 if counts["break"]`: the _sit wrapper
+    # coerces non-verdicts and harness exceptions to "break", so "error"
+    # is unreachable and brk == counts["break"] here.
+    return 1 if (brk or err) else 0
 
 
 if __name__ == "__main__":

@@ -32,6 +32,8 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(_HERE)
 if _REPO not in sys.path:
     sys.path.insert(0, _REPO)
+sys.path.insert(0, os.path.join(_REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 MODE = os.environ.get("GOV_IMTEXT_IMPL", "real")
 
@@ -485,18 +487,38 @@ def _green_check():
             [sys.executable, adj], capture_output=True, text=True,
             env=env, timeout=600, cwd=_REPO)
         lines = p.stdout.splitlines()
+        # Dual-form (D8): match the canonical "[BREAK]"/"[ERROR]"
+        # probe lines AND the legacy "BREAK "/"ERROR " shape, so
+        # this check keeps working whether or not the adjacent
+        # battery has been summary-form migrated.
         bad_lines = [l for l in lines
-                     if l.startswith("BREAK ") or l.startswith("MISMATCH")
-                     or l.startswith("ERROR ")]
+                     if l.startswith(("[BREAK]", "BREAK ",
+                                      "MISMATCH",
+                                      "[ERROR]", "ERROR "))]
         ok = not bad_lines and p.returncode == 0
         note = "rc=%d bad=%d" % (p.returncode, len(bad_lines))
-        results.append(("green-check:w269_imgscreen_probes",
+        results.append(("green-check_w269_imgscreen_probes",
                         "HELD" if ok else "BREAK", note))
     except Exception as exc:  # noqa: BLE001
-        results.append(("green-check:w269_imgscreen_probes", "ERROR",
+        results.append(("green-check_w269_imgscreen_probes", "ERROR",
                         "%r" % (exc,)))
     return results
 
+
+
+# D1 verdict mapping (evals/SUMMARY_FORM_POLICIES.md): probes record
+# HELD/FAIL/ERROR and the depth-1 green checks record HELD/SKIPPED/
+# BREAK/ERROR; canonical emission is BREAK/HELD/ERROR/SKIP, mapped
+# red-first (FAIL->BREAK, SKIPPED->SKIP). The green-check pid is renamed
+# value-only ("green-check:<adj>" -> "green-check_<adj>") to stay inside
+# the pid character class. Probe logic, verdict computation and count
+# code are untouched -- only the print loop below maps.
+_VERDICT_MAP = {
+    "PASS": "HELD", "HELD": "HELD", "GREEN": "HELD",
+    "FAIL": "BREAK", "BROKEN": "BREAK", "GAP": "BREAK",
+    "RED": "BREAK",
+    "ERROR": "ERROR", "SKIP": "SKIP", "SKIPPED": "SKIP",
+}
 
 def main():
     out = _run_all()
@@ -504,10 +526,18 @@ def main():
     det = all(a[1] == b[1] for a, b in zip(out, out2))
     green = _green_check()
     print("MODE=%s" % MODE)
-    for name, verdict, note in out:
-        print("%s %s %s" % (verdict, name, note))
-    for name, verdict, note in green:
-        print("%s %s %s" % (verdict, name, note))
+    final = [(n, _VERDICT_MAP[v], note) for n, v, note in out]
+    final += [(n, _VERDICT_MAP[v], note) for n, v, note in green]
+    probe_lines.emit(final)
+    brk_c = sum(1 for _, v, _ in final if v == "BREAK")
+    held_c = sum(1 for _, v, _ in final if v == "HELD")
+    err_c = sum(1 for _, v, _ in final if v == "ERROR")
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        final, brk_c, held_c, err_c)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % ("; ".join(_coh_diags)))
+    print("%d BREAK / %d HELD / %d ERROR"
+          % (brk_c, held_c, err_c))
     print("RESULT deterministic=%s probes=%d" % (det, len(out)))
     bad = _expect(out, MODE)
     for name, verdict, want, note in bad:

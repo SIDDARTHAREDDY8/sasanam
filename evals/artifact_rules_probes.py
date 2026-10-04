@@ -62,6 +62,8 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 _SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -288,16 +290,30 @@ def main():
     return _emit(0)
 
 
+# D1 verdict mapping (evals/SUMMARY_FORM_POLICIES.md), red-first: GAP -> BREAK.
+# SKIPPED -> SKIP is the exact semantic match. Raw records keep the battery's
+# own vocabulary (count code and exit contract untouched); the mapping happens
+# at emission. Unknown verdicts fall back to BREAK (red-first, never greener).
+_VERDICT_MAP = {"HELD": "HELD", "GAP": "BREAK", "ERROR": "ERROR",
+                "SKIPPED": "SKIP"}
+
+
 def _emit(code):
     held = sum(1 for r in _RESULTS if r["verdict"] == "HELD")
     gap = sum(1 for r in _RESULTS if r["verdict"] == "GAP")
     err = sum(1 for r in _RESULTS if r["verdict"] == "ERROR")
-    skip = sum(1 for r in _RESULTS if r["verdict"] == "SKIPPED")
-    print("artifact_rules_probes: %d HELD / %d GAP / %d ERROR / %d SKIPPED"
-          % (held, gap, err, skip))
-    for r in _RESULTS:
-        print("  %s %-22s %s %s"
-              % (r["id"], r["name"], r["verdict"], r["detail"]))
+    rows = [{"id": r["id"],
+             "verdict": _VERDICT_MAP.get(r["verdict"], "BREAK"),
+             "note": ("GAP: %s" % (r["detail"],)
+                      if r["verdict"] == "GAP" else r["detail"])}
+            for r in _RESULTS]
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        [(row["id"], row["verdict"], row["note"]) for row in rows],
+        gap, held, err)
+    probe_lines.emit_dicts(rows, pid_key="id")
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (gap, held, err))
     return 0 if (code == 0 and err == 0) else 2
 
 

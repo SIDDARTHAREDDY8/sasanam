@@ -53,6 +53,8 @@ os.environ["TMPDIR"] = _TMP
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
+import probe_lines  # noqa: E402  (canonical probe-line form)
+
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _RESULTS = []
@@ -478,28 +480,42 @@ def main():
           "(base-red expected pre-fix)")
     for pid, expected, fn in _PROBES:
         _run(pid, expected, fn)
-    n_break = n_err = 0
+    # Wave-316 lane-3 decision (D1 PASS/FAIL rationale): ok -> HELD,
+    # MISMATCH -> BREAK. Exit-equivalence: every probe expects HELD,
+    # so an actual BREAK/ERROR verdict always implies ok=False; the
+    # old `n_break or n_err or mism` reduces to `mism`, and folding
+    # the green checks into brk preserves `or not green_ok`.
+    mapped = []
     for pid, expected, verdict, ok, note in _RESULTS:
-        mark = "ok" if ok else "MISMATCH"
-        print("[%s] %s expected=%s got=%s :: %s"
-              % (mark, pid, expected, verdict, note))
-        if verdict == "BREAK":
-            n_break += 1
-        if verdict == "ERROR":
-            n_err += 1
+        mapped.append((pid, "HELD" if ok else "BREAK",
+                       "expected=%s got=%s :: %s" % (expected, verdict,
+                                                     note)))
+    probe_lines.emit(mapped)
     print("--- green checks (depth-1) ---")
-    green_ok = True
+    gc_mapped = []
     for label, note in green_check():
         bad = note.startswith("NOT GREEN") or note.startswith("ERROR")
-        green_ok = green_ok and not bad
-        print("[%s] %s :: %s" % ("BAD" if bad else "ok", label, note))
+        if "GOV_SKIP_GREEN=1" in note:
+            gc_mapped.append((label, "SKIP", note))
+        elif bad:
+            gc_mapped.append((label, "BREAK", note))
+        else:
+            gc_mapped.append((label, "HELD", note))
+    probe_lines.emit(gc_mapped)
+    mapped.extend(gc_mapped)
+    brk = sum(1 for _, v, _ in mapped if v == "BREAK")
+    hld = sum(1 for _, v, _ in mapped if v == "HELD")
+    err = 0
+    _coh_ok, _coh_diags = probe_lines.check_coherence(mapped, brk, hld, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk, hld, err))
+    n_break = sum(1 for _, _, v, _, _ in _RESULTS if v == "BREAK")
+    n_err = sum(1 for _, _, v, _, _ in _RESULTS if v == "ERROR")
+    green_ok = all(v != "BREAK" for _, v, _ in gc_mapped)
     print("probes: %d BREAK / %d ERROR; green checks %s"
           % (n_break, n_err, "GREEN" if green_ok else "NOT GREEN"))
-    mism = [r for r in _RESULTS if not r[3]]
-    rc = 0
-    if n_break or n_err or mism or not green_ok:
-        rc = 1
-    return rc
+    return 0 if (brk == 0 and err == 0) else 1
 
 
 if __name__ == "__main__":

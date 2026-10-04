@@ -51,6 +51,7 @@ sys.path.insert(0, REPO)
 
 from gov import rail_verdict as RV  # noqa: E402
 from gov import retrieval_rail as RR  # noqa: E402
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -191,20 +192,29 @@ def green_check():
 
 def main():
     print("== w276 F293 battery: %d probes ==" % len(PROBES))
-    all_ok = True
     for pid, expected, fn in PROBES:
-        ok = _run(pid, expected, fn)
-        all_ok = all_ok and ok
-        status = "ok" if ok else "MISMATCH"
-        print("[%s] %s expected=%s got=%s: %s" % (
-            status, pid, expected, _RESULTS[-1][2], _RESULTS[-1][4]))
+        _run(pid, expected, fn)
+    # Wave-316 lane-3 decision (D1 PASS/FAIL rationale): ok -> HELD,
+    # MISMATCH -> BREAK. The battery's own pass/fail (ok) is the
+    # verdict; expected/got stay in the note.
+    mapped = []
+    for pid, expected, verdict, ok, note in _RESULTS:
+        mapped.append((pid, "HELD" if ok else "BREAK",
+                       "expected=%s got=%s: %s" % (expected, verdict, note)))
     g_ok, g_note = green_check()
-    print("[%s] green: %s" % ("ok" if g_ok else "MISMATCH", g_note))
-    all_ok = all_ok and g_ok
+    mapped.append(("green", "HELD" if g_ok else "BREAK", g_note))
+    probe_lines.emit(mapped)
+    brk = sum(1 for _, v, _ in mapped if v == "BREAK")
+    hld = sum(1 for _, v, _ in mapped if v == "HELD")
+    err = 0
+    _coh_ok, _coh_diags = probe_lines.check_coherence(mapped, brk, hld, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk, hld, err))
     n_held = sum(1 for r in _RESULTS if r[3])
-    print("== %d/%d probes as expected; green=%s ==" % (
-        n_held, len(_RESULTS), g_ok))
-    return 0 if all_ok else 1
+    print("== %d/%d probes as expected; green=%s =="
+          % (n_held, len(_RESULTS), g_ok))
+    return 0 if (brk == 0 and err == 0) else 1
 
 
 if __name__ == "__main__":

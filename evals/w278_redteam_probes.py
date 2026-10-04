@@ -77,6 +77,8 @@ import zlib
 
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
+import probe_lines  # noqa: E402  (canonical probe-line form)
+
 _TMP = tempfile.mkdtemp(prefix="g278-redteam-%d-" % os.getpid(), dir="/var/tmp")
 os.makedirs(_TMP, exist_ok=True)
 os.environ["TMPDIR"] = _TMP
@@ -645,20 +647,40 @@ def main():
                      pin_verdict == "HELD", pin_note))
     for pid, expected, fn in PROBES:
         _run(pid, expected, fn)
+    # Wave-316 lane-3 decision (D1): FAIL -> BREAK. The battery's own
+    # ok flag is the verdict (expected/got stay in the note).
+    # Exit-equivalence: every probe expects HELD, so an actual ERROR
+    # verdict implies ok=False; old `n_err==0 and n_mismatch==0` ==
+    # new `brk==0 and err==0`. Green checks are informational (the old
+    # exit ignored them) and emitted after the summary.
+    mapped = []
+    for pid, expected, verdict, ok, note in _RESULTS:
+        mapped.append((pid, "HELD" if ok else "BREAK",
+                       "expected=%s got=%s %s" % (expected, verdict, note)))
+    probe_lines.emit(mapped)
+    brk = sum(1 for _, v, _ in mapped if v == "BREAK")
+    hld = sum(1 for _, v, _ in mapped if v == "HELD")
+    err = 0
+    _coh_ok, _coh_diags = probe_lines.check_coherence(mapped, brk, hld, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk, hld, err))
     n_break = sum(1 for r in _RESULTS if r[2] == "BREAK")
     n_held = sum(1 for r in _RESULTS if r[2] == "HELD")
     n_err = sum(1 for r in _RESULTS if r[2] == "ERROR")
     n_mismatch = sum(1 for r in _RESULTS if not r[3])
-    for pid, expected, verdict, ok, note in _RESULTS:
-        print("[%s] %-34s expected=%-5s got=%-5s %s"
-              % ("ok " if ok else "FAIL", pid, expected, verdict, note))
-    print("--- green checks (depth-1) ---")
-    for name, verdict, note in green_check():
-        print("[%s] %s %s" % ("ok " if verdict == "HELD" else "FAIL",
-                              name, note))
     print("probes: %d BREAK / %d HELD / %d ERROR; mismatches: %d"
           % (n_break, n_held, n_err, n_mismatch))
-    return 0 if (n_err == 0 and n_mismatch == 0) else 1
+    print("--- green checks (depth-1) ---")
+    for name, verdict, note in green_check():
+        # Green checks already record canonical verdicts; the
+        # GOV_SKIP_GREEN skip carries a sentence pid -- normalize to
+        # the class-conforming "green-check" pid with a SKIP verdict.
+        if name.startswith("GOV_SKIP_GREEN=1"):
+            probe_lines.emit([("green-check", "SKIP", name)])
+        else:
+            probe_lines.emit([(name, verdict, note)])
+    return 0 if (brk == 0 and err == 0) else 1
 
 
 if __name__ == "__main__":

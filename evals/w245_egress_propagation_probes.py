@@ -84,6 +84,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+sys.path.insert(0, os.path.join(REPO_ROOT, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 try:
     from gov import egress_propagation_guard as epg  # noqa: E402  (red-first: absent until the seam lands)
@@ -423,7 +425,14 @@ def _main():
             record(name, "ERROR %s: %s" % (type(exc).__name__,
                                           str(exc)[:80]), "seam", False)
 
-    print("probe  verdict                         expect")
+    # D1 verdict mapping (evals/SUMMARY_FORM_POLICIES.md), red-first. The
+    # recorded "tag" is the verdict: HELD/BREAK map to themselves; EXPECTED is
+    # a documented accepted residual (pinned design miss, p7) and maps to
+    # HELD with an "EXPECTED: " note prefix, per the D1 residual rule. The
+    # raw verdict-detail string ("GAP (seam absent: ...)" when the seam is
+    # absent) is kept verbatim as the note. Count code and exit contract
+    # untouched; the mapping happens here, at emission.
+    mapped = []
     for probe_name, verdict, expect, ok in results:
         if expect == "EXPECTED":
             tag = "EXPECTED"
@@ -439,11 +448,18 @@ def _main():
             expected += 1
         else:
             errors += 1
-        print("  %-4s %-31s %-30s %s" % (probe_name, verdict, expect, tag))
-    print("%d HELD, %d BREAK, %d EXPECTED, %d ERROR, %d GAP-seam"
-          % (held, broke, expected, errors,
-             sum(1 for _, v, e, _ in results
-                 if e == "seam" and v.startswith("GAP"))))
+        note = probe_lines.first_line(verdict)
+        if tag == "EXPECTED":
+            mapped.append((probe_name, "HELD", "EXPECTED: " + note))
+        else:
+            mapped.append((probe_name, tag, note))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        mapped, broke, held + expected, errors)
+    probe_lines.emit(mapped)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR"
+          % (broke, held + expected, errors))
     print("(EXPECTED = pinned design miss: paraphrase (p7); the pin FAILS "
           "if a paraphrase ever flags)")
     return 0 if errors == 0 else 1

@@ -36,6 +36,9 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 try:
     from gov import mesh_admission as ma
@@ -436,8 +439,26 @@ def _green_check():
     return results
 
 
+# D1 verdict mapping (evals/SUMMARY_FORM_POLICIES.md), red-first: GAP -> BREAK.
+# BASELINE is defined by these batteries as "known-open finding reproduced"
+# (dead in practice: no probe returns it) and maps to BREAK as well. Raw rows
+# keep the battery's own vocabulary (count code and exit contract untouched);
+# the mapping happens here, at emission. Anything else fails closed as ERROR.
+def _mapped(rows):
+    out = []
+    for _name, _verdict, _detail in rows:
+        if _verdict in ("GAP", "BASELINE"):
+            out.append((_name, "BREAK", "%s: %s" % (_verdict, _detail)))
+        elif _verdict in ("HELD", "BREAK", "ERROR"):
+            out.append((_name, _verdict, _detail))
+        else:
+            out.append((_name, "ERROR",
+                        "unexpected verdict %r: %s" % (_verdict, _detail)))
+    return out
+
 def main():
     held = breaks = gaps = baselines = errors = 0
+    rows = []
     for name, fn in _PROBES:
         try:
             verdict, detail = fn()
@@ -454,7 +475,13 @@ def main():
             baselines += 1
         else:
             errors += 1
-        print("%-8s %-32s %s" % (verdict, name, detail))
+        rows.append((name, verdict, detail))
+    mapped = _mapped(rows)
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        mapped, breaks + gaps + baselines, held, errors)
+    probe_lines.emit(mapped)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
     print("-" * 79)
     pin_ok = True
     if decision_codes is None:
@@ -468,9 +495,7 @@ def main():
         print("taxonomy pin OK: %d" % TAXONOMY_PIN)
     for name, note in _green_check():
         print("green-check %-24s %s" % (name, note))
-    print("HELD %d / BREAK %d / GAP %d / BASELINE %d / ERROR %d "
-          "over %d probes" % (held, breaks, gaps, baselines, errors,
-                              len(_PROBES)))
+    print("%d BREAK / %d HELD / %d ERROR" % (breaks + gaps + baselines, held, errors))
     if gaps and not breaks and not errors:
         print("RED BASELINE: capability absent, all probes GAP")
         return 0

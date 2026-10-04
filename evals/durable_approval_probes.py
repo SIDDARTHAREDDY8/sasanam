@@ -36,6 +36,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO not in sys.path:
     sys.path.insert(0, REPO)
 
+import probe_lines  # noqa: E402  (canonical probe-line form)
+
 _SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _HAS_JOURNAL = importlib.util.find_spec("gov.durable_journal") is not None
@@ -468,16 +470,31 @@ def main():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     held = brk = expected = errors = 0
+    mapped = []
     for pid, name, status, detail in results:
-        print("%s %-28s %s -- %s" % (pid, name, status, detail))
+        # Wave-316 lane-3 decision (D1): EXPECTED -> HELD with an
+        # "expected: " prefix (pinned limitation -- P1-P9 cannot run
+        # their crash-recovery paths on this tree; exit-neutral here).
+        note = "%s -- %s" % (name, detail)
         if status == "HELD":
             held += 1
+            mapped.append((pid, "HELD", note))
         elif status == "BREAK":
             brk += 1
+            mapped.append((pid, "BREAK", note))
         elif status == "EXPECTED":
             expected += 1
+            mapped.append((pid, "HELD", "expected: " + note))
         else:
             errors += 1
+            mapped.append((pid, "ERROR", note))
+    probe_lines.emit(mapped)
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        mapped, brk, held + expected, errors)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR"
+          % (brk, held + expected, errors))
     print("summary: %d HELD / %d BREAK / %d EXPECTED / %d ERROR"
           % (held, brk, expected, errors))
     green_ok = _green_check()

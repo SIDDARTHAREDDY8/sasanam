@@ -41,6 +41,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "evals"))
 import w242_aee_refusal_vector as refusal_vector
+import probe_lines  # noqa: E402  (canonical probe-line form)
 AEE_REF = os.environ.get("W242_AEE_REF", "/tmp/aee-ref")
 AEE_CORPUS = os.environ.get("W242_AEE_CORPUS", "/tmp/aee-conformance")
 CHECKER_BIN = os.environ.get(
@@ -50,11 +51,29 @@ CHECKER_BIN = os.environ.get(
 RESULTS = {"probes": []}
 
 
+def _map_status(status):
+    # Wave-316 lane-3 decision: "skip" -> SKIP (exact semantic match,
+    # D1 SKIPPED -> SKIP rationale); "pass"/"fail" -> HELD/BREAK (D1
+    # PASS/FAIL rationale); "not-applicable" -> SKIP (the probe cannot
+    # run -- no checker exists; exit-neutral like "skip").
+    if status == "pass":
+        return "HELD"
+    if status == "fail":
+        return "BREAK"
+    return "SKIP"
+
+
+_RAW_COUNTS = {}
+
+
 def record(name, status, detail):
+    # Wave-316 lane-3: append-only; emission happens once in main()
+    # via probe_lines.emit_dicts (canonical form). Raw-status counts
+    # are kept for the human summary line below.
+    _RAW_COUNTS[status] = _RAW_COUNTS.get(status, 0) + 1
     RESULTS["probes"].append(
-        {"name": name, "status": status, "detail": detail}
+        {"name": name, "status": _map_status(status), "detail": detail}
     )
-    print(f"[{status}] {name}: {detail if isinstance(detail, str) else json.dumps(detail)[:200]}")
 
 
 def need_dir(path, what):
@@ -336,14 +355,31 @@ def main():
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     json.dump(RESULTS, open(out_path, "w"), indent=1)
     print(f"results -> {out_path}")
-    failures = [p for p in RESULTS["probes"] if p["status"] == "fail"]
-    skips = [p for p in RESULTS["probes"] if p["status"] == "skip"]
+    probe_lines.emit_dicts(RESULTS["probes"], verdict_key="status",
+                           pid_key="name", note_key="detail",
+                           note_getter=lambda r: r["detail"]
+                           if isinstance(r["detail"], str)
+                           else json.dumps(r["detail"])[:200])
+    brk = sum(1 for p in RESULTS["probes"] if p["status"] == "BREAK")
+    hld = sum(1 for p in RESULTS["probes"] if p["status"] == "HELD")
+    err = sum(1 for p in RESULTS["probes"] if p["status"] == "ERROR")
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        [(p["name"], p["status"],
+          p["detail"] if isinstance(p["detail"], str) else "")
+         for p in RESULTS["probes"]], brk, hld, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk, hld, err))
+    # Exit-equivalence: old `1 if failures else 0` (failures =
+    # status == "fail") == new `0 if (brk==0 and err==0)`; skips
+    # (incl. not-applicable) are exit-neutral in both.
+    failures = [p for p in RESULTS["probes"] if p["status"] == "BREAK"]
     print(
-        f"{len(RESULTS['probes']) - len(failures) - len(skips)}/"
+        f"{_RAW_COUNTS.get('pass', 0) + _RAW_COUNTS.get('not-applicable', 0)}/"
         f"{len(RESULTS['probes'])} pass-or-na, "
-        f"{len(failures)} fail, {len(skips)} skip"
+        f"{len(failures)} fail, {_RAW_COUNTS.get('skip', 0)} skip"
     )
-    return 1 if failures else 0
+    return 0 if (brk == 0 and err == 0) else 1
 
 
 if __name__ == "__main__":

@@ -69,7 +69,7 @@ genuine public-seam miss; ERROR = probe/harness problem):
   m3_no_post_execution_warnings: on the success path, no "warn"-class
       audit event for the approval postdates its execution_authorized
       marker. HELD (Manus pin: warnings never follow execution).
-  pin-taxonomy / footer-state: standard pins (1888; open none / next F398).
+  pin-taxonomy / footer-state: standard pins (1888; open F398, F399, F400 / next F401).
 
 Row mapping (18-row program, evals/attack_program_status_2026-09-26.md):
   SJ* -> Row 7 (delayed execution / logic bombs, PARTIAL): new *shape*
@@ -546,13 +546,14 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    want_open = "F396"  # wave-309: F393 CLOSED
-    if nxt != 397 or open_s != want_open:
+    want_open = "F398, F399, F400"  # wave-316: F398/F399/F400 OPEN (wave-315
+    # merge footer); F393-F397 all CLOSED.
+    if nxt != 401 or open_s != want_open:
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F397 open %r)"
+                       "footer drift: next F%d open %r (want next F401 open %r)"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open F396 / next F397")
+            "footer pins open F398, F399, F400 / next F401")
 
 
 # ---------------------------------------------------------------------------

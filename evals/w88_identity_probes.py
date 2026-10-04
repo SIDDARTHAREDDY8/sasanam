@@ -48,6 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # Test-only key provisioning (tests/keyfixture.py): the suite provisions an
 # explicit random key per process through the production env backend.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tests"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 # NOTE: no import-time provisioning. The registry gate runs ~700 probes
 # in one process and some earlier probe scrubs the key env (F73 no-key
 # tests) without restoring; each probe below provisions its own key
@@ -559,23 +560,55 @@ def sit_store_run_binding():
         g["td"].cleanup()
 
 
+# D1 verdict mapping for the HOLD/MISS vocabulary
+# (evals/SUMMARY_FORM_POLICIES.md): "stopped" (attack stopped) -> HELD,
+# "break" -> BREAK, "error" -> ERROR, "residual" -> HELD with a
+# "residual: " note prefix. Red-first: an unmapped verdict maps to BREAK.
+_VERDICT_MAP = {"stopped": "HELD", "break": "BREAK", "error": "ERROR",
+                "residual": "HELD"}
+
+
+def _note_of(row):
+    # D2 contract for the w72 family: the note lives under
+    # detail["note"], falling back to detail["error"] for harness
+    # exceptions (which record {"error": ...} with no "note").
+    return row["detail"].get("note") or row["detail"].get("error", "")
+
+
 def main():
-    print("wave-88 Lane B identity-seam battery (break-first)", flush=True)
     for sid in SITUATIONS:
         SITUATIONS[sid]()
-    print("---- summary ----", flush=True)
-    breaks = [r for r in RESULTS if r["verdict"] == "break"]
+    rows = []
     for r in RESULTS:
-        print("%-58s %s" % (r["id"], r["verdict"]), flush=True)
-        if r["verdict"] != "stopped":
-            print("    %s" % r["detail"].get("note", ""), flush=True)
-    if breaks:
+        detail = r["detail"]
+        if r["verdict"] == "residual":
+            detail = dict(detail)
+            detail["note"] = "residual: " + detail.get("note", "")
+        rows.append({"id": r["id"],
+                     "verdict": _VERDICT_MAP.get(r["verdict"], "BREAK"),
+                     "detail": detail})
+    probe_lines.emit_dicts(rows, pid_key="id", note_getter=_note_of)
+    brk = sum(1 for r in rows if r["verdict"] == "BREAK")
+    held = sum(1 for r in rows if r["verdict"] == "HELD")
+    err = sum(1 for r in rows if r["verdict"] == "ERROR")
+    print("w88 battery: %d BREAK / %d HELD / %d ERROR"
+          % (brk, held, err))
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        [(r["id"], r["verdict"], _note_of(r)) for r in rows], brk, held, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    if brk:
         print("BATTERY RED: %d BREAK probe(s): %s"
-              % (len(breaks), ", ".join(r["id"] for r in breaks)),
+              % (brk, ", ".join(r["id"] for r in rows
+                                if r["verdict"] == "BREAK")),
               flush=True)
-        return 1
-    print("BATTERY GREEN: no BREAK probes", flush=True)
-    return 0
+    else:
+        print("BATTERY GREEN: no BREAK probes", flush=True)
+    # Exit-equivalent to the old `return 1 if breaks else 0` (breaks
+    # counted "break" verdicts): the sit wrapper coerces non-verdicts
+    # and harness exceptions to "break", so "error" is unreachable and
+    # brk == len(breaks) here.
+    return 1 if (brk or err) else 0
 
 
 if __name__ == "__main__":

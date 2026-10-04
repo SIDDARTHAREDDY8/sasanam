@@ -17,6 +17,8 @@ import traceback
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 from gov import bundle_delivery as bd
 from gov.bundle_refresh import (BundleRefresher, FetchNotFound, RefreshError,
@@ -119,7 +121,7 @@ def expect_refusal(fn, code):
 
 # ---------------------------------------------------------------- red ----
 
-@probe("R01 terminating-shadowing-delegation-is-reported-not-silent")
+@probe("R01_terminating-shadowing-delegation-is-reported-not-silent")
 def _():
     term = role("term", keypair(1), paths=["bundles/*"], terminating=True)
     later = role("later", keypair(2), paths=["bundles/x"])
@@ -130,7 +132,7 @@ def _():
         "bundle-delivery-shadowed-delegation")
 
 
-@probe("R02 stale-metadata-at-versioned-url-refused")
+@probe("R02_stale-metadata-at-versioned-url-refused")
 def _():
     import base64
     import json
@@ -144,7 +146,7 @@ def _():
         "bundle-delivery-mirror-stale")
 
 
-@probe("R03 swapped-target-bytes-at-hash-url-refused")
+@probe("R03_swapped-target-bytes-at-hash-url-refused")
 def _():
     good = digest_of(b"real bundle bytes")
     return expect_refusal(
@@ -152,7 +154,7 @@ def _():
         "bundle-delivery-mirror-stale")
 
 
-@probe("R04 expired-delegated-metadata-is-never-an-authority")
+@probe("R04_expired-delegated-metadata-is-never-an-authority")
 def _():
     s = keypair(4)
     r = role("leaf", s, paths=["bundles/*"])
@@ -164,7 +166,7 @@ def _():
         "bundle-delivery-expired-authority-refused")
 
 
-@probe("R05 delegation-cycle-fails-closed")
+@probe("R05_delegation-cycle-fails-closed")
 def _():
     s = keypair(5)
     r = role("a", s, paths=["bundles/*"])
@@ -182,7 +184,7 @@ def _():
         "bundle-delivery-delegation-cycle")
 
 
-@probe("R06 delegation-walk-cap-enforced")
+@probe("R06_delegation-walk-cap-enforced")
 def _():
     chain = [role("r%d" % i, keypair(60 + i), paths=["bundles/*"])
              for i in range(40)]
@@ -207,7 +209,7 @@ def _():
         "bundle-delivery-delegation-cap-exceeded")
 
 
-@probe("R07 forged-delegation-signature-refused")
+@probe("R07_forged-delegation-signature-refused")
 def _():
     s = keypair(7)
     r = role("leaf", s, paths=["bundles/*"])
@@ -220,7 +222,7 @@ def _():
         "bundle-delivery-delegation-unverified")
 
 
-@probe("R08 unmet-threshold-refused")
+@probe("R08_unmet-threshold-refused")
 def _():
     s1, s2, s3 = keypair(81), keypair(82), keypair(83)
     kids = ["k1", "k2", "k3"]
@@ -234,7 +236,7 @@ def _():
         "bundle-delivery-delegation-unverified")
 
 
-@probe("R09 noncanonical-delegated-envelope-refused")
+@probe("R09_noncanonical-delegated-envelope-refused")
 def _():
     s = keypair(9)
     r = role("leaf", s, paths=["bundles/*"])
@@ -247,7 +249,7 @@ def _():
         "bundle-delivery-delegation-malformed")
 
 
-@probe("R10 missing-eligible-delegated-metadata-refused")
+@probe("R10_missing-eligible-delegated-metadata-refused")
 def _():
     s = keypair(10)
     r = role("leaf", s, paths=["bundles/*"])
@@ -258,7 +260,7 @@ def _():
         "bundle-delivery-delegation-unverified")
 
 
-@probe("R11 wrong-bin-target-not-routed-to-delegation")
+@probe("R11_wrong-bin-target-not-routed-to-delegation")
 def _():
     digest = digest_of(b"secret")
     s = keypair(11)
@@ -270,7 +272,7 @@ def _():
         "bundle-delivery-target-not-found")
 
 
-@probe("R12 expired-intermediate-cannot-authorize-rollback")
+@probe("R12_expired-intermediate-cannot-authorize-rollback")
 def _():
     s = keypair(12)
     keys = {"kid-r": keyval(s)}
@@ -290,7 +292,7 @@ def _():
         "bundle-delivery-expired-bootstrap-refused")
 
 
-@probe("R13 impostor-successor-during-bootstrap-refused")
+@probe("R13_impostor-successor-during-bootstrap-refused")
 def _():
     s = keypair(13)
     keys = {"kid-r": keyval(s)}
@@ -328,7 +330,7 @@ def _():
         "bundle-delivery-expired-bootstrap-refused")
 
 
-@probe("R14 concurrent-locked-cache-refused")
+@probe("R14_concurrent-locked-cache-refused")
 def _():
     tmp = tempfile.mkdtemp(prefix="w273r14-")
     try:
@@ -361,7 +363,7 @@ def _():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-@probe("R15 stale-refresher-cannot-serve-delegation")
+@probe("R15_stale-refresher-cannot-serve-delegation")
 def _():
     from gov.bundle_refresh import SuspendedError
 
@@ -377,7 +379,7 @@ def _():
 
 # ------------------------------------------------------------ controls ----
 
-@probe("C01 happy-two-level-delegation-resolves")
+@probe("C01_happy-two-level-delegation-resolves")
 def _():
     s = keypair(20)
     r = role("leaf", s, paths=["bundles/*"])
@@ -389,7 +391,7 @@ def _():
     return "resolved via leaf"
 
 
-@probe("C02 disjoint-terminating-delegation-does-not-block")
+@probe("C02_disjoint-terminating-delegation-does-not-block")
 def _():
     s_t, s_l = keypair(21), keypair(22)
     term = role("term", s_t, paths=["bundles/a/*"], terminating=True)
@@ -409,7 +411,7 @@ def _():
     return "leaf served; term untouched"
 
 
-@probe("C03 top-level-target-never-touches-delegation-fetch")
+@probe("C03_top-level-target-never-touches-delegation-fetch")
 def _():
     s = keypair(23)
     r = role("leaf", s, paths=["bundles/*"])
@@ -425,7 +427,7 @@ def _():
     return "top-level hit"
 
 
-@probe("C04 hash-bin-delegation-resolves-without-names")
+@probe("C04_hash-bin-delegation-resolves-without-names")
 def _():
     data = b"secret bundle"
     dgst = digest_of(data)
@@ -438,7 +440,7 @@ def _():
     return "bin-routed"
 
 
-@probe("C05 potential-shadow-is-warning-not-refusal")
+@probe("C05_potential-shadow-is-warning-not-refusal")
 def _():
     s_t, s_l = keypair(25), keypair(26)
     term = role("term", s_t, paths=["skills/a/*"], terminating=True)
@@ -453,7 +455,7 @@ def _():
     return "resolved with warning"
 
 
-@probe("C06 expired-intermediate-bootstraps-successor")
+@probe("C06_expired-intermediate-bootstraps-successor")
 def _():
     s = keypair(27)
     keys = {"kid-r": keyval(s)}
@@ -491,7 +493,7 @@ def _():
     return "bootstrapped v2"
 
 
-@probe("C07 consistent-snapshot-urls-bind-version-and-digest")
+@probe("C07_consistent-snapshot-urls-bind-version-and-digest")
 def _():
     assert bd.snapshot_metadata_url("targets", 7) == "v7.targets.json"
     dgst = digest_of(b"bytes")
@@ -500,7 +502,7 @@ def _():
     return "url mapping binds"
 
 
-@probe("C08 resolve-pin-shape-fits-skill-update-gate")
+@probe("C08_resolve-pin-shape-fits-skill-update-gate")
 def _():
     dgst = digest_of(b"pin bytes")
     doc = top_doc([], {"b/x": entry(dgst)})
@@ -515,7 +517,7 @@ def _():
     return "pin shape ok"
 
 
-@probe("C09 taxonomy-carries-all-ten-codes")
+@probe("C09_taxonomy-carries-all-ten-codes")
 def _():
     from gov import decision_codes as dc
     codes = ["bundle-delivery-cache-locked",
@@ -534,7 +536,7 @@ def _():
     return "10/10 codes present"
 
 
-@probe("C10 pin-1458")
+@probe("C10_pin-1458")
 def _():
     import re
     lits = re.findall(r'"code": \'([^\']*)\'',
@@ -547,7 +549,7 @@ def _():
     return "%d codes, unique" % len(lits)
 
 
-@probe("C11 clean-delegation-list-lints-clean")
+@probe("C11_clean-delegation-list-lints-clean")
 def _():
     term = role("term", keypair(28), paths=["bundles/a/*"],
                 terminating=True)
@@ -588,11 +590,22 @@ def main():
     for _name, _run in runs:
         _run()
     failed = [r for r in RESULTS if not r[1]]
+    # D1 (evals/SUMMARY_FORM_POLICIES.md), red-first: PASS->HELD, FAIL->BREAK.
+    # first_line is the D4 note normalizer (the old splitlines()[0] idiom
+    # raises IndexError on an empty detail; first_line cannot).
+    final = [(name, "HELD" if ok else "BREAK",
+              probe_lines.first_line(detail or ""))
+             for name, ok, detail in RESULTS]
+    probe_lines.emit(final)
+    brk = sum(1 for _, v, _ in final if v == "BREAK")
+    held = sum(1 for _, v, _ in final if v == "HELD")
+    err = sum(1 for _, v, _ in final if v == "ERROR")
+    _coh_ok, _coh_diags = probe_lines.check_coherence(final, brk, held, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % ("; ".join(_coh_diags)))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk, held, err))
     print("w273_tuf_probes: %d/%d passed"
           % (sum(1 for r in RESULTS if r[1]), len(RESULTS)))
-    for name, ok, detail in RESULTS:
-        print("[%s] %s: %s" % ("PASS" if ok else "FAIL", name,
-                               (detail or "").splitlines()[0]))
     return 1 if failed else 0
 
 

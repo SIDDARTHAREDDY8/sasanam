@@ -76,6 +76,7 @@ import chapman_row1_coverage as crc  # noqa: E402
 from gov.chapman import chapman_ci  # noqa: E402
 from gov.log import read_entries  # noqa: E402
 from gov.memory_provenance import instruction_shaping_reason  # noqa: E402
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 # ---------------------------------------------------------------------------
 # Operator list (documented; deterministic; fixed application order)
@@ -189,8 +190,17 @@ _RESULTS = []
 
 
 def _record(name, verdict, detail=""):
+    # Wave-316 lane-3: append-only; emission happens once in main()
+    # via probe_lines.emit (canonical form).
     _RESULTS.append((name, verdict, detail))
-    print("  %-38s %-10s %s" % (name, verdict, detail))
+
+
+def _sanitize_pid(pid):
+    # D7: pids must match [A-Za-z0-9_.\-]; shape combos use "+"
+    # separators (e.g. shape_B1_imperative__syn+order). Value-only
+    # rename at emit time; _RESULTS (used by the determinism check)
+    # keeps the raw ids.
+    return re.sub(r"[^A-Za-z0-9_.\-]", "-", pid)
 
 
 def generate_shapes():
@@ -417,6 +427,18 @@ def main():
     brk = sum(1 for _, v, _ in _RESULTS if v == "BREAK")
     exp = sum(1 for _, v, _ in _RESULTS if v == "EXPECTED")
     err = sum(1 for _, v, _ in _RESULTS if v == "ERROR")
+    # Wave-316 lane-3 decision (D1): EXPECTED -> HELD with an
+    # "expected: " prefix (documented paraphrase-laundering residual,
+    # F154 #1; exit-neutral in this battery).
+    mapped = [(_sanitize_pid(n), "HELD", "expected: " + d)
+              if v == "EXPECTED" else (_sanitize_pid(n), v, d)
+              for n, v, d in _RESULTS]
+    probe_lines.emit(mapped)
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        mapped, brk, held + exp, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk, held + exp, err))
     print("row1_diversity_probes: "
           "%d HELD / %d BREAK / %d EXPECTED / %d ERROR"
           % (held, brk, exp, err))

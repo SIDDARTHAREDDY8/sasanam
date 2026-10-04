@@ -40,6 +40,7 @@ import tempfile
 TREE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, TREE)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 from sigma_detection_streams import build_streams  # noqa: E402
 
@@ -119,7 +120,7 @@ def _red_probes():
     try:
         ad, rp, new_keyset, ksfv = _import_product()
     except ImportError as e:
-        return [("red: auditor detection absent (module missing)",
+        return [("red_auditor_detection_absent_module_missing",
                  "GAP SHOWN", str(e))]
     out = []
 
@@ -180,13 +181,13 @@ def _red_probes():
             encoding="utf-8"), indent=2, sort_keys=True)
         w.detect(build_streams(seed=196)[6]["events"])
 
-    check("red: tampered rule file refused", tamper_rule, "rule-tampered")
-    check("red: unbound rule file refused", unbound_rule, "rule-unbound")
-    check("red: forged pack signature refused", forge_pack_sig,
+    check("red_tampered_rule_file_refused", tamper_rule, "rule-tampered")
+    check("red_unbound_rule_file_refused", unbound_rule, "rule-unbound")
+    check("red_forged_pack_signature_refused", forge_pack_sig,
           "pack-invalid")
-    check("red: missing bound rule file refused", missing_rule_file,
+    check("red_missing_bound_rule_file_refused", missing_rule_file,
           "rule-missing")
-    check("red: unknown correlation type refused", unknown_correlator,
+    check("red_unknown_correlation_type_refused", unknown_correlator,
           "unsupported-correlation")
 
     # Expired pack: separate world (mint-time expiry in the past).
@@ -194,10 +195,10 @@ def _red_probes():
     try:
         try:
             w.detect([])
-            out.append(("red: expired pack refused", "FAIL",
+            out.append(("red_expired_pack_refused", "FAIL",
                         "no refusal raised"))
         except ad.DetectionError as e:
-            out.append(("red: expired pack refused",
+            out.append(("red_expired_pack_refused",
                         "HELD" if e.code == "pack-invalid" else "FAIL",
                         "code=%s" % (e.code,)))
     finally:
@@ -229,6 +230,9 @@ def _green_check():
 
 def main(argv):
     red_phase = "--red-phase" in argv
+    # D5 recipe 2 (red/green-phase demonstration): the executed phase rides
+    # in each line's note prefix so a canonical line is self-describing.
+    phase = "red-phase" if red_phase else "green-phase"
     if red_phase:
         try:
             _import_product()
@@ -237,6 +241,10 @@ def main(argv):
             have_product = False
         if not have_product:
             print("== sigma detection probes (RED-PHASE: gap demonstration) ==")
+            # The red-phase gap demonstration runs zero probes: the canonical
+            # summary is 0/0/0, the GAP SHOWN conclusion is retained, and
+            # exit 0 (= gap shown) is unchanged.
+            print("0 BREAK / 0 HELD / 0 ERROR")
             print("GAP SHOWN: gov.audit_detect absent -- "
                   "the auditor has no detection capability")
             return 0
@@ -267,12 +275,23 @@ def main(argv):
             second.append((name, status, detail))
     det_ok = ([(n, s, d) for n, s, d in results]
               == [(n, s, d) for n, s, d in second])
-    width = max(len(n) for n, _, _ in results)
     print("== sigma detection probes (%s) =="
           % ("RED-PHASE: auditor red-team" if red_phase else
              "GREEN-PHASE: closure battery"))
-    for n, s, d in results:
-        print("%-*s %s %s" % (width, n, s, d))
+    # D1 (evals/SUMMARY_FORM_POLICIES.md), red-first: PASS/HELD->HELD,
+    # FAIL->BREAK, and the "GAP SHOWN" row (module missing) ->BREAK -- the
+    # battery's own n_fail contract counts it as failing (exit 1).
+    _map = {"PASS": "HELD", "HELD": "HELD", "FAIL": "BREAK",
+            "GAP SHOWN": "BREAK", "BREAK": "BREAK", "ERROR": "ERROR"}
+    final = [(n, _map[s], "%s: %s" % (phase, d)) for n, s, d in results]
+    probe_lines.emit(final)
+    brk = sum(1 for _, v, _ in final if v == "BREAK")
+    held = sum(1 for _, v, _ in final if v == "HELD")
+    err = sum(1 for _, v, _ in final if v == "ERROR")
+    _coh_ok, _coh_diags = probe_lines.check_coherence(final, brk, held, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % ("; ".join(_coh_diags)))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk, held, err))
     print("deterministic x2: %s" % det_ok)
     n_fail = sum(1 for _, s, _ in results if s not in ("PASS", "HELD"))
     if not red_phase:
@@ -290,7 +309,7 @@ def _green_probe_fns():
     try:
         ad, rp, new_keyset, ksfv = _import_product()
     except ImportError as e:
-        return [("green: product import",
+        return [("green_product_import",
                  lambda: ("FAIL", "missing: %s" % (e,)))]
 
     def contingency():
@@ -416,12 +435,12 @@ def _green_probe_fns():
             w.cleanup()
 
     return [
-        ("green: per-rule contingency 1/0/0/9", contingency),
-        ("green: assumption violation warns loudly", assumption_warns),
-        ("green: correlator assumptions evaluated", correlator_assumptions_evaluated),
-        ("green: bad-ts skipped with warning", bad_ts_skipped),
-        ("green: unknown geo warns, no crash", unknown_geo_warns),
-        ("green: report serializes + inbox provenance", report_shape),
+        ("green_per-rule_contingency_1_0_0_9", contingency),
+        ("green_assumption_violation_warns_loudly", assumption_warns),
+        ("green_correlator_assumptions_evaluated", correlator_assumptions_evaluated),
+        ("green_bad-ts_skipped_with_warning", bad_ts_skipped),
+        ("green_unknown_geo_warns_no_crash", unknown_geo_warns),
+        ("green_report_serializes_inbox_provenance", report_shape),
     ]
 
 

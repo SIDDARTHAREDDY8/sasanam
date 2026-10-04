@@ -61,6 +61,8 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.join(REPO, "evals"))
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 _SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -369,6 +371,13 @@ _PROBES = [
 ]
 
 
+# D1 verdict mapping (evals/SUMMARY_FORM_POLICIES.md), red-first: GAP -> BREAK.
+# Raw records keep the battery's own vocabulary (count code and exit contract
+# untouched); the mapping happens at emission. Unknown verdicts fall back to
+# BREAK (red-first, never greener).
+_VERDICT_MAP = {"HELD": "HELD", "GAP": "BREAK", "ERROR": "ERROR"}
+
+
 def main():
     if _ABSENT:
         for pid, name, _ in _PROBES:
@@ -380,11 +389,18 @@ def main():
     held = sum(1 for r in _RESULTS if r["verdict"] == "HELD")
     gaps = sum(1 for r in _RESULTS if r["verdict"] == "GAP")
     errors = sum(1 for r in _RESULTS if r["verdict"] == "ERROR")
-    for r in _RESULTS:
-        print("%s %-24s %s: %s" % (r["id"], r["name"], r["verdict"],
-                                   r["detail"]))
-    print("== %d HELD / %d GAP / %d ERROR out of %d =="
-          % (held, gaps, errors, len(_RESULTS)))
+    rows = [{"id": r["id"],
+             "verdict": _VERDICT_MAP.get(r["verdict"], "BREAK"),
+             "note": ("GAP: %s" % (r["detail"],)
+                      if r["verdict"] == "GAP" else r["detail"])}
+            for r in _RESULTS]
+    _coh_ok, _coh_diags = probe_lines.check_coherence(
+        [(row["id"], row["verdict"], row["note"]) for row in rows],
+        gaps, held, errors)
+    probe_lines.emit_dicts(rows, pid_key="id")
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (gaps, held, errors))
     return 0 if errors == 0 else 1
 
 
