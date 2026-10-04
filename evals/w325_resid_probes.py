@@ -742,10 +742,10 @@ def _p19():
 def _p20():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     src = open(path, encoding="utf-8").read()
-    assert "Next free finding: **F414**" in src, "next-free footer"
-    assert "**Open findings: F413.**" in src, "open-F413 footer"
-    _held("P20-footer-open-F412-next-F413",
-          "footer: open F412 / next F413 (F412 filed by wave-327 lane 4)")
+    assert "Next free finding: **F415**" in src, "next-free footer"
+    assert "**Open findings: F414.**" in src, "open-F414 footer"
+    _held("P20-footer-open-F414-next-F415",
+          "footer: open F414 / next F415 (F414 filed by wave-329 lane 3)")
 
 
 # ---------------------------------------------------------------------------

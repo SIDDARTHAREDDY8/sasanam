@@ -1,14 +1,14 @@
 """Wave-329 independent red-team battery.
 
-Base: dd034c36 (wave-328 merge). Footer: open F413 / next F414
-(F414 filed by this lane). Pin: 2056.
+Base: dd034c36 (wave-328 merge). Footer: open F414 / next F415
+(F413 CLOSED by wave-329 lane 1; F414 filed by wave-329 lane 3). Pin: 2056.
 
 P1  wave-328 seams not yet broken: Shamir custody (share forgery,
     ceremony mixing, duplicates, length drift, commitment games,
     transcript tamper, distribute overwrite, t=1, <t shares, rekey),
     standing_verdicts post-F412 (atomic conflict shape, legacy replay,
     tip-guard), the 7 residual hardenings.
-P2  F413 re-probe (expected BREAK -- wave-329 lane 1 owns the closure).
+P2  F413 re-probe (HELD -- F413 CLOSED wave-329 lane 1).
 P3  F412/F411/F410 closure-regression probes (all must stay HELD).
 P4  merge-defect class: wave-328's pin-only --theirs clobbering of
     semantic changes (P1a/P1h rewrites, _EXPECTED_BREAKS) -- probe the
@@ -38,7 +38,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2056  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).; Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*)
-FOOTER_OPEN = "F413"  # F412 CLOSED wave-328 lane 1; F413 (LOW, policy-channel version ordering) OPEN (wave-328 lane 4); F414 OPEN (this lane).
+FOOTER_OPEN = "F414"  # F413 CLOSED wave-329 lane 1; F414 (LOW, shamir distribute symlink alias) OPEN (wave-329 lane 3).
 FOOTER_NEXT = "F415"  # Next free finding number.
 
 _results = []
@@ -652,7 +652,7 @@ def _p1w():
 
 
 # ---------------------------------------------------------------------------
-# P2: F413 re-probes (expected BREAK -- lane 1 owns the closure).
+# P2: F413 re-probes (HELD -- F413 CLOSED wave-329 lane 1).
 # ---------------------------------------------------------------------------
 
 @probe("P2a-f413-feed-version-ordering")
@@ -727,18 +727,18 @@ def _p4b():
     """w328_redteam's _EXPECTED_BREAKS still excludes the removed P5x IDs.
 
     The wave-328 merge's lane-2 _EXPECTED_BREAKS overwrite dropped lane
-    1's emptied set (restored pre-push). Pin the post-restore state.
+    1's emptied set (restored pre-push); wave-329 lane 1 emptied it again
+    for the F413 closure. Pin the post-closure state.
     """
     import w328_redteam_probes as w328
     removed = {"P5b", "P5c", "P5e", "P5f", "P5g"}
-    # The restored set must contain exactly the F413 pair.
-    want = {"P1b-f413-feed-version-ordering",
-            "P1c-f413-intermediate-revocation-recorded"}
+    # The closed set must be empty: F413 CLOSED wave-329 lane 1.
+    want = set()
     if set(w328._EXPECTED_BREAKS) != want:
         return _break("P4b-merge-expected-breaks-not-clobbered",
                       "_EXPECTED_BREAKS=%r" % (sorted(w328._EXPECTED_BREAKS),))
     return _held("P4b-merge-expected-breaks-not-clobbered",
-                 "_EXPECTED_BREAKS is exactly the F413 pair")
+                 "_EXPECTED_BREAKS is empty (F413 closed)")
 
 
 @probe("P4c-pin-comments-match-pin-value")
@@ -802,9 +802,9 @@ def _p5a():
                  "2056/2056/0 sorted unique on raw source literals")
 
 
-@probe("P5b-footer-open-F413-next-F415")
+@probe("P5b-footer-open-f414-next-f415")
 def _p5b():
-    """Footer: open F413, F414; next free F415."""
+    """Footer: open F414; next free F415."""
     footer = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
     # The footer is a long paragraph with historical "Next free" entries;
     # the live one is the LAST.
@@ -812,18 +812,18 @@ def _p5b():
                           r"\*\*Open findings: ([^*]*)\.\*\*",
                           footer))
     if not ms:
-        return _break("P5b-footer-open-F413-next-F415",
+        return _break("P5b-footer-open-f414-next-f415",
                       "footer line not found")
     m = ms[-1]
     if m.group(1) != "F" + FOOTER_NEXT[1:]:
-        return _break("P5b-footer-open-F413-next-F415",
+        return _break("P5b-footer-open-f414-next-f415",
                       "next=%r, want F%s" % (m.group(1), FOOTER_NEXT[1:]))
     opens = m.group(2).strip()
-    if "F413" not in opens or "F414" not in opens:
-        return _break("P5b-footer-open-F413-next-F415",
-                      "open=%r, want F413 and F414" % (opens,))
-    return _held("P5b-footer-open-F413-next-F415",
-                 "footer open F413, F414 / next F415")
+    if "F414" not in opens or "F413" in opens:
+        return _break("P5b-footer-open-f414-next-f415",
+                      "open=%r, want F414 only" % (opens,))
+    return _held("P5b-footer-open-f414-next-f415",
+                 "footer open F414 / next F415")
 
 
 # ---------------------------------------------------------------------------
@@ -874,33 +874,23 @@ def _run_child(battery, marker, fmt, timeout=600):
     return (int(m.group(2)), int(m.group(1)), int(m.group(3))), None
 
 
-# Every BREAK below is the F414-filing footer cascade (wave-305 class),
-# verified by direct child runs on this tree: footer-state probes and
-# green-child probes whose own expected tallies pinned the pre-F414
-# footer. The merge coordinator re-pins the whole cascade; this probe
-# fails LOUD on any break OUTSIDE the cascade (a genuine regression).
+# Every BREAK below is a genuinely open finding (F414), not the
+# wave-305-class footer cascade: the wave-329 merge re-pinned every
+# footer-state probe to open F414 / next F415. This probe fails LOUD on
+# any break OUTSIDE the cascade (a genuine regression).
 _CHILD_CASCADE = {
-    "w328_redteam_probes.py": {
-        "P1b-f413-feed-version-ordering",      # F413 OPEN (not cascade)
-        "P1c-f413-intermediate-revocation-recorded",  # F413 OPEN
-        "P5b-green-w327-redteam", "P5c-green-w327-polchan",
-        "P5e-green-w326-redteam", "P5f-green-w326-standing",
-        "P5g-green-w326-sched", "P6b-footer-open-f413-next-f414"},
-    "w328_resid_probes.py": {"P9-footer-open-F412-next-F413"},
+    # Post-sweep: every child battery is fully green (F413 closed; all
+    # footer-state probes re-pinned to open F414 / next F415). Any child
+    # BREAK is a genuine regression and fails loud.
+    "w328_redteam_probes.py": set(),
+    "w328_resid_probes.py": set(),
     "w328_shamir_probes.py": set(),
-    "w327_redteam_probes.py": {
-        "P5b-green-w326-standing", "P5c-green-w326-sched",
-        "P5e-green-w326-redteam", "P5f-green-w325-redteam",
-        "P5g-green-w324-alert", "P6b-footer-open-f412-next-f413"},
-    "w327_polchan_probes.py": {"P2b-footer-open-f413"},
+    "w327_redteam_probes.py": set(),
+    "w327_polchan_probes.py": set(),
     "w326_tufaudit_probes.py": set(),
-    "w326_redteam_probes.py": {
-        "P5a-green-w325-resid", "P5b-green-w325-dexid",
-        "P5c-green-w325-redteam", "P5d-green-w324-alert",
-        "P5e-green-w324-offver", "P5f-green-w324-vsa",
-        "P6b-footer-open-f411-next-f412"},
-    "w326_standing_probes.py": {"P11-footer-state"},
-    "w326_sched_probes.py": {"P16-footer-open-F412-next-F413"},
+    "w326_redteam_probes.py": set(),
+    "w326_standing_probes.py": set(),
+    "w326_sched_probes.py": set(),
 }
 
 _CHILD_TALLIES = (
@@ -959,8 +949,6 @@ def _p6a():
 
 _EXPECTED_BREAKS = {
     "P1h-shamir-distribute-symlink-alias-partial-write",  # F414 OPEN
-    "P2a-f413-feed-version-ordering",                     # F413 OPEN
-    "P2b-f413-intermediate-revocation-recorded",           # F413 OPEN
 }
 
 
@@ -975,7 +963,7 @@ def _green_check():
                 "skipped: GOV_SKIP_GREEN=1 (depth-1 convention)")
         return
     # Adjacent batteries most likely to shift under this lane's probes.
-    # They run with the F414 footer cascade; assert every BREAK is inside
+    # Post-sweep every child is fully green; assert every BREAK is inside
     # the documented cascade set (a genuine regression breaks LOUD here).
     for battery in ("w328_redteam_probes.py",
                     "w327_redteam_probes.py",
@@ -1009,7 +997,7 @@ def main(argv):
                     if v == "BREAK" and pid.startswith("P")}
     mismatch = probe_breaks ^ _EXPECTED_BREAKS
     print("w329_redteam battery: %d BREAK / %d HELD / %d ERROR "
-          "(3 BREAKs expected: P1h/F414 open, P2a/P2b/F413 open)"
+          "(1 BREAK expected: P1h/F414 open)"
           % (breaks, len(_results) - breaks - errors, errors))
     if mismatch:
         print("BREAK-SET MISMATCH: %r" % (sorted(mismatch),))

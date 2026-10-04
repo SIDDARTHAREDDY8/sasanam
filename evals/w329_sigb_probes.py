@@ -29,7 +29,7 @@ W (6): witness-backed CVE analogues -- entry transplant binding
     on base.
 P (2): taxonomy pin 2056 (this lane registers no taxonomy codes -- the
     module's refusals are bundle-scoped codes by design) and footer
-    open F413 / next F414.
+    open F414 / next F415 (wave-329 merge: F413 closed, F414 filed).
 
 Result contract: each probe prints [HELD]/[BREAK]/[ERROR]. Exit 0 iff no
 ERROR and no unexpected BREAK. The S-group documents its expected BREAKs
@@ -65,8 +65,8 @@ from gov.signing import Ed25519Signer, Ed25519Verifier  # noqa: E402
 
 TAXONOMY_PIN = 2056  # Wave-328 merge: pin 2044 -> 2056 (+12). This lane adds no taxonomy codes.
 
-FOOTER_OPEN = "F413"
-FOOTER_NEXT = "F414"
+FOOTER_OPEN = "F414"  # Wave-329 merge: F413 CLOSED, F414 OPEN.
+FOOTER_NEXT = "F415"
 
 _results = []
 _PROBES = []

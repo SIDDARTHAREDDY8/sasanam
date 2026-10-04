@@ -51,8 +51,8 @@ from gov.signing import Ed25519Signer  # noqa: E402
 TAXONOMY_PIN = 2056#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*)
 
 
-FOOTER_OPEN = "F413"
-FOOTER_NEXT = "F414"
+FOOTER_OPEN = "F414"  # Wave-329 merge: F413 CLOSED, F414 OPEN.
+FOOTER_NEXT = "F415"
 
 _results = []
 _PROBES = []
@@ -424,7 +424,7 @@ def _p4b():
     ok = (m_open and m_open[-1].strip() == FOOTER_OPEN
           and m_next and m_next[-1] == FOOTER_NEXT)
     if ok:
-        return _held("P4-footer-state", "open F412 / next F413")
+        return _held("P4-footer-state", "open F414 / next F415")
     return _break("P4-footer-state",
                   "got %r / %r" % (m_open[-1] if m_open else None,
                                    m_next[-1] if m_next else None))

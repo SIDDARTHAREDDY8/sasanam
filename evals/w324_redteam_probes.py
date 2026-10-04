@@ -76,8 +76,8 @@ from tests.keyfixture import provision_test_key  # noqa: E402
 provision_test_key()
 
 TAXONOMY_PIN = 2056  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*)
-FOOTER_OPEN = "F413"  # F409/F410/F411 CLOSED; F412 (LOW, standing-conflict) OPEN.
-FOOTER_NEXT = "F414"
+FOOTER_OPEN = "F414"  # F409/F410/F411/F412/F413 CLOSED; F414 (LOW, shamir-distribute symlink alias) OPEN.
+FOOTER_NEXT = "F415"
 
 _results = []
 _PROBES = []

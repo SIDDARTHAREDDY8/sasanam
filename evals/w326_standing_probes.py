@@ -409,9 +409,9 @@ def _p10():
 def _p11():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Next free finding: **F414**. **Open findings: F413.**" in text, \
+    assert "Next free finding: **F415**. **Open findings: F414.**" in text, \
         "footer mismatch"
-    _held("P11-footer-state", "open F413 / next F414")
+    _held("P11-footer-state", "open F414 / next F415")
 
 
 # ---------------------------------------------------------------------------

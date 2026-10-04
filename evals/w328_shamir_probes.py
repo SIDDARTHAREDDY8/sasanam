@@ -27,7 +27,7 @@ What the battery pins:
    (custody-shamir-ceremony-mismatch).
 10. Transcript: chain verifies; tampering refuses coded
     custody-shamir-transcript-corrupt; never appends to a broken chain.
-11. Pin 2056 + footer open F413 / next F414.
+11. Pin 2056 + footer open F414 / next F415 (wave-329 merge: F413 closed, F414 filed).
 
 Staging default is set at module level (the harness refuses the declared
 ungoverned_ack in production mode).
@@ -46,8 +46,8 @@ sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2056  # Wave-327 merge pin 2056; wave-328 lane 3 repoints to 2044 (+8 custody-shamir-*); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*)
 
-FOOTER_OPEN = "F413"
-FOOTER_NEXT = "F414"
+FOOTER_OPEN = "F414"  # F413 CLOSED wave-329 lane 1; F414 OPEN wave-329 lane 3.
+FOOTER_NEXT = "F415"
 
 _results = []
 
@@ -430,10 +430,10 @@ def _p11():
     for line in text.splitlines():
         if "Next free finding" in line:
             m = line
-    if m is None or "F413" not in m or "F414" not in m:
-        _break("P11-footer-open-F413-next-F414", "footer line wrong: %r" % (m,))
+    if m is None or "F414" not in m or "F415" not in m:
+        _break("P11-footer-open-F414-next-F415", "footer line wrong: %r" % (m,))
     else:
-        _held("P11-footer-open-F413-next-F414", "footer open F413 / next F414")
+        _held("P11-footer-open-F414-next-F415", "footer open F414 / next F415")
 
 
 # ---------------------------------------------------------------------------

@@ -33,9 +33,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
 TAXONOMY_PIN = 2056  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).; Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*)
-FOOTER_OPEN = "none"  # F409/F410/F411/F412/F413 all CLOSED (F413 CLOSED
-# 2026-10-04 wave-329 lane 1). No open findings.
-FOOTER_NEXT = "F414"  # Next free finding number.
+FOOTER_OPEN = "F414"  # F409/F410/F411/F412/F413 all CLOSED (F413 CLOSED
+# 2026-10-04 wave-329 lane 1). F414 (LOW, shamir-distribute symlink alias) OPEN (wave-329 lane 3).
+FOOTER_NEXT = "F415"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -712,7 +712,7 @@ def _p6a():
     return _held("P6a-pin-taxonomy-2056-sorted", "2056/2056/0 sorted")
 
 
-@probe("P6b-footer-open-none-next-f414")
+@probe("P6b-footer-open-f414-next-f415")
 def _p6b():
     text = open(os.path.join(REPO, "evals/FINDINGS.md")).read()
     opens = re.findall(r"\*\*Open findings:\s*([^*]+?)\.\*\*", text)
@@ -720,13 +720,13 @@ def _p6b():
     open_line = opens[-1].strip() if opens else ""
     next_free = nexts[-1].strip() if nexts else ""
     if open_line != FOOTER_OPEN:
-        return _break("P6b-footer-open-none-next-f414",
+        return _break("P6b-footer-open-f414-next-f415",
                       "open findings %r, want %r" % (open_line, FOOTER_OPEN))
     if next_free != FOOTER_NEXT:
-        return _break("P6b-footer-open-none-next-f414",
+        return _break("P6b-footer-open-f414-next-f415",
                       "next free %r, want %r" % (next_free, FOOTER_NEXT))
-    return _held("P6b-footer-open-none-next-f414",
-                 "footer open none / next F414")
+    return _held("P6b-footer-open-f414-next-f415",
+                 "footer open F414 / next F415")
 
 
 # ---------------------------------------------------------------------------

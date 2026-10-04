@@ -473,9 +473,9 @@ def _p2b():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
-    assert "Next free finding: **F414**" in text, "footer next-free wrong"
-    assert "Open findings: F413" in text, "footer open set wrong"
-    _held("P2b-footer-open-f413", "footer open F413 / next F414")
+    assert "Next free finding: **F415**" in text, "footer next-free wrong"
+    assert "Open findings: F414" in text, "footer open set wrong"
+    _held("P2b-footer-open-f414", "footer open F414 / next F415")
 
 
 # ---------------------------------------------------------------------------
