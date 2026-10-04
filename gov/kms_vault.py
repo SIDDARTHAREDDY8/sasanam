@@ -1,5 +1,10 @@
 """HashiCorp Vault transit-engine backend for the provider-neutral KMS seam.
 
+NOTE (license): the HashiCorp Vault *server* is BSL-1.1, not OSI open
+source. This adapter is API-compatible with OpenBao (MPL-2.0, Linux
+Foundation fork) and drove a live OpenBao v2.7.0 server unmodified —
+deploy OpenBao for the self-hosted path (see docs/OPENBAO_RUNBOOK.md).
+
 Implements the ``KmsProvider`` ABC from ``gov/kms.py``
 (``wrap_data_key`` / ``unwrap_data_key`` / ``describe_key``, all raising
 ``KmsError`` on failure, key-id binding on unwrap) against Vault's

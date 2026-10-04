@@ -135,7 +135,7 @@ python -m venv /tmp/gov-venv
 
 - Tools are simulated in the demo harness: the enforcement logic is real, the tool effects are not. Real sandboxing for tool execution is the documented next step.
 - No audio-capable model is in the loop: carrier defenses are tested at the ingestion/governance seam with synthetic carriers, not perceptual fidelity.
-- Log integrity rests on key custody. It fails closed with no configured key; a HashiCorp Vault transit adapter exists; cloud KMS is the production answer.
+- Log integrity rests on key custody. It fails closed with no configured key; a HashiCorp Vault transit adapter exists (server is BSL-1.1 — the license-clean self-hosted path is OpenBao, API-compatible, zero adapter changes); cloud KMS is the production answer.
 - End-to-end TLS and live transparency-log anchoring are documented v1 boundaries, not hidden gaps.
 - Precision/recall figures are synthetic self-consistency measurements, not field data.
 - The OSCAL export is a format, not a proof — no external validator has been run.

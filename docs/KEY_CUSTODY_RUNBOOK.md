@@ -54,6 +54,15 @@ operator does not mistake "KMS is set up" for "all keys are managed".
 
 ## A. HashiCorp Vault path (via `gov.kms_vault.vault_provider_from_config` / `VaultKmsProvider` — implemented wave-91, F160 knobs; validated against live Vault OSS v1.20.0, 20/20 live tests green)
 
+> **License carve-out (wave-318 prospecting, confirmed):** HashiCorp Vault
+> server is **BSL-1.1**, not OSI open source. The adapter above is
+> API-compatible with **OpenBao** (MPL-2.0, Linux Foundation fork) and
+> drove a live OpenBao v2.7.0 server unmodified (wave-186 spike).
+> For the self-hosted path, deploy OpenBao — see
+> `docs/OPENBAO_RUNBOOK.md`. Cloud KMS (AWS/GCP/Azure) remains the
+> recommended production default for teams that do not want to operate
+> a secrets server.
+
 > `VaultKmsProvider` exists in `gov/kms_vault.py` (transit secrets
 > engine, Attack-2 key-id binding, fail-closed `KmsError`). It was
 > validated against a real Vault OSS **v1.20.0** dev server on
