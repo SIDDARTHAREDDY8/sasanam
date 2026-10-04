@@ -498,7 +498,7 @@ def _p15b():
     # states and must not match.
     opens = re.findall(r"Open findings: (F\d+|none)\.", text)
     nexts = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-    if opens and nexts and opens[-1] == "F406" and nexts[-1] == "F407":
+    if opens and nexts and opens[-1] == "F407" and nexts[-1] == "F408":
         _held("P15-footer-state", "open F407 / next F408")
     else:
         _break("P15-footer-state", "footer=%r next=%r"
@@ -517,7 +517,7 @@ def _p15b():
 GREEN_EVALS = [
     ("w321-sigstore", "evals/w321_sigstore_probes.py", (0, 20, 0)),
     ("w321-oci", "evals/w321_oci_probes.py", (0, 9, 0)),
-    ("w321-redteam", "evals/w321_redteam_probes.py", (5, 31, 0)),
+    ("w321-redteam", "evals/w321_redteam_probes.py", (0, 36, 0)),
     ("w320-redteam", "evals/w320_redteam_probes.py", (0, 25, 0)),
 ]
 

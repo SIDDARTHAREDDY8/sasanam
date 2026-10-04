@@ -665,11 +665,10 @@ def _p3_break_probe(pid, phrase):
     v = _p3_gate(phrase)
     if v.verdict == "ALLOW":
         return _break(pid, "F406 reopened: silent ALLOW: %r" % (phrase,))
-    ok = v.code == "provenance-critical-arg-refused"
-    return _held(pid, ok,
-                 "near-miss prohibition refuses coded"
-                 if ok else "%r decision=%r code=%r"
-                 % (phrase, v.verdict, v.code))
+    if v.code == "provenance-critical-arg-refused":
+        return _held(pid, "near-miss prohibition refuses coded")
+    return _break(pid, "%r decision=%r code=%r, want coded refusal"
+                  % (phrase, v.verdict, v.code))
 
 
 @probe("P3-near-miss-dnot-transposed")
@@ -710,7 +709,7 @@ def _p3e():
 _GREEN_EVALS = [
     ("w321-sigstore", "evals/w321_sigstore_probes.py", (0, 20, 0)),
     ("w321-oci", "evals/w321_oci_probes.py", (0, 9, 0)),
-    ("w321-redteam", "evals/w321_redteam_probes.py", (5, 31, 0)),
+    ("w321-redteam", "evals/w321_redteam_probes.py", (0, 36, 0)),
     ("w320-redteam", "evals/w320_redteam_probes.py", (0, 25, 0)),
 ]
 

@@ -303,7 +303,7 @@ def p_footer_state():
     m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
     ok = (m_open and m_open[-1].strip() == "F407"
-          and m_next and m_next[-1] == "F407")
+          and m_next and m_next[-1] == "F408")
     return _held("footer-state", ok,
                  "open F407 / next F408" if ok
                  else "footer drift: %r / %r" % (m_open[-1:], m_next[-1:]))
