@@ -369,10 +369,10 @@ def pin_taxonomy():
                       "provenance-sink-redacted",
                       "provenance-sink-refused",
                       "provenance-sink-unknown-tool")]
-    ok = (len(keys) == TAXONOMY_PIN == 1916 and len(mine) == 9
+    ok = (len(keys) == TAXONOMY_PIN == 1933 and len(mine) == 9
           and keys == sorted(keys) and len(set(keys)) == len(keys))
     _held("pin-taxonomy", ok,
-          "taxonomy 1916/1916/0 sorted, 9 wave-314 codes present"
+          "taxonomy 1933/1933/0 sorted, 9 wave-314 codes present"
           if ok else "taxonomy pin mismatch")
 
 

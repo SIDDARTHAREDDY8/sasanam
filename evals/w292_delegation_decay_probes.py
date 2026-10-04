@@ -150,7 +150,7 @@ def p_taxonomy_pin():
             ok = False
     # delegation-expired is reused, not re-minted (lane-6 precedent).
     if ok:
-        _record("pin-taxonomy", "HELD", "1916/1916/0 sorted")
+        _record("pin-taxonomy", "HELD", "1933/1933/0 sorted")
     else:
         _record("pin-taxonomy", "BREAK",
                 "taxonomy pin mismatch: %d literals" % len(codes))

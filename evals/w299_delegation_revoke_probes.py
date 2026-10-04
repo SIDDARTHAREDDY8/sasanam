@@ -94,7 +94,7 @@ def p_taxonomy_pin():
             and dr.RV_LIST_FULL == "delegation-revocation-list-full"):
         return _record("pin-taxonomy", "BREAK",
                        "module code constants drift from taxonomy")
-    _record("pin-taxonomy", "HELD", "1916/1916/0 sorted")
+    _record("pin-taxonomy", "HELD", "1933/1933/0 sorted")
 
 
 class _H:

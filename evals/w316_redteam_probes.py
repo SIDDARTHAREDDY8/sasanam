@@ -574,34 +574,34 @@ def _footer():
 
 @probe("P5-footer-state")
 def _p5_footer():
-    """Footer: open F405 / next F406 (F403 CLOSED at the wave-317 merge; F404 OPEN)."""
+    """Footer: open F405 / next F406 (F404 CLOSED at the wave-318 merge; F405 OPEN)."""
     got = _footer()
-    if got != (405, "none"):
+    if got != (406, "F405"):
         return _break("P5-footer-state", "footer is %r" % (got,))
     return _held("P5-footer-state",
-                 "open F404 / next F405")
+                 "open F405 / next F406")
 
 
-@probe("P5-pin-taxonomy-1900-sorted")
+@probe("P5-pin-taxonomy-1933-sorted")
 def _p5_pin():
-    """Taxonomy pin 1916/1916/0 on raw source literals, sorted, unique
+    """Taxonomy pin 1933/1933/0 on raw source literals, sorted, unique
     (wave-260 lesson: assert on literals, not the deduped dict)."""
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
     if len(lits) != 1933:
-        return _break("P5-pin-taxonomy-1900-sorted",
-                      "literals %d != pin 1916" % len(lits))
+        return _break("P5-pin-taxonomy-1933-sorted",
+                      "literals %d != pin 1933" % len(lits))
     if len(set(lits)) != len(lits):
-        return _break("P5-pin-taxonomy-1900-sorted",
+        return _break("P5-pin-taxonomy-1933-sorted",
                       "duplicate code literals in source")
     if sorted(lits) != lits:
-        return _break("P5-pin-taxonomy-1900-sorted", "literals not sorted")
+        return _break("P5-pin-taxonomy-1933-sorted", "literals not sorted")
     if len(DC.TAXONOMY) != 1933:
-        return _break("P5-pin-taxonomy-1900-sorted",
+        return _break("P5-pin-taxonomy-1933-sorted",
                       "TAXONOMY dict has %d" % len(DC.TAXONOMY))
-    return _held("P5-pin-taxonomy-1900-sorted", "1916/1916/0 sorted")
+    return _held("P5-pin-taxonomy-1933-sorted", "1933/1933/0 sorted")
 
 
 def _run_battery(path, expect, break_must_contain=None):

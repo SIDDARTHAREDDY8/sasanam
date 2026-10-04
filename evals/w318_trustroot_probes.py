@@ -31,8 +31,8 @@ Probe map (public seams only -- verify() / consume_vsa()):
       coded trust-root-expired at the VSA's timeVerified.
   vsa-consume-stale-freshness-refused: VSA with a stale freshness
       signal -> coded trust-root-stale-freshness.
-  pin-taxonomy / footer-state: standard pins (1916; open F404 / next
-      F405).
+  pin-taxonomy / footer-state: standard pins (1933; open F405 / next
+      F406).
 """
 
 import os

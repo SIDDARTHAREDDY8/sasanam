@@ -78,7 +78,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate code literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "code literals not sorted")
-    _record("pin-taxonomy", "HELD", "1916/1916/0 sorted")
+    _record("pin-taxonomy", "HELD", "1933/1933/0 sorted")
 
 
 def _green_check(path, name, tolerate=()):

@@ -156,8 +156,8 @@ class BaseStateTest(unittest.TestCase):
         text = open(path, encoding="utf-8").read()
         m_open = _re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = _re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-        ok = (m_open and m_open[-1].strip() == "F394"
-              and m_next and m_next[-1] == "F395")
+        ok = (m_open and m_open[-1].strip() == "F405"
+              and m_next and m_next[-1] == "F406")
         self.assertTrue(_expect_held("footer-state", ok,
                                     "footer disagrees") == "HELD")
 

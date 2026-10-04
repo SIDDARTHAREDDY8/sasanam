@@ -297,7 +297,7 @@ def p_pin_taxonomy():
     if len(new) != 10:
         return _record("pin-taxonomy", "BREAK",
                        "want 10 new witness codes, got %d" % len(new))
-    _record("pin-taxonomy", "HELD", "1916/1916/0 sorted, +10 witness codes")
+    _record("pin-taxonomy", "HELD", "1933/1933/0 sorted, +10 witness codes")
 
 
 def p_footer_state():

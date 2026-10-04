@@ -883,7 +883,7 @@ def _p4_gate_code():
 # pin + footer
 # ---------------------------------------------------------------------------
 
-@probe("pin-taxonomy-1900-sorted")
+@probe("pin-taxonomy-1933-sorted")
 def _pin():
     import json as _json
     from gov import decision_codes as _dc
@@ -894,19 +894,19 @@ def _pin():
     lits = _re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += _re.findall(r'"code":\s*"([^"]+)"', src)
     if len(lits) != TAXONOMY_PIN:
-        return _break("pin-taxonomy-1900-sorted",
+        return _break("pin-taxonomy-1933-sorted",
                       "taxonomy literals %d != pin %d"
                       % (len(lits), TAXONOMY_PIN))
     if len(set(lits)) != len(lits):
-        return _break("pin-taxonomy-1900-sorted",
+        return _break("pin-taxonomy-1933-sorted",
                       "duplicate code literals in source")
     if sorted(lits) != lits:
-        return _break("pin-taxonomy-1900-sorted", "literals not sorted")
-    return _held("pin-taxonomy-1900-sorted",
-                 "1916/1916/0 unique sorted on source literals")
+        return _break("pin-taxonomy-1933-sorted", "literals not sorted")
+    return _held("pin-taxonomy-1933-sorted",
+                 "1933/1933/0 unique sorted on source literals")
 
 
-@probe("footer-F404-open-next-F405")
+@probe("footer-F405-open-next-F406")
 def _footer():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     text = open(path).read()
@@ -915,15 +915,15 @@ def _footer():
         r"Next free finding: \*\*(F\d+)\*\*\. \*\*Open findings: ([^*]*)\*\*",
         text)
     if not feet:
-        return _error("footer-F404-open-next-F405",
+        return _error("footer-F405-open-next-F406",
                       "no footer parsed")
     num, opens = feet[-1]
     opens = opens.strip().lower().rstrip(".")
-    if num != "F405" or opens != "none":
-        return _break("footer-F404-open-next-F405",
-                      "footer is %s / %s, want F405 / F404"
+    if num != "F406" or opens != "f405":
+        return _break("footer-F405-open-next-F406",
+                      "footer is %s / %s, want F406 / F405"
                       % (num, opens))
-    return _held("footer-F404-open-next-F405",
+    return _held("footer-F405-open-next-F406",
                  "footer: open F405 / next F406")
 
 

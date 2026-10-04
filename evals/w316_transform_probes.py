@@ -447,7 +447,7 @@ def p20():
         return ("ERROR", "footer line unparseable")
     nxt = int(m.group(1))
     open_s = opens.group(1).strip()
-    if nxt == 405 and open_s == "none":
+    if nxt == 406 and open_s == "F405":
         return _held("footer pins open F405 / next F406")
     return _break("footer is F%d / %s" % (nxt, open_s))
 

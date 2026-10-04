@@ -88,7 +88,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1916/1916/0 sorted")
+    _record("pin-taxonomy", "HELD", "1933/1933/0 sorted")
 
 
 def p_footer_state():
@@ -99,10 +99,10 @@ def p_footer_state():
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
     # Wave-316 merge footer: F398/F399/F400 CLOSED; F401/F402/F403 OPEN; next F404.
     ok = (m_open and m_open[-1].strip()
-          == "none"
-          and m_next and m_next[-1] == "F405")
+          == "F405"
+          and m_next and m_next[-1] == "F406")
     _record("footer-state", "HELD" if ok else "BREAK",
-            "want open none / next free F405")
+            "want open F405 / next free F406")
 
 
 def _al():

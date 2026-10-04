@@ -285,7 +285,7 @@ def p_pin_taxonomy():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1916/1916/0 sorted")
+    _record("pin-taxonomy", "HELD", "1933/1933/0 sorted")
 
 
 def p_footer_state():

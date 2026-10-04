@@ -187,7 +187,7 @@ class RepinTest(unittest.TestCase):
         lits = re.findall(r'"code":\s*\'([a-z][a-z0-9-_.]*)\'', src)
         self.assertTrue(_expect_held(
             "repin-pin-1851",
-            len(lits) == 1916 and len(set(lits)) == 1916
+            len(lits) == 1933 and len(set(lits)) == 1933
             and lits == sorted(lits),
             "1851 unique sorted literals") == "HELD")
 
