@@ -41,6 +41,7 @@ from gov import approval_discipline as ad
 from gov import delegation_chain as dc
 from gov import decision_codes
 from gov import ed25519
+import probe_lines  # noqa: E402  (canonical probe-line form)
 
 NOW = 1700000000
 
@@ -578,7 +579,9 @@ def green_check(env):
     """Depth-1: run adjacent wave-265 batteries' mains with
     GOV_SKIP_GREEN=1 in the child env. Honors the var itself."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
-        return [("green-check", "SKIPPED",
+        # Wave-316 lane-3: D1 SKIPPED -> SKIP (canonical vocabulary;
+        # the marker is exit-neutral in this battery).
+        return [("green-check", "SKIP",
                  "GOV_SKIP_GREEN=1 (depth-1)")]
     adj = ["evals/w265_f245f246f247_probes.py",
            "evals/w265_callback_probes.py",
@@ -608,6 +611,27 @@ def green_check(env):
              "; ".join("%s=%s" % (n, v) for n, v, _ in out))]
 
 
+# Wave-316 lane-3 decisions (D1): RESIDUAL -> HELD with "residual: " prefix,
+# BASELINE -> HELD with "baseline: " prefix, EXPECTED -> HELD with
+# "expected: " prefix. All three are exit-neutral in this battery (exit is
+# 2 if nondeterministic, 1 if ERRORs, else 0), so the mappings preserve the
+# exit contract. BREAK/ERROR pass through.
+_VERDICT_MAP = {
+    "HELD": ("HELD", ""),
+    "BREAK": ("BREAK", ""),
+    "RESIDUAL": ("HELD", "residual: "),
+    "BASELINE": ("HELD", "baseline: "),
+    "EXPECTED": ("HELD", "expected: "),
+    "ERROR": ("ERROR", ""),
+}
+
+
+def _sanitize_pid(pid):
+    # D7: pid class [A-Za-z0-9_.-]; probe names contain "/".
+    return "".join(c if (c.isalnum() or c in "_.-") else "-"
+                   for c in pid)
+
+
 def main():
     tmpd = "/var/tmp/g266rt-main-%d" % os.getpid()
     os.makedirs(tmpd, exist_ok=True)
@@ -616,13 +640,40 @@ def main():
     b = run_once()
     det = [(x[0], x[1]) for x in a] == [(x[0], x[1]) for x in b]
     counts = {}
+    mapped = []
+    brk = err = 0
     for name, verdict, detail in a:
         counts[verdict] = counts.get(verdict, 0) + 1
-        print("%-42s %-9s %s" % (name, verdict, detail))
+        canon, prefix = _VERDICT_MAP[verdict]
+        mapped.append((_sanitize_pid(name), canon, prefix + detail))
+        if canon == "BREAK":
+            brk += 1
+        elif canon == "ERROR":
+            err += 1
+    probe_lines.emit(mapped)
     print("determinism A==B: %s" % ("YES" if det else "NO"))
     gc = green_check(dict(os.environ))
+    gc_mapped = []
     for name, verdict, detail in gc:
-        print("%-42s %-9s %s" % (name, verdict, detail))
+        # The GOV_SKIP_GREEN skip marker is uppercase "SKIPPED" -> SKIP (D1).
+        pid = "green-check" if name == "green-check" else _sanitize_pid(name)
+        if verdict == "SKIPPED":
+            gc_mapped.append((pid, "SKIP", detail))
+        else:
+            gc_mapped.append((pid, verdict, detail))
+            if verdict == "BREAK":
+                brk += 1
+            elif verdict == "ERROR":
+                err += 1
+    probe_lines.emit(gc_mapped)
+    # SKIP is informational and tallied separately (must not be folded
+    # into HELD per check_coherence contract).
+    coh_list = mapped + [g for g in gc_mapped if g[1] != "SKIP"]
+    held = sum(1 for _, v, _ in coh_list if v == "HELD")
+    _coh_ok, _coh_diags = probe_lines.check_coherence(coh_list, brk, held, err)
+    if not _coh_ok:
+        print("coherence-WARNING: %s" % "; ".join(_coh_diags))
+    print("%d BREAK / %d HELD / %d ERROR" % (brk, held, err))
     tot = "TOTAL: " + " / ".join(
         "%d %s" % (counts.get(v, 0), v)
         for v in ("HELD", "BREAK", "RESIDUAL", "BASELINE",
