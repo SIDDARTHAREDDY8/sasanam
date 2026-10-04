@@ -90,6 +90,7 @@ from . import detection_verdicts as _detection_verdicts
 from . import exchange_ledger as _exchange_ledger
 from . import approval_tokens as _approval_tokens  # wave-313 Row-7 step 3
 from . import provenance_sink as _provenance_sink  # wave-314 Row-7 step 5
+from . import provenance_labels as _provenance_labels  # wave-317 producer wiring
 from . import rules_tiering as _rules_tiering
 from . import precommit as _precommit
 from . import tool_continuity as _tool_continuity
@@ -5204,6 +5205,86 @@ class ToolExecutor:
                 prior_actions=prior)
         except Exception:  # noqa: BLE001 - judge never breaks queueing
             return None
+
+    def _build_provenance_segments(self, justification, identity):
+        """Wave-317: the provenance-segment PRODUCER. Origin-grade the
+        influencing context this call carries and seal each segment at
+        ingestion (trusted infrastructure seals; agents never grade).
+
+        Sources (executor-held context only):
+          - each operator user turn (set_intent_context): origin
+            ``user`` (USER=100), principal ``user``;
+          - the agent's ``justification`` framing kwarg (when
+            non-empty): origin ``tool`` (TOOL=50), principal the
+            calling agent_id. Agent-authored prose can never alone
+            satisfy USER-trust egress -- the honest grade for agent
+            framing. A missing agent_id falls back to the literal
+            principal ``"unknown-agent"`` (never to a user-graded
+            principal); a whitespace-only justification carries no
+            framing content and counts as no context.
+
+        Segment ids are content-derived (``pv-`` + sha256 of
+        origin|principal|content, truncated) so the sink's ctx_key --
+        and therefore the F399 REPLAN_BUDGET ratchet -- accumulates on
+        genuine same-context retries instead of resetting on random
+        ids. The label nonce stays random per issue (seal freshness);
+        only the id is deterministic.
+
+        Returns a list of segment dicts (JSON-native, to_dict form),
+        or None when there is no provenance context -- the sweep's
+        None-skip then keeps behavior unchanged. Never raises: a
+        producer failure degrades to None (the pre-wave-317 dormant
+        behavior), never to an unsealed or forged segment -- and the
+        degradation is audit-visible via a
+        ``provenance_producer_degraded`` event, so a broken sealer
+        cannot silently return the sink to dormancy."""
+        try:
+            segments = []
+            turns = self._intent_user_turns or []
+            for turn in turns:
+                if not isinstance(turn, str) or not turn:
+                    continue
+                segments.append(self._seal_segment(
+                    "user", "user", turn))
+            if isinstance(justification, str) and justification.strip():
+                principal = getattr(identity, "agent_id", None) \
+                    or "unknown-agent"
+                segments.append(self._seal_segment(
+                    "tool", str(principal), justification))
+            if not segments:
+                return None
+            return [s.to_dict() for s in segments]
+        except Exception as exc:  # noqa: BLE001 - producer never breaks queueing
+            # A producer failure degrades to None (the pre-wave-317
+            # dormant posture -- the standard policy engine still gates
+            # the call) but must never be SILENT: the loss of the
+            # provenance layer is audit-visible.
+            try:
+                self.log.append({
+                    "event": "provenance_producer_degraded",
+                    "run_id": self.run_id,
+                    "reason": "segment sealing failed: %s"
+                    % type(exc).__name__,
+                })
+            except Exception:
+                pass
+            return None
+
+    def _seal_segment(self, origin, principal, content):
+        """Seal one segment at ingestion: origin-grade it, issue the
+        label, and give it its content-derived id."""
+        label = _provenance_labels.issue_label(
+            origin, principal, content)
+        return _provenance_labels.Segment(
+            segment_id=self._provenance_segment_id(
+                origin, principal, content),
+            label=label, content=content)
+
+    @staticmethod
+    def _provenance_segment_id(origin, principal, content):
+        return "pv-" + hashlib.sha256(
+            ("%s|%s|%s" % (origin, principal, content)).encode(
+                "utf-8")).hexdigest()[:16]
 
     def _provenance_grant_decision(self, tool, args, driving_units):
         """Wave-279 (F300) + wave-281 (F307): run the
@@ -11599,7 +11680,13 @@ class ToolExecutor:
             # rendered section ({"text", "code"}), MAC-bound from birth
             # -- the approver-facing consent surface. None when the
             # seam is inert or allowed the action.
-            instruction_provenance=_prov_section)
+            instruction_provenance=_prov_section,
+            # Wave-317: sealed provenance segments from the
+            # producer wiring above (origin-graded at ingestion).
+            # MAC-bound from birth; None when the call carried no
+            # provenance context (the sweep skips -- unchanged).
+            provenance_segments=self._build_provenance_segments(
+                justification, identity))
         entry = self.log.append(_base({
             "decision": "queued_pending",
             "policy_id": decision.policy_id,

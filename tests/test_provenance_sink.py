@@ -534,8 +534,14 @@ class SweepIntegrationTests(unittest.TestCase):
         return aid
 
     def _attach_segments(self, run, aid, segments):
+        # Wave-317: provenance_segments is MAC-bound on the record, so
+        # attaching segments after queue() must re-MAC (a silent
+        # post-queue attach is now a digest break by design).
+        import gov.approvals as ap
         run["approvals"]._rewrite(lambda records: [
-            dict(r, provenance_segments=segments)
+            dict(r, provenance_segments=segments,
+                 args_digest=ap.approval_record_digest(
+                     dict(r, provenance_segments=segments)))
             if r["id"] == aid else r for r in records])
 
     def _segs(self, origin, content):
@@ -586,8 +592,12 @@ class SweepIntegrationTests(unittest.TestCase):
                                 decided_by="human-operator")
         segs = [pl.Segment(sid, pl.issue_label("web", "op", content),
                            content).to_dict()]
+        # Wave-317: re-MAC after attaching (segments are MAC-bound).
+        import gov.approvals as ap
         run["approvals"]._rewrite(lambda records: [
-            dict(r, provenance_segments=segs)
+            dict(r, provenance_segments=segs,
+                 args_digest=ap.approval_record_digest(
+                     dict(r, provenance_segments=segs)))
             if r["id"] == aid else r for r in records])
         return aid
 

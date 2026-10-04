@@ -459,6 +459,12 @@ _SECURITY_PAYLOAD_FIELDS = (
     # verification automatically after the upgrade -- queued items
     # must be decided or drained before upgrading.
     "approval_token",
+    # Wave-317: sealed provenance segments (origin-graded at
+    # ingestion). MAC-bound from birth so segment deletion -- which
+    # would otherwise silently raise the sink's trust minimum --
+    # breaks the record digest (fail closed). Same fail-closed
+    # upgrade precedent as the fields above.
+    "provenance_segments",
 )
 
 
@@ -3466,7 +3472,14 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
               capability_verdict=None, intent_slice_verdict=None,
               skill_id=None, skill_attested_digest=None,
               delegation_receipt=None, instruction_provenance=None,
-              stakes_tier=None, approval_request=None):
+              stakes_tier=None, approval_request=None,
+              # Wave-317: sealed provenance segments from the
+              # executor's producer wiring (origin-graded at
+              # ingestion). None when the call carried no provenance
+              # context. Stamped MAC-bound on the record (see
+              # _SECURITY_PAYLOAD_FIELDS); explicit None, never
+              # omitted.
+              provenance_segments=None):
         """Store a pending approval; returns the approval id.
 
         ``approval_request`` (wave-297, opt-in): a signed approval
@@ -3750,6 +3763,25 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             # None when no provenance context is installed or the grant
             # seam allowed the action (advisory-only) -- never omitted.
             "instruction_provenance": instruction_provenance,
+            # Wave-317: sealed provenance segments from the
+            # executor's producer wiring, origin-graded at ingestion.
+            # JSON-safe deep copy (same defensive idiom as
+            # approval_request) so caller-side mutation after queue()
+            # cannot reach the MAC-bound record. Explicit None when
+            # the call carried no provenance context -- never
+            # omitted. MAC-bound via _SECURITY_PAYLOAD_FIELDS:
+            # stripping a low-trust segment would otherwise raise
+            # the sink's trust minimum silently; a deletion now
+            # breaks the record digest -- fail closed.
+            # FAIL-CLOSED UPGRADE (same precedent as
+            # F34/F38/R11/D1/wave-24/F101/F103): records queued before
+            # this change do not carry this field, so their digests
+            # fail verification after the upgrade -- queued items
+            # must be decided or drained before upgrading.
+            "provenance_segments": (
+                json.loads(json.dumps(provenance_segments,
+                                      ensure_ascii=True, default=str))
+                if provenance_segments is not None else None),
             # Wave-280 (HumanLayer ADAPT): the declared 4-tier stakes
             # of the request -- the registry's authority (see
             # gov.human_approval_contract), not agent framing.

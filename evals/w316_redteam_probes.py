@@ -333,10 +333,12 @@ def _p2_f399_control():
 @probe("P2-sink-seam-wiring")
 def _p2_wiring():
     """Executor-seam wiring: provenance_gate with no segments must skip
-    (None -- the documented lane-B discipline); and no gov/ module may
-    write provenance_segments into approval records, i.e. the sink is
-    dormant in the standard flow until producer wiring lands (pinned
-    integration residual, not a defect)."""
+    (None -- the documented lane-B discipline); and the producer
+    wiring (wave-317) must be the ONLY writer of provenance_segments
+    into approval records -- sealed at ingestion via issue_label,
+    never agent-graded. The wave-315 residual ('sink dormant in
+    standard flow') is closed by the producer; this probe now pins
+    the closed state."""
     _ensure_key()
     v = PS.provenance_gate("send_email", {"to": "x@y"}, None)
     if v is not None:
@@ -353,19 +355,38 @@ def _p2_wiring():
         if leaf == "provenance_sink.py":
             continue
         # an assignment into rec["provenance_segments"] / rec.get default
+        # / bare kwarg (producer wiring passes provenance_segments=...)
         for i, line in enumerate(src.splitlines(), 1):
             s = line.strip()
             if ('"provenance_segments"' in s or
-                    "'provenance_segments'" in s):
+                    "'provenance_segments'" in s or
+                    "provenance_segments=" in s.replace(" ", "")):
                 if "=" in s and ".get(" not in s and "==" not in s \
                         and "!=" not in s:
                     writers.append("%s:%d" % (leaf, i))
-    if writers:
+    # Wave-317 closed the dormancy residual: the ONLY sanctioned
+    # writers are the executor producer (sealed at ingestion) and the
+    # queue stamper (MAC-bound). Anything else is a rogue writer.
+    allowed = [w for w in writers
+               if w.startswith("executor.py:") or
+               w.startswith("approvals.py:")]
+    rogue = [w for w in writers if w not in allowed]
+    if rogue:
         return _break("P2-sink-seam-wiring",
-                      "unexpected segment writers: %s" % writers)
+                      "unexpected segment writers: %s" % rogue)
+    if not allowed:
+        return _break("P2-sink-seam-wiring",
+                      "producer wiring missing: sink dormant again")
+    # The producer must seal via issue_label (agents never grade).
+    with open(os.path.join(govdir, "executor.py"),
+              encoding="utf-8") as f:
+        ex_src = f.read()
+    if "issue_label" not in ex_src:
+        return _break("P2-sink-seam-wiring",
+                      "producer does not seal via issue_label")
     return _held("P2-sink-seam-wiring",
-                 "gate skips on None; no gov/ producer writes segments "
-                 "(sink dormant in standard flow -- pinned residual)")
+                 "gate skips on None; producer wiring is the sole "
+                 "segment writer (sealed at ingestion, MAC-bound)")
 
 
 # ---------------------------------------------------------------------------

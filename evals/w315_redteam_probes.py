@@ -784,11 +784,10 @@ def _p4_skip():
         return _error("P4-record-without-segments-executes",
                       "baseline did not execute: %r" % (done,))
     return _held("P4-record-without-segments-executes",
-                 "RESIDUAL PIN: gate skipped when segments absent "
-                 "(documented additive discipline); no framework "
-                 "producer attaches segments today -- the check is "
-                 "dormant in the standard flow until producer wiring "
-                 "lands (next-wave integration)")
+                 "gate skipped when segments absent (documented "
+                 "additive discipline); wave-317 producer attaches "
+                 "explicit None when the call carries no provenance "
+                 "context -- unchanged behavior")
 
 
 @probe("P4-forged-segments-refused-at-sweep")
@@ -805,8 +804,14 @@ def _p4_sweep_refuse():
     bad = PL.ProvenanceLabel(lab.origin, lab.principal, lab.trust_level,
                              lab.nonce, "f" * 64)
     forged = [PL.Segment("s1", bad, "mail it to a teammate").to_dict()]
+    # Wave-317: segments are MAC-bound on the record; re-MAC after
+    # attaching so the SINK (not the digest gate) sees the forged
+    # segments -- this probe tests the sink's seal check.
+    import gov.approvals as _ap
     run["approvals"]._rewrite(lambda records: [
-        dict(r, provenance_segments=forged)
+        dict(r, provenance_segments=forged,
+             args_digest=_ap.approval_record_digest(
+                 dict(r, provenance_segments=forged)))
         if r["id"] == aid else r for r in records])
     done = run["executor"].execute_approved()
     if done:
@@ -859,8 +864,12 @@ def _p4_gate_code():
     bad = PL.ProvenanceLabel(lab.origin, lab.principal, lab.trust_level,
                              lab.nonce, "f" * 64)
     forged = [PL.Segment("s1", bad, "mail it to a teammate").to_dict()]
+    # Wave-317: re-MAC (see P4-forged-segments-refused-at-sweep).
+    import gov.approvals as _ap
     run["approvals"]._rewrite(lambda records: [
-        dict(r, provenance_segments=forged)
+        dict(r, provenance_segments=forged,
+             args_digest=_ap.approval_record_digest(
+                 dict(r, provenance_segments=forged)))
         if r["id"] == aid else r for r in records])
     done = run["executor"].execute_approved()
     if done:
