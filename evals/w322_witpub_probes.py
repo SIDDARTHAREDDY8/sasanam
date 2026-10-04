@@ -22,6 +22,7 @@ sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 1991  # 1967 + 3 witness-publish-*/witness-checkpoint-*
 
+
 _results = []
 
 
@@ -476,6 +477,7 @@ def _p14():
 # ---------------------------------------------------------------------------
 
 @probe("P15-pin-taxonomy-1991-sorted")
+
 def _p15():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
@@ -487,6 +489,7 @@ def _p15():
         _held("P15-pin-taxonomy-1991-sorted", "1991/1991/0 sorted")
     else:
         _break("P15-pin-taxonomy-1991-sorted",
+
                "got %d literals" % (len(lits),))
 
 

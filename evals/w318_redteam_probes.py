@@ -37,6 +37,7 @@ P8 (2): decision_bom level-3 fallback divergence risk -- an unknown
     ladder mode in the standalone path refuses (stricter, never
     looser); the pin test fails loudly on drift, never silently.
 P9 (3): regressions -- footer, pin taxonomy 1991/1991/0 sorted, the
+
     wave-317 producer USER/TOOL grading pin.
 
 Result contract: each probe prints [HELD]/[BREAK]/[ERROR]. Exit 0 iff
@@ -864,6 +865,7 @@ def _p9_footer():
 
 
 @probe("P9-pin-taxonomy-1991-sorted")
+
 def _p9_pin():
     try:
         lits = re.findall(r'"code":\s*\'([^\']+)\'',
@@ -879,6 +881,7 @@ def _p9_pin():
     if lits != sorted(lits):
         return _break("P9-pin-taxonomy-1991-sorted", "literals not sorted")
     return _held("P9-pin-taxonomy-1991-sorted", "1991/1991/0 sorted")
+
 
 
 # ---------------------------------------------------------------------------

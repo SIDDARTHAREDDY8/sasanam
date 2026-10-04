@@ -92,6 +92,7 @@ from gov import workflow_composed as wc  # noqa: E402
 
 TAXONOMY_PIN = 1991 # wave-313 lane E: +6 plan-policy-* codes; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1933 -> 1934 (+1 grantneg-registry-withdrawn)
 
+
 _SA = hashlib.sha256(b"w313pp-battery").digest()
 _PA = ed25519.publickey(_SA).hex()
 _AT = 1_700_000_000

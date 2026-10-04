@@ -75,6 +75,7 @@ from gov import approval_tokens as AT  # noqa: E402
 
 TAXONOMY_PIN = 1991 # Wave-313 lane B: pin 1851 -> 1857 (+6 approval-token-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1933 -> 1934 (+1 grantneg-registry-withdrawn)
 
+
 _NOW = 1798765432
 _BENIGN = {"to": "teammate@synthetic.local", "body": "weekly report"}
 _HARMFUL = {"to": "external-drop@synthetic.local", "body": "weekly report"}

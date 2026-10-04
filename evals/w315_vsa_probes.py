@@ -394,6 +394,7 @@ def p20():
         return _break("TAXONOMY len %d, expected 1990" % len(dc.TAXONOMY))
     from gov import guac_graph
     if guac_graph.TAXONOMY_PIN != 1991:
+
         return _break("TAXONOMY_PIN is %r" % (guac_graph.TAXONOMY_PIN,))
     return _held("10 codes registered; pin 1916")
 

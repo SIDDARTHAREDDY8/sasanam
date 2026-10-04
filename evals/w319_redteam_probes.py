@@ -22,6 +22,7 @@ P4 (2): w318 green-check depth-1 discipline -- the three w318 batteries'
     green checks honor GOV_SKIP_GREEN; their spawned children do too.
 P5 (3): regressions -- footer open none / next F409; pin taxonomy
     1991/1991/0 sorted; F404 still closed (out-of-vocabulary
+
     prohibitions refuse).
 
 Result contract: each probe prints [HELD]/[BREAK]/[ERROR]. Exit 0 iff
@@ -95,6 +96,7 @@ def _error(pid, note):
 
 
 TAXONOMY_PIN = 1991  # Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*)
+
 FOOTER_OPEN = "none"
 FOOTER_NEXT = "F409"
 

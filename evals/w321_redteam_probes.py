@@ -30,6 +30,7 @@ Probe map (public seams only):
  P5 (2): pin taxonomy 1991/1991/0 sorted on source literals; footer
      open none / next F409.
 
+
 Expected: 5 BREAK / 31 HELD / 0 ERROR (the 5 BREAKs are the F406
 standing probes).
 """
@@ -66,6 +67,7 @@ import gov.provenance_sink as PS  # noqa: E402
 import gov.provenance_labels as PL  # noqa: E402
 
 TAXONOMY_PIN = 1991
+
 FOOTER_OPEN = "none"
 FOOTER_NEXT = "F409"
 
@@ -749,6 +751,7 @@ def p5_pin_taxonomy_sorted():
     if ok:
         return _held("P5-pin-taxonomy-1991-sorted", True, "1991/1991/0 sorted")
     return _break("P5-pin-taxonomy-1991-sorted",
+
                   "got %d literals" % (len(lits),))
 
 

@@ -77,6 +77,7 @@ from gov import provenance_sink as PS  # noqa: E402
 
 TAXONOMY_PIN = 1991 # Wave-314 lane 1: pin 1863 -> 1872 (+9 provenance-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1933 -> 1934 (+1 grantneg-registry-withdrawn)
 
+
 _results = []
 _seg_n = [0]
 
@@ -373,6 +374,7 @@ def pin_taxonomy():
           and keys == sorted(keys) and len(set(keys)) == len(keys))
     _held("pin-taxonomy", ok,
           "taxonomy 1991/1991/0 sorted, 9 wave-314 codes present"
+
           if ok else "taxonomy pin mismatch")
 
 

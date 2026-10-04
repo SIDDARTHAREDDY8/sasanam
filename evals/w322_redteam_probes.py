@@ -14,6 +14,7 @@ Attacks the wave-321 NEW surfaces break-first:
       tallies (child-mode, GOV_SKIP_GREEN=1).
   P5  Pin/footer -- 1991/1991/0 sorted on source literals; footer
       open none / next F409 (F406 closed, F407 closed; see
+
       evals/FINDINGS.md).
 
 F407 (LOW, CLOSED 2026-10-04 wave-323 lane 1): malformed referrers JSON
@@ -57,6 +58,7 @@ from tests.keyfixture import provision_test_key  # noqa: E402
 provision_test_key()
 
 TAXONOMY_PIN = 1991
+
 FOOTER_OPEN = "none"
 FOOTER_NEXT = "F409"
 
@@ -832,6 +834,7 @@ def green_check():
 
 
 @probe("P4-pin-taxonomy-1991-sorted")
+
 def _p5a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
@@ -842,6 +845,7 @@ def _p5a():
     if ok:
         return _held("P4-pin-taxonomy-1991-sorted", "1991/1991/0 sorted")
     return _break("P4-pin-taxonomy-1991-sorted",
+
                   "got %d literals" % (len(lits),))
 
 

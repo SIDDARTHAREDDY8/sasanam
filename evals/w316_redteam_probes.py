@@ -585,6 +585,7 @@ def _p5_footer():
 @probe("P5-pin-taxonomy-1991-sorted")
 def _p5_pin():
     """Taxonomy pin 1991/1991/0 on raw source literals, sorted, unique
+
     (wave-260 lesson: assert on literals, not the deduped dict)."""
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
@@ -602,6 +603,7 @@ def _p5_pin():
         return _break("P5-pin-taxonomy-1991-sorted",
                       "TAXONOMY dict has %d" % len(DC.TAXONOMY))
     return _held("P5-pin-taxonomy-1991-sorted", "1991/1991/0 sorted")
+
 
 
 def _run_battery(path, expect, break_must_contain=None):

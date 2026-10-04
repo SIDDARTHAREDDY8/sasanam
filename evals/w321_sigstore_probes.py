@@ -15,6 +15,7 @@ P3 (2): contract probes -- verify_keyed_bundle returns False (not
     spike shape ({"publicKey": {}}) is accepted, as cosign proved.
 P4 (2): regressions -- footer open none / next F409; pin taxonomy
     1991/1991/0 sorted on source literals (this lane registers no
+
     taxonomy codes).
 
 Result contract: each probe prints [HELD]/[BREAK]/[ERROR]. Exit 0 iff
@@ -47,6 +48,7 @@ from gov import evidence_intoto as _intoto  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
 TAXONOMY_PIN = 1991
+
 FOOTER_OPEN = "none"
 FOOTER_NEXT = "F409"
 
@@ -394,6 +396,7 @@ def _p3b():
 # ---------------------------------------------------------------------------
 
 @probe("P4-pin-taxonomy-1991-sorted")
+
 def _p4a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
@@ -404,6 +407,7 @@ def _p4a():
     if ok:
         return _held("P4-pin-taxonomy-1991-sorted", "1991/1991/0 sorted")
     return _break("P4-pin-taxonomy-1991-sorted",
+
                   "got %d literals" % (len(lits),))
 
 

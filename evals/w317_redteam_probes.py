@@ -36,6 +36,7 @@ P8 (1): F403 re-probe -- decision_packet standalone offline import still
     broken on the OPEN tree (lane 1 owns the closure; not closed here).
 P9 (2): regressions -- footer (open none / next F409; F405 closed),
     pin taxonomy 1991/1991/0 sorted.
+
 P10 (3): robustness acceptance gaming -- enum budget respected,
     string without markers fails closed, attacker>benign bits fails.
 
@@ -918,6 +919,7 @@ def _p9_footer():
 
 
 @probe("P9-pin-taxonomy-1991-sorted")
+
 def _p9_pin():
     try:
         lits = re.findall(r'"code":\s*\'([^\']+)\'',
@@ -933,6 +935,7 @@ def _p9_pin():
     if lits != sorted(lits):
         return _break("P9-pin-taxonomy-1991-sorted", "literals not sorted")
     return _held("P9-pin-taxonomy-1991-sorted", "1991/1991/0 sorted")
+
 
 
 # ---------------------------------------------------------------------------

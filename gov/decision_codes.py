@@ -10605,6 +10605,175 @@ TAXONOMY = {
         "evidence_kinds_required": ['digest'],
         "reverify_steps": ['recompute'],
     },
+    'offline-verify-anchor-invalid': {
+        "domain": 'witness',
+        "code": 'offline-verify-anchor-invalid',
+        "human": 'offline evidence verifier: the bundle anchor receipt is '
+                 'invalid -- its statement does not commit to this manifest, '
+                 'its Merkle inclusion proof does not verify, or its log '
+                 'signature does not verify under the pinned anchor key; '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'offline-verify-anchor-key-mismatch': {
+        "domain": 'witness',
+        "code": 'offline-verify-anchor-key-mismatch',
+        "human": 'offline evidence verifier: the manifest-pinned anchor log '
+                 'key is not the trust-root-pinned key -- a self-consistent '
+                 'receipt under an untrusted key proves nothing; refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'offline-verify-anchor-unsupported': {
+        "domain": 'witness',
+        "code": 'offline-verify-anchor-unsupported',
+        "human": 'offline evidence verifier: the bundle anchor adapter is '
+                 'not verifiable by this tool (v1 verifies fake-log '
+                 'receipts fully); refused fail-closed -- the auditor '
+                 'cannot verify what it cannot check',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'offline-verify-bundle-digest-mismatch': {
+        "domain": 'witness',
+        "code": 'offline-verify-bundle-digest-mismatch',
+        "human": 'offline evidence verifier: the recomputed bundle digest '
+                 'does not match the witness layer (transplant refused) or '
+                 'the exporter-recorded digest (post-export tampering); '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'offline-verify-chain-broken': {
+        "domain": 'witness',
+        "code": 'offline-verify-chain-broken',
+        "human": 'offline evidence verifier: the unkeyed export chain does '
+                 'not recompute to the anchored tip -- a ledger entry was '
+                 'added, removed, or altered; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'offline-verify-containment': {
+        "domain": 'witness',
+        "code": 'offline-verify-containment',
+        "human": 'offline evidence verifier: the exported window is not '
+                 'fully present -- entry_count disagrees with the ledger; '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'offline-verify-entry-signature-invalid': {
+        "domain": 'witness',
+        "code": 'offline-verify-entry-signature-invalid',
+        "human": 'offline evidence verifier: a ledger entry signature does '
+                 'not verify under the manifest-pinned entry-signer key, or '
+                 'its key id does not match; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'offline-verify-internal': {
+        "domain": 'witness',
+        "code": 'offline-verify-internal',
+        "human": 'offline evidence verifier: an unexpected internal failure '
+                 'interrupted verification -- fails LOUD, never a success '
+                 'signal; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'offline-verify-malformed': {
+        "domain": 'witness',
+        "code": 'offline-verify-malformed',
+        "human": 'offline evidence verifier: the package, manifest, or layer '
+                 'is malformed -- bad shape, unknown fields, bad digests, '
+                 'or missing trusted time; refused fail-closed, never '
+                 'defaulted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'offline-verify-monotonicity': {
+        "domain": 'witness',
+        "code": 'offline-verify-monotonicity',
+        "human": 'offline evidence verifier: ledger sequence numbers are '
+                 'not strictly increasing by 1 over the window -- a gap or '
+                 'reorder; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'offline-verify-policy-window': {
+        "domain": 'witness',
+        "code": 'offline-verify-policy-window',
+        "human": 'offline evidence verifier: the newest cosignature time '
+                 'falls outside the verified policy validity window -- a '
+                 'policy valid now but issued after (or expired before) the '
+                 'checkpoint was cosigned does not cover it; refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'offline-verify-redaction-undisclosed': {
+        "domain": 'witness',
+        "code": 'offline-verify-redaction-undisclosed',
+        "human": 'offline evidence verifier: a redacted ledger entry is not '
+                 'listed in the redaction report -- silent redaction; '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'offline-verify-trust-root-invalid': {
+        "domain": 'witness',
+        "code": 'offline-verify-trust-root-invalid',
+        "human": 'offline evidence verifier: the caller-pinned trust root '
+                 'is malformed -- policy signers, threshold, or anchor log '
+                 'key missing or misshapen; refused fail-closed, never '
+                 'defaulted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'offline-verify-version-skew': {
+        "domain": 'witness',
+        "code": 'offline-verify-version-skew',
+        "human": 'offline evidence verifier: the package or bundle format '
+                 'version is not the supported v1; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'offline-verify-witness-layer-invalid': {
+        "domain": 'witness',
+        "code": 'offline-verify-witness-layer-invalid',
+        "human": 'offline evidence verifier: the witness layer is rejected '
+                 '-- checkpoint, cosignature quorum, proofs, policy, '
+                 'freshness, or small carrier failed (inner coded reason '
+                 'preserved); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'offline-verify-witness-layer-missing': {
+        "domain": 'witness',
+        "code": 'offline-verify-witness-layer-missing',
+        "human": 'offline evidence verifier: the package carries no witness '
+                 'layer -- the auditor tool requires the witness dimension; '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
     'oidc-ambiguous-subject': {
         "domain": 'oidc',
         "code": 'oidc-ambiguous-subject',
