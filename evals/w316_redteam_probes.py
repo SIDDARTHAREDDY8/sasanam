@@ -9,15 +9,15 @@ P2 (5): provenance sink -- F398/F399 closed-form re-probes (both CLOSED at
     (segment-suppression skip, sink dormancy in the standard flow).
 P3 (4): summary-form migration coherence -- the F400 error-path fix, the
     probe_lines seam, a GAP-contract sample.
-P4 (3): new findings filed by this lane -- F401 (w310 F394 stale probes
-    ERROR on the base tree), F402 (w283 F343 stale expectation BREAKs --
-    CLOSED at the wave-316 merge), F403 (decision_packet.py standalone
-    offline import broken).
+P4 (3): lane-5 filings -- F401 (w310 F394 stale probes -- CLOSED at the
+    wave-316 merge), F402 (w283 F343 stale expectation -- CLOSED at the
+    wave-316 merge), F403 (decision_packet.py standalone offline import
+    broken -- OPEN).
 P5 (6): regressions -- footer, pin, adjacent batteries.
 
 Result contract: each probe prints [HELD]/[BREAK]/[ERROR]. Exit 0 iff no
-BREAK and no ERROR. Two BREAKs are EXPECTED on the merged tree: the
-F401/F403 open-finding probes (F398/F399/F400/F402 CLOSED at the wave-316 merge).
+BREAK and no ERROR. One BREAK is EXPECTED on the merged tree: the F403
+open-finding probe (F398/F399/F400/F401/F402 CLOSED at the wave-316 merge).
 
 Depth-1 green check honoring GOV_SKIP_GREEN; no in-repo git subprocesses;
 deterministic (fixed seeds, fixed clock); stdlib only.
@@ -466,11 +466,10 @@ def _p3_counts():
 
 @probe("P4-f401-w310-f394-stale")
 def _p4_f401():
-    """F401 (LOW, test-infra, OPEN): w310_redteam's F394 probes ERROR on
-    the base tree -- stale after the wave-313 F397 closure (the probe
-    passes a stale `at`, the F397 closure refuses coded
-    workflow-saga-resolution-invalid, the probe only catches the old
-    F394 code)."""
+    """F401 CLOSED (wave-316 merge): w310_redteam's F394 probes updated to
+    pass a non-stale `at=AT + 1` per the F397 contract (wave-316 lane 3
+    rot-pin) -- both probes HELD on the merged tree. The product was
+    never defective."""
     w310._results.clear()
     w310._safe("F394-op-retry-composed", w310.p_f394_op_retry_composed)
     w310._safe("F394-abort-composed", w310.p_f394_abort_composed)
@@ -483,7 +482,7 @@ def _p4_f401():
         return _break("P4-f401-w310-f394-stale",
                       "F401 partial: %s" % (errs[0][2][:160],))
     return _held("P4-f401-w310-f394-stale",
-                 "F394 probes no longer ERROR (fixed)")
+                 "F401 closed: F394 probes pass non-stale at, 0 ERROR")
 
 
 @probe("P4-f402-w283-f343-stale")
@@ -551,12 +550,12 @@ def _footer():
 
 @probe("P5-footer-state")
 def _p5_footer():
-    """Footer: open F401, F403 / next F404 (F398/F399/F400 CLOSED at the wave-316 merge)."""
+    """Footer: open F403 / next F404 (F398/F399/F400 CLOSED at the wave-316 merge)."""
     got = _footer()
-    if got != (404, "F401, F403"):
+    if got != (404, "F403"):
         return _break("P5-footer-state", "footer is %r" % (got,))
     return _held("P5-footer-state",
-                 "open F401, F403 / next F404")
+                 "open F403 / next F404")
 
 
 @probe("P5-pin-taxonomy-1900-sorted")
@@ -624,21 +623,17 @@ def _run_battery(path, expect, break_must_contain=None):
 
 @probe("P5-green-approval-tokens")
 def _p5_apt():
-    # the 1 BREAK is the footer-state probe pinning the wave-313 footer
-    # (expected footer-drift; merge-maintenance, not a regression)
+    # footer re-pinned at the wave-316 merge: 0 BREAK expected
     verdict, note = _run_battery(
-        os.path.join(REPO, "evals", "w313_aptokens_probes.py"), (1, 20, 0),
-        break_must_contain="footer-state")
+        os.path.join(REPO, "evals", "w313_aptokens_probes.py"), (0, 21, 0))
     return ("P5-green-approval-tokens", verdict, note)
 
 
 @probe("P5-green-plan-policy")
 def _p5_plan():
-    # the 1 BREAK is the footer-state probe pinning the wave-313 footer
-    # (expected footer-drift; merge-maintenance, not a regression)
+    # footer re-pinned at the wave-316 merge: 0 BREAK expected
     verdict, note = _run_battery(
-        os.path.join(REPO, "evals", "w313_plancheck_probes.py"), (1, 22, 0),
-        break_must_contain="footer-state")
+        os.path.join(REPO, "evals", "w313_plancheck_probes.py"), (0, 23, 0))
     return ("P5-green-plan-policy", verdict, note)
 
 
