@@ -10,13 +10,14 @@ P2 (5): provenance sink -- F398/F399 closed-form re-probes (both CLOSED at
 P3 (4): summary-form migration coherence -- the F400 error-path fix, the
     probe_lines seam, a GAP-contract sample.
 P4 (3): new findings filed by this lane -- F401 (w310 F394 stale probes
-    ERROR on the base tree), F402 (w283 F343 stale expectation BREAKs),
-    F403 (decision_packet.py standalone offline import broken).
+    ERROR on the base tree), F402 (w283 F343 stale expectation BREAKs --
+    CLOSED at the wave-316 merge), F403 (decision_packet.py standalone
+    offline import broken).
 P5 (6): regressions -- footer, pin, adjacent batteries.
 
 Result contract: each probe prints [HELD]/[BREAK]/[ERROR]. Exit 0 iff no
-BREAK and no ERROR. Three BREAKs are EXPECTED on the merged tree: the
-F401/F402/F403 open-finding probes (F398/F399 CLOSED at the wave-316 merge).
+BREAK and no ERROR. Two BREAKs are EXPECTED on the merged tree: the
+F401/F403 open-finding probes (F398/F399/F400/F402 CLOSED at the wave-316 merge).
 
 Depth-1 green check honoring GOV_SKIP_GREEN; no in-repo git subprocesses;
 deterministic (fixed seeds, fixed clock); stdlib only.
@@ -487,9 +488,10 @@ def _p4_f401():
 
 @probe("P4-f402-w283-f343-stale")
 def _p4_f402():
-    """F402 (LOW, test-infra, OPEN): w283_defectdojo's p-findings-md-load
-    BREAKs -- it expects F343/F344/F345 OPEN, but all three were CLOSED
-    at the wave-289 merge (stale expectation, wave-305 lesson class)."""
+    """F402 CLOSED (wave-316 merge): w283_defectdojo's p-findings-md-load
+    expectation corrected to `verified` (wave-316 lane 3 rot-pin) --
+    F343/F344/F345 were CLOSED at the wave-289 merge; the probe now
+    passes. The product was never defective."""
     w283._RESULTS.clear()
     w283.p_findings_md_load()
     recs = [r for r in w283._RESULTS
@@ -504,7 +506,7 @@ def _p4_f402():
         return _break("P4-f402-w283-f343-stale",
                       "F402 (different): %s" % rec["note"][:200])
     return _held("P4-f402-w283-f343-stale",
-                 "p-findings-md-load no longer BREAKs (fixed)")
+                 "F402 closed: p-findings-md-load expects verified, 0 BREAK")
 
 
 @probe("P4-f403-decision-packet-offline")
@@ -549,12 +551,12 @@ def _footer():
 
 @probe("P5-footer-state")
 def _p5_footer():
-    """Footer: open F401, F402, F403 / next F404 (F398/F399/F400 CLOSED at the wave-316 merge)."""
+    """Footer: open F401, F403 / next F404 (F398/F399/F400 CLOSED at the wave-316 merge)."""
     got = _footer()
-    if got != (404, "F401, F402, F403"):
+    if got != (404, "F401, F403"):
         return _break("P5-footer-state", "footer is %r" % (got,))
     return _held("P5-footer-state",
-                 "open F401, F402, F403 / next F404")
+                 "open F401, F403 / next F404")
 
 
 @probe("P5-pin-taxonomy-1900-sorted")

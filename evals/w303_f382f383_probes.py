@@ -95,7 +95,7 @@ class BaseStateTest(unittest.TestCase):
               and m_next and m_next[-1] == "F404")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F401, F402, F403 / next free F404") == "HELD")
+            "want open F401, F403 / next free F404") == "HELD")
 
     def test_taxonomy_pin(self):
         self.assertTrue(_expect_held(
