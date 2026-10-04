@@ -926,13 +926,13 @@ def _p9_pin():
                                encoding="utf-8").read())
     except Exception as exc:  # noqa: BLE001
         return _error("P9-pin-taxonomy-1900-sorted", "%r" % (exc,))
-    if len(lits) != 1946 or len(set(lits)) != 1946:
+    if len(lits) != 1951 or len(set(lits)) != 1951:
         return _break("P9-pin-taxonomy-1900-sorted",
-                      "got %d literals / %d unique (want 1946/1916)"
+                      "got %d literals / %d unique (want 1951/1916)"
                       % (len(lits), len(set(lits))))
     if lits != sorted(lits):
         return _break("P9-pin-taxonomy-1900-sorted", "literals not sorted")
-    return _held("P9-pin-taxonomy-1900-sorted", "1946/1946/0 sorted")
+    return _held("P9-pin-taxonomy-1900-sorted", "1951/1951/0 sorted")
 
 
 # ---------------------------------------------------------------------------
