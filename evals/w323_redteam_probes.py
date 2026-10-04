@@ -18,8 +18,8 @@ Attacks the wave-322 NEW surfaces break-first (base 0b03472b):
   P3  checkpoint_note 0x04 extension: the "no existing input reaches
       the new branch" claim, proved by running the BASE (35db643a)
       parse_vkey against a 0x04 vkey (refuses) -- plus the 4 F407
-      OCI malformed-referrers re-probes (expected BREAK; lane 1 owns
-      the closure, not fixed here).
+      OCI malformed-referrers re-probes (F407 CLOSED at the wave-323
+      merge: each asserts the coded oci-referrers-malformed refusal).
   P4  F406 re-probe -- F406 CLOSED (wave-322 lane 1, merged): the 5
       standing near-miss probes assert the coded refusal
       (provenance-critical-arg-refused); a silent ALLOW is a BREAK.
@@ -27,12 +27,12 @@ Attacks the wave-322 NEW surfaces break-first (base 0b03472b):
       shipped tallies (child-mode, GOV_SKIP_GREEN=1; every tally below
       was verified by direct child run, never "corrected" to
       parent-with-green numbers).
-  P6  Pin/footer -- 1976/1976/0 sorted on source literals; footer open
-      F407 / next F408 (F406 closed, F407 still open).
+  P6  Pin/footer -- 1990/1990/0 sorted on source literals; footer open
+      none / next F408 (F406 and F407 both closed).
 
 Result: no genuine new findings from this campaign -- every attack
 refuses coded or is held as documented caller-trust/design behavior.
-F407's 4 probes remain BREAK (still OPEN). gov/ is byte-identical to
+F407's 4 probes now assert the coded refusal (CLOSED). gov/ is byte-identical to
 base (verified by the lane: `git diff --stat -- gov/` empty).
 
 Stdlib only. No in-repo git subprocesses. Deterministic (fixed
@@ -68,8 +68,8 @@ from tests.keyfixture import provision_test_key  # noqa: E402
 
 provision_test_key()
 
-TAXONOMY_PIN = 1976
-FOOTER_OPEN = "F407"
+TAXONOMY_PIN = 1990
+FOOTER_OPEN = "none"
 FOOTER_NEXT = "F408"
 
 _results = []
@@ -690,7 +690,7 @@ def _p2p():
 
 
 # ---------------------------------------------------------------------------
-# P3: 0x04 no-existing-input proof + F407 re-probes (expected BREAK)
+# P3: 0x04 no-existing-input proof + F407 re-probes (CLOSED -- asserts coded refusal)
 # ---------------------------------------------------------------------------
 
 @probe("P3-0x04-no-existing-input")
@@ -770,8 +770,10 @@ class _CannedRegistry(oci.OCIRegistryClient):
 
 
 def _f407_probe(pid, body_bytes, note):
-    # F407 (LOW, OPEN): malformed referrers JSON escapes as an UNCODED
-    # AttributeError/TypeError instead of a coded oci-* refusal.
+    # F407 (LOW, CLOSED 2026-10-04 wave-323 lane 1, merged): malformed
+    # referrers JSON must refuse with the coded oci-referrers-malformed
+    # refusal -- an uncoded exception reopens the finding; a wrong code
+    # or a silent return is a BREAK.
     ev = b'{"decision": "deny", "seq": 7}'
     sd = oci.digest_of(ev)
     routes = {("GET", "/v2/sasanam/evidence/referrers/" + sd):
@@ -779,13 +781,14 @@ def _f407_probe(pid, body_bytes, note):
     try:
         _CannedRegistry(routes).pull_and_verify(sd)
     except oci.OCIRefusal as exc:
-        return _held(pid, "%s: FIXED, coded refusal %s" % (note, exc.code))
-    except oci.OCIError:
-        return _held(pid, "%s: FIXED, operational fail-closed" % note)
+        if exc.code == "oci-referrers-malformed":
+            return _held(pid, "%s: coded refusal oci-referrers-malformed" % note)
+        return _break(pid, "%s: wrong code %r, want oci-referrers-malformed"
+                      % (note, exc.code))
     except Exception as exc:  # noqa: BLE001
-        return _break(pid, "%s: UNCODED %s: %s (F407 still open)"
+        return _break(pid, "%s: UNCODED %s: %s (F407 reopened)"
                       % (note, type(exc).__name__, exc))
-    return _break(pid, "%s: silently returned" % note)
+    return _break(pid, "%s: silently returned (F407 reopened)" % note)
 
 
 @probe("P3-f407-referrers-array")
@@ -880,7 +883,7 @@ def _p4e():
 _GREEN_EVALS = [
     ("w322-witpol", "evals/w322_witpol_probes.py", (0, 24, 0)),
     ("w322-witpub", "evals/w322_witpub_probes.py", (0, 21, 0)),
-    ("w322-redteam", "evals/w322_redteam_probes.py", (4, 39, 0)),
+    ("w322-redteam", "evals/w322_redteam_probes.py", (0, 46, 0)),
     ("w321-sigstore", "evals/w321_sigstore_probes.py", (0, 20, 0)),
     ("w321-oci", "evals/w321_oci_probes.py", (0, 9, 0)),
     ("w321-redteam", "evals/w321_redteam_probes.py", (0, 36, 0)),
@@ -933,17 +936,17 @@ def green_check():
 # P6: pin + footer
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-1976-sorted")
+@probe("P6-pin-taxonomy-1990-sorted")
 def _p6a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 1976
+    ok = (len(lits) == TAXONOMY_PIN == 1990
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P6-pin-taxonomy-1976-sorted", "1976/1976/0 sorted")
-    return _break("P6-pin-taxonomy-1976-sorted",
+        return _held("P6-pin-taxonomy-1990-sorted", "1990/1990/0 sorted")
+    return _break("P6-pin-taxonomy-1990-sorted",
                   "got %d literals" % (len(lits),))
 
 

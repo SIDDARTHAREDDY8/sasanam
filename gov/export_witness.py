@@ -80,7 +80,7 @@ import json
 import os
 
 # ---------------------------------------------------------------------------
-# Codes (registered centrally in gov/decision_codes.py; pin 1984).
+# Codes (registered centrally in gov/decision_codes.py; pin 1990).
 # ---------------------------------------------------------------------------
 
 EXPORT_WITNESS_MALFORMED = "export-witness-malformed"

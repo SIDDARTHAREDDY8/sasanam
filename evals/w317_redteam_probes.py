@@ -35,7 +35,7 @@ P7 (2): F399 seam -- the escalate-terminal ratchet fires at the 4th
 P8 (1): F403 re-probe -- decision_packet standalone offline import still
     broken on the OPEN tree (lane 1 owns the closure; not closed here).
 P9 (2): regressions -- footer (open none / next F408; F405 closed),
-    pin taxonomy 1977/1977/0 sorted.
+    pin taxonomy 1990/1990/0 sorted.
 P10 (3): robustness acceptance gaming -- enum budget respected,
     string without markers fails closed, attacker>benign bits fails.
 
@@ -902,22 +902,22 @@ def _p9_footer():
         r"Next free finding: \*\*F(\d+)\*\*\. \*\*Open findings: ([^*]*)\*\*",
         text))
     if not m:
-        return _error("P9-footer-open-F407-next-F408",
+        return _error("P9-footer-open-none-next-F408",
                       "no footer line found")
     last = m[-1]
     nxt, opens = last.group(1), last.group(2)
-    if nxt != "408" or opens.strip().lower().rstrip(".") != "f407":
-        return _break("P9-footer-open-F407-next-F408",
-                      "footer pins next=%s open=%s (want 408 / F407)"
+    if nxt != "408" or opens.strip().lower().rstrip(".") != "none":
+        return _break("P9-footer-open-none-next-F408",
+                      "footer pins next=%s open=%s (want 408 / none)"
                       % (nxt, opens))
     if "## F407" not in text:
-        return _break("P9-footer-open-F407-next-F408",
+        return _break("P9-footer-open-none-next-F408",
                       "F407 entry missing from FINDINGS.md")
-    return _held("P9-footer-open-F407-next-F408",
+    return _held("P9-footer-open-none-next-F408",
                  "footer pins open none / next F408")
 
 
-@probe("P9-pin-taxonomy-1984-sorted")
+@probe("P9-pin-taxonomy-1990-sorted")
 def _p9_pin():
     try:
         lits = re.findall(r'"code":\s*\'([^\']+)\'',
@@ -925,14 +925,14 @@ def _p9_pin():
                                             "decision_codes.py"),
                                encoding="utf-8").read())
     except Exception as exc:  # noqa: BLE001
-        return _error("P9-pin-taxonomy-1984-sorted", "%r" % (exc,))
-    if len(lits) != 1984 or len(set(lits)) != 1984:
-        return _break("P9-pin-taxonomy-1984-sorted",
-                      "got %d literals / %d unique (want 1984/1916)"
+        return _error("P9-pin-taxonomy-1990-sorted", "%r" % (exc,))
+    if len(lits) != 1990 or len(set(lits)) != 1990:
+        return _break("P9-pin-taxonomy-1990-sorted",
+                      "got %d literals / %d unique (want 1990/1916)"
                       % (len(lits), len(set(lits))))
     if lits != sorted(lits):
-        return _break("P9-pin-taxonomy-1984-sorted", "literals not sorted")
-    return _held("P9-pin-taxonomy-1984-sorted", "1984/1984/0 sorted")
+        return _break("P9-pin-taxonomy-1990-sorted", "literals not sorted")
+    return _held("P9-pin-taxonomy-1990-sorted", "1990/1990/0 sorted")
 
 
 # ---------------------------------------------------------------------------

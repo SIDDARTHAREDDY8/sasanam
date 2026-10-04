@@ -54,7 +54,7 @@ from gov import evidence_verify_offline as v  # noqa: E402
 from gov import trust_root_refresh as trr  # noqa: E402
 from gov import vsa_packet as vp  # noqa: E402
 
-TAXONOMY_PIN = 1984  # Wave-318 lane 3: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1934 -> 1934 (+1 grantneg-registry-withdrawn)
+TAXONOMY_PIN = 1990  # Wave-318 lane 3: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-320 lane 2: pin 1934 -> 1934 (+1 grantneg-registry-withdrawn)
 
 FOOTER_NEXT = "F408"
 FOOTER_OPEN = "none"

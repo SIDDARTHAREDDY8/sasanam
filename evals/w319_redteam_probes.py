@@ -21,7 +21,7 @@ P3 (6): F405 -- the F404 closure's negation-cue vocabulary missed
 P4 (2): w318 green-check depth-1 discipline -- the three w318 batteries'
     green checks honor GOV_SKIP_GREEN; their spawned children do too.
 P5 (3): regressions -- footer open none / next F408; pin taxonomy
-    1977/1977/0 sorted; F404 still closed (out-of-vocabulary
+    1990/1990/0 sorted; F404 still closed (out-of-vocabulary
     prohibitions refuse).
 
 Result contract: each probe prints [HELD]/[BREAK]/[ERROR]. Exit 0 iff
@@ -94,7 +94,7 @@ def _error(pid, note):
     return (pid, "ERROR", probe_lines.first_line(note)[:160])
 
 
-TAXONOMY_PIN = 1977  # Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*)
+TAXONOMY_PIN = 1990  # Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*)
 FOOTER_OPEN = "none"
 FOOTER_NEXT = "F408"
 

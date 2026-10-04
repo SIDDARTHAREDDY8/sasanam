@@ -390,10 +390,10 @@ def p20():
     missing = [c for c in vp._VERDICTS if c not in codes]
     if missing:
         return _break("codes missing from TAXONOMY: %s" % missing)
-    if len(dc.TAXONOMY) != 1984:
-        return _break("TAXONOMY len %d, expected 1984" % len(dc.TAXONOMY))
+    if len(dc.TAXONOMY) != 1990:
+        return _break("TAXONOMY len %d, expected 1990" % len(dc.TAXONOMY))
     from gov import guac_graph
-    if guac_graph.TAXONOMY_PIN != 1984:
+    if guac_graph.TAXONOMY_PIN != 1990:
         return _break("TAXONOMY_PIN is %r" % (guac_graph.TAXONOMY_PIN,))
     return _held("10 codes registered; pin 1916")
 
