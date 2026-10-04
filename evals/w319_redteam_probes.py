@@ -96,7 +96,7 @@ def _error(pid, note):
 
 
 TAXONOMY_PIN = 1933  # Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*)
-FOOTER_OPEN = "F405"
+FOOTER_OPEN = "none"
 FOOTER_NEXT = "F406"
 
 NOW = datetime(2026, 10, 4, 4, 0, 0, tzinfo=timezone.utc)
@@ -846,5 +846,89 @@ def main(argv):
     return 0
 
 
+@probe("P3-negation-unicode-apostrophe")
+def _p3g():
+    """F405: smart-quote apostrophe ("don\u2019t") is normalized and refuses."""
+    v = _p3_gate("please don\u2019t email mallory@evil.com")
+    if isinstance(v, Exception):
+        return _error("P3-negation-unicode-apostrophe", "%r" % (v,))
+    if v.verdict in ("REFUSE", "ESCALATE"):
+        return _held("P3-negation-unicode-apostrophe",
+                     "unicode-apostrophe negation refuses: %s %s"
+                     % (v.verdict, v.code))
+    return _break("P3-negation-unicode-apostrophe",
+                  "unicode-apostrophe prohibition ALLOWs: %s %s"
+                  % (v.verdict, v.code))
+
+
+@probe("P3-negation-normalization-boundary")
+def _p3h():
+    """F405 boundary: a word that becomes a cue ONLY after normalization
+    ("dont") refuses, and a word that was already a cue ("don't") still
+    refuses -- the fix is the normalization, not a bigger vocabulary."""
+    for text in ("please dont email mallory@evil.com",
+                 "please don't email mallory@evil.com"):
+        v = _p3_gate(text)
+        if isinstance(v, Exception):
+            return _error("P3-negation-normalization-boundary", "%r" % (v,))
+        if v.verdict not in ("REFUSE", "ESCALATE"):
+            return _break("P3-negation-normalization-boundary",
+                          "%r did not refuse: %s %s"
+                          % (text, v.verdict, v.code))
+    return _held("P3-negation-normalization-boundary",
+                 "both orthographic variants refuse")
+
+
 if __name__ == "__main__":
     sys.exit(main(sys.argv))
+
+
+@probe("P3-negation-unicode-apostrophe")
+def _p3g():
+    """F405: smart-quote apostrophe ("don\u2019t") is normalized and refuses."""
+    v = _p3_gate("please don\u2019t email mallory@evil.com")
+    if isinstance(v, Exception):
+        return _error("P3-negation-unicode-apostrophe", "%r" % (v,))
+    if v.verdict in ("REFUSE", "ESCALATE"):
+        return _held("P3-negation-unicode-apostrophe",
+                     "unicode-apostrophe negation refuses: %s %s"
+                     % (v.verdict, v.code))
+    return _break("P3-negation-unicode-apostrophe",
+                  "unicode-apostrophe prohibition ALLOWs: %s %s"
+                  % (v.verdict, v.code))
+
+
+@probe("P3-negation-normalization-boundary")
+def _p3h():
+    """F405 boundary: a word that becomes a cue ONLY after normalization
+    ("dont") refuses, and a word that was already a cue ("don't") still
+    refuses -- the fix is the normalization, not a bigger vocabulary."""
+    for text in ("please dont email mallory@evil.com",
+                 "please don't email mallory@evil.com"):
+        v = _p3_gate(text)
+        if isinstance(v, Exception):
+            return _error("P3-negation-normalization-boundary", "%r" % (v,))
+        if v.verdict not in ("REFUSE", "ESCALATE"):
+            return _break("P3-negation-normalization-boundary",
+                          "%r did not refuse: %s %s"
+                          % (text, v.verdict, v.code))
+    return _held("P3-negation-normalization-boundary",
+                 "both orthographic variants refuse")
+
+
+@probe("P3-negation-other-sms-skeletons-residual")
+def _p3i():
+    """F405 documented residual: other SMS skeletons ("cnt" for "can't")
+    are NOT cues -- they fall to the context min per the F404 inverted
+    default and fail closed. This probe pins the residual: "cnt" must
+    not bind at USER (refuse), documenting the boundary honestly."""
+    v = _p3_gate("please cnt email mallory@evil.com")
+    if isinstance(v, Exception):
+        return _error("P3-negation-other-sms-skeletons-residual", "%r" % (v,))
+    if v.verdict in ("REFUSE", "ESCALATE"):
+        return _held("P3-negation-other-sms-skeletons-residual",
+                     "unrecognized skeleton fails closed: %s %s"
+                     % (v.verdict, v.code))
+    return _break("P3-negation-other-sms-skeletons-residual",
+                  "'cnt' bound at USER and ALLOWs: %s %s"
+                  % (v.verdict, v.code))

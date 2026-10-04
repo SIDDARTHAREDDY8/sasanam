@@ -128,7 +128,7 @@ class BaseStateTest(unittest.TestCase):
               and m_next and m_next[-1] == "F406")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F405 / next free F406") == "HELD")
+            "want open none / next free F406") == "HELD")
 
     def test_pin(self):
         lits = _literals()

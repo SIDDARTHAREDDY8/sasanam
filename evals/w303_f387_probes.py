@@ -227,7 +227,7 @@ class FooterStateTest(unittest.TestCase):
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
         # Wave-309 lane A: F393 CLOSED; footer open none / next F396.
-        want_open, want_next = "F405", "F406"
+        want_open, want_next = "none", "F406"
         self.assertTrue(_expect_held(
             "footer-state",
             m_open and m_open[-1].strip() == want_open

@@ -64,7 +64,7 @@ from gov import ed25519 as _ed  # noqa: E402
 TAXONOMY_PIN = 1933  # Wave-319 lane 2: pin 1906 -> 1914 (+8 identity-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*)
 
 FOOTER_NEXT = "F406"
-FOOTER_OPEN = "F405"
+FOOTER_OPEN = "none"
 
 _results = []
 PROBES = []

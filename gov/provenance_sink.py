@@ -219,10 +219,15 @@ def _canon(value):
 #: authorizing mention -- mention is not authorization. Since F404 the
 #: negation cues are only the DISCOUNT side: a clause with no cue is no
 #: longer assumed affirmative (see _AUTHORIZATION_VERBS below). Tokens
-#: are lowercased, punctuation-stripped, apostrophes preserved.
+#: are lowercased and punctuation-stripped; apostrophes (ASCII + Unicode
+#: variants) are stripped from both clause and cues before matching, so
+#: "dont" collapses onto "don't" (F405: see _strip_apostrophes).
+#: F405: "dnt" is the SMS vowel-syncope form of "don't" -- not reachable
+#: by apostrophe normalization, so it is one explicit cue (see
+#: _strip_apostrophes below for the normalization half).
 _NEGATION_CUES = frozenset({
     "never", "not", "no", "none", "nobody", "nothing", "neither", "nor",
-    "without", "cannot",
+    "without", "cannot", "dnt",
     "don't", "doesn't", "didn't", "can't", "won't", "shouldn't",
     "wouldn't", "couldn't", "mustn't", "isn't", "aren't", "wasn't",
     "weren't", "haven't", "hasn't", "hadn't",
@@ -251,10 +256,39 @@ _CLAUSE_SPLIT = re.compile(
 _WORD = re.compile(r"[a-zA-Z']+")
 
 
+#: Apostrophe characters normalized before negation-cue matching (F405).
+#: Typing "dont" for "don't" -- or using a smart-quote apostrophe -- must
+#: not flip a prohibition into an authorization. ASCII apostrophe plus the
+#: common Unicode variants: RIGHT/LEFT SINGLE QUOTATION MARK (U+2019/U+2018,
+#: the smart-quote pair), MODIFIER LETTER APOSTROPHE (U+02BC), GRAVE ACCENT
+#: (U+0060, the backtick-as-apostrophe typo).
+_APOSTROPHE_CHARS = ("'", "\u2019", "\u2018", "\u02bc", "`")
+
+
+def _strip_apostrophes(text):
+    """Remove apostrophe characters (ASCII + Unicode variants)."""
+    for ch in _APOSTROPHE_CHARS:
+        text = text.replace(ch, "")
+    return text
+
+
+#: The cue vocabulary with apostrophes stripped, so orthographic variants
+#: collapse onto the same cues: "dont" matches "don't", "cant" matches
+#: "can't". The cue list's meaning is unchanged -- only spelling variants
+#: that drop the apostrophe are folded in. (Trade-off, documented: "wont"
+#: as in "as is his wont" now reads as negation and fails closed -- the
+#: safe direction.)
+_NEGATION_CUES_NORM = frozenset(
+    _strip_apostrophes(c) for c in _NEGATION_CUES)
+
+
 def _clause_negated(clause):
-    """True iff the clause carries a negation cue (F398)."""
-    return any(tok in _NEGATION_CUES
-               for tok in _WORD.findall(clause.lower()))
+    """True iff the clause carries a negation cue (F398; F405:
+    apostrophe-normalized, so "dont"/"dnt"/"can't"/smart-quote variants
+    all discount)."""
+    norm = _strip_apostrophes(clause.lower())
+    return any(tok in _NEGATION_CUES_NORM
+               for tok in _WORD.findall(norm))
 
 
 #: Deterministic authorization vocabulary for the F404 critical-arg fix.
