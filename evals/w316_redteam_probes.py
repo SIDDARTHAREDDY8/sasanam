@@ -4,9 +4,9 @@ P1 (12): VSA forgery at gov/vsa_packet.py consume_vsa -- hand-sealed FAILED
     results, verifier/keyid crosses, decision_packet transplant, double
     signatures, freshness-window abuse, untrusted verifiers. Every attack
     must refuse with a closed-vocabulary code.
-P2 (5): provenance sink -- F398/F399 re-probes (both OPEN: must still BREAK),
-    benign controls, executor-seam wiring (segment-suppression skip, sink
-    dormancy in the standard flow).
+P2 (5): provenance sink -- F398/F399 closed-form re-probes (both CLOSED at
+    the wave-316 merge), benign controls, executor-seam wiring
+    (segment-suppression skip, sink dormancy in the standard flow).
 P3 (4): summary-form migration coherence -- the F400 error-path fix, the
     probe_lines seam, a GAP-contract sample.
 P4 (3): new findings filed by this lane -- F401 (w310 F394 stale probes
@@ -15,8 +15,8 @@ P4 (3): new findings filed by this lane -- F401 (w310 F394 stale probes
 P5 (6): regressions -- footer, pin, adjacent batteries.
 
 Result contract: each probe prints [HELD]/[BREAK]/[ERROR]. Exit 0 iff no
-BREAK and no ERROR. Five BREAKs are EXPECTED on the open tree: the F398
-and F399 re-probes (open findings) and the three new findings' probes.
+BREAK and no ERROR. Three BREAKs are EXPECTED on the merged tree: the
+F401/F402/F403 open-finding probes (F398/F399 CLOSED at the wave-316 merge).
 
 Depth-1 green check honoring GOV_SKIP_GREEN; no in-repo git subprocesses;
 deterministic (fixed seeds, fixed clock); stdlib only.
@@ -262,7 +262,7 @@ def _p1_no_allow():
 
 
 # ---------------------------------------------------------------------------
-# P2: provenance sink -- F398/F399 re-probes (OPEN), controls, seam wiring
+# P2: provenance sink -- F398/F399 closed-form re-probes, controls, seam wiring
 # ---------------------------------------------------------------------------
 
 @probe("P2-f398-still-breaks")
@@ -301,19 +301,20 @@ def _p2_f398_controls():
     return _held("P2-f398-controls", "; ".join(notes))
 
 
-@probe("P2-f399-still-breaks")
+@probe("P2-f399-closed")
 def _p2_f399():
-    """F399 (LOW, OPEN) re-probe: provenance_gate must still construct a
-    fresh sink per call, so 6 same-context refusals never go terminal."""
+    """F399 CLOSED (wave-316 lane 2): delegates to w315's closed-form
+    P2-sink-per-seam-context probe -- a retained sink at the seam makes
+    the 4th same-context refusal escalate-terminal."""
     _ensure_key()
-    pid, verdict, note = w315._p2_fresh_sink()
+    pid, verdict, note = w315._p2_seam_sink()
     if verdict == "BREAK":
-        return _break("P2-f399-still-breaks",
-                      "F399 still open: %s" % note[:160])
+        return _break("P2-f399-closed",
+                      "F399 regressed to open: %s" % note[:160])
     if verdict == "ERROR":
-        return _error("P2-f399-still-breaks", note[:200])
-    return _held("P2-f399-still-breaks",
-                 "F399 closed: budget accumulates across gate calls")
+        return _error("P2-f399-closed", note[:200])
+    return _held("P2-f399-closed",
+                 "F399 closed: retained sink at the seam, 4th refusal terminal")
 
 
 @probe("P2-f399-control-terminal")
@@ -548,35 +549,34 @@ def _footer():
 
 @probe("P5-footer-state")
 def _p5_footer():
-    """Footer pins this lane's filings: open
-    F398, F399, F400, F401, F402, F403 / next F404."""
+    """Footer: open F401, F402, F403 / next F404 (F398/F399/F400 CLOSED at the wave-316 merge)."""
     got = _footer()
-    if got != (404, "F398, F399, F400, F401, F402, F403"):
+    if got != (404, "F401, F402, F403"):
         return _break("P5-footer-state", "footer is %r" % (got,))
     return _held("P5-footer-state",
-                 "open F398, F399, F400, F401, F402, F403 / next F404")
+                 "open F401, F402, F403 / next F404")
 
 
-@probe("P5-pin-taxonomy-1888-sorted")
+@probe("P5-pin-taxonomy-1900-sorted")
 def _p5_pin():
-    """Taxonomy pin 1888/1888/0 on raw source literals, sorted, unique
+    """Taxonomy pin 1900/1900/0 on raw source literals, sorted, unique
     (wave-260 lesson: assert on literals, not the deduped dict)."""
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    if len(lits) != 1888:
-        return _break("P5-pin-taxonomy-1888-sorted",
-                      "literals %d != pin 1888" % len(lits))
+    if len(lits) != 1900:
+        return _break("P5-pin-taxonomy-1900-sorted",
+                      "literals %d != pin 1900" % len(lits))
     if len(set(lits)) != len(lits):
-        return _break("P5-pin-taxonomy-1888-sorted",
+        return _break("P5-pin-taxonomy-1900-sorted",
                       "duplicate code literals in source")
     if sorted(lits) != lits:
-        return _break("P5-pin-taxonomy-1888-sorted", "literals not sorted")
-    if len(DC.TAXONOMY) != 1888:
-        return _break("P5-pin-taxonomy-1888-sorted",
+        return _break("P5-pin-taxonomy-1900-sorted", "literals not sorted")
+    if len(DC.TAXONOMY) != 1900:
+        return _break("P5-pin-taxonomy-1900-sorted",
                       "TAXONOMY dict has %d" % len(DC.TAXONOMY))
-    return _held("P5-pin-taxonomy-1888-sorted", "1888/1888/0 sorted")
+    return _held("P5-pin-taxonomy-1900-sorted", "1900/1900/0 sorted")
 
 
 def _run_battery(path, expect, break_must_contain=None):
@@ -649,11 +649,9 @@ def _p5_vsa():
 
 @probe("P5-green-w315-redteam")
 def _p5_w315():
-    # the 3 BREAKs are the F398/F399 open-finding probes plus this
-    # lane's own footer-state probe (expected footer-drift from the
-    # F401/F402/F403 filings -- merge-maintenance)
+    # F398/F399 CLOSED at the wave-316 merge; footer re-pinned
     verdict, note = _run_battery(
-        os.path.join(REPO, "evals", "w315_redteam_probes.py"), (3, 36, 0))
+        os.path.join(REPO, "evals", "w315_redteam_probes.py"), (0, 39, 0))
     return ("P5-green-w315-redteam", verdict, note)
 
 

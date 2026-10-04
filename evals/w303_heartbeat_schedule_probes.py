@@ -105,12 +105,12 @@ def p_footer_state():
         text = fh.read()
     m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-    # Wave-312 merge footer: F396 CLOSED (lane A); F397 OPEN (lane C).
+    # Wave-316 merge footer: F398/F399/F400 CLOSED; F401/F402/F403 OPEN; next F404.
     ok = (m_open and m_open[-1].strip()
-          == "none"
-          and m_next and m_next[-1] == "F398")
+          == "F401, F402, F403"
+          and m_next and m_next[-1] == "F404")
     _record("footer-state", "HELD" if ok else "BREAK",
-            "want open none / next free F398")
+            "want open F401, F402, F403 / next free F404")
 
 
 def _al():

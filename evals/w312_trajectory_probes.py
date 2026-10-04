@@ -443,15 +443,15 @@ def footer_state():
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               encoding="utf-8") as fh:
         text = fh.read()
-    # Wave-313 merge footer: F397 CLOSED (lane A); no open findings.
+    # Wave-316 merge footer: F398/F399/F400 CLOSED; F401/F402/F403 OPEN; next F404.
     # Footer lines repeat through history; the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F398**" in text
-          and m_open and m_open[-1].strip() == "none")
+    ok = ("Next free finding: **F404**" in text
+          and m_open and m_open[-1].strip() == "F401, F402, F403")
     if ok:
-        _record("footer-state", "HELD", "footer: open none / next F398")
+        _record("footer-state", "HELD", "footer: open F401, F402, F403 / next F404")
     else:
-        _record("footer-state", "BREAK", "footer mismatch vs open none / next F398")
+        _record("footer-state", "BREAK", "footer mismatch vs open F401, F402, F403 / next F404")
 
 
 PROBES = [corpus_schema, corpus_deterministic_replay,

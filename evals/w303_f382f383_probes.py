@@ -92,10 +92,10 @@ class BaseStateTest(unittest.TestCase):
         # Wave-316 re-pin: wave-315 merge footer -- open F398, F399,
         # F400 / next free F401 (F393-F397 all CLOSED).
         ok = (m_open and m_open[-1].replace(" ", "") == "F398,F399,F400"
-              and m_next and m_next[-1] == "F401")
+              and m_next and m_next[-1] == "F404")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F398, F399, F400 / next free F401") == "HELD")
+            "want open F401, F402, F403 / next free F404") == "HELD")
 
     def test_taxonomy_pin(self):
         self.assertTrue(_expect_held(

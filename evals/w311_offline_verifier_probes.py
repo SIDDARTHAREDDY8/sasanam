@@ -292,11 +292,11 @@ def p_footer_state():
         text = fh.read()
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
     m_open = re.findall(r"Open findings: ([^.]*)\.", text)
-    # Wave-312 merge footer: F396 CLOSED (lane A); F397 OPEN (lane C).
-    ok = (m_next and m_next[-1] == "F398"
-          and m_open and m_open[-1].strip() == "none")
+    # Wave-316 merge footer: F398/F399/F400 CLOSED; F401/F402/F403 OPEN; next F404.
+    ok = (m_next and m_next[-1] == "F404"
+          and m_open and m_open[-1].strip() == "F401, F402, F403")
     _record("footer-state", "HELD" if ok else "BREAK",
-            "open none / next F398" if ok else "footer drift")
+            "open F401, F402, F403 / next F404" if ok else "footer drift")
 
 
 def p_taxonomy_shape():
