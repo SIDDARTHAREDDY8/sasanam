@@ -7306,6 +7306,88 @@ TAXONOMY = {
         "evidence_kinds_required": ['agent-card', 'signature', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'export-witness-bundle-mismatch': {
+        "domain": 'witness',
+        "code": 'export-witness-bundle-mismatch',
+        "human": 'offline export witness layer: the layer names a bundle '
+                 'digest different from the bundle the auditor holds -- '
+                 'transplant attack; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'export-witness-carrier-oversize': {
+        "domain": 'witness',
+        "code": 'export-witness-carrier-oversize',
+        "human": 'offline export witness layer: the QR-scale carrier '
+                 'exceeds the 3072-byte budget -- the auditor must use '
+                 'the file form; refused fail-closed',
+        "severity": 'low',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'export-witness-checkpoint-invalid': {
+        "domain": 'witness',
+        "code": 'export-witness-checkpoint-invalid',
+        "human": 'offline export witness layer: the embedded checkpoint '
+                 'does not authenticate under the operator key with the '
+                 "policy's witness quorum; refused fail-closed",
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
+    'export-witness-malformed': {
+        "domain": 'witness',
+        "code": 'export-witness-malformed',
+        "human": 'offline export witness layer: the layer or carrier is '
+                 'malformed -- bad shape, unknown fields, bad digests, '
+                 'or missing trusted time; refused fail-closed, never '
+                 'defaulted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'export-witness-policy-invalid': {
+        "domain": 'witness',
+        "code": 'export-witness-policy-invalid',
+        "human": 'offline export witness layer: the embedded sealed '
+                 'witness-policy document does not verify against the '
+                 "auditor's trust anchor; refused fail-closed",
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'export-witness-proof-mismatch': {
+        "domain": 'witness',
+        "code": 'export-witness-proof-mismatch',
+        "human": 'offline export witness layer: a consistency or '
+                 'inclusion proof does not bind the bundle digest to the '
+                 'checkpoint root; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'export-witness-stale': {
+        "domain": 'witness',
+        "code": 'export-witness-stale',
+        "human": 'offline export witness layer: the checkpoint '
+                 'cosignatures are older than the policy staleness bound '
+                 'or a timestamp is in the future; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
+    'export-witness-vkey-mismatch': {
+        "domain": 'witness',
+        "code": 'export-witness-vkey-mismatch',
+        "human": 'offline export witness layer: the embedded log/witness '
+                 'vkeys differ from the verified policy -- the policy is '
+                 'the trust source, embedded keys are a convenience '
+                 'copy; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
     'faithfulness-error': {
         "domain": 'presentation',
         "code": 'faithfulness-error',

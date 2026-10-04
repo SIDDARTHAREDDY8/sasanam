@@ -27,7 +27,7 @@ Probe map (public seams only):
  P4: regression -- the depth-1 green check re-runs the four wave-320
      batteries (w320_redteam 0/30/0, w320_quorum 0/18/0,
      w320_grantwiring 0/10/0, w319_redteam 0/24/0).
- P5 (2): pin taxonomy 1976/1976/0 sorted on source literals; footer
+ P5 (2): pin taxonomy 1984/1984/0 sorted on source literals; footer
      open F407 / next F408.
 
 Expected: 5 BREAK / 31 HELD / 0 ERROR (the 5 BREAKs are the F406
@@ -65,7 +65,7 @@ from gov.approvals import approval_digest_ok  # noqa: E402
 import gov.provenance_sink as PS  # noqa: E402
 import gov.provenance_labels as PL  # noqa: E402
 
-TAXONOMY_PIN = 1976
+TAXONOMY_PIN = 1984
 FOOTER_OPEN = "F407"
 FOOTER_NEXT = "F408"
 
@@ -744,11 +744,11 @@ def p5_pin_taxonomy_sorted():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 1976
+    ok = (len(lits) == TAXONOMY_PIN == 1984
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P5-pin-taxonomy-1976-sorted", True, "1976/1976/0 sorted")
-    return _break("P5-pin-taxonomy-1976-sorted",
+        return _held("P5-pin-taxonomy-1984-sorted", True, "1984/1984/0 sorted")
+    return _break("P5-pin-taxonomy-1984-sorted",
                   "got %d literals" % (len(lits),))
 
 

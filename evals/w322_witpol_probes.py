@@ -18,7 +18,7 @@ P3 (3): contract probes -- verify returns the verified VALUES (dict),
     change breaks); trust anchor authority (doc-declared signers do not
     count, only the anchor's do).
 P4 (2): regressions -- footer open F407 / next F408; pin taxonomy
-    1976/1976/0 sorted on source literals.
+    1984/1984/0 sorted on source literals.
 
 Result contract: each probe prints [HELD]/[BREAK]/[ERROR]. Exit 0 iff
 no ERROR and no unexpected BREAK. On the OPEN tree (module absent) the
@@ -49,7 +49,7 @@ from gov import checkpoint_note as CN  # noqa: E402
 from gov.witness_log import WitnessLog  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
-TAXONOMY_PIN = 1976
+TAXONOMY_PIN = 1984
 FOOTER_OPEN = "F407"
 FOOTER_NEXT = "F408"
 
@@ -530,17 +530,17 @@ def _p3c():
 # P4: regressions
 # ---------------------------------------------------------------------------
 
-@probe("P4-pin-taxonomy-1976-sorted")
+@probe("P4-pin-taxonomy-1984-sorted")
 def _p4a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 1976
+    ok = (len(lits) == TAXONOMY_PIN == 1984
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P4-pin-taxonomy-1976-sorted", "1976/1976/0 sorted")
-    return _break("P4-pin-taxonomy-1976-sorted",
+        return _held("P4-pin-taxonomy-1984-sorted", "1984/1984/0 sorted")
+    return _break("P4-pin-taxonomy-1984-sorted",
                   "got %d literals" % (len(lits),))
 
 
