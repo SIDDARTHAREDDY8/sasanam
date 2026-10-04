@@ -7826,6 +7826,94 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
     },
+    'grantneg-anchor-untrusted': {
+        "domain": 'grantneg',
+        "code": 'grantneg-anchor-untrusted',
+        "human": 'grant negotiation: the delegation chain root was not '
+                 'issued by the tool\u2019s registered resource owner; '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'grantneg-audience-mismatch': {
+        "domain": 'grantneg',
+        "code": 'grantneg-audience-mismatch',
+        "human": 'grant negotiation: the grant audience does not match '
+                 'the presenting agent (replay by another agent); refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'grantneg-chain-unverifiable': {
+        "domain": 'grantneg',
+        "code": 'grantneg-chain-unverifiable',
+        "human": 'grant negotiation: a chain link signature does not '
+                 'verify, its issuer key is unknown, or parent linkage is '
+                 'broken; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'grantneg-chain-widened': {
+        "domain": 'grantneg',
+        "code": 'grantneg-chain-widened',
+        "human": 'grant negotiation: a delegation hop is not '
+                 'equal-or-narrower than its parent; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'grantneg-expired': {
+        "domain": 'grantneg',
+        "code": 'grantneg-expired',
+        "human": 'grant negotiation: the grant TTL lapsed '
+                 '(expiry-as-revocation); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'grantneg-malformed': {
+        "domain": 'grantneg',
+        "code": 'grantneg-malformed',
+        "human": 'grant negotiation: the grant or grant request failed '
+                 'the grammar/shape check; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'grantneg-product-of-fields': {
+        "domain": 'grantneg',
+        "code": 'grantneg-product-of-fields',
+        "human": 'grant negotiation: one grant object names more than one '
+                 '(tool, resource) pair -- the RFC 9396 S2.2 '
+                 'multiplicative-privilege trap; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'grantneg-scope-mismatch': {
+        "domain": 'grantneg',
+        "code": 'grantneg-scope-mismatch',
+        "human": 'grant negotiation: the grant does not cover this call '
+                 '-- the grant tool differs from the called tool, or the '
+                 'grant resource differs from the call resource locator; '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'grantneg-widening-refused': {
+        "domain": 'grantneg',
+        "code": 'grantneg-widening-refused',
+        "human": 'grant negotiation: derive() was asked for a delegation '
+                 'that is not strictly narrower than its parent; refused '
+                 'fail-fast at construction',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
     'guac-graph-ambiguous-link': {
         "domain": 'guac-graph',
         "code": 'guac-graph-ambiguous-link',

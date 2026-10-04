@@ -75,6 +75,7 @@ from . import dlp
 from . import advisory as _advisory
 from . import canary as _canary
 from . import goals as _goals
+from . import grant_negotiation
 from . import sentinel_substitution as _sentinel
 from . import attestation_release as _attestation_release
 from . import classification as _classification
@@ -1420,6 +1421,12 @@ class ToolExecutor:
         # gov.mcp_annotations.build_tool_registry over keyset-attested
         # statements), so the agent-facing paths never call it.
         self._mcp_tool_registry = None
+        # Wave-319 (grant negotiation): deployment-owned grant registry
+        # for the advisory grant check. None (the default) means the
+        # check is not-applicable: zero behavior change. Set
+        # post-construction via set_grant_registry(); the registry is
+        # operator authority, so the agent-facing paths never call it.
+        self._grant_registry = None
         # Wave-198 lane E: verified identity-token claim sets, keyed by
         # agent_id, recorded at mint_identity time. The claims were
         # signature-verified by the dex client and claim-policy-checked
@@ -3092,6 +3099,11 @@ class ToolExecutor:
         # One sub-chain, one lock: the child shares the parent's BOM
         # head cell, so it must share the guard too.
         child._advisory_lock = self._advisory_lock
+        # Wave-319 (grant negotiation): the child inherits the
+        # deployment's grant registry by reference (immutable after
+        # registration), so a spawn cannot shed the advisory grant
+        # check by construction.
+        child._grant_registry = self._grant_registry
         # Row-12: one run, one artifact inventory — the child shares
         # the parent's registry by reference, so a child egressing a
         # parent-written artifact sees it as registered (not unknown).
@@ -9394,6 +9406,26 @@ class ToolExecutor:
                 "%r" % type(registry).__name__)
         self._mcp_tool_registry = registry
 
+    def set_grant_registry(self, registry):
+        """Install the deployment-owned grant registry (wave-319 lane 1).
+
+        ``registry`` must be a ``gov.grant_negotiation.GrantRegistry``
+        (or None to return to no-grant behavior). With a registry
+        installed, ``call()`` runs the advisory grant check after the
+        deterministic policy verdict passes: a presented grant that
+        fails verification refuses with its coded ``grantneg-*``
+        refusal (tighten-only); absent registry, unregistered tool, or
+        absent grant proceeds exactly as before. The registry is
+        operator authority: the agent-facing paths never call this.
+        """
+        if registry is not None and not isinstance(
+                registry, grant_negotiation.GrantRegistry):
+            raise TypeError(
+                "set_grant_registry expects a "
+                "gov.grant_negotiation.GrantRegistry or None, got %r"
+                % type(registry).__name__)
+        self._grant_registry = registry
+
     def _mcp_token_claims_for(self, agent_id):
         """Return the recorded verified token claims for ``agent_id``.
 
@@ -9619,6 +9651,14 @@ class ToolExecutor:
         if not isinstance(identity, AgentIdentity):
             raise TypeError("identity must be an AgentIdentity minted by "
                             "this executor, got %r" % type(identity).__name__)
+
+        # Wave-319 (grant negotiation): reserved kwarg carrying a
+        # presented grant (a dict, or a list of dicts forming a
+        # delegation chain). Popped BEFORE tool-arg processing so it
+        # never reaches the tool implementation. No "grant" string
+        # exists anywhere else in this module, so there is no
+        # collision with a tool argument.
+        _presented_grant = kwargs.pop("grant", None)
 
         # Wave-100 (Stream 1): the capability gate -- before anything
         # agent-influenced runs. No valid assessment, no execution.
@@ -10577,6 +10617,41 @@ class ToolExecutor:
             decision = self._apply_advisory(
                 decision, action, ctx, policy, identity, tool, kwargs,
                 lambda extra: self.log.append(_base(extra)))
+
+        # Wave-319 (grant negotiation): advisory grant check --
+        # only-tighten. Runs AFTER the deterministic verdict (and the
+        # monotonic advisory layer above), and only when the verdict
+        # would otherwise allow: it can only turn an allow into a
+        # deny, never a deny into an allow, and it never masks a
+        # deterministic denial reason. Absent registry, unregistered
+        # tool, or absent grant proceeds exactly as before (the
+        # deterministic layer is canonical; advisory failures default
+        # to allow). A presented grant that fails verification refuses
+        # LOUD with its coded grantneg-* refusal. The
+        # require_approval path is out of scope in v1: a presented
+        # grant is evaluated on the direct-allow path only, never
+        # forwarded into the queued approval.
+        _grant_status, _grant_detail = (None, None)
+        if decision.effect == "allow":
+            _grant_status, _grant_detail = grant_negotiation.advisory_check(
+                getattr(self, "_grant_registry", None), tool,
+                _presented_grant, identity.agent_id, args=kwargs)
+        if _grant_status == "refused":
+            _grant_entry = self.log.append(_base({
+                "decision": "denied",
+                "policy_id": "grant-advisory",
+                "flag": "grantneg_" + _grant_detail["code"].replace(
+                    "-", "_"),
+                "matched_rules": [],
+                "reason": ("Refusing to act: presented grant failed "
+                           "verification (%s): %s"
+                           % (_grant_detail["code"],
+                              _grant_detail["reason"])),
+            }))
+            return {"status": "denied",
+                    "reason": _grant_entry["reason"],
+                    "policy_id": "grant-advisory",
+                    "seq": _grant_entry["seq"]}
 
         # Wave-89 (stream s5-tool): use-time tool-definition
         # verification. The inventory's CURRENT definition digest is
