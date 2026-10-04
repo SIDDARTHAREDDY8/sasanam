@@ -9,7 +9,7 @@ is CLOSED (lane 1, wave-326 merge) so P2a must be HELD; F408's P17
 must stay HELD. P3 attacks the federated-identity / threshold-VSA /
 offline-verifier seams. P4 is the regression section (F409 HELD;
 F408/F407/F406 HELD). P5 runs prior batteries in child mode
-(GOV_SKIP_GREEN=1). P6 pins the taxonomy (2035) and the footer state.
+(GOV_SKIP_GREEN=1). P6 pins the taxonomy (2044) and the footer state.
 
 Filed finding: F411 (MEDIUM) -- federated-mode mint_identity accepts
 an unverified dict token_claims, bypassing token authentication
@@ -41,7 +41,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
-TAXONOMY_PIN = 2035  # Wave-326 merge: pin 2020 -> 2035 (+15: 1 witness-alert-state-lost + 7 standing-* + 7 scan-*).
+TAXONOMY_PIN = 2044  # Wave-326 merge: pin 2020 -> 2044 (+15: 1 witness-alert-state-lost + 7 standing-* + 7 scan-*).
 FOOTER_OPEN = "F410, F411"  # F409 CLOSED (lane 1); F410 (LOW, TUF) + F411 (MEDIUM, identity) OPEN.
 FOOTER_NEXT = "F412"  # Next free finding number.
 
@@ -903,17 +903,17 @@ def _p5f():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2035-sorted")
+@probe("P6a-pin-taxonomy-2044-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
-    if TAXONOMY_PIN != 2035:
-        return _break("P6a-pin-taxonomy-2035-sorted",
-                      "TAXONOMY_PIN is %r, want 2035" % (TAXONOMY_PIN,))
-    if len(codes) != 2035 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-2035-sorted",
+    if TAXONOMY_PIN != 2044:
+        return _break("P6a-pin-taxonomy-2044-sorted",
+                      "TAXONOMY_PIN is %r, want 2044" % (TAXONOMY_PIN,))
+    if len(codes) != 2044 or codes != sorted(codes):
+        return _break("P6a-pin-taxonomy-2044-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    return _held("P6a-pin-taxonomy-2035-sorted", "2035/2035/0 sorted")
+    return _held("P6a-pin-taxonomy-2044-sorted", "2044/2044/0 sorted")
 
 
 @probe("P6b-footer-open-f410-f411-next-f412")
