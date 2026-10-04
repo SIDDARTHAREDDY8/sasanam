@@ -107,7 +107,7 @@ def p_footer_state():
                        "footer pins next F%d open '%s', want next F404 "
                        "open 'none'" % (nxt, open_s))
     _record("footer-state", "HELD",
-            "footer pins open F405 / next F406")
+            "footer pins open none / next F406")
 
 
 # ------------------------------------------------------------------

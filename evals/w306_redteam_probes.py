@@ -119,7 +119,7 @@ def p_footer_state():
                        "footer drift: next F%d open %r (want next F404 open "
                        "'F396')" % (nxt, open_s))
     _record("footer-state", "HELD",
-            "footer pins open F405 / next F406")
+            "footer pins open none / next F406")
 
 
 def _chain_fx():
