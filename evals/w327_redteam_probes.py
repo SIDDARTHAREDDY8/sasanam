@@ -1,14 +1,14 @@
 """Wave-327 independent red-team battery.
 
 Base: 542c5cee (wave-326 merge). Footer: open F412 / next F413.
-Pin: 2056.
+Pin: 2058.
 
 P1  wave-326 seams: standing_verdicts / knowledge_ingest / background_scan.
 P2  F410 re-probe (w326_tufaudit T4c/T4d -- must still BREAK; lane 2 owns it).
 P3  F411 re-probe (w326_redteam P3a -- must still BREAK; lane 1 owns it).
 P4  regression: F409 (HELD), F408/F407/F406 (HELD).
 P5  corruption-survivor probe + prior batteries in child mode.
-P6  pin 2056 + footer state.
+P6  pin 2058 + footer state.
 
 gov/ is byte-identical to base: this battery changes no product code and
 files findings only (from F412). No new decision codes from this lane.
@@ -28,7 +28,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
-TAXONOMY_PIN = 2056  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).; Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*)
+TAXONOMY_PIN = 2058  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).; Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*)
 FOOTER_OPEN = "F414"  # F409/F410/F411/F412/F413 CLOSED; F414 (LOW, shamir-distribute symlink alias) OPEN.
 FOOTER_NEXT = "F415"  # Next free finding number.
 
@@ -554,7 +554,7 @@ def _p5a():
     corruption markers. (The needle is built dynamically so this file's
     own documentation does not self-match.)
     """
-    needles = ["2035" + "OLD", "2056" + "OLD"]
+    needles = ["2035" + "OLD", "2058" + "OLD"]
     hits = []
     for dirpath, dirnames, filenames in os.walk(REPO):
         # Skip .git and derived bytecode caches (not source literals).
@@ -676,20 +676,20 @@ def _p5g():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2056-sorted")
+@probe("P6a-pin-taxonomy-2058-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
-    if TAXONOMY_PIN != 2056:
-        return _break("P6a-pin-taxonomy-2056-sorted",
-                      "TAXONOMY_PIN is %r, want 2056" % (TAXONOMY_PIN,))
-    if len(codes) != 2056 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-2056-sorted",
+    if TAXONOMY_PIN != 2058:
+        return _break("P6a-pin-taxonomy-2058-sorted",
+                      "TAXONOMY_PIN is %r, want 2058" % (TAXONOMY_PIN,))
+    if len(codes) != 2058 or codes != sorted(codes):
+        return _break("P6a-pin-taxonomy-2058-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    if len(set(codes)) != 2056:
-        return _break("P6a-pin-taxonomy-2056-sorted",
+    if len(set(codes)) != 2058:
+        return _break("P6a-pin-taxonomy-2058-sorted",
                       "duplicate codes in TAXONOMY")
-    return _held("P6a-pin-taxonomy-2056-sorted", "2056/2056/0 sorted")
+    return _held("P6a-pin-taxonomy-2058-sorted", "2058/2058/0 sorted")
 
 
 @probe("P6b-footer-open-f414-next-f415")

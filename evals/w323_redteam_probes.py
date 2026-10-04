@@ -27,7 +27,7 @@ Attacks the wave-322 NEW surfaces break-first (base 0b03472b):
       shipped tallies (child-mode, GOV_SKIP_GREEN=1; every tally below
       was verified by direct child run, never "corrected" to
       parent-with-green numbers).
-  P6  Pin/footer -- 2056/2056/0 sorted on source literals; footer open
+  P6  Pin/footer -- 2058/2058/0 sorted on source literals; footer open
       none / next F409 (F406 and F407 both closed).
 
 
@@ -70,7 +70,7 @@ from tests.keyfixture import provision_test_key  # noqa: E402
 
 provision_test_key()
 
-TAXONOMY_PIN = 2056#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*)
+TAXONOMY_PIN = 2058#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*)
 
 
 FOOTER_OPEN = "F414"  # F409/F410/F411/F412/F413 CLOSED; F414 (LOW, shamir-distribute symlink alias) OPEN.
@@ -940,7 +940,7 @@ def green_check():
 # P6: pin + footer
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-2056-sorted")
+@probe("P6-pin-taxonomy-2058-sorted")
 
 
 def _p6a():
@@ -948,11 +948,11 @@ def _p6a():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2056
+    ok = (len(lits) == TAXONOMY_PIN == 2058
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P6-pin-taxonomy-2056-sorted", "2056/2056/0 sorted")
-    return _break("P6-pin-taxonomy-2056-sorted",
+        return _held("P6-pin-taxonomy-2058-sorted", "2058/2058/0 sorted")
+    return _break("P6-pin-taxonomy-2058-sorted",
 
 
                   "got %d literals" % (len(lits),))

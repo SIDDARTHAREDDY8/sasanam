@@ -6941,6 +6941,18 @@ TAXONOMY = {
         "evidence_kinds_required": ['identity-assertion'],
         "reverify_steps": ['re-fetch-assertion'],
     },
+    'evidence-bundle-hint-mismatch': {
+        "domain": 'evbundle',
+        "code": 'evidence-bundle-hint-mismatch',
+        "human": 'sigstore bundle: verificationMaterial.publicKey.hint is '
+                 'neither empty nor the authenticated primary key\'s '
+                 'fingerprint; the hint is informational, never authority, '
+                 'and a non-matching hint names a key that did not '
+                 'authenticate this bundle; refused, fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-check-verification-material'],
+    },
     'evidence-bundle-malformed': {
         "domain": 'evbundle',
         "code": 'evidence-bundle-malformed',
@@ -6998,6 +7010,17 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['bundle'],
         "reverify_steps": ['re-parse-token'],
+    },
+    'evidence-bundle-verification-material': {
+        "domain": 'evbundle',
+        "code": 'evidence-bundle-verification-material',
+        "human": 'sigstore bundle: verificationMaterial.publicKey is not '
+                 'the Bundle v0.3 form-(1) PublicKeyIdentifier shape '
+                 '(hint field only); unknown fields are refused -- strict '
+                 'protobuf-JSON parsers reject them; fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-check-verification-material'],
     },
     'evidence-bundle-witness-checkpoint-invalid': {
         "domain": 'evbundle',

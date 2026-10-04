@@ -36,7 +36,7 @@ import w324_offver_probes as _wo  # noqa: E402
 import w324_vsa_probes as _wv  # noqa: E402
 import w322_redteam_probes as _w322  # noqa: E402
 
-TAXONOMY_PIN = 2056  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*)
+TAXONOMY_PIN = 2058  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*)
 FOOTER_OPEN = "F414"  # F409/F410/F411/F412/F413 CLOSED; F414 (LOW, shamir-distribute symlink alias) OPEN.
 FOOTER_NEXT = "F415"  # Next free finding number.
 
@@ -899,17 +899,17 @@ def _p5e():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2056-sorted")
+@probe("P6a-pin-taxonomy-2058-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
-    if TAXONOMY_PIN != 2056:
-        return _break("P6a-pin-taxonomy-2056-sorted",
+    if TAXONOMY_PIN != 2058:
+        return _break("P6a-pin-taxonomy-2058-sorted",
                       "TAXONOMY_PIN is %r, want 2021" % (TAXONOMY_PIN,))
-    if len(codes) != 2056 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-2056-sorted",
+    if len(codes) != 2058 or codes != sorted(codes):
+        return _break("P6a-pin-taxonomy-2058-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    return _held("P6a-pin-taxonomy-2056-sorted", "2056/2056/0 sorted")
+    return _held("P6a-pin-taxonomy-2058-sorted", "2058/2058/0 sorted")
 
 
 @probe("P6b-footer-open-f414-next-f415")
