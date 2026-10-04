@@ -147,14 +147,17 @@ class TestBundleShape(unittest.TestCase):
         self.assertEqual(body, evidence_intoto.statement_bytes(stmt))
 
     def test_verification_material_carries_signer_key(self):
+        # Bundle v0.3 form (1): PublicKeyIdentifier carries ONLY hint.
+        # The raw key travels out-of-band; the hint names the signer.
+        from gov import sigstore_bundle as _sigbundle
         signers = _signers(1)
         bundle = _sealed_bundle(signers=signers)
         vm = bundle["verificationMaterial"]
         self.assertIn("publicKey", vm)
         self.assertIn("tlogEntries", vm)
-        raw = base64.b64decode(vm["publicKey"]["rawBytes"])
-        self.assertEqual(raw, signers[0].public_key)
-        self.assertEqual(len(raw), 32)
+        self.assertEqual(set(vm["publicKey"]), {"hint"})
+        self.assertEqual(vm["publicKey"]["hint"],
+                         _sigbundle.key_hint(signers[0].public_key))
 
     def test_witness_entry_shape(self):
         bundle = _sealed_bundle()
@@ -416,6 +419,39 @@ class TestBreakProbes(unittest.TestCase):
             _open(tampered)
         self.assertEqual(_reason(ctx.exception),
                          "evidence-bundle-witness-unbound")
+
+    def test_publickey_unknown_field_refuses_coded(self):
+        # Bundle v0.3 form (1): PublicKeyIdentifier has only 'hint'.
+        # Unknown fields are refused -- strict protobuf-JSON parsers
+        # reject them, so accepting them would fork the wire shape.
+        bundle = _sealed_bundle()
+        tampered = copy.deepcopy(bundle)
+        tampered["verificationMaterial"]["publicKey"]["rawBytes"] = "AA=="
+        with self.assertRaises(_dsse.EnvelopeError) as ctx:
+            _open(tampered)
+        self.assertEqual(_reason(ctx.exception),
+                         "evidence-bundle-verification-material")
+
+    def test_hint_spoof_refuses_coded(self):
+        # A hint naming a key that did not authenticate the bundle is
+        # refused: the hint is informational, never authority, and it
+        # must not lie.
+        bundle = _sealed_bundle()
+        tampered = copy.deepcopy(bundle)
+        tampered["verificationMaterial"]["publicKey"]["hint"] = "ff" * 32
+        with self.assertRaises(_dsse.EnvelopeError) as ctx:
+            _open(tampered)
+        self.assertEqual(_reason(ctx.exception),
+                         "evidence-bundle-hint-mismatch")
+
+    def test_empty_hint_accepts(self):
+        # The spike-proven cosign shape {"publicKey": {}} verifies: the
+        # key is pinned out-of-band by the auditor.
+        bundle = _sealed_bundle()
+        bare = copy.deepcopy(bundle)
+        bare["verificationMaterial"]["publicKey"] = {}
+        got = _open(bare)
+        self.assertEqual(got["statement"]["predicate"], CLAIMS)
 
     def test_wrong_witness_key_refuses_coded(self):
         # Entry witnessed by an attacker's key: the logId does not name
@@ -690,10 +726,15 @@ class TestCosignInterop(unittest.TestCase):
             self.assertIsInstance(entry.get("keyid"), str)
             self.assertTrue(entry["keyid"])
 
-        # verificationMaterial per the protobuf JSON mapping.
+        # verificationMaterial per the protobuf JSON mapping: form (1)
+        # PublicKeyIdentifier carries ONLY hint (strict protobuf-JSON
+        # parsers reject unknown fields inside it). The hint names the
+        # signing key; the raw key travels out-of-band.
+        from gov import sigstore_bundle as _sigbundle
         vm = parsed["verificationMaterial"]
-        raw = base64.b64decode(vm["publicKey"]["rawBytes"])
-        self.assertEqual(raw, signers[0].public_key)
+        self.assertEqual(set(vm["publicKey"]), {"hint"})
+        self.assertEqual(vm["publicKey"]["hint"],
+                         _sigbundle.key_hint(signers[0].public_key))
         self.assertTrue(len(vm["tlogEntries"]) >= 1)
         entry = vm["tlogEntries"][0]
         for field in ("logIndex", "logId", "kindVersion",
