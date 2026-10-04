@@ -9,7 +9,7 @@ is CLOSED (lane 1, wave-326 merge) so P2a must be HELD; F408's P17
 must stay HELD. P3 attacks the federated-identity / threshold-VSA /
 offline-verifier seams. P4 is the regression section (F409 HELD;
 F408/F407/F406 HELD). P5 runs prior batteries in child mode
-(GOV_SKIP_GREEN=1). P6 pins the taxonomy (2045) and the footer state.
+(GOV_SKIP_GREEN=1). P6 pins the taxonomy (2047) and the footer state.
 
 Filed finding: F411 (MEDIUM) -- federated-mode mint_identity accepts
 an unverified dict token_claims, bypassing token authentication
@@ -19,7 +19,7 @@ F410 at 11:19:59 UTC). Probe P3a demonstrates it and is the single
 EXPECTED BREAK.
 
 Footer note (wave-305 lesson): the FINDINGS.md footer is now
-"open none / next F413". The P5 expected tallies below are the
+"open F412 / next F413". The P5 expected tallies below are the
 post-merge tallies with all footer-state probes swept to the final
 footer.
 
@@ -41,8 +41,8 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
-TAXONOMY_PIN = 2045  # Wave-327 merge: pin 2035 -> 2045 (+9 policy-channel-*)
-FOOTER_OPEN = "none"  # F409/F410/F411/F412 CLOSED; no open findings.
+TAXONOMY_PIN = 2047  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*); Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned)
+FOOTER_OPEN = "F412"  # F409/F410/F411 CLOSED; F412 (LOW, standing-conflict) OPEN.
 FOOTER_NEXT = "F413"  # Next free finding number.
 
 _results = []
@@ -141,33 +141,44 @@ def _pin_snapshot(snapshot, threshold=1, freshness=3600, seed_byte=11):
 
 @probe("P1a-supersede-tie-order-dependent")
 def _p1a():
-    """Two same-version conflicting snapshots: supersede() is first-wins.
+    """Two same-version conflicting snapshots: supersede() refuses LOUD.
 
-    DOCUMENTED order-dependence (deployment controls the list order): with
-    [allow, flagged] the survivor is allow; with [flagged, allow] it is
-    flagged. This probe LOCKS the behavior -- a flip to last-wins or a
-    nondeterministic order would be a flip-suppression vector. HELD as
-    designed; the residual (same-version conflicts should not exist in a
-    well-formed feed) is a hardening note, not a finding.
+    HARDENED (wave-328 lane 2): first-wins made the survivor
+    order-dependent. An exact version tie between two DIFFERENT
+    presented records is now refused with ``advisory-version-tie`` --
+    same-version conflicts must not exist in a well-formed feed, and
+    the feed (not the tie-break) is fixed. The identical-object case
+    (the same record presented twice) is harmless dedup-able input and
+    is NOT refused.
     """
     from gov import advisory_binding as ab
     snap_allow = _signed_snapshot({"pkg-a": "allow"}, version=3)
     snap_flag = _signed_snapshot({"pkg-a": "flagged"}, version=3)
     pinned_allow = _pin_snapshot(snap_allow)
     pinned_flag = _pin_snapshot(snap_flag)
-    s1 = ab.supersede([pinned_allow, pinned_flag])
-    s2 = ab.supersede([pinned_flag, pinned_allow])
-    r1 = ab.check_package(s1, "pkg-a", 1_700_000_100)
     try:
-        r2 = ab.check_package(s2, "pkg-a", 1_700_000_100)
-        v2 = r2["verdict"]
+        ab.supersede([pinned_allow, pinned_flag])
+        return _break("P1a-supersede-tie-order-dependent",
+                      "same-version tie ACCEPTED (order-dependent survivor)")
     except ab.AdvisoryBindingError as exc:
-        v2 = exc.code
-    if r1["verdict"] == "advisory-clear" and v2 == "package-advisory-flagged":
-        return _held("P1a-supersede-tie-order-dependent",
-                     "same-version ties are first-wins (order-dependent, locked)")
-    return _break("P1a-supersede-tie-order-dependent",
-                  "tie behavior changed: %r vs %r" % (r1["verdict"], v2))
+        if exc.code != "advisory-version-tie":
+            return _break("P1a-supersede-tie-order-dependent",
+                          "tie refused with wrong code %r" % (exc.code,))
+    # Identical object twice: dedup-able, must not refuse.
+    try:
+        s = ab.supersede([pinned_allow, pinned_allow])
+    except ab.AdvisoryBindingError as exc:
+        return _break("P1a-supersede-tie-order-dependent",
+                      "identical record refused: %r" % (exc.code,))
+    # Normal newest-wins still works.
+    snap_new = _signed_snapshot({"pkg-a": "flagged"}, version=4)
+    pinned_new = _pin_snapshot(snap_new)
+    if ab.supersede([pinned_allow, pinned_new]) is not pinned_new:
+        return _break("P1a-supersede-tie-order-dependent",
+                      "newest-wins regressed")
+    return _held("P1a-supersede-tie-order-dependent",
+                 "same-version tie refused coded advisory-version-tie; "
+                 "dedup + newest-wins intact")
 
 
 @probe("P1b-forged-advisory-signature-threshold-unmet")
@@ -348,12 +359,14 @@ def _p1g():
 
 @probe("P1h-handbuilt-pin-inflated-signatures")
 def _p1h():
-    """Caller-boundary lock: check_package trusts the pinned snapshot the
-    DEPLOYMENT passes. A hand-built pinned dict with inflated
-    valid_signatures is honored -- this is the documented caller trust
-    boundary (the deployment must only pin what it verified via
-    bind_advisory_input), not a product bypass. HELD as designed; locks
-    the boundary."""
+    """Sealed-input lock: check_package refuses hand-built pinned dicts.
+
+    HARDENED (wave-328 lane 2): the pinned snapshot was caller-trusted on
+    shape alone, so a hand-built dict with inflated valid_signatures was
+    honored. Now only ``bind_advisory_input``-sealed ``PinnedAdvisory``
+    records are accepted; anything else is refused LOUD with
+    ``advisory-input-unpinned``. The sealed path still verifies normally.
+    """
     from gov import advisory_binding as ab
     pinned = {
         "advisory_policy_input": "handbuilt",
@@ -367,12 +380,23 @@ def _p1h():
         "flags": {"pkg-h": "allow"},
         "digest": "ab" * 32,
     }
-    r = ab.check_package(pinned, "pkg-h", 1_700_000_100)
-    if r["verdict"] == "advisory-clear":
-        return _held("P1h-handbuilt-pin-inflated-signatures",
-                     "pinned snapshot is caller-trusted (boundary locked)")
-    return _break("P1h-handbuilt-pin-inflated-signatures",
-                  "unexpected verdict %r" % (r["verdict"],))
+    try:
+        ab.check_package(pinned, "pkg-h", 1_700_000_100)
+        return _break("P1h-handbuilt-pin-inflated-signatures",
+                      "hand-built pinned dict ACCEPTED")
+    except ab.AdvisoryBindingError as exc:
+        if exc.code != "advisory-input-unpinned":
+            return _break("P1h-handbuilt-pin-inflated-signatures",
+                          "refused with wrong code %r" % (exc.code,))
+    # Sealed path still works.
+    sealed = _pin_snapshot(_signed_snapshot({"pkg-h": "allow"}, version=9))
+    r = ab.check_package(sealed, "pkg-h", 1_700_000_100)
+    if r["verdict"] != "advisory-clear":
+        return _break("P1h-handbuilt-pin-inflated-signatures",
+                      "sealed path regressed: %r" % (r["verdict"],))
+    return _held("P1h-handbuilt-pin-inflated-signatures",
+                 "hand-built pin refused coded advisory-input-unpinned; "
+                 "sealed path verifies")
 
 
 # ---------------------------------------------------------------------------
@@ -822,7 +846,7 @@ def _parse_tally(text):
 
 
 # Post-merge tallies: all footer-state probes swept to the final footer
-# ("open none / next F413"), so the child tallies are the clean
+# ("open F412 / next F413"), so the child tallies are the clean
 # post-closure counts (F409 HELD everywhere). Child mode (GOV_SKIP_GREEN=1).
 _GREEN_EVALS = [
     ("w325-resid", "evals/w325_resid_probes.py", (0, 23, 0)),
@@ -906,17 +930,17 @@ def _p5f():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2045-sorted")
+@probe("P6a-pin-taxonomy-2047-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
-    if TAXONOMY_PIN != 2045:
-        return _break("P6a-pin-taxonomy-2045-sorted",
-                      "TAXONOMY_PIN is %r, want 2045" % (TAXONOMY_PIN,))
-    if len(codes) != 2045 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-2045-sorted",
+    if TAXONOMY_PIN != 2047:
+        return _break("P6a-pin-taxonomy-2047-sorted",
+                      "TAXONOMY_PIN is %r, want 2047" % (TAXONOMY_PIN,))
+    if len(codes) != 2047 or codes != sorted(codes):
+        return _break("P6a-pin-taxonomy-2047-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    return _held("P6a-pin-taxonomy-2045-sorted", "2045/2045/0 sorted")
+    return _held("P6a-pin-taxonomy-2047-sorted", "2047/2047/0 sorted")
 
 
 @probe("P6b-footer-open-f411-next-f412")
@@ -933,8 +957,8 @@ def _p6b():
     if next_free != FOOTER_NEXT:
         return _break("P6b-footer-open-f411-next-f412",
                       "next free %r, want %r" % (next_free, FOOTER_NEXT))
-    return _held("P6b-footer-open-none-next-f413",
-                 "footer open none / next F413")
+    return _held("P6b-footer-open-f412-next-f413",
+                 "footer open F412 / next F413")
 
 
 # ---------------------------------------------------------------------------

@@ -424,6 +424,15 @@ class StandingStore(object):
         Returns ``{"digest", "standing", "chain", "tip_seq"}``. Unknown or
         unregistered digests report standing ``"unknown"`` with an empty
         chain -- never a refusal, never an invented verdict.
+
+        The chain is EVERY knowledge entry for this digest in journal
+        (seq) order -- not just the ``supersedes`` lineage. An agreeing
+        concurrent attach points its ``supersedes`` at the tip's parent,
+        so a pure supersedes-walk would skip the agreeing tip entry and
+        the "full justification chain" would omit one voice. Walking the
+        journal instead keeps the audit trail complete. (Conflict records
+        are not knowledge voices; they stay out of the chain and remain
+        discoverable via the journal.)
         """
         _check_digest(digest)
         tip = self._tip_entry(digest)
@@ -432,9 +441,11 @@ class StandingStore(object):
                     "chain": [], "tip_seq": None}
         tip_seq = tip["seq"]
         chain = []
-        seq = tip_seq
-        while seq is not None:
-            entry = self._by_seq[seq]
+        for entry in self._entries:
+            if entry.get("artifact_digest") != digest:
+                continue
+            if entry.get("kind") != _KIND_KNOWLEDGE:
+                continue
             chain.append({
                 "seq": entry["seq"],
                 "asserted_standing": entry.get("asserted_standing"),
@@ -445,8 +456,6 @@ class StandingStore(object):
                 "advisory_id": entry.get("advisory_id"),
                 "kind": entry.get("kind"),
             })
-            seq = entry.get("supersedes")
-        chain.reverse()
         return {"digest": digest,
                 "standing": tip["asserted_standing"],
                 "chain": chain, "tip_seq": tip_seq}

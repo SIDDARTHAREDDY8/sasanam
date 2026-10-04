@@ -21,7 +21,7 @@ P3 (6): F405 -- the F404 closure's negation-cue vocabulary missed
 P4 (2): w318 green-check depth-1 discipline -- the three w318 batteries'
     green checks honor GOV_SKIP_GREEN; their spawned children do too.
 P5 (3): regressions -- footer open none / next F409; pin taxonomy
-    2045/2045/0 sorted; F404 still closed (out-of-vocabulary
+    2047/2047/0 sorted; F404 still closed (out-of-vocabulary
 
 
     prohibitions refuse).
@@ -96,10 +96,10 @@ def _error(pid, note):
     return (pid, "ERROR", probe_lines.first_line(note)[:160])
 
 
-TAXONOMY_PIN = 2045  # Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-325 lane 2: pin 2012 -> 2018 (+6 federated-identity-*: identity-issuer-key-retired + identity-token-issuer-unknown + identity-token-key-binding-mismatch + identity-token-replayed + identity-token-required + identity-token-ttl-exceeded); Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening (witness-alert-queue-overflow + export-witness-policy-version-below-minimum) + 6 federated-identity-*); Wave-326 lane 2: pin 2020 -> 2027 (+7: 6 supplychain-standing-* + 1 supplychain-feed-outside-trust-boundary)
+TAXONOMY_PIN = 2047  # Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 merge: pin 1906 -> 1933 (+27: 9 grantneg-* +8 identity-* +10 witness-*); Wave-325 lane 2: pin 2012 -> 2018 (+6 federated-identity-*: identity-issuer-key-retired + identity-token-issuer-unknown + identity-token-key-binding-mismatch + identity-token-replayed + identity-token-required + identity-token-ttl-exceeded); Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening (witness-alert-queue-overflow + export-witness-policy-version-below-minimum) + 6 federated-identity-*); Wave-326 lane 2: pin 2020 -> 2027 (+7: 6 supplychain-standing-* + 1 supplychain-feed-outside-trust-boundary); Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned)
 
 
-FOOTER_OPEN = "none"  # F409/F410/F411/F412 CLOSED; no open findings.
+FOOTER_OPEN = "F412"
 FOOTER_NEXT = "F413"
 
 NOW = datetime(2026, 10, 4, 4, 0, 0, tzinfo=timezone.utc)

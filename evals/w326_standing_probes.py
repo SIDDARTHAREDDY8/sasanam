@@ -28,7 +28,7 @@ from gov import ed25519 as ed  # noqa: E402
 from gov import knowledge_ingest as ki  # noqa: E402
 from gov import standing_verdicts as sv  # noqa: E402
 
-TAXONOMY_PIN = 2045  # 2020 + 7 standing-verdict codes (wave-326 lane 2)
+TAXONOMY_PIN = 2047  # 2020 + 7 standing-verdict codes (wave-326 lane 2); Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned)
 
 _results = []
 
@@ -391,7 +391,7 @@ def _p9():
         _cleanup(root)
 
 
-@probe("P10-pin-taxonomy-2045-sorted")
+@probe("P10-pin-taxonomy-2047-sorted")
 def _p10():
     import re
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -401,7 +401,7 @@ def _p10():
         "want %d/%d/0, got %d/%d" % (TAXONOMY_PIN, TAXONOMY_PIN,
                                     len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
-    _held("P10-pin-taxonomy-2045-sorted",
+    _held("P10-pin-taxonomy-2047-sorted",
           "%d/%d/0 sorted" % (TAXONOMY_PIN, TAXONOMY_PIN))
 
 
@@ -409,9 +409,9 @@ def _p10():
 def _p11():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Next free finding: **F413**. **Open findings: none.**" in text, \
+    assert "Next free finding: **F413**. **Open findings: F412.**" in text, \
         "footer mismatch"
-    _held("P11-footer-state", "open none / next F413")
+    _held("P11-footer-state", "open F412 / next F413")
 
 
 # ---------------------------------------------------------------------------

@@ -18,7 +18,7 @@ P3 (3): contract probes -- verify returns the verified VALUES (dict),
     change breaks); trust anchor authority (doc-declared signers do not
     count, only the anchor's do).
 P4 (2): regressions -- footer open none / next F409; pin taxonomy
-    2045/2045/0 sorted on source literals.
+    2047/2047/0 sorted on source literals.
 
 
 
@@ -51,10 +51,10 @@ from gov import checkpoint_note as CN  # noqa: E402
 from gov.witness_log import WitnessLog  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
-TAXONOMY_PIN = 2045#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost)
+TAXONOMY_PIN = 2047#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost); Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned)
 
 
-FOOTER_OPEN = "none"  # F409/F410/F411/F412 CLOSED; no open findings.
+FOOTER_OPEN = "F412"
 FOOTER_NEXT = "F413"
 
 _results = []
@@ -534,7 +534,7 @@ def _p3c():
 # P4: regressions
 # ---------------------------------------------------------------------------
 
-@probe("P4-pin-taxonomy-2045-sorted")
+@probe("P4-pin-taxonomy-2047-sorted")
 
 
 def _p4a():
@@ -542,11 +542,11 @@ def _p4a():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2045
+    ok = (len(lits) == TAXONOMY_PIN == 2047
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P4-pin-taxonomy-2045-sorted", "2045/2045/0 sorted")
-    return _break("P4-pin-taxonomy-2045-sorted",
+        return _held("P4-pin-taxonomy-2047-sorted", "2047/2047/0 sorted")
+    return _break("P4-pin-taxonomy-2047-sorted",
 
 
                   "got %d literals" % (len(lits),))
@@ -561,7 +561,7 @@ def _p4b():
     ok = (m_open and m_open[-1].strip() == FOOTER_OPEN
           and m_next and m_next[-1] == FOOTER_NEXT)
     if ok:
-        return _held("P4-footer-state", "open none / next F413")
+        return _held("P4-footer-state", "open F412 / next F413")
     return _break("P4-footer-state",
                   "got %r / %r" % (m_open[-1] if m_open else None,
                                    m_next[-1] if m_next else None))

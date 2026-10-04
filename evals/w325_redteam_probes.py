@@ -36,8 +36,8 @@ import w324_offver_probes as _wo  # noqa: E402
 import w324_vsa_probes as _wv  # noqa: E402
 import w322_redteam_probes as _w322  # noqa: E402
 
-TAXONOMY_PIN = 2045  # Wave-327 merge: pin 2035 -> 2045 (+9 policy-channel-*)
-FOOTER_OPEN = "none"  # F409/F410/F411/F412 CLOSED; no open findings.
+TAXONOMY_PIN = 2047  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*); Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned)
+FOOTER_OPEN = "F412"  # F409/F410/F411 CLOSED; F412 (LOW, standing-conflict) OPEN.
 FOOTER_NEXT = "F413"  # Next free finding number.
 
 _results = []
@@ -819,7 +819,7 @@ def _parse_tally(text):
 _GREEN_EVALS = [
     # Tallies are post-F409-filing: each battery's footer-state probe
     # breaks once (it was written for the pre-filing footer "open none /
-    # next F409"; the true footer is now "open none / next F413"). The
+    # next F409"; the true footer is now "open F412 / next F413"). The
     # merge updates those footer probes per the wave-305 lesson; the
     # single BREAK in each child is that probe and nothing else.
     ("w324-alert", "evals/w324_alert_probes.py", (0, 18, 0)),
@@ -899,17 +899,17 @@ def _p5e():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2045-sorted")
+@probe("P6a-pin-taxonomy-2047-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
-    if TAXONOMY_PIN != 2045:
-        return _break("P6a-pin-taxonomy-2045-sorted",
+    if TAXONOMY_PIN != 2047:
+        return _break("P6a-pin-taxonomy-2047-sorted",
                       "TAXONOMY_PIN is %r, want 2021" % (TAXONOMY_PIN,))
-    if len(codes) != 2045 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-2045-sorted",
+    if len(codes) != 2047 or codes != sorted(codes):
+        return _break("P6a-pin-taxonomy-2047-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    return _held("P6a-pin-taxonomy-2045-sorted", "2045/2045/0 sorted")
+    return _held("P6a-pin-taxonomy-2047-sorted", "2047/2047/0 sorted")
 
 
 @probe("P6b-footer-open-f409-next-f410")
@@ -917,7 +917,7 @@ def _p6b():
     text = open(os.path.join(REPO, "evals/FINDINGS.md")).read()
     import re
     # The file carries one footer line per wave; the LAST one is current.
-    # Footer form: "Next free finding: **F413**. **Open findings: none.**"
+    # Footer form: "Next free finding: **F413**. **Open findings: F412.**"
     opens = re.findall(r"\*\*Open findings:\s*([^*]+?)\.\*\*", text)
     nexts = re.findall(r"Next free finding:\s*\*\*([^*]+?)\*\*", text)
     open_line = opens[-1].strip() if opens else ""

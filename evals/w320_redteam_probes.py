@@ -20,7 +20,7 @@ P4 (3): F405 re-probe (CLOSED wave-320 lane 1) -- apostrophe-less negation
 P5 (3): wave-319 follow-up spot-check -- 3 of the 70 touched batteries
     re-run beyond their pin probes (w314_provsink, w303_f385, w297_redteam).
 P6 (2): regressions -- footer open none / next F409; pin taxonomy
-    2045/2045/0 sorted on source literals.
+    2047/2047/0 sorted on source literals.
 
 
 
@@ -61,10 +61,10 @@ from tests.keyfixture import scrub_key_env, provision_test_key  # noqa: E402
 
 from evals import probe_lines  # noqa: E402
 
-TAXONOMY_PIN = 2045#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost)
+TAXONOMY_PIN = 2047#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost); Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned)
 
 
-FOOTER_OPEN = "none"  # F409/F410/F411/F412 CLOSED; no open findings.
+FOOTER_OPEN = "F412"
 FOOTER_NEXT = "F413"
 
 _NOW = datetime(2026, 10, 4, 5, 0, 0, tzinfo=timezone.utc)
@@ -701,7 +701,7 @@ def _p5c():
 # P6: regressions (pin + footer)
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-2045-sorted")
+@probe("P6-pin-taxonomy-2047-sorted")
 
 
 def _p6a():
@@ -709,12 +709,12 @@ def _p6a():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2045
+    ok = (len(lits) == TAXONOMY_PIN == 2047
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P6-pin-taxonomy-2045-sorted",
-                     "2045/2045/0 sorted")
-    return _break("P6-pin-taxonomy-2045-sorted",
+        return _held("P6-pin-taxonomy-2047-sorted",
+                     "2047/2047/0 sorted")
+    return _break("P6-pin-taxonomy-2047-sorted",
 
 
                  "got %d literals" % (len(lits),))
@@ -729,7 +729,7 @@ def _p6b():
     ok = (m_open and m_open[-1].strip() == FOOTER_OPEN
           and m_next and m_next[-1] == FOOTER_NEXT)
     if ok:
-        return _held("P6-footer-state", "open none / next F413")
+        return _held("P6-footer-state", "open F412 / next F413")
     return _break("P6-footer-state",
                  "got %r / %r" % (m_open[-1] if m_open else None,
                                   m_next[-1] if m_next else None))

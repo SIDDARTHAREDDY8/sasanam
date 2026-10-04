@@ -43,7 +43,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 from gov import bundle_refresh as br  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
-TAXONOMY_PIN = 2045  # repo footer pin; re-point only if codes are added.
+TAXONOMY_PIN = 2047  # repo footer pin; re-point only if codes are added.; Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned)
 
 
 # ---------------------------------------------------------------------------

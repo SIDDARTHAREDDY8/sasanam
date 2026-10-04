@@ -21,7 +21,7 @@ sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 
-TAXONOMY_PIN = 2045  # 1995 + 5 vsa-threshold-*; Wave-325 lane 2: pin 2012 -> 2018 (+6 federated-identity-*: identity-issuer-key-retired + identity-token-issuer-unknown + identity-token-key-binding-mismatch + identity-token-replayed + identity-token-required + identity-token-ttl-exceeded); Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening (witness-alert-queue-overflow + export-witness-policy-version-below-minimum) + 6 federated-identity-*); Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost)
+TAXONOMY_PIN = 2047  # 1995 + 5 vsa-threshold-*; Wave-325 lane 2: pin 2012 -> 2018 (+6 federated-identity-*: identity-issuer-key-retired + identity-token-issuer-unknown + identity-token-key-binding-mismatch + identity-token-replayed + identity-token-required + identity-token-ttl-exceeded); Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening (witness-alert-queue-overflow + export-witness-policy-version-below-minimum) + 6 federated-identity-*); Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost); Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned)
 
 _results = []
 
@@ -380,7 +380,7 @@ def _p16():
 # P17/P18: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P17-pin-taxonomy-2045-sorted")
+@probe("P17-pin-taxonomy-2047-sorted")
 def _p17():
     from gov import decision_codes as dc
     import re
@@ -392,7 +392,7 @@ def _p17():
                                      len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
     assert len(dc.TAXONOMY) == TAXONOMY_PIN
-    _held("P17-pin-taxonomy-2045-sorted",
+    _held("P17-pin-taxonomy-2047-sorted",
           "%d/%d/0 sorted" % (TAXONOMY_PIN, TAXONOMY_PIN))
 
 
@@ -400,9 +400,9 @@ def _p17():
 def _p18():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Next free finding: **F413**. **Open findings: none.**" in text, \
+    assert "Next free finding: **F413**. **Open findings: F412.**" in text, \
         "footer mismatch"
-    _held("P18-footer-state", "open none / next F413")
+    _held("P18-footer-state", "open F412 / next F413")
 
 
 # ---------------------------------------------------------------------------

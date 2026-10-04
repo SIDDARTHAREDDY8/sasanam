@@ -33,7 +33,13 @@ composes)::
         "code": <decision code or None>,
         "detail": <str>,
         "checked": [...],          # from verify_delegated_authority
-        "missed_intervals": [...], # caught-up LOUD, never silently skipped
+        "missed_intervals": [...], # caught-up LOUD, never silently skipped;
+                                   # capped at MAX_MISSED_INTERVALS_REPORTED
+        "missed_intervals_truncated": bool,  # True when the cap bit
+        "missed_intervals_total": int,       # true catch-up count, LOUD
+        "clock_trust": "caller-supplied",  # LOUD: TTL/expiry trusts the
+            # caller's clock (``now``) or the process clock; the deployment
+            # owns clock integrity -- see CLOCK_TRUST.
         "notes": [...],            # crash recovery etc, LOUD
         "standing": {
             "status": "current" | "lapsed" | "never-scanned",
@@ -76,6 +82,15 @@ from gov import skill_supply_chain as _sc
 REPORT_SCHEMA = "sasanam-background-scan-report/v1"
 STATE_SCHEMA = "sasanam-background-scan-state/v1"
 
+# CLOCK-TRUST ASSUMPTION (stated LOUD, not hidden): every TTL/expiry
+# evaluation in this module trusts the caller-supplied ``now`` (or the
+# process clock when ``now`` is omitted). A skewed or lying clock moves
+# expiry boundaries and the missed-interval accounting. The deployment
+# owns clock integrity; this module records the assumption in every
+# report's ``clock_trust`` field so no auditor mistakes the timestamps
+# for independently verified time.
+CLOCK_TRUST = "caller-supplied"
+
 _NEW_CODES = (
     "supplychain-scan-malformed",
     "supplychain-scan-state-corrupt",
@@ -84,7 +99,16 @@ _NEW_CODES = (
     "supplychain-scan-missed-interval",
     "supplychain-scan-content-mismatch",
     "supplychain-standing-lapsed",
+    "supplychain-scan-already-registered",
 )
+
+# Bound on the missed_intervals list carried in a report. A pathological
+# clock gap (or a huge caller-supplied ``now``) would otherwise build an
+# unbounded list; the true total is always carried in
+# ``missed_intervals_total`` and the truncation is flagged LOUD, so no
+# catch-up is ever silently dropped -- only the per-slot listing is
+# capped.
+MAX_MISSED_INTERVALS_REPORTED = 128
 
 
 class BackgroundScanError(ValueError):
@@ -237,6 +261,18 @@ def register_skill(state_path, *, skill_path, delegation_wire, authz_wire,
         if exc.code != "supplychain-scan-state-missing":
             raise
         state = {"schema": STATE_SCHEMA, "skills": {}}
+    if skill_path in state["skills"]:
+        # Re-registration is a caller bug, not a refresh: the scan itself
+        # re-baselines digests and delegation versions after successful
+        # re-verification, so a second register_skill would silently
+        # discard scan history (last verdict, consecutive refusals,
+        # standing). Refuse LOUD; TTL/interval changes go through
+        # update_skill_registration.
+        _fail("supplychain-scan-already-registered",
+              "skill %r is already registered; re-registration is "
+              "refused to protect scan history -- use "
+              "update_skill_registration for TTL/interval changes"
+              % (skill_path,))
     rec = {
         "digest": _digest_of(skill_bytes),
         "delegations_version": _delegation_version(delegation_wire),
@@ -257,6 +293,42 @@ def register_skill(state_path, *, skill_path, delegation_wire, authz_wire,
     return dict(rec)
 
 
+def update_skill_registration(state_path, *, skill_path, ttl_seconds=None,
+                              scan_interval_seconds=None):
+    """Change a registered skill's TTL and/or scan interval.
+
+    The legitimate configuration-change path: ``register_skill`` refuses
+    re-registration LOUD, so deployments change schedule parameters here.
+    Only schedule parameters are touched -- the scan-owned baselines
+    (digest, delegation versions, verdict history, standing) are never
+    rewritten by this function; the scan itself re-baselines those after
+    successful re-verification.
+    """
+    if not isinstance(skill_path, str) or not skill_path:
+        _fail("supplychain-scan-malformed",
+              "skill_path must be a non-empty str")
+    state = _load_state(state_path)
+    rec = state["skills"].get(skill_path)
+    if rec is None:
+        _fail("supplychain-scan-malformed",
+              "skill %r not registered: register_skill first" % (skill_path,))
+    if ttl_seconds is not None:
+        if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, int) \
+                or ttl_seconds <= 0:
+            _fail("supplychain-scan-malformed",
+                  "ttl_seconds must be a +int")
+        rec["ttl_seconds"] = ttl_seconds
+    if scan_interval_seconds is not None:
+        if isinstance(scan_interval_seconds, bool) \
+                or not isinstance(scan_interval_seconds, int) \
+                or scan_interval_seconds <= 0:
+            _fail("supplychain-scan-malformed",
+                  "scan_interval_seconds must be a +int")
+        rec["scan_interval_seconds"] = scan_interval_seconds
+    _store_state(state_path, state)
+    return dict(rec)
+
+
 def _utcnow():
     return int(time.time())
 
@@ -266,38 +338,50 @@ def _utcnow():
 # ---------------------------------------------------------------------------
 
 def _evaluate_triggers(rec, *, digest_now, deleg_version_now, now):
-    """Return (trigger, missed_intervals). ``trigger`` may be None."""
-    missed = []
+    """Return (trigger, missed_intervals, missed_total).
+
+    ``trigger`` may be None. ``missed_intervals`` is capped at
+    MAX_MISSED_INTERVALS_REPORTED and ``missed_total`` is the true
+    count, so the cap never silently drops a catch-up: the report
+    carries the total and a truncation flag LOUD.
+
+    The count is computed ARITHMETICALLY, never by iterating the gap:
+    a pathological caller-supplied ``now`` (the clock-trust assumption
+    is caller-owned, see CLOCK_TRUST) must not be able to spin the
+    scan O(gap/interval). At most MAX_MISSED_INTERVALS_REPORTED slots
+    are ever materialized.
+    """
     interval = rec["scan_interval_seconds"]
     nxt = rec["next_scan_at"]
-    # Missed intervals: every scheduled time strictly before now, excluding
-    # the currently-due one, is caught up LOUD.
-    t = nxt
-    while t + interval < now:
-        missed.append(t)
-        t += interval
+    # Missed intervals: every scheduled time strictly before now,
+    # excluding the currently-due one, is caught up LOUD. Count of
+    # k >= 0 with nxt + k*interval + interval < now.
+    total = max(0, (now - nxt - 1) // interval)
+    missed = [nxt + k * interval
+              for k in range(min(total, MAX_MISSED_INTERVALS_REPORTED))]
     if digest_now != rec["digest"]:
-        return "resource-change", missed
+        return "resource-change", missed, total
     if (deleg_version_now is not None
             and rec["delegations_version"] is not None
             and deleg_version_now != rec["delegations_version"]):
-        return "policy-change", missed
+        return "policy-change", missed, total
     if deleg_version_now is None and rec["delegations_version"] is not None:
         # The wire no longer parses as a delegation document -- the
         # verification step will fail loudly; force the scan now.
-        return "policy-change", missed
+        return "policy-change", missed, total
     if now >= nxt:
-        return "interval", missed
-    return None, missed
+        return "interval", missed, total
+    return None, missed, total
 
 
 def _scan_one(skill_path, rec, *, skill_bytes, delegation_wire, authz_wire,
               root_trust, now):
     digest_now = _digest_of(skill_bytes)
     deleg_version_now = _delegation_version(delegation_wire)
-    trigger, missed = _evaluate_triggers(
+    trigger, missed, missed_total = _evaluate_triggers(
         rec, digest_now=digest_now,
         deleg_version_now=deleg_version_now, now=now)
+    truncated = missed_total > len(missed)
 
     report = {
         "schema": REPORT_SCHEMA,
@@ -310,6 +394,9 @@ def _scan_one(skill_path, rec, *, skill_bytes, delegation_wire, authz_wire,
         "detail": "",
         "checked": [],
         "missed_intervals": missed,
+        "missed_intervals_truncated": truncated,
+        "missed_intervals_total": missed_total,
+        "clock_trust": CLOCK_TRUST,
         "notes": [],
         "standing": {
             "status": rec["status"],
@@ -318,10 +405,15 @@ def _scan_one(skill_path, rec, *, skill_bytes, delegation_wire, authz_wire,
             "ttl_seconds": rec["ttl_seconds"],
         },
     }
-    if missed:
-        report["notes"].append(
-            "supplychain-scan-missed-interval: %d scheduled scan(s) missed "
-            "and caught up now (never silently skipped)" % (len(missed),))
+    if missed_total:
+        note = ("supplychain-scan-missed-interval: %d scheduled scan(s) "
+                "missed and caught up now (never silently skipped)"
+                % (missed_total,))
+        if truncated:
+            note += ("; per-slot listing truncated to %d entries, see "
+                     "missed_intervals_total"
+                     % (MAX_MISSED_INTERVALS_REPORTED,))
+        report["notes"].append(note)
         report["code"] = "supplychain-scan-missed-interval"
 
     new_rec = dict(rec)
@@ -414,6 +506,13 @@ def run_scan(state_path, inventory, root_trust, *, now=None):
     ``delegation_wire``, ``authz_wire``. ``root_trust``: the deployment
     root-trust document (out-of-band bootstrap). ``now``: pinned epoch for
     the whole pass (every expiry check uses it and nothing else).
+
+    CLOCK TRUST (deployment assumption, stated LOUD): ``now`` is
+    caller-supplied, or the process clock when omitted. Every TTL/expiry
+    evaluation and the missed-interval accounting trust that clock; a
+    skewed clock moves the boundaries. The deployment owns clock
+    integrity. Each report carries ``clock_trust: "caller-supplied"`` so
+    the assumption travels with the evidence (see CLOCK_TRUST).
 
     Returns the list of per-skill reports. Never enforces -- every refusal
     is carried in the report for a separate actuator.

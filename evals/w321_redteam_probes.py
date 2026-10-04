@@ -27,7 +27,7 @@ Probe map (public seams only):
  P4: regression -- the depth-1 green check re-runs the four wave-320
      batteries (w320_redteam 0/30/0, w320_quorum 0/18/0,
      w320_grantwiring 0/10/0, w319_redteam 0/24/0).
- P5 (2): pin taxonomy 2045/2045/0 sorted on source literals; footer
+ P5 (2): pin taxonomy 2047/2047/0 sorted on source literals; footer
      open none / next F409.
 
 
@@ -67,10 +67,10 @@ from gov.approvals import approval_digest_ok  # noqa: E402
 import gov.provenance_sink as PS  # noqa: E402
 import gov.provenance_labels as PL  # noqa: E402
 
-TAXONOMY_PIN = 2045#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost)
+TAXONOMY_PIN = 2047#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost); Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned)
 
 
-FOOTER_OPEN = "none"  # F409/F410/F411/F412 CLOSED; no open findings.
+FOOTER_OPEN = "F412"
 FOOTER_NEXT = "F413"
 
 _results = []
@@ -748,11 +748,11 @@ def p5_pin_taxonomy_sorted():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2045
+    ok = (len(lits) == TAXONOMY_PIN == 2047
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P5-pin-taxonomy-2045-sorted", True, "2045/2045/0 sorted")
-    return _break("P5-pin-taxonomy-2045-sorted",
+        return _held("P5-pin-taxonomy-2047-sorted", True, "2047/2047/0 sorted")
+    return _break("P5-pin-taxonomy-2047-sorted",
 
 
                   "got %d literals" % (len(lits),))
@@ -766,7 +766,7 @@ def p5_footer_state():
     ok = (m_open and m_open[-1].strip() == FOOTER_OPEN
           and m_next and m_next[-1] == FOOTER_NEXT)
     if ok:
-        return _held("P5-footer-state", True, "open none / next F413")
+        return _held("P5-footer-state", True, "open F412 / next F413")
     return _break("P5-footer-state",
                   "got %r / %r" % (m_open[-1] if m_open else None,
                                    m_next[-1] if m_next else None))

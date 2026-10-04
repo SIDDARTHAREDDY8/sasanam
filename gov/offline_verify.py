@@ -112,7 +112,7 @@ import json
 import os
 
 # ---------------------------------------------------------------------------
-# Codes (registered centrally in gov/decision_codes.py; pin 2045).
+# Codes (registered centrally in gov/decision_codes.py; pin 2047).
 # ---------------------------------------------------------------------------
 
 OFFLINE_VERIFY_MALFORMED = "offline-verify-malformed"

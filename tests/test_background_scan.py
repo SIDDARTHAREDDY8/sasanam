@@ -112,13 +112,35 @@ class TestRegistrationValidation(unittest.TestCase):
         self.assertEqual(state["schema"], "sasanam-background-scan-state/v1")
         self.assertIn(SKILL, state["skills"])
 
-    def test_re_registration_updates_baseline(self):
+    def test_re_registration_refused_loud(self):
+        # Wave-328 lane 2: re-registration is a caller bug and is refused
+        # LOUD; it no longer silently re-baselines.
         sp = _tmp_state()
         _register(sp, now=T0)
-        _register(sp, now=T0 + 5, delegation_wire=_deleg_wire(2))
+        with self.assertRaises(BS.BackgroundScanError) as ctx:
+            _register(sp, now=T0 + 5, delegation_wire=_deleg_wire(2))
+        self.assertEqual(ctx.exception.code,
+                         "supplychain-scan-already-registered")
         with open(sp, encoding="utf-8") as _fh:
             state = json.load(_fh)
-        self.assertEqual(state["skills"][SKILL]["delegations_version"], 2)
+        # Baseline untouched by the refused call.
+        self.assertEqual(state["skills"][SKILL]["delegations_version"], 1)
+
+    def test_update_skill_registration_config_path(self):
+        # Wave-328 lane 2: the legitimate config-change path; scan-owned
+        # baselines are never rewritten by it.
+        sp = _tmp_state()
+        _register(sp, now=T0)
+        rec = BS.update_skill_registration(
+            sp, skill_path=SKILL, ttl_seconds=999,
+            scan_interval_seconds=60)
+        self.assertEqual(rec["ttl_seconds"], 999)
+        self.assertEqual(rec["scan_interval_seconds"], 60)
+        self.assertEqual(rec["delegations_version"], 1)
+        with self.assertRaises(BS.BackgroundScanError) as ctx:
+            BS.update_skill_registration(
+                sp, skill_path="skills/nope", ttl_seconds=1)
+        self.assertEqual(ctx.exception.code, "supplychain-scan-malformed")
 
     def test_register_returns_record(self):
         rec = _register(_tmp_state())
@@ -136,21 +158,22 @@ class TestTriggerEvaluation(unittest.TestCase):
         return rec
 
     def test_interval_due(self):
-        trig, missed = BS._evaluate_triggers(self._rec(), now=T0 + 100,
+        trig, missed, missed_total = BS._evaluate_triggers(self._rec(), now=T0 + 100,
                                        digest_now="d",
                                        deleg_version_now=1)
         self.assertEqual(trig, "interval")
         self.assertEqual(missed, [])
+        self.assertEqual(missed_total, 0)
 
     def test_interval_not_due(self):
-        trig, missed = BS._evaluate_triggers(self._rec(), now=T0 + 99,
+        trig, missed, missed_total = BS._evaluate_triggers(self._rec(), now=T0 + 99,
                                        digest_now="d",
                                        deleg_version_now=1)
         self.assertIsNone(trig)
         self.assertEqual(missed, [])
 
     def test_missed_intervals_counted(self):
-        trig, missed = BS._evaluate_triggers(self._rec(), now=T0 + 350,
+        trig, missed, missed_total = BS._evaluate_triggers(self._rec(), now=T0 + 350,
                                        digest_now="d",
                                        deleg_version_now=1)
         # The currently-due interval (T0+300) is the live trigger,
@@ -159,25 +182,25 @@ class TestTriggerEvaluation(unittest.TestCase):
         self.assertEqual(trig, "interval")
 
     def test_policy_change_trigger(self):
-        trig, _ = BS._evaluate_triggers(self._rec(), now=T0,
+        trig, _, _ = BS._evaluate_triggers(self._rec(), now=T0,
                                         digest_now="d", deleg_version_now=2)
         self.assertEqual(trig, "policy-change")
 
     def test_policy_change_unknown_baseline_no_trigger(self):
         # Baseline version unknown: cannot claim a change.
         rec = self._rec(delegations_version=None)
-        trig, _ = BS._evaluate_triggers(rec, now=T0, digest_now="d",
+        trig, _, _ = BS._evaluate_triggers(rec, now=T0, digest_now="d",
                                         deleg_version_now=2)
         self.assertIsNone(trig)
 
     def test_resource_change_trigger(self):
-        trig, _ = BS._evaluate_triggers(self._rec(), now=T0, digest_now="other",
+        trig, _, _ = BS._evaluate_triggers(self._rec(), now=T0, digest_now="other",
                                         deleg_version_now=1)
         self.assertEqual(trig, "resource-change")
 
     def test_policy_beats_interval_in_precedence(self):
         # When both fire, policy-change is the reported trigger.
-        trig, _ = BS._evaluate_triggers(self._rec(), now=T0 + 500,
+        trig, _, _ = BS._evaluate_triggers(self._rec(), now=T0 + 500,
                                         digest_now="d", deleg_version_now=2)
         self.assertEqual(trig, "policy-change")
 

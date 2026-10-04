@@ -20,7 +20,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2045  # 1967 + 3 witness-publish-*/witness-checkpoint-*; Wave-325 lane 2: pin 2012 -> 2018 (+6 federated-identity-*: identity-issuer-key-retired + identity-token-issuer-unknown + identity-token-key-binding-mismatch + identity-token-replayed + identity-token-required + identity-token-ttl-exceeded); Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening (witness-alert-queue-overflow + export-witness-policy-version-below-minimum) + 6 federated-identity-*); Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost)
+TAXONOMY_PIN = 2047  # 1967 + 3 witness-publish-*/witness-checkpoint-*; Wave-325 lane 2: pin 2012 -> 2018 (+6 federated-identity-*: identity-issuer-key-retired + identity-token-issuer-unknown + identity-token-key-binding-mismatch + identity-token-replayed + identity-token-required + identity-token-ttl-exceeded); Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening (witness-alert-queue-overflow + export-witness-policy-version-below-minimum) + 6 federated-identity-*); Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost); Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned)
 
 
 
@@ -477,7 +477,7 @@ def _p14():
 # P15: regressions -- pin taxonomy + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P15-pin-taxonomy-2045-sorted")
+@probe("P15-pin-taxonomy-2047-sorted")
 
 
 def _p15():
@@ -485,12 +485,12 @@ def _p15():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2045
+    ok = (len(lits) == TAXONOMY_PIN == 2047
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        _held("P15-pin-taxonomy-2045-sorted", "2045/2045/0 sorted")
+        _held("P15-pin-taxonomy-2047-sorted", "2047/2047/0 sorted")
     else:
-        _break("P15-pin-taxonomy-2045-sorted",
+        _break("P15-pin-taxonomy-2047-sorted",
 
 
                "got %d literals" % (len(lits),))
@@ -505,7 +505,7 @@ def _p15b():
     opens = re.findall(r"Open findings: ([A-Za-z0-9, ]*)\.", text)
     nexts = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
     if opens and nexts and opens[-1] == "F412" and nexts[-1] == "F413":
-        _held("P15-footer-state", "open none / next F413")
+        _held("P15-footer-state", "open F412 / next F413")
     else:
         _break("P15-footer-state", "footer=%r next=%r"
                % (opens[-1] if opens else None,

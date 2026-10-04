@@ -73,6 +73,10 @@ _CHAIN_SOURCE_UNAVAILABLE = "chain-source-unavailable"
 _CHAIN_SOURCE_STALE = "chain-source-stale"
 _REGISTRY_THRESHOLD_UNMET = "registry-threshold-unmet"
 _VERIFIER_INPUT_MALFORMED = "verifier-input-malformed"
+# New in wave-328 (registered in gov/decision_codes.py):
+#   "advisory-version-tie", "advisory-input-unpinned"
+_ADVISORY_VERSION_TIE = "advisory-version-tie"
+_ADVISORY_INPUT_UNPINNED = "advisory-input-unpinned"
 
 _ASSERTED = "asserted"
 _KEY_BOUND = "key-bound"
@@ -96,6 +100,23 @@ def _refuse(code, detail):
 
 def _malformed(detail):
     _refuse(_VERIFIER_INPUT_MALFORMED, detail)
+
+
+class PinnedAdvisory(dict):
+    """Sealed advisory input: only ``bind_advisory_input`` builds these.
+
+    ``check_package`` accepts ONLY this type. A plain dict -- even one
+    with all the right fields -- is refused LOUD
+    (``advisory-input-unpinned``): the deployment must pin through
+    ``bind_advisory_input`` (shape + canonical digest + signature
+    threshold checks), never hand-build the pinned record. Dict
+    subclassing keeps every existing consumer working unchanged.
+
+    Convention-grade seal (stated honestly): the constructor is public,
+    so this stops accidental hand-built dicts -- the observed gap --
+    not a determined direct construction. A caller that deliberately
+    builds one is attacking its own check.
+    """
 
 
 def _num(value, name):
@@ -228,7 +249,9 @@ def bind_advisory_input(policy, snapshot, now):
 
     Checks, in order: policy shape -> snapshot shape -> canonical-byte
     digest (tamper-evident) -> signature verification against the
-    policy trust list. Returns the pinned record; refuses fail-closed.
+    policy trust list. Returns the pinned record as a ``PinnedAdvisory``
+    (sealed: only ``check_package`` accepts it, and only this function
+    builds it); refuses fail-closed.
     """
     policy_input, freshness, threshold, trusted = _check_policy(policy)
     _num(now, "now")
@@ -261,7 +284,7 @@ def bind_advisory_input(policy, snapshot, now):
                    "(possible tampering)")
     valid = _count_valid_signatures(
         canon, snapshot.get("signatures"), trusted)
-    return {
+    return PinnedAdvisory({
         "advisory_policy_input": policy_input,
         "advisory_id": advisory_id,
         "version": version,
@@ -272,7 +295,7 @@ def bind_advisory_input(policy, snapshot, now):
         "valid_signatures": valid,
         "flags": dict(flags),
         "digest": digest,
-    }
+    })
 
 
 def supersede(pinned_list):
@@ -282,6 +305,11 @@ def supersede(pinned_list):
     current set (the freshness bound on ``bind_advisory_input`` catches
     a stale feed). An empty set means no advisory source at all ->
     ``chain-source-unavailable`` (fail closed).
+
+    An exact version tie between two DIFFERENT presented records is
+    refused LOUD (``advisory-version-tie``): first-wins would make the
+    survivor order-dependent, and same-version conflicts must not exist
+    in a well-formed feed -- the feed, not the tie-break, is fixed.
     """
     if not isinstance(pinned_list, list):
         _malformed("pinned_list must be a list")
@@ -297,6 +325,13 @@ def supersede(pinned_list):
             _malformed("pinned advisory version must be an int")
         if best is None or version > best["version"]:
             best = pinned
+        elif version == best["version"] and pinned is not best:
+            _refuse(_ADVISORY_VERSION_TIE,
+                    "two presented advisories share version %d (%r vs "
+                    "%r); the survivor would be order-dependent -- the "
+                    "feed must not contain same-version conflicts"
+                    % (version, best.get("advisory_id"),
+                       pinned.get("advisory_id")))
     return best
 
 
@@ -312,8 +347,15 @@ def check_package(pinned, package_id, now):
     if pinned is None:
         _refuse(_CHAIN_SOURCE_UNAVAILABLE,
                 "no pinned advisory input for this check")
-    if not isinstance(pinned, dict):
-        _malformed("pinned advisory must be a dict")
+    if not isinstance(pinned, PinnedAdvisory):
+        # The pinned record is caller-trusted ONLY when it came out of
+        # bind_advisory_input (shape + canonical digest + signature
+        # threshold verified there). A hand-built dict -- even with all
+        # the right fields -- is refused LOUD: the deployment must pin
+        # through bind_advisory_input, never assemble the record itself.
+        _refuse(_ADVISORY_INPUT_UNPINNED,
+                "pinned advisory must be a bind_advisory_input-sealed "
+                "PinnedAdvisory, got %s" % (type(pinned).__name__,))
     for field in ("advisory_policy_input", "advisory_id", "version",
                   "fetched_at", "freshness_seconds",
                   "signature_threshold", "valid_signatures", "flags"):
