@@ -10458,6 +10458,59 @@ TAXONOMY = {
         "evidence_kinds_required": ['execution-evidence'],
         "reverify_steps": ['recompute'],
     },
+    'oci-artifact-type-mismatch': {
+        "domain": 'oci',
+        "code": 'oci-artifact-type-mismatch',
+        "human": 'OCI distribution: candidate manifest artifactType is not '
+                 'the expected Sasanam evidence artifactType; refused '
+                 'fail-closed, never silently accepted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'oci-blob-digest-mismatch': {
+        "domain": 'oci',
+        "code": 'oci-blob-digest-mismatch',
+        "human": 'OCI distribution: bytes pulled by digest do not match the '
+                 'descriptor (bytes differ, or the blob was not served) -- '
+                 'recomputed evidence disagrees with the claim, treat as '
+                 'possible tampering; refused fail-closed',
+        "severity": 'critical',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'oci-manifest-malformed': {
+        "domain": 'oci',
+        "code": 'oci-manifest-malformed',
+        "human": 'OCI distribution: manifest bytes from the registry fail '
+                 'shape validation (not a subject-bearing OCI manifest); '
+                 'the registry is untrusted, its bytes are validated before '
+                 'any field is trusted; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'oci-referrers-unavailable': {
+        "domain": 'oci',
+        "code": 'oci-referrers-unavailable',
+        "human": 'OCI distribution: no referrer discovered for the subject '
+                 'digest via the referrers API or the tag-schema fallback; '
+                 'refused fail-closed, never a silent None',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'oci-subject-mismatch': {
+        "domain": 'oci',
+        "code": 'oci-subject-mismatch',
+        "human": 'OCI distribution: candidate manifest subject digest is not '
+                 'the queried subject digest -- the registry served a '
+                 'manifest for a different subject; refused fail-closed, '
+                 'never returns the wrong evidence',
+        "severity": 'high',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
     'oidc-ambiguous-subject': {
         "domain": 'oidc',
         "code": 'oidc-ambiguous-subject',
