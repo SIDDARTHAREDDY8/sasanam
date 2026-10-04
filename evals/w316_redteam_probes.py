@@ -582,26 +582,26 @@ def _p5_footer():
                  "open none / next F408")
 
 
-@probe("P5-pin-taxonomy-1990-sorted")
+@probe("P5-pin-taxonomy-2006-sorted")
 def _p5_pin():
-    """Taxonomy pin 1990/1990/0 on raw source literals, sorted, unique
+    """Taxonomy pin 2006/2006/0 on raw source literals, sorted, unique
     (wave-260 lesson: assert on literals, not the deduped dict)."""
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    if len(lits) != 1990:
-        return _break("P5-pin-taxonomy-1990-sorted",
-                      "literals %d != pin 1990" % len(lits))
+    if len(lits) != 2006:
+        return _break("P5-pin-taxonomy-2006-sorted",
+                      "literals %d != pin 2006" % len(lits))
     if len(set(lits)) != len(lits):
-        return _break("P5-pin-taxonomy-1990-sorted",
+        return _break("P5-pin-taxonomy-2006-sorted",
                       "duplicate code literals in source")
     if sorted(lits) != lits:
-        return _break("P5-pin-taxonomy-1990-sorted", "literals not sorted")
-    if len(DC.TAXONOMY) != 1990:
-        return _break("P5-pin-taxonomy-1990-sorted",
+        return _break("P5-pin-taxonomy-2006-sorted", "literals not sorted")
+    if len(DC.TAXONOMY) != 2006:
+        return _break("P5-pin-taxonomy-2006-sorted",
                       "TAXONOMY dict has %d" % len(DC.TAXONOMY))
-    return _held("P5-pin-taxonomy-1990-sorted", "1990/1990/0 sorted")
+    return _held("P5-pin-taxonomy-2006-sorted", "2006/2006/0 sorted")
 
 
 def _run_battery(path, expect, break_must_contain=None):

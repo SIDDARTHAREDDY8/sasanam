@@ -36,7 +36,7 @@ P7 (2): F403 re-probe on the CLOSED tree -- the 3-file standalone
 P8 (2): decision_bom level-3 fallback divergence risk -- an unknown
     ladder mode in the standalone path refuses (stricter, never
     looser); the pin test fails loudly on drift, never silently.
-P9 (3): regressions -- footer, pin taxonomy 1990/1990/0 sorted, the
+P9 (3): regressions -- footer, pin taxonomy 2006/2006/0 sorted, the
     wave-317 producer USER/TOOL grading pin.
 
 Result contract: each probe prints [HELD]/[BREAK]/[ERROR]. Exit 0 iff
@@ -863,7 +863,7 @@ def _p9_footer():
                  "footer pins open none / next F408")
 
 
-@probe("P9-pin-taxonomy-1990-sorted")
+@probe("P9-pin-taxonomy-2006-sorted")
 def _p9_pin():
     try:
         lits = re.findall(r'"code":\s*\'([^\']+)\'',
@@ -871,14 +871,14 @@ def _p9_pin():
                                             "decision_codes.py"),
                                encoding="utf-8").read())
     except Exception as exc:  # noqa: BLE001
-        return _error("P9-pin-taxonomy-1990-sorted", "%r" % (exc,))
-    if len(lits) != 1990 or len(set(lits)) != 1990:
-        return _break("P9-pin-taxonomy-1990-sorted",
-                      "got %d literals / %d unique (want 1990/1973)"
+        return _error("P9-pin-taxonomy-2006-sorted", "%r" % (exc,))
+    if len(lits) != 2006 or len(set(lits)) != 2006:
+        return _break("P9-pin-taxonomy-2006-sorted",
+                      "got %d literals / %d unique (want 2006/1973)"
                       % (len(lits), len(set(lits))))
     if lits != sorted(lits):
-        return _break("P9-pin-taxonomy-1990-sorted", "literals not sorted")
-    return _held("P9-pin-taxonomy-1990-sorted", "1990/1990/0 sorted")
+        return _break("P9-pin-taxonomy-2006-sorted", "literals not sorted")
+    return _held("P9-pin-taxonomy-2006-sorted", "2006/2006/0 sorted")
 
 
 # ---------------------------------------------------------------------------
