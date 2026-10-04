@@ -1646,6 +1646,20 @@ class ToolExecutor:
         # Lazy: only created when advisors are configured, preserving
         # the S5 invariant that an advisor-less executor owns no locks.
         self._advisory_lock = threading.Lock() if advisors else None
+        # Wave-316 (F399): one run, one provenance sink. The executor
+        # owns a single ProvenanceSink for its instance lifetime and
+        # passes it to provenance_gate at the sweep seam, so the
+        # REPLAN_BUDGET ratchet, the quarantine set, and the
+        # consumed-declassification set accumulate across calls
+        # instead of being discarded per call. Per-context isolation
+        # is preserved by the sink's ctx_key (tool + influencing
+        # segment ids): a fresh re-plan context gets a fresh budget,
+        # no cross-context bleed. The sink is dropped with the
+        # executor at the end of the run -- state only accumulates on
+        # refusals/quarantines/declassifications (one small entry per
+        # distinct context), bounded by the run's own activity. The
+        # sweep is single-threaded, so the sink is used serially.
+        self._pv_sink = _provenance_sink.ProvenanceSink()
         # Wave-51 P1: persistent run-halt flag. Once a canary trips, the
         # run stays halted server-side: every later call() raises
         # CanaryTripHalt immediately, so catching the exception and
@@ -3093,6 +3107,12 @@ class ToolExecutor:
         # quarantine state, and the infection monitor see the whole
         # lineage. None stays None (opt-in preserved down the tree).
         child._message_bus = self._message_bus
+        # Wave-316 (F399): one lineage, one provenance sink -- the
+        # child shares the parent's run-scoped sink by reference, so a
+        # spawned child's refusals count against the same re-plan
+        # budget (a spawn cannot dodge the escalate-terminal ratchet).
+        # Per-context isolation still holds via the sink's ctx_key.
+        child._pv_sink = self._pv_sink
         return child
 
     def _check_capability_gate(self, *, agent_id, role, principal, tool,
@@ -13055,8 +13075,12 @@ class ToolExecutor:
             # the call continues with the redacted form.
             _pv_segments = rec.get("provenance_segments")
             if _pv_segments is not None:
+                # Wave-316 (F399): pass the run-scoped sink so the
+                # re-plan budget ratchet, quarantine set, and
+                # consumed-declassification set persist across calls.
                 _pv_verdict = _provenance_sink.provenance_gate(
-                    rec["tool"], rec["args"], _pv_segments)
+                    rec["tool"], rec["args"], _pv_segments,
+                    sink=self._pv_sink)
                 if _pv_verdict is not None and \
                         _pv_verdict.verdict in ("REFUSE", "ESCALATE"):
                     _refuse("Approval %s refused: the provenance-graded "

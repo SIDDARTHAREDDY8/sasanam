@@ -669,11 +669,23 @@ class ProvenanceSink(object):
         return rec
 
 
-def provenance_gate(tool, args, segments, **kwargs):
+def provenance_gate(tool, args, segments, sink=None, **kwargs):
     """The executor-seam entry point. Returns None when no provenance
     context is supplied (the check is skipped entirely -- backward
     compatible, the lane-B token-check discipline); otherwise returns
-    the SinkVerdict. A REFUSE/ESCALATE verdict must block the call."""
+    the SinkVerdict. A REFUSE/ESCALATE verdict must block the call.
+
+    ``sink``: an optional retained ``ProvenanceSink``. When omitted, a
+    fresh sink is constructed per call -- fine for standalone /
+    battery use (budget-inert: the re-plan ratchet cannot accumulate),
+    but the re-plan budget ratchet, the quarantine set, and the
+    consumed-declassification set only accumulate when the caller
+    retains the sink across calls (F399). The executor seam passes its
+    run-scoped sink (``ToolExecutor._pv_sink``); re-plan contexts stay
+    isolated by the sink's ctx_key (tool + influencing segment ids),
+    and the sink is dropped with the executor at the end of the run."""
     if segments is None:
         return None
-    return ProvenanceSink().check(tool, args, segments, **kwargs)
+    if sink is None:
+        sink = ProvenanceSink()
+    return sink.check(tool, args, segments, **kwargs)

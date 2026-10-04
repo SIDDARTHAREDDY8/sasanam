@@ -118,7 +118,7 @@ def p_footer_state():
     want_open = "F399, F400"  # this lane: F387 filed OPEN
     if nxt != 401 or open_s != want_open:
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F401 open 'f398, f399, f400')"
+                       "footer drift: next F%d open %r (want next F401 open 'f398')"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
             "footer pins open F399, F400 / next F401")
