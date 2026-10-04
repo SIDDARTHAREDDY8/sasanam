@@ -39,7 +39,7 @@ Probe map:
       byte-for-byte proof the verifier's witness step consumes our
       receipts (that step's acceptance of seal output is pinned by the
       w311/w312 batteries).
-  pin-taxonomy / footer-state: standard pins (1888; open F398, F399, F400 / next F401).
+  pin-taxonomy / footer-state: standard pins (1900; open F398, F399, F400 / next F401).
 
 Deterministic across 2 runs; $0 spend; synthetic/local. Stdlib only
 apart from gov/witness_rekor.py + gov/witness_log.py (real product
@@ -77,7 +77,7 @@ from gov.witness_log import WitnessLog  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 from gov import evidence_verify_offline as EVO  # noqa: E402
 
-TAXONOMY_PIN = 1888  # Wave-314 lane 2: pin 1869 -> 1869 (+6 witness-rekor-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*)
+TAXONOMY_PIN = 1900 # Wave-314 lane 2: pin 1869 -> 1869 (+6 witness-rekor-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*)
 
 _NOW = 1798765432
 _SEED_A = bytes(range(32))

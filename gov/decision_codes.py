@@ -16320,6 +16320,125 @@ TAXONOMY = {
         "evidence_kinds_required": ['token', 'key-reference'],
         "reverify_steps": ['recompute'],
     },
+    'transform-capacity-exceeded': {
+        "domain": 'transform',
+        "code": 'transform-capacity-exceeded',
+        "human": 'a registered transform emitted on a wider capacity '
+                 'channel than its declared output contract (the FIDES '
+                 'laundering budget is blown); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['transform-output'],
+        "reverify_steps": ['recompute'],
+    },
+    'transform-contract-violated': {
+        "domain": 'transform',
+        "code": 'transform-contract-violated',
+        "human": 'a registered transform output failed its declared '
+                 'output contract (shape, max_bytes, or enum membership) '
+                 'on post-transform re-verification; laundered bytes are '
+                 'never silently passed',
+        "severity": 'high',
+        "evidence_kinds_required": ['transform-output'],
+        "reverify_steps": ['recompute'],
+    },
+    'transform-identity-mismatch': {
+        "domain": 'transform',
+        "code": 'transform-identity-mismatch',
+        "human": 'the presented function is not the registered transform '
+                 '(module/qualname/code-digest identity check); the (where) '
+                 'half of the (where, what) pair does not hold',
+        "severity": 'high',
+        "evidence_kinds_required": ['transform-registration'],
+        "reverify_steps": ['recompute'],
+    },
+    'transform-ledger-corrupt': {
+        "domain": 'transform',
+        "code": 'transform-ledger-corrupt',
+        "human": 'the durable transform-declassify consume ledger is '
+                 'corrupt or unreadable; at-most-once cannot be enforced, '
+                 'so every token-gated lowering refuses fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['ledger'],
+        "reverify_steps": ['recompute'],
+    },
+    'transform-model-lowering-refused': {
+        "domain": 'transform',
+        "code": 'transform-model-lowering-refused',
+        "human": 'a model-mediated transform can never lower a label, '
+                 'even with a declassification token (CaMeL discipline; '
+                 'structural, not a policy knob)',
+        "severity": 'high',
+        "evidence_kinds_required": ['transform-registration'],
+        "reverify_steps": ['recompute'],
+    },
+    'transform-registration-denylist-refused': {
+        "domain": 'transform',
+        "code": 'transform-registration-denylist-refused',
+        "human": 'a transform registration with a denylist-shaped output '
+                 'contract was refused; only allowlist contracts register '
+                 '(the mXSS record: denylists lose)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['transform-registration'],
+        "reverify_steps": ['recompute'],
+    },
+    'transform-registration-duplicate': {
+        "domain": 'transform',
+        "code": 'transform-registration-duplicate',
+        "human": 'a transform name is already registered; registrations '
+                 'are never silently replaced',
+        "severity": 'medium',
+        "evidence_kinds_required": ['transform-registration'],
+        "reverify_steps": ['recompute'],
+    },
+    'transform-registration-marking-refused': {
+        "domain": 'transform',
+        "code": 'transform-registration-marking-refused',
+        "human": 'a byte-marking/delimiter transform was refused at '
+                 'registration; marking transforms are not label-lowering '
+                 'transforms (Spotlighting negative rule)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['transform-registration'],
+        "reverify_steps": ['recompute'],
+    },
+    'transform-registration-model-lowering-refused': {
+        "domain": 'transform',
+        "code": 'transform-registration-model-lowering-refused',
+        "human": 'a model-mediated transform declaring a label-lowering '
+                 'rule was refused at registration; model transforms are '
+                 'never declassification points',
+        "severity": 'medium',
+        "evidence_kinds_required": ['transform-registration'],
+        "reverify_steps": ['recompute'],
+    },
+    'transform-token-invalid': {
+        "domain": 'transform',
+        "code": 'transform-token-invalid',
+        "human": 'a transform-declassify token failed verification or its '
+                 'exact argument binding (transform, output digest, '
+                 'capacity, input min trust); the lowering refuses',
+        "severity": 'high',
+        "evidence_kinds_required": ['token'],
+        "reverify_steps": ['recompute'],
+    },
+    'transform-token-replayed': {
+        "domain": 'transform',
+        "code": 'transform-token-replayed',
+        "human": 'a transform-declassify token nonce was already consumed '
+                 '(durable ledger); a token authorizes at most one lowering',
+        "severity": 'high',
+        "evidence_kinds_required": ['token', 'ledger'],
+        "reverify_steps": ['recompute'],
+    },
+    'transform-unregistered': {
+        "domain": 'transform',
+        "code": 'transform-unregistered',
+        "human": 'a transform not in the registry was presented; it runs '
+                 'on the data plane (output keeps min input trust) and can '
+                 'never lower a label',
+        "severity": 'medium',
+        "evidence_kinds_required": ['transform-registration'],
+        "reverify_steps": ['recompute'],
+    },
     'trust-class-unknown': {
         "domain": 'deploy',
         "code": 'trust-class-unknown',

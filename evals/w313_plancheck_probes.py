@@ -50,7 +50,7 @@ Probe map:
       payload): write capability declared -> admitted.
   synth-privesc: corpus PRV-01 shape (read -> write -> write):
       admitted under state-write; refused when the envelope hides it.
-  pin-taxonomy / footer-state: standard pins (1888; open none / next F398).
+  pin-taxonomy / footer-state: standard pins (1900; open none / next F398).
 
 Deterministic across 2 runs; $0 spend; synthetic/local. Stdlib only
 apart from gov/* (real product code, no stubs).
@@ -90,7 +90,7 @@ from gov import workflow_routing as wr  # noqa: E402
 from gov import workflow_idempotency as idem  # noqa: E402
 from gov import workflow_composed as wc  # noqa: E402
 
-TAXONOMY_PIN = 1888  # wave-313 lane E: +6 plan-policy-* codes; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*)
+TAXONOMY_PIN = 1900 # wave-313 lane E: +6 plan-policy-* codes; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*)
 
 _SA = hashlib.sha256(b"w313pp-battery").digest()
 _PA = ed25519.publickey(_SA).hex()
