@@ -3036,7 +3036,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         fail-closed, never silently stamped unverified.
         """
         if getattr(self, "_attested_identity_sealed", False):
-            raise ValueError(
+            raise IdentityVerifierAlreadySetError(
                 "attested-identity verifier is write-once: a verifier is "
                 "already installed; refusing to swap it out")
         if not isinstance(audience, str) or not audience:

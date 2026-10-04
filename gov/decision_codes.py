@@ -8407,14 +8407,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['identity-document'],
         "reverify_steps": ['recompute'],
     },
-    'identity-mismatch': {
-        "domain": 'agent_card',
-        "code": 'identity-mismatch',
-        "human": 'agent card: the recomputed value does not match the claimed value',
-        "severity": 'critical',
-        "evidence_kinds_required": ['agent-card', 'signature', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
     'identity-mint-refused': {
         "domain": 'attested-identity',
         "code": 'identity-mint-refused',
@@ -8423,6 +8415,14 @@ TAXONOMY = {
                  'or malformed inputs; no document issued',
         "severity": 'medium',
         "evidence_kinds_required": ['identity-document'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-mismatch': {
+        "domain": 'agent_card',
+        "code": 'identity-mismatch',
+        "human": 'agent card: the recomputed value does not match the claimed value',
+        "severity": 'critical',
+        "evidence_kinds_required": ['agent-card', 'signature', 'digest'],
         "reverify_steps": ['recompute'],
     },
     'identity-not-yet-valid': {

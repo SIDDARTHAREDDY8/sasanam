@@ -229,6 +229,28 @@ class MalformedTests(unittest.TestCase):
             v = verifier.verify(h, "tool:x", _selectors())
             self.assertFalse(v.verified, "accepted %r" % (h,))
             self.assertEqual(v.code, "identity-forged")
+class QueueWiringTests(unittest.TestCase):
+    def test_verifier_install_is_write_once_typed(self):
+        # Standards axis: the F31 write-once seal must raise the typed
+        # seam error, not a bare ValueError.
+        from pathlib import Path  # noqa: E402
+        from gov import approvals as ap  # noqa: E402
+        from gov.log import ActionLog  # noqa: E402
+        from tests.keyfixture import provision_test_key, scrub_key_env  # noqa
+        import tempfile  # noqa: E402
+        _seed, pub = _issuer()
+        restore = scrub_key_env()
+        try:
+            provision_test_key()
+            run_dir = Path(tempfile.mkdtemp(prefix="w319q-"))
+            q = ap.ApprovalQueue(run_dir, ActionLog(run_dir / "a.jsonl"))
+            v = wi.DocumentVerifier(issuer_pubkeys={_DOMAIN: pub},
+                                   trust_domain=_DOMAIN, now=_NOW)
+            q.set_attested_identity_verifier(v, wi.APPROVAL_QUEUE_AUDIENCE)
+            with self.assertRaises(ap.IdentityVerifierAlreadySetError):
+                q.set_attested_identity_verifier(v, wi.APPROVAL_QUEUE_AUDIENCE)
+        finally:
+            restore()
 
 
 if __name__ == "__main__":

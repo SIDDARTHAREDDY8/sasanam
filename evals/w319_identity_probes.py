@@ -55,14 +55,13 @@ for _p in (REPO, os.path.join(REPO, "tests"), os.path.join(REPO, "evals")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-import green_check  # noqa: E402  (shared fail-closed green checks)
 import probe_lines  # noqa: E402  (canonical probe-line emission)
 
 from gov import decision_codes as dc  # noqa: E402
 from gov import workload_identity as ai  # noqa: E402
 from gov import ed25519 as _ed  # noqa: E402
 
-TAXONOMY_PIN = 1914  # Wave-319 lane 2: pin 1914 -> 1914 (+8 identity-*)
+TAXONOMY_PIN = 1914  # Wave-319 lane 2: pin 1906 -> 1914 (+8 identity-*)
 
 FOOTER_NEXT = "F405"
 FOOTER_OPEN = "none"

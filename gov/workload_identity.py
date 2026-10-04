@@ -309,6 +309,8 @@ class DocumentVerifier:
         refusal is a typed ``IdentityVerdict``.
 
         ``audience``: the audience the document must name (exact match).
+        Must be a non-empty string -- a caller-API misuse raises
+        ValueError (fail-fast); hostile *documents* never raise.
         ``presented_selectors``: the facts re-attested about the
         presenting workload by the caller -- the check only means
         something when the caller is the attesting path, not the agent.
