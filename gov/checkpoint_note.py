@@ -88,9 +88,39 @@ What this does NOT do (honest boundaries):
 
 import base64
 import hashlib
+import importlib.util
+import os
 import re
 
-from gov import ed25519 as _ed25519
+# Lazy Ed25519 (wave-319 lane 3): ``from gov import ed25519`` would
+# execute ``gov/__init__.py``, whose transitive imports include
+# ``urllib`` -- network-capable code in the import closure. This module
+# is loaded by file path by ``gov/witness_consistency.py``, which is
+# itself loaded by file path by the offline verifier, whose contract is
+# zero network (the ``gov/trust_root_refresh.py`` pattern). The vendored
+# primitive is loaded directly from the sibling file instead; it imports
+# only hashlib+secrets, so the true import closure stays socket-free.
+# Behavior is identical: the same ``gov/ed25519.py`` code, cross-tested
+# by ``tests/test_checkpoint_note.py``.
+_ed25519 = None
+
+
+def _ed():
+    global _ed25519
+    if _ed25519 is None:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "ed25519.py")
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "sasanam_standalone_ed25519_checkpoint", path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        except Exception as exc:  # noqa: BLE001
+            raise CheckpointNoteError(
+                CHECKPOINT_NOTE_MALFORMED,
+                "cannot load ed25519 from %r: %s" % (path, exc))
+        _ed25519 = module
+    return _ed25519
 
 SIG_TYPE_ED25519 = 0x01
 EM_DASH = "\u2014"
@@ -390,9 +420,9 @@ def emit_checkpoint(origin, tree_size, root_hash, key_name, seed):
     text = "%s\n%d\n%s\n" % (
         origin, tree_size, base64.b64encode(root).decode("ascii"))
     text_bytes = text.encode("utf-8")
-    public = _ed25519.publickey(seed)
+    public = _ed().publickey(seed)
     key_id = derive_key_id(key_name, SIG_TYPE_ED25519, public)
-    sig = _ed25519.sign(seed, text_bytes)
+    sig = _ed().sign(seed, text_bytes)
     sig_line = "%s %s %s\n" % (
         EM_DASH, key_name,
         base64.b64encode(key_id + sig).decode("ascii"))
@@ -435,7 +465,7 @@ def verify_checkpoint(note, vkeys):
     verified_by = []
     for vkey, sig in known:
         try:
-            good = _ed25519.verify(vkey["public_key"], note_text,
+            good = _ed().verify(vkey["public_key"], note_text,
                                    sig["signature"])
         except Exception:
             good = False

@@ -17367,6 +17367,18 @@ TAXONOMY = {
         "evidence_kinds_required": ['jail-policy', 'measurement'],
         "reverify_steps": ['recompute'],
     },
+    'witness-checkpoint-stale': {
+        "domain": 'witness',
+        "code": 'witness-checkpoint-stale',
+        "human": 'witness consistency: the checkpoint note is older than the '
+                 'freshness window, is dated in the future vs the observed '
+                 'time, or carries no issuance timestamp at all (a note '
+                 'with no issuance time cannot be freshness-checked); '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
     'witness-config-cwd-autoload': {
         "domain": 'witness',
         "code": 'witness-config-cwd-autoload',
@@ -17395,6 +17407,65 @@ TAXONOMY = {
         "severity": 'high',
         "evidence_kinds_required": ['config-source'],
         "reverify_steps": ['recompute'],
+    },
+    'witness-consistency-fork-detected': {
+        "domain": 'witness',
+        "code": 'witness-consistency-fork-detected',
+        "human": 'witness consistency: two checkpoint notes from one log '
+                 'key at the same tree size name different roots -- '
+                 'cryptographic proof of log misbehavior (RFC 6962 gossip '
+                 'rule); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-consistency'],
+    },
+    'witness-consistency-invalid': {
+        "domain": 'witness',
+        "code": 'witness-consistency-invalid',
+        "human": 'witness consistency: the consistency proof does not '
+                 'recompute both checkpoint roots, the old checkpoint does '
+                 'not match the anchored receipt checkpoint, or the note '
+                 'does not verify under the log key (forged evidence); a '
+                 'valid proof alone is never enough (CVE-2026-22703); '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-consistency'],
+    },
+    'witness-consistency-missing': {
+        "domain": 'witness',
+        "code": 'witness-consistency-missing',
+        "human": 'witness consistency: the signed policy configures the '
+                 'witness-consistency mode but the bundle carries no '
+                 'consistency evidence (no cosigned head note or no '
+                 'consistency proof); the mode is optional-but-fail-closed '
+                 '-- configured means required',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-consistency'],
+    },
+    'witness-cosignature-invalid': {
+        "domain": 'witness',
+        "code": 'witness-cosignature-invalid',
+        "human": 'witness consistency: a signature from a CONFIGURED '
+                 'witness key failed verification (on a cosignature line '
+                 'or a gossip view); unknown keys are ignored per the '
+                 'signed-note collision rules, but a known key\\u2019s bad '
+                 'signature is a refusal, never an accept; fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
+    'witness-gossip-conflict': {
+        "domain": 'witness',
+        "code": 'witness-gossip-conflict',
+        "human": 'witness consistency: witnesses report conflicting signed '
+                 'tree heads for one log (same tree size, different roots) '
+                 '-- cryptographic proof of log misbehavior (RFC 6962 '
+                 'gossip); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-consistency'],
     },
     'witness-intermediates-missing': {
         "domain": 'witness',
@@ -17488,6 +17559,40 @@ TAXONOMY = {
         "evidence_kinds_required": ['witness-log'],
         "reverify_steps": ['recompute'],
     },
+    'witness-note-malformed': {
+        "domain": 'witness',
+        "code": 'witness-note-malformed',
+        "human": 'witness consistency: the checkpoint note is not a valid '
+                 'C2SP signed note (bad UTF-8, no signature section, bad '
+                 'checkpoint body, or bad origin/size/root/timestamp '
+                 'fields); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'witness-policy-malformed': {
+        "domain": 'witness',
+        "code": 'witness-policy-malformed',
+        "human": 'witness consistency: the witness_consistency policy '
+                 'section or the gossip input is malformed -- bad '
+                 'verifier-key strings, bad quorum, bad freshness window, '
+                 'missing accepted head, or a view from an unconfigured '
+                 'witness; refused fail-closed, never defaulted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'witness-quorum-unmet': {
+        "domain": 'witness',
+        "code": 'witness-quorum-unmet',
+        "human": 'witness consistency: fewer than quorum_k distinct '
+                 'configured witnesses cosigned the log head; the head is '
+                 'accepted only with the policy\\u2019s witness quorum; '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
     'witness-rekor-anchor-expired': {
         "domain": 'witness',
         "code": 'witness-rekor-anchor-expired',
@@ -17548,6 +17653,16 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['witness-log'],
         "reverify_steps": ['recompute'],
+    },
+    'witness-unreachable': {
+        "domain": 'witness',
+        "code": 'witness-unreachable',
+        "human": 'witness consistency: a configured witness reported no '
+                 'view during gossip; silence refuses, never passes (the '
+                 'TesseraCT fail-open caveat inverted); fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-consistency'],
     },
     'workflow-approval-binding-invalid': {
         "domain": 'workflow-approval',

@@ -35,7 +35,7 @@ P7 (2): F399 seam -- the escalate-terminal ratchet fires at the 4th
 P8 (1): F403 re-probe -- decision_packet standalone offline import still
     broken on the OPEN tree (lane 1 owns the closure; not closed here).
 P9 (2): regressions -- footer (open none / next F405; F404 closed),
-    pin taxonomy 1906/1906/0 sorted.
+    pin taxonomy 1916/1916/0 sorted.
 P10 (3): robustness acceptance gaming -- enum budget respected,
     string without markers fails closed, attacker>benign bits fails.
 
@@ -926,13 +926,13 @@ def _p9_pin():
                                encoding="utf-8").read())
     except Exception as exc:  # noqa: BLE001
         return _error("P9-pin-taxonomy-1900-sorted", "%r" % (exc,))
-    if len(lits) != 1906 or len(set(lits)) != 1906:
+    if len(lits) != 1916 or len(set(lits)) != 1916:
         return _break("P9-pin-taxonomy-1900-sorted",
-                      "got %d literals / %d unique (want 1906/1906)"
+                      "got %d literals / %d unique (want 1916/1916)"
                       % (len(lits), len(set(lits))))
     if lits != sorted(lits):
         return _break("P9-pin-taxonomy-1900-sorted", "literals not sorted")
-    return _held("P9-pin-taxonomy-1900-sorted", "1906/1906/0 sorted")
+    return _held("P9-pin-taxonomy-1900-sorted", "1916/1916/0 sorted")
 
 
 # ---------------------------------------------------------------------------

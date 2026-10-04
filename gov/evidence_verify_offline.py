@@ -125,6 +125,7 @@ def _load_ed25519():
 _ed25519 = None
 _wl = None
 _trr = None
+_wc = None
 
 
 def _init_ed25519():
@@ -182,6 +183,32 @@ def _trust_root_refresh():
     if _trr is None:
         _trr = _load_trust_root_refresh()
     return _trr
+
+
+def _load_witness_consistency():
+    """Load gov/witness_consistency.py by file path (same reason as the
+    ed25519/witness_log/trust_root_refresh loaders above: ``from gov
+    import witness_consistency`` would execute ``gov/__init__.py`` and
+    pull urllib into the import closure of a verifier whose contract is
+    zero network)."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "witness_consistency.py")
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "sasanam_standalone_witness_consistency", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except Exception as exc:  # noqa: BLE001
+        raise InternalError("cannot load witness_consistency from %r: %s"
+                            % (path, exc))
+    return module
+
+
+def _witness_consistency():
+    global _wc
+    if _wc is None:
+        _wc = _load_witness_consistency()
+    return _wc
 
 
 def _load_schema_v2():
@@ -332,6 +359,21 @@ FAILURE_CODES = {
         "remedy": "re-issue the policy with the policy-signing key; "
                   "check version, expires, and required sections",
     },
+    # -- witness consistency (wave-319 lane 3; parse) --
+    "witness-note-malformed": {
+        "exit": EXIT_PARSE, "category": "parse",
+        "reason": "the checkpoint note is not a valid C2SP signed note",
+        "remedy": "re-issue the checkpoint note from the witness log; do "
+                  "not hand-edit note bytes",
+    },
+    "witness-policy-malformed": {
+        "exit": EXIT_PARSE, "category": "parse",
+        "reason": "the witness_consistency policy section or the gossip "
+                  "input is malformed",
+        "remedy": "re-issue the policy with a well-formed "
+                  "witness_consistency section; malformed policy is never "
+                  "defaulted",
+    },
     # -- crypto (41) --
     "ENVELOPE_SIGNATURE_INVALID": {
         "exit": EXIT_CRYPTO, "category": "crypto",
@@ -379,6 +421,14 @@ FAILURE_CODES = {
                   "window) to the signed policy's witness_log_keys; a "
                   "witness entry without a policy-pinned key is not "
                   "verifiable",
+    },
+    # -- witness consistency (wave-319 lane 3; crypto) --
+    "witness-cosignature-invalid": {
+        "exit": EXIT_CRYPTO, "category": "crypto",
+        "reason": "a signature from a configured witness key failed "
+                  "verification (cosignature line or gossip view)",
+        "remedy": "re-fetch the witness's signature; a known key's bad "
+                  "signature is a refusal, never an accept",
     },
     # -- unsupported (42) --
     "UNSUPPORTED_PAYLOAD_TYPE": {
@@ -456,6 +506,33 @@ FAILURE_CODES = {
         "remedy": "witness the exact bundle being verified; an entry "
                   "for another artifact cannot be transplanted",
     },
+    # -- witness consistency (wave-319 lane 3; consistency) --
+    "witness-consistency-fork-detected": {
+        "exit": EXIT_BINDING, "category": "consistency",
+        "reason": "two checkpoint notes from one log key at the same tree "
+                  "size name different roots: cryptographic proof of log "
+                  "misbehavior",
+        "remedy": "treat the log as compromised; rotate to a new log and "
+                  "investigate the fork before trusting any checkpoint",
+    },
+    "witness-consistency-invalid": {
+        "exit": EXIT_BINDING, "category": "consistency",
+        "reason": "the consistency proof does not recompute both "
+                  "checkpoint roots, the old checkpoint does not match the "
+                  "anchored receipt checkpoint, or the note does not verify "
+                  "under the log key",
+        "remedy": "fetch a valid consistency proof from the witness log "
+                  "between the two checkpoints; a valid proof alone is "
+                  "never enough (it must bind the receipt's checkpoint)",
+    },
+    "witness-gossip-conflict": {
+        "exit": EXIT_BINDING, "category": "consistency",
+        "reason": "witnesses report conflicting signed tree heads for one "
+                  "log (same tree size, different roots): cryptographic "
+                  "proof of log misbehavior",
+        "remedy": "treat the log as compromised; do not accept either head "
+                  "until the fork is investigated",
+    },
     # -- policy / temporal (44) --
     "TEMPORAL_UNSATISFIED": {
         "exit": EXIT_POLICY, "category": "policy",
@@ -478,6 +555,37 @@ FAILURE_CODES = {
                   "log, or re-issue the policy without "
                   "witness_required; the requirement is never silently "
                   "dropped",
+    },
+    "witness-consistency-missing": {
+        "exit": EXIT_POLICY, "category": "policy",
+        "reason": "the signed policy configures the witness-consistency "
+                  "mode but the bundle carries no consistency evidence",
+        "remedy": "attach the cosigned head note and the consistency proof "
+                  "from the accepted head, or re-issue the policy without "
+                  "the witness_consistency section; configured means "
+                  "required",
+    },
+    "witness-quorum-unmet": {
+        "exit": EXIT_POLICY, "category": "policy",
+        "reason": "fewer than quorum_k distinct configured witnesses "
+                  "cosigned the log head",
+        "remedy": "collect cosignatures from the policy-pinned witnesses "
+                  "until the quorum is met; the head is accepted only with "
+                  "the policy's witness quorum",
+    },
+    "witness-unreachable": {
+        "exit": EXIT_POLICY, "category": "policy",
+        "reason": "a configured witness reported no view during gossip",
+        "remedy": "retry once the witness is reachable; silence refuses, "
+                  "never passes",
+    },
+    "witness-checkpoint-stale": {
+        "exit": EXIT_POLICY, "category": "policy",
+        "reason": "the checkpoint note is older than the freshness window, "
+                  "is dated in the future vs the observed time, or carries "
+                  "no issuance timestamp",
+        "remedy": "fetch a fresh checkpoint from the witness log within "
+                  "the policy's max_checkpoint_age",
     },
     # -- trust-root chain (45; wave-318) --
     "trust-root-chain-malformed": {
@@ -734,7 +842,8 @@ def seal_envelope(payload_bytes, payload_type, signers):
 
 
 def build_verification_bundle(envelope, policy_envelope, timestamps=(),
-                              witness_entries=()):
+                              witness_entries=(),
+                              consistency_evidence=None):
     """Assemble the inline verification bundle (the narrow input).
 
     ``envelope``: DSSE envelope over the in-toto statement.
@@ -744,18 +853,27 @@ def build_verification_bundle(envelope, policy_envelope, timestamps=(),
     (``sasanam-witness-log/v1``, see :func:`seal_witness_entry`); each
     is verified checkpoint-first by :func:`verify`. Unknown entry kinds
     are refused coded, never skipped.
+    ``consistency_evidence``: optional ``{"head_note_b64": str,
+    "consistency_proof": [hex, ...]}`` for the witness-consistency
+    stage (wave-319 lane 3); omitted entirely when None so legacy
+    bundles are byte-identical.
     """
     for name, doc in (("envelope", envelope),
                       ("policy_envelope", policy_envelope)):
         if not isinstance(doc, dict):
             raise InternalError("%s must be a dict" % name)
-    return {
+    bundle = {
         "version": BUNDLE_VERSION,
         "envelope": envelope,
         "policy": policy_envelope,
         "timestamps": list(timestamps),
         "witness_entries": list(witness_entries),
     }
+    if consistency_evidence is not None:
+        if not isinstance(consistency_evidence, dict):
+            raise InternalError("consistency_evidence must be a dict")
+        bundle["consistency_evidence"] = dict(consistency_evidence)
+    return bundle
 
 
 def seal_witness_entry(witness_log, witness_signer, *, artifact_digest,
@@ -1120,6 +1238,83 @@ def _check_policy_shape(doc):
     if not isinstance(wr, bool):
         raise VerificationError("POLICY_MALFORMED",
                                 detail="witness_required must be a bool")
+    # Witness-consistency mode (optional section; wave-319 lane 3).
+    # When present, the verifier runs the witness-consistency stage
+    # fail-closed: quorum cosignatures + freshness + growth from the
+    # accepted head. The note bytes travel as base64 (the policy is
+    # JSON); the module gets raw bytes.
+    wc_section = doc.get("witness_consistency")
+    wc_policy = None
+    if wc_section is not None:
+        if not isinstance(wc_section, dict):
+            raise VerificationError("POLICY_MALFORMED",
+                                    detail="witness_consistency must be "
+                                           "an object")
+        op_vkeys = wc_section.get("operator_vkeys")
+        if (not isinstance(op_vkeys, list) or not op_vkeys
+                or not all(isinstance(v, str) and v for v in op_vkeys)):
+            raise VerificationError("POLICY_MALFORMED",
+                                    detail="witness_consistency."
+                                           "operator_vkeys must be a "
+                                           "non-empty list of str")
+        wit_vkeys = wc_section.get("witness_vkeys")
+        if (not isinstance(wit_vkeys, dict) or not wit_vkeys
+                or not all(isinstance(k, str) and k
+                           and isinstance(v, str) and v
+                           for k, v in wit_vkeys.items())):
+            raise VerificationError("POLICY_MALFORMED",
+                                    detail="witness_consistency."
+                                           "witness_vkeys must be a "
+                                           "non-empty {name: vkey} map")
+        quorum_k = wc_section.get("quorum_k")
+        if (isinstance(quorum_k, bool) or not isinstance(quorum_k, int)
+                or quorum_k < 1):
+            raise VerificationError("POLICY_MALFORMED",
+                                    detail="witness_consistency.quorum_k "
+                                           "must be a positive int")
+        max_age = wc_section.get("max_checkpoint_age")
+        if (isinstance(max_age, bool) or not isinstance(max_age, int)
+                or max_age <= 0):
+            raise VerificationError("POLICY_MALFORMED",
+                                    detail="witness_consistency."
+                                           "max_checkpoint_age must be "
+                                           "a positive int")
+        head = wc_section.get("accepted_head")
+        # accepted_head is OPTIONAL (spec): the pinned previous checkpoint
+        # for growth proofs. Absent -> quorum + freshness still enforced,
+        # but there is no growth to prove.
+        accepted_head = None
+        if head is not None:
+            if not isinstance(head, dict):
+                raise VerificationError("POLICY_MALFORMED",
+                                        detail="witness_consistency."
+                                               "accepted_head must be an "
+                                               "object")
+            head_b64 = head.get("note_b64")
+            if not isinstance(head_b64, str):
+                raise VerificationError("POLICY_MALFORMED",
+                                        detail="witness_consistency."
+                                               "accepted_head.note_b64 must "
+                                               "be a str")
+            try:
+                head_note = base64.b64decode(head_b64.encode("ascii"),
+                                             validate=True)
+            except (binascii.Error, ValueError, UnicodeEncodeError) as exc:
+                raise VerificationError("POLICY_MALFORMED",
+                                        detail="witness_consistency."
+                                               "accepted_head.note_b64 is "
+                                               "not valid base64: %s" % (exc,))
+            if not head_note:
+                raise VerificationError("POLICY_MALFORMED",
+                                        detail="witness_consistency."
+                                               "accepted_head.note_b64 must "
+                                               "decode to non-empty bytes")
+            accepted_head = {"note": head_note}
+        wc_policy = {"operator_vkeys": list(op_vkeys),
+                     "witness_vkeys": dict(wit_vkeys),
+                     "quorum_k": quorum_k,
+                     "max_checkpoint_age": max_age,
+                     "accepted_head": accepted_head}
     return {
         "policy_id": pid,
         "expires": expires,
@@ -1132,6 +1327,7 @@ def _check_policy_shape(doc):
         "min_timestamps": min_ts,
         "max_age_hours": max_age,
         "witness_required": wr,
+        "witness_consistency": wc_policy,
         "canonical": canonical(doc),
     }
 
@@ -1749,6 +1945,66 @@ def verify(bundle_bytes, verification_bundle, trust_root=None,
               % (witness_info["log_id"][:16], witness_info["tree_size"],
                  witness_info["log_index"]))
 
+    # -- witness-consistency stage (conditional, wave-319 lane 3):
+    # runs only when the signed policy configures the
+    # witness_consistency mode. Optional-but-fail-closed: a configured
+    # mode with missing evidence refuses coded (never silently
+    # skipped). Bundles without the policy section keep the exact
+    # legacy behavior above.
+    wc_info = None
+    if policy["witness_consistency"] is not None:
+        wc = _witness_consistency()
+        raw_ev = vb.get("consistency_evidence")
+        ev = {}
+        if isinstance(raw_ev, dict):
+            ev = dict(raw_ev)
+            head_b64 = ev.get("head_note_b64")
+            if isinstance(head_b64, str):
+                try:
+                    ev["head_note"] = base64.b64decode(
+                        head_b64.encode("ascii"), validate=True)
+                except (binascii.Error, ValueError,
+                        UnicodeEncodeError) as exc:
+                    _fail("WITNESS_NOTE_MALFORMED",
+                          detail="consistency_evidence.head_note_b64 is "
+                                 "not valid base64: %s" % (exc,))
+        try:
+            # CVE-2026-22703: bind the growth proof to the checkpoint the
+            # bundle's inclusion receipt proved (witness_info carries the
+            # VERIFIED checkpoint sizes/hashes from the witness stage).
+            receipt_cp = None
+            if isinstance(witness_info, dict):
+                try:
+                    receipt_cp = {
+                        "treeSize": witness_info["tree_size"],
+                        "rootHash": witness_info["root_hash"],
+                    }
+                except KeyError:
+                    receipt_cp = None
+            wc_info = wc.verify_witness_policy(
+                policy["witness_consistency"], ev,
+                now=int(now.timestamp()),
+                receipt_checkpoint=receipt_cp)
+        except wc.WitnessConsistencyError as exc:
+            _fail(exc.code, detail=exc.detail)
+        if wc_info["growth"] is None:
+            _pass("witness-consistency",
+                  "quorum %d/%d witness cosignatures, head fresh (age %ds), "
+                  "no pinned accepted_head (steady state, no growth proof "
+                  "needed)"
+                  % (wc_info["cosignatures"],
+                     policy["witness_consistency"]["quorum_k"],
+                     wc_info["head"]["age"]))
+        else:
+            _pass("witness-consistency",
+                  "quorum %d/%d witness cosignatures, head fresh (age %ds), "
+                  "log grew %d->%d with a valid consistency proof"
+                  % (wc_info["cosignatures"],
+                     policy["witness_consistency"]["quorum_k"],
+                     wc_info["head"]["age"],
+                     wc_info["growth"]["old_size"],
+                     wc_info["growth"]["new_size"]))
+
     # -- step 9: transcript --
     report = {
         "status": "VALID",
@@ -1771,6 +2027,7 @@ def verify(bundle_bytes, verification_bundle, trust_root=None,
         "observerTimestamps": {"required": policy["min_timestamps"],
                                "verified": n_ts},
         "witness": witness_info,
+        "witness_consistency": wc_info,
         "existenceOnly": bool(existence_only),
         "checks": checks,
     }

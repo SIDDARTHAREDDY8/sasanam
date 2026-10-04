@@ -121,13 +121,15 @@ def _good_bundle():
 
 
 class TestTaxonomyShape(unittest.TestCase):
-    def test_twenty_three_codes(self):
+    def test_thirty_three_codes(self):
         # Wave-312 adds the five WITNESS_* witness-stage codes (11 -> 16);
         # the eleven base codes are unchanged and keep their slots.
         # Wave-318 lane 3 adds the six trust-root-* chain codes (16 -> 22).
         # Wave-318 lane 2 adds EXTENSION_SCHEMA_INVALID (22 -> 23).
         # Wave-318 merge: 16 -> 23.
-        self.assertEqual(len(v.FAILURE_CODES), 23)
+        # Wave-319 lane 3 adds the ten witness-consistency/gossip codes
+        # (23 -> 33).
+        self.assertEqual(len(v.FAILURE_CODES), 33)
 
     def test_exit_codes_and_categories(self):
         exits = {c["exit"] for c in v.FAILURE_CODES.values()}

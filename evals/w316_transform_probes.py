@@ -41,7 +41,7 @@ from gov.provenance_labels import TrustLevel as T
 NOW = 1790000000  # fixed "now" for token verification
 ISSUER = "w316-probe-approver"
 
-EXPECTED_PIN = 1906  # Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*)
+EXPECTED_PIN = 1916  # Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*)
 
 PROBES = []
 
