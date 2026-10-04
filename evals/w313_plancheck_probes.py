@@ -90,7 +90,7 @@ from gov import workflow_routing as wr  # noqa: E402
 from gov import workflow_idempotency as idem  # noqa: E402
 from gov import workflow_composed as wc  # noqa: E402
 
-TAXONOMY_PIN = 1900 # wave-313 lane E: +6 plan-policy-* codes; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*)
+TAXONOMY_PIN = 1906 # wave-313 lane E: +6 plan-policy-* codes; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*)
 
 _SA = hashlib.sha256(b"w313pp-battery").digest()
 _PA = ed25519.publickey(_SA).hex()
@@ -647,11 +647,11 @@ def footer_state():
     # the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
     ok = ("Next free finding: **F405**" in text
-          and m_open and m_open[-1].strip() == "F404")
+          and m_open and m_open[-1].strip() == "none")
     if ok:
-        _record("footer-state", "HELD", "footer: open F404 / next F405")
+        _record("footer-state", "HELD", "footer: open none / next F405")
     else:
-        _record("footer-state", "BREAK", "footer mismatch vs open F404 / next F405")
+        _record("footer-state", "BREAK", "footer mismatch vs open none / next F405")
 
 
 PROBES = [happy_observation, happy_egress_declared,

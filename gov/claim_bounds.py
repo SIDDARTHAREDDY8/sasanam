@@ -257,22 +257,33 @@ def default_bundle_bounds(where="claim_bounds"):
 
 
 def default_claim_assignment(section_names, proves, *, discovery_present,
+                             extra_section_claims=None,
                              where="claim_assignment"):
     """Per-section claim tokens for the given payload sections. Every
     returned token is drawn from ``proves`` by construction; the
     verifier re-checks membership anyway (never trust the generator).
     Unknown sections are refused -- the assignment vocabulary is
     closed: a new section needs an explicit token allocation, not a
-    silent pass.
+    silent pass. ``extra_section_claims`` (wave-318 lane 2) extends the
+    allocation map additively for schema extensions; the v1 map is
+    untouched when it is None.
     """
+    section_claims = dict(_DEFAULT_SECTION_CLAIMS)
+    if extra_section_claims:
+        for section, tokens in extra_section_claims.items():
+            if section in section_claims:
+                raise ClaimBoundsError(
+                    "%s: extra allocation for known section %r refused "
+                    "(the v1 contract is immutable)" % (where, section))
+            section_claims[section] = list(tokens)
     assignment = {}
     for section in section_names:
         if section == "discovery":
             token = ("discovery-snapshot-integrity" if discovery_present
                      else "discovery-absence-recorded")
             assignment[section] = [token]
-        elif section in _DEFAULT_SECTION_CLAIMS:
-            assignment[section] = list(_DEFAULT_SECTION_CLAIMS[section])
+        elif section in section_claims:
+            assignment[section] = list(section_claims[section])
         else:
             raise ClaimBoundsError(
                 "%s: no claim allocation for section %r -- allocate "

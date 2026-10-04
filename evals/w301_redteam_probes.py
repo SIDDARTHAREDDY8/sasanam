@@ -65,7 +65,7 @@ from gov import memory_composed as mc
 from gov import memory_reconcile as mr
 from gov import memory_store as ms
 
-TAXONOMY_PIN = 1900 # Wave-301 merge pin 1812 (was 1802 at wave-300); this lane mints no codes.; Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 lane 4: pin 1820 -> 1822 (+2 workflow-saga-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*)
+TAXONOMY_PIN = 1906 # Wave-301 merge pin 1812 (was 1802 at wave-300); this lane mints no codes.; Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 lane 4: pin 1820 -> 1822 (+2 workflow-saga-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*)
 
 _results = []
 
@@ -128,7 +128,7 @@ class BaseStateTest(unittest.TestCase):
               and m_next and m_next[-1] == "F405")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F404 / next free F405") == "HELD")
+            "want open none / next free F405") == "HELD")
 
     def test_pin(self):
         lits = _literals()
@@ -136,7 +136,7 @@ class BaseStateTest(unittest.TestCase):
               and lits == sorted(lits))
         self.assertTrue(_expect_held(
             "taxonomy-pin",
-            ok and TAXONOMY_PIN == 1900,
+            ok and TAXONOMY_PIN == 1906,
             "%d literals / %d unique / sorted=%s"
             % (len(lits), len(set(lits)), lits == sorted(lits))) == "HELD")
 
@@ -808,7 +808,7 @@ class RepinTest(unittest.TestCase):
         lits = _literals()
         self.assertTrue(_expect_held(
             "repin-pin-1851",
-            len(lits) == 1900 and len(set(lits)) == 1900
+            len(lits) == 1906 and len(set(lits)) == 1906
             and lits == sorted(lits),
             "1851 unique sorted literals") == "HELD")
 

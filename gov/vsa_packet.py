@@ -56,6 +56,19 @@ except ImportError:  # standalone/offline: ed25519.py beside this file
     import ed25519 as _ed
 
 
+def _trr():
+    """Lazy handle on gov/trust_root_refresh (the _dsse() pattern above).
+
+    trust_root_refresh is stdlib-only and loads ed25519 by file path,
+    so either import route keeps the closure socket-free.
+    """
+    try:
+        from . import trust_root_refresh as mod
+    except ImportError:  # standalone/offline: trust_root_refresh.py beside
+        import trust_root_refresh as mod  # this file
+    return mod
+
+
 def _dsse():
     """Lazy handle on gov/dsse_envelope (the decision_packet.py pattern).
 
@@ -122,6 +135,15 @@ _VERDICTS = frozenset((
     "vsa-packet-result-not-passed",
     "vsa-packet-levels-missing",
     "vsa-packet-window-invalid",
+    # trust-root chain discipline (wave-318): emitted when expected
+    # carries a trust_chain and the chain fails (all registered in the
+    # decision taxonomy).
+    "trust-root-chain-malformed",
+    "trust-root-rotation-invalid",
+    "trust-root-silent-swap",
+    "trust-root-stale-freshness",
+    "trust-root-expired",
+    "trust-root-receipt-unbound",
 ))
 
 
@@ -422,6 +444,32 @@ def _expected_claims(expected):
             or not (now == now) \
             or now in (float("inf"), float("-inf")):
         raise ValueError("expected now must be a finite number or None")
+    tc = expected.get("trust_chain")
+    if tc is not None:
+        # Optional trust-root chain discipline (wave-318): the VSA is
+        # consumed only under a live, fresh trust root. Validated here
+        # (caller errors -> ValueError); enforced in consume_vsa after
+        # the signature check, with the VSA's timeVerified as the bundle
+        # timestamp (expiry evaluated at the timestamp's time).
+        if not isinstance(tc, dict):
+            raise ValueError("expected trust_chain must be a dict")
+        if not isinstance(tc.get("chain"), list) or not tc["chain"]:
+            raise ValueError("expected trust_chain.chain must be a "
+                             "non-empty list")
+        freshness = tc.get("freshness")
+        if freshness is not None and not isinstance(freshness, dict):
+            raise ValueError("expected trust_chain.freshness must be a "
+                             "dict or None")
+        tc_max_age = tc.get("max_age_seconds", 86400)
+        if isinstance(tc_max_age, bool) \
+                or not isinstance(tc_max_age, (int, float)) \
+                or not (tc_max_age == tc_max_age) \
+                or tc_max_age in (float("inf"), float("-inf")) \
+                or tc_max_age <= 0:
+            raise ValueError("expected trust_chain.max_age_seconds must be "
+                             "a positive finite number")
+        tc = {"chain": tc["chain"], "freshness": freshness,
+              "max_age_seconds": float(tc_max_age)}
     return {
         "subject_digest": subject,
         "resource_uri": expected["resource_uri"],
@@ -430,6 +478,7 @@ def _expected_claims(expected):
         "signer_registry": registry,
         "max_age_seconds": float(max_age),
         "now": float(now),
+        "trust_chain": tc,
     }
 
 
@@ -550,6 +599,12 @@ def consume_vsa(envelope, *, expected):
          "signer_registry": {verifier_id: [pubkey_hex, ...]},
          "now" (None -> wall clock), "max_age_seconds"}
 
+    Optional ``trust_chain``: ``{"chain": [...], "freshness": {...},
+    "max_age_seconds": N}`` -- when present, the VSA is consumed only
+    under a live, fresh trust root (the wave-318 trust-root chain
+    discipline); a stale, exhausted, or silently-swapped root refuses
+    with a coded ``trust-root-*`` error.
+
     Checks, in order, fail-closed: (0) envelope shape and the VSA
     payloadType binding; (1) the expected verifier id is pinned, the
     envelope keyid is pinned for that id -- "consumers MUST accept only
@@ -617,6 +672,23 @@ def consume_vsa(envelope, *, expected):
             <= verified_at + exp["max_age_seconds"]):
         _refuse("vsa-packet-window-invalid",
                 "timeVerified is outside the consumer window")
+    tc = exp["trust_chain"]
+    if tc is not None:
+        # Trust-root chain discipline: the chain must be structurally
+        # valid with a fresh signal at consumption time, and the tip
+        # must have been valid at the VSA's timeVerified (expiry at the
+        # timestamp's time, per CVE-2026-24122). A stale, exhausted, or
+        # silently-swapped root refuses with a coded trust-root-* error.
+        trr = _trr()
+        try:
+            tip = trr.verify_chain(
+                tc["chain"], freshness=tc["freshness"],
+                bundle_timestamp=datetime.fromtimestamp(
+                    verified_at, tz=timezone.utc),
+                now=datetime.fromtimestamp(exp["now"], tz=timezone.utc),
+                max_age_seconds=tc["max_age_seconds"])
+        except trr.TrustRootError as exc:
+            _refuse(exc.code, exc.detail)
     return {
         "ok": True,
         "subject_digest": claims["subject_digest"],

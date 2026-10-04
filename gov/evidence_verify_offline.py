@@ -124,6 +124,7 @@ def _load_ed25519():
 # InternalError on failure, so it must exist first).
 _ed25519 = None
 _wl = None
+_trr = None
 
 
 def _init_ed25519():
@@ -156,6 +157,60 @@ def _witness_log():
     if _wl is None:
         _wl = _load_witness_log()
     return _wl
+
+
+def _load_trust_root_refresh():
+    """Load gov/trust_root_refresh.py by file path (same reason as the
+    ed25519/witness_log loaders above: ``from gov import trust_root_refresh``
+    would execute ``gov/__init__.py`` and pull urllib into the import
+    closure of a verifier whose contract is zero network)."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "trust_root_refresh.py")
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "sasanam_standalone_trust_root_refresh", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except Exception as exc:  # noqa: BLE001
+        raise InternalError("cannot load trust_root_refresh from %r: %s"
+                            % (path, exc))
+    return module
+
+
+def _trust_root_refresh():
+    global _trr
+    if _trr is None:
+        _trr = _load_trust_root_refresh()
+    return _trr
+
+
+def _load_schema_v2():
+    """Load gov/evidence_schema_v2.py by file path (same reason as the
+    ed25519/witness-log loaders: ``from gov import evidence_schema_v2``
+    would execute ``gov/__init__.py`` and pull urllib into the import
+    closure). evidence_schema_v2 is stdlib-only, so the closure stays
+    socket-free."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "evidence_schema_v2.py")
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "sasanam_standalone_evidence_schema_v2", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except Exception as exc:  # noqa: BLE001
+        raise InternalError("cannot load evidence_schema_v2 from %r: %s"
+                            % (path, exc))
+    return module
+
+
+_sv2 = None
+
+
+def _schema_v2():
+    global _sv2
+    if _sv2 is None:
+        _sv2 = _load_schema_v2()
+    return _sv2
 
 __all__ = [
     "VERIFIER_ID",
@@ -360,6 +415,19 @@ FAILURE_CODES = {
         "remedy": "build the statement with the 4-field shape and "
                   "include every claim the policy requires",
     },
+    # Wave-318 lane 2: schema-2.0 extension (AU-3 record fields + CC8.1
+    # decision-maker versioning). The claim says 2.0 but the extension
+    # fields are missing, malformed, or the change log has a gap.
+    "EXTENSION_SCHEMA_INVALID": {
+        "exit": EXIT_BINDING, "category": "consistency",
+        "reason": "the statement claims evidence-schema/2.0 but the "
+                  "extension claims (au3_records, decision_maker) are "
+                  "missing, malformed, or the decision-maker change log "
+                  "has a gap",
+        "remedy": "attach well-shaped au3_records and decision_maker "
+                  "claims, and change-log every model/prompt/config "
+                  "change; or ship a schema-1.0 bundle",
+    },
     "SUBJECT_DIGEST_MISMATCH": {
         "exit": EXIT_BINDING, "category": "consistency",
         "reason": "the statement's canonical bytes differ from the "
@@ -410,6 +478,55 @@ FAILURE_CODES = {
                   "log, or re-issue the policy without "
                   "witness_required; the requirement is never silently "
                   "dropped",
+    },
+    # -- trust-root chain (45; wave-318) --
+    "trust-root-chain-malformed": {
+        "exit": EXIT_POLICY, "category": "policy",
+        "reason": "the versioned trust-root chain is structurally invalid: "
+                  "empty, versions not strictly consecutive from v1, content "
+                  "hash mismatch, or bad pin fields",
+        "remedy": "re-export the chain from the rotation ceremony records; "
+                  "never hand-edit chain JSON",
+    },
+    "trust-root-rotation-invalid": {
+        "exit": EXIT_POLICY, "category": "policy",
+        "reason": "the rotation ceremony record is invalid: bad version "
+                  "link, hash mismatch, future review date, reviewed "
+                  "outside the signing root's window, or not signed by the "
+                  "old root's keys",
+        "remedy": "re-run the rotation ceremony with the old root's keys; "
+                  "rotation is a policy ceremony, never a silent swap",
+    },
+    "trust-root-silent-swap": {
+        "exit": EXIT_POLICY, "category": "policy",
+        "reason": "a chain link was adopted without a rotation record",
+        "remedy": "adopt the new root through a signed rotation record; "
+                  "silent root swaps are refused",
+    },
+    "trust-root-stale-freshness": {
+        "exit": EXIT_POLICY, "category": "policy",
+        "reason": "the trust-root freshness signal is missing, stale, "
+                  "future-dated, for the wrong chain version, or not signed "
+                  "by the tip root's keys",
+        "remedy": "re-issue the freshness statement with the tip root's "
+                  "keys within the freshness window",
+    },
+    "trust-root-expired": {
+        "exit": EXIT_POLICY, "category": "policy",
+        "reason": "the chain tip was not valid at the bundle timestamp's "
+                  "time (expiry is evaluated at the timestamp's time, "
+                  "chain-wide)",
+        "remedy": "rotate the trust root through the ceremony and "
+                  "re-verify; bundles timestamped outside the root's "
+                  "window are refused",
+    },
+    "trust-root-receipt-unbound": {
+        "exit": EXIT_POLICY, "category": "policy",
+        "reason": "a witness receipt does not bind the artifact digest, "
+                  "signature, and signer key (CVE-2026-22703: never accept "
+                  "'a valid receipt' alone)",
+        "remedy": "present the receipt issued for this exact "
+                  "artifact/signature/key triple",
     },
 }
 
@@ -1367,7 +1484,8 @@ def _fmt_time(dt):
 
 
 def verify(bundle_bytes, verification_bundle, trust_root=None,
-           time_source=None, existence_only=False):
+           time_source=None, existence_only=False, trust_chain=None,
+           chain_freshness=None, chain_max_age_seconds=86400):
     """Verify an evidence bundle offline; return the verification report.
 
     Narrow inputs: ``bundle_bytes`` (the canonical artifact bytes),
@@ -1376,6 +1494,20 @@ def verify(bundle_bytes, verification_bundle, trust_root=None,
     root; a dict -> caller-supplied, recorded in the transcript),
     ``time_source`` (a NAMED clock -- None fails closed: no trusted
     time), ``existence_only`` (labeled mode; never defaulted).
+
+    Optional trust-root chain discipline (additive; when ``trust_chain``
+    is None the pipeline is unchanged): ``trust_chain`` (a versioned
+    chain as built by ``gov.trust_root_refresh``), ``chain_freshness``
+    (its freshness statement), ``chain_max_age_seconds`` (freshness
+    window). The chain tip becomes the authority: rotation records are
+    checked, freshness must hold at verification time, and the tip's
+    validity window must cover the bundle timestamp's time (checked at
+    the timestamp's time, per CVE-2026-24122 -- a bundle timestamped
+    inside the window still verifies after the root expired). Any chain
+    failure raises a coded ``trust-root-*`` VerificationError.
+    ``trust_root`` and ``trust_chain`` together are an InternalError
+    (ambiguous anchor): the chain tip is the authority, never silently
+    preferred over an explicit root.
 
     Returns the VSA-shaped report dict on success. Raises the typed
     :class:`VerificationError` on any check failure, or
@@ -1391,7 +1523,14 @@ def verify(bundle_bytes, verification_bundle, trust_root=None,
         raise VerificationError(code, checks=checks, **kw)
 
     # -- verifier integrity first: the pin on the compiled-in root --
-    if trust_root is None:
+    if trust_chain is not None:
+        if trust_root is not None:
+            raise InternalError(
+                "trust_root and trust_chain are mutually exclusive: "
+                "the chain tip is the authority")
+        root_doc = None  # resolved from the chain after the clock check
+        root_source = "trust-chain"
+    elif trust_root is None:
         root_doc = compiled_trust_root()
         root_source = "compiled-in"
     else:
@@ -1399,8 +1538,9 @@ def verify(bundle_bytes, verification_bundle, trust_root=None,
             raise InternalError("trust_root must be a dict or None")
         root_doc = trust_root
         root_source = "caller-supplied"
-    root_keys = _check_trust_root_shape(root_doc)
-    root_digest = hashlib.sha256(canonical(root_doc)).hexdigest()
+    if root_doc is not None:
+        root_keys = _check_trust_root_shape(root_doc)
+        root_digest = hashlib.sha256(canonical(root_doc)).hexdigest()
 
     # -- clock as inspectable control: fail closed with no trusted time --
     if time_source is None:
@@ -1413,6 +1553,29 @@ def verify(bundle_bytes, verification_bundle, trust_root=None,
     now = now_fn()
     if not isinstance(now, datetime) or now.tzinfo is None:
         raise InternalError("time_source.now() must return tz-aware time")
+
+    # -- trust-root chain (optional, additive): versioned rotation --
+    # Structure + freshness are checked here (they need the clock); the
+    # tip's validity at the bundle timestamp's time is checked after the
+    # timestamps step (step 8), when the bundle's attested time is known.
+    chain_tip = None
+    if trust_chain is not None:
+        trr = _trust_root_refresh()
+        try:
+            chain_tip = trr.verify_chain_structure(
+                trust_chain, freshness=chain_freshness, now=now,
+                max_age_seconds=chain_max_age_seconds)
+        except trr.TrustRootError as exc:
+            _fail(exc.code, detail=exc.detail)
+        root_doc = chain_tip["root_doc"]
+        root_source = "trust-chain v%d" % chain_tip["chain_version"]
+        root_keys = _check_trust_root_shape(root_doc)
+        root_digest = hashlib.sha256(canonical(root_doc)).hexdigest()
+        _pass("trust-chain",
+              "v1..v%d valid; freshness fresh at %s; authority is the "
+              "tip root (content %s)"
+              % (chain_tip["chain_version"], _fmt_time(now),
+                 chain_tip["content_hash"][:16]))
 
     # -- step 1: parse --
     if not isinstance(bundle_bytes, (bytes, bytearray)) \
@@ -1493,12 +1656,30 @@ def verify(bundle_bytes, verification_bundle, trust_root=None,
               expected="predicate claims %r"
                        % (policy["required_predicate_claims"],),
               actual="missing %r" % (missing,))
+    # Schema-2.0 extension gate (wave-318 lane 2): when the statement
+    # claims evidence-schema/2.0, the AU-3 + CC8.1 extension claims are
+    # validated strictly -- missing/malformed fields or a change-log gap
+    # refuse coded EXTENSION_SCHEMA_INVALID. Bundles without the 2.0
+    # claim take the legacy path unchanged (backward compat). Skipped in
+    # existence-only mode like all other predicate-CONTENT evaluation.
+    v2_note = ""
+    if not existence_only and statement["predicate"].get(
+            "evidence_schema_version") == \
+            _schema_v2().EVIDENCE_SCHEMA_V2:
+        try:
+            _schema_v2().validate_v2_claims(statement["predicate"])
+        except _schema_v2().SchemaV2Error as exc:
+            _fail("EXTENSION_SCHEMA_INVALID", detail=str(exc))
+        v2_note = (" + schema-2.0 extension "
+                   "(au3_records, decision_maker_versions, "
+                   "change-log consistent)")
     _pass("predicate",
-          "%s%s" % (policy["required_predicate_type"],
+          "%s%s%s" % (policy["required_predicate_type"],
                     " (existence-only: content not evaluated)"
                     if existence_only else
                     " + %d required claim(s)"
-                    % len(policy["required_predicate_claims"])))
+                    % len(policy["required_predicate_claims"]),
+                    v2_note))
 
     # -- step 6: digest (same-bytes) --
     if canonical(statement) != payload:
@@ -1526,6 +1707,30 @@ def verify(bundle_bytes, verification_bundle, trust_root=None,
           "key; expires %s; %d observer timestamp(s) verified "
           "(authority-isolated)"
           % (policy["policy_id"], _fmt_time(policy["expires"]), n_ts))
+
+    # -- trust-chain expiry (conditional): at the timestamp's time --
+    # The bundle's attested time is the earliest verified observer
+    # timestamp when present, else the trusted now (tokens were verified
+    # in the step above, so re-parsing their times here is safe).
+    # CVE-2026-24122: the tip's validity window is evaluated at the
+    # TIMESTAMP's time -- a bundle timestamped inside the window still
+    # verifies after the root expired (designed grace); a bundle
+    # timestamped outside it is refused.
+    if trust_chain is not None:
+        ts_times = []
+        for tok in vb.get("timestamps", []):
+            ts_times.append(_parse_time(tok["time"], "timestamp.time",
+                                        "TIMESTAMP_SIGNATURE_INVALID"))
+        bundle_ts = min(ts_times) if ts_times else now
+        trr = _trust_root_refresh()
+        try:
+            trr.check_expiry(chain_tip, bundle_ts)
+        except trr.TrustRootError as exc:
+            _fail(exc.code, detail=exc.detail)
+        _pass("trust-chain-expiry",
+              "tip root v%d valid at bundle time %s (expiry evaluated at "
+              "the timestamp's time)"
+              % (chain_tip["chain_version"], _fmt_time(bundle_ts)))
 
     # -- witness step (conditional): runs only when the bundle carries
     # witness entries or the signed policy requires them. The 9 base

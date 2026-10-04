@@ -16467,11 +16467,74 @@ TAXONOMY = {
         "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'trust-root-chain-malformed': {
+        "domain": 'evidence',
+        "code": 'trust-root-chain-malformed',
+        "human": 'trust-root chain: the chain is structurally invalid -- '
+                 'empty, versions not strictly consecutive from v1, content '
+                 'hash mismatch, or bad pin fields; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'trust-root-expired': {
+        "domain": 'evidence',
+        "code": 'trust-root-expired',
+        "human": 'trust-root chain: the chain tip was not valid at the '
+                 'bundle timestamp\'s time (expiry is evaluated at the '
+                 'timestamp\'s time, chain-wide, per CVE-2026-24122); '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'trust-root-receipt-unbound': {
+        "domain": 'evidence',
+        "code": 'trust-root-receipt-unbound',
+        "human": 'trust-root chain: a witness receipt does not bind the '
+                 'artifact digest, signature, and signer key (a valid '
+                 'receipt alone is never enough, per CVE-2026-22703); '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
     'trust-root-revoked': {
         "domain": 'deploy',
         "code": 'trust-root-revoked',
         "human": 'deployment trust config: the trust root has been revoked',
         "severity": 'high',
+        "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'trust-root-rotation-invalid': {
+        "domain": 'evidence',
+        "code": 'trust-root-rotation-invalid',
+        "human": 'trust-root chain: the rotation ceremony record is invalid '
+                 '-- bad version link, hash mismatch, future review date, '
+                 'reviewed outside the signing root\'s window, or not '
+                 'signed by the old root\'s keys; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'trust-root-silent-swap': {
+        "domain": 'evidence',
+        "code": 'trust-root-silent-swap',
+        "human": 'trust-root chain: a chain link was adopted without a '
+                 'rotation record -- rotation is a policy ceremony, never '
+                 'silent; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'trust-root-stale-freshness': {
+        "domain": 'evidence',
+        "code": 'trust-root-stale-freshness',
+        "human": 'trust-root chain: the freshness signal is missing, stale, '
+                 'future-dated, for the wrong chain version, or not signed '
+                 'by the tip root\'s keys; refused fail-closed',
+        "severity": 'medium',
         "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
         "reverify_steps": ['recompute'],
     },

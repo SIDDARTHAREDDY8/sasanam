@@ -73,7 +73,7 @@ import probe_lines  # noqa: E402  (canonical probe-line emission)
 
 from gov import approval_tokens as AT  # noqa: E402
 
-TAXONOMY_PIN = 1900 # Wave-313 lane B: pin 1851 -> 1857 (+6 approval-token-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*)
+TAXONOMY_PIN = 1906 # Wave-313 lane B: pin 1851 -> 1857 (+6 approval-token-*); Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*)
 
 _NOW = 1798765432
 _BENIGN = {"to": "teammate@synthetic.local", "body": "weekly report"}
@@ -442,12 +442,12 @@ def footer_state():
     # the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
     ok = ("Next free finding: **F405**" in text
-          and m_open and m_open[-1].strip() == "F404")
+          and m_open and m_open[-1].strip() == "none")
     if ok:
-        _record("footer-state", "HELD", "footer: open F404 / next F405")
+        _record("footer-state", "HELD", "footer: open none / next F405")
     else:
         _record("footer-state", "BREAK",
-                "footer mismatch vs open F404 / next F405")
+                "footer mismatch vs open none / next F405")
 
 
 PROBES = [issue_verify_roundtrip, refuse_tampered,

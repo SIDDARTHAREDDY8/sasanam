@@ -82,7 +82,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-309 pin 1829 (+1 workflow-composed-plan-mismatch). This lane
 # mints no codes (red team only), so the pin stays 1829.
-TAXONOMY_PIN = 1900 # wave-309 merge: +1 workflow-composed-plan-mismatch; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*)
+TAXONOMY_PIN = 1906 # wave-309 merge: +1 workflow-composed-plan-mismatch; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*)
 
 AT = 1000000
 
@@ -120,7 +120,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1900/1900/0 sorted")
+    _record("pin-taxonomy", "HELD", "1906/1906/0 sorted")
 
 
 def p_footer_state():
@@ -134,11 +134,11 @@ def p_footer_state():
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
     # Wave-312 merge footer: F396 CLOSED (lane A); F397 OPEN (lane C).
-    if nxt != 405 or open_s != "F404":
+    if nxt != 405 or open_s != "none":
         return _record("footer-state", "BREAK",
                        "footer pins next F%d open '%s', want next F397 "
                        "open 'F396'" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open F404 / next F405")
+    _record("footer-state", "HELD", "footer pins open none / next F405")
 
 
 # ------------------------------------------------------------------

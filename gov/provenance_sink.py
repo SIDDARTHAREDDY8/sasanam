@@ -216,11 +216,10 @@ def _canon(value):
 
 #: Deterministic negation vocabulary for the F398 critical-arg fix.
 #: A critical-arg value that occurs inside a negated clause is not an
-#: authorizing mention -- mention is not authorization. This is a
-#: conservative floor, not an NLP claim: anything not recognized as
-#: negated is still judged by the ordinary trust rules, and anything
-#: recognized as negated simply stops contributing trust (fail closed).
-#: Tokens are lowercased, punctuation-stripped, apostrophes preserved.
+#: authorizing mention -- mention is not authorization. Since F404 the
+#: negation cues are only the DISCOUNT side: a clause with no cue is no
+#: longer assumed affirmative (see _AUTHORIZATION_VERBS below). Tokens
+#: are lowercased, punctuation-stripped, apostrophes preserved.
 _NEGATION_CUES = frozenset({
     "never", "not", "no", "none", "nobody", "nothing", "neither", "nor",
     "without", "cannot",
@@ -258,21 +257,114 @@ def _clause_negated(clause):
                for tok in _WORD.findall(clause.lower()))
 
 
-def _affirmative_mention(content, text):
+#: Deterministic authorization vocabulary for the F404 critical-arg fix.
+#: The F398 rule asked "is this clause negated?" -- a blacklist of
+#: prohibitions. F404 showed the blacklist has no deterministic ceiling:
+#: out-of-vocabulary prohibitions ("X is off the table", "X is banned")
+#: carry no negation cue and bound at USER. The F404 rule inverts the
+#: default and asks "is this clause an authorization?" -- a whitelist.
+#: A value binds at USER only on POSITIVE evidence of authorization;
+#: bare mentions, descriptive statements, and unrecognized prohibitions
+#: carry no such evidence and fall to the context min (fail closed).
+#: Unknown phrasings now refuse instead of allowing.
+#:
+#: Base forms only, deliberately: past tense ("X emailed me the report")
+#: is descriptive of a prior act, not an authorization of a new one.
+_AUTHORIZATION_VERBS = frozenset({
+    "send", "email", "mail", "forward", "cc", "bcc",
+    "share", "deliver", "notify", "contact", "ask", "tell",
+    "message", "ping", "write", "dispatch", "distribute",
+    "circulate", "relay", "transmit",
+})
+
+#: Positive predicates: "X is fine/ok/..." authorizes X. The copula test
+#: below treats "X is <predicate>" as descriptive UNLESS the predicate is
+#: in this set, so "bob@corp.com is fine" binds while
+#: "mallory@evil.com is banned" does not. Single-word check by design
+#: (residual R2: "X is perfectly fine" fails closed).
+_POSITIVE_PREDICATES = frozenset({
+    "fine", "ok", "okay", "approved", "authorized", "acceptable",
+    "good", "allowed", "permitted",
+})
+
+#: Copulas and modals for the descriptive-construction test. A value
+#: immediately followed by one of these opens a statement ABOUT the value
+#: ("X is banned", "X should be blacklisted") -- the value is the SUBJECT,
+#: not the object of an authorization.
+_COPULAS = frozenset({"is", "are", "was", "were", "be", "been", "being"})
+_MODALS = frozenset({"should", "must", "will", "would", "can", "could",
+                     "may", "shall"})
+
+
+def _occurrence_authorizes(clause, idx, tlen):
+    """True iff the occurrence of the value at ``clause[idx:idx+tlen]``
+    is an authorizing mention (F404).
+
+    The value must be the OBJECT of the authorization, not its SUBJECT:
+    an occurrence immediately followed by a copular/descriptive
+    construction ("X is ...", "X should be ...") is a statement about
+    the value and does not authorize, unless the predicate is positively
+    authorizing ("X is fine"). Otherwise an authorization verb must
+    appear before the occurrence in the clause -- the verb-before-value
+    order keeps genuinely ambiguous phrasings ("X, please email him the
+    report") fail-closed.
+    """
+    after = _WORD.findall(clause[idx + tlen:].lower())
+    j = 0
+    if after and after[0] in _COPULAS:
+        j = 1
+    elif len(after) >= 2 and after[0] in _MODALS and \
+            after[1] in ("be", "been"):
+        j = 2
+    if j:
+        # Copular/descriptive construction: authorizes only on a
+        # positive predicate ("X is fine"); "X is banned",
+        # "X is off the table", "X should be blacklisted" do not.
+        return len(after) > j and after[j] in _POSITIVE_PREDICATES
+    before = _WORD.findall(clause[:idx].lower())
+    return any(tok in _AUTHORIZATION_VERBS for tok in before)
+
+
+def _authorizing_mention(content, text):
     """True iff ``text`` occurs in ``content`` in at least one clause
-    with no negation cue (F398). A negated occurrence -- a prohibition,
-    a "don't", a "never" -- is not an authorizing mention and is
-    discounted everywhere it appears."""
+    carrying positive evidence of authorization (F404).
+
+    Per clause: a negated clause authorizes nothing (F398: negation
+    discounts first and everywhere); otherwise each occurrence of the
+    value is judged by `_occurrence_authorizes`. A bare mention with no
+    authorization signal is not an authorizing mention.
+    """
     if not content or not text:
         return False
     start = 0
     for match in _CLAUSE_SPLIT.finditer(content):
         clause = content[start:match.start()]
-        if text in clause and not _clause_negated(clause):
-            return True
+        if not _clause_negated(clause):
+            idx = clause.find(text)
+            while idx != -1:
+                if _occurrence_authorizes(clause, idx, len(text)):
+                    return True
+                idx = clause.find(text, idx + 1)
         start = match.end()
     tail = content[start:]
-    return text in tail and not _clause_negated(tail)
+    if _clause_negated(tail):
+        return False
+    idx = tail.find(text)
+    while idx != -1:
+        if _occurrence_authorizes(tail, idx, len(text)):
+            return True
+        idx = tail.find(text, idx + 1)
+    return False
+
+
+def _affirmative_mention(content, text):
+    """Backward-compatible alias for `_authorizing_mention` (F404).
+
+    The F398 name over-promised: a non-negated mention is not an
+    affirmative authorization. Kept as a thin alias so out-of-tree
+    callers keep working; new code must use `_authorizing_mention`.
+    """
+    return _authorizing_mention(content, text)
 
 
 def _coerce_segment(raw):
@@ -514,24 +606,32 @@ class ProvenanceSink(object):
 
     def _bind_arg(self, value, graded):
         """Bind one arg value to a trust level, in precedence order:
-        (1) the value appears AFFIRMATIVELY in a live user/system
-        segment -> USER; (2) else the trust of the most-recent live
-        segment containing it affirmatively; (3) else the context min.
-        A negated occurrence (a prohibition: "never email X") is not an
-        authorizing mention -- mention is not authorization -- and is
-        discounted in both rules (F398). Deterministic (trajectory order
-        is the tiebreak)."""
+        (1) the value appears in an AUTHORIZING mention in a live
+        user/system segment -> USER; (2) else the trust of the
+        most-recent live segment containing it in an authorizing
+        mention; (3) else the context min.
+        Since F404 the mention test is `_authorizing_mention`: positive
+        evidence of authorization is required (an authorization verb
+        governing the value as its object, or a positive predicate such
+        as "X is fine"). A negated occurrence (a prohibition: "never
+        email X") is not an authorizing mention -- mention is not
+        authorization -- and is discounted in both rules (F398). Bare
+        mentions, descriptive statements ("X is banned"), and
+        out-of-vocabulary prohibitions ("X is off the table") carry no
+        positive evidence and fall through to the context min, never to
+        USER (fail closed). Deterministic (trajectory order is the
+        tiebreak)."""
         text = value if isinstance(value, str) else _canon(value)
         if not text:
             return T.UNTRUSTED
         live = [(s, t) for s, t, _ in graded
                 if s.segment_id not in self._quarantined]
         for s, t in live:
-            if t >= T.USER and _affirmative_mention(s.content or "",
+            if t >= T.USER and _authorizing_mention(s.content or "",
                                                     text):
                 return T.USER
         for s, t in reversed(live):
-            if _affirmative_mention(s.content or "", text):
+            if _authorizing_mention(s.content or "", text):
                 return t
         return min((t for _, t in live), default=T.UNTRUSTED)
 

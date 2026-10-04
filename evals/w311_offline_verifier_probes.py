@@ -11,10 +11,10 @@ distribution), implementing the wave-310 lane B steal verdicts
   (canonical bundle bytes + inline verification bundle + compiled-in
   trust root pinned by SHA-256), zero network by construction, five
   negative tests + one known-good positive;
-  DepGuard-shaped typed failure taxonomy (16 codes, exit codes 40-44,
+  DepGuard-shaped typed failure taxonomy (23 codes, exit codes 40-44,
   ordered parse -> crypto -> unsupported -> binding -> policy/temporal --
   11 base codes from lane E plus the 5 wave-312 WITNESS_* codes slotted
-  into the existing categories);
+  in, plus the wave-318 EXTENSION_SCHEMA_INVALID schema-2.0 code,  into the existing categories);
   cosign air-gap UX (--offline / --trusted-root / --rfc3161-timestamp,
   no --private-infrastructure); SLSA VSA consumer procedure
   (PASSED != ALLOW); Witness policy binding (trust roots inside the
@@ -92,7 +92,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # No new decision codes minted by this lane (verifier taxonomy is the
 # verifier's own surface, not governance decisions); pin stays 1829.
-TAXONOMY_PIN = 1900 # wave-312: 1841 + 10 witness-log/evidence-bundle codes; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*)
+TAXONOMY_PIN = 1906 # wave-312: 1841 + 10 witness-log/evidence-bundle codes; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*)
 
 from gov.signing import Ed25519Signer, Ed25519Verifier
 from gov import evidence_verify_offline as v
@@ -283,7 +283,7 @@ def p_pin_taxonomy():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1900/1900/0 sorted")
+    _record("pin-taxonomy", "HELD", "1906/1906/0 sorted")
 
 
 def p_footer_state():
@@ -294,16 +294,19 @@ def p_footer_state():
     m_open = re.findall(r"Open findings: ([^.]*)\.", text)
     # Wave-316 merge footer: F398/F399/F400 CLOSED; F401/F402/F403 OPEN; next F404.
     ok = (m_next and m_next[-1] == "F405"
-          and m_open and m_open[-1].strip() == "F404")
+          and m_open and m_open[-1].strip() == "none")
     _record("footer-state", "HELD" if ok else "BREAK",
-            "open F404 / next F405" if ok else "footer drift")
+            "open none / next F405" if ok else "footer drift")
 
 
 def p_taxonomy_shape():
     codes = v.FAILURE_CODES
-    if len(codes) != 16:
+    # Wave-318 lane 2: 16 -> 17 (+1 EXTENSION_SCHEMA_INVALID, schema-2.0
+    # AU-3/CC8.1 extension gate). Wave-318 lane 3: 17 -> 23 (+6
+    # trust-root-* chain codes). Wave-318 merge: 16 -> 23.
+    if len(codes) != 23:
         return _record("taxonomy-shape", "BREAK",
-                       "want 16 codes, got %d" % len(codes))
+                       "want 23 codes, got %d" % len(codes))
     exits = sorted({c["exit"] for c in codes.values()})
     if exits != [40, 41, 42, 43, 44]:
         return _record("taxonomy-shape", "BREAK",
@@ -327,7 +330,7 @@ def p_taxonomy_shape():
         if not c.get("reason") or not c.get("remedy"):
             return _record("taxonomy-shape", "BREAK",
                            "code %s missing reason/remedy" % k)
-    _record("taxonomy-shape", "HELD", "16 codes, exits 40-44, ordered")
+    _record("taxonomy-shape", "HELD", "23 codes, exits 40-44, ordered")
 
 
 def p_known_good_positive():

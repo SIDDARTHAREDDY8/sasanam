@@ -80,7 +80,7 @@ import probe_lines
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Pin moves 1841 -> 1851: +8 witness-log-* +2 evidence-bundle-witness-*.
-TAXONOMY_PIN = 1900 #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*)
+TAXONOMY_PIN = 1906 #Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*)
 
 from gov import witness_log as wl
 from gov.signing import Ed25519Signer
@@ -297,7 +297,7 @@ def p_pin_taxonomy():
     if len(new) != 10:
         return _record("pin-taxonomy", "BREAK",
                        "want 10 new witness codes, got %d" % len(new))
-    _record("pin-taxonomy", "HELD", "1900/1900/0 sorted, +10 witness codes")
+    _record("pin-taxonomy", "HELD", "1906/1906/0 sorted, +10 witness codes")
 
 
 def p_footer_state():
@@ -309,9 +309,9 @@ def p_footer_state():
     # Footer lines repeat through history; the LAST one is current.
     # Wave-316 merge footer: F398/F399/F400 CLOSED; F401/F402/F403 OPEN; next F404.
     ok = (m_next and m_next[-1] == "F405"
-          and m_open and m_open[-1].strip() == "F404")
+          and m_open and m_open[-1].strip() == "none")
     _record("footer-state", "HELD" if ok else "BREAK",
-            "open F404 / next F405" if ok else "footer drift")
+            "open none / next F405" if ok else "footer drift")
 
 
 def p_log_roundtrip():

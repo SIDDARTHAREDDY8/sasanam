@@ -68,7 +68,7 @@ from gov.trajectory_risk import (  # noqa: E402
     WINDOW_SIZE,
 )
 
-TAXONOMY_PIN = 1900 # wave-311 merge pin; this lane files nothing; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*)
+TAXONOMY_PIN = 1906 # wave-311 merge pin; this lane files nothing; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*)
 CORPUS = os.path.join(REPO, "evals", "artifacts", "decomp_corpus_v1.jsonl")
 
 # Characterization pins (measured on the wave-311 base 2026-10-03).
@@ -447,11 +447,11 @@ def footer_state():
     # Footer lines repeat through history; the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
     ok = ("Next free finding: **F405**" in text
-          and m_open and m_open[-1].strip() == "F404")
+          and m_open and m_open[-1].strip() == "none")
     if ok:
-        _record("footer-state", "HELD", "footer: open F404 / next F405")
+        _record("footer-state", "HELD", "footer: open none / next F405")
     else:
-        _record("footer-state", "BREAK", "footer mismatch vs open F404 / next F405")
+        _record("footer-state", "BREAK", "footer mismatch vs open none / next F405")
 
 
 PROBES = [corpus_schema, corpus_deterministic_replay,

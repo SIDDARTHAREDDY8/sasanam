@@ -54,6 +54,7 @@ from datetime import datetime, timezone
 
 from gov import log as _log
 from gov import claim_bounds as _claim_bounds
+from gov import evidence_schema_v2 as _evidence_schema_v2
 from gov import honest_claims as _honest_claims
 from gov.discovery import DiscoveryLedger, LedgerCorruptError
 from gov.safeguard_bundle import (
@@ -255,7 +256,9 @@ class EvidenceBundle:
                  retention_manifest=None, key_provider=None,
                  sar_manifest=None, eval_session_ids=None,
                  exported_at=None, roster=None,
-                 discovery_ledger_path=None, live_config=None):
+                 discovery_ledger_path=None, live_config=None,
+                 schema_version="1.0", decision_maker=None,
+                 decision_maker_change_log=None):
         self.log_path = str(log_path)
         self._window_req = window
         self._operator_id = operator_id
@@ -280,6 +283,19 @@ class EvidenceBundle:
         #  "retention": {...}}. None means no binding check (previous
         # behavior: attestation derived, manifest asserted).
         self._live_config = live_config
+        # Wave-318 lane 2: evidence-schema version. "1.0" (default)
+        # renders the legacy payload byte-identically; "2.0" adds the
+        # AU-3 record section and the CC8.1 decision-maker versioning
+        # section additively. Anything else refuses.
+        if schema_version not in ("1.0", "2.0"):
+            raise EvidenceBundleError(
+                "unsupported evidence schema_version %r (want '1.0' or "
+                "'2.0')" % (schema_version,))
+        self._schema_version = schema_version
+        # CC8.1 decision-maker context (operator-supplied; None means
+        # honestly absent, never guessed).
+        self._decision_maker = decision_maker
+        self._decision_maker_change_log = decision_maker_change_log
         self._entries = None
         self._window = None
 
@@ -355,6 +371,35 @@ class EvidenceBundle:
             "discovery": self._build_discovery(),
             "sections_meta": {},
         }
+        # Wave-318 lane 2: schema-2.0 extension sections (AU-3 records +
+        # CC8.1 decision-maker versioning), additive and inside the
+        # bundle identity (before bundle_id computation).
+        _v2_extra_claims = None
+        if self._schema_version == "2.0":
+            # Wave-318 lane 2: schema 2.0 exists to carry CC8.1
+            # decision-maker versioning; without decision-maker context
+            # the build refuses (fail-fast) instead of issuing a bundle
+            # the verifier's v2 gate could never accept.
+            if self._decision_maker is None:
+                raise EvidenceBundleError(
+                    "schema_version='2.0' requires decision_maker "
+                    "context (model, system_prompt, config, change_log); "
+                    "build schema 1.0 when the context is unavailable")
+            try:
+                _v2 = _evidence_schema_v2.build_v2_sections(
+                    window_entries, self._decision_maker,
+                    self._decision_maker_change_log)
+            except _evidence_schema_v2.SchemaV2Error as exc:
+                raise EvidenceBundleError(
+                    "schema 2.0 section build refused: %s" % exc)
+            payload["au3_records"] = _v2["au3_records"]
+            payload["decision_maker_versions"] = \
+                _v2["decision_maker_versions"]
+            _v2_extra_claims = {
+                "au3_records": ["au3-record-integrity"],
+                "decision_maker_versions":
+                    ["decision-maker-version-integrity"],
+            }
         # Wave-209: mandatory claim bounds (the narrow-claims honesty
         # rule). Every bundle declares what it proves and what it does
         # not; V18 in the offline verifier refuses boundless or
@@ -362,10 +407,20 @@ class EvidenceBundle:
         # so the bounds are inside the deterministic identity.
         _evidence_sections = [k for k in payload if k != "sections_meta"]
         _bounds = _claim_bounds.default_bundle_bounds()
+        if self._schema_version == "2.0":
+            # Wave-318 lane 2: the v1 honesty contract is immutable; the
+            # v2 proves list is the v1 list plus the two extension
+            # tokens, re-validated (disjointness etc.) before issue.
+            _bounds = _claim_bounds.validate_bounds(
+                {**_bounds, "proves": list(_bounds["proves"]) + [
+                    "au3-record-integrity",
+                    "decision-maker-version-integrity"]},
+                where="claim_bounds")
         payload["claim_bounds"] = _bounds
         payload["claim_assignment"] = _claim_bounds.default_claim_assignment(
             _evidence_sections, _bounds["proves"],
-            discovery_present=payload.get("discovery") is not None)
+            discovery_present=payload.get("discovery") is not None,
+            extra_section_claims=_v2_extra_claims)
         payload["kms_attestation"], meta = self._build_kms_attestation()
         payload["sections_meta"]["kms_attestation"] = meta
         # H6 (wave-117): bind the seal-time KMS/retention claims against
@@ -393,7 +448,10 @@ class EvidenceBundle:
         op_given = self._operator_id is not None
         return {
             "bundle_version": BUNDLE_VERSION,
-            "evidence_schema_version": EVIDENCE_SCHEMA_VERSION,
+            "evidence_schema_version": (
+                _evidence_schema_v2.EVIDENCE_SCHEMA_V2
+                if self._schema_version == "2.0"
+                else EVIDENCE_SCHEMA_VERSION),
             "generator": GENERATOR,
             "generator_version": GENERATOR_VERSION,
             "exported_at": self._exported_at or _utcnow_iso(),

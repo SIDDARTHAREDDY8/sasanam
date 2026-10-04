@@ -49,7 +49,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1900 # Wave-303 merge pin; F386 adds no decision codes.; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*)
+TAXONOMY_PIN = 1906 # Wave-303 merge pin; F386 adds no decision codes.; Wave-315 lane 2: pin 1878 -> 1888 (+10 vsa-packet-*); Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*)
 
 # Wave-312 merge: the F395 closure contract (coded
 # workflow-composed-definition-invalid for non-JSON-native closed-over
@@ -94,7 +94,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1900/1900/0 sorted")
+    _record("pin-taxonomy", "HELD", "1906/1906/0 sorted")
 
 
 def p_footer_state():
@@ -107,13 +107,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
-    want_open = "F404"  # this lane: F386 CLOSED
+    want_open = "none"  # this lane: F386 CLOSED
     if nxt != 405 or open_s != want_open:
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F404 open 'none')"
                        % (nxt, open_s, want_open))
     _record("footer-state", "HELD",
-            "footer pins open F404 / next F405")
+            "footer pins open none / next F405")
 
 
 AT = 1_700_000_000
