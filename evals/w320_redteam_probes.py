@@ -738,7 +738,7 @@ GREEN_EVALS = [
     ("w319-grant", "evals/w319_grant_probes.py", (0, 19, 0)),
     ("w319-identity", "evals/w319_identity_probes.py", (0, 19, 0)),
     ("w319-witness", "evals/w319_witness_probes.py", (0, 21, 0)),
-    ("w319-redteam", "evals/w319_redteam_probes.py", (3, 19, 0)),
+    ("w319-redteam", "evals/w319_redteam_probes.py", (0, 24, 0)),  # F405 CLOSED at wave-320 merge (was 3/19/0 on the open tree)
     ("w318-trustroot", "evals/w318_trustroot_probes.py", (0, 12, 0)),
     ("w318-evidence", "evals/w318_evidence_schema_probes.py", (0, 18, 0)),
 ]
@@ -774,7 +774,7 @@ def _run_green_eval(name, rel, expect):
     if got == expect:
         return (name, "HELD", "%d/%d/%d" % got)
     return (name, "BREAK", "got %d/%d/%d want %d/%d/%d"
-            % (got + expect,))
+            % (got + expect))
 
 
 def green_check():
