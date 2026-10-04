@@ -214,6 +214,47 @@ class ShamirCeremonyTests(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(tmp, "b.shard")))
         self.assertEqual(open(target, "rb").read(), b"live")
 
+    def test_distribute_symlink_alias_refuses_before_any_write(self):
+        # F414: two assignment paths naming one file through a symlink
+        # must refuse in the pre-flight, with nothing written.
+        tmp = tempfile.mkdtemp(prefix="shamir-ut-")
+        link = tmp + "-alias"
+        try:
+            os.symlink(tmp, link)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable in this environment")
+        try:
+            shards = sc.split(sc.generate_secret(16), 2, 2, "ut-f414")
+            with self.assertRaises(sc.ShamirCustodyError) as ctx:
+                sc.distribute(shards,
+                              {"ann": os.path.join(tmp, "shard"),
+                               "bob": os.path.join(link, "shard")})
+            self.assertEqual(ctx.exception.code,
+                             "custody-shamir-distribute-refused")
+            self.assertEqual(os.listdir(tmp), [])
+        finally:
+            try:
+                os.unlink(link)
+            except OSError:
+                pass
+
+    def test_distribute_spelling_variant_refuses_before_any_write(self):
+        # Two assignments spelling the same file differently (redundant
+        # separators) resolve to one realpath and must refuse in the
+        # pre-flight with nothing written. The (dev, ino, basename)
+        # directory-alias key additionally covers bind-mount-class
+        # aliases that realpath cannot see; that class needs mount
+        # privileges and is covered by code inspection, not here.
+        tmp = tempfile.mkdtemp(prefix="shamir-ut-")
+        shards = sc.split(sc.generate_secret(16), 2, 2, "ut-f414b")
+        with self.assertRaises(sc.ShamirCustodyError) as ctx:
+            sc.distribute(shards,
+                          {"ann": os.path.join(tmp, "shard"),
+                           "bob": tmp + "//shard"})
+        self.assertEqual(ctx.exception.code,
+                         "custody-shamir-distribute-refused")
+        self.assertEqual(os.listdir(tmp), [])
+
     def test_transcript_chain(self):
         tmp = tempfile.mkdtemp(prefix="shamir-ut-")
         tr = sc.CeremonyTranscript(os.path.join(tmp, "t.jsonl"))
