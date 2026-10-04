@@ -820,11 +820,11 @@ def _parse_tally(text):
 
 # Post-merge tallies: all footer-state probes swept to the final footer
 # ("open F410, F411 / next F412"), so the child tallies are the clean
-# post-closure counts (F409 HELD everywhere).
+# post-closure counts (F409 HELD everywhere). Child mode (GOV_SKIP_GREEN=1).
 _GREEN_EVALS = [
     ("w325-resid", "evals/w325_resid_probes.py", (0, 23, 0)),
     ("w325-dexid", "evals/w325_dexid_probes.py", (0, 26, 0)),
-    ("w325-redteam", "evals/w325_redteam_probes.py", (0, 50, 0)),
+    ("w325-redteam", "evals/w325_redteam_probes.py", (0, 46, 0)),
     ("w324-alert", "evals/w324_alert_probes.py", (0, 18, 0)),
     ("w324-offver", "evals/w324_offver_probes.py", (0, 32, 0)),
     ("w324-vsa", "evals/w324_vsa_probes.py", (0, 22, 0)),
