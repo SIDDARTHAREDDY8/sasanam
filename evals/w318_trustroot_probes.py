@@ -31,7 +31,7 @@ Probe map (public seams only -- verify() / consume_vsa()):
       coded trust-root-expired at the VSA's timeVerified.
   vsa-consume-stale-freshness-refused: VSA with a stale freshness
       signal -> coded trust-root-stale-freshness.
-  pin-taxonomy / footer-state: standard pins (1914; open F404 / next
+  pin-taxonomy / footer-state: standard pins (1916; open F404 / next
       F405).
 """
 
@@ -54,7 +54,7 @@ from gov import evidence_verify_offline as v  # noqa: E402
 from gov import trust_root_refresh as trr  # noqa: E402
 from gov import vsa_packet as vp  # noqa: E402
 
-TAXONOMY_PIN = 1914  # Wave-318 lane 3: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 2: pin 1906 -> 1914 (+8 identity-*)
+TAXONOMY_PIN = 1916  # Wave-318 lane 3: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*)
 
 FOOTER_NEXT = "F405"
 FOOTER_OPEN = "none"

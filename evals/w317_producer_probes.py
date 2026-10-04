@@ -50,7 +50,7 @@ import probe_lines  # noqa: E402  (canonical probe-line emission)
 from gov import provenance_labels as PL  # noqa: E402
 from gov import provenance_sink as PS  # noqa: E402
 
-TAXONOMY_PIN = 1914  # Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 2: pin 1906 -> 1914 (+8 identity-*)
+TAXONOMY_PIN = 1916  # Wave-316 lane 4: pin 1888 -> 1900 (+12 transform-*); Wave-318 merge: pin 1900 -> 1906 (+6 trust-root-*); Wave-319 lane 3: pin 1906 -> 1916 (+10 witness-*)
 
 FOOTER_NEXT = "F405"
 FOOTER_OPEN = "none"
