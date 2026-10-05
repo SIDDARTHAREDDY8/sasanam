@@ -28,9 +28,9 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
-TAXONOMY_PIN = 2121 # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).; Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*)
-FOOTER_OPEN = "F424, F425"  # F417 CLOSED 2026-10-05 (wave-334 lane 1); no open findings.
-FOOTER_NEXT = "F426"  # Next free finding number (F417 OPEN, F418 closed at wave-333 merge).  # Next free finding number.
+TAXONOMY_PIN = 2124 # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).; Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
+FOOTER_OPEN = "F426"  # Prior findings CLOSED; F426 OPEN (wave-337 red team).
+FOOTER_NEXT = "F427"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -706,23 +706,23 @@ def _p5g():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2121-sorted")
+@probe("P6a-pin-taxonomy-2124-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
-    if TAXONOMY_PIN != 2121:
-        return _break("P6a-pin-taxonomy-2121-sorted",
-                      "TAXONOMY_PIN is %r, want 2121" % (TAXONOMY_PIN,))
-    if len(codes) != 2121 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-2121-sorted",
+    if TAXONOMY_PIN != 2124:
+        return _break("P6a-pin-taxonomy-2124-sorted",
+                      "TAXONOMY_PIN is %r, want 2124" % (TAXONOMY_PIN,))
+    if len(codes) != 2124 or codes != sorted(codes):
+        return _break("P6a-pin-taxonomy-2124-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    if len(set(codes)) != 2121:
-        return _break("P6a-pin-taxonomy-2121-sorted",
+    if len(set(codes)) != 2124:
+        return _break("P6a-pin-taxonomy-2124-sorted",
                       "duplicate codes in TAXONOMY")
-    return _held("P6a-pin-taxonomy-2121-sorted", "2121/2121/0 sorted")
+    return _held("P6a-pin-taxonomy-2124-sorted", "2124/2124/0 sorted")
 
 
-@probe("P6b-footer-open-none-next-f419")
+@probe("P6b-footer-open-f426-next-f427")
 def _p6b():
     text = open(os.path.join(REPO, "evals/FINDINGS.md")).read()
     opens = re.findall(r"\*\*Open findings:\s*([^*]+?)\.\*\*", text)
@@ -730,12 +730,12 @@ def _p6b():
     open_line = opens[-1].strip() if opens else ""
     next_free = nexts[-1].strip() if nexts else ""
     if open_line != FOOTER_OPEN:
-        return _break("P6b-footer-open-none-next-f419",
+        return _break("P6b-footer-open-f426-next-f427",
                       "open findings %r, want %r" % (open_line, FOOTER_OPEN))
     if next_free != FOOTER_NEXT:
-        return _break("P6b-footer-open-none-next-f419",
+        return _break("P6b-footer-open-f426-next-f427",
                       "next free %r, want %r" % (next_free, FOOTER_NEXT))
-    return _held("P6b-footer-open-none-next-f419",
+    return _held("P6b-footer-open-f426-next-f427",
                  "footer open none / next F419")
 
 

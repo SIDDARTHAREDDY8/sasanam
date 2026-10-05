@@ -12,7 +12,7 @@ Attacks the wave-321 NEW surfaces break-first:
       (provenance-critical-arg-refused); a silent ALLOW is a BREAK.
   P4  Regression -- the four wave-321 batteries must match their shipped
       tallies (child-mode, GOV_SKIP_GREEN=1).
-  P5  Pin/footer -- 2121/2121/0 sorted on source literals; footer
+  P5  Pin/footer -- 2124/2124/0 sorted on source literals; footer
       open none / next F409 (F406 closed, F407 closed; see
 
 
@@ -58,8 +58,7 @@ from tests.keyfixture import provision_test_key  # noqa: E402
 
 provision_test_key()
 
-TAXONOMY_PIN = 2121 #Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*)
-
+TAXONOMY_PIN = 2124 #Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
 
 FOOTER_OPEN = "none"
 FOOTER_NEXT = "F426"
@@ -835,7 +834,7 @@ def green_check():
         _record("green-" + n, v, note)
 
 
-@probe("P4-pin-taxonomy-2121-sorted")
+@probe("P4-pin-taxonomy-2124-sorted")
 
 
 def _p5a():
@@ -843,11 +842,11 @@ def _p5a():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2121#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
+    ok = (len(lits) == TAXONOMY_PIN == 2124#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P4-pin-taxonomy-2121-sorted", "2121/2121/0 sorted")
-    return _break("P4-pin-taxonomy-2121-sorted",
+        return _held("P4-pin-taxonomy-2124-sorted", "2124/2124/0 sorted")
+    return _break("P4-pin-taxonomy-2124-sorted",
 
 
                   "got %d literals" % (len(lits),))

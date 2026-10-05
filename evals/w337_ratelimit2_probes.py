@@ -54,7 +54,7 @@ P16 Green check (depth-1): honors GOV_SKIP_GREEN; otherwise runs
 gov/ changes in this lane: gov/tool_rate_limit.py gains glob-family
 scoping (is_pattern_key/matching_buckets shared helpers); new
 gov/tool_budget.py (+3 tool-budget-* codes in gov/decision_codes.py,
-pin 2106 -> 2109); policy tool_budgets: section normalized
+pin 2106 -> 2124); policy tool_budgets: section normalized
 fail-closed in gov/policy.py; executor _check_tool_budget hooked at
 both F33 execution boundaries after _check_tool_rate, and the budget
 wire reset on F162 resume alongside the rate wire.
@@ -73,9 +73,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2109  # Wave-337 lane 5: pin 2106 -> 2109 (+3 tool-budget-*).
-FOOTER_OPEN = "F424, F425"  # No new findings in this lane.
-FOOTER_NEXT = "F426"  # Next free finding number.
+TAXONOMY_PIN = 2124  # Wave-337 lane 5: pin 2106 -> 2109 (+3 tool-budget-*).; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
+FOOTER_OPEN = "F426"  # No new findings in this lane.
+FOOTER_NEXT = "F427"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -651,9 +651,9 @@ def _p13():
 # P14 -- pin + footer honesty.
 # ---------------------------------------------------------------------------
 
-@probe("P14a-pin-taxonomy-2109-sorted")
+@probe("P14a-pin-taxonomy-2124-sorted")
 def _p14a():
-    pid = "P14a-pin-taxonomy-2109-sorted"
+    pid = "P14a-pin-taxonomy-2124-sorted"
     from gov.guac_graph import TAXONOMY_PIN as _pin
     if _pin != TAXONOMY_PIN:
         return _break(pid, "guac_graph pin %r != battery pin %r"
@@ -671,7 +671,7 @@ def _p14a():
     if len(literals) != TAXONOMY_PIN or len(set(literals)) != TAXONOMY_PIN:
         return _break(pid, "raw literal count %d/%d != pin"
                       % (len(literals), len(set(literals))))
-    return _held(pid, "2109/2109/0 sorted unique on raw source literals")
+    return _held(pid, "2124/2124/0 sorted unique on raw source literals")
 
 
 @probe("P14b-new-codes-centrally-registered")
@@ -697,9 +697,9 @@ def _p14c():
     # the file tail -- search the whole document.
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    if "Next free finding: **F426**" not in text:
+    if "Next free finding: **F427**" not in text:
         return _break(pid, "footer next != F426")
-    if "Open findings: F424, F425" not in text:
+    if "Open findings: F426." not in text:
         return _break(pid, "footer open != F424, F425")
     return _held(pid, "footer open F424, F425 / next F426")
 

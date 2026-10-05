@@ -35,7 +35,7 @@ P7 (2): F399 seam -- the escalate-terminal ratchet fires at the 4th
 P8 (1): F403 re-probe -- decision_packet standalone offline import still
     broken on the OPEN tree (lane 1 owns the closure; not closed here).
 P9 (2): regressions -- footer (open none / next F409; F405 closed),
-    pin taxonomy 2121/2121/0 sorted.
+    pin taxonomy 2124/2124/0 sorted.
 
 
 P10 (3): robustness acceptance gaming -- enum budget respected,
@@ -919,7 +919,7 @@ def _p9_footer():
                  "footer pins open none / next F409")
 
 
-@probe("P9-pin-taxonomy-2121-sorted")
+@probe("P9-pin-taxonomy-2124-sorted")
 
 
 def _p9_pin():
@@ -929,14 +929,14 @@ def _p9_pin():
                                             "decision_codes.py"),
                                encoding="utf-8").read())
     except Exception as exc:  # noqa: BLE001
-        return _error("P9-pin-taxonomy-2121-sorted", "%r" % (exc,))
-    if len(lits) != 2121 or len(set(lits)) != 2121:
-        return _break("P9-pin-taxonomy-2121-sorted",
-                      "got %d literals / %d unique (want 2121/2121)"
+        return _error("P9-pin-taxonomy-2124-sorted", "%r" % (exc,))
+    if len(lits) != 2124 or len(set(lits)) != 2124:
+        return _break("P9-pin-taxonomy-2124-sorted",
+                      "got %d literals / %d unique (want 2124/2124)"
                       % (len(lits), len(set(lits))))
     if lits != sorted(lits):
-        return _break("P9-pin-taxonomy-2121-sorted", "literals not sorted")
-    return _held("P9-pin-taxonomy-2121-sorted", "2121/2121/0 sorted")
+        return _break("P9-pin-taxonomy-2124-sorted", "literals not sorted")
+    return _held("P9-pin-taxonomy-2124-sorted", "2124/2124/0 sorted")
 
 
 

@@ -36,9 +36,9 @@ import gov.tool_rate_limit as TRL  # noqa: E402
 # closed tree (wave-331 lesson: empty set, never {}).
 _EXPECTED_BREAKS = set()
 
-TAXONOMY_PIN = 2106  # Wave-336: no new codes this lane, pin unchanged.
-FOOTER_OPEN = "none"
-FOOTER_NEXT = "F426"
+TAXONOMY_PIN = 2124  # Wave-336: no new codes this lane, pin unchanged.; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
+FOOTER_OPEN = "F426"
+FOOTER_NEXT = "F427"
 
 _results = []
 
@@ -422,8 +422,8 @@ def P2d():
 # ---------------------------------------------------------------------------
 
 def P3a():
-    """Pin 2106: taxonomy 2106/2106/0 sorted-unique on raw literals."""
-    pid = "P3a-pin-taxonomy-2106-sorted"
+    """Pin 2106: taxonomy 2124/2124/0 sorted-unique on raw literals."""
+    pid = "P3a-pin-taxonomy-2124-sorted"
     # Raw-literal uniqueness on the source (wave-260 lesson): a
     # deduped-dict check would miss duplicate code literals.
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -436,26 +436,35 @@ def P3a():
     if found != sorted(found):
         _break(pid, "code literals not sorted")
         return
-    _held(pid, "taxonomy 2106/2106/0 sorted-unique on raw literals")
+    _held(pid, "taxonomy 2124/2124/0 sorted-unique on raw literals")
 
 
 def P3b():
     """Footer: open none / next F426; F424/F425 marked CLOSED."""
-    pid = "P3b-footer-open-none-next-F426"
+    pid = "P3b-footer-open-f426-next-f427"
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     lines = text.splitlines()
     last = lines[-1] if lines else ""
-    if "Next free finding: **F426**" not in last:
-        _break(pid, "footer does not read next F426")
+    if "Next free finding: **F427**" not in last:
+        _break(pid, "footer does not read next F427")
         return
-    if "Open findings: none." not in last:
-        _break(pid, "footer does not read open none")
+    if "Open findings: F426." not in last:
+        _break(pid, "footer does not read open F426")
         return
-    if "**Status: OPEN.**" in text.split("## F424", 1)[-1].split("## F425", 1)[-1]:
-        _break(pid, "F424/F425 section still marked OPEN")
-        return
-    _held(pid, "footer open none / next F426, F424+F425 closed")
+    import re as _re
+    def _section(tag):
+        m = _re.search(r"^## %s\b.*$" % tag, text, _re.M)
+        if not m:
+            return ""
+        rest = text[m.end():]
+        n = _re.search(r"^## \S", rest, _re.M)
+        return rest[:n.start()] if n else rest
+    for tag in ("F424", "F425"):
+        if "**Status: OPEN.**" in _section(tag):
+            _break(pid, "%s section still marked OPEN" % tag)
+            return
+    _held(pid, "footer open F426 / next F427, F424+F425 closed")
 
 
 _PROBES = [
@@ -472,8 +481,8 @@ _PROBES = [
     ("P2b-limiter-failure-record-chained", P2b),
     ("P2c-exceeded-path-unchanged", P2c),
     ("P2d-sweep-boundary-unchanged", P2d),
-    ("P3a-pin-taxonomy-2106-sorted", P3a),
-    ("P3b-footer-open-none-next-F426", P3b),
+    ("P3a-pin-taxonomy-2124-sorted", P3a),
+    ("P3b-footer-open-f426-next-f427", P3b),
 ]
 
 
@@ -486,10 +495,10 @@ def _run_root():
 
 _CHILD_BATTERIES = [
     # After F424/F425 closures: P2c and P3e flip from BREAK to HELD
-    # (the child runs with GOV_SKIP_GREEN=1, so its 4 grandchildren
-    # collapse into one GREEN-SKIPPED HELD: 30 probes + 1 skip).
-    ("w336_redteam_probes.py", 0, "0/31/0"),
-    ("w336_f423_probes.py", 0, "0/8/0"),
+    # (the child runs with GOV_SKIP_GREEN=1, so its green checks
+    # collapse into one GREEN-SKIPPED HELD).
+    ("w336_redteam_probes.py", 0, "0/28/0"),
+    ("w336_f423_probes.py", 0, "0/7/0"),
 ]
 
 

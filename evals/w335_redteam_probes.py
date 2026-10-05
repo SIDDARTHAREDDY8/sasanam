@@ -151,8 +151,7 @@ from gov import mcp_oauth_binding as MOB  # noqa: E402
 from gov import revocation_push as RP  # noqa: E402
 from gov import decision_codes as DC  # noqa: E402
 
-TAXONOMY_PIN = 2121 # Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*)
-
+TAXONOMY_PIN = 2124 # Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
 _NOW = 1798765432
 _ISS = "https://as.example.com"
 _RES = "https://mcp.example.com/tools"
@@ -1324,15 +1323,15 @@ _FINDINGS_MD = os.path.join(REPO, "evals", "FINDINGS.md")
 def P5a():
     """Pin honesty: TAXONOMY_PIN is 2121 and the registry's sorted
     unique key order holds on raw source literals."""
-    pid = "P5a-pin-taxonomy-2121-sorted"
-    if TAXONOMY_PIN != 2121:
-        _break(pid, "TAXONOMY_PIN %r != 2121" % (TAXONOMY_PIN,))
+    pid = "P5a-pin-taxonomy-2124-sorted"
+    if TAXONOMY_PIN != 2124:
+        _break(pid, "TAXONOMY_PIN %r != 2124" % (TAXONOMY_PIN,))
         return
     # The canonical pin constant lives in gov/guac_graph.py (wave-302
     # lesson); the battery-local literal must agree with it.
     from gov import guac_graph as GG  # noqa: E402
-    if GG.TAXONOMY_PIN != 2121:
-        _break(pid, "guac_graph.TAXONOMY_PIN %r != 2121" % (GG.TAXONOMY_PIN,))
+    if GG.TAXONOMY_PIN != 2124:
+        _break(pid, "guac_graph.TAXONOMY_PIN %r != 2124" % (GG.TAXONOMY_PIN,))
         return
     codes = sorted(DC.TAXONOMY.keys())
     if list(DC.TAXONOMY.keys()) != codes:
@@ -1365,20 +1364,21 @@ def P5b():
 
 def P5c():
     """Footer honesty: the last line of evals/FINDINGS.md carries open
-    none and next F426 (raw-literal assertion, wave-331 lesson). F423
+    F426 and next F427 (raw-literal assertion, wave-331 lesson). F423
     was this lane's genuine finding (filed as F421, renumbered at the
     wave-335 merge per the wave-272 earliest-filed rule) and was
     CLOSED 2026-10-05 by wave-336 lane 1; F424/F425 were closed
-    2026-10-05 by wave-337 lane 1."""
-    pid = "P5c-footer-open-none-next-f426"
+    2026-10-05 by wave-337 lane 1; F426 was filed 2026-10-05 by the
+    wave-337 red team and remains OPEN."""
+    pid = "P5c-footer-open-f426-next-f427"
     with open(_FINDINGS_MD, "rb") as f:
         lines = f.read().decode("utf-8").splitlines()
     last = lines[-1] if lines else ""
-    if "Open findings: none" not in last:
-        _break(pid, "last line lacks 'Open findings: none': %r" % (last[:120],))
+    if "Open findings: F426." not in last:
+        _break(pid, "last line lacks 'Open findings: F426.': %r" % (last[:120],))
         return
-    if "Next free finding: **F426**" not in last:
-        _break(pid, "last line lacks next-F426: %r" % (last[:120],))
+    if "Next free finding: **F427**" not in last:
+        _break(pid, "last line lacks next-F427: %r" % (last[:120],))
         return
     if not any(l.startswith("## F423 ") for l in lines):
         _break(pid, "F423 section missing from FINDINGS.md")
@@ -1386,7 +1386,7 @@ def P5c():
     if "CLOSED 2026-10-05 wave-336 lane 1" not in "\n".join(lines):
         _break(pid, "F423 closure not recorded in FINDINGS.md")
         return
-    _held(pid, "footer honest: open none / next F426")
+    _held(pid, "footer honest: open F426 / next F427")
 
 
 # ---------------------------------------------------------------------------
@@ -1457,9 +1457,9 @@ _PROBES = [
     ("P4b-f419-closed", P4b),
     ("P4c-f420-closed", P4c),
     ("P4d-f418-closed", P4d),
-    ("P5a-pin-taxonomy-2121-sorted", P5a),
+    ("P5a-pin-taxonomy-2124-sorted", P5a),
     ("P5b-23-codes-registered", P5b),
-    ("P5c-footer-open-none-next-f426", P5c),
+    ("P5c-footer-open-f426-next-f427", P5c),
     ("P6a-f415-unicode-digit", P6a),
     ("P6b-f416-int64-boundary", P6b),
     ("P6c-f414-symlink-alias", P6c),

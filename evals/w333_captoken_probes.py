@@ -67,8 +67,7 @@ for _p in (REPO, os.path.join(REPO, "tests"), os.path.join(REPO, "evals")):
 
 from gov import capability_token as CT  # noqa: E402
 
-TAXONOMY_PIN = 2121 # Wave-332 merge pin 2062 + 7 capability-token-*; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*)
-# (agent/mission/tools/policy-stale/malformed/tampered/expired).
+TAXONOMY_PIN = 2124 # Wave-332 merge pin 2062 + 7 capability-token-*; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)# (agent/mission/tools/policy-stale/malformed/tampered/expired).
 # (agent/mission/tools/policy-stale/malformed/tampered/expired).
 
 _NOW = 1798765432
@@ -358,13 +357,13 @@ def footer_state():
     # This lane files no findings. Footer lines repeat through history;
     # the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F419**" in text
-          and m_open and m_open[-1].strip() == "F424, F425")
+    ok = ("Next free finding: **F427**" in text
+          and m_open and m_open[-1].strip() == "F426")
     if ok:
-        _record("footer-state", "HELD", "footer: open none / next F419")
+        _record("footer-state", "HELD", "footer: open F426 / next F427")
     else:
         _record("footer-state", "BREAK",
-                "footer mismatch vs open none / next F419")
+                "footer mismatch vs open F426 / next F427")
 
 
 _PROBES = [("mint-verify-roundtrip", mint_verify_roundtrip),

@@ -21,7 +21,7 @@ P5  Pre-registration intake (mock fetcher/resolver -- all SSRF cases
     pinned verification.
 P6  Deliberate deviations pinned (no logo prefetch, no loopback
     exception, no CIMD Service, fetch-scheme fold, pin-mismatch fold).
-P7  Pin/taxonomy honesty (2121/2121/0 sorted-unique, 15 codes
+P7  Pin/taxonomy honesty (2124/2124/0 sorted-unique, 15 codes
     registered, footer state).
 P8  Green check (depth-1): tests/test_decision_codes.py as a child.
 
@@ -42,9 +42,9 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2121  # Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*).
-FOOTER_OPEN = ("F424", "F425")
-FOOTER_NEXT = "F426"
+TAXONOMY_PIN = 2124  # Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*).; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
+FOOTER_OPEN = ("F426",)
+FOOTER_NEXT = "F427"
 
 _results = []
 _PROBES = []
@@ -671,7 +671,7 @@ def _p7a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
-    assert len(lits) == TAXONOMY_PIN == 2121, \
+    assert len(lits) == TAXONOMY_PIN == 2124, \
         "literal count %d != pin %d" % (len(lits), TAXONOMY_PIN)
     assert len(set(lits)) == TAXONOMY_PIN, "duplicate code literals"
     assert lits == sorted(lits), "literals not sorted"
@@ -681,7 +681,7 @@ def _p7a():
     assert all(dc.TAXONOMY[c]["domain"] == "mcp-oauth"
                for c in CIMD.CIMD_CODES)
     assert len(CIMD.CIMD_CODES) == 15
-    _held("P7a-taxonomy-pin", "2121/2121/0 sorted-unique; 15 cimd codes "
+    _held("P7a-taxonomy-pin", "2124/2124/0 sorted-unique; 15 cimd codes "
                               "registered in domain mcp-oauth")
 
 
@@ -689,8 +689,8 @@ def _p7a():
 def _p7b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Open findings: F424, F425." in text, "footer open findings"
-    assert "Next free finding: **F426**" in text, "footer next free"
+    assert "Open findings: F426." in text, "footer open findings"
+    assert "Next free finding: **F427**" in text, "footer next free"
     assert "F424" in text and "F425" in text
     _held("P7b-footer", "footer open F424, F425 / next F426 (unchanged)")
 

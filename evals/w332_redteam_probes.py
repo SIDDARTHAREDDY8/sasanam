@@ -49,9 +49,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2121 # Wave-331 merge: pin unchanged 2058 (F415/F416: no new codes). Wave-332 merge: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*)
-FOOTER_OPEN = "F424, F425"  # F417 CLOSED 2026-10-05 (wave-334 lane 1); no open findings.
-FOOTER_NEXT = "F426"  # Next free finding number (F417 OPEN, F418 closed at wave-333 merge).
+TAXONOMY_PIN = 2124 # Wave-331 merge: pin unchanged 2058 (F415/F416: no new codes). Wave-332 merge: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
+FOOTER_OPEN = "F426"  # F417/F423/F424/F425 CLOSED; F426 OPEN (wave-337 red team).
+FOOTER_NEXT = "F427"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -1019,7 +1019,7 @@ def _p4d():
                     r"EXPECTED_PIN)\s*=\s*(\d+)",
                     src, re.M):
                 count += 1
-                if int(m.group(2)) != 2121:
+                if int(m.group(2)) != 2124:
                     bad.append("%s: %s = %s" % (rel, m.group(1),
                                                m.group(2)))
     if bad:
@@ -1034,39 +1034,39 @@ def _p4d():
 # P5: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P5a-pin-taxonomy-2121-sorted")
+@probe("P5a-pin-taxonomy-2124-sorted")
 def _p5a():
-    if TAXONOMY_PIN != 2121:
-        return _break("P5a-pin-taxonomy-2121-sorted",
-                      "TAXONOMY_PIN is %r, want 2121" % (TAXONOMY_PIN,))
+    if TAXONOMY_PIN != 2124:
+        return _break("P5a-pin-taxonomy-2124-sorted",
+                      "TAXONOMY_PIN is %r, want 2124" % (TAXONOMY_PIN,))
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
-    if len(lits) != 2121 or len(set(lits)) != 2121 \
+    if len(lits) != 2124 or len(set(lits)) != 2124 \
             or lits != sorted(lits):
-        return _break("P5a-pin-taxonomy-2121-sorted",
-                      "want 2121/2121/0 sorted, got %d/%d/sorted=%s"
+        return _break("P5a-pin-taxonomy-2124-sorted",
+                      "want 2124/2124/0 sorted, got %d/%d/sorted=%s"
                       % (len(lits), len(set(lits)), lits == sorted(lits)))
-    return _held("P5a-pin-taxonomy-2121-sorted",
-                 "2121/2121/0 sorted unique on raw source literals")
+    return _held("P5a-pin-taxonomy-2124-sorted",
+                 "2124/2124/0 sorted unique on raw source literals")
 
 
-@probe("P5b-footer-open-none-next-f419")
+@probe("P5b-footer-open-f426-next-f427")
 def _p5b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return _break("P5b-footer-open-none-next-f419",
+        return _break("P5b-footer-open-f426-next-f427",
                       "footer line not found")
     next_free, open_now = ms[-1]  # the LAST footer is the live one
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return _break("P5b-footer-open-none-next-f419",
+        return _break("P5b-footer-open-f426-next-f427",
                       "footer open %s / next %s, want open %s / next %s"
                       % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return _held("P5b-footer-open-none-next-f419",
-                 "footer open none / next F419")
+    return _held("P5b-footer-open-f426-next-f427",
+                 "footer open F426 / next F427")
 
 
 # ---------------------------------------------------------------------------
