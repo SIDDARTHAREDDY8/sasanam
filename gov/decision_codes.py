@@ -17547,6 +17547,40 @@ TAXONOMY = {
         "evidence_kinds_required": ['receipt'],
         "reverify_steps": ['recompute'],
     },
+    'tool-budget-config-invalid': {
+        "domain": 'velocity',
+        "code": 'tool-budget-config-invalid',
+        "human": 'per-tool budget enforcement: the deployment\'s '
+                 'tool_budgets: policy section is malformed '
+                 '(non-mapping, bad tool name, unknown key, missing '
+                 'budget, non-positive or non-finite budget/cost); the '
+                 'executor never constructs on uninterpretable budget '
+                 'policy',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-declaration'],
+        "reverify_steps": ['recompute'],
+    },
+    'tool-budget-exhausted': {
+        "domain": 'velocity',
+        "code": 'tool-budget-exhausted',
+        "human": 'per-tool budget enforcement: the tool\'s cumulative '
+                 'spend would exceed its configured budget; this call '
+                 'is refused coded -- the run continues, unlike the '
+                 'F162 class tripwire which pauses the whole run',
+        "severity": 'medium',
+        "evidence_kinds_required": ['budget-state', 'policy-declaration'],
+        "reverify_steps": ['recompute'],
+    },
+    'tool-budget-unavailable': {
+        "domain": 'velocity',
+        "code": 'tool-budget-unavailable',
+        "human": 'per-tool budget enforcement: the budget wire itself '
+                 'failed unexpectedly at call time; fail closed -- the '
+                 'call is denied, never allowed unlimited spend',
+        "severity": 'high',
+        "evidence_kinds_required": ['budget-state'],
+        "reverify_steps": ['recompute'],
+    },
     'tool-crashed': {
         "domain": 'capability',
         "code": 'tool-crashed',

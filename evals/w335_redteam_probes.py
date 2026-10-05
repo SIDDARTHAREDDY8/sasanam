@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Wave-335 lane 5 independent red team: break the wave-334 tree.
 
-Base: `0fd4f736` (wave-334 merge). Pin 2106 at merge. Footer open none / next
+Base: `0fd4f736` (wave-334 merge). Pin 2109 at merge. Footer open none / next
 F424 (F423 filed by this lane as F421, OPEN; renumbered at the wave-335 merge;
 CLOSED 2026-10-05 wave-336 lane 1).
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Wave-335 lane 4: reserved PQ evidence-envelope slot (format only).
 
-Base: `0fd4f736` (wave-334 merge). Pin 2106. Footer open none / next F424.
+Base: `0fd4f736` (wave-334 merge). Pin 2109. Footer open none / next F424.
 
 New surface under test: `gov/pq_envelope.py` (reserved `pqAlgId` slot,
 FORMAT ONLY -- no production crypto, identifiers only) and its wiring

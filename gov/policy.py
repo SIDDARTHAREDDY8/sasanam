@@ -154,7 +154,7 @@ KNOWN_TOP_LEVEL_KEYS = frozenset(
     {"version", "roles", "rate_limit", "egress", "approvals",
      "auto_approve", "campaign_allowlist", "delegation", "log_limits",
      "budgets", "run_limits", "velocity", "tempo", "tool_rate_limits",
-     "policies",
+     "tool_budgets", "policies",
      "critical_windows"})
 
 KNOWN_APPROVALS_KEYS = frozenset(
@@ -526,6 +526,13 @@ class PolicyEngine:
         # construction).
         self.tool_rate_limits = self._normalize_tool_rate_limits(
             cfg.get("tool_rate_limits"))
+        # Wave-337 (R12): per-tool cumulative budgets (cost axis).
+        # Normalized fail-closed; the raw mapping is kept (the
+        # executor validates it coded at wire construction). Absent
+        # section -> {} (no budgets -- strictly opt-in, never
+        # default-enforced).
+        self.tool_budgets = self._normalize_tool_budgets(
+            cfg.get("tool_budgets"))
         # S1: AgentSpec DSL provenance. apply_dsl() fills these in when a
         # DSL source is promoted; without a DSL they stay null and
         # behavior is unchanged.
@@ -855,6 +862,52 @@ class PolicyEngine:
                     "non-negative integer, got %r" % (tool, m))
         return {t: {"window_secs": float(s["window_secs"]),
                    "max_calls": s["max_calls"]}
+                for t, s in cfg.items()}
+
+    @staticmethod
+    def _normalize_tool_budgets(cfg):
+        """Normalize the ``tool_budgets:`` section (wave-337, R12).
+
+        Shape: ``{tool_or_glob: {budget: <positive finite number>,
+        cost_per_call: <positive finite number, default 1>}}``. Keys
+        may be exact tool names or fnmatch glob families. Returns the
+        raw mapping for the executor to validate coded
+        (``tool-budget-config-invalid``) at wire construction. Absent
+        section -> {} (no budgets -- strictly opt-in, never
+        default-enforced). Malformed values raise ValueError (fail
+        closed at load).
+        """
+        if cfg is None:
+            return {}
+        if not isinstance(cfg, dict):
+            raise ValueError("tool_budgets must be a mapping")
+        for tool, spec in cfg.items():
+            if not isinstance(tool, str) or not tool:
+                raise ValueError(
+                    "tool_budgets: tool name must be a non-empty "
+                    "string, got %r" % (tool,))
+            if not isinstance(spec, dict):
+                raise ValueError(
+                    "tool_budgets[%r] must be a mapping, got %r"
+                    % (tool, spec))
+            for key in spec:
+                if key not in ("budget", "cost_per_call"):
+                    raise ValueError(
+                        "tool_budgets[%r]: unknown key %r"
+                        % (tool, key))
+            if "budget" not in spec:
+                raise ValueError(
+                    "tool_budgets[%r]: need budget" % (tool,))
+            for num_key in ("budget", "cost_per_call"):
+                v = spec.get(num_key, 1)
+                if isinstance(v, bool) or not isinstance(v, (int, float)) \
+                        or v != v or v == float("inf") \
+                        or v == float("-inf") or v <= 0:
+                    raise ValueError(
+                        "tool_budgets[%r].%s must be a positive finite "
+                        "number, got %r" % (tool, num_key, v))
+        return {t: {"budget": float(s["budget"]),
+                   "cost_per_call": float(s.get("cost_per_call", 1))}
                 for t, s in cfg.items()}
 
     @staticmethod

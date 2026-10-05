@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Wave-336 lane 3: CrewAI + AG2 framework adapters.
 
-Base: `c4acf39e` (wave-335 merge). Pin 2106. Footer open F423 / next F424.
+Base: `c4acf39e` (wave-335 merge). Pin 2109. Footer open F423 / next F424.
 
 New surface under test: `gov/adapters/crewai_tools.py` (a governed
 `crewai.tools.BaseTool` whose `_run`/`_arun` route through

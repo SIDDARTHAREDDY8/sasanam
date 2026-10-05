@@ -5,6 +5,9 @@ Supports exactly the subset used by policies/*.yaml:
   - block sequences using "- "
   - flow sequences like [a, b, c]
   - scalars: single/double-quoted strings, integers, floats, booleans, null
+  - mapping keys: bare ([A-Za-z_][A-Za-z0-9_-]*) or single/double-quoted
+    (quoted keys exist for section keys the bare grammar cannot spell,
+    e.g. fnmatch families like "db.*" -- wave-337)
 Blank lines and "#" comments are ignored.
 
 This is intentionally small: it exists so policy files stay human-readable
@@ -13,7 +16,22 @@ YAML without adding a third-party dependency.
 
 import re
 
-_MAP_KEY = re.compile(r"^([A-Za-z_][A-Za-z0-9_\-]*)\s*:(?:\s+(.*)|\s*)$")
+_MAP_KEY = re.compile(
+    r"^(?:([A-Za-z_][A-Za-z0-9_\-]*)|\"([^\"]*)\"|'([^']*)')"
+    r"\s*:(?:\s+(.*)|\s*)$")
+
+
+def _map_key(m):
+    """The mapping key from a _MAP_KEY match: bare, double-quoted, or
+    single-quoted. Quoted keys exist so policy sections can name keys
+    the bare grammar cannot spell -- e.g. fnmatch families like
+    "db.*" in tool_rate_limits:/tool_budgets: (wave-337, R8/R12).
+    An empty quoted key ("") is returned as "" and refused
+    downstream by the section normalizers (fail closed)."""
+    key = m.group(1)
+    if key is None:
+        key = m.group(2) if m.group(2) is not None else m.group(3)
+    return key
 
 
 def _strip_comment(line):
@@ -96,7 +114,7 @@ def _parse_map(items, pos, indent):
         m = _MAP_KEY.match(content)
         if not m:
             raise ValueError("expected 'key: value', got: %r" % content)
-        key, rest = m.group(1), (m.group(2) or "").strip()
+        key, rest = _map_key(m), (m.group(4) or "").strip()
         pos += 1
         if rest:
             out[key] = _scalar(rest)
@@ -134,7 +152,7 @@ def _parse_seq(items, pos, indent):
                 pos += 1
             if not cont:
                 m = _MAP_KEY.match(rest)
-                out.append({m.group(1): _scalar((m.group(2) or "").strip())})
+                out.append({_map_key(m): _scalar((m.group(4) or "").strip())})
                 continue
             base = cont[0][0]
             sub = [(base, rest)] + cont

@@ -2,7 +2,7 @@
 
 Base: 0fd4f736 (wave-334 merge). Footer at wave-335 merge: open F423 / next F424
 (F422 filed as F421 then CLOSED here; renumbered at merge; F423 CLOSED 2026-10-05
-wave-336 lane 1, footer now open F424, F425 / next F426). Pin: 2106 (+3 tool-rate-*).
+wave-336 lane 1, footer now open F424, F425 / next F426). Pin: 2109 (+3 tool-rate-*).
 
 P1  F422 red-first, now closed: the red script's burst -- 29 http_post
     executions inside 60s with no coded intervention on the base tree

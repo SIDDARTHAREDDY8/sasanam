@@ -2,7 +2,7 @@
 
 Base: 0fd4f736 (wave-334 merge). Footer at wave-335 merge: open F423 / next F424
 (F421 filed then CLOSED here; F423 CLOSED 2026-10-05 wave-336 lane 1, footer now
-open F424, F425 / next F426). Pin: 2106 (+1 identity-refresh-lock-unavailable).
+open F424, F425 / next F426). Pin: 2109 (+1 identity-refresh-lock-unavailable).
 
 P1  F421 red-first, now closed: the /tmp/red_rtlock.py double-spend
     (two threads, barrier-aligned, 0.2s slow issuer modeling a

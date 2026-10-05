@@ -179,6 +179,11 @@ _NON_CODES = frozenset([
     # "tool_rate_limits[%r]: ...") -- a policy section name, not a
     # decision code (the coded refusal is tool-rate-limit-config-invalid).
     "tool_rate_limits",
+    # Wave-337 lane 5: gov/policy.py + gov/tool_budget.py config-key
+    # prefix in human ValueError messages ("tool_budgets: ...",
+    # "tool_budgets[%r]: ...") -- a policy section name, not a
+    # decision code (the coded refusal is tool-budget-config-invalid).
+    "tool_budgets",
 ])
 
 
