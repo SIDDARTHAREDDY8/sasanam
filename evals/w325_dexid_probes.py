@@ -430,9 +430,9 @@ def _p17():
 def _p18():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Next free finding: **F417**. **Open findings: F415, F416.**" in text, \
+    assert "Next free finding: **F417**. **Open findings: F416.**" in text, \
         "footer mismatch"
-    _held("P18-footer-state", "open F415, F416 / next F417")
+    _held("P18-footer-state", "open F416 / next F417")
 
 
 @probe("P19-nondict-token-claims-coded")
