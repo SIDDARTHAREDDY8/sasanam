@@ -43,7 +43,7 @@ Shapes (A1/A2/A3 = the three wave-344 attack targets):
   defeated control. Pinned as held-by-design.
 
   F432/F433: filed OPEN this round (F429-closure residuals); footer now
-  open F430, F431, F432, F433 / next F434. F428/F429: CLOSED.
+  open F432, F433, F434, F435 / next F436. F428/F429: CLOSED.
 
 Usage:
   ~/workspace/.gov-venv/bin/python evals/w344_attack_probes.py
@@ -216,8 +216,8 @@ def test_b3_f432_f433_filings_pinned():
     ok = ("(F432 filed 2026-10-05, wave-344 lane 4" in text
           and "(F433 filed 2026-10-05, wave-344 lane 4" in text
           and "LOW, OPEN:" in text
-          and "Next free finding: **F434**" in text
-          and "Open findings: F430, F431, F432, F433." in text)
+          and "Next free finding: **F436**" in text
+          and "Open findings: F432, F433, F434, F435." in text)
     return ("HELD" if ok else "BREAK", "F432/F433 filed open=%s" % ok)
 
 

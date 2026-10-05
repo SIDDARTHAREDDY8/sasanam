@@ -45,8 +45,8 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
 TAXONOMY_PIN = 2134  # Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); no new codes in wave-344 lane 1
-FOOTER_OPEN = "F431"
-FOOTER_NEXT = "F432"
+FOOTER_OPEN = "F432, F433, F434, F435"
+FOOTER_NEXT = "F436"
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402

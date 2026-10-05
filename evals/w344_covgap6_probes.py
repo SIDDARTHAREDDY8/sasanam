@@ -26,7 +26,7 @@ hostile input.
   PZ green check (depth-1): adjacent suites as children with
      GOV_SKIP_GREEN=1.
 
-Base: 1a800558 (wave-343 merge). Pin 2134, footer open F430, F431 /
+Base: 1a800558 (wave-343 merge). Pin 2134, footer open F432, F433, F434, F435 /
 next F432. No gov/ changes in this lane. Findings: none filed (all
 probes HELD on the base; a genuine BREAK would be filed as F432+).
 
@@ -58,8 +58,8 @@ if REPO not in sys.path:
     sys.path.insert(0, REPO)
 
 PIN = 2134
-FOOTER_OPEN = ("F430", "F431")
-FOOTER_NEXT = "F432"
+FOOTER_OPEN = ("F432", "F433", "F434", "F435")
+FOOTER_NEXT = "F436"
 
 _results = []
 _EXPECTED_BREAKS = set()  # empty set, never {} (dict) -- wave-331 lesson

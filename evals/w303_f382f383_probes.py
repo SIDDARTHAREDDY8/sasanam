@@ -92,8 +92,8 @@ class BaseStateTest(unittest.TestCase):
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
         # Wave-316 re-pin: wave-315 merge footer -- open F398, F399,
         # F400 / next free F401 (F393-F397 all CLOSED).
-        ok = (m_open and m_open[-1].replace(" ", "") == "F430,F431"
-              and m_next and m_next[-1] == "F432")
+        ok = (m_open and m_open[-1].replace(" ", "") == "F432,F433,F434,F435"
+              and m_next and m_next[-1] == "F436")
         self.assertTrue(_expect_held(
             "footer-state", ok,
             "want open F429 / next free F430") == "HELD")

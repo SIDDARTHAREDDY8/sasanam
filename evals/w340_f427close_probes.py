@@ -358,15 +358,15 @@ def P2a():
 
 def P2b():
     """Footer: open none / next F430; F426 and F427 marked CLOSED."""
-    pid = "P2b-footer-open-f430-f431-next-f432"
+    pid = "P2b-footer-open-f432-f433-f434-f435-next-f436"
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     lines = text.splitlines()
     last = lines[-1] if lines else ""
-    if "Next free finding: **F432**" not in last:
+    if "Next free finding: **F436**" not in last:
         _break(pid, "footer does not read next F430: %r" % (last[:120],))
         return
-    if "Open findings: F430, F431." not in last:
+    if "Open findings: F432, F433, F434, F435." not in last:
         _break(pid, "footer does not read open none: %r" % (last[:120],))
         return
 
@@ -535,7 +535,7 @@ _PROBES = [
     ("P1j-r8v2-wrapper-delegate-coded-refusal", P1j),
     ("P1k-r8v3-attr-mutation-coded-refusal", P1k),
     ("P2a-pin-taxonomy-2134-sorted", P2a),
-    ("P2b-footer-open-f430-f431-next-f432", P2b),
+    ("P2b-footer-open-f432-f433-f434-f435-next-f436", P2b),
     ("P3a-r34-approvals-scoped-to-owning-agent", P3a),
     ("P3b-r34-approval-sees-validated-arguments", P3b),
     ("P3c-r34-post-audit-tool-mutation-drift", P3c),

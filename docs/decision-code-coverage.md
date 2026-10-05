@@ -1,6 +1,6 @@
 # Decision-code coverage table (generated)
 
-Generated: 2026-10-05T19:23:28Z UTC · registry pin: 2134 · base: wave-343 merge (+3 ownership-* codes, 2129/2134 behaviorally probed; 5 fault-injection residuals: tool-crashed, tool-timed-out, preexec_child_died, post-rotation, offline-verify-internal)
+Generated: 2026-10-05T19:53:20Z UTC · registry pin: 2134 · base: wave-343 merge (+3 ownership-* codes, 2129/2134 behaviorally probed; 5 fault-injection residuals: tool-crashed, tool-timed-out, preexec_child_died, post-rotation, offline-verify-internal)
 
 Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code counts as covered when its literal string appears quoted in at least one ``.py`` file under ``tests/`` or ``evals/``. Production ``emit()`` call sites do not count.
 
@@ -1253,12 +1253,12 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `pack-lint-failed` | pack | medium | yes | evals/pack_lint_probes.py, tests/test_pack_lint.py |
 | `package-advisory-flagged` | advisory | high | yes | evals/w244_treeship_advisory_probes.py, tests/test_advisory_binding.py, tests/test_residual_hardening_w328.py |
 | `package-digest-first-seen-mismatch` | registry-acceptance | critical | yes | evals/w245_registry_adversary_probes.py, tests/test_registry_adversary.py |
-| `package-digest-mismatch` | registry-acceptance | critical | yes | evals/w243_threat_model_probes.py, evals/w244_treeship_advisory_probes.py, tests/test_wave243_effect_agreement.py |
+| `package-digest-mismatch` | registry-acceptance | critical | yes | evals/w243_threat_model_probes.py, evals/w244_treeship_advisory_probes.py, evals/w344_mcp_ecosystem_probes.py (+1) |
 | `package-identity-name-untrusted` | registry-acceptance | high | yes | evals/w245_registry_adversary_probes.py, tests/test_registry_adversary.py |
 | `package-manifest-malformed` | registry-acceptance | medium | yes | tests/test_wave243_effect_agreement.py |
 | `package-signature-invalid` | registry-acceptance | high | yes | evals/w243_threat_model_probes.py, evals/w244_treeship_advisory_probes.py, evals/w245_registry_adversary_probes.py (+2) |
 | `package-signer-compromised` | registry-acceptance | critical | yes | evals/w245_registry_adversary_probes.py, tests/test_registry_adversary.py |
-| `package-stale` | registry-acceptance | medium | yes | evals/w243_threat_model_probes.py, tests/test_wave243_effect_agreement.py |
+| `package-stale` | registry-acceptance | medium | yes | evals/w243_threat_model_probes.py, evals/w344_mcp_ecosystem_probes.py, tests/test_wave243_effect_agreement.py |
 | `parameter-malformed` | parameter | medium | yes | tests/test_wave241_probe_classes.py |
 | `parameter-obfuscation` | parameter | high | yes | evals/w241_probe_classes_probes.py, tests/test_wave241_probe_classes.py |
 | `pass-vacuous` | identity | low | yes | evals/w215_identity_policy_probes.py, tests/test_identity_policy.py, tests/test_policy_compile.py |

@@ -44,7 +44,7 @@ sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 FOOTER_OPEN = ("F428",)  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
-FOOTER_NEXT = "F432"
+FOOTER_NEXT = "F436"
 
 _results = []
 _PROBES = []
@@ -689,8 +689,8 @@ def _p7a():
 def _p7b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Open findings: F430, F431." in text, "footer open findings"
-    assert "Next free finding: **F432**" in text, "footer next free"
+    assert "Open findings: F432, F433, F434, F435." in text, "footer open findings"
+    assert "Next free finding: **F436**" in text, "footer next free"
     assert "F424" in text and "F425" in text and "F426" in text
     _held("P7b-footer", "footer open none / next F430 (F426 closed)")
 

@@ -67,7 +67,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 
 TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 FOOTER_OPEN = ("F428",)
-FOOTER_NEXT = "F432"
+FOOTER_NEXT = "F436"
 
 _results = []
 _PROBES = []
@@ -367,8 +367,8 @@ def _p6a():
 def _p6b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Open findings: F430, F431." in text, "footer open findings"
-    assert "Next free finding: **F432**" in text, "footer next free"
+    assert "Open findings: F432, F433, F434, F435." in text, "footer open findings"
+    assert "Next free finding: **F436**" in text, "footer next free"
     _held("P6b-footer", "footer open none / next F430 (unchanged)")
 
 

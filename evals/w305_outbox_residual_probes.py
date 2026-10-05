@@ -130,14 +130,14 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    want_open = "F430, F431"
+    want_open = "F432, F433, F434, F435"
     # Wave-342 lane 6: repointed to open F429 / next F430 (footer-state probe audit).
-    if nxt != 432 or open_s != want_open:
+    if nxt != 436 or open_s != want_open:
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next 430 open 'F429')"
                        % (nxt, open_s))
     _record("footer-state", "HELD",
-            "footer pins open F430, F431 / next F432")
+            "footer pins open F432, F433, F434, F435 / next F436")
 
 
 AT = 1_700_000_000

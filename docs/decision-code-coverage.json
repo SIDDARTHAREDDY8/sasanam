@@ -1,5 +1,5 @@
 {
- "generated": "2026-10-05T19:23:28Z",
+ "generated": "2026-10-05T19:53:20Z",
  "pin": 2134,
  "covered": 2129,
  "gaps": [
@@ -12775,6 +12775,7 @@
    "files": [
     "evals/w243_threat_model_probes.py",
     "evals/w244_treeship_advisory_probes.py",
+    "evals/w344_mcp_ecosystem_probes.py",
     "tests/test_wave243_effect_agreement.py"
    ]
   },
@@ -12827,6 +12828,7 @@
    "covered": true,
    "files": [
     "evals/w243_threat_model_probes.py",
+    "evals/w344_mcp_ecosystem_probes.py",
     "tests/test_wave243_effect_agreement.py"
    ]
   },

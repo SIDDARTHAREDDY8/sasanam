@@ -63,8 +63,8 @@ from evals import probe_lines  # noqa: E402
 
 TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
-FOOTER_OPEN = "F430, F431"
-FOOTER_NEXT = "F432"
+FOOTER_OPEN = "F432, F433, F434, F435"
+FOOTER_NEXT = "F436"
 
 _NOW = datetime(2026, 10, 4, 5, 0, 0, tzinfo=timezone.utc)
 _NOW_INT = 1759554000

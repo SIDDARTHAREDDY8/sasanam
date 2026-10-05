@@ -574,12 +574,12 @@ def _footer():
 
 @probe("P5-footer-state")
 def _p5_footer():
-    """Footer: open F430, F431 / next F432 (F430/F431 filed wave-343)."""
+    """Footer: open F432, F433, F434, F435 / next F436 (F432-F435 filed wave-344)."""
     got = _footer()
-    if got != (432, "F430, F431"):
+    if got != (436, "F432, F433, F434, F435"):
         return _break("P5-footer-state", "footer is %r" % (got,))
     return _held("P5-footer-state",
-                 "open F430, F431 / next F432")
+                 "open F432, F433, F434, F435 / next F436")
 
 
 @probe("P5-pin-taxonomy-2134-sorted")

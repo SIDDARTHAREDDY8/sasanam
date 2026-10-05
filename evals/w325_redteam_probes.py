@@ -37,8 +37,8 @@ import w324_vsa_probes as _wv  # noqa: E402
 import w322_redteam_probes as _w322  # noqa: E402
 
 TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = "F430, F431"  # F409-F423 CLOSED; F424, F425 open (wave-336 merge).
-FOOTER_NEXT = "F432"  # Next free finding number.
+FOOTER_OPEN = "F432, F433, F434, F435"  # F409-F423 CLOSED; F424, F425 open (wave-336 merge).
+FOOTER_NEXT = "F436"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -937,23 +937,23 @@ def _p6a():
     return _held("P6a-pin-taxonomy-2134-sorted", "2134/2134/0 sorted")
 
 
-@probe("P6b-footer-open-f430-f431-next-f432")
+@probe("P6b-footer-open-f432-f433-f434-f435-next-f436")
 def _p6b():
     text = open(os.path.join(REPO, "evals/FINDINGS.md")).read()
     import re
     # The file carries one footer line per wave; the LAST one is current.
-    # Footer form: "Next free finding: **F432**. **Open findings: F430, F431.**"
+    # Footer form: "Next free finding: **F436**. **Open findings: F432, F433, F434, F435.**"
     opens = re.findall(r"\*\*Open findings:\s*([^*]+?)\.\*\*", text)
     nexts = re.findall(r"Next free finding:\s*\*\*([^*]+?)\*\*", text)
     open_line = opens[-1].strip() if opens else ""
     next_free = nexts[-1].strip() if nexts else ""
     if open_line != FOOTER_OPEN:
-        return _break("P6b-footer-open-f430-f431-next-f432",
+        return _break("P6b-footer-open-f432-f433-f434-f435-next-f436",
                       "open findings %r, want %r" % (open_line, FOOTER_OPEN))
     if next_free != FOOTER_NEXT:
-        return _break("P6b-footer-open-f430-f431-next-f432",
+        return _break("P6b-footer-open-f432-f433-f434-f435-next-f436",
                       "next free %r, want %r" % (next_free, FOOTER_NEXT))
-    return _held("P6b-footer-open-f430-f431-next-f432",
+    return _held("P6b-footer-open-f432-f433-f434-f435-next-f436",
                  "footer open none / next F430")
 
 

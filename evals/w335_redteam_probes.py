@@ -1370,15 +1370,15 @@ def P5c():
     CLOSED 2026-10-05 by wave-336 lane 1; F424/F425 were closed
     2026-10-05 by wave-337 lane 1; F426 was filed 2026-10-05 by the
     wave-337 red team and remains OPEN."""
-    pid = "P5c-footer-open-f430-f431-next-f432"
+    pid = "P5c-footer-open-f432-f433-f434-f435-next-f436"
     with open(_FINDINGS_MD, "rb") as f:
         lines = f.read().decode("utf-8").splitlines()
     last = lines[-1] if lines else ""
-    if "Open findings: F430, F431." not in last:
-        _break(pid, "last line lacks 'Open findings: F430, F431.': %r" % (last[:120],))
+    if "Open findings: F432, F433, F434, F435." not in last:
+        _break(pid, "last line lacks 'Open findings: F432, F433, F434, F435.': %r" % (last[:120],))
         return
-    if "Next free finding: **F432**" not in last:
-        _break(pid, "last line lacks next-F427: %r" % (last[:120],))
+    if "Next free finding: **F436**" not in last:
+        _break(pid, "last line lacks next-F436: %r" % (last[:120],))
         return
     if not any(l.startswith("## F423 ") for l in lines):
         _break(pid, "F423 section missing from FINDINGS.md")
@@ -1459,7 +1459,7 @@ _PROBES = [
     ("P4d-f418-closed", P4d),
     ("P5a-pin-taxonomy-2134-sorted", P5a),
     ("P5b-23-codes-registered", P5b),
-    ("P5c-footer-open-f430-f431-next-f432", P5c),
+    ("P5c-footer-open-f432-f433-f434-f435-next-f436", P5c),
     ("P6a-f415-unicode-digit", P6a),
     ("P6b-f416-int64-boundary", P6b),
     ("P6c-f414-symlink-alias", P6c),

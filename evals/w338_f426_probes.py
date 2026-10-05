@@ -323,15 +323,15 @@ def P2a():
 
 def P2b():
     """Footer: open F429 / next F430; F426 and F427 marked CLOSED; F428 marked OPEN."""
-    pid = "P2b-footer-open-f430-f431-next-f432"
+    pid = "P2b-footer-open-f432-f433-f434-f435-next-f436"
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     lines = text.splitlines()
     last = lines[-1] if lines else ""
-    if "Next free finding: **F432**" not in last:
+    if "Next free finding: **F436**" not in last:
         _break(pid, "footer does not read next F429")
         return
-    if "Open findings: F430, F431." not in last:
+    if "Open findings: F432, F433, F434, F435." not in last:
         _break(pid, "footer does not read open F428: %r" % (last[:120],))
         return
     import re as _re
@@ -349,7 +349,7 @@ def P2b():
     if "**Status: OPEN.**" in _section("F427"):
         _break(pid, "F427 section still marked OPEN")
         return
-    _held(pid, "footer open F430, F431 / next F432, F426+F427 closed, F428 open")
+    _held(pid, "footer open F432, F433, F434, F435 / next F436, F426+F427 closed, F428 open")
 
 
 _PROBES = [
@@ -361,7 +361,7 @@ _PROBES = [
     ("P1f-wrapped-entry-correspondence", P1f),
     ("P1g-undeclared-name-refused-despite-name-coincidence", P1g),
     ("P2a-pin-taxonomy-2134-sorted", P2a),
-    ("P2b-footer-open-f430-f431-next-f432", P2b),
+    ("P2b-footer-open-f432-f433-f434-f435-next-f436", P2b),
 ]
 
 

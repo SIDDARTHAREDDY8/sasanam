@@ -103,7 +103,7 @@ def p_footer_state():
     # Wave-316 merge footer: F398/F399/F400 CLOSED; F401/F402/F403 OPEN; next F404.
     ok = (m_open and m_open[-1].strip()
           == "F429"
-          and m_next and m_next[-1] == "F432")
+          and m_next and m_next[-1] == "F436")
     _record("footer-state", "HELD" if ok else "BREAK",
             "want open F429 / next free F430")
 
