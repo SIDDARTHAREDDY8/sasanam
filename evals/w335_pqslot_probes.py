@@ -393,19 +393,19 @@ def P6b():
 
 
 def P6c():
-    """Footer honesty: open F423 / next F424 (raw literals included --
-    wave-331 lesson)."""
-    pid = "P6c-footer-open-f423-next-f424"
+    """Footer honesty: open F423, F424, F425 / next F426 (raw literals
+    included -- wave-331 lesson)."""
+    pid = "P6c-footer-open-f423-f424-f425-next-f426"
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               encoding="utf-8") as fh:
         text = fh.read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F424**" in text
-          and m_open and m_open[-1].strip() == "F423")
+    ok = ("Next free finding: **F426**" in text
+          and m_open and m_open[-1].strip() == "F423, F424, F425")
     if ok:
-        _held(pid, "footer: open F423 / next F424")
+        _held(pid, "footer: open F423, F424, F425 / next F426")
     else:
-        _break(pid, "footer mismatch vs open F423 / next F424")
+        _break(pid, "footer mismatch vs open F423, F424, F425 / next F426")
 
 
 _PROBES = [

@@ -52,8 +52,8 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2106 # Wave-335 lane 2: pin 2100 -> 2103 (+3 tool-rate-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
-FOOTER_OPEN = "F423"  # F422 (filed as F421) CLOSED 2026-10-05 wave-335 lane 2.
-FOOTER_NEXT = "F424"  # Next free finding number.
+FOOTER_OPEN = "F423, F424, F425"  # F422 (filed as F421) CLOSED 2026-10-05 wave-335 lane 2. F424/F425 filed 2026-10-05 wave-336 lane 5, OPEN.
+FOOTER_NEXT = "F426"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -565,7 +565,7 @@ def _p10():
                       % (open_now.strip(), next_free, FOOTER_OPEN,
                          FOOTER_NEXT))
     return _held(pid, "taxonomy 2106/2106/0 sorted-unique; 3 codes "
-                      "registered; F422 CLOSED; footer open F423 / next F424")
+                      "registered; F422 CLOSED; footer open F423, F424, F425 / next F426")
 
 
 # ---------------------------------------------------------------------------

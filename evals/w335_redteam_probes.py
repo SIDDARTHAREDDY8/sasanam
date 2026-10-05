@@ -1364,23 +1364,30 @@ def P5b():
 
 def P5c():
     """Footer honesty: the last line of evals/FINDINGS.md carries open
-    F423 and next F424 (raw-literal assertion, wave-331 lesson). F423
-    is this lane's genuine finding (filed as F421, renumbered at the
-    wave-335 merge per the wave-272 earliest-filed rule)."""
-    pid = "P5c-footer-open-f423-next-f424"
+    F423, F424, F425 and next F426 (raw-literal assertion, wave-331
+    lesson). F423 is the wave-335 lane-5 genuine finding (filed as
+    F421, renumbered at the wave-335 merge per the wave-272
+    earliest-filed rule); F424/F425 were filed by wave-336 lane 5."""
+    pid = "P5c-footer-open-f423-f424-f425-next-f426"
     with open(_FINDINGS_MD, "rb") as f:
         lines = f.read().decode("utf-8").splitlines()
     last = lines[-1] if lines else ""
-    if "Open findings: F423" not in last:
-        _break(pid, "last line lacks 'Open findings: F423': %r" % (last[:120],))
+    if "Open findings: F423, F424, F425" not in last:
+        _break(pid, "last line lacks 'Open findings: F423, F424, F425': %r" % (last[:120],))
         return
-    if "Next free finding: **F424**" not in last:
-        _break(pid, "last line lacks next-F424: %r" % (last[:120],))
+    if "Next free finding: **F426**" not in last:
+        _break(pid, "last line lacks next-F426: %r" % (last[:120],))
         return
     if not any(l.startswith("## F423 ") for l in lines):
         _break(pid, "F423 section missing from FINDINGS.md")
         return
-    _held(pid, "footer honest: open F423, next F424")
+    if not any(l.startswith("## F424 ") for l in lines):
+        _break(pid, "F424 section missing from FINDINGS.md")
+        return
+    if not any(l.startswith("## F425 ") for l in lines):
+        _break(pid, "F425 section missing from FINDINGS.md")
+        return
+    _held(pid, "footer honest: open F423, F424, F425 / next F426")
 
 
 # ---------------------------------------------------------------------------
@@ -1453,7 +1460,7 @@ _PROBES = [
     ("P4d-f418-closed", P4d),
     ("P5a-pin-taxonomy-2106-sorted", P5a),
     ("P5b-23-codes-registered", P5b),
-    ("P5c-footer-open-f423-next-f424", P5c),
+    ("P5c-footer-open-f423-f424-f425-next-f426", P5c),
     ("P6a-f415-unicode-digit", P6a),
     ("P6b-f416-int64-boundary", P6b),
     ("P6c-f414-symlink-alias", P6c),

@@ -60,8 +60,8 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2106 # Wave-333 merge: pin 2077.; Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
-FOOTER_OPEN = "F423"  # F423 OPEN 2026-10-05 (wave-335 lane 5 independent red team: PRM control-char finding; filed as F421, renumbered at merge).
-FOOTER_NEXT = "F424"  # Next free finding number.
+FOOTER_OPEN = "F423, F424, F425"  # F423 OPEN 2026-10-05 (wave-335 lane 5 independent red team: PRM control-char finding; filed as F421, renumbered at merge). F424/F425 filed 2026-10-05 wave-336 lane 5, OPEN.
+FOOTER_NEXT = "F426"  # Next free finding number.
 
 _results = []
 _PROBES = []
