@@ -31,7 +31,7 @@ R14 (Bernstein #5569 "no row claims coverage without a test"):
   P5  coverage checker runs, writes the generated table, and reports
       honestly: exit 1 with the gap list (gaps are the deliverable --
       NOT hand-closed this lane), exit 2 on a pin mismatch.
-P6  Pin/taxonomy honesty (2130/2130/0 sorted-unique, footer state).
+P6  Pin/taxonomy honesty (2131/2131/0 sorted-unique, footer state).
 P7  Green check (depth-1): tests/test_evidence_verify_offline as a
     child with GOV_SKIP_GREEN=1.
 
@@ -65,7 +65,7 @@ sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "tests"))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
-TAXONOMY_PIN = 2130  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-338 lane 5: pin at 6cdf5fdd.; Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused)
+TAXONOMY_PIN = 2131  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-338 lane 5: pin at 6cdf5fdd.; Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); Wave-340 lane 3: pin 2130 -> 2131 (+1 deadctrl-subject-mutated).
 FOOTER_OPEN = ("F427",)
 FOOTER_NEXT = "F428"
 
@@ -328,8 +328,8 @@ def _p5():
     assert os.path.isfile(md) and os.path.isfile(js), \
         "checker did not write the generated table"
     doc = json.load(open(js, encoding="utf-8"))
-    assert doc["pin"] == TAXONOMY_PIN == 2130, "table pin mismatch"
-    assert len(doc["codes"]) == 2130
+    assert doc["pin"] == TAXONOMY_PIN == 2131, "table pin mismatch"
+    assert len(doc["codes"]) == 2131
     gaps = doc["gaps"]
     if proc.returncode == 1:
         assert gaps, "exit 1 must come with a gap list"
@@ -339,7 +339,7 @@ def _p5():
     elif proc.returncode == 0:
         assert not gaps, "exit 0 with gaps is dishonest"
         _held("P5-coverage-checker-reports-honestly",
-              "exit 0; all 2130 codes covered")
+              "exit 0; all 2131 codes covered")
     else:
         raise AssertionError("checker exit %d: %s"
                              % (proc.returncode, proc.stderr[-400:]))
@@ -355,12 +355,12 @@ def _p6a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
-    assert len(lits) == TAXONOMY_PIN == 2130, \
+    assert len(lits) == TAXONOMY_PIN == 2131, \
         "literal count %d != pin %d" % (len(lits), TAXONOMY_PIN)
     assert len(set(lits)) == TAXONOMY_PIN, "duplicate code literals"
     assert lits == sorted(lits), "literals not sorted"
     assert len(dc.TAXONOMY) == TAXONOMY_PIN
-    _held("P6a-taxonomy-pin", "2130/2130/0 sorted-unique literals")
+    _held("P6a-taxonomy-pin", "2131/2131/0 sorted-unique literals")
 
 
 @_probe("P6b-footer")

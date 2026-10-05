@@ -151,7 +151,7 @@ from gov import mcp_oauth_binding as MOB  # noqa: E402
 from gov import revocation_push as RP  # noqa: E402
 from gov import decision_codes as DC  # noqa: E402
 
-TAXONOMY_PIN = 2130 # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused)
+TAXONOMY_PIN = 2131 # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); Wave-340 lane 3: pin 2130 -> 2131 (+1 deadctrl-subject-mutated).
 _NOW = 1798765432
 _ISS = "https://as.example.com"
 _RES = "https://mcp.example.com/tools"
@@ -1323,15 +1323,15 @@ _FINDINGS_MD = os.path.join(REPO, "evals", "FINDINGS.md")
 def P5a():
     """Pin honesty: TAXONOMY_PIN is 2121 and the registry's sorted
     unique key order holds on raw source literals."""
-    pid = "P5a-pin-taxonomy-2130-sorted"
-    if TAXONOMY_PIN != 2130:
-        _break(pid, "TAXONOMY_PIN %r != 2130" % (TAXONOMY_PIN,))
+    pid = "P5a-pin-taxonomy-2131-sorted"
+    if TAXONOMY_PIN != 2131:
+        _break(pid, "TAXONOMY_PIN %r != 2131" % (TAXONOMY_PIN,))
         return
     # The canonical pin constant lives in gov/guac_graph.py (wave-302
     # lesson); the battery-local literal must agree with it.
     from gov import guac_graph as GG  # noqa: E402
-    if GG.TAXONOMY_PIN != 2130:
-        _break(pid, "guac_graph.TAXONOMY_PIN %r != 2130" % (GG.TAXONOMY_PIN,))
+    if GG.TAXONOMY_PIN != 2131:
+        _break(pid, "guac_graph.TAXONOMY_PIN %r != 2131" % (GG.TAXONOMY_PIN,))
         return
     codes = sorted(DC.TAXONOMY.keys())
     if list(DC.TAXONOMY.keys()) != codes:
@@ -1457,7 +1457,7 @@ _PROBES = [
     ("P4b-f419-closed", P4b),
     ("P4c-f420-closed", P4c),
     ("P4d-f418-closed", P4d),
-    ("P5a-pin-taxonomy-2130-sorted", P5a),
+    ("P5a-pin-taxonomy-2131-sorted", P5a),
     ("P5b-23-codes-registered", P5b),
     ("P5c-footer-open-none-next-f428", P5c),
     ("P6a-f415-unicode-digit", P6a),

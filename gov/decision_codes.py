@@ -4697,6 +4697,19 @@ TAXONOMY = {
         "evidence_kinds_required": ['record'],
         "reverify_steps": ['recompute'],
     },
+    'deadctrl-subject-mutated': {
+        "domain": 'deadctrl',
+        "code": 'deadctrl-subject-mutated',
+        "human": 'dead-controls CI gate: the test subject changed under the '
+                 'gate (TOCTOU) -- a file was modified, added, or removed '
+                 'between the pre-run subject pin and the post-run '
+                 'verification; the gate analyzed a different tree than it '
+                 'pinned; refused fail-closed, never report on a swapped '
+                 'subject',
+        "severity": 'high',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
     'decision-code-digest-malformed': {
         "domain": 'decision_codes',
         "code": 'decision-code-digest-malformed',

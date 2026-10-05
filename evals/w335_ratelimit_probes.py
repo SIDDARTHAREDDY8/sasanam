@@ -52,7 +52,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2130 # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-335 lane 2: pin 2100 -> 2103 (+3 tool-rate-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused)
+TAXONOMY_PIN = 2131 # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-335 lane 2: pin 2100 -> 2103 (+3 tool-rate-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); Wave-340 lane 3: pin 2130 -> 2131 (+1 deadctrl-subject-mutated).
 FOOTER_OPEN = "F427"  # F422 (filed as F421) CLOSED 2026-10-05 wave-335 lane 2. F426 closed wave-338 lane 1.
 FOOTER_NEXT = "F428"  # Next free finding number.
 
@@ -534,9 +534,9 @@ def _p9b():
 # P10 -- pin + footer.
 # ---------------------------------------------------------------------------
 
-@probe("P10-pin-2130-footer-f422")
+@probe("P10-pin-2131-footer-f422")
 def _p10():
-    pid = "P10-pin-2130-footer-f422"
+    pid = "P10-pin-2131-footer-f422"
     src = open(os.path.join(REPO, "gov", "decision_codes.py")).read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
     n = len(dc.TAXONOMY)
@@ -565,7 +565,7 @@ def _p10():
         return _break(pid, "footer open %s / next %s, want open %s / next %s"
                       % (open_now.strip(), next_free, FOOTER_OPEN,
                          FOOTER_NEXT))
-    return _held(pid, "taxonomy 2130/2130/0 sorted-unique; 3 codes "
+    return _held(pid, "taxonomy 2131/2131/0 sorted-unique; 3 codes "
                       "registered; F422 CLOSED; footer open F424, F425 / next F426")
 
 

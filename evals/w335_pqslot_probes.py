@@ -34,7 +34,7 @@ P5 (classical byte-identical): seal with and without the explicit
    `pq_alg_id=None` kwarg produces byte-identical canonical JSON;
    top-level key set is exactly the pre-slot shape; a classical
    bundle round-trips (open returns the statement bytes, verify True).
-P6 (honesty): taxonomy 2130/2130/0 sorted-unique on raw source
+P6 (honesty): taxonomy 2131/2131/0 sorted-unique on raw source
    literals; both new codes centrally registered; footer open none /
    next F421.
 
@@ -79,7 +79,7 @@ from gov import pq_envelope as PQ  # noqa: E402
 from gov import sigstore_bundle as SB  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
-TAXONOMY_PIN = 2130 # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 lane 4: pin 2100 -> 2102 (+2 evidence-pq-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused)
+TAXONOMY_PIN = 2131 # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 lane 4: pin 2100 -> 2102 (+2 evidence-pq-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); Wave-340 lane 3: pin 2130 -> 2131 (+1 deadctrl-subject-mutated).
 _SEED = b"w335-pqslot-test-seed-0000000001"  # 32 bytes
 assert len(_SEED) == 32
 _STMT = b'{"_type":"https://in-toto.io/Statement/v1","subject":[],"predicateType":"x"}'
@@ -357,10 +357,10 @@ def P5b():
 # ---------------------------------------------------------------------------
 
 def P6a():
-    """Pin honesty: taxonomy is 2130/2130/0, sorted and unique on raw
+    """Pin honesty: taxonomy is 2131/2131/0, sorted and unique on raw
     source literals (wave-260 lesson: assert on literals, not the
     deduped dict)."""
-    pid = "P6a-pin-taxonomy-2130-sorted"
+    pid = "P6a-pin-taxonomy-2131-sorted"
     with open(os.path.join(REPO, "gov", "decision_codes.py"),
               encoding="utf-8") as fh:
         src = fh.read()
@@ -375,7 +375,7 @@ def P6a():
     if sorted(codes) != codes:
         _break(pid, "literals not sorted")
         return
-    _held(pid, "taxonomy 2130/2130/0 sorted unique on raw literals")
+    _held(pid, "taxonomy 2131/2131/0 sorted unique on raw literals")
 
 
 def P6b():
@@ -419,7 +419,7 @@ _PROBES = [
     ("P4c-pq-verify-null-slot-classical", P4c),
     ("P5a-pq-classical-byte-identical", P5a),
     ("P5b-pq-classical-roundtrip", P5b),
-    ("P6a-pin-taxonomy-2130-sorted", P6a),
+    ("P6a-pin-taxonomy-2131-sorted", P6a),
     ("P6b-pq-codes-registered", P6b),
     ("P6c-footer-open-none-next-f428", P6c),
 ]

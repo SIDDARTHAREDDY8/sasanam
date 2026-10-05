@@ -25,7 +25,7 @@ P3 (5): dual-threshold -- signer-set change sealed with anchor
     base-tree gap, demonstrated red before the fix); old+new thresholds
     pass; unchanged signer set keeps old behavior; new-set-only fails;
     one key counted once per side (dedup).
-P4 (2): pin 2130/2130/0 sorted on raw source literals (2 new codes:
+P4 (2): pin 2131/2131/0 sorted on raw source literals (2 new codes:
     witness-policy-dual-threshold-unmet, witness-daemon-state-failed);
     footer open none / next F428.
 
@@ -63,7 +63,7 @@ from gov import decision_codes as DC  # noqa: E402
 from gov.witness_log import WitnessLog  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
-TAXONOMY_PIN = 2130  # Wave-339 lane 2: pin 2126 -> 2128 (+2: witness-policy-dual-threshold-unmet, witness-daemon-state-failed); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused)
+TAXONOMY_PIN = 2131  # Wave-339 lane 2: pin 2126 -> 2128 (+2: witness-policy-dual-threshold-unmet, witness-daemon-state-failed); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); Wave-340 lane 3: pin 2130 -> 2131 (+1 deadctrl-subject-mutated).
 
 _results = []
 _PROBES = []
@@ -768,7 +768,7 @@ def _p3e():
 # P4: pin + footer
 # ---------------------------------------------------------------------------
 
-@probe("P4-pin-taxonomy-2130-unique")
+@probe("P4-pin-taxonomy-2131-unique")
 def _p4a():
     path = os.path.join(REPO, "gov", "decision_codes.py")
     with open(path, "r", encoding="utf-8") as fh:
@@ -778,16 +778,16 @@ def _p4a():
     # literals and are excluded by the name pattern.
     lits = re.findall(r"\"code\":\s*[\"']([A-Za-z0-9_.\-]+)[\"']", src)
     n_dict = len(DC.TAXONOMY)
-    ok = (n_dict == TAXONOMY_PIN == 2130
-          and len(lits) == 2130 and len(set(lits)) == len(lits)
+    ok = (n_dict == TAXONOMY_PIN == 2131
+          and len(lits) == 2131 and len(set(lits)) == len(lits)
           and "witness-policy-dual-threshold-unmet" in lits
           and "witness-daemon-state-failed" in lits)
     if ok:
-        return _held("P4-pin-taxonomy-2130-unique",
-                     "2130 dict / 2130 unique raw literals; both new "
+        return _held("P4-pin-taxonomy-2131-unique",
+                     "2131 dict / 2131 unique raw literals; both new "
                      "codes registered")
-    return _break("P4-pin-taxonomy-2130-unique",
-                  "want dict 2130 + 2130 unique literals, got dict=%d "
+    return _break("P4-pin-taxonomy-2131-unique",
+                  "want dict 2131 + 2131 unique literals, got dict=%d "
                   "lits=%d unique=%s" % (n_dict, len(lits),
                                          len(set(lits)) == len(lits)))
 
