@@ -19,7 +19,7 @@ P7  Unknown registry kind => refused; matrix_override can record a
     private registry but can never flip a matrix OUT to IN.
 P8  Same-repository pinning: cross-repository / replica reads refuse
     coded; the #23210 shape (Harbor replica) refuses.
-P9  Pin/taxonomy honesty (2131/2131/0 sorted-unique on raw literals; the
+P9  Pin/taxonomy honesty (2127/2127/0 sorted-unique on raw literals; the
     new code registered) + footer state (open none / next F428).
 P10 Green check (depth-1): tests/test_oci_registry_gate.py as a child.
 
@@ -42,7 +42,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2131  # Wave-339 lane 3: pin 2126 -> 2127 (+1 oci-registry-onboarding-refused); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); wave-340 merge: pin 2130 -> 2131
+TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 FOOTER_OPEN = ("F428",)
 FOOTER_NEXT = "F429"
 
@@ -227,7 +227,7 @@ def _p9():
     assert "Open findings: F428." in text, "footer open findings"
     assert FOOTER_OPEN == ("F428",) and FOOTER_NEXT == "F428"
     _held("P9-pin-taxonomy",
-          "2131/2131/0 sorted-unique; oci-registry-onboarding-refused "
+          "2127/2127/0 sorted-unique; oci-registry-onboarding-refused "
           "registered; footer open none / next F428")
 
 

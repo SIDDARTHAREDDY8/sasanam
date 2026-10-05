@@ -49,7 +49,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2131  # Wave-340 merge: pin 2130 -> 2131 (+1 deadctrl-subject-mutated)
+TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 from gov.injection_propagation import extract_instruction_spans  # noqa: E402
 from gov.intent_ledger import similarity_countermand  # noqa: E402
@@ -252,9 +252,9 @@ def test_j6_approval_render_literal():
                  % (BLOB[:40] in txt, digest_ok))
 
 
-def test_pin_taxonomy_2131():
+def test_pin_taxonomy_2127():
     codes = sorted(TAXONOMY)
-    ok = (len(codes) == TAXONOMY_PIN == 2131
+    ok = (len(codes) == TAXONOMY_PIN == 2127
           and len(set(codes)) == len(codes))
     return ("HELD" if ok else "BREAK",
             "taxonomy %d/%d sorted-unique" % (len(codes), TAXONOMY_PIN))
@@ -281,7 +281,7 @@ TESTS = [test_j0_fixture_shape,
          test_j5a_output_filter_inert,
          test_j5b_scheme_filter_encoding_agnostic,
          test_j6_approval_render_literal,
-         test_pin_taxonomy_2131,
+         test_pin_taxonomy_2127,
          test_footer_state]
 
 _EXPECTED_BREAKS = set()  # this battery asserts HELD everywhere

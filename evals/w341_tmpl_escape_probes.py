@@ -52,7 +52,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2131  # Wave-340 merge: pin 2130 -> 2131 (+1 deadctrl-subject-mutated)
+TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 from gov.approval_render import _render_text, render_approval  # noqa: E402
 from gov.approvals import sanitize_preview_text  # noqa: E402
@@ -184,9 +184,9 @@ def test_t5_sanitize_preview_inert():
     return _held(not bad, "mangled payloads: %r" % (bad,))
 
 
-def test_pin_taxonomy_2131():
+def test_pin_taxonomy_2127():
     codes = sorted(TAXONOMY)
-    ok = (len(codes) == TAXONOMY_PIN == 2131
+    ok = (len(codes) == TAXONOMY_PIN == 2127
           and len(set(codes)) == len(codes))
     return ("HELD" if ok else "BREAK",
             "taxonomy %d/%d sorted-unique" % (len(codes), TAXONOMY_PIN))
@@ -210,7 +210,7 @@ TESTS = [test_t0_no_template_engine_dep,
          test_t3b_mcp_control_refuses,
          test_t4_action_text_no_eval,
          test_t5_sanitize_preview_inert,
-         test_pin_taxonomy_2131,
+         test_pin_taxonomy_2127,
          test_footer_state]
 
 _EXPECTED_BREAKS = set()  # this battery asserts HELD everywhere

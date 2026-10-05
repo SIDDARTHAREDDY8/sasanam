@@ -1,10 +1,9 @@
 {
- "generated": "2026-10-05T11:47:45Z",
- "pin": 2131,
- "covered": 1982,
+ "generated": "2026-10-05T12:28:56Z",
+ "pin": 2127,
+ "covered": 1983,
  "gaps": [
   "absence-refused",
-  "admission-at-risk-accepted",
   "alg-refused",
   "arap-error",
   "assessment_malformed",
@@ -68,7 +67,6 @@
   "evaltask-scoring-source-unavailable",
   "evaltask-unknown-scoring-function",
   "evidence-bundle-payload-type-refused",
-  "evidence-refused",
   "faithfulness-error",
   "hop_token_refs",
   "hybrid-gate-refused",
@@ -78,7 +76,6 @@
   "issuer-malformed",
   "keep_evidence_types",
   "keep_subject_fields",
-  "key-identity-refused",
   "make_link_record",
   "malformed-context",
   "malformed-message",
@@ -129,9 +126,7 @@
   "scan_verdict_window_too_long",
   "sigstore-keyed-envelope",
   "sigstore-keyed-malformed",
-  "single-use-refused",
   "spawn_failed",
-  "spiffe-refused",
   "subject-not-allowlisted",
   "subject_claims",
   "svr-refused",
@@ -503,8 +498,10 @@
    "code": "admission-at-risk-accepted",
    "domain": "admission",
    "severity": "low",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w342_deadcode_probes.py"
+   ]
   },
   {
    "code": "admission-check-failed",
@@ -553,6 +550,7 @@
     "evals/w289_redteam_probes.py",
     "evals/w290_f348_f349_probes.py",
     "evals/w291_redteam_probes.py",
+    "evals/w342_deadcode_probes.py",
     "tests/test_evidence_admission.py"
    ]
   },
@@ -598,6 +596,7 @@
     "evals/w289_redteam_probes.py",
     "evals/w290_f348_f349_probes.py",
     "evals/w291_redteam_probes.py",
+    "evals/w342_deadcode_probes.py",
     "tests/test_evidence_admission.py"
    ]
   },
@@ -759,6 +758,7 @@
     "evals/w288_admission_probes.py",
     "evals/w290_f348_f349_probes.py",
     "evals/w291_redteam_probes.py",
+    "evals/w342_deadcode_probes.py",
     "tests/test_evidence_admission.py"
    ]
   },
@@ -5175,6 +5175,7 @@
    "covered": true,
    "files": [
     "evals/w228_codes_probes.py",
+    "evals/w342_deadcode_probes.py",
     "tests/test_decision_codes.py"
    ]
   },
@@ -7963,13 +7964,6 @@
    ]
   },
   {
-   "code": "evidence-refused",
-   "domain": "evidence",
-   "severity": "medium",
-   "covered": false,
-   "files": []
-  },
-  {
    "code": "evidence-unverifiable-item",
    "domain": "evidence",
    "severity": "medium",
@@ -10700,13 +10694,6 @@
    "files": [
     "tests/test_key_identity.py"
    ]
-  },
-  {
-   "code": "key-identity-refused",
-   "domain": "key_identity",
-   "severity": "medium",
-   "covered": false,
-   "files": []
   },
   {
    "code": "key-identity-revoked",
@@ -18058,13 +18045,6 @@
    ]
   },
   {
-   "code": "single-use-refused",
-   "domain": "single_use",
-   "severity": "medium",
-   "covered": false,
-   "files": []
-  },
-  {
    "code": "single-use-replay-refused",
    "domain": "single_use",
    "severity": "high",
@@ -18072,6 +18052,7 @@
    "files": [
     "evals/w226_singleuse_probes.py",
     "evals/w228_codes_probes.py",
+    "evals/w342_deadcode_probes.py",
     "tests/test_consumption_ledger.py",
     "tests/test_single_use.py"
    ]
@@ -18351,13 +18332,6 @@
     "evals/w232_spiffe_probes.py",
     "tests/test_spiffe_credential_provider.py"
    ]
-  },
-  {
-   "code": "spiffe-refused",
-   "domain": "spiffe",
-   "severity": "medium",
-   "covered": false,
-   "files": []
   },
   {
    "code": "spiffe-svid-expired",
@@ -19412,6 +19386,8 @@
    "files": [
     "evals/w243_threat_model_probes.py",
     "evals/w244_token_scope_probes.py",
+    "evals/w341_jsfuck_probes.py",
+    "evals/w341_tmpl_escape_probes.py",
     "tests/test_wave243_effect_agreement.py"
    ]
   },

@@ -1,10 +1,10 @@
 # Decision-code coverage table (generated)
 
-Generated: 2026-10-05T11:47:45Z UTC · registry pin: 2131 · base: wave-341 lane B (coverage round 3)
+Generated: 2026-10-05T12:28:56Z UTC · registry pin: 2127 · base: wave-342 lane 6 (registry hygiene: -4 family-fallback codes, +at-risk emission)
 
 Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code counts as covered when its literal string appears quoted in at least one ``.py`` file under ``tests/`` or ``evals/``. Production ``emit()`` call sites do not count.
 
-**Covered: 1982 / 2131** · **Gaps: 149**
+**Covered: 1983 / 2127** · **Gaps: 144**
 
 | code | domain | severity | covered | asserted in |
 | ---- | ------ | -------- | ------- | ----------- |
@@ -43,15 +43,15 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `action-type-unknown` | typed_action | medium | yes | evals/w228_typed_probes.py, tests/test_typed_actions.py |
 | `action-value-count-exceeded` | typed_action | medium | yes | evals/w230_defsha_probes.py, tests/test_typed_actions.py |
 | `action-value-too-long` | typed_action | medium | yes | evals/w230_defsha_probes.py, tests/test_typed_actions.py |
-| `admission-at-risk-accepted` | admission | low | **NO** |  |
+| `admission-at-risk-accepted` | admission | low | yes | evals/w342_deadcode_probes.py |
 | `admission-check-failed` | admission | medium | yes | evals/w288_admission_probes.py, evals/w291_redteam_probes.py, tests/test_evidence_admission.py |
 | `admission-conjunction-refused` | admission | medium | yes | evals/w223_gatealg_probes.py, evals/w224_quar_probes.py, tests/test_gate_algebra.py |
 | `admission-digest-mismatch` | admission | critical | yes | evals/w221_admission_probes.py, evals/w223_gatealg_probes.py, evals/w223_set_probes.py (+4) |
-| `admission-exception-refused` | admission | medium | yes | evals/w288_admission_probes.py, evals/w289_redteam_probes.py, evals/w290_f348_f349_probes.py (+2) |
+| `admission-exception-refused` | admission | medium | yes | evals/w288_admission_probes.py, evals/w289_redteam_probes.py, evals/w290_f348_f349_probes.py (+3) |
 | `admission-format-unknown` | admission | medium | yes | evals/w221_admission_probes.py, evals/w224_quar_probes.py, tests/test_admission.py (+1) |
 | `admission-inspection-bundle-mismatch` | admission | critical | yes | evals/w221_admission_probes.py, tests/test_admission.py |
 | `admission-inspection-missing` | admission | medium | yes | evals/w221_admission_probes.py, tests/test_admission.py |
-| `admission-integrity-floor-violated` | admission | high | yes | evals/w288_admission_probes.py, evals/w289_redteam_probes.py, evals/w290_f348_f349_probes.py (+2) |
+| `admission-integrity-floor-violated` | admission | high | yes | evals/w288_admission_probes.py, evals/w289_redteam_probes.py, evals/w290_f348_f349_probes.py (+3) |
 | `admission-issuer-untrusted` | admission | medium | yes | evals/w221_admission_probes.py, evals/w224_quar_probes.py, tests/test_admission.py (+2) |
 | `admission-malformed` | admission | medium | yes | tests/test_admission.py, tests/test_gate_algebra.py |
 | `admission-no-applicable-policy` | admission | medium | yes | evals/w288_admission_probes.py, tests/test_evidence_admission.py |
@@ -67,7 +67,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `admission-policy-unresolvable` | admission-policy | medium | yes | evals/w264_admission_probes.py |
 | `admission-policy-unsigned` | admission-policy | high | yes | evals/w264_admission_probes.py, evals/w265_redteam_probes.py |
 | `admission-policy-vacuous` | admission-policy | medium | yes | evals/w264_admission_probes.py |
-| `admission-refused` | admission | medium | yes | evals/w288_admission_probes.py, evals/w290_f348_f349_probes.py, evals/w291_redteam_probes.py (+1) |
+| `admission-refused` | admission | medium | yes | evals/w288_admission_probes.py, evals/w290_f348_f349_probes.py, evals/w291_redteam_probes.py (+2) |
 | `admission-severity-exceeded` | admission | medium | yes | evals/w223_gatealg_probes.py, evals/w224_quar_probes.py, tests/test_gate_algebra.py |
 | `admission-severity-unverifiable` | admission | medium | yes | evals/w223_gatealg_probes.py, evals/w224_quar_probes.py, tests/test_gate_algebra.py |
 | `admission-tag-mutated` | admission | medium | yes | evals/w223_gatealg_probes.py, tests/test_gate_algebra.py |
@@ -511,7 +511,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `decision-code-digest-mismatch` | decision_codes | high | yes | evals/w228_codes_probes.py, tests/test_decision_codes.py |
 | `decision-code-malformed` | decision_codes | medium | yes | evals/w228_codes_probes.py, evals/w303_f385_probes.py, tests/test_decision_codes.py (+4) |
 | `decision-code-not-authorization` | decision_codes | critical | yes | evals/w228_codes_probes.py, tests/test_decision_codes.py |
-| `decision-code-unmapped` | decision_codes | medium | yes | evals/w228_codes_probes.py, tests/test_decision_codes.py |
+| `decision-code-unmapped` | decision_codes | medium | yes | evals/w228_codes_probes.py, evals/w342_deadcode_probes.py, tests/test_decision_codes.py |
 | `decision-effect-decision-drift` | decision_effect | critical | yes | evals/w230_agree_probes.py, tests/test_decision_effect_agreement.py |
 | `decision-effect-disagreement` | decision_effect | critical | yes | evals/w230_agree_probes.py, tests/test_decision_effect_agreement.py |
 | `decision-effect-effect-absent` | decision_effect | high | yes | evals/w230_agree_probes.py, tests/test_decision_effect_agreement.py |
@@ -782,7 +782,6 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `evidence-quality-gate-failed` | evidence-quality | medium | yes | evals/w256_evidence_quality_probes.py, evals/w258_f222_probes.py, evals/w261_failaction_probes.py (+2) |
 | `evidence-quality-malformed` | evidence-quality | medium | yes | evals/w256_evidence_quality_probes.py, evals/w258_f222_probes.py, evals/w261_failaction_probes.py (+2) |
 | `evidence-quality-unknown-expectation` | evidence-quality | medium | yes | evals/w256_evidence_quality_probes.py, evals/w257_redteam_probes.py, evals/w259_f226_probes.py (+2) |
-| `evidence-refused` | evidence | medium | **NO** |  |
 | `evidence-unverifiable-item` | evidence | medium | yes | evals/w226_singleuse_probes.py, tests/test_single_use.py |
 | `exception-baseline-drift` | exception | high | yes | evals/w285_exceptions_probes.py, tests/test_governed_exceptions.py |
 | `exception-close-refused` | exception | high | yes | evals/w285_exceptions_probes.py, tests/test_governed_exceptions.py |
@@ -1047,7 +1046,6 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `keep_evidence_types` | vc | medium | **NO** |  |
 | `keep_subject_fields` | vc | medium | **NO** |  |
 | `key-identity-malformed` | key_identity | medium | yes | tests/test_key_identity.py |
-| `key-identity-refused` | key_identity | medium | **NO** |  |
 | `key-identity-revoked` | key_identity | high | yes | evals/w227_keys_probes.py, evals/w228_codes_probes.py, tests/test_hybrid_gate.py (+1) |
 | `key-identity-unknown` | key_identity | medium | yes | evals/w227_keys_probes.py, tests/test_key_identity.py |
 | `key-identity-unregistered` | key_identity | medium | yes | evals/w227_keys_probes.py, tests/test_key_identity.py |
@@ -1771,8 +1769,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `single-use-malformed` | single_use | medium | yes | evals/w226_singleuse_probes.py, evals/w229_reconcile_probes.py, evals/w234_consumed_probes.py (+2) |
 | `single-use-not-reserved` | single_use | high | yes | evals/w229_reconcile_probes.py, tests/test_single_use_lifecycle.py |
 | `single-use-reconcile-replayed` | single_use | high | yes | evals/w229_reconcile_probes.py, tests/test_single_use_lifecycle.py |
-| `single-use-refused` | single_use | medium | **NO** |  |
-| `single-use-replay-refused` | single_use | high | yes | evals/w226_singleuse_probes.py, evals/w228_codes_probes.py, tests/test_consumption_ledger.py (+1) |
+| `single-use-replay-refused` | single_use | high | yes | evals/w226_singleuse_probes.py, evals/w228_codes_probes.py, evals/w342_deadcode_probes.py (+2) |
 | `single-use-reservation-mismatch` | single_use | high | yes | evals/w229_reconcile_probes.py, tests/test_single_use_lifecycle.py |
 | `single-use-reservation-unknown` | single_use | high | yes | evals/w229_reconcile_probes.py, tests/test_single_use_lifecycle.py |
 | `single-use-reserve-conflict` | single_use | high | yes | evals/w229_reconcile_probes.py, tests/test_single_use_lifecycle.py |
@@ -1801,7 +1798,6 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `spiffe-audience-mismatch` | spiffe | high | yes | evals/w232_spiffe_probes.py, tests/test_spiffe_credential_provider.py |
 | `spiffe-auth-refused` | spiffe | high | yes | evals/w232_spiffe_probes.py, tests/test_spiffe_credential_provider.py |
 | `spiffe-permission-invalid` | spiffe | high | yes | evals/w232_spiffe_probes.py, tests/test_spiffe_credential_provider.py |
-| `spiffe-refused` | spiffe | medium | **NO** |  |
 | `spiffe-svid-expired` | spiffe | medium | yes | evals/w232_spiffe_probes.py, tests/test_spiffe_credential_provider.py |
 | `spiffe-svid-malformed` | spiffe | medium | yes | evals/w232_spiffe_probes.py, tests/test_spiffe_credential_provider.py |
 | `spiffe-svid-unavailable` | spiffe | medium | yes | evals/w232_spiffe_probes.py, tests/test_spiffe_credential_provider.py |
@@ -1901,7 +1897,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `tool-budget-unavailable` | velocity | high | yes | evals/w337_ratelimit2_probes.py |
 | `tool-crashed` | capability | medium | **NO** |  |
 | `tool-definition-malformed` | mcp-surface | medium | yes | tests/test_wave243_effect_agreement.py |
-| `tool-executable-content` | mcp-surface | high | yes | evals/w243_threat_model_probes.py, evals/w244_token_scope_probes.py, tests/test_wave243_effect_agreement.py |
+| `tool-executable-content` | mcp-surface | high | yes | evals/w243_threat_model_probes.py, evals/w244_token_scope_probes.py, evals/w341_jsfuck_probes.py (+2) |
 | `tool-failed-no-commit` | capability | medium | yes | evals/capability_grant_probes.py |
 | `tool-guardrail-tripwire` | guardrail | high | yes | evals/w279_triad_probes.py, evals/w281_f306_probes.py, tests/test_tool_guardrails.py |
 | `tool-rate-limit-config-invalid` | velocity | medium | yes | evals/w335_ratelimit_probes.py, evals/w336_redteam_probes.py, evals/w337_redteam_probes.py |

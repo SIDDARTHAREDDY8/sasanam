@@ -39,11 +39,11 @@ hostile input.
   G17 approvals delegation store: store_lock_unavailable
   G18 inventory query: inventory-identity-collision
   G19 evidence sigstore witness: evidence-bundle-witness-key-unavailable
-  P0  pin/taxonomy honesty (2131/2131/0 sorted-unique, footer state).
+  P0  pin/taxonomy honesty (2127/2127/0 sorted-unique, footer state).
   PZ  green check (depth-1): adjacent suites as children with
       GOV_SKIP_GREEN=1.
 
-Base: adaafaef (wave-340 merge). Pin 2131, footer open none / next
+Base: adaafaef (wave-340 merge). Pin 2127, footer open none / next
 F428. No gov/ changes in this lane. Findings: none filed (all probes
 HELD on the base; a genuine BREAK would have been filed as F428+).
 
@@ -79,7 +79,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "tests"))
 
-TAXONOMY_PIN = 2131  # Wave-340 merge (adaafaef). Footer: open none / next F428.
+TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 _results = []
 
@@ -138,7 +138,7 @@ def p0():
     elif codes != sorted(set(codes)):
         _break("P0a", "taxonomy not sorted-unique")
     else:
-        _held("P0a", "taxonomy 2131/2131/0 sorted-unique literals")
+        _held("P0a", "taxonomy 2127/2127/0 sorted-unique literals")
     footer = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                   encoding="utf-8").read()
     want = "Next free finding: **F429**. **Open findings: F428.**"

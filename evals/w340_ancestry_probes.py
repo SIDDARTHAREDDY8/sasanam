@@ -27,7 +27,7 @@ P5 (red-capable): the pin excludes .git and __pycache__.
 P6 (red-capable): ``deadctrl-subject-mutated`` is registered in the
   central taxonomy and is LIVE on the real tree (emitted by the gate
   itself, which the raise-site scan covers).
-P7 (pin): TAXONOMY_PIN == 2131 and the registry holds 2131 codes.
+P7 (pin): TAXONOMY_PIN == 2127 and the registry holds 2127 codes.
 
 Verdicts: HELD = behavior matches the pin; BREAK = genuine defect;
 ERROR = probe/harness problem. No findings manufactured.
@@ -59,7 +59,7 @@ REPO_ROOT = os.path.dirname(_EVALS)
 import no_dead_controls as gate  # noqa: E402
 from w338_deadctrl_probes import make_tree, cleanup  # noqa: E402
 
-TAXONOMY_PIN = 2131  # Wave-340 lane 3: pin 2130 -> 2131 (+1 deadctrl-subject-mutated).
+TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 _EXPECTED_BREAKS = set()  # never {} (wave-331 lesson); breaks documented above
 
@@ -226,17 +226,17 @@ def p6_code_registered_and_live():
 
 
 def p7_pin():
-    """TAXONOMY_PIN == 2131 and the registry holds 2131 codes."""
+    """TAXONOMY_PIN == 2127 and the registry holds 2127 codes."""
     try:
         sys.path.insert(0, REPO_ROOT)
         from gov.decision_codes import TAXONOMY
     except Exception:
         return "ERROR", "P7", traceback.format_exc(limit=3)
-    if TAXONOMY_PIN != 2131:
-        return "BREAK", "P7", "TAXONOMY_PIN = %r, want 2131" % TAXONOMY_PIN
-    if len(TAXONOMY) != 2131:
-        return "BREAK", "P7", "registry has %d codes, want 2131" % len(TAXONOMY)
-    return "HELD", "P7", "pin 2131; registry 2131 codes"
+    if TAXONOMY_PIN != 2127:
+        return "BREAK", "P7", "TAXONOMY_PIN = %r, want 2127" % TAXONOMY_PIN
+    if len(TAXONOMY) != 2127:
+        return "BREAK", "P7", "registry has %d codes, want 2127" % len(TAXONOMY)
+    return "HELD", "P7", "pin 2127; registry 2127 codes"
 
 
 PROBES = [

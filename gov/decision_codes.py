@@ -20,7 +20,15 @@ never authority: any authority-shaped use refuses
 ``decision-code-not-authorization``.
 
 Inventory definition (the closed vocabulary this module maps):
-1. Class-level ``code = "..."`` attributes on exception classes.
+1. Class-level ``code = "..."`` attributes on exception classes,
+   EXCLUDING family-fallback base classes whose ``code`` is never
+   raised with that value: a base class whose every concrete subclass
+   overrides ``code`` contributes no emitted refusal string of its
+   own, so its default is implementation vocabulary, not evidence
+   vocabulary (wave-342 lane 6: ``single-use-refused``,
+   ``evidence-refused``, ``key-identity-refused``, ``spiffe-refused``
+   removed for exactly this reason -- all raise sites use the
+   overriding subclass codes).
 2. Module constants demonstrably USED as machine codes: raised
    directly, passed as a ``code=`` kwarg, assigned to ``.code``,
    passed to a code-first exception constructor, or used as a
@@ -7313,14 +7321,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['evidence', 'attestation'],
         "reverify_steps": ['check-evidence-present', 'check-evidence-verifiable'],
     },
-    'evidence-refused': {
-        "domain": 'evidence',
-        "code": 'evidence-refused',
-        "human": 'evidence completeness: refused by policy',
-        "severity": 'medium',
-        "evidence_kinds_required": ['evidence', 'attestation'],
-        "reverify_steps": ['check-evidence-present', 'check-evidence-verifiable'],
-    },
     'evidence-unverifiable-item': {
         "domain": 'evidence',
         "code": 'evidence-unverifiable-item',
@@ -9827,14 +9827,6 @@ TAXONOMY = {
         "domain": 'key_identity',
         "code": 'key-identity-malformed',
         "human": 'registered key identity: the input failed structural validation; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['key-registry', 'pubkey', 'revocation-registry', 'signature'],
-        "reverify_steps": ['recompute-pubkey-digest', 'resolve-key', 'check-revocation', 'verify-signature'],
-    },
-    'key-identity-refused': {
-        "domain": 'key_identity',
-        "code": 'key-identity-refused',
-        "human": 'registered key identity: refused by policy',
         "severity": 'medium',
         "evidence_kinds_required": ['key-registry', 'pubkey', 'revocation-registry', 'signature'],
         "reverify_steps": ['recompute-pubkey-digest', 'resolve-key', 'check-revocation', 'verify-signature'],
@@ -16519,14 +16511,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['reservation', 'consumption-record'],
         "reverify_steps": ['check-not-consumed', 'check-approval-registered'],
     },
-    'single-use-refused': {
-        "domain": 'single_use',
-        "code": 'single-use-refused',
-        "human": 'single-use attestation: refused by policy',
-        "severity": 'medium',
-        "evidence_kinds_required": ['attestation', 'revocation-registry'],
-        "reverify_steps": ['check-not-consumed', 'check-issuer-revocation'],
-    },
     'single-use-replay-refused': {
         "domain": 'single_use',
         "code": 'single-use-replay-refused',
@@ -16797,15 +16781,6 @@ TAXONOMY = {
         "severity": 'high',
         "evidence_kinds_required": ['receipt'],
         "reverify_steps": ['check-svid-permissions'],
-    },
-    'spiffe-refused': {
-        "domain": 'spiffe',
-        "code": 'spiffe-refused',
-        "human": 'spiffe KMS auth: base-class fallback code; concrete '
-                 'refusals carry a specific spiffe-* code',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
     },
     'spiffe-svid-expired': {
         "domain": 'spiffe',
