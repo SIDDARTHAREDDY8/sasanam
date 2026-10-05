@@ -38,7 +38,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2106 # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).; Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
+TAXONOMY_PIN = 2109 # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).; Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
 FOOTER_OPEN = "F424, F425"  # F417 CLOSED 2026-10-05 (wave-334 lane 1); no open findings.
 FOOTER_NEXT = "F426"  # Next free finding number (F417 OPEN, F418 closed at wave-333 merge).
 
@@ -584,21 +584,21 @@ def _p4c():
 # P5: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P5a-pin-taxonomy-2106-sorted")
+@probe("P5a-pin-taxonomy-2109-sorted")
 def _p5a():
-    if TAXONOMY_PIN != 2106:
-        return _break("P5a-pin-taxonomy-2106-sorted",
-                      "TAXONOMY_PIN is %r, want 2106" % (TAXONOMY_PIN,))
+    if TAXONOMY_PIN != 2109:
+        return _break("P5a-pin-taxonomy-2109-sorted",
+                      "TAXONOMY_PIN is %r, want 2109" % (TAXONOMY_PIN,))
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
-    if len(lits) != 2106 or len(set(lits)) != 2106 \
+    if len(lits) != 2109 or len(set(lits)) != 2109 \
             or lits != sorted(lits):
-        return _break("P5a-pin-taxonomy-2106-sorted",
-                      "want 2106/2106/0 sorted, got %d/%d/sorted=%s"
+        return _break("P5a-pin-taxonomy-2109-sorted",
+                      "want 2109/2109/0 sorted, got %d/%d/sorted=%s"
                       % (len(lits), len(set(lits)), lits == sorted(lits)))
-    return _held("P5a-pin-taxonomy-2106-sorted",
-                 "2106/2106/0 sorted unique on raw source literals")
+    return _held("P5a-pin-taxonomy-2109-sorted",
+                 "2109/2109/0 sorted unique on raw source literals")
 
 
 @probe("P5b-footer-open-none-next-f419")

@@ -2,7 +2,7 @@
 
 Base: 0fd4f736 (wave-334 merge). Footer at wave-335 merge: open F423 / next F424
 (F421 filed then CLOSED here; F423 CLOSED 2026-10-05 wave-336 lane 1, footer now
-open F424, F425 / next F426). Pin: 2106 (+1 identity-refresh-lock-unavailable).
+open F424, F425 / next F426). Pin: 2109 (+1 identity-refresh-lock-unavailable).
 
 P1  F421 red-first, now closed: the /tmp/red_rtlock.py double-spend
     (two threads, barrier-aligned, 0.2s slow issuer modeling a
@@ -24,7 +24,7 @@ P5  Per-token independence: two distinct tokens refresh concurrently
 P6  _revoke_chain under concurrent mint: a spinner thread mints in a
     loop while the main thread triggers reuse-revocation repeatedly --
     no RuntimeError, refusals stay coded.
-P7  Pin 2106 + footer state (open F424, F425 / next F426; F421 CLOSED);
+P7  Pin 2109 + footer state (open F424, F425 / next F426; F421 CLOSED);
     taxonomy sorted-unique on raw literals; the new code centrally
     registered.
 P8  Green check (depth-1): honors GOV_SKIP_GREEN; otherwise runs
@@ -53,7 +53,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2106  # Wave-335 lane 3: pin 2100 -> 2101 (+1 identity-refresh-lock-unavailable, F421). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
+TAXONOMY_PIN = 2109  # Wave-335 lane 3: pin 2100 -> 2101 (+1 identity-refresh-lock-unavailable, F421). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
 FOOTER_OPEN = "F424, F425"  # F421 CLOSED 2026-10-05 (wave-335 lane 3).
 FOOTER_NEXT = "F426"  # Next free finding number.
 
@@ -363,7 +363,7 @@ def _p7():
         "footer open-findings mismatch"
     assert "## F421" in text and "CLOSED 2026-10-05 wave-335 lane 3" in text, \
         "F421 closure not recorded"
-    return _held(pid, "taxonomy 2106/2106/0 sorted-unique; new code "
+    return _held(pid, "taxonomy 2109/2109/0 sorted-unique; new code "
                       "registered; F421 CLOSED; footer open F424, F425 / next F426")
 
 

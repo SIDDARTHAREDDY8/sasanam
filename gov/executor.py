@@ -167,6 +167,7 @@ from .memory_provenance import MemoryQuarantineError, instruction_shaping_reason
 from . import citation_provenance as _citation_provenance
 from . import capability_gate as _capability_gate
 from . import tool_rate_limit as _tool_rate
+from . import tool_budget as _tool_budget
 from . import velocity as _velocity
 
 _SEND_TOOLS = ("send_email", "http_post")
@@ -2222,6 +2223,13 @@ class ToolExecutor:
         self._tool_rate_wire = _tool_rate.ToolRateWire(
             self._tool_rate_cfg(),
             clock=lambda: self._tempo_clock())
+        # Wave-337 (R12): per-tool cumulative budgets (cost axis),
+        # orthogonal to the frequency axis above. Strictly opt-in:
+        # absent tool_budgets section = no budgets. Malformed
+        # deployment config refuses coded
+        # tool-budget-config-invalid at construction.
+        self._tool_budget_wire = _tool_budget.ToolBudgetWire(
+            self._tool_budget_cfg())
         # F167 (MEDIUM): the pause survives executor rotation (the F60
         # fresh-executor-per-sweep deployment pattern). The pause is
         # derived from the run's own chained log — the trip path chains
@@ -6906,6 +6914,13 @@ class ToolExecutor:
             getattr(self.policy, "tool_rate_limits", None) or {}))
         return cfg
 
+    def _tool_budget_cfg(self):
+        """Effective per-tool budgets (wave-337, R12): policy values
+        only (absent section = no budgets -- strictly opt-in, never
+        default-enforced). Returns {key: (budget, cost_per_call)}."""
+        return _tool_budget.normalize_section(
+            getattr(self.policy, "tool_budgets", None) or {})
+
     def _velocity_cfg(self):
         """Effective cross-run velocity config: policy values over
         conservative defaults (F162: absent section no longer
@@ -7112,8 +7127,7 @@ class ToolExecutor:
             code = "tool-rate-limiter-unavailable"
             detail = ("per-tool rate limiter failed unexpectedly for "
                       "tool %r: %s" % (tool, wire_exc))
-        window_secs, max_calls = self._tool_rate_wire.limits.get(
-            tool, (0.0, 0))
+        window_secs, max_calls = self._tool_rate_wire.limit_for(tool)
         try:
             observed = self._tool_rate_wire.windowed_count(tool)
         except _tool_rate.ToolRateLimitError:
@@ -7144,6 +7158,79 @@ class ToolExecutor:
         if code == "tool-rate-limit-exceeded":
             raise _tool_rate.ToolRateLimitExceeded(code, detail)
         raise _tool_rate.ToolRateLimiterUnavailable(code, detail)
+
+    def _check_tool_budget(self, identity, tool, audit_identity=None):
+        """Charge one EXECUTION against the per-tool budget wire (R12).
+
+        Called at the two F33 execution boundaries (direct allow path
+        and the approved-execution sweep), AFTER ``_check_tool_rate``
+        and BEFORE ``_charge_tempo``: the velocity refusal fires
+        before the cumulative-spend refusal, and both fire before the
+        class tempo wire. On exhaustion: chain a coded refusal record
+        and raise code-first ``ToolBudgetExhausted`` fail-closed --
+        the call is refused; the run continues (same per-call
+        granularity as the rate wire). Tools with no configured
+        budget are uncharged (documented residual).
+
+        ``identity`` is the calling AgentIdentity on the call() path.
+        On the approved-execution sweep there is no calling identity:
+        pass None and ``audit_identity`` (a plain agent-info dict from
+        the approval record) for the refusal record.
+
+        Fail-closed on budget failure: any unexpected exception from
+        the wire becomes a coded ``tool-budget-unavailable`` denial
+        -- a broken budget denies, never allows unlimited spend.
+        """
+        _ai = audit_identity or {}
+        try:
+            self._tool_budget_wire.charge(tool)
+            return
+        except _tool_budget.ToolBudgetExhausted as exc:
+            code = exc.code
+            detail = exc.detail
+        except Exception as wire_exc:  # noqa: BLE001 -- fail closed
+            code = "tool-budget-unavailable"
+            detail = ("per-tool budget wire failed unexpectedly for "
+                      "tool %r: %s" % (tool, wire_exc))
+        # Diagnostic state is best-effort and must never re-raise: a
+        # wire that failed above must not fail the refusal record
+        # too (the F425 lesson on the rate path).
+        try:
+            budget, cost_per_call = self._tool_budget_wire.limit_for(tool)
+        except Exception:  # noqa: BLE001 -- diagnostic only
+            budget, cost_per_call = (0.0, 0.0)
+        try:
+            state = self._tool_budget_wire.budget_state(tool)
+            # budget_state preserves finest-first bucket order.
+            spent = state[next(iter(state))]["spent"]
+        except Exception:  # noqa: BLE001 -- diagnostic only
+            spent = budget + 1.0
+        refusal_entry = {
+            "event": "tool_call",
+            "run_id": self.run_id,
+            "agent_id": (identity.agent_id if identity is not None
+                         else _ai.get("agent_id", "system")),
+            "role": (identity.role if identity is not None
+                     else _ai.get("role", "system")),
+            "principal": (identity.principal if identity is not None
+                          else _ai.get("principal", "system")),
+            "tool": tool,
+            "decision": "tool_call_refused",
+            "policy_id": "tool-budget",
+            "flag": code,
+            "matched_rules": [],
+            "budget": budget,
+            "budget_spent": spent,
+            "budget_cost_per_call": cost_per_call,
+            "reason": detail,
+        }
+        # Chain the refusal BEFORE raising: the evidence must exist
+        # even if the raise path is mishandled upstream. An append
+        # failure raises and nothing executes (fail closed).
+        self.log.append(refusal_entry)
+        if code == "tool-budget-exhausted":
+            raise _tool_budget.ToolBudgetExhausted(code, detail)
+        raise _tool_budget.ToolBudgetUnavailable(code, detail)
 
     def resume_after_velocity_pause(self, approval_id):
         """Resume a tempo-paused run after HUMAN re-approval.
@@ -7229,6 +7316,11 @@ class ToolExecutor:
             for _rt_tool in _velocity.ACTION_CLASSES.get(
                     self._tempo_trip_class, ()):
                 self._tool_rate_wire.reset_tool(_rt_tool)
+                # Wave-337 (R12): the tripped class's per-tool budgets
+                # start fresh too -- otherwise the very next call
+                # would hit the still-exhausted budget and the resume
+                # would be useless.
+                self._tool_budget_wire.reset_tool(_rt_tool)
         self._tempo_trip_class = None
         return {"status": "resumed", "approval_id": approval_id}
 
@@ -11544,6 +11636,12 @@ class ToolExecutor:
             # first; an exceed refuses this call coded
             # tool-rate-limit-exceeded (the run continues).
             self._check_tool_rate(identity, tool)
+            # Wave-337 (R12): charge the per-tool budget wire at this
+            # execution boundary, AFTER the rate wire (velocity
+            # refuses before cumulative spend) and BEFORE the class
+            # tempo wire. An exhaustion refuses this call coded
+            # tool-budget-exhausted (the run continues).
+            self._check_tool_budget(identity, tool)
             # F162 (HIGH): charge the per-class tempo wire at this
             # execution boundary, BEFORE the side effect. A trip
             # pauses the whole run fail-closed (raises) — the call
@@ -13548,6 +13646,12 @@ class ToolExecutor:
             }
             self._check_tool_rate(None, rec["tool"],
                                  audit_identity=_rec_audit)
+            # Wave-337 (R12): charge the per-tool budget wire at this
+            # execution boundary too (approved executions are
+            # executions). AFTER the rate wire, BEFORE the class
+            # tempo wire -- same ordering as the direct allow path.
+            self._check_tool_budget(None, rec["tool"],
+                                    audit_identity=_rec_audit)
             # F162: charge the per-class tempo wire at this execution
             # boundary too (approved executions are executions). A trip
             # pauses the run fail-closed before the side effect. There

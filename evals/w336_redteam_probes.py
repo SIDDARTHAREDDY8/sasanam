@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Wave-336 lane 5 independent red team: break the wave-335 tree.
 
-Base: `c4acf39e` (wave-335 merge). Pin 2106. Footer open F423, F424,
+Base: `c4acf39e` (wave-335 merge). Pin 2109. Footer open F423, F424,
 F425 / next F426 (F424, F425 filed by this lane, OPEN).
 
 New attack surface under test: `gov/tool_rate_limit.py` (per-tool
@@ -74,7 +74,7 @@ P5 (F423 -- OPEN at base, attacked live):
        while F423 is open.
 
 P6 (honesty):
-  P6a  pin 2106: taxonomy 2106/2106/0 sorted-unique on raw source
+  P6a  pin 2109: taxonomy 2109/2109/0 sorted-unique on raw source
        literals; all 6 wave-335 codes centrally registered.
   P6b  footer: open F424, F425 / next F426 (raw-literal assertion,
        wave-331 lesson).
@@ -116,7 +116,7 @@ from gov import decision_codes as DC  # noqa: E402
 from gov.policy import PolicyEngine  # noqa: E402
 from tests.harness import make_run  # noqa: E402
 
-TAXONOMY_PIN = 2106  # Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
+TAXONOMY_PIN = 2109  # Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
 
 _NEW_CODES = (
     "identity-refresh-lock-unavailable",
@@ -847,9 +847,9 @@ def P5b():
 # ---------------------------------------------------------------------------
 
 def P6a():
-    """Pin 2106: taxonomy 2106/2106/0 sorted-unique on raw source
+    """Pin 2109: taxonomy 2109/2109/0 sorted-unique on raw source
     literals; all 6 wave-335 codes centrally registered."""
-    pid = "P6a-pin-2106-taxonomy"
+    pid = "P6a-pin-2109-taxonomy"
     src = open(os.path.join(REPO, "gov", "decision_codes.py")).read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
     n = len(DC.TAXONOMY)
@@ -864,7 +864,7 @@ def P6a():
         if c not in DC.TAXONOMY:
             _break(pid, "code %r not centrally registered" % (c,))
             return
-    _held(pid, "2106/2106/0 sorted-unique; 6 wave-335 codes registered")
+    _held(pid, "2109/2109/0 sorted-unique; 6 wave-335 codes registered")
 
 
 def P6b():
@@ -989,7 +989,7 @@ _PROBES = [
     ("P4f-classical-roundtrip", P4f),
     ("P5a-f423-nul-accepted", P5a),
     ("P5b-f423-crlf-mutated", P5b),
-    ("P6a-pin-2106-taxonomy", P6a),
+    ("P6a-pin-2109-taxonomy", P6a),
     ("P6b-footer-open-f424-f425-next-f426", P6b),
     ("P6c-f424-f425-open-f423-closed", P6c),
     ("P7a-f422-burst-coded", P7a),

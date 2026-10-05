@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Wave-335 lane 4: reserved PQ evidence-envelope slot (format only).
 
-Base: `0fd4f736` (wave-334 merge). Pin 2106. Footer open none / next F424.
+Base: `0fd4f736` (wave-334 merge). Pin 2109. Footer open none / next F424.
 
 New surface under test: `gov/pq_envelope.py` (reserved `pqAlgId` slot,
 FORMAT ONLY -- no production crypto, identifiers only) and its wiring
@@ -34,7 +34,7 @@ P5 (classical byte-identical): seal with and without the explicit
    `pq_alg_id=None` kwarg produces byte-identical canonical JSON;
    top-level key set is exactly the pre-slot shape; a classical
    bundle round-trips (open returns the statement bytes, verify True).
-P6 (honesty): taxonomy 2106/2106/0 sorted-unique on raw source
+P6 (honesty): taxonomy 2109/2109/0 sorted-unique on raw source
    literals; both new codes centrally registered; footer open none /
    next F421.
 
@@ -79,7 +79,7 @@ from gov import pq_envelope as PQ  # noqa: E402
 from gov import sigstore_bundle as SB  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
-TAXONOMY_PIN = 2106 # Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 lane 4: pin 2100 -> 2102 (+2 evidence-pq-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
+TAXONOMY_PIN = 2109 # Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 lane 4: pin 2100 -> 2102 (+2 evidence-pq-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
 
 _SEED = b"w335-pqslot-test-seed-0000000001"  # 32 bytes
 assert len(_SEED) == 32
@@ -358,10 +358,10 @@ def P5b():
 # ---------------------------------------------------------------------------
 
 def P6a():
-    """Pin honesty: taxonomy is 2106/2106/0, sorted and unique on raw
+    """Pin honesty: taxonomy is 2109/2109/0, sorted and unique on raw
     source literals (wave-260 lesson: assert on literals, not the
     deduped dict)."""
-    pid = "P6a-pin-taxonomy-2106-sorted"
+    pid = "P6a-pin-taxonomy-2109-sorted"
     with open(os.path.join(REPO, "gov", "decision_codes.py"),
               encoding="utf-8") as fh:
         src = fh.read()
@@ -376,7 +376,7 @@ def P6a():
     if sorted(codes) != codes:
         _break(pid, "literals not sorted")
         return
-    _held(pid, "taxonomy 2106/2106/0 sorted unique on raw literals")
+    _held(pid, "taxonomy 2109/2109/0 sorted unique on raw literals")
 
 
 def P6b():
@@ -420,7 +420,7 @@ _PROBES = [
     ("P4c-pq-verify-null-slot-classical", P4c),
     ("P5a-pq-classical-byte-identical", P5a),
     ("P5b-pq-classical-roundtrip", P5b),
-    ("P6a-pin-taxonomy-2106-sorted", P6a),
+    ("P6a-pin-taxonomy-2109-sorted", P6a),
     ("P6b-pq-codes-registered", P6b),
     ("P6c-footer-open-f424-f425-next-f426", P6c),
 ]

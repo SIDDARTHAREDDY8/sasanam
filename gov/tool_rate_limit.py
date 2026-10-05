@@ -17,17 +17,30 @@ path AND the approved-execution sweep), BEFORE the class tempo
 charge: the finer, more specific refusal fires first; an agent that
 persists by rotating tools still meets the class tripwire.
 
+Wave-337 (R8, AG2 TealTiger pattern adapted): limit keys may be
+exact tool names OR fnmatch glob families (``db.*`` bounds the whole
+family with one line). A tool matching several keys charges every
+matching bucket -- one timestamp per DISTINCT bucket per call (the
+TealTiger double-count lesson: overlapping exact+glob matches must
+not record two timestamps in the same bucket, and the finest limit
+refuses first). There is deliberately no shadowing: an exact rule
+never exempts a tool from a family rule, so a family bucket cannot
+be bypassed by adding an exact key.
+
 Semantics:
 * ``ToolRateWire.charge(tool)`` records one EXECUTION of ``tool``
-  and returns the observed windowed count; when the count exceeds
-  the tool's limit it raises code-first ``ToolRateLimitExceeded``
+  against every matching bucket and returns the finest bucket's
+  observed windowed count; when a bucket's count exceeds its limit
+  it raises code-first ``ToolRateLimitExceeded``
   (``tool-rate-limit-exceeded``). The call is refused; the run
   continues -- deliberately finer than the F162 whole-run pause.
+  Matching buckets are checked finest-first so the most specific
+  refusal is the one raised.
 * Limits are deployment-set (policy ``tool_rate_limits:`` section),
   never agent-set. Absent section = conservative built-in defaults
   for the sensitive set (default-enforced, never opt-in -- F162
-  precedent). A tool with no configured limit is uncharged
-  (documented residual, same scoping pattern as F162's taxonomy).
+  precedent). A tool matching no key is uncharged (documented
+  residual, same scoping pattern as F162's taxonomy).
 * Fail-closed: malformed deployment config raises code-first
   ``ToolRateConfigError`` (``tool-rate-limit-config-invalid``) at
   construction; any unexpected limiter failure at call time is
@@ -37,12 +50,44 @@ Semantics:
 * The clock is monotonic and injectable (``clock=``); production
   uses ``time.monotonic``. Timestamps older than the window are
   evicted on every charge, so memory is bounded by
-  (limits x tools), not by run length.
+  (buckets x matched tools), not by run length.
 """
 
+import fnmatch
 import time
 
 import gov.decision_codes as _dc
+
+# Characters that make a limit key a glob family rather than an
+# exact tool name (fnmatch magic). A key containing any of these is
+# matched with fnmatchcase against tool names; anything else is an
+# exact key. (Adapted pattern, not code: AG2 TealTiger shipped
+# fnmatch scoping in ag2 v1.0.6, Apache-2.0.)
+_GLOB_MAGIC = frozenset("*?[]")
+
+
+def is_pattern_key(key):
+    """True when a limit key is a glob family (contains fnmatch magic)."""
+    return any(ch in _GLOB_MAGIC for ch in key)
+
+
+def matching_buckets(tool, limits):
+    """Config keys (buckets) matching ``tool``, finest-first.
+
+    A key matches when it equals the tool name exactly, or when it
+    is a glob family matching via ``fnmatch.fnmatchcase``. Each key
+    appears at most once (a key is one bucket -- the TealTiger
+    double-count guard). Sorted by (max_calls, window_secs, key) so
+    the finest, most specific limit is checked first and its refusal
+    is the one raised.
+    """
+    hits = []
+    for key, (window_secs, max_calls) in limits.items():
+        if key == tool or (is_pattern_key(key)
+                           and fnmatch.fnmatchcase(tool, key)):
+            hits.append((max_calls, window_secs, key))
+    hits.sort()
+    return [key for _, _, key in hits]
 
 # Default per-tool limits: tool -> (window_secs, max_calls). These are
 # the tools where a per-tool limit is STRICTER than the F162 class
@@ -143,11 +188,13 @@ def _check_max_calls(max_calls, where):
 def normalize_section(section):
     """Normalize a ``tool_rate_limits:`` policy section.
 
-    Shape: ``{tool_name: {window_secs: <positive number>,
-    max_calls: <non-negative int>}}``. Returns ``{tool: (window_secs,
-    max_calls)}``. ``None`` (absent section) -> ``{}`` (the executor
-    applies the built-in defaults). Anything malformed raises
-    ``ToolRateConfigError`` fail-closed.
+    Shape: ``{tool_or_glob: {window_secs: <positive number>,
+    max_calls: <non-negative int>}}``. Keys may be exact tool names
+    or fnmatch glob families (a key containing ``*?[]`` is a
+    family). Returns ``{key: (window_secs, max_calls)}``. ``None``
+    (absent section) -> ``{}`` (the executor applies the built-in
+    defaults). Anything malformed raises ``ToolRateConfigError``
+    fail-closed.
     """
     if section is None:
         return {}
@@ -181,14 +228,17 @@ def normalize_section(section):
 
 
 class ToolRateWire:
-    """Per-tool sliding-window rate counters, one deque per tool.
+    """Per-tool sliding-window rate counters, one deque per bucket.
 
-    ``limits`` maps tool -> (window_secs, max_calls); both validated
+    ``limits`` maps key -> (window_secs, max_calls); keys may be
+    exact tool names or fnmatch glob families; both validated
     fail-closed at construction. ``charge(tool)`` records one
-    EXECUTION and returns the observed windowed count; when the count
-    exceeds the tool's limit it raises ``ToolRateLimitExceeded``
-    (the offending execution is recorded, then refused). Tools with
-    no configured limit are ignored (no charge, no trip).
+    EXECUTION against every bucket matching ``tool`` -- exactly one
+    timestamp per distinct bucket -- and returns the finest
+    bucket's observed windowed count; when a bucket's count exceeds
+    its limit it raises ``ToolRateLimitExceeded`` (the offending
+    execution is recorded, then refused). Tools matching no key are
+    ignored (no charge, no trip).
     """
 
     def __init__(self, limits, clock=None):
@@ -228,46 +278,75 @@ class ToolRateWire:
         return len(hits)
 
     def windowed_count(self, tool):
-        """Current in-window execution count for a tool (read-only)."""
-        if tool not in self.limits:
+        """Current in-window execution count for a tool (read-only).
+
+        Reports the finest matching bucket's count. Raises
+        ``ToolRateConfigError`` when the tool matches no bucket.
+        """
+        buckets = matching_buckets(tool, self.limits)
+        if not buckets:
             raise ToolRateConfigError(
                 "tool-rate-limit-config-invalid",
                 "no rate limit configured for tool %r" % (tool,))
-        return self._evict(tool, self._clock())
+        return self._evict(buckets[0], self._clock())
+
+    def limit_for(self, tool):
+        """Finest matching bucket's (window_secs, max_calls) for a tool.
+
+        Returns ``(0.0, 0)`` when the tool matches no bucket (used
+        for refusal-record diagnostics).
+        """
+        buckets = matching_buckets(tool, self.limits)
+        if not buckets:
+            return (0.0, 0)
+        return self.limits[buckets[0]]
 
     def reset_tool(self, tool):
         """Forget all in-window hits for ``tool`` (fresh window).
 
+        Resets every bucket matching ``tool`` (exact and family).
         Used on F162 human-approved resume: the tripped class's
         tools start fresh, mirroring the tempo wire's class reset,
         so the very next call does not hit a still-hot per-tool
         window and make the resume useless.
         """
-        if tool in self._hits:
-            self._hits[tool] = []
+        for key in matching_buckets(tool, self.limits):
+            self._hits[key] = []
 
     def configured_tools(self):
-        """Tool names carrying a rate limit (sorted, read-only)."""
+        """Limit keys carrying a rate limit (sorted, read-only).
+
+        Keys may be exact tool names or glob families.
+        """
         return sorted(self.limits)
 
     def charge(self, tool):
         """Record one execution of ``tool``; fail closed on exceed.
 
-        Tools with no configured limit are ignored (no charge, no
-        trip). Returns the windowed count. Raises
-        ``ToolRateLimitExceeded`` when the count exceeds the tool's
-        limit.
+        Charges every bucket matching ``tool`` -- exactly one
+        timestamp per distinct bucket (the TealTiger double-count
+        guard). Returns the finest bucket's windowed count. Raises
+        ``ToolRateLimitExceeded`` when a bucket's count exceeds its
+        limit; buckets are checked finest-first so the most
+        specific refusal is raised. Tools matching no key are
+        ignored (no charge, no trip); returns 0.
         """
-        if tool not in self.limits:
+        buckets = matching_buckets(tool, self.limits)
+        if not buckets:
             return 0
         now = self._clock()
-        hits = self._hits[tool]
-        hits.append(now)
-        count = self._evict(tool, now)
-        window_secs, max_calls = self.limits[tool]
-        if count > max_calls:
+        first_exceeded = None
+        for key in buckets:
+            hits = self._hits[key]
+            hits.append(now)
+            count = self._evict(key, now)
+            window_secs, max_calls = self.limits[key]
+            if count > max_calls and first_exceeded is None:
+                first_exceeded = (key, count, window_secs, max_calls)
+        if first_exceeded is not None:
+            key, count, window_secs, max_calls = first_exceeded
             _fail("tool-rate-limit-exceeded",
-                  "tool %r exceeded its rate limit: %d executions in "
-                  "%.1fs window (limit %d)" % (tool, count, window_secs,
-                                              max_calls))
-        return count
+                  "tool %r (bucket %r) exceeded its rate limit: %d "
+                  "executions in %.1fs window (limit %d)"
+                  % (tool, key, count, window_secs, max_calls))
+        return self._evict(buckets[0], now)
