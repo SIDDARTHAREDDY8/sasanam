@@ -1542,6 +1542,13 @@ class ToolExecutor:
         # fails closed. No token presented at mint -> no entry ->
         # scope-required tools fail closed for that agent.
         self._mcp_token_claims = {}
+        # Wave-345 lane 6 (ownership threading): the verified
+        # mint_identity claim record, keyed by agent_id. Captured at
+        # mint time and binding-checked at packet-emit time; a
+        # tokenless re-mint overwrites the record (no stale-claim
+        # inheritance -- the same fail-closed invariant as
+        # _mcp_token_claims above).
+        self._minted_identity_claims = {}
         # Wave-90 (S6, F137 — infection lineage): the lineage substrate
         # (gov.lineage.LineageTracker), constructed by the deployment in
         # the operator trust domain and shared across a spawn lineage by
@@ -2937,6 +2944,51 @@ class ToolExecutor:
             # a tokenless re-mint would silently violate the "no
             # entry -> fail closed" invariant).
             self._mcp_token_claims.pop(agent_id, None)
+        # Wave-345 lane 6 (ownership threading): capture the verified
+        # claim record bound to this identity for per-call packet
+        # threading. A re-mint overwrites: a tokenless re-mint of the
+        # same agent_id must not inherit a previous mint's verified
+        # claims (same fail-closed invariant as _mcp_token_claims).
+        # verification_status names HOW the claims were verified:
+        # identity-token-verified = this deployment's own
+        # TokenVerifier (federated; raw strings are verified above,
+        # so reaching here as a VerifiedTokenClaims from another
+        # verifier was already refused); token-claims-validated =
+        # the legacy wave-191 dict path (check_token_claims +
+        # sub/role/principal binding above); principal-registry =
+        # tokenless mint against the deployment-controlled registry;
+        # self-asserted = dev mode (mint authenticates nothing).
+        _tok = token_claims if isinstance(token_claims, dict) else None
+        if (_tok is not None
+                and isinstance(
+                    _tok, _federated_identity.VerifiedTokenClaims)
+                and self._token_verifier is not None
+                and _tok.verified_by is self._token_verifier):
+            _verification_status = "identity-token-verified"
+        elif _tok is not None:
+            _verification_status = "token-claims-validated"
+        elif self._principal_registry is not None:
+            _verification_status = "principal-registry"
+        else:
+            _verification_status = "self-asserted"
+        _email = _tok.get("email") if _tok is not None else None
+        if _email is not None and not isinstance(_email, str):
+            _email = None
+        _groups = _tok.get("groups") if _tok is not None else None
+        self._minted_identity_claims[agent_id] = {
+            "agent_id": agent_id,
+            "role": role,
+            "principal": principal,
+            "subject": _tok.get("sub") if _tok is not None else None,
+            "email": _email,
+            "email_verified":
+                bool(_tok.get("email_verified")) if _email else False,
+            "groups": [_g for _g in _groups if isinstance(_g, str)]
+                       if isinstance(_groups, (list, tuple)) else [],
+            "connector_id": (_tok.get("connector_id") or _tok.get("iss"))
+                            if _tok is not None else None,
+            "verification_status": _verification_status,
+        }
         self._mint_count += 1
         ident = AgentIdentity(agent_id=agent_id, role=role,
                               run_id=self.run_id, principal=principal,
@@ -9962,22 +10014,67 @@ class ToolExecutor:
                 approval_id=approval_id,
                 approval_record_digest=_approval_record_digest,
                 **_ladder_kwargs)
+            # Wave-345 lane 6 (ownership threading): the verified
+            # mint_identity claim record rides EVERY per-call packet
+            # as the identity_claims section (digests + verification
+            # status, no raw PII) -- closing the wave-343 honest
+            # boundary. The record is binding-checked against the
+            # acting identity (agent_id/role/principal must match); a
+            # mismatch omits the section rather than threading a stale
+            # record. A binding failure is a deployment bug, never
+            # owner evidence.
+            _identity_claims = None
+            _record = self._minted_identity_claims.get(identity.agent_id)
+            _bound = (_record is not None
+                      and _record.get("agent_id") == identity.agent_id
+                      and _record.get("role") == identity.role
+                      and _record.get("principal") == identity.principal)
+            if _bound:
+                from . import ownership_inference as _oic
+                try:
+                    _identity_claims = _oic.identity_claim_packet_value(
+                        _record)
+                except ValueError:
+                    # Unreachable: the executor is the sole writer of
+                    # the record (closed status vocabulary) and the
+                    # binding check above passed. If it ever fires,
+                    # degrade to unbound (no section, declared-only
+                    # attribution below) rather than breaking the
+                    # verdict path -- a malformed record is never
+                    # owner evidence.
+                    _bound = False
             # Wave-343 lane 4 (ownership inference): when the
             # deployment configured an owner directory, the decision
             # packet names the inferred owner of the acting agent (or
-            # the explicit coded unresolved state). attribute_owner
-            # never raises, so the attribution can never break the
-            # verdict path; the declared principal is self-asserted,
-            # so the attribution resolves it against the directory
-            # (directory-principal-known tier -- honest about being
-            # the weakest tier) and records the declared-vs-inferred
-            # consistency for the auditor.
+            # the explicit coded unresolved state. With a bound
+            # record, attribution runs over the FULL verified claim
+            # set (verified email > directory subject > directory
+            # principal-known); without one it falls back to the
+            # declared-principal-only claim set, which resolves only
+            # at the weakest directory-principal-known tier -- honest
+            # about what it proves (the principal is known to the
+            # deployment, not verified). attribute_owner never
+            # raises, so the attribution can never break the verdict
+            # path; the declared-vs-inferred consistency comparison
+            # is itself the accountability signal.
             _owner_attribution = None
             if self._owner_directory is not None:
                 from . import ownership_inference as _oi
+                if _bound:
+                    try:
+                        _claim_set = _oi.build_identity_claim_set(
+                            _record)
+                    except ValueError:
+                        # Same unreachable-as-above guard: degrade to
+                        # declared-only rather than break the verdict
+                        # path.
+                        _claim_set = {"declared_principal":
+                                      identity.principal}
+                else:
+                    _claim_set = {"declared_principal":
+                                  identity.principal}
                 _owner_attribution = _oi.attribute_owner(
-                    {"declared_principal": identity.principal},
-                    self._owner_directory)
+                    _claim_set, self._owner_directory)
             _body = _dp.build_decision_packet(
                 decision=decision,
                 boundary_declared=_boundary_declared,
@@ -10012,7 +10109,8 @@ class ToolExecutor:
                 policy_reason=policy_decision.reason,
                 bill_of_materials=_bom,
                 policy_bundle_digest=_policy_hash,
-                owner_attribution=_owner_attribution)
+                owner_attribution=_owner_attribution,
+                identity_claims=_identity_claims)
             _packet = _dp.sign_packet(_body, self._packet_key["seed"])
             _entry = self.log.append({
                 "event": "decision_packet",

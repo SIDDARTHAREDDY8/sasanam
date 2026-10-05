@@ -369,6 +369,59 @@ def _check_identity_token_value(value):
     return True, "ok"
 
 
+IDENTITY_CLAIMS_FIELDS = ("verification_status", "subject_digest",
+                          "email_digest", "email_verified",
+                          "groups_count")
+
+
+def _check_identity_claims_value(value):
+    """Validate the 5-field identity_claims section value.
+
+    Returns ``(ok, reason)``. Shared by the builder (which raises
+    :class:`PacketError` on failure) and the verifier (which fails
+    closed) so the two can never disagree on the shape.
+
+    The section carries only digests and machine facts -- no raw
+    PII. ``email_verified=True`` requires a non-None ``email_digest``
+    (verified against WHAT must be answerable from the packet). The
+    verification-status vocabulary lives in
+    ``gov/ownership_inference.py`` (lazy import: this module is
+    import-safe for the standalone verifier).
+    """
+    if not isinstance(value, dict):
+        return False, "identity_claims value is not a dict"
+    if set(value.keys()) != set(IDENTITY_CLAIMS_FIELDS):
+        return False, "identity_claims must carry exactly %r" % (
+            IDENTITY_CLAIMS_FIELDS,)
+    try:
+        from . import ownership_inference as _oi
+    except ImportError:  # standalone/offline: ownership_inference
+        import ownership_inference as _oi  # beside this file
+    if value.get("verification_status") not in \
+            _oi.IDENTITY_VERIFICATION_STATUSES:
+        return False, "identity_claims.verification_status must be one " \
+            "of %r" % (sorted(_oi.IDENTITY_VERIFICATION_STATUSES),)
+    subject_digest = value.get("subject_digest")
+    if subject_digest is not None and not _is_hex64(subject_digest):
+        return False, "identity_claims.subject_digest must be None or " \
+            "64-char lowercase hex"
+    email_digest = value.get("email_digest")
+    if email_digest is not None and not _is_hex64(email_digest):
+        return False, "identity_claims.email_digest must be None or " \
+            "64-char lowercase hex"
+    if not isinstance(value.get("email_verified"), bool):
+        return False, "identity_claims.email_verified must be a bool"
+    if value.get("email_verified") and email_digest is None:
+        return False, "identity_claims.email_verified=True requires " \
+            "email_digest (verified against WHAT must be answerable)"
+    if not isinstance(value.get("groups_count"), int) or \
+            isinstance(value.get("groups_count"), bool) or \
+            value.get("groups_count") < 0:
+        return False, "identity_claims.groups_count must be a " \
+            "non-negative int"
+    return True, "ok"
+
+
 def _check_rule_labels(rule_labels):
     """Validate the rule_labels evidence map.
 
@@ -654,7 +707,8 @@ def build_decision_packet(*, decision, boundary_declared,
                           policy_bundle_digest=None, identity_token=None,
                           rule_labels=None, decision_code=None,
                           policy_rev_id=None, policy_digest=None,
-                          deny_receipt=None, owner_attribution=None):
+                          deny_receipt=None, owner_attribution=None,
+                          identity_claims=None):
     """Build the UNSIGNED decision-packet body (dict, no ``signature``).
 
     ``decision`` is "allow" | "deny" | "queue" (the executor maps
@@ -676,6 +730,25 @@ def build_decision_packet(*, decision, boundary_declared,
     ``{token_digest, iss, aud, exp, jti}`` -- the claims, never the raw
     bearer token. ``None`` builds a legacy packet: the 17 existing
     sections are byte-identical to a build without the kwarg.
+
+    ``identity_claims`` (wave-345 lane 6) is the OPTIONAL machine
+    record of the verified ``mint_identity`` claims bound to this
+    packet's acting identity: exactly
+    ``{verification_status, subject_digest, email_digest,
+    email_verified, groups_count}`` -- digests and machine facts, no
+    raw PII. ``verification_status`` is one of
+    ``gov/ownership_inference.IDENTITY_VERIFICATION_STATUSES``;
+    ``email_verified=True`` requires a non-None ``email_digest``. The
+    executor builds it at packet-emit time from the claim record
+    captured at mint (binding-checked against the acting identity);
+    malformed values raise :class:`PacketError`. The section is
+    signature-covered like every other section, so a swapped digest
+    breaks the packet signature, and the verifier re-validates the
+    shape after the signature. ``None`` (the default) builds a legacy
+    packet: no ``identity_claims`` section is added and the body is
+    byte-identical to a build without the kwarg. The section is
+    evidence of how the acting identity was verified, never
+    authority.
 
     ``rule_labels`` is the OPTIONAL evidence-enrichment map
     ``{rule_name: rule_identifier}`` naming the policy rules/verdicts
@@ -786,6 +859,11 @@ def build_decision_packet(*, decision, boundary_declared,
         if not tok_ok:
             raise PacketError(
                 "identity_token invalid: %s" % tok_reason)
+    if identity_claims is not None:
+        clm_ok, clm_reason = _check_identity_claims_value(identity_claims)
+        if not clm_ok:
+            raise PacketError(
+                "identity_claims invalid: %s" % clm_reason)
     ident = identity if isinstance(identity, dict) else {}
     body = {
         "decision_packet_version": DECISION_PACKET_VERSION,
@@ -873,6 +951,16 @@ def build_decision_packet(*, decision, boundary_declared,
         # A copy is stored so the caller's dict is never aliased.
         body["identity_token"] = _wrap(dict(identity_token),
                                        TOKEN_IDENTITY_PRODUCER)
+    if identity_claims is not None:
+        # Wave-345 (ownership threading): the digest-bound record of
+        # the verified mint_identity claims bound to this packet's
+        # acting identity. Signature-covered like every other section
+        # (it is part of the body before sign_packet runs), so a
+        # swapped digest breaks the packet signature; the verifier
+        # additionally re-validates the shape. A copy is stored so
+        # the caller's dict is never aliased.
+        body["identity_claims"] = _wrap(dict(identity_claims),
+                                        "gov/executor.py")
     labels = _check_rule_labels(rule_labels)
     if labels is not None:
         # Wave-225 (rule labels): the optional evidence-enrichment
@@ -1186,6 +1274,32 @@ def _verify(packet, entries, token_claims, trust_root, relied_claims):
             owner_section.get("value"))
         if not ok:
             return False, "owner_attribution value invalid: %s" % reason
+    ic_section = packet.get("identity_claims")
+    if ic_section is not None:
+        # Wave-345 (ownership threading): optional evidence section
+        # carrying the verified mint_identity claim record bound to
+        # this packet's acting identity. When present it must be
+        # well-formed and producer-attributed; the digests are
+        # signature-covered, so a swapped digest fails the signature
+        # check below. The shape is re-validated with the SAME
+        # checker the builder used, so builder and verifier can never
+        # disagree. The section is evidence of how the acting identity
+        # was verified, never authority.
+        if not isinstance(ic_section, dict):
+            return False, "identity_claims section is not a dict"
+        if "value" not in ic_section:
+            return False, "identity_claims section has no value"
+        if ic_section.get("producer") != "gov/executor.py":
+            return False, "identity_claims section producer must be " \
+                "'gov/executor.py'"
+        if ic_section.get("producer_version") != \
+                PRODUCER_VERSIONS["gov/executor.py"]:
+            return False, "identity_claims section producer_version " \
+                "must be %r" % (PRODUCER_VERSIONS["gov/executor.py"],)
+        _ic_ok, _ic_reason = _check_identity_claims_value(
+            ic_section.get("value"))
+        if not _ic_ok:
+            return False, "identity_claims value invalid: %s" % _ic_reason
     rev_section = packet.get("policy_revision")
     if rev_section is not None:
         # Wave-229 (policy-revision-pinned replay): optional

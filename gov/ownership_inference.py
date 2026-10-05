@@ -72,6 +72,113 @@ CODE_UNRESOLVED = "ownership-inference-unresolved"
 CODE_AMBIGUOUS = "ownership-inference-ambiguous"
 CODE_DIRECTORY_MALFORMED = "ownership-directory-malformed"
 
+# Wave-345 (ownership threading): how the acting identity's claims
+# were verified at mint_identity time. Ordered strongest -> weakest;
+# only the top two tiers carry IdP-vouched identifiers into
+# inference, and only verified email counts as evidence (the subject
+# tier needs a directory, which the claim record itself does not
+# carry). The status is set by the executor at mint and rides every
+# per-call packet's ``identity_claims`` section as machine evidence
+# of HOW the acting identity was verified.
+IDENTITY_VERIFICATION_STATUSES = frozenset({
+    # Verified by this deployment's own TokenVerifier (federated).
+    "identity-token-verified",
+    # Legacy wave-191 dict claims validated at mint.
+    "token-claims-validated",
+    # Tokenless mint against a deployment-controlled principal
+    # registry: the registry binding is the evidence.
+    "principal-registry",
+    # Dev/self-asserted mode: mint_identity authenticates nothing.
+    "self-asserted",
+})
+
+
+def _wellformed_record(claim_record):
+    """Fail-fast shape check for a mint_identity claim record.
+
+    Shared by ``build_identity_claim_set`` and
+    ``identity_claim_packet_value`` so the two can never disagree on
+    what a well-formed record is. Raises ``ValueError`` (fail-fast
+    programmer error: the executor binding-checks the record before
+    calling either).
+    """
+    if not isinstance(claim_record, dict):
+        raise ValueError("claim_record must be a dict, got %s"
+                         % type(claim_record).__name__)
+    if claim_record.get("verification_status") not in \
+            IDENTITY_VERIFICATION_STATUSES:
+        raise ValueError("claim_record.verification_status %r is not a "
+                         "known verification status"
+                         % (claim_record.get("verification_status"),))
+    return claim_record
+
+
+def build_identity_claim_set(claim_record):
+    """Normalize a mint_identity claim record into an inference claim
+    set.
+
+    The executor captures ``claim_record`` at mint time
+    (``{"agent_id", "role", "principal", "subject", "email",
+    "email_verified", "groups", "connector_id",
+    "verification_status"}``) and binding-checks it against the
+    acting identity at packet-emit time before calling this. The
+    returned claim set is the dex-shaped input ``infer_owner`` /
+    ``attribute_owner`` expect: ``{subject, email, email_verified,
+    groups, connector_id, declared_principal}``. Evidence-tier
+    ordering is unchanged from wave-343: verified email > directory
+    subject > declared principal-known; a self-declared principal is
+    never owner evidence.
+
+    Raises ``ValueError`` on a malformed record (fail-fast programmer
+    error: the executor binding-check guarantees shape).
+    """
+    claim_record = _wellformed_record(claim_record)
+    email = claim_record.get("email")
+    return {
+        "subject": claim_record.get("subject"),
+        "email": email,
+        "email_verified": bool(claim_record.get("email_verified"))
+                          if email else False,
+        "groups": list(claim_record.get("groups") or []),
+        "connector_id": claim_record.get("connector_id"),
+        "declared_principal": claim_record.get("principal"),
+    }
+
+
+def identity_claim_packet_value(claim_record):
+    """Build the ``identity_claims`` packet-section value from a
+    binding-checked mint_identity claim record.
+
+    Returns exactly ``{verification_status, subject_digest,
+    email_digest, email_verified, groups_count}`` -- digests and
+    machine facts, no raw PII. The digests use the same
+    ``_digest_value`` domains as attribution evidence records
+    (``"subject"`` / ``"email"``), so an auditor can correlate the
+    packet's digests with the attribution's ``value_digest``
+    entries. Only evidence-grade identifiers are digested: an
+    unverified email is not evidence, so ``email_digest`` is present
+    exactly when ``email_verified`` is True (the packet seam refuses
+    ``email_verified=True`` with no digest).
+
+    Raises ``ValueError`` on a malformed record (fail-fast: the
+    executor binding-checks the record before calling this).
+    """
+    claim_record = _wellformed_record(claim_record)
+    status = claim_record.get("verification_status")
+    subject = claim_record.get("subject")
+    email = claim_record.get("email")
+    email_verified = bool(claim_record.get("email_verified")) \
+        if email else False
+    return {
+        "verification_status": status,
+        "subject_digest": _digest_value("subject", subject)
+                          if subject else None,
+        "email_digest": _digest_value("email", email)
+                        if (email and email_verified) else None,
+        "email_verified": email_verified,
+        "groups_count": len(claim_record.get("groups") or []),
+    }
+
 # Confidence tiers, strongest first.
 TIER_VERIFIED_EMAIL = "verified-email-binding"
 TIER_SUBJECT = "directory-subject-binding"
