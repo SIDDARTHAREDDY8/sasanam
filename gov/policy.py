@@ -205,7 +205,8 @@ class PolicyDecision:
     def __init__(self, effect, reason, policy_id=None, flag=None,
                  matched_rules=None, diagnostics=None,
                  nominal_effect=None, mode="deny", warnings=None,
-                 policy_rev_id=None, policy_digest=None):
+                 policy_rev_id=None, policy_digest=None,
+                 policy_mode="enforce"):
         self.effect = effect          # "allow" | "require_approval" | "deny"
         self.reason = reason
         self.policy_id = policy_id
@@ -280,6 +281,16 @@ class PolicyDecision:
                 "PolicyDecision.mode cannot be 'observe': observe hits "
                 "are diagnostic-only and never final decisions")
         self.mode = mode
+        # Wave-343 (per-policy observe->enforce rollout): the
+        # DEPLOYMENT mode of the policy that produced this decision.
+        # Orthogonal to the per-rule ladder ``mode``. "enforce" is the
+        # resting default; a policy deployed in observe declares
+        # "observe" on every decision record. Validated loud.
+        if policy_mode not in ("enforce", "observe"):
+            raise ValueError(
+                "PolicyDecision.policy_mode must be enforce/observe, got %r"
+                % (policy_mode,))
+        self.policy_mode = policy_mode
         # Wave-198: operator telemetry for warn-mode decisions.
         # Aggregated into per-window digests by the executor; NEVER
         # returned to the agent as interrupts (R1 warn-fatigue).
@@ -310,6 +321,11 @@ class PolicyDecision:
         if self.policy_rev_id is not None:
             out["policy_rev_id"] = self.policy_rev_id
             out["policy_digest"] = self.policy_digest
+        # Wave-343: per-policy deployment mode is serialized only when
+        # it carries information -- enforce-mode decisions keep their
+        # byte-identical serialized shape.
+        if self.policy_mode == "observe":
+            out["policy_mode"] = "observe"
         return out
 
 
