@@ -10407,6 +10407,110 @@ TAXONOMY = {
         "evidence_kinds_required": ['verdict', 'gate-record'],
         "reverify_steps": ['recompute'],
     },
+    'mcp-server-auth-insufficient-scope': {
+        "domain": 'mcp-server-auth',
+        "code": 'mcp-server-auth-insufficient-scope',
+        "human": 'mcp-server-auth: the bearer token is valid but its '
+                 'scope does not cover every required scope; HTTP 403 '
+                 'with insufficient_scope',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mcp-server-auth-issuer-mismatched': {
+        "domain": 'mcp-server-auth',
+        "code": 'mcp-server-auth-issuer-mismatched',
+        "human": 'mcp-server-auth: the token iss names a different '
+                 'issuer than the deployment-configured trusted issuer; '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mcp-server-auth-issuer-missing': {
+        "domain": 'mcp-server-auth',
+        "code": 'mcp-server-auth-issuer-missing',
+        "human": 'mcp-server-auth: the token carries no iss claim; '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mcp-server-auth-malformed': {
+        "domain": 'mcp-server-auth',
+        "code": 'mcp-server-auth-malformed',
+        "human": 'mcp-server-auth: the Authorization header is not a '
+                 'well-formed Bearer credential, or a token claim has '
+                 'an unparseable shape; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mcp-server-auth-missing-token': {
+        "domain": 'mcp-server-auth',
+        "code": 'mcp-server-auth-missing-token',
+        "human": 'mcp-server-auth: no bearer token presented with the '
+                 'request; HTTP 401 with WWW-Authenticate challenge',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mcp-server-auth-resource-misbound': {
+        "domain": 'mcp-server-auth',
+        "code": 'mcp-server-auth-resource-misbound',
+        "human": 'mcp-server-auth: the token names a different protected '
+                 'resource than this server (RFC 8707 cross-server '
+                 'replay); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mcp-server-auth-resource-missing': {
+        "domain": 'mcp-server-auth',
+        "code": 'mcp-server-auth-resource-missing',
+        "human": 'mcp-server-auth: the token carries no RFC 8707 '
+                 'resource indicator (nor RFC 9068 aud) for this '
+                 'server; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mcp-server-auth-token-expired': {
+        "domain": 'mcp-server-auth',
+        "code": 'mcp-server-auth-token-expired',
+        "human": 'mcp-server-auth: the token exp is at or before now; '
+                 'HTTP 401',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mcp-server-auth-token-in-query': {
+        "domain": 'mcp-server-auth',
+        "code": 'mcp-server-auth-token-in-query',
+        "human": 'mcp-server-auth: an access token traveled in the '
+                 'query string; tokens must travel in the Authorization '
+                 'header; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mcp-server-auth-token-invalid': {
+        "domain": 'mcp-server-auth',
+        "code": 'mcp-server-auth-token-invalid',
+        "human": 'mcp-server-auth: the deployment token verifier '
+                 'rejected the token; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mcp-server-auth-token-not-yet-valid': {
+        "domain": 'mcp-server-auth',
+        "code": 'mcp-server-auth-token-not-yet-valid',
+        "human": 'mcp-server-auth: the token nbf is after now; HTTP 401',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'measurement-mismatch': {
         "domain": 'measurement',
         "code": 'measurement-mismatch',

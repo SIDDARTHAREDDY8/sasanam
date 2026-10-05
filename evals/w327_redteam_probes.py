@@ -1,14 +1,14 @@
 """Wave-327 independent red-team battery.
 
 Base: 542c5cee (wave-326 merge). Footer: open F412 / next F413.
-Pin: 2077.
+Pin: 2088.
 
 P1  wave-326 seams: standing_verdicts / knowledge_ingest / background_scan.
 P2  F410 re-probe (w326_tufaudit T4c/T4d -- must still BREAK; lane 2 owns it).
 P3  F411 re-probe (w326_redteam P3a -- must still BREAK; lane 1 owns it).
 P4  regression: F409 (HELD), F408/F407/F406 (HELD).
 P5  corruption-survivor probe + prior batteries in child mode.
-P6  pin 2077 + footer state.
+P6  pin 2088 + footer state.
 
 gov/ is byte-identical to base: this battery changes no product code and
 files findings only (from F412). No new decision codes from this lane.
@@ -28,7 +28,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
-TAXONOMY_PIN = 2077  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).; Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*)
+TAXONOMY_PIN = 2088  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).; Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*)
 FOOTER_OPEN = "F417"  # F417 OPEN (wave-333 merge).
 FOOTER_NEXT = "F419"  # Next free finding number (F417 OPEN, F418 closed at wave-333 merge).  # Next free finding number.
 
@@ -554,7 +554,7 @@ def _p5a():
     corruption markers. (The needle is built dynamically so this file's
     own documentation does not self-match.)
     """
-    needles = ["2035" + "OLD", "2077" + "OLD"]
+    needles = ["2035" + "OLD", "2088" + "OLD"]
     hits = []
     for dirpath, dirnames, filenames in os.walk(REPO):
         # Skip .git and derived bytecode caches (not source literals).
@@ -706,20 +706,20 @@ def _p5g():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2077-sorted")
+@probe("P6a-pin-taxonomy-2088-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
-    if TAXONOMY_PIN != 2077:
-        return _break("P6a-pin-taxonomy-2077-sorted",
-                      "TAXONOMY_PIN is %r, want 2077" % (TAXONOMY_PIN,))
-    if len(codes) != 2077 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-2077-sorted",
+    if TAXONOMY_PIN != 2088:
+        return _break("P6a-pin-taxonomy-2088-sorted",
+                      "TAXONOMY_PIN is %r, want 2088" % (TAXONOMY_PIN,))
+    if len(codes) != 2088 or codes != sorted(codes):
+        return _break("P6a-pin-taxonomy-2088-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    if len(set(codes)) != 2077:
-        return _break("P6a-pin-taxonomy-2077-sorted",
+    if len(set(codes)) != 2088:
+        return _break("P6a-pin-taxonomy-2088-sorted",
                       "duplicate codes in TAXONOMY")
-    return _held("P6a-pin-taxonomy-2077-sorted", "2077/2077/0 sorted")
+    return _held("P6a-pin-taxonomy-2088-sorted", "2088/2088/0 sorted")
 
 
 @probe("P6b-footer-open-f417-next-f419")
