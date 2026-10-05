@@ -151,6 +151,7 @@ def test_i6_f428_open_pinned():
           and "(F429 filed 2026-10-05, wave-342 lane 5" in text
           and "Next free finding: **F430**" in text
           and "Open findings: F429." in text)
+    return ("HELD" if ok else "BREAK", "F428 closed/F429 open=%s" % ok)
 
 
 # ---------------------------------------------------------------- J: template-sandbox escape (CVE-2026-90970 analogue)

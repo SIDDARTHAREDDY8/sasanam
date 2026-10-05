@@ -2,7 +2,7 @@
 """Decision-code coverage table (wave-338 lane 5, R14).
 
 Bernstein #5569 ("no row claims coverage without a test"), ADAPT: the
-decision-code registry (gov/decision_codes.py, 2127 codes) is generated
+decision-code registry (gov/decision_codes.py, 2131 codes) is generated
 into a coverage table, and NO row may claim coverage without at least
 one test/eval probe asserting that code.
 

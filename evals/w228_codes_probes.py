@@ -184,6 +184,10 @@ _NON_CODES = frozenset([
     # "tool_budgets[%r]: ...") -- a policy section name, not a
     # decision code (the coded refusal is tool-budget-config-invalid).
     "tool_budgets",
+    # Wave-342 merge: gov/run_receipt.py error-message prefixes
+    # (function names in human RunReceiptError messages, not decision
+    # codes -- content anomalies become tampered statuses, never raises).
+    "verify_run_receipt", "build_run_receipt",
 ])
 
 
