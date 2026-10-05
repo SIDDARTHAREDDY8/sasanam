@@ -52,7 +52,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2106 # Wave-332 merge: pin 2058 -> 2062 (+4 mcp-oauth-*).; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
-FOOTER_OPEN = "F423"  # F417 CLOSED 2026-10-05 (wave-334 lane 1: port guard; no open findings).
+FOOTER_OPEN = "none"  # F417 CLOSED 2026-10-05 (wave-334 lane 1: port guard; no open findings).
 FOOTER_NEXT = "F424"  # Next free finding number (F417 closed wave-334 lane 1; F418 closed at wave-333 merge).
 
 _results = []
@@ -591,30 +591,30 @@ def _p6a():
                  "2106/2106/0 sorted unique on raw source literals")
 
 
-@probe("P6b-footer-open-f423-next-f424")
+@probe("P6b-footer-open-none-next-f424")
 def _p6b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     # Raw-literal assertions (wave-331 lesson): the footer must read
     # correctly as literal text, not only via constants.
     if "Next free finding: **F424**." not in text:
-        return _break("P6b-footer-open-f423-next-f424",
+        return _break("P6b-footer-open-none-next-f424",
                       "raw literal 'Next free finding: **F424**.' absent")
-    if "**Open findings: F423.**" not in text:
-        return _break("P6b-footer-open-f423-next-f424",
-                      "raw literal '**Open findings: F423.**' absent")
+    if "**Open findings: none.**" not in text:
+        return _break("P6b-footer-open-none-next-f424",
+                      "raw literal '**Open findings: none.**' absent")
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return _break("P6b-footer-open-f423-next-f424",
+        return _break("P6b-footer-open-none-next-f424",
                       "footer line not found")
     next_free, open_now = ms[-1]  # the LAST footer is the live one
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return _break("P6b-footer-open-f423-next-f424",
+        return _break("P6b-footer-open-none-next-f424",
                       "footer open %s / next %s, want open %s / next %s"
                       % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return _held("P6b-footer-open-f423-next-f424",
-                 "footer open F423 / next F424 (raw literals + parse)")
+    return _held("P6b-footer-open-none-next-f424",
+                 "footer open none / next F424 (raw literals + parse)")
 
 
 @probe("P6c-pin-constants-2106-live")

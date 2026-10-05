@@ -73,7 +73,7 @@ TAXONOMY_PIN = 2106 # Wave-320 lane 3: pin 1933 -> 1945 (+12 quorum-*); Wave-325
 
 
 FOOTER_NEXT = "F424"
-FOOTER_OPEN = "F423"
+FOOTER_OPEN = "none"
 
 PROBES = []
 

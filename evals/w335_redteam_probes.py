@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Wave-335 lane 5 independent red team: break the wave-334 tree.
 
-Base: `0fd4f736` (wave-334 merge). Pin 2106 at merge. Footer open F423 / next
-F424 (F423 filed by this lane as F421, OPEN; renumbered at the wave-335 merge).
+Base: `0fd4f736` (wave-334 merge). Pin 2106 at merge. Footer open none / next
+F424 (F423 filed by this lane as F421, OPEN; renumbered at the wave-335 merge;
+CLOSED 2026-10-05 wave-336 lane 1).
 
 New attack surface under test: `gov/mcp_server_authz.py` (per-request
 bearer validation, +11 mcp-server-auth-* codes), `gov/mcp_prm.py`
@@ -98,7 +99,7 @@ P4 (closure regressions):
        in-flight session coded revocation-push-session-terminated.
 
 P5 (honesty): pin 2106 taxonomy sorted-unique on raw literals; all 23
-     wave-334 codes centrally registered; footer open F423 / next F424.
+     wave-334 codes centrally registered; footer open none / next F424.
 
 P6 (older closure spot-regressions, adopted from w332):
   P6a  F415: unicode-digit version fragment refuses coded
@@ -1364,15 +1365,16 @@ def P5b():
 
 def P5c():
     """Footer honesty: the last line of evals/FINDINGS.md carries open
-    F423 and next F424 (raw-literal assertion, wave-331 lesson). F423
-    is this lane's genuine finding (filed as F421, renumbered at the
-    wave-335 merge per the wave-272 earliest-filed rule)."""
-    pid = "P5c-footer-open-f423-next-f424"
+    none and next F424 (raw-literal assertion, wave-331 lesson). F423
+    was this lane's genuine finding (filed as F421, renumbered at the
+    wave-335 merge per the wave-272 earliest-filed rule) and was
+    CLOSED 2026-10-05 by wave-336 lane 1."""
+    pid = "P5c-footer-open-none-next-f424"
     with open(_FINDINGS_MD, "rb") as f:
         lines = f.read().decode("utf-8").splitlines()
     last = lines[-1] if lines else ""
-    if "Open findings: F423" not in last:
-        _break(pid, "last line lacks 'Open findings: F423': %r" % (last[:120],))
+    if "Open findings: none" not in last:
+        _break(pid, "last line lacks 'Open findings: none': %r" % (last[:120],))
         return
     if "Next free finding: **F424**" not in last:
         _break(pid, "last line lacks next-F424: %r" % (last[:120],))
@@ -1380,7 +1382,10 @@ def P5c():
     if not any(l.startswith("## F423 ") for l in lines):
         _break(pid, "F423 section missing from FINDINGS.md")
         return
-    _held(pid, "footer honest: open F423, next F424")
+    if "CLOSED 2026-10-05 wave-336 lane 1" not in "\n".join(lines):
+        _break(pid, "F423 closure not recorded in FINDINGS.md")
+        return
+    _held(pid, "footer honest: open none, next F424")
 
 
 # ---------------------------------------------------------------------------
@@ -1453,7 +1458,7 @@ _PROBES = [
     ("P4d-f418-closed", P4d),
     ("P5a-pin-taxonomy-2106-sorted", P5a),
     ("P5b-23-codes-registered", P5b),
-    ("P5c-footer-open-f423-next-f424", P5c),
+    ("P5c-footer-open-none-next-f424", P5c),
     ("P6a-f415-unicode-digit", P6a),
     ("P6b-f416-int64-boundary", P6b),
     ("P6c-f414-symlink-alias", P6c),

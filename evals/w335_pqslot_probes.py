@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Wave-335 lane 4: reserved PQ evidence-envelope slot (format only).
 
-Base: `0fd4f736` (wave-334 merge). Pin 2106. Footer open F423 / next F424.
+Base: `0fd4f736` (wave-334 merge). Pin 2106. Footer open none / next F424.
 
 New surface under test: `gov/pq_envelope.py` (reserved `pqAlgId` slot,
 FORMAT ONLY -- no production crypto, identifiers only) and its wiring
@@ -393,19 +393,19 @@ def P6b():
 
 
 def P6c():
-    """Footer honesty: open F423 / next F424 (raw literals included --
+    """Footer honesty: open none / next F424 (raw literals included --
     wave-331 lesson)."""
-    pid = "P6c-footer-open-f423-next-f424"
+    pid = "P6c-footer-open-none-next-f424"
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               encoding="utf-8") as fh:
         text = fh.read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
     ok = ("Next free finding: **F424**" in text
-          and m_open and m_open[-1].strip() == "F423")
+          and m_open and m_open[-1].strip() == "none")
     if ok:
-        _held(pid, "footer: open F423 / next F424")
+        _held(pid, "footer: open none / next F424")
     else:
-        _break(pid, "footer mismatch vs open F423 / next F424")
+        _break(pid, "footer mismatch vs open none / next F424")
 
 
 _PROBES = [
@@ -422,7 +422,7 @@ _PROBES = [
     ("P5b-pq-classical-roundtrip", P5b),
     ("P6a-pin-taxonomy-2106-sorted", P6a),
     ("P6b-pq-codes-registered", P6b),
-    ("P6c-footer-open-f423-next-f424", P6c),
+    ("P6c-footer-open-none-next-f424", P6c),
 ]
 
 _EXPECTED_BREAKS = set()

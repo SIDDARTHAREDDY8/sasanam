@@ -55,7 +55,9 @@ Model (RFC 9728, verified against the primary source):
 Refusal vocabulary (domain ``mcp-oauth``, all fail-closed):
 
 * ``mcp-oauth-prm-malformed`` -- a PRM document, PRM URL, or resource
-  identifier is malformed (shape validation, RFC 9728 section 2/3.2).
+  identifier is malformed (shape validation, RFC 9728 section 2/3.2);
+  since wave-336 this includes any ASCII control character in a raw
+  PRM-controlled URL, refused before parsing (F423).
 * ``mcp-oauth-prm-resource-mismatched`` -- the PRM ``resource`` value
   is not the deployment-configured resource identifier (section 3.3
   impersonation shape).
@@ -152,18 +154,39 @@ def _require_nonempty_str(value, name):
     return value
 
 
+def _reject_control_chars(value, label):
+    """Refuse ASCII control characters in a RAW URL, before any parse.
+
+    F423: ``urlsplit`` silently strips ``\\r``/``\\n``/``\\t`` and
+    preserves every other control verbatim, so a post-parse check
+    blesses a mutated copy of the wire value (or emits a URL no HTTP
+    client accepts). The raw value is refused coded here, before
+    ``urlsplit`` touches it.
+    """
+    for ch in value:
+        if ord(ch) < 0x20 or ord(ch) == 0x7f:
+            _refuse(MCP_OAUTH_PRM_MALFORMED,
+                    "%s contains an ASCII control character "
+                    "(U+%04X); raw URLs must be control-free"
+                    % (label, ord(ch)))
+
+
 def _raw_url_guards(url, label):
     """Raw-parse guards shared by the PRM URL entry points.
 
-    Userinfo and fragment are checked on the RAW parse because the
-    canonicalizer silently drops them (hostname excludes userinfo).
-    IPv6 literals are refused: the shared ``_normalize_url`` strips
-    the brackets when reassembling (``https://[::1]/x`` becomes the
-    corrupt ``https://::1/x``), so this seam refuses them coded
-    rather than emitting a corrupt URL. That normalizer defect is in
-    the F417 family (OPEN, against ``_normalize_url``) and is not
-    closed here.
+    Control characters are refused on the RAW value first (F423):
+    ``urlsplit`` silently strips CR/LF/TAB and preserves every other
+    control verbatim, so checking after the parse would bless a
+    mutated copy of the wire value. Userinfo and fragment are checked
+    on the RAW parse because the canonicalizer silently drops them
+    (hostname excludes userinfo). IPv6 literals are refused: the
+    shared ``_normalize_url`` strips the brackets when reassembling
+    (``https://[::1]/x`` becomes the corrupt ``https://::1/x``), so
+    this seam refuses them coded rather than emitting a corrupt URL.
+    That normalizer defect is in the F417 family (OPEN, against
+    ``_normalize_url``) and is not closed here.
     """
+    _reject_control_chars(url, label)
     try:
         raw = urlsplit(url)
     except ValueError:
