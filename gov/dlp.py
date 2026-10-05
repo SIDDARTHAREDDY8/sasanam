@@ -15,14 +15,16 @@ A conservative entropy tripwire blocks high-entropy tokens that appear next
 to credential keywords (``password``, ``api_key``, ...) even when they do
 not match a known format.
 
-ENCODING-AWARE MATCHING (F2, extended F8, F428, F429). The credential patterns above
+ENCODING-AWARE MATCHING (F2, extended F8, F428, F429, F430). The credential patterns above
 are syntactic, so an attacker can smuggle a credential past them with one
-encoding step (hex, base64, base32, URL-encoding, JSFuck, text escapes).
+encoding step (hex, base64, base32, URL-encoding, JSFuck, text escapes,
+JS string expressions).
 ``find_credential``
 therefore decodes likely encodings BEFORE pattern matching, bounded to 2
 layers: each layer finds candidate encoded runs, decodes only those that
 validate (base64/base32 round-trip / even-length hex / percent-decoding
 that changes the text / strict static JSFuck evaluation / strict
+static JS-expression evaluation / strict
 backslash-escape, numeric-HTML-entity, and UTF-16-null decodes / NFKC +
 zero-width confusable normalization) AND decode to
 mostly-printable ASCII, then re-runs
@@ -34,7 +36,11 @@ credential-shaped string. The JSFuck decoder is a strict bounded
 evaluator, never a JS engine: undecodable runs are ignored, and
 Function() (arbitrary code) always fails closed. The text-escape decoders
 (F429) are likewise strict static transforms -- malformed, surrogate, or
-out-of-range sequences decode to nothing, never to a guess.
+out-of-range sequences decode to nothing, never to a guess. The
+JS-expression decoder (F430) is a strict bounded recursive-descent
+parser for quoted '+' concatenation, template literals (no ${...}),
+String.fromCharCode, and .concat()/.repeat() -- never eval; undecodable
+runs are ignored and bare literals are not rewritten.
 
 FORM VARIANTS (F8). Every candidate string (the original text and each
 decoded variant) is also checked whitespace-stripped and reversed: those
@@ -1055,10 +1061,258 @@ def _normalize_bidi(text):
     return norm if norm != text else None
 
 
+class _JSExprFail(Exception):
+    """A JS-expression run is not strictly decodable (fail closed)."""
+
+
+_JS_EXPR_START = re.compile(r"['\"`]|String\.fromCharCode|\(")
+_JS_EXPR_MAX_PARTS = 64        # bound on '+' operands per expression
+_JS_EXPR_MAX_CODEPOINTS = 512  # bound on fromCharCode argument count
+_JS_EXPR_MAX_DEPTH = 8         # bound on parenthesization depth
+_JS_EXPR_MAX_REPEAT = 64       # bound on .repeat(n)
+_JS_EXPR_MAX_LITERAL = 4096    # bound on one string literal
+_JS_EXPR_MAX_RUN = 100000      # bound on expression run length
+_ASCII_DIGITS = frozenset("0123456789")
+
+
+def _js_skip_ws(text, i):
+    n = len(text)
+    while i < n and text[i] in " \t\n\r":
+        i += 1
+    return i
+
+
+def _js_parse_string(text, i):
+    """Parse a '...', "...", or `...` literal at text[i].
+
+    Returns (value, next_index). Template literals containing ${...}
+    fail closed (undecodable). Never evals.
+    """
+    quote = text[i]
+    i += 1
+    n = len(text)
+    out = []
+    while True:
+        if i >= n:
+            raise _JSExprFail("unterminated string")
+        c = text[i]
+        if c == quote:
+            return "".join(out), i + 1
+        if quote == "`" and c == "$" and i + 1 < n and text[i + 1] == "{":
+            raise _JSExprFail("interpolation")
+        if c == "\\":
+            if i + 1 >= n:
+                raise _JSExprFail("bad escape")
+            e = text[i + 1]
+            if e in "xuU":
+                r = _decode_one_escape(text, i)
+                if r is None:
+                    raise _JSExprFail("bad escape")
+                ch, i = r
+                out.append(ch)
+                continue
+            out.append({"n": "\n", "t": "\t", "r": "\r", "b": "\b",
+                        "f": "\f", "v": "\v", "0": "\0"}.get(e, e))
+            i += 2
+            continue
+        if ord(c) < 0x20 and c not in "\t\n\r":
+            raise _JSExprFail("control char")
+        out.append(c)
+        i += 1
+        if len(out) > _JS_EXPR_MAX_LITERAL:
+            raise _JSExprFail("literal too long")
+
+
+def _js_parse_number(text, i):
+    """Parse a decimal or 0x integer literal at text[i] (ASCII only)."""
+    n = len(text)
+    if text.startswith(("0x", "0X"), i):
+        j = i + 2
+        k = j
+        while k < n and text[k] in _HEX_DIGITS:
+            k += 1
+        if k == j:
+            raise _JSExprFail("bad hex number")
+        if k - j > 8:  # int() digit-limit safety: fail closed, not loud
+            raise _JSExprFail("number too big")
+        val = int(text[j:k], 16)
+        if val > 0x10FFFF:
+            raise _JSExprFail("number too big")
+        return val, k
+    else:
+        j = i
+        while j < n and text[j] in _ASCII_DIGITS:
+            j += 1
+        if j == i:
+            raise _JSExprFail("not a number")
+        if j - i > 7:  # 0x10FFFF needs 7 decimal digits at most
+            raise _JSExprFail("number too big")
+        val = int(text[i:j])
+    if val > 0x10FFFF:
+        raise _JSExprFail("number too big")
+    return val, j
+
+
+def _js_parse_fromcharcode(text, i):
+    """Parse String.fromCharCode(n, ...) at text[i]; returns (value, idx)."""
+    i += len("String.fromCharCode")
+    i = _js_skip_ws(text, i)
+    if i >= len(text) or text[i] != "(":
+        raise _JSExprFail("fromCharCode without paren")
+    i += 1
+    out = []
+    i = _js_skip_ws(text, i)
+    if i < len(text) and text[i] == ")":
+        return "", i + 1
+    while True:
+        val, i = _js_parse_number(text, i)
+        ch = _safe_chr(val)
+        if ch is None:
+            raise _JSExprFail("bad codepoint")
+        out.append(ch)
+        if len(out) > _JS_EXPR_MAX_CODEPOINTS:
+            raise _JSExprFail("too many codepoints")
+        i = _js_skip_ws(text, i)
+        if i < len(text) and text[i] == ",":
+            i = _js_skip_ws(text, i + 1)
+            continue
+        if i < len(text) and text[i] == ")":
+            return "".join(out), i + 1
+        raise _JSExprFail("bad fromCharCode args")
+
+
+def _js_parse_additive(text, i, depth, state):
+    """Parse expr ('+' expr)* at text[i]; returns (value, end_index)."""
+    val, i = _js_parse_primary(text, i, depth, state)
+    while True:
+        j = _js_skip_ws(text, i)
+        if j >= len(text) or text[j] != "+":
+            return val, i
+        rhs, i = _js_parse_primary(text, j + 1, depth, state)
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("concat too long")
+        val = val + rhs
+        state["ops"] += 1
+
+
+def _js_apply_method(text, j, name, value, depth, state):
+    """Apply .concat(...) / .repeat(...) with text[j] == '('."""
+    i = j + 1
+    if name == "repeat":
+        i = _js_skip_ws(text, i)
+        count, i = _js_parse_number(text, i)
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("bad repeat")
+        if count > _JS_EXPR_MAX_REPEAT:
+            raise _JSExprFail("repeat too big")
+        result = value * count
+        if len(result) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("repeat too long")
+        state["ops"] += 1
+        return result, i + 1
+    parts = []
+    i = _js_skip_ws(text, i)
+    if i < len(text) and text[i] == ")":
+        state["ops"] += 1
+        return value, i + 1
+    while True:
+        arg, i = _js_parse_additive(text, i, depth, state)
+        parts.append(arg)
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        i = _js_skip_ws(text, i)
+        if i < len(text) and text[i] == ",":
+            i = _js_skip_ws(text, i + 1)
+            continue
+        if i < len(text) and text[i] == ")":
+            result = value + "".join(parts)
+            if len(result) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("concat too long")
+            state["ops"] += 1
+            return result, i + 1
+        raise _JSExprFail("bad concat")
+
+
+def _js_parse_postfix(text, i, value, depth, state):
+    """Consume chained .concat(...) / .repeat(...) calls on *value*."""
+    while True:
+        j = _js_skip_ws(text, i)
+        if j >= len(text) or text[j] != ".":
+            return value, i
+        for name in ("concat", "repeat"):
+            if text.startswith(name, j + 1):
+                k = _js_skip_ws(text, j + 1 + len(name))
+                if k < len(text) and text[k] == "(":
+                    value, i = _js_apply_method(text, k, name, value,
+                                                depth, state)
+                    break
+        else:
+            return value, i
+
+
+def _js_parse_primary(text, i, depth, state):
+    """Parse one primary (literal / fromCharCode / parens / number)."""
+    i = _js_skip_ws(text, i)
+    if i >= len(text):
+        raise _JSExprFail("empty")
+    c = text[i]
+    if c in "'\"`":
+        val, i = _js_parse_string(text, i)
+        return _js_parse_postfix(text, i, val, depth, state)
+    if text.startswith("String.fromCharCode", i):
+        val, i = _js_parse_fromcharcode(text, i)
+        state["ops"] += 1  # the call itself is obfuscation-shaped
+        return _js_parse_postfix(text, i, val, depth, state)
+    if c == "(":
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        val, i = _js_parse_additive(text, i + 1, depth + 1, state)
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("unbalanced paren")
+        return _js_parse_postfix(text, i + 1, val, depth, state)
+    if c in _ASCII_DIGITS:
+        num, i = _js_parse_number(text, i)
+        return str(num), i
+    raise _JSExprFail("not a primary")
+
+
+def _try_js_expr_decode(text, start):
+    """Strict static decode of one JS string expression (F430).
+
+    Returns (decoded, end_index), or None when the run at *start* is not
+    a decodable expression. Handles quoted-string '+' concatenation,
+    template literals (no ${...}), String.fromCharCode(...), and
+    .concat(...) / .repeat(...) postfix calls. Bounded by part, depth,
+    codepoint, repeat, and output budgets; never evals; undecodable
+    runs are ignored. A bare string literal with no operator or call is
+    not rewritten (not obfuscation-shaped).
+    """
+    if len(text) - start > _JS_EXPR_MAX_RUN:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        val, end = _js_parse_additive(text, start, 0, state)
+    except _JSExprFail:
+        return None
+    except RecursionError:
+        return None
+    if state["ops"] == 0:
+        return None
+    decoded = _ascii_printable_or_none(val)
+    if decoded is None or decoded == text[start:end]:
+        return None
+    return decoded, end
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
-
     def _add(variant):
         if variant != text and variant not in variants:
             variants.append(variant)
@@ -1103,6 +1357,14 @@ def _decode_layer(text):
         decoded = _try_jsfuck_decode(m.group(0))
         if decoded is not None:
             _add(text[:m.start()] + decoded + text[m.end():])
+    # JS string-expression runs (F430): strict static decode of quoted
+    # '+' concatenation, template literals, String.fromCharCode, and
+    # .concat/.repeat postfix calls; undecodable runs are ignored.
+    for m in list(_JS_EXPR_START.finditer(text))[:_MAX_CANDIDATES]:
+        r = _try_js_expr_decode(text, m.start())
+        if r is not None:
+            decoded, end = r
+            _add(text[:m.start()] + decoded + text[end:])
     # Backslash-escape runs (F429): strict static \uXXXX / \xXX /
     # octal / CSS-escape decode; undecodable runs are ignored.
     for m in list(_ESC_RUN.finditer(text))[:_MAX_CANDIDATES]:
@@ -1186,8 +1448,11 @@ def find_credential(text):
     """Return the id of the first blocking credential rule matching *text*,
     or None. Also fires the entropy tripwire for unknown key formats.
 
-    Encoding-aware (F2/F8/F428/F429/F431): before giving up, decodes likely encodings
-    (base64/base64url, base32, hex, URL-encoding, JSFuck, backslash
+<<<<<<< HEAD
+    Encoding-aware (F2/F8/F428/F429/F430/F431): before giving up, decodes likely encodings
+    (base64/base64url, base32, hex, URL-encoding, JSFuck, JS string
+    expressions, backslash
+>>>>>>> e1159278
     escapes, numeric HTML entities, UTF-16 null-interleave, confusable
     normalization incl. the Cyrillic-homoglyph map, bidi-override
     normalization -- bounded, 2 layers) and

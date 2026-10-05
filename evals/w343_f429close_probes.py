@@ -28,7 +28,7 @@ Probes:
       ignored (no variant, no crash, no block).
   P6  bounds: oversized escape runs are ignored without hanging.
   P7  end-to-end: scan_value and scan_tool_args block the escaped form.
-  P8  pin + footer: taxonomy pin 2134, footer open F430, F431 / next F432.
+  P8  pin + footer: taxonomy pin 2134, footer open F431 / next F432.
 
 Usage:
   ~/workspace/.gov-venv/bin/python evals/w343_f429close_probes.py
@@ -48,8 +48,8 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2134  # Wave-343: pin 2131 (no new codes in wave-343 lane 1); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = "F430"
-FOOTER_NEXT = "F432"
+FOOTER_OPEN = "F432, F433"
+FOOTER_NEXT = "F434"
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -235,7 +235,7 @@ def p8_pin_and_footer():
         ok = ok and "Open findings: none." in footer
     else:
         ok = ok and ("Open findings: %s." % FOOTER_OPEN) in footer
-    return _check("p8: pin 2134, footer open F430, F431 / next F432", ok,
+    return _check("p8: pin 2134, footer open F431 / next F432", ok,
                   footer[-70:])
 
 

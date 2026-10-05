@@ -105,14 +105,15 @@ _CONCAT_SHAPES = [
 def _concat_probe(idx, shape):
     @_t
     def probe(idx=idx, shape=shape):
-        """F430 filed OPEN: the JS string-concatenation miss is
-        known-open, demonstrated red-first in
-        evals/w343_concat_redfirst.py. Flips to a refusal assertion
-        when F430 closes."""
-        miss = dlp.find_credential("token=" + shape) is None
-        return ("HELD" if miss else "BREAK",
-                "F430 concat[%d] miss reproduced=%s" % (idx, miss))
-    probe.__name__ = "test_a1_concat_%d_miss_pinned" % idx
+        """F430 CLOSED 2026-10-05 wave-344 lane 1: the JS
+        string-concatenation shape now refuses coded dlp-slack-token
+        (was filed OPEN and pinned as a miss; flipped to a refusal
+        assertion on closure)."""
+        rule = dlp.find_credential("token=" + shape)
+        ok = rule == "dlp-slack-token"
+        return ("HELD" if ok else "BREAK",
+                "F430 concat[%d] coded refusal=%s rule=%s" % (idx, ok, rule))
+    probe.__name__ = "test_a1_concat_%d_refusal_pinned" % idx
     return probe
 
 
@@ -156,14 +157,18 @@ def test_a7_cyrillic_homoglyph_blocked():
 
 @_t
 def test_a8_f430_filing_pinned():
-    """F430 is filed OPEN: pins the filing so the concat miss cannot
-    go undocumented; flips to a refusal assertion when F430 closes."""
+    """F430 is CLOSED 2026-10-05 wave-344 lane 1: pins the closure entry;
+    the concat shape now refuses coded dlp-slack-token (filed OPEN to
+    document the miss; flipped to a refusal assertion on closure)."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("(F430 filed 2026-10-05, wave-343 lane 3" in text
-          and "LOW, OPEN:" in text
-          and "Next free finding: **F432**" in text
-          and "Open findings: F430." in text)
-    return ("HELD" if ok else "BREAK", "F430 filed open=%s" % ok)
+    entry = ("(F430 filed 2026-10-05, wave-343 lane 3" in text
+             and "LOW, CLOSED 2026-10-05 wave-344 lane 1" in text
+             and "Open findings: F432, F433." in text)
+    refusal = (dlp.find_credential('token="xoxb-abc123" + "def456"')
+               == "dlp-slack-token")
+    ok = entry and refusal
+    return ("HELD" if ok else "BREAK",
+            "F430 closed=%s refusal=%s" % (entry, refusal))
 
 
 @_t
@@ -174,7 +179,7 @@ def test_a9_f429_still_open_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F429 filed 2026-10-05, wave-342 lane 5" in text
           and "LOW, CLOSED 2026-10-05 wave-343 lane 1" in text
-          and "Open findings: F430." in text)
+          and "Open findings: F432, F433." in text)
     return ("HELD" if ok else "BREAK", "F429 closed=%s" % ok)
 
 
