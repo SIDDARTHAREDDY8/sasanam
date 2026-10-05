@@ -50,7 +50,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 TAXONOMY_PIN = 2134  # Wave-343: pin 2131 (no new codes in wave-343 lane 1); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 FOOTER_OPEN = "none"  # F432, F433, F434, F435 CLOSED 2026-10-05 wave-345 lanes 1-4
 
-FOOTER_NEXT = "F436"
+FOOTER_NEXT = "F437"
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402

@@ -328,10 +328,10 @@ def P2b():
                 encoding="utf-8").read()
     lines = text.splitlines()
     last = lines[-1] if lines else ""
-    if "Next free finding: **F436**" not in last:
+    if "Next free finding: **F437**" not in last:
         _break(pid, "footer does not read next F429")
         return
-    if "Open findings: F433, F434, F435." not in last:
+    if "Open findings: F436." not in last:
         _break(pid, "footer does not read open F428: %r" % (last[:120],))
         return
     import re as _re
@@ -349,7 +349,7 @@ def P2b():
     if "**Status: OPEN.**" in _section("F427"):
         _break(pid, "F427 section still marked OPEN")
         return
-    _held(pid, "footer open F433, F434, F435 / next F436, F426+F427 closed, F428 open")
+    _held(pid, "footer open F436 / next F437, F426+F427 closed, F428 open")
 
 
 _PROBES = [

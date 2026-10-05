@@ -174,7 +174,7 @@ def p2_pin():
 
 
 def p3_footer():
-    """Footer: open F433, F434, F435 / next F436 (raw literals, wave-331 lesson)."""
+    """Footer: open F436 / next F437 (raw literals, wave-331 lesson)."""
     try:
         text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md"),
                     encoding="utf-8").read()
@@ -182,11 +182,11 @@ def p3_footer():
         return "ERROR", "P3", "FINDINGS.md unreadable"
     lines = text.splitlines()
     last = lines[-1] if lines else ""
-    if "Next free finding: **F436**" not in last:
+    if "Next free finding: **F437**" not in last:
         return "BREAK", "P3", "footer next-free is not F436"
-    if not re.search(r"\*\*Open findings: F433, F434, F435\.\*\*", last):
-        return "BREAK", "P3", "footer open findings is not F433, F434, F435"
-    return "HELD", "P3", "footer open F433, F434, F435 / next F436"
+    if not re.search(r"\*\*Open findings: F436.\*\*", last):
+        return "BREAK", "P3", "footer open findings is not F436"
+    return "HELD", "P3", "footer open F436 / next F437"
 
 
 def p4_orphan_module_fails():

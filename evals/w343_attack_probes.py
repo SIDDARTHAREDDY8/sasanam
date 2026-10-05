@@ -195,7 +195,7 @@ def test_a11_f434_filing_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     entry = ("(F434 filed 2026-10-05, wave-344 merge" in text
              and "LOW, CLOSED 2026-10-05 wave-345 lane 3" in text
-             and "Open findings: F432, F433, F435." in text)
+             and "Open findings: F436." in text)
     payload = "[" + ", ".join("'%s'" % ch for ch in _CRED) + "].join('')"
     refusal = dlp.find_credential(payload) == "dlp-slack-token"
     ok = entry and refusal

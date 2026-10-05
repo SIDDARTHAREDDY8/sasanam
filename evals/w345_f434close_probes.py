@@ -52,8 +52,8 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
 TAXONOMY_PIN = 2134  # Wave-343 merge pin; no new codes in wave-345 lane 3
-FOOTER_OPEN = "F432, F433, F435"
-FOOTER_NEXT = "F436"
+FOOTER_OPEN = "F436"
+FOOTER_NEXT = "F437"
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -234,7 +234,7 @@ def p6_pin_and_footer():
                 "%d/%d" % (len(TAXONOMY), len(set(TAXONOMY)))) and ok
     last = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
                 ).read().splitlines()[-1]
-    ok = _check("P6b footer open F432, F433, F435 / next F436",
+    ok = _check("P6b footer open F436 / next F437",
                 ("Next free finding: **%s**." % FOOTER_NEXT) in last
                 and ("Open findings: %s." % FOOTER_OPEN) in last,
                 last[:60]) and ok

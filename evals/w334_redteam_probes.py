@@ -786,8 +786,8 @@ def P5c():
               encoding="utf-8") as fh:
         text = fh.read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F436**" in text
-          and m_open and m_open[-1].strip() == "F433, F434, F435")
+    ok = ("Next free finding: **F437**" in text
+          and m_open and m_open[-1].strip() == "F436")
     if ok:
         _held(pid, "footer: open none / next F430")
     else:

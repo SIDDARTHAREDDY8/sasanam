@@ -37,8 +37,8 @@ import w324_vsa_probes as _wv  # noqa: E402
 import w322_redteam_probes as _w322  # noqa: E402
 
 TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = "F433, F434, F435"  # F409-F423 CLOSED; F424, F425 open (wave-336 merge).
-FOOTER_NEXT = "F436"  # Next free finding number.
+FOOTER_OPEN = "F436"  # F409-F423 CLOSED; F424, F425 open (wave-336 merge).
+FOOTER_NEXT = "F437"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -942,7 +942,7 @@ def _p6b():
     text = open(os.path.join(REPO, "evals/FINDINGS.md")).read()
     import re
     # The file carries one footer line per wave; the LAST one is current.
-    # Footer form: "Next free finding: **F436**. **Open findings: F433, F434, F435.**"
+    # Footer form: "Next free finding: **F437**. **Open findings: F436.**"
     opens = re.findall(r"\*\*Open findings:\s*([^*]+?)\.\*\*", text)
     nexts = re.findall(r"Next free finding:\s*\*\*([^*]+?)\*\*", text)
     open_line = opens[-1].strip() if opens else ""

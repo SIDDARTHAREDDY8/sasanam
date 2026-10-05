@@ -82,8 +82,8 @@ sys.path.insert(0, os.path.join(REPO, "tests"))
 
 TAXONOMY_PIN = 2134  # Wave-341 merge (c47ab9e8). Footer: open F429 / next F430.; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
-FOOTER_OPEN = "F433, F434, F435"
-FOOTER_NEXT = "F436"
+FOOTER_OPEN = "F436"
+FOOTER_NEXT = "F437"
 
 _results = []
 
@@ -146,7 +146,7 @@ def p0():
     want = "Next free finding: **%s**. **Open findings: %s.**" % (
         FOOTER_NEXT, FOOTER_OPEN)
     if want in footer:
-        _held("P0b", "footer open F433, F434, F435 / next F436")
+        _held("P0b", "footer open F436 / next F437")
     else:
         _break("P0b", "footer text mismatch")
 

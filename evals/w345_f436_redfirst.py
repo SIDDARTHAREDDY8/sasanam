@@ -13,10 +13,17 @@ dlp-slack-token, so the miss is specifically the sub-threshold
 fragment. Model-proposed (gpt-4o-mini, round 13, target B2 stacked
 encodings); every shape validated locally against the real gov/dlp.py.
 
+WAVE-345 MERGE COMPOSITION NOTE (2026-10-05): the F432 closure
+(wave-345 lane 1, text-escape gate {2,} -> 1+) absorbed 6 of the 8
+filed shapes -- single decimal/hex entities and single
+\\xHH/\\uXXXX/octal fragments inside base64 runs now decode and
+block. The 2 residuals below remain OPEN and verified (roundtrip=True
+through a real parser). This script now pins the RESIDUAL scope:
+prints BREAK while the 2 residuals miss, HELD when they block.
+
 Expected on the OPEN tree: prints BREAK (F436 is OPEN).
-After a closure (the decode layer recognizes sub-threshold
-entity/escape fragments inside base64 runs, or refuses
-obfuscation-shaped runs coded): prints HELD.
+After a closure (the decode layer recognizes the residual shapes):
+prints HELD.
 
 $0 SPEND BY CONSTRUCTION: canned transforms of a test credential;
 no model calls here.
@@ -84,6 +91,10 @@ def main():
     raw_hit = dlp.find_credential(b64) == "dlp-slack-token"
     print("control (plain credential blocks) -> %s" % ("HELD" if control else "BROKEN-CONTROL"))
     print("control (raw base64 of long cred blocks) -> %s" % ("HELD" if raw_hit else "BROKEN-CONTROL"))
+    # Residual scope (wave-345 merge): the 6 shapes absorbed by the F432
+    # closure are documented as HELD-absorbed; BREAK requires the 2
+    # residuals to miss.
+    RESIDUALS = {"single-entity-no-semicolon", "two-entities-25-apart"}
     misses = {}
     for name, (payload, rt_fn) in _shapes(b64).items():
         assert _LONG not in payload, "payload %s smuggles plaintext" % name
@@ -91,8 +102,10 @@ def main():
         rt = rt_fn(payload)
         miss = dlp.find_credential(payload) is None
         misses[name] = miss
-        print("%-32s -> %s (roundtrip=%s)" % (name, "MISS" if miss else "HIT", rt))
-    if control and raw_hit and all(misses.values()):
+        tag = "RESIDUAL" if name in RESIDUALS else "absorbed-by-F432"
+        print("%-32s -> %s (roundtrip=%s) [%s]" % (name, "MISS" if miss else "HIT", rt, tag))
+    residual_miss = all(misses[n] for n in RESIDUALS)
+    if control and raw_hit and residual_miss:
         print("BREAK")
         return 1
     print("HELD")

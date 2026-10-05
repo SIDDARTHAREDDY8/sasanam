@@ -284,7 +284,7 @@ def test_z0_f436_filed_open_with_new_footer():
     ok = ("(F436 filed 2026-10-05, wave-345 lane 5" in text
           and "LOW, OPEN:" in text
           and "Next free finding: **F437**" in text
-          and "Open findings: F432, F433, F434, F435, F436." in text)
+          and "Open findings: F436." in text)
     return ("HELD" if ok else "BREAK", "F436 filed open=%s" % ok)
 
 

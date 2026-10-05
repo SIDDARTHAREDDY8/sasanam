@@ -31,7 +31,7 @@ Probes:
       (linear scan, no ReDoS surface).
   P7  layering: bidi-wrapped unicode-escaped and homoglyph-bearing
       escaped credentials block via the 2-layer decode budget.
-  P8  pin + footer: taxonomy pin 2134, footer open F432, F433, F434 / next F436 (wave-345 lane 4: F435 closed).
+  P8  pin + footer: taxonomy pin 2134, footer open F436 / next F437 (wave-345 lane 4: F435 closed).
 
 Usage:
   ~/workspace/.gov-venv/bin/python evals/w344_f431close_probes.py
@@ -53,7 +53,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 TAXONOMY_PIN = 2134  # Wave-344: pin 2134 (no new codes in wave-344 lane 2)
 FOOTER_OPEN = "none"
 
-FOOTER_NEXT = "F436"
+FOOTER_NEXT = "F437"
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402

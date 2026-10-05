@@ -924,12 +924,12 @@ def _footer():
                       "no footer parsed")
     num, opens = feet[-1]
     opens = opens.strip().lower().rstrip(".")
-    if num != "F436" or opens != "f433, f434, f435":
+    if num != "F437" or opens != "f436":
         return _break("footer-open-f433-f434-f435-next-f436",
-                      "footer is %%s / %%s, want F436 / F433, F434, F435"
+                      "footer is %%s / %%s, want F437 / F436"
                       % (num, opens))
     return _held("footer-open-f433-f434-f435-next-f436",
-                 "footer: open F433, F434, F435 / next F436")
+                 "footer: open F436 / next F437")
 
 
 # ---------------------------------------------------------------------------

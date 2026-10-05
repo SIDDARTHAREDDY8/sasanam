@@ -455,8 +455,8 @@ def p_footer_state():
     with open(os.path.join(REPO, "evals", "FINDINGS.md")) as f:
         text = f.read()
     # Wave-336 lane 1: repaired stale F412/F413-era assertions.
-    assert "Open findings: F433, F434, F435." in text, "footer must show open none"
-    assert "Next free finding: **F436**" in text, "next free must be F427"
+    assert "Open findings: F436." in text, "footer must show open none"
+    assert "Next free finding: **F437**" in text, "next free must be F427"
     _record("footer-state", "HELD", "open none / next F430")
 
 

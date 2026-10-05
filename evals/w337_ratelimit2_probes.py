@@ -74,8 +74,8 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = "F433, F434, F435"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
-FOOTER_NEXT = "F436"  # Next free finding number.
+FOOTER_OPEN = "F436"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
+FOOTER_NEXT = "F437"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -697,9 +697,9 @@ def _p14c():
     # the file tail -- search the whole document.
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    if "Next free finding: **F436**" not in text:
+    if "Next free finding: **F437**" not in text:
         return _break(pid, "footer next != F427")
-    if "Open findings: F433, F434, F435." not in text:
+    if "Open findings: F436." not in text:
         return _break(pid, "footer open != none")
     return _held(pid, "footer open none / next F430 (F426 closed)")
 
