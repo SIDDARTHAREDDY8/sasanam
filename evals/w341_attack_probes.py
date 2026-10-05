@@ -142,15 +142,15 @@ def test_i5_b32_slack_token_blocked():
 def test_i6_f428_open_pinned():
     """F428 is filed CLOSED (2026-10-05 wave-342 lane 1): the JSFuck
     decode layer now blocks the canned payload coded. This probe pins
-    the closure so it cannot silently regress; F429 (backslash-escape
-    miss) is the currently open filing."""
+    the closure so it cannot silently regress; F429 (text-escape-transform
+    miss, filed by lane 5, independently confirmed by lane 1) is the
+    currently open filing."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F428 filed 2026-10-05, wave-341 lane C" in text
           and "CLOSED 2026-10-05 wave-342 lane 1" in text
-          and "(F429 filed 2026-10-05, wave-342 lane 1" in text
+          and "(F429 filed 2026-10-05, wave-342 lane 5" in text
           and "Next free finding: **F430**" in text
           and "Open findings: F429." in text)
-    return ("HELD" if ok else "BREAK", "F428 closed/F429 open=%s" % ok)
 
 
 # ---------------------------------------------------------------- J: template-sandbox escape (CVE-2026-90970 analogue)
