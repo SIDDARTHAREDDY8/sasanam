@@ -11702,6 +11702,40 @@ TAXONOMY = {
         "evidence_kinds_required": ['deployment', 'checklist', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'ownership-directory-malformed': {
+        "domain": 'identity',
+        "code": 'ownership-directory-malformed',
+        "human": 'the deployment-supplied owner directory failed '
+                 'validation (non-dict, duplicate identifiers claimed '
+                 'by two principals, wrong types); refused fail-fast '
+                 'at load -- a directory that cannot disambiguate is '
+                 'a deployment configuration error',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'ownership-inference-ambiguous': {
+        "domain": 'identity',
+        "code": 'ownership-inference-ambiguous',
+        "human": 'two or more identity-evidence sources named different '
+                 'owning principals for one agent identity; the '
+                 'inference refuses rather than voting or guessing '
+                 '(fail-closed) -- the conflicting candidates are '
+                 'recorded for the auditor',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'ownership-inference-unresolved': {
+        "domain": 'identity',
+        "code": 'ownership-inference-unresolved',
+        "human": 'no identity identifier matched any directory principal: '
+                 'the owner is explicitly unknown, recorded as a coded '
+                 'unresolved state -- never silently omitted',
+        "severity": 'low',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'pack-expired': {
         "domain": 'pack',
         "code": 'pack-expired',
