@@ -315,7 +315,7 @@ def p3():
     if "Next free finding: **%s**." % FOOTER_NEXT not in text:
         _break(pid, "footer next-free mismatch")
         return
-    if "**Open findings: F432, F433, F434, F435.**" not in text:
+    if "**Open findings: F433, F434, F435.**" not in text:
         _break(pid, "footer open-findings mismatch (want open F426)")
         return
     if "## F423 " not in text:

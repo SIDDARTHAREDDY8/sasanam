@@ -224,7 +224,7 @@ def _p9():
     assert "oci-registry-onboarding-refused" in DC.TAXONOMY
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
     assert "Next free finding: **F436**" in text, "footer next free"
-    assert "Open findings: F432, F433, F434, F435." in text, "footer open findings"
+    assert "Open findings: F433, F434, F435." in text, "footer open findings"
     assert FOOTER_OPEN == ("F432", "F433", "F434", "F435") and FOOTER_NEXT == "F436"
     _held("P9-pin-taxonomy",
           "2134/2134/0 sorted-unique; oci-registry-onboarding-refused "

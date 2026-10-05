@@ -404,9 +404,9 @@ def run_pin_footer_probes():
                % (len(lits), len(set(lits)), lits == sorted(lits)))
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    if "Open findings: F432, F433, F434, F435." in text \
+    if "Open findings: F433, F434, F435." in text \
             and "Next free finding: **F436**" in text:
-        _held("P0b", "footer open F432, F433, F434, F435 / next F436")
+        _held("P0b", "footer open F433, F434, F435 / next F436")
     else:
         _break("P0b", "footer text mismatch")
 

@@ -43,7 +43,8 @@ Shapes (A1/A2/A3 = the three wave-344 attack targets):
   defeated control. Pinned as held-by-design.
 
   F432/F433: filed OPEN this round (F429-closure residuals); footer now
-  open F432, F433, F434, F435 / next F436. F428/F429: CLOSED.
+  open F433, F434, F435 / next F436 (F432 CLOSED by wave-345 lane 1).
+  F428/F429: CLOSED.
 
 Usage:
   ~/workspace/.gov-venv/bin/python evals/w344_attack_probes.py
@@ -189,13 +190,14 @@ def test_a8_url_path_credential_held():
 # ---------------------------------------------------------------- B: F432/F433 pins
 
 @_t
-def test_b1_f432_singlescape_miss_pinned():
-    """F432 filed OPEN: sub-threshold single-escape transforms miss
-    the F429 decode layer ({2,} run threshold). Pinned as
-    HELD-when-reproduced; flips to a refusal assertion on closure."""
-    miss = dlp.find_credential("k=\\u0078oxb-abc123def456") is None
-    return ("HELD" if miss else "BREAK",
-            "F432 singlescape miss reproduced=%s" % miss)
+def test_b1_f432_singlescape_closed_refusal():
+    """F432 CLOSED (wave-345 lane 1): sub-threshold single-escape
+    transforms now hit the widened decode layer (1+ escape gate) and
+    block coded dlp-slack-token. Flipped from the miss-pin per the
+    wave-306 rule on closure."""
+    rule = dlp.find_credential("k=\\u0078oxb-abc123def456")
+    return ("HELD" if rule == "dlp-slack-token" else "BREAK",
+            "F432 singlescape refused coded=%s" % (rule == "dlp-slack-token"))
 
 
 @_t
@@ -210,15 +212,17 @@ def test_b2_f433_css_nospace_miss_pinned():
 
 @_t
 def test_b3_f432_f433_filings_pinned():
-    """F432/F433 are filed OPEN with the new footer: pins the filings
-    so the misses cannot go undocumented."""
+    """F432/F433 are filed OPEN with the new footer; F432 CLOSED by
+    wave-345 lane 1. Pins the filings and the closed footer so the
+    misses cannot go undocumented."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F432 filed 2026-10-05, wave-344 lane 4" in text
           and "(F433 filed 2026-10-05, wave-344 lane 4" in text
           and "LOW, OPEN:" in text
+          and "LOW, CLOSED 2026-10-05 wave-345 lane 1" in text
           and "Next free finding: **F436**" in text
-          and "Open findings: F432, F433, F434, F435." in text)
-    return ("HELD" if ok else "BREAK", "F432/F433 filed open=%s" % ok)
+          and "Open findings: F433, F434, F435." in text)
+    return ("HELD" if ok else "BREAK", "F432/F433 filed, F432 closed=%s" % ok)
 
 
 # ---------------------------------------------------------------- pins
@@ -235,8 +239,9 @@ def test_pin_taxonomy_2134():
 
 
 _EXPECTED_BREAKS = set()  # this battery asserts HELD everywhere:
-# the F430/F431/F432/F433 misses are pinned as known-open (probe
-# returns HELD when the miss reproduces); a literal BREAK verdict would
+# the F430/F431/F433 misses are pinned as known-open (probe
+# returns HELD when the miss reproduces); F432 pins the coded refusal
+# (closed wave-345 lane 1); a literal BREAK verdict would
 # mean the pin failed or a NEW unexpected break appeared.
 
 

@@ -348,14 +348,17 @@ _B32_RUN = re.compile(r"[A-Z2-7]{24,}={0,6}")
 # gates decode ATTEMPTS, never blocking decisions.
 _JSFUCK_RUN = re.compile(r"[\[\]()!+\-]{64,}")
 # F429: text-escape runs. Backslash escapes (\uXXXX / \UXXXXXXXX / \xXX
-# / octal / CSS \HHHHHH<space>) need 2+ consecutive escapes before a decode is
-# attempted -- a lone backslash in prose or a Windows path never forms
-# a run, and a run that decodes to non-credential text never blocks.
+# / octal / CSS \HHHHHH<space>) need only 1+ escapes before a decode is
+# attempted (F432: a single escaped char decodes to the raw credential in
+# any real JSON/JS/CSS parser). The ASCII-printable gate and the
+# credential-rule match still protect precision: a lone escape that
+# decodes to non-credential text never blocks.
 _ESC_RUN = re.compile(
     r"(?:\\(?:u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|x[0-9a-fA-F]{2}|[0-9a-fA-F]{1,6} "
-    r"|[0-7]{1,3})){2,}")
-# F429: numeric HTML entities (&#x..; / &#..;), 2+ consecutive.
-_ENTITY_RUN = re.compile(r"(?:&#[xX][0-9a-fA-F]{1,6};|&#[0-9]{1,7};){2,}")
+    r"|[0-7]{1,3}))+")
+# F429: numeric HTML entities (&#x..; / &#..;), 1+ (F432: a single
+# entity decodes to the raw credential in any real HTML parser).
+_ENTITY_RUN = re.compile(r"(?:&#[xX][0-9a-fA-F]{1,6};|&#[0-9]{1,7};)+")
 # F429: UTF-16 null-interleaved runs (ASCII bytes separated by NULs).
 _UTF16N_RUN = re.compile(r"(?:[\x20-\x7e]\x00){4,}|(?:\x00[\x20-\x7e]){4,}")
 # F429: zero-width / invisible joiners stripped by the confusable

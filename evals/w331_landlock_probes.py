@@ -36,7 +36,7 @@ if REPO_ROOT not in sys.path:
 from gov import landlock_jail as lj  # noqa: E402
 
 TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = "F432, F433, F434, F435"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
+FOOTER_OPEN = "F433, F434, F435"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
 FOOTER_NEXT = "F436"  # Next free finding number.
 
 PROBES = []
@@ -463,9 +463,9 @@ def _p1():
     return _held(name, "2134/2134/0 sorted; landlock codes present")
 
 
-@probe("P2-footer-open-f432-f433-f434-f435-next-f436")
+@probe("P2-footer-open-f433-f434-f435-next-f436")
 def _p2():
-    name = "P2-footer-open-f432-f433-f434-f435-next-f436"
+    name = "P2-footer-open-f433-f434-f435-next-f436"
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
