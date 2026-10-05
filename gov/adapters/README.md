@@ -98,6 +98,8 @@ inputs *before* the executor's DLP scan sees them:
 | `generic` (`governed` wrapper) | `**kwargs` straight to `binding.call`; positional args raise fail-closed | Clean: no schema coercion, no drop. |
 | `mcp_adapter` (`call_tool`) | full `arguments` dict mediated via `binding.call(name, **dict(arguments))` | Clean: no filtering of tool arguments. `session_kwargs` (transport-level, e.g. `read_timeout_seconds`) go only to the session, never the executor — documented above, not a governance drop. |
 | `openai_loop` (`run_tool_loop`) | `parse_tool_calls` strictly parses the raw JSON-object arguments; `binding.call(call.name, **call.arguments)` | Clean: malformed shapes raise `MalformedToolCallError` fail-closed; valid arguments pass through unmodified. |
+| `openai_agents` (guardrail fn) | SDK passes the RAW arguments string pre-schema-preparation; shim `json.loads`es strictly (must be an object) and calls `binding.call(framework_tool, **parsed)` | Clean: no filtering — malformed input trips the wire fail-closed; every parsed kwarg reaches mediation. `expect_sdk_tool_name` catches guardrail/tool misattachment. |
+| `langgraph_hitl` (`governed_tool_call`) | `arguments` must be a dict; passed as `**arguments` to `binding.call` | Clean: no schema coercion, no drop. Interrupt payload deliberately excludes raw arguments (client-channel hygiene; the human decides in the queue UI). |
 
 ### `gov.adapters.mcp_adapter` — MCP client wrapper
 
@@ -129,6 +131,25 @@ simulate-only design, not a second authorization.
 Default: the first denied/queued call raises and the loop stops (fail closed).
 With `on_denied="return"` / `on_queued="return"` the notice becomes a `tool`
 message so the model can react and continue.
+
+### `gov.adapters.openai_agents` — OpenAI Agents SDK native-guardrail shim (verified: openai-agents 0.23.1)
+
+| Name | Signature | Behavior |
+|---|---|---|
+| `make_tool_input_guardrail` | `(binding, framework_tool, *, on_denied="raise", on_queued="raise", name=None, expect_sdk_tool_name=None) -> callable` | Returns a guardrail function `(data) -> ToolGuardrailFunctionOutput` for the SDK's native `tool_input_guardrails` pipeline (`ToolInputGuardrail(guardrail_function=...)` or the SDK's `@tool_input_guardrail`). Unregistered `framework_tool` raises at **construction**. Executor `"executed"` → `allow` (coded `output_info`); `"denied"` → `raise_exception` tripwire (SDK raises `ToolGuardrailTripwireTriggered`, halting the run) or `reject_content` with `on_denied="return"`; `"queued"` → `raise_exception` with `output_info["approval_id"]` (human decides via OUR ApprovalQueue; the run is re-invoked) or `reject_content` with `on_queued="return"`. Malformed tool arguments (not JSON / not an object) → `raise_exception` fail-closed. `expect_sdk_tool_name` fails closed on guardrail/tool misattachment. |
+| `audit_agent_coverage` | `(agent, *, nested_agent_tools=()) -> dict` | Fail-closed coverage audit (duck-typed; the `agents` package need not be installed). Raises `UncoveredSurfaceError` naming every uncovered surface: handoffs, non-`FunctionTool` tools (hosted/built-in tools never enter the SDK's guardrail pipeline), `Agent.as_tool()` nested tools (SDK's own `_is_agent_tool` marker or declared names — the guardrail sees only the outer input, never nested calls), `FunctionTool`s without a shim-issued guardrail, or `agent=None`. Returns a report dict on success. |
+| `sdk_available` | `() -> bool` | True when the `agents` package is importable. |
+| `RESIDUAL_SURFACES` | — | The tested honest-boundary contract: hosted tools, built-in execution tools, handoffs, `as_tool()` nested runs are NEVER covered by this shim. |
+
+The `agents` package is optional: with it installed the shim returns the real `ToolGuardrailFunctionOutput`; otherwise a behavior-compatible stand-in (the SDK only reads `behavior["type"]`/`behavior["message"]`). No F62-class hole: the SDK hands guardrails the RAW arguments string before schema preparation, and the shim parses it strictly itself — every parsed kwarg reaches `binding.call` unmodified.
+
+### `gov.adapters.langgraph_hitl` — LangGraph `interrupt()` → ApprovalQueue recipe (verified: langgraph 1.2.12)
+
+| Name | Signature | Behavior |
+|---|---|---|
+| `governed_tool_call` | `(binding, framework_tool, arguments, *, interrupt, queue=None, prior_approval_id=None, on_denied="raise") -> (outcome, payload)` | Mediates one tool call inside a LangGraph node. `"executed"` → `("executed", result)`, `interrupt` never called. `"denied"` → `ToolDeniedError` (or `("denied", result)` with `on_denied="return"`), `interrupt` never called. `"queued"` → `interrupt(payload)` pauses the graph (raises `GraphInterrupt`); payload carries `approval_id` + tool names, never raw arguments. After the human decides via `ApprovalQueue.decide` and the client resumes (`graph.update_state(..., {"approval_id": aid})` then `Command(resume=...)`), the node re-enters with `prior_approval_id`: `binding.call` is NOT re-run (no duplicate queue entry), `interrupt()` returns the resume value, and the helper returns `("approved", record)` / `("rejected", record)` — the queue is the decision authority. The deployment then runs `executor.execute_approved()`. Resume-path failures are fail-closed: `ApprovalResumeMismatchError` (resume names another approval), `ApprovalRecordMissingError` (vanished record), `ApprovalNotDecidedError` (premature resume — a resume value can never smuggle an approval past the queue). |
+
+`langgraph` is optional: `interrupt` is dependency-injected (`langgraph.types.interrupt` in production, a stand-in in tests); this module never imports `langgraph`.
 
 ## Residual limitations (cannot be closed in-process — by design)
 
