@@ -1,121 +1,28 @@
 {
- "generated": "2026-10-05T13:31:19Z",
+ "generated": "2026-10-05T18:07:12Z",
  "pin": 2131,
- "covered": 2018,
+ "covered": 2111,
  "gaps": [
-  "absence-refused",
-  "arap-error",
-  "assessment_malformed",
   "attest_absence",
-  "axis-ceiling-hit",
-  "axis-indeterminate",
-  "axis-unestablished",
-  "bad-files",
-  "bad-handoff",
-  "bad-issuer-key",
-  "bad-measurements",
-  "bad-now",
-  "bad-operator",
-  "bad-operator-ceremony",
-  "bad-pack-class",
-  "bad-pack-id",
-  "bad-rules",
-  "bad-seed",
-  "bad-trust-record",
-  "ballot-malformed-proposal",
-  "ballot-unknown-ballot-type",
   "battery-lang-bad-metadata",
-  "battery-lang-bad-module",
-  "battery-lang-bad-probe-entry",
-  "battery-lang-no-probes",
-  "battery-lang-probe-missing",
-  "bundle-inspection-malformed",
   "canonical_link_body",
-  "ceremony-malformed-proposal",
-  "ceremony-unknown-ceremony",
-  "checkpoint-refused",
   "clear_cross_run_lineage",
   "compute_candidate",
-  "config-malformed",
-  "consent_expired",
-  "consent_required",
-  "digest-linkage-refused",
-  "digest-role-missing",
-  "display-attestation-error",
-  "empty_reason",
-  "envelope-bad-sample",
-  "envelope-sample-too-large",
-  "envelope-too-many-samples",
-  "evaltask-bad-dataset-id",
-  "evaltask-bad-sample",
-  "evaltask-bad-samples",
-  "evaltask-bad-scoring-id",
   "evaltask-bad-scoring-refs",
-  "evaltask-bad-target",
-  "evaltask-bad-task-id",
-  "evaltask-duplicate-scoring-function",
-  "evaltask-duplicate-task",
   "evaltask-not-json",
-  "evaltask-scoring-not-callable",
-  "evaltask-scoring-source-unavailable",
-  "evaltask-unknown-scoring-function",
-  "faithfulness-error",
   "hop_token_refs",
   "identity_key_of",
   "input_closure_digest",
-  "invalid_target",
-  "issuer-malformed",
-  "keep_evidence_types",
-  "keep_subject_fields",
   "make_link_record",
-  "malformed-context",
-  "missing-skill-id",
-  "no_framing_store",
-  "no_resolved_target",
   "offline-verify-internal",
-  "policy-delta-evaluation-error",
-  "policy-envelope-malformed",
   "post-rotation",
   "preexec_child_died",
-  "proof.envelope",
-  "proof.type",
   "propose_release",
-  "provisioned_required",
-  "r3-no-match",
-  "rail-instruction-chunk-masked",
-  "receipt-malformed",
-  "receipt-pair-refused",
   "recover_torn_tail",
-  "replay-refused",
-  "reverify-refused",
-  "run_limits",
-  "scan_policy",
-  "scan_policy_duplicates",
-  "scan_verdict_bad_severity_counts",
-  "scan_verdict_bad_timestamp",
-  "scan_verdict_bad_verifiers",
-  "scan_verdict_empty_window",
-  "scan_verdict_missing_fields",
-  "scan_verdict_unknown_fields",
-  "scan_verdict_window_too_long",
-  "sigstore-keyed-envelope",
   "spawn_failed",
-  "subject_claims",
-  "svr-refused",
   "tool-crashed",
   "tool-timed-out",
-  "tool_ratings",
-  "ttl_out_of_range",
-  "typed-context",
-  "unknown-manifest-category",
-  "unknown_approval",
-  "unknown_parent",
-  "unresolvable_mode",
-  "untrusted-render-error",
-  "verifier-malformed",
-  "verpol-uncheckable",
-  "wiring-malformed",
-  "witness-log-index-out-of-range"
+  "tool_ratings"
  ],
  "codes": [
   {
@@ -281,8 +188,10 @@
    "code": "absence-refused",
    "domain": "absence",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "absence-revoked",
@@ -1361,8 +1270,10 @@
    "code": "arap-error",
    "domain": "arap",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "arg_constraint_violated",
@@ -1490,8 +1401,10 @@
    "code": "assessment_malformed",
    "domain": "capability",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "assessment_report_digest_mismatch",
@@ -1950,15 +1863,19 @@
    "code": "axis-ceiling-hit",
    "domain": "axis",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "axis-indeterminate",
    "domain": "axis",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "axis-invalid",
@@ -1973,8 +1890,10 @@
    "code": "axis-unestablished",
    "domain": "axis",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "bad-artifacts",
@@ -2017,8 +1936,10 @@
    "code": "bad-files",
    "domain": "deploy",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "bad-format",
@@ -2037,8 +1958,10 @@
    "code": "bad-handoff",
    "domain": "deploy",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "bad-identity-policy",
@@ -2053,15 +1976,19 @@
    "code": "bad-issuer-key",
    "domain": "measurement",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "bad-measurements",
    "domain": "measurement",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "bad-namespace",
@@ -2077,22 +2004,28 @@
    "code": "bad-now",
    "domain": "deploy",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "bad-operator",
    "domain": "deploy",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "bad-operator-ceremony",
    "domain": "pack",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "bad-operators",
@@ -2107,15 +2040,19 @@
    "code": "bad-pack-class",
    "domain": "deploy",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "bad-pack-id",
    "domain": "pack",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "bad-pin",
@@ -2158,8 +2095,10 @@
    "code": "bad-rules",
    "domain": "pack",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "bad-ruleset",
@@ -2174,8 +2113,10 @@
    "code": "bad-seed",
    "domain": "measurement",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "bad-signature",
@@ -2212,8 +2153,10 @@
    "code": "bad-trust-record",
    "domain": "c2pa",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "bad-trust-signature",
@@ -2320,8 +2263,10 @@
    "code": "ballot-malformed-proposal",
    "domain": "ballot",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "ballot-not-member",
@@ -2354,8 +2299,10 @@
    "code": "ballot-unknown-ballot-type",
    "domain": "ballot",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "ballot-vote-hook-failed",
@@ -2387,8 +2334,10 @@
    "code": "battery-lang-bad-module",
    "domain": "battery",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "battery-lang-bad-probe",
@@ -2403,8 +2352,10 @@
    "code": "battery-lang-bad-probe-entry",
    "domain": "battery",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "battery-lang-expected-drift",
@@ -2422,22 +2373,27 @@
    "severity": "medium",
    "covered": true,
    "files": [
-    "evals/w280_batterylang_probes.py"
+    "evals/w280_batterylang_probes.py",
+    "evals/w343_covgap5_probes.py"
    ]
   },
   {
    "code": "battery-lang-no-probes",
    "domain": "battery",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "battery-lang-probe-missing",
    "domain": "battery",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "battery-lang-unannotated",
@@ -2806,8 +2762,10 @@
    "code": "bundle-inspection-malformed",
    "domain": "bundle",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "bundle-link-unverifiable",
@@ -3363,8 +3321,10 @@
    "code": "ceremony-malformed-proposal",
    "domain": "ceremony",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "ceremony-not-keyholder",
@@ -3454,8 +3414,10 @@
    "code": "ceremony-unknown-ceremony",
    "domain": "ceremony",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "ceremony-v2-already-consumed",
@@ -3894,8 +3856,10 @@
    "code": "checkpoint-refused",
    "domain": "checkpoints",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "checkpoint-root-malformed",
@@ -4274,8 +4238,10 @@
    "code": "config-malformed",
    "domain": "authorization_receipt",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "config-provenance-agent-asserted",
@@ -4333,8 +4299,10 @@
    "code": "consent_expired",
    "domain": "platform",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "consent_invalid",
@@ -4358,8 +4326,10 @@
    "code": "consent_required",
    "domain": "platform",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "consumption-idempotency-reused",
@@ -6274,8 +6244,10 @@
    "code": "digest-linkage-refused",
    "domain": "digest_link",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "digest-malformed",
@@ -6315,8 +6287,10 @@
    "code": "digest-role-missing",
    "domain": "authorization_receipt",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "digest_mismatch",
@@ -6499,8 +6473,10 @@
    "code": "display-attestation-error",
    "domain": "display",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "display-hash-mismatch",
@@ -6881,8 +6857,10 @@
    "code": "empty_reason",
    "domain": "approval",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "envelope-aad-mismatch",
@@ -6906,8 +6884,10 @@
    "code": "envelope-bad-sample",
    "domain": "envelope",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "envelope-custody-unavailable",
@@ -6989,8 +6969,10 @@
    "code": "envelope-sample-too-large",
    "domain": "envelope",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "envelope-seal-refused",
@@ -7019,8 +7001,10 @@
    "code": "envelope-too-many-samples",
    "domain": "envelope",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "envelope-unwrap-failed",
@@ -7105,22 +7089,28 @@
    "code": "evaltask-bad-dataset-id",
    "domain": "evidence",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "evaltask-bad-sample",
    "domain": "evidence",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "evaltask-bad-samples",
    "domain": "evidence",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "evaltask-bad-score",
@@ -7135,8 +7125,10 @@
    "code": "evaltask-bad-scoring-id",
    "domain": "evidence",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "evaltask-bad-scoring-refs",
@@ -7149,15 +7141,19 @@
    "code": "evaltask-bad-target",
    "domain": "evidence",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "evaltask-bad-task-id",
    "domain": "evidence",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "evaltask-dataset-changed",
@@ -7182,15 +7178,19 @@
    "code": "evaltask-duplicate-scoring-function",
    "domain": "evidence",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "evaltask-duplicate-task",
    "domain": "evidence",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "evaltask-grader-changed",
@@ -7221,15 +7221,19 @@
    "code": "evaltask-scoring-not-callable",
    "domain": "evidence",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "evaltask-scoring-source-unavailable",
    "domain": "evidence",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "evaltask-target-crashed",
@@ -7246,6 +7250,7 @@
    "severity": "medium",
    "covered": true,
    "files": [
+    "evals/w343_covgap5_probes.py",
     "tests/test_eval_tasks.py"
    ]
   },
@@ -7253,8 +7258,10 @@
    "code": "evaltask-unknown-scoring-function",
    "domain": "evidence",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "evaltask-unknown-task",
@@ -8277,8 +8284,10 @@
    "code": "faithfulness-error",
    "domain": "presentation",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "federation-attestation-malformed",
@@ -10395,8 +10404,10 @@
    "code": "invalid_target",
    "domain": "approval",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "inventory-catalog-card-malformed",
@@ -10597,8 +10608,10 @@
    "code": "issuer-malformed",
    "domain": "authorization_receipt",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "issuer-not-allowlisted",
@@ -10672,15 +10685,19 @@
    "code": "keep_evidence_types",
    "domain": "vc",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "keep_subject_fields",
    "domain": "vc",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "key-identity-malformed",
@@ -11098,8 +11115,10 @@
    "code": "malformed-context",
    "domain": "mcp",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "malformed-message",
@@ -12032,8 +12051,10 @@
    "code": "missing-skill-id",
    "domain": "capability",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "mission-binding-mismatch",
@@ -12142,15 +12163,19 @@
    "code": "no_framing_store",
    "domain": "deployment",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "no_resolved_target",
    "domain": "deployment",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "non_delegable_power",
@@ -13846,8 +13871,10 @@
    "code": "policy-delta-evaluation-error",
    "domain": "policy-delta",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "policy-delta-forbid",
@@ -13960,8 +13987,10 @@
    "code": "policy-envelope-malformed",
    "domain": "jail",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "policy-expired",
@@ -14389,15 +14418,19 @@
    "code": "proof.envelope",
    "domain": "vc",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "proof.type",
    "domain": "vc",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "propose_release",
@@ -14770,8 +14803,10 @@
    "code": "provisioned_required",
    "domain": "approval",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "provlabel-approval-required",
@@ -15388,8 +15423,10 @@
    "code": "r3-no-match",
    "domain": "r3",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "r3-per-call-binding-broken",
@@ -15485,8 +15522,10 @@
    "code": "rail-instruction-chunk-masked",
    "domain": "rail",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "rail-merge-contract-violated",
@@ -15600,8 +15639,10 @@
    "code": "receipt-malformed",
    "domain": "authorization_receipt",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "receipt-pair-decision-drift",
@@ -15658,8 +15699,10 @@
    "code": "receipt-pair-refused",
    "domain": "receipt_pair",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "receipt-pair-time-inversion",
@@ -16139,8 +16182,10 @@
    "code": "replay-refused",
    "domain": "policy_replay",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "replay-unverifiable-tool-digest",
@@ -16343,8 +16388,10 @@
    "code": "reverify-refused",
    "domain": "reverify",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "reverify-required",
@@ -16745,8 +16792,10 @@
    "code": "run_limits",
    "domain": "policy",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "sandbox-landlock-apply-failed",
@@ -16911,15 +16960,19 @@
    "code": "scan_policy",
    "domain": "scan",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "scan_policy_duplicates",
    "domain": "scan",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "scan_verdict_bad_bytes",
@@ -16970,15 +17023,19 @@
    "code": "scan_verdict_bad_severity_counts",
    "domain": "scan",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "scan_verdict_bad_timestamp",
    "domain": "scan",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "scan_verdict_bad_verdict",
@@ -16993,8 +17050,10 @@
    "code": "scan_verdict_bad_verifiers",
    "domain": "scan",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "scan_verdict_born_stale",
@@ -17009,8 +17068,10 @@
    "code": "scan_verdict_empty_window",
    "domain": "scan",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "scan_verdict_future_scan",
@@ -17043,8 +17104,10 @@
    "code": "scan_verdict_missing_fields",
    "domain": "scan",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "scan_verdict_negative",
@@ -17131,8 +17194,10 @@
    "code": "scan_verdict_unknown_fields",
    "domain": "scan",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "scan_verdict_unknown_scanner",
@@ -17147,8 +17212,10 @@
    "code": "scan_verdict_window_too_long",
    "domain": "scan",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "scan_verdicts_unpresented",
@@ -17933,8 +18000,10 @@
    "code": "sigstore-keyed-envelope",
    "domain": "evbundle",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "sigstore-keyed-hint-mismatch",
@@ -18549,8 +18618,10 @@
    "code": "subject_claims",
    "domain": "vc",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "supervision-capability-rights-exceeded",
@@ -19241,8 +19312,10 @@
    "code": "svr-refused",
    "domain": "svr",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "tainted_run",
@@ -20337,8 +20410,10 @@
    "code": "ttl_out_of_range",
    "domain": "approval",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "typed-action-malformed",
@@ -20373,8 +20448,10 @@
    "code": "typed-context",
    "domain": "context",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "unbound-grant-label",
@@ -20472,8 +20549,10 @@
    "code": "unknown-manifest-category",
    "domain": "capability",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "unknown_agent",
@@ -20488,8 +20567,10 @@
    "code": "unknown_approval",
    "domain": "approval",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "unknown_delegatee_agent",
@@ -20525,8 +20606,10 @@
    "code": "unknown_parent",
    "domain": "approval",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "unpin_version_not_monotonic",
@@ -20561,8 +20644,10 @@
    "code": "unresolvable_mode",
    "domain": "deployment",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "unsigned-field-ignored",
@@ -20635,8 +20720,10 @@
    "code": "untrusted-render-error",
    "domain": "render",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "untrusted-signer",
@@ -20707,8 +20794,10 @@
    "code": "verifier-malformed",
    "domain": "authorization_receipt",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "verify-artifactsfrom-empty",
@@ -20871,8 +20960,10 @@
    "code": "verpol-uncheckable",
    "domain": "verpol",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "vote_already_cast",
@@ -21057,8 +21148,10 @@
    "code": "wiring-malformed",
    "domain": "jail",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "wiring-unmapped-mount",
@@ -21298,8 +21391,10 @@
    "code": "witness-log-index-out-of-range",
    "domain": "witness",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w343_covgap5_probes.py"
+   ]
   },
   {
    "code": "witness-log-key-mismatch",
