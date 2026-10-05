@@ -514,6 +514,25 @@ ALLOWED_HMAC_SITES = {
     # hmac.compare_digest, out of scope per the module docstring.
     ("gov/transform_policy.py", "FileConsumeStore._line_digest", 0):
         "consume-ledger line MAC; key from _active_key() chokepoint, domain-separated",
+    # gov/capability_token.py (wave-333 lane 3): the context-bound
+    # capability-token outer seal. The key is gov.log._active_key()
+    # output (the wave-69 guarded chokepoint, same key as the action-log
+    # chain), passed explicitly into _seal(); the MAC is domain-separated
+    # (_MAC_DOMAIN = b"capability-token-v1:") with the key_epoch bound
+    # into the MAC input, so context seals can never be confused with log
+    # entries or approval tokens. Verification (hmac.compare_digest) is
+    # out of scope per the module docstring.
+    ("gov/capability_token.py", "_seal", 0):
+        "capability-token seal MAC; key from _active_key() chokepoint, domain-separated",
+    # gov/revocation_push.py (wave-333 lane 4): the revocation-event
+    # signature. The key is an explicit 32-byte deployment hmac_key
+    # (validated at RevocationHub construction; no default, unsigned
+    # events refused by default); the MAC is domain-separated
+    # (_SIG_DOMAIN) over the canonical event body, so event signatures
+    # can never be confused with log entries or tokens. Verification
+    # (hmac.compare_digest) is out of scope per the module docstring.
+    ("gov/revocation_push.py", "_sign_body", 0):
+        "revocation-event signature MAC; explicit 32-byte deployment key, domain-separated",
 }
 
 
