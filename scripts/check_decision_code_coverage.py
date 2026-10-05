@@ -110,8 +110,8 @@ def main(argv):
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     md = io.StringIO()
     md.write("# Decision-code coverage table (generated)\n\n")
-    md.write("Generated: %s UTC · registry pin: %d · base: wave-339 "
-             "lane 2\n\n" % (stamp, COVERAGE_PIN))
+    md.write("Generated: %s UTC · registry pin: %d · base: wave-340 "
+             "lane 2 (coverage round 2)\n\n" % (stamp, COVERAGE_PIN))
     md.write("Rule (Bernstein #5569, ADAPT): no row claims coverage "
              "without a test. A code counts as covered when its literal "
              "string appears quoted in at least one ``.py`` file under "

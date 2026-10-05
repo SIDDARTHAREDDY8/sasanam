@@ -1,7 +1,7 @@
 {
- "generated": "2026-10-05T10:41:49Z",
+ "generated": "2026-10-05T10:40:00Z",
  "pin": 2130,
- "covered": 1919,
+ "covered": 1949,
  "gaps": [
   "absence-refused",
   "admission-at-risk-accepted",
@@ -14,7 +14,6 @@
   "attest_absence",
   "axis-ceiling-hit",
   "axis-indeterminate",
-  "axis-invalid",
   "axis-unestablished",
   "bad-files",
   "bad-handoff",
@@ -29,7 +28,6 @@
   "bad-rules",
   "bad-seed",
   "bad-trust-record",
-  "bad_delegatee",
   "ballot-malformed-proposal",
   "ballot-unknown-ballot-type",
   "battery-lang-bad-metadata",
@@ -38,8 +36,6 @@
   "battery-lang-no-probes",
   "battery-lang-probe-missing",
   "bundle-inspection-malformed",
-  "callauthz-check-error",
-  "callauthz-not-configured",
   "canonical_link_body",
   "capsule-refused",
   "ceremony-malformed-proposal",
@@ -53,11 +49,9 @@
   "compute_candidate",
   "config-malformed",
   "consent_expired",
-  "consent_invalid",
   "consent_required",
   "consumption-journal-write-failed",
   "contradictory_declaration",
-  "delegation-decision-mismatch",
   "delegation-unknown-parent",
   "digest-linkage-refused",
   "digest-role-missing",
@@ -75,31 +69,24 @@
   "evaltask-bad-scoring-refs",
   "evaltask-bad-target",
   "evaltask-bad-task-id",
-  "evaltask-dataset-changed",
   "evaltask-duplicate-scoring-function",
   "evaltask-duplicate-task",
-  "evaltask-grader-changed",
   "evaltask-not-json",
   "evaltask-scoring-not-callable",
   "evaltask-scoring-source-unavailable",
-  "evaltask-target-crashed",
   "evaltask-unknown-scoring-function",
-  "evaltask-unverifiable",
   "evidence-bundle-payload-type-refused",
   "evidence-bundle-witness-key-unavailable",
   "evidence-refused",
   "faithfulness-error",
-  "grant-decision-mismatch",
   "grantneg-registry-withdrawn",
   "hop_token_refs",
   "hybrid-gate-refused",
   "identity_key_of",
   "input_closure_digest",
-  "integrity_violation",
   "invalid_target",
   "inventory-identity-collision",
   "issuer-malformed",
-  "jku-not-allowed",
   "keep_evidence_types",
   "keep_subject_fields",
   "key-identity-refused",
@@ -108,11 +95,8 @@
   "malformed-context",
   "malformed-message",
   "malformed-permit",
-  "malformed-signature-entry",
   "malformed_binding",
   "malformed_lease",
-  "mapping-drift",
-  "memory-composed-key-invalid",
   "missing-skill-id",
   "no_framing_store",
   "no_resolved_target",
@@ -131,18 +115,9 @@
   "proof.type",
   "propose_release",
   "provisioned_required",
-  "ptgrant-attenuation-invalid",
-  "ptgrant-cnf-missing",
   "ptgrant-grant-not-yet-valid",
-  "ptgrant-issuer-unknown",
-  "quorum-not-met",
-  "r3-grant-beyond-document",
-  "r3-grant-hash-mismatch",
   "r3-malformed",
   "r3-no-match",
-  "r3-per-call-binding-broken",
-  "r3-s256-mismatch",
-  "r3-unknown-operation",
   "r3-vocabulary-unknown",
   "rail-instruction-chunk-masked",
   "ratify-policy-unsatisfied",
@@ -151,9 +126,7 @@
   "recover_torn_tail",
   "replay-refused",
   "reverify-refused",
-  "revocation-category-error",
   "revocation-push-refused",
-  "revocation-state-unknown",
   "run_limits",
   "sandbox-refused",
   "scan_gate",
@@ -203,17 +176,14 @@
   "unknown-grant-id",
   "unknown-manifest-category",
   "unknown_approval",
-  "unknown_delegatee_agent",
   "unknown_parent",
   "unresolvable_mode",
   "untrusted-render-error",
   "verifier-malformed",
   "verpol-uncheckable",
-  "wall_proof_unreadable",
   "wiring-malformed",
   "witness-alert-state-lost",
-  "witness-log-index-out-of-range",
-  "wrong_run_identity"
+  "witness-log-index-out-of-range"
  ],
  "codes": [
   {
@@ -2047,8 +2017,10 @@
    "code": "axis-invalid",
    "domain": "axis",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "axis-unestablished",
@@ -2263,6 +2235,7 @@
    "covered": true,
    "files": [
     "evals/sign_deploy_namespace_probes.py",
+    "evals/w340_covgap2_probes.py",
     "tests/test_audit_detect.py",
     "tests/test_corpus_manifest.py",
     "tests/test_sign_deploy_namespaces.py"
@@ -2317,8 +2290,10 @@
    "code": "bad_delegatee",
    "domain": "approval",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "bad_key",
@@ -2995,8 +2970,10 @@
    "code": "callauthz-check-error",
    "domain": "callauthz",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "callauthz-denied",
@@ -3011,8 +2988,10 @@
    "code": "callauthz-not-configured",
    "domain": "callauthz",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "callback-approval-denied",
@@ -4401,8 +4380,10 @@
    "code": "consent_invalid",
    "domain": "platform",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "consent_key_required",
@@ -5563,8 +5544,10 @@
    "code": "delegation-decision-mismatch",
    "domain": "capability",
    "severity": "critical",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "delegation-depth-exceeded",
@@ -7197,8 +7180,10 @@
    "code": "evaltask-dataset-changed",
    "domain": "evidence",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "evaltask-duplicate-dataset",
@@ -7228,8 +7213,10 @@
    "code": "evaltask-grader-changed",
    "domain": "evidence",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "evaltask-grader-crashed",
@@ -7265,8 +7252,10 @@
    "code": "evaltask-target-crashed",
    "domain": "evidence",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "evaltask-unknown-dataset",
@@ -7297,8 +7286,10 @@
    "code": "evaltask-unverifiable",
    "domain": "evidence",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "evaluation-incomplete-details",
@@ -8804,8 +8795,10 @@
    "code": "grant-decision-mismatch",
    "domain": "capability",
    "severity": "critical",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "grant-malformed",
@@ -10394,8 +10387,10 @@
    "code": "integrity_violation",
    "domain": "sweep",
    "severity": "critical",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "invalid-signature",
@@ -10628,8 +10623,10 @@
    "code": "jku-not-allowed",
    "domain": "capability",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "jwks-issuer-unpinned",
@@ -11100,8 +11097,10 @@
    "code": "malformed-signature-entry",
    "domain": "signature",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "malformed-statement",
@@ -11267,8 +11266,10 @@
    "code": "mapping-drift",
    "domain": "mcp",
    "severity": "critical",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "max_hops_exceeded",
@@ -11756,8 +11757,10 @@
    "code": "memory-composed-key-invalid",
    "domain": "memory_composed",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "memory-composed-key-too-long",
@@ -14818,8 +14821,10 @@
    "code": "ptgrant-attenuation-invalid",
    "domain": "tool_grant",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "ptgrant-audience-mismatch",
@@ -14855,8 +14860,10 @@
    "code": "ptgrant-cnf-missing",
    "domain": "tool_grant",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "ptgrant-context-oversize",
@@ -14908,8 +14915,10 @@
    "code": "ptgrant-issuer-unknown",
    "domain": "tool_grant",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "ptgrant-jti-reused",
@@ -15223,8 +15232,10 @@
    "code": "quorum-not-met",
    "domain": "quorum",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "quorum-operation-mismatch",
@@ -15302,15 +15313,19 @@
    "code": "r3-grant-beyond-document",
    "domain": "r3",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "r3-grant-hash-mismatch",
    "domain": "r3",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "r3-malformed",
@@ -15330,22 +15345,28 @@
    "code": "r3-per-call-binding-broken",
    "domain": "r3",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "r3-s256-mismatch",
    "domain": "r3",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "r3-unknown-operation",
    "domain": "r3",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "r3-vocabulary-unknown",
@@ -16345,8 +16366,10 @@
    "code": "revocation-category-error",
    "domain": "axis",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "revocation-check-unsealed",
@@ -16509,8 +16532,10 @@
    "code": "revocation-state-unknown",
    "domain": "axis",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "revocation-status-unverifiable",
@@ -20367,8 +20392,10 @@
    "code": "unknown_delegatee_agent",
    "domain": "approval",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "unknown_grant",
@@ -20918,8 +20945,10 @@
    "code": "wall_proof_unreadable",
    "domain": "platform",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   },
   {
    "code": "wiring-malformed",
@@ -21865,8 +21894,10 @@
    "code": "wrong_run_identity",
    "domain": "approval",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w340_covgap2_probes.py"
+   ]
   }
  ]
 }
