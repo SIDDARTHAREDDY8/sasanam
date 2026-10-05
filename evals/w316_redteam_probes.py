@@ -574,9 +574,9 @@ def _footer():
 
 @probe("P5-footer-state")
 def _p5_footer():
-    """Footer: open F429 / next F430 (F428 filed 2026-10-05 wave-341 lane C)."""
+    """Footer: open F430, F431 / next F432 (F430/F431 filed wave-343)."""
     got = _footer()
-    if got != (430, "F429"):
+    if got != (432, "F430, F431"):
         return _break("P5-footer-state", "footer is %r" % (got,))
     return _held("P5-footer-state",
                  "open F430, F431 / next F432")
