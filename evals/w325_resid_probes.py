@@ -738,14 +738,14 @@ def _p19():
     _held("P19-pin-taxonomy-2058-sorted", "2058/2058/0 sorted; new codes ok")
 
 
-@probe("P20-footer-open-F416-next-F417")
+@probe("P20-footer-open-F412-next-F413")
 def _p20():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     src = open(path, encoding="utf-8").read()
     assert "Next free finding: **F417**" in src, "next-free footer"
-    assert "**Open findings: F416.**" in src, "open-F415 footer"
-    _held("P20-footer-open-F416-next-F417",
-          "footer: open F416 / next F417 (F416 filed by wave-330 lane 3; F414/F415 closed)")
+    assert "**Open findings: F415.**" in src, "open-F414 footer"
+    _held("P20-footer-open-F415-F416-next-F417",
+          "footer: open F415 / next F417 (F415/F416 filed by wave-330 lane 3; F414 closed)")
 
 
 # ---------------------------------------------------------------------------

@@ -210,6 +210,41 @@ def _malformed(detail):
     _refuse("evidence-bundle-malformed", detail)
 
 
+# int64-as-string fields (logIndex, integratedTime) arrive as
+# hostile-bundle strings. ``str.isdigit()`` is the wrong gate twice
+# over: it admits non-ASCII digits (e.g. "²") that ``int()`` rejects,
+# and it admits arbitrarily long runs -- a >4300-digit string passes
+# the gate and ``int()`` raises the digit-limit ``ValueError`` bare,
+# uncoded, escaping ``open_sigstore_bundle()`` (F416). Parse with an
+# ASCII-only, length-bounded check so the conversion is TOTAL: it can
+# only return an int or refuse coded ``evidence-bundle-malformed``;
+# a bare ``ValueError`` can never escape.
+_INT64_AS_STRING_MAX_CHARS = 20  # int64 max is 19 digits; 20 keeps headroom
+_INT64_MAX = (1 << 63) - 1
+
+
+def _parse_int64_as_string(value, field):
+    """Total parser for int64-as-string bundle fields (F416).
+
+    Refuses coded ``evidence-bundle-malformed`` on anything that is not
+    a short ASCII digit string: non-str, empty, non-ASCII digits, or a
+    digit run longer than ``_INT64_AS_STRING_MAX_CHARS`` (the
+    digit-limit DoS shape). Never raises bare ``ValueError``.
+    """
+    if not isinstance(value, str) or not value:
+        _malformed("%s must be a non-empty int64-as-string" % field)
+    if (len(value) > _INT64_AS_STRING_MAX_CHARS
+            or not all("0" <= ch <= "9" for ch in value)):
+        _malformed(
+            "%s must be a short ASCII int64-as-string (at most %d "
+            "digits), got %d chars" % (field, _INT64_AS_STRING_MAX_CHARS,
+                                       len(value)))
+    n = int(value)  # total here: bounded ASCII digits cannot fail int()
+    if n > _INT64_MAX:
+        _malformed("%s %d exceeds int64 range" % (field, n))
+    return n
+
+
 def _b64_decode(value, where):
     if not isinstance(value, str):
         _malformed("%s: must be a base64 str, got %s"
@@ -563,15 +598,16 @@ def _open_statement(native_envelope, expected_bundle_bytes, verifiers,
                                   code=code)
 
 
-def _check_log_inclusion(entry, leaf_bytes, log_index, witness_pub):
-    """Verify the entry's log-backed inclusionProof (when present).
+def _verify_witness_checkpoint(entry, witness_pub):
+    """Verify the entry's log-backed checkpoint signature (F416).
 
     Checkpoint-first: the checkpoint signature is verified against the
     pinned witness key BEFORE anything is parsed; tree_size/root_hash
     come ONLY from the verified checkpoint (sigstore-python#248 --
-    never from the proof envelope or the entry). Then the Merkle audit
-    path must recompute the checkpoint root for this leaf at
-    log_index. Refuses coded; returns the tree size.
+    never from the proof envelope or the entry). Called before
+    integratedTime/logIndex are converted, so a hostile bundle's
+    garbage index hits the witness refusal first when the checkpoint
+    is forged. Refuses coded; returns (tree_size, root_hash_hex).
     """
     ip = entry.get("inclusionProof")
     if not isinstance(ip, dict):
@@ -585,12 +621,22 @@ def _check_log_inclusion(entry, leaf_bytes, log_index, witness_pub):
         _refuse("evidence-bundle-witness-checkpoint-invalid",
                 "log checkpoint rejected: [%s] %s" % (exc.code,
                                                      exc.detail))
-    tree_size = cp["treeSize"]
-    root_hash = bytes.fromhex(cp["rootHash"])
+    return cp["treeSize"], cp["rootHash"]
+
+
+def _verify_witness_inclusion(entry, leaf_bytes, log_index, tree_size,
+                             root_hash_hex):
+    """Range-check log_index against the verified tree_size and verify
+    the Merkle audit path (F416). Called only after log_index has been
+    converted by the TOTAL bounded parser. Refuses coded; returns
+    (tree_size, root_hash_hex).
+    """
+    root_hash = bytes.fromhex(root_hash_hex)  # hex-validated by verify_checkpoint
     if not 0 <= log_index < tree_size:
         _refuse("evidence-bundle-witness-inclusion-invalid",
                 "logIndex %d outside checkpoint tree_size %d"
                 % (log_index, tree_size))
+    ip = entry.get("inclusionProof")
     try:
         _witness_log.verify_inclusion(leaf_bytes, log_index,
                                      ip.get("auditPath"), tree_size,
@@ -599,7 +645,7 @@ def _check_log_inclusion(entry, leaf_bytes, log_index, witness_pub):
         _refuse("evidence-bundle-witness-inclusion-invalid",
                 "inclusion proof rejected: [%s] %s" % (exc.code,
                                                       exc.detail))
-    return tree_size, cp["rootHash"]
+    return tree_size, root_hash_hex
 
 
 def _resolve_primary_key(native_envelope, payload_bytes, verifiers):
@@ -683,7 +729,15 @@ def _check_verification_material(vm, primary_pub):
 def _check_witness(entries, wire_signatures, payload_bytes, primary_pub,
                    witness_verifier, witness_validity):
     """Witness stage: exactly one entry of our kind, body bound to this
-    bundle's artifact/signature/key, SET verified, time window honored."""
+    bundle's artifact/signature/key, SET verified, time window honored.
+
+    Order (F416): the witness SET -- logId binding, body binding, SET
+    signature -- is verified BEFORE integratedTime/logIndex are
+    converted or trusted. A hostile bundle's garbage time/index fields
+    hit the witness refusal first; the conversions below are TOTAL
+    (bounded ASCII digit parse, coded evidence-bundle-malformed), so a
+    bare ValueError can never escape at any point.
+    """
     if not entries:
         _refuse("evidence-bundle-witness-missing",
                 "bundle carries no witness entry")
@@ -702,23 +756,6 @@ def _check_witness(entries, wire_signatures, payload_bytes, primary_pub,
         _refuse("evidence-bundle-witness-unsupported",
                 "witness kind %r is not %s/%s"
                 % (kind_version, WITNESS_KIND, WITNESS_KIND_VERSION))
-
-    log_index = entry.get("logIndex")
-    if not isinstance(log_index, str) or not log_index.isdigit():
-        _malformed("tlogEntries[0].logIndex must be an int64-as-string")
-
-    # Time check before crypto: a time we cannot trust fails closed
-    # without spending verification (CVE-2026-24122 analogue).
-    integrated = entry.get("integratedTime")
-    if not isinstance(integrated, str) or not integrated.isdigit():
-        _malformed("tlogEntries[0].integratedTime must be an "
-                   "int64-as-string unix time")
-    integrated_time = int(integrated)
-    not_before, not_after = witness_validity
-    if not (not_before <= integrated_time <= not_after):
-        _refuse("evidence-bundle-witness-expired",
-                "integratedTime %d outside pinned validity window "
-                "[%d, %d]" % (integrated_time, not_before, not_after))
 
     # The witness verifier must name its key: the logId binding needs
     # the raw public key (key-remote witness verifiers unsupported).
@@ -758,7 +795,10 @@ def _check_witness(entries, wire_signatures, payload_bytes, primary_pub,
                 "canonicalizedBody does not bind this bundle's "
                 "artifact digest + signatures + key")
 
-    # Crypto last: the SET covers the witnessed (now bound) bytes.
+    # Crypto: the SET covers the witnessed (now bound) bytes. Verified
+    # BEFORE integratedTime/logIndex are touched (F416): a hostile
+    # bundle's garbage time/index fields hit this refusal first, never
+    # the time/index conversion path.
     promise = entry.get("inclusionPromise")
     if not isinstance(promise, dict):
         _malformed("tlogEntries[0].inclusionPromise must be an object")
@@ -769,21 +809,55 @@ def _check_witness(entries, wire_signatures, payload_bytes, primary_pub,
         _refuse("evidence-bundle-witness-signature-invalid",
                 "witness SET does not verify against the pinned key")
 
+    # Log-backed path, checkpoint-first (F416(b)): the checkpoint
+    # signature is verified BEFORE logIndex/integratedTime are converted
+    # -- a hostile bundle's garbage index hits the witness refusal first
+    # when the checkpoint is forged. The Merkle range/path checks run
+    # after the TOTAL parse below, once log_index is a trusted int.
+    checkpoint = None
+    if entry.get("inclusionProof") is not None:
+        checkpoint = _verify_witness_checkpoint(entry, witness_pub)
+
+    # Only now are the time/index fields converted -- with a TOTAL
+    # bounded parser (F416): ASCII digits only, length-bounded before
+    # int(), coded evidence-bundle-malformed on anything else. The old
+    # isdigit()-then-int() shape admitted >4300-digit strings (bare
+    # digit-limit ValueError) and non-ASCII digits (F415 class).
+    log_index_raw = entry.get("logIndex")
+    log_index = _parse_int64_as_string(
+        log_index_raw, "tlogEntries[0].logIndex")
+    integrated_time = _parse_int64_as_string(
+        entry.get("integratedTime"),
+        "tlogEntries[0].integratedTime")
+
+    # The time window is checked against the pinned validity range only
+    # after the SET authenticated the entry (F416): the time is not
+    # trusted until the witness is. This deliberately moves the old
+    # pre-crypto window check (CVE-2026-24122 analogue) -- the SET must
+    # verify first so hostile garbage fields hit the witness refusal,
+    # not the time path. The bounded parse above still fails fast and
+    # coded on garbage, before any Merkle work below.
+    not_before, not_after = witness_validity
+    if not (not_before <= integrated_time <= not_after):
+        _refuse("evidence-bundle-witness-expired",
+                "integratedTime %d outside pinned validity window "
+                "[%d, %d]" % (integrated_time, not_before, not_after))
+
     witness_info = {
-        "log_index": log_index,
+        "log_index": log_index_raw,
         "integrated_time": integrated_time,
         "time_source": "sealer host clock (time.time) at seal",
         "validity_window": (not_before, not_after),
         "witness_key_id": hashlib.sha256(witness_pub).hexdigest()[:16],
     }
 
-    # Log-backed path: when the entry carries an inclusionProof, the
-    # checkpoint and Merkle proof are verified on top of the SET (the
-    # offline fallback has no proof and verifies exactly as before).
-    inclusion_proof = entry.get("inclusionProof")
-    if inclusion_proof is not None:
-        tree_size, root_hash = _check_log_inclusion(
-            entry, witnessed, int(log_index), witness_pub)
+    # Log-backed path: the Merkle range/path checks run on top of the
+    # already-verified checkpoint (signature verified above, before the
+    # parse) and the now-trusted log_index int. The offline fallback has
+    # no proof and verifies exactly as before.
+    if checkpoint is not None:
+        tree_size, root_hash = _verify_witness_inclusion(
+            entry, witnessed, log_index, checkpoint[0], checkpoint[1])
         witness_info["log_backed"] = True
         witness_info["tree_size"] = tree_size
         witness_info["root_hash"] = root_hash

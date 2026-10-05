@@ -543,6 +543,143 @@ class TestBreakProbes(unittest.TestCase):
                 _witness_verifier(_witness()))
 
 
+class TestF416TotalInt64Parsing(unittest.TestCase):
+    """Wave-331 lane 2 (F416): int64-as-string parsing is TOTAL.
+
+    _parse_int64_as_string accepts only short ASCII digit strings and
+    refuses coded evidence-bundle-malformed on everything else -- a
+    bare ValueError (digit-limit, non-ASCII digits) can never escape.
+    The witness SET is verified BEFORE integratedTime/logIndex are
+    touched, so a hostile bundle's garbage fields hit the witness
+    refusal first.
+    """
+
+    def test_parse_valid(self):
+        from gov import evidence_sigstore as es
+        self.assertEqual(es._parse_int64_as_string("0", "f"), 0)
+        self.assertEqual(es._parse_int64_as_string("42", "f"), 42)
+        self.assertEqual(
+            es._parse_int64_as_string(str(2 ** 63 - 1), "f"), 2 ** 63 - 1)
+
+    def test_parse_overlong_refuses_coded(self):
+        # F416: >4300-digit strings used to pass isdigit() and crash
+        # int() with a bare ValueError.
+        from gov import evidence_sigstore as es
+        with self.assertRaises(_dsse.EnvelopeError) as ctx:
+            es._parse_int64_as_string("9" * 5000, "f")
+        self.assertEqual(_reason(ctx.exception),
+                         "evidence-bundle-malformed")
+
+    def test_parse_non_ascii_digits_refuses_coded(self):
+        # F415 class: str.isdigit() admits "²" but int() rejects it.
+        from gov import evidence_sigstore as es
+        with self.assertRaises(_dsse.EnvelopeError) as ctx:
+            es._parse_int64_as_string("1²3", "f")
+        self.assertEqual(_reason(ctx.exception),
+                         "evidence-bundle-malformed")
+
+    def test_parse_wrong_type_and_empty_refuse_coded(self):
+        from gov import evidence_sigstore as es
+        for bad in (None, 123, "", b"42", " 42", "+42", "4_2"):
+            with self.assertRaises(_dsse.EnvelopeError,
+                                   msg="value %r" % (bad,)):
+                es._parse_int64_as_string(bad, "f")
+
+    def test_parse_beyond_int64_refuses_coded(self):
+        from gov import evidence_sigstore as es
+        with self.assertRaises(_dsse.EnvelopeError) as ctx:
+            es._parse_int64_as_string(str(2 ** 63), "f")
+        self.assertEqual(_reason(ctx.exception),
+                         "evidence-bundle-malformed")
+
+    def test_end_to_end_overlong_integratedtime_refuses_coded(self):
+        # P1a at unit level: sealed-valid bundle, hostile integratedTime.
+        bundle = _sealed_bundle()
+        bundle["verificationMaterial"]["tlogEntries"][0][
+            "integratedTime"] = "9" * 5000
+        with self.assertRaises(_dsse.EnvelopeError) as ctx:
+            _open(bundle)
+        self.assertEqual(_reason(ctx.exception),
+                         "evidence-bundle-malformed")
+
+    def test_end_to_end_overlong_logindex_refuses_coded(self):
+        # P1b at unit level: log-backed bundle, hostile logIndex.
+        from gov import evidence_sigstore, witness_log
+        signers = _signers(1)
+        witness = _witness()
+        stmt = evidence_intoto.build_statement(BUNDLE, CLAIMS)
+        env = evidence_intoto.seal_statement(stmt, signers)
+        wlog = witness_log.WitnessLog(witness.public_key)
+        bundle = evidence_sigstore.seal_sigstore_bundle(
+            env, signers, witness, witness_log=wlog,
+            integrated_time=T0)
+        bundle["verificationMaterial"]["tlogEntries"][0][
+            "logIndex"] = "9" * 5000
+        with self.assertRaises(_dsse.EnvelopeError) as ctx:
+            _open(bundle, signers=signers, witness=witness)
+        self.assertEqual(_reason(ctx.exception),
+                         "evidence-bundle-malformed")
+
+    def test_witness_refusal_precedes_time_parse(self):
+        # F416(b): a bundle that is hostile in BOTH dimensions (garbage
+        # integratedTime AND a forged SET) must hit the witness refusal
+        # first -- the time/index fields are not trusted until the SET
+        # verifies.
+        bundle = _sealed_bundle()
+        entry = bundle["verificationMaterial"]["tlogEntries"][0]
+        entry["integratedTime"] = "9" * 5000
+        raw = bytearray(base64.b64decode(
+            entry["inclusionPromise"]["signedEntryTimestamp"]))
+        raw[0] ^= 0x01
+        entry["inclusionPromise"]["signedEntryTimestamp"] = (
+            base64.b64encode(bytes(raw)).decode("ascii"))
+        with self.assertRaises(_dsse.EnvelopeError) as ctx:
+            _open(bundle)
+        self.assertEqual(_reason(ctx.exception),
+                         "evidence-bundle-witness-signature-invalid")
+
+    def test_checkpoint_refusal_precedes_index_parse(self):
+        # F416(b): garbage logIndex + forged checkpoint -> the witness
+        # checkpoint refusal comes first, never the index conversion.
+        from gov import evidence_sigstore, witness_log
+        signers = _signers(1)
+        witness = _witness()
+        stmt = evidence_intoto.build_statement(BUNDLE, CLAIMS)
+        env = evidence_intoto.seal_statement(stmt, signers)
+        wlog = witness_log.WitnessLog(witness.public_key)
+        bundle = evidence_sigstore.seal_sigstore_bundle(
+            env, signers, witness, witness_log=wlog,
+            integrated_time=T0)
+        entry = bundle["verificationMaterial"]["tlogEntries"][0]
+        entry["logIndex"] = "9" * 5000
+        raw = bytearray(base64.b64decode(
+            entry["inclusionProof"]["checkpointSignature"]))
+        raw[0] ^= 0x01
+        entry["inclusionProof"]["checkpointSignature"] = (
+            base64.b64encode(bytes(raw)).decode("ascii"))
+        with self.assertRaises(_dsse.EnvelopeError) as ctx:
+            _open(bundle, signers=signers, witness=witness)
+        self.assertEqual(_reason(ctx.exception),
+                         "evidence-bundle-witness-checkpoint-invalid")
+
+    def test_never_bare_valueerror(self):
+        # The totality property: no input drawn from the hostile shapes
+        # may escape as a bare ValueError.
+        from gov import evidence_sigstore as es
+        hostile = ["9" * 5000, "1²3", "１２３", "", " ", "\t42",
+                   str(2 ** 63), "-" + "9" * 19, None, 3.5, ["4"]]
+        for h in hostile:
+            try:
+                es._parse_int64_as_string(h, "f")
+            except _dsse.EnvelopeError:
+                pass  # coded refusal: the only acceptable failure
+            except ValueError as exc:
+                # A bare ValueError must never escape; EnvelopeError IS
+                # a ValueError subclass, so exclude the coded path.
+                if not isinstance(exc, _dsse.EnvelopeError):
+                    self.fail("bare ValueError escaped for %r" % (h,))
+
+
 class TestThirdPartyAcceptance(unittest.TestCase):
     """The acceptance test for "sell evidence, not the engine".
 

@@ -1,7 +1,7 @@
 """Wave-330 independent red-team battery.
 
-Base: 8c4f6139 (wave-329 merge). Footer: open F416 / next F417
-(F413/F414/F415 CLOSED; F416 filed by wave-330 lane 3, LOW, OPEN). Pin: 2058.
+Base: 8c4f6139 (wave-329 merge). Footer: open F415 / next F417
+(F413/F414 CLOSED; F415/F416 filed by wave-330 lane 3, LOW, OPEN). Pin: 2058.
 
 P1  wave-329 seams not yet broken: evidence_sigstore post-audit
     (form-(1) hint games, primary-key resolution, unknown-field
@@ -39,7 +39,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2058  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).; Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*)
-FOOTER_OPEN = "F416"  # F409-F415 CLOSED; F416 (LOW, uncoded int() crash) OPEN (wave-330 lane 3).
+FOOTER_OPEN = "F415"  # F409-F414, F416 CLOSED; F415 (LOW, uncoded int() crash) OPEN (wave-331 lane 2).
 FOOTER_NEXT = "F417"  # Next free finding number.
 
 _results = []
@@ -99,7 +99,12 @@ def _uncoded_crash(pid, fn, note):
     try:
         fn()
     except (EnvelopeError, PolicyChannelError) as exc:
-        return _held(pid, "%s: refused coded %s" % (note, exc.code))
+        # F416 closure: EnvelopeError carries the machine code as
+        # ``reason`` (wave-232), PolicyChannelError as ``code`` -- accept
+        # either, so a coded refusal on the closed tree records HELD
+        # instead of erroring in the probe itself.
+        code = getattr(exc, "code", None) or getattr(exc, "reason", "?")
+        return _held(pid, "%s: refused coded %s" % (note, code))
     except ValueError as exc:
         return _break(pid, "%s: UNCODED %s escapes: %s"
                       % (note, type(exc).__name__, str(exc)[:120]))
@@ -218,13 +223,20 @@ def _open(bundle, signers=None, witness=None, threshold=1,
 def _p1a():
     """F416: integratedTime digit-limit -> uncoded ValueError.
 
-    _check_witness gates on str.isdigit() then calls int() directly.
-    A 5000-digit integratedTime passes the gate; int() raises the
-    4300-digit-limit ValueError -- bare, uncoded. The time check runs
-    BEFORE the witness SET is verified, so any bundle presenter (the
-    whole point of the offline verifier) triggers it: a loud DoS of
+    _check_witness gated on str.isdigit() then called int() directly.
+    A 5000-digit integratedTime passed the gate; int() raised the
+    4300-digit-limit ValueError -- bare, uncoded. The time check ran
+    BEFORE the witness SET was verified, so any bundle presenter (the
+    whole point of the offline verifier) triggered it: a loud DoS of
     the verify path that violates the coded-refusal discipline
     (F412-class: refusals must be coded, never bare).
+
+    CLOSED 2026-10-04 wave-331 lane 2: the witness SET (logId binding,
+    body binding, SET signature) is verified BEFORE integratedTime is
+    touched, and the conversion is TOTAL -- _parse_int64_as_string
+    (ASCII digits only, length-bounded before int()) refusing coded
+    evidence-bundle-malformed. This probe now asserts the coded
+    refusal (HELD).
     """
     bundle = _sealed_bundle()
     bundle["verificationMaterial"]["tlogEntries"][0][
@@ -240,10 +252,15 @@ def _p1b():
     """F416 (second manifestation): logIndex digit-limit, post-SET.
 
     Same isdigit()->int() class at the inclusionProof branch: the
-    logIndex gate passes a 5000-digit string and int() raises bare.
+    logIndex gate passed a 5000-digit string and int() raised bare.
     Demonstrated with a fully valid bundle (real WitnessLog, valid
     checkpoint, valid re-checked SET): the crash needs no forgery,
     only an over-long logIndex.
+
+    CLOSED 2026-10-04 wave-331 lane 2: logIndex goes through the same
+    TOTAL _parse_int64_as_string (coded evidence-bundle-malformed on
+    over-long/non-ASCII input), parsed only after the SET verifies.
+    This probe now asserts the coded refusal (HELD).
     """
     from gov import witness_log as wl
     signers = _signers(1)
@@ -355,13 +372,13 @@ def _p1f():
 
 @probe("P1g-policy-channel-unicode-version-uncoded")
 def _p1g():
-    """F415 (CLOSED 2026-10-04 wave-331 lane 1): _feed_files gated on
-    str.isdigit() then int()d directly, so Unicode digits like U+00B2
-    SUPERSCRIPT TWO passed isdigit() but int() rejected them -- a bare
-    ValueError escaped poll(), which only catches PolicyChannelError.
-    The fix ASCII-digit-gates the fragment: pol.v².json now refuses
-    coded policy-channel-malformed (HELD here). Any uncoded escape is
-    still a BREAK.
+    """F415: _feed_files gates on str.isdigit() then int()s directly.
+
+    Unicode digits like U+00B2 SUPERSCRIPT TWO pass isdigit() but
+    int() rejects them -- a bare ValueError escapes poll(), which only
+    catches PolicyChannelError. Any feed-dir writer (no signing key
+    needed) can crash every poll: loud, fail-closed, but UNCODED --
+    the F412-class discipline violation.
     """
     fx = _pfresh()
     _pwrite(fx["feed"], _pdoc(fx["seed"], 1), "pol.v1.json")
@@ -579,22 +596,22 @@ def _p5a():
                  "2058/2058/0 sorted unique on raw source literals")
 
 
-@probe("P5b-footer-open-f416-next-f417")
+@probe("P5b-footer-open-f415-next-f417")
 def _p5b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return _break("P5b-footer-open-f416-next-f417",
+        return _break("P5b-footer-open-f415-next-f417",
                       "footer line not found")
     next_free, open_now = ms[-1]  # the LAST footer is the live one
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return _break("P5b-footer-open-f416-next-f417",
+        return _break("P5b-footer-open-f415-next-f417",
                       "footer open %s / next %s, want open %s / next %s"
                       % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return _held("P5b-footer-open-f416-next-f417",
-                 "footer open F416 / next F417")
+    return _held("P5b-footer-open-f415-next-f417",
+                 "footer open F415 / next F417")
 
 
 # ---------------------------------------------------------------------------
@@ -622,11 +639,9 @@ def _run_child_output(battery, timeout=600):
 
 # Battery -> set of BREAK probe IDs that are NOT regressions on this
 # tree. Post wave-330 merge sweep: every child battery's footer-state
-# probes were re-pinned to the merged footer (open F415, F416 / next
+# probes were re-pinned to the merged footer (open F415 / next
 # F417) and F414's closure probe flips to HELD, so all cascade sets are
-# EMPTY. F415 CLOSED 2026-10-04 wave-331 lane 1: child footer-state
-# probes re-pinned to open F416 / next F417 (P1g flips to HELD).
-# Any child BREAK below is a genuine regression. (wave-305 class.)
+# EMPTY. Any child BREAK below is a genuine regression. (wave-305 class.)
 _CHILD_CASCADE = {
     "w329_redteam_probes.py": set(),
     "w329_sigb_probes.py": set(),
@@ -697,11 +712,11 @@ def _p6a():
 # ---------------------------------------------------------------------------
 
 _EXPECTED_BREAKS = {
-    # F415 CLOSED 2026-10-04 wave-331 lane 1: P1g re-probe is HELD.
-    # F416 (this lane): evidence_sigstore time/logIndex digit-limit
-    # uncoded crashes.
-    "P1a-evidence-sigstore-integratedtime-digitlimit-uncoded",
-    "P1b-evidence-sigstore-logindex-digitlimit-uncoded",
+    # F415 (wave-330 lane 3): isdigit()->int() admits unicode digits int()
+    # rejects -> uncoded ValueError out of poll(). Still OPEN.
+    "P1g-policy-channel-unicode-version-uncoded",
+    # F416 CLOSED 2026-10-04 wave-331 lane 2: P1a/P1b now assert the
+    # coded evidence-bundle-malformed refusal (HELD).
     # F414 CLOSED 2026-10-04 wave-330 lane 1: P2 re-probe is HELD.
 }
 
@@ -757,7 +772,7 @@ def main(argv):
                     if v == "BREAK" and pid.startswith("P")}
     mismatch = probe_breaks ^ _EXPECTED_BREAKS
     print("w330_redteam battery: %d BREAK / %d HELD / %d ERROR "
-          "(2 BREAKs expected: P1a/P1b/F416; F414/F415 closed)"
+          "(1 BREAK expected: P1g/F415; F414/F416 closed)"
           % (breaks, len(_results) - breaks - errors, errors))
     if mismatch:
         print("BREAK-SET MISMATCH: %r" % (sorted(mismatch),))
