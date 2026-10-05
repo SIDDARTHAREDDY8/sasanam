@@ -1,7 +1,7 @@
 {
- "generated": "2026-10-05T09:46:26Z",
- "pin": 2128,
- "covered": 1887,
+ "generated": "2026-10-05T09:35:31Z",
+ "pin": 2126,
+ "covered": 1915,
  "gaps": [
   "absence-refused",
   "admission-at-risk-accepted",
@@ -57,12 +57,6 @@
   "consent_required",
   "consumption-journal-write-failed",
   "contradictory_declaration",
-  "corroboration-key-inequality",
-  "corroboration-malformed",
-  "corroboration-signature-invalid",
-  "corroboration-unattested",
-  "corroboration-uncorroborated",
-  "corroboration-untrusted-source",
   "delegation-decision-mismatch",
   "delegation-unknown-parent",
   "digest-linkage-refused",
@@ -118,21 +112,6 @@
   "malformed_binding",
   "malformed_lease",
   "mapping-drift",
-  "mcp-oauth-cimd-binding-mismatch",
-  "mcp-oauth-cimd-credential-present",
-  "mcp-oauth-cimd-document-malformed",
-  "mcp-oauth-cimd-fetch-non200",
-  "mcp-oauth-cimd-fetch-redirect",
-  "mcp-oauth-cimd-fetch-ssrf-range",
-  "mcp-oauth-cimd-fetch-timeout",
-  "mcp-oauth-cimd-fetch-too-large",
-  "mcp-oauth-cimd-redirect-origin-mismatch",
-  "mcp-oauth-cimd-url-dot-segment",
-  "mcp-oauth-cimd-url-fragment",
-  "mcp-oauth-cimd-url-not-https",
-  "mcp-oauth-cimd-url-query",
-  "mcp-oauth-cimd-url-root-path",
-  "mcp-oauth-cimd-url-userinfo",
   "memory-composed-key-invalid",
   "missing-skill-id",
   "no_framing_store",
@@ -182,7 +161,6 @@
   "scan_policy_duplicates",
   "scan_verdict_bad_bytes",
   "scan_verdict_bad_digest",
-  "scan_verdict_bad_json",
   "scan_verdict_bad_scanner_version",
   "scan_verdict_bad_severity_counts",
   "scan_verdict_bad_timestamp",
@@ -190,19 +168,11 @@
   "scan_verdict_bad_verifiers",
   "scan_verdict_born_stale",
   "scan_verdict_empty_window",
-  "scan_verdict_future_scan",
-  "scan_verdict_malformed_envelope",
   "scan_verdict_missing",
   "scan_verdict_missing_fields",
   "scan_verdict_negative",
   "scan_verdict_no_signer",
   "scan_verdict_no_verifiers",
-  "scan_verdict_not_canonical",
-  "scan_verdict_payload_type",
-  "scan_verdict_scanner_mismatch",
-  "scan_verdict_signature_invalid",
-  "scan_verdict_stale",
-  "scan_verdict_target_mismatch",
   "scan_verdict_unknown_fields",
   "scan_verdict_unknown_scanner",
   "scan_verdict_window_too_long",
@@ -4929,43 +4899,55 @@
    "code": "corroboration-key-inequality",
    "domain": "corroboration",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "corroboration-malformed",
    "domain": "corroboration",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "corroboration-signature-invalid",
    "domain": "corroboration",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "corroboration-unattested",
    "domain": "corroboration",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "corroboration-uncorroborated",
    "domain": "corroboration",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "corroboration-untrusted-source",
    "domain": "corroboration",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "coverage-logbook-chain-broken",
@@ -11314,106 +11296,136 @@
    "code": "mcp-oauth-cimd-binding-mismatch",
    "domain": "mcp-oauth",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "mcp-oauth-cimd-credential-present",
    "domain": "mcp-oauth",
    "severity": "critical",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "mcp-oauth-cimd-document-malformed",
    "domain": "mcp-oauth",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "mcp-oauth-cimd-fetch-non200",
    "domain": "mcp-oauth",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "mcp-oauth-cimd-fetch-redirect",
    "domain": "mcp-oauth",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "mcp-oauth-cimd-fetch-ssrf-range",
    "domain": "mcp-oauth",
    "severity": "critical",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "mcp-oauth-cimd-fetch-timeout",
    "domain": "mcp-oauth",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "mcp-oauth-cimd-fetch-too-large",
    "domain": "mcp-oauth",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "mcp-oauth-cimd-redirect-origin-mismatch",
    "domain": "mcp-oauth",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "mcp-oauth-cimd-url-dot-segment",
    "domain": "mcp-oauth",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "mcp-oauth-cimd-url-fragment",
    "domain": "mcp-oauth",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "mcp-oauth-cimd-url-not-https",
    "domain": "mcp-oauth",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "mcp-oauth-cimd-url-query",
    "domain": "mcp-oauth",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "mcp-oauth-cimd-url-root-path",
    "domain": "mcp-oauth",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "mcp-oauth-cimd-url-userinfo",
    "domain": "mcp-oauth",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "mcp-oauth-credential-misbound",
@@ -16820,8 +16832,10 @@
    "code": "scan_verdict_bad_json",
    "domain": "scan",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "scan_verdict_bad_scanner_name",
@@ -16885,15 +16899,19 @@
    "code": "scan_verdict_future_scan",
    "domain": "scan",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "scan_verdict_malformed_envelope",
    "domain": "scan",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "scan_verdict_missing",
@@ -16934,43 +16952,55 @@
    "code": "scan_verdict_not_canonical",
    "domain": "scan",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "scan_verdict_payload_type",
    "domain": "scan",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "scan_verdict_scanner_mismatch",
    "domain": "scan",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "scan_verdict_signature_invalid",
    "domain": "scan",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "scan_verdict_stale",
    "domain": "scan",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "scan_verdict_target_mismatch",
    "domain": "scan",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w339_covgap1_probes.py"
+   ]
   },
   {
    "code": "scan_verdict_unknown_fields",
@@ -21022,18 +21052,7 @@
     "evals/w322_witpub_probes.py",
     "evals/w323_redteam_probes.py",
     "evals/w324_redteam_probes.py",
-    "evals/w339_witness_probes.py",
     "tests/test_witness_publish.py"
-   ]
-  },
-  {
-   "code": "witness-daemon-state-failed",
-   "domain": "witness",
-   "severity": "high",
-   "covered": true,
-   "files": [
-    "evals/w339_witness_probes.py",
-    "tests/test_witness_daemon.py"
    ]
   },
   {
@@ -21199,18 +21218,7 @@
    "files": [
     "evals/w322_witpub_probes.py",
     "evals/w323_redteam_probes.py",
-    "tests/test_witness_daemon.py",
     "tests/test_witness_publish.py"
-   ]
-  },
-  {
-   "code": "witness-policy-dual-threshold-unmet",
-   "domain": "witness",
-   "severity": "high",
-   "covered": true,
-   "files": [
-    "evals/w339_witness_probes.py",
-    "tests/test_witness_daemon.py"
    ]
   },
   {
@@ -21274,7 +21282,6 @@
    "files": [
     "evals/w322_witpol_probes.py",
     "evals/w323_redteam_probes.py",
-    "tests/test_witness_daemon.py",
     "tests/test_witness_policy.py"
    ]
   },
@@ -21332,8 +21339,6 @@
    "files": [
     "evals/w322_witpub_probes.py",
     "evals/w323_redteam_probes.py",
-    "evals/w339_witness_probes.py",
-    "tests/test_witness_daemon.py",
     "tests/test_witness_publish.py"
    ]
   },
