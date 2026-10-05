@@ -688,24 +688,23 @@ def P2k():
 # ---------------------------------------------------------------------------
 
 def P3a():
-    """F417 (OPEN, LOW, wave-333 lane 5): a non-numeric URL port still
-    escapes _normalize_url as a BARE ValueError. HELD = the finding is
-    still open exactly as documented. BREAK = it now refuses coded
-    (closed without filing) or behaves differently."""
-    pid = "P3a-f417-open-bare-port"
+    """F417 (CLOSED 2026-10-05, wave-334 lane 1): a non-numeric URL port
+    is now guarded in _normalize_url and codes
+    mcp-oauth-metadata-malformed. HELD = the coded refusal holds.
+    BREAK = bare ValueError regresses or a different code."""
+    pid = "P3a-f417-closed-coded"
     sealed = mob.seal_as_binding("https://as.example.com", "w334-client",
                                  _MKEY)
     try:
         mob.validate_authorization_response(
             sealed, {"iss": "https://as.example.com:badport"}, _MKEY)
-    except ValueError as e:
-        if "Port could not be cast" in str(e):
-            _held(pid, "F417 still OPEN: bare ValueError as documented")
-        else:
-            _break(pid, "ValueError but unexpected message: %r" % (e,))
     except mob.McpOAuthError as e:
-        _break(pid, "now refuses coded %s: F417 closed without filing?"
-               % (e.code,))
+        if e.code == "mcp-oauth-metadata-malformed":
+            _held(pid, "F417 CLOSED: coded mcp-oauth-metadata-malformed")
+        else:
+            _break(pid, "wrong code: %r" % (e.code,))
+    except ValueError as e:
+        _break(pid, "bare ValueError regressed: %r" % (e,))
     except Exception as e:  # noqa: BLE001
         _break(pid, "unexpected exception type: %r" % (e,))
     else:
@@ -815,7 +814,7 @@ _PROBES = [
     ("P2i-future-issued-at", P2i),
     ("P2j-unknown-session-refused", P2j),
     ("P2k-reregistration-refused", P2k),
-    ("P3a-f417-open-bare-port", P3a),
+    ("P3a-f417-closed-coded", P3a),
     ("P4a-f418-closure-holds", P4a),
     ("P5a-pin-taxonomy-2100-sorted", P5a),
     ("P5b-new-codes-registered", P5b),

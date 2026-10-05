@@ -591,29 +591,29 @@ def _p6a():
                  "2100/2100/0 sorted unique on raw source literals")
 
 
-@probe("P6b-footer-open-none-next-f419")
+@probe("P6b-footer-open-none-next-f421")
 def _p6b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     # Raw-literal assertions (wave-331 lesson): the footer must read
     # correctly as literal text, not only via constants.
-    if "Next free finding: **F419**." not in text:
-        return _break("P6b-footer-open-none-next-f419",
-                      "raw literal 'Next free finding: **F419**.' absent")
+    if "Next free finding: **F421**." not in text:
+        return _break("P6b-footer-open-none-next-f421",
+                      "raw literal 'Next free finding: **F421**.' absent")
     if "**Open findings: none.**" not in text:
-        return _break("P6b-footer-open-none-next-f419",
+        return _break("P6b-footer-open-none-next-f421",
                       "raw literal '**Open findings: none.**' absent")
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return _break("P6b-footer-open-none-next-f419",
+        return _break("P6b-footer-open-none-next-f421",
                       "footer line not found")
     next_free, open_now = ms[-1]  # the LAST footer is the live one
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return _break("P6b-footer-open-none-next-f419",
+        return _break("P6b-footer-open-none-next-f421",
                       "footer open %s / next %s, want open %s / next %s"
                       % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return _held("P6b-footer-open-none-next-f419",
+    return _held("P6b-footer-open-none-next-f421",
                  "footer open none / next F419 (raw literals + parse)")
 
 

@@ -418,8 +418,10 @@ def _p6a():
 @probe("P7a-prm-badport-coded")
 def _p7a():
     pid = "P7a-prm-badport-coded"
-    # A non-numeric port in a PRM-controlled URL must refuse coded
-    # here (F417 itself, OPEN against _normalize_url, is not closed).
+    # A non-numeric port in a PRM-controlled URL must refuse coded.
+    # F417 CLOSED 2026-10-05 (wave-334 lane 1): _normalize_url guards
+    # parts.port and codes mcp-oauth-metadata-malformed, which is the
+    # correct coded refusal here (more specific than prm-malformed).
     for fn, args in [
         (prm.verify_prm_document,
          (_sealed(), _RES,
@@ -431,8 +433,8 @@ def _p7a():
         try:
             fn(*args)
         except mob.McpOAuthError as exc:
-            if exc.code != "mcp-oauth-prm-malformed":
-                return _break(pid, "%s: want prm-malformed got %s"
+            if exc.code != "mcp-oauth-metadata-malformed":
+                return _break(pid, "%s: want mcp-oauth-metadata-malformed got %s"
                               % (fn.__name__, exc.code))
         except ValueError:
             return _break(pid, "%s: bare ValueError escaped"
