@@ -30,6 +30,18 @@ except supplychain.SupplyChainError as e:
 print("supply-chain audit OK: %d distributions checked against "
       "requirements.lock" % _audit["checked"])
 
+# Wave-339 (R19): DNS hermeticity guard (Bernstein #6010 shape). Installed
+# after the F75 preflight and before test discovery so every test module
+# runs under it: socket.getaddrinfo/getnameinfo/gethostbyname/
+# gethostbyname_ex raise DNSBlockedError unless the call originates from
+# one of the network-machinery test modules in
+# tests/no_network.py EXEMPT_FILES. Tests needing a local server must use
+# the literal 127.0.0.1, never the 'localhost' hostname.
+from tests import no_network as _no_network
+_patched = _no_network.install()
+print("DNS hermeticity guard installed: blocking %s (exemptions: %s)"
+      % (", ".join(_patched), ", ".join(sorted(_no_network.EXEMPT_FILES))))
+
 # Wave-24 run-dir hygiene: the suite creates thousands of temp run dirs
 # (tests/harness.make_run "govred-*" at 344+ call sites, plus direct
 # tempfile.mkdtemp scratch in ~28 test modules). Wave-23 showed these

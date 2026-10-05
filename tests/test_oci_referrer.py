@@ -337,6 +337,48 @@ class OciReferrerTests(unittest.TestCase):
                 OR.verify_referrer_binding(bad, _digest(b"s"))
             self.assertEqual(ctx.exception.code, "oci-referrers-malformed")
 
+    def test_missing_artifacttype_is_nonmatch_not_error(self):
+        # Wave-339 (R25) pin: cosign v3.1.2 fixed missing `artifactType`
+        # in referrer manifests; older artifacts may lack it. Discovery
+        # treats a referrer entry with a missing (or wrong) artifactType
+        # as a NON-MATCH -- silently skipped -- never as a match and
+        # never as an error. Pinning this so a future "improvement" that
+        # matches typeless entries cannot silently adopt foreign
+        # artifacts as evidence bundles.
+        subject = _digest(b"s5")
+        doc = {"schemaVersion": 2, "mediaType": OR.OCI_INDEX_MEDIA_TYPE,
+               "referrers": [
+                   {"mediaType": OR.OCI_MANIFEST_MEDIA_TYPE,
+                    "digest": _digest(b"no-artifact-type"),
+                    "size": 5,
+                    "subject": {"mediaType": OR.OCI_MANIFEST_MEDIA_TYPE,
+                                "digest": subject}},
+                   {"mediaType": OR.OCI_MANIFEST_MEDIA_TYPE,
+                    "digest": _digest(b"wrong-artifact-type"),
+                    "size": 5,
+                    "artifactType": "application/vnd.example.other+json",
+                    "subject": {"mediaType": OR.OCI_MANIFEST_MEDIA_TYPE,
+                                "digest": subject}},
+                   {"mediaType": OR.OCI_MANIFEST_MEDIA_TYPE,
+                    "digest": _digest(b"right-artifact-type"),
+                    "size": 5,
+                    "artifactType": OR.BUNDLE_ARTIFACT_TYPE,
+                    "subject": {"mediaType": OR.OCI_MANIFEST_MEDIA_TYPE,
+                                "digest": subject}}]}
+        selected = OR.verify_referrer_binding(doc, subject)
+        self.assertEqual([e["digest"] for e in selected],
+                         [_digest(b"right-artifact-type")])
+        # All-typeless index: no match, no error, no refusal -- "no
+        # bundles attached" is a legitimate answer.
+        doc2 = {"schemaVersion": 2, "mediaType": OR.OCI_INDEX_MEDIA_TYPE,
+                "referrers": [
+                    {"mediaType": OR.OCI_MANIFEST_MEDIA_TYPE,
+                     "digest": _digest(b"typeless"),
+                     "size": 5,
+                     "subject": {"mediaType": OR.OCI_MANIFEST_MEDIA_TYPE,
+                                 "digest": subject}}]}
+        self.assertEqual(OR.verify_referrer_binding(doc2, subject), [])
+
 
 if __name__ == "__main__":
     unittest.main()
