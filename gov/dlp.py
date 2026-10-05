@@ -351,9 +351,19 @@ _JSFUCK_RUN = re.compile(r"[\[\]()!+\-]{64,}")
 # / octal / CSS \HHHHHH<space>) need 2+ consecutive escapes before a decode is
 # attempted -- a lone backslash in prose or a Windows path never forms
 # a run, and a run that decodes to non-credential text never blocks.
+# F433: CSS escapes may also terminate space-free -- per CSS Syntax L3
+# 4.3.7 the escape ends at the first non-hex code point, which is NOT
+# consumed (\78o -> 'x' + 'o'), and a single following whitespace
+# (space, tab, LF, FF, CR, or CRLF) is consumed as part of the escape.
+# The bare [0-9a-fA-F]{1,6} alternative (after the whitespace-terminated
+# form) lets space-free runs be found; the strict decoders below
+# validate them. NOTE: a non-whitespace terminator (e.g. '!') is NOT
+# consumed, so it survives decoding and breaks consecutiveness -- only
+# backslash- and whitespace-terminated escapes form runs.
 _ESC_RUN = re.compile(
-    r"(?:\\(?:u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|x[0-9a-fA-F]{2}|[0-9a-fA-F]{1,6} "
-    r"|[0-7]{1,3})){2,}")
+    r"(?:\\(?:u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|x[0-9a-fA-F]{2}"
+    r"|[0-9a-fA-F]{1,6}(?:\r\n|[ \t\n\f])"
+    r"|[0-9a-fA-F]{1,6}|[0-7]{1,3})){2,}")
 # F429: numeric HTML entities (&#x..; / &#..;), 2+ consecutive.
 _ENTITY_RUN = re.compile(r"(?:&#[xX][0-9a-fA-F]{1,6};|&#[0-9]{1,7};){2,}")
 # F429: UTF-16 null-interleaved runs (ASCII bytes separated by NULs).
@@ -974,6 +984,89 @@ def _try_escape_decode(run):
     return _ascii_printable_or_none("".join(out))
 
 
+# F433: CSS whitespace that may terminate a space-free escape (CSS
+# Syntax L3 4.3.7 -- one whitespace code point is consumed; CRLF counts
+# as a single whitespace).
+_CSS_WS = frozenset(" \t\n\r\f")
+
+
+def _decode_one_escape_css_free(run, i):
+    """Decode one backslash escape at run[i] == '\\\\' with space-free CSS.
+
+    Second interpretation of an escape run (F433), alongside the F429
+    priority in _decode_one_escape. Per CSS Syntax Level 3 4.3.7, a CSS
+    escape is backslash + 1-6 hex digits; the escape ends at the first
+    non-hex code point, which is NOT consumed (so ``\\\\78o`` is 'x'
+    followed by literal 'o'), and a single following whitespace is
+    consumed as part of the escape. There is deliberately NO octal
+    fallback here: in a CSS context ``\\\\62`` is 0x62 ('b'), never
+    octal -- the F429 octal interpretation is tried separately by
+    _try_escape_decode, so a run decodes under whichever genuine
+    encoding the attacker used. Returns (char, next_index) or None
+    when malformed -- the whole run is then ignored. Never evals.
+    """
+    n = len(run)
+    c = run[i + 1]
+    if c == "u":
+        h = run[i + 2:i + 6]
+        if len(h) != 4 or any(ch not in _HEX_DIGITS for ch in h):
+            return None
+        ch = _safe_chr(int(h, 16))
+        return (ch, i + 6) if ch is not None else None
+    if c == "U":
+        h = run[i + 2:i + 10]
+        if len(h) != 8 or any(ch not in _HEX_DIGITS for ch in h):
+            return None
+        ch = _safe_chr(int(h, 16))
+        return (ch, i + 10) if ch is not None else None
+    if c == "x":
+        h = run[i + 2:i + 4]
+        if len(h) != 2 or any(ch not in _HEX_DIGITS for ch in h):
+            return None
+        ch = _safe_chr(int(h, 16))
+        return (ch, i + 4) if ch is not None else None
+    j = i + 1
+    while j < n and j < i + 7 and run[j] in _HEX_DIGITS:
+        j += 1
+    if j == i + 1:
+        return None
+    if j < n and run[j] in _HEX_DIGITS:
+        # 7+ hex digits: not a strict single escape; the whole run is
+        # ignored rather than guessed at.
+        return None
+    ch = _safe_chr(int(run[i + 1:j], 16))
+    if ch is None:
+        return None
+    if j < n and run[j] in _CSS_WS:
+        # Consume one whitespace terminator (CRLF counts as one).
+        if run[j] == "\r" and j + 1 < n and run[j + 1] == "\n":
+            j += 1
+        j += 1
+    return ch, j
+
+
+def _try_escape_decode_css_free(run):
+    """Strict static decode of one escape run with space-free CSS (F433).
+
+    Returns the decoded string, or None when the run is not fully
+    decodable, decodes to non-text, or is unchanged. Never evals.
+    """
+    if len(run) > 6 * _MAX_DECODE_BYTES:
+        return None
+    out = []
+    i = 0
+    n = len(run)
+    while i < n:
+        if run[i] != "\\" or i + 1 >= n:
+            return None
+        r = _decode_one_escape_css_free(run, i)
+        if r is None:
+            return None
+        ch, i = r
+        out.append(ch)
+    return _ascii_printable_or_none("".join(out))
+
+
 def _try_entity_decode(run):
     """Strict static decode of one numeric-HTML-entity run (F429).
 
@@ -1369,6 +1462,15 @@ def _decode_layer(text):
     # octal / CSS-escape decode; undecodable runs are ignored.
     for m in list(_ESC_RUN.finditer(text))[:_MAX_CANDIDATES]:
         decoded = _try_escape_decode(m.group(0))
+        if decoded is not None:
+            _add(text[:m.start()] + decoded + text[m.end():])
+    # Backslash-escape runs, space-free CSS interpretation (F433): the
+    # same runs decoded per CSS Syntax L3 4.3.7 (a non-hex code point
+    # terminates the escape without being consumed; no octal fallback).
+    # A run decodes under whichever genuine encoding the attacker used;
+    # undecodable runs are ignored.
+    for m in list(_ESC_RUN.finditer(text))[:_MAX_CANDIDATES]:
+        decoded = _try_escape_decode_css_free(m.group(0))
         if decoded is not None:
             _add(text[:m.start()] + decoded + text[m.end():])
     # Numeric HTML-entity runs (F429): strict &#x..; / &#..; decode.

@@ -199,26 +199,28 @@ def test_b1_f432_singlescape_miss_pinned():
 
 
 @_t
-def test_b2_f433_css_nospace_miss_pinned():
-    """F433 filed OPEN: space-free CSS escapes (terminated by a
-    non-hex char per CSS Syntax L3) miss the F429 layer. Pinned as
-    HELD-when-reproduced; flips to a refusal assertion on closure."""
-    miss = dlp.find_credential("k=\\78\\6f\\78\\62-abc123def456") is None
-    return ("HELD" if miss else "BREAK",
-            "F433 css-nospace miss reproduced=%s" % miss)
+def test_b2_f433_css_nospace_closed():
+    """F433 CLOSED 2026-10-05 wave-345 lane 2: space-free CSS escapes
+    (terminated by a non-hex char per CSS Syntax L3) now block coded
+    dlp-slack-token via the second escape-run interpretation. Was
+    pinned as known-open (miss) before closure."""
+    rule = dlp.find_credential("k=\\78\\6f\\78\\62-abc123def456")
+    held = rule == "dlp-slack-token"
+    return ("HELD" if held else "BREAK",
+            "F433 css-nospace shape rule=%s" % rule)
 
 
 @_t
 def test_b3_f432_f433_filings_pinned():
-    """F432/F433 are filed OPEN with the new footer: pins the filings
-    so the misses cannot go undocumented."""
+    """F432 filed OPEN, F433 CLOSED 2026-10-05 wave-345 lane 2: pins the
+    filings and the closed footer so neither can go undocumented."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F432 filed 2026-10-05, wave-344 lane 4" in text
           and "(F433 filed 2026-10-05, wave-344 lane 4" in text
-          and "LOW, OPEN:" in text
+          and "LOW, CLOSED 2026-10-05 wave-345 lane 2" in text
           and "Next free finding: **F436**" in text
-          and "Open findings: F432, F433, F434, F435." in text)
-    return ("HELD" if ok else "BREAK", "F432/F433 filed open=%s" % ok)
+          and "Open findings: F432, F434, F435." in text)
+    return ("HELD" if ok else "BREAK", "F432 open / F433 closed=%s" % ok)
 
 
 # ---------------------------------------------------------------- pins
