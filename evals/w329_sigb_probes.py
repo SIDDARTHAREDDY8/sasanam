@@ -65,7 +65,7 @@ from gov.signing import Ed25519Signer, Ed25519Verifier  # noqa: E402
 
 TAXONOMY_PIN = 2058  # Wave-328 merge: pin 2044 -> 2056 (+12). This lane adds no taxonomy codes.; Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*)
 
-FOOTER_OPEN = "F415"  # F414/F416 CLOSED; F415 OPEN (F416 closed wave-331 lane 2).
+FOOTER_OPEN = "none"  # F409-F416 CLOSED; no open findings (wave-331 merge).
 FOOTER_NEXT = "F417"
 
 _results = []

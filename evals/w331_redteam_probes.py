@@ -9,8 +9,8 @@ P1  wave-330 seams not yet broken: gov/shamir_custody.py post-F414
     pre-flight and write) and the w330_prospectus.md STEAL-verdict
     audit (Landlock overclaim vs the wave-266 tier already in
     gov/sandbox.py; PQC slot absence; MCP OAuth gaps #1/#2 absence).
-P2  F415/F416 re-probes (expected BREAK -- lanes 1/2 own the closures,
-    do NOT fix).
+P2  F415/F416 re-probes (CLOSED -- lanes 1/2 closed them; assert the
+    coded refusals, HELD).
 P3  F414/F413/F412/F411/F410 closure-regression probes (all HELD).
 P4  merge-defect class: no trailing blank line on footer-bearing
     files (wave-330 scripted-resolution class), code-registration,
@@ -39,7 +39,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2058  # Wave-328 merge: pin 2044 -> 2056 (+12).; Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*).; Wave-330 merge: pin unchanged 2058 (F414/F415/F416: no new codes).
-FOOTER_OPEN = "F415, F416"  # F409-F414 CLOSED; F415/F416 (LOW, uncoded int() crashes) OPEN (wave-330 lane 3).
+FOOTER_OPEN = "none"  # F409-F416 CLOSED; no open findings (wave-331 merge).
 FOOTER_NEXT = "F417"  # Next free finding number.
 
 _results = []
@@ -232,35 +232,41 @@ def _p1e():
 def _p1f():
     """w330 prospectus audit: the #1 STEAL ("build gov/landlock.py --
     only candidate that closes gov/sandbox.py's honestly-documented
-    gap") is overclaimed.
+    gap") is overclaimed -- RESOLVED at the wave-331 merge.
 
-    gov/sandbox.py already carries a full ctypes Landlock LSM tier
-    (wave-266): landlock_available(), use_landlock/require_landlock
-    flags, sandbox-landlock-* decision codes, empirically verified
-    against the kernel ABI. A `grep landlock gov/` -- the tree check
-    the prospectus claims for every STEAL verdict -- finds it
-    instantly. The deliverable is at most an ADAPT (extract a module),
-    never a from-scratch STEAL, and the "honestly-documented gap" it
-    claims to close is already partially closed by that tier.
+    gov/sandbox.py already carried a full ctypes Landlock LSM tier
+    (wave-266). At the wave-331 merge the research stream acknowledged
+    the overclaim: the tier was extracted VERBATIM to
+    gov/landlock_jail.py (wave-331 lane 3) with the genuinely-new
+    standalone restrict_fs()/landlock_supported() API and a break-first
+    empirical audit of the existing tier. The verdict is downgraded
+    from STEAL to ADAPT -- no product defect, no user impact.
+
+    This probe now asserts the resolution (HELD): the tier lives in
+    gov/landlock_jail.py, gov/sandbox.py re-exports every historical
+    attribute path, and the 3 sandbox-landlock-* codes are registered.
     """
+    jail = open(os.path.join(REPO, "gov", "landlock_jail.py"),
+                encoding="utf-8").read()
     sandbox = open(os.path.join(REPO, "gov", "sandbox.py"),
                    encoding="utf-8").read()
     codes = open(os.path.join(REPO, "gov", "decision_codes.py"),
                  encoding="utf-8").read()
-    tier = ("def landlock_available" in sandbox
-            and "use_landlock" in sandbox
-            and "require_landlock" in sandbox)
+    tier = ("def landlock_available" in jail
+            and "def restrict_fs" in jail
+            and "def landlock_supported" in jail)
+    bridge = "from gov.landlock_jail import" in sandbox
     coded = ("sandbox-landlock-apply-failed" in codes
              and "sandbox-landlock-required" in codes
              and "sandbox-landlock-unavailable" in codes)
-    if tier and coded:
-        return _break("P1f-prospectus-landlock-steal-overclaimed",
-                      "Landlock tier EXISTS in gov/sandbox.py (wave-266) "
-                      "+ 3 sandbox-landlock-* codes registered; the "
-                      "prospectus #1 STEAL duplicates it")
-    return _held("P1f-prospectus-landlock-steal-overclaimed",
-                 "no Landlock tier found (tier=%s coded=%s)"
-                 % (tier, coded))
+    if tier and bridge and coded:
+        return _held("P1f-prospectus-landlock-steal-overclaimed",
+                     "overclaim resolved: tier in gov/landlock_jail.py "
+                     "(wave-266, extracted wave-331), sandbox re-export "
+                     "bridge intact, 3 codes registered; verdict ADAPT")
+    return _break("P1f-prospectus-landlock-steal-overclaimed",
+                  "resolution missing (tier=%s bridge=%s coded=%s)"
+                  % (tier, bridge, coded))
 
 
 @probe("P1g-prospectus-mcp-oauth-gap1-confirmed-absent")
@@ -317,28 +323,29 @@ def _p1i():
 
 
 # ---------------------------------------------------------------------------
-# P2: F415/F416 re-probes (expected BREAK; lanes 1/2 own the closures).
+# P2: F415/F416 re-probes (CLOSED; lanes 1/2 closed them -- assert coded refusals).
 # ---------------------------------------------------------------------------
 
 @probe("P2a-f415-reprobe-unicode-version-uncoded")
 def _p2a():
-    """F415: pol.v².json crashes poll() with bare ValueError."""
+    """F415 CLOSED 2026-10-04 wave-331 lane 1: pol.v².json refuses
+    coded policy-channel-malformed (HELD)."""
     import w330_redteam_probes as w330
     return _relabel("P2a-f415-reprobe-unicode-version-uncoded", w330._p1g)
 
 
 @probe("P2b-f416-reprobe-integratedtime-uncoded")
 def _p2b():
-    """F416: 5000-digit integratedTime crashes open_sigstore_bundle
-    with bare ValueError."""
+    """F416 CLOSED 2026-10-04 wave-331 lane 2: 5000-digit
+    integratedTime refuses coded evidence-bundle-malformed (HELD)."""
     import w330_redteam_probes as w330
     return _relabel("P2b-f416-reprobe-integratedtime-uncoded", w330._p1a)
 
 
 @probe("P2c-f416-reprobe-logindex-uncoded")
 def _p2c():
-    """F416: 5000-digit logIndex crashes open_sigstore_bundle with
-    bare ValueError (valid SET, valid checkpoint)."""
+    """F416 CLOSED 2026-10-04 wave-331 lane 2: 5000-digit logIndex
+    refuses coded evidence-bundle-malformed (HELD)."""
     import w330_redteam_probes as w330
     return _relabel("P2c-f416-reprobe-logindex-uncoded", w330._p1b)
 
@@ -546,22 +553,22 @@ def _p5a():
                  "2058/2058/0 sorted unique on raw source literals")
 
 
-@probe("P5b-footer-open-f415-f416-next-f417")
+@probe("P5b-footer-open-none-next-f417")
 def _p5b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return _break("P5b-footer-open-f415-f416-next-f417",
+        return _break("P5b-footer-open-none-next-f417",
                       "footer line not found")
     next_free, open_now = ms[-1]  # the LAST footer is the live one
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return _break("P5b-footer-open-f415-f416-next-f417",
+        return _break("P5b-footer-open-none-next-f417",
                       "footer open %s / next %s, want open %s / next %s"
                       % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return _held("P5b-footer-open-f415-f416-next-f417",
-                 "footer open F415, F416 / next F417")
+    return _held("P5b-footer-open-none-next-f417",
+                 "footer open none / next F417")
 
 
 # ---------------------------------------------------------------------------
@@ -593,10 +600,10 @@ def _run_child_output(battery, timeout=1500):
 
 
 # Battery -> set of BREAK probe IDs that are NOT regressions on this
-# tree. Post wave-330 merge sweep: every child battery's footer-state
-# probes were re-pinned to the merged footer (open F415, F416 / next
-# F417) and F414's closure probe flips to HELD. w330's own three
-# expected BREAKs (P1g/F415, P1a/P1b/F416) are its open findings.
+# tree. Post wave-331 merge sweep: every child battery's footer-state
+# probes were re-pinned to the merged footer (open none / next
+# F417) and F414/F415/F416's closure probes flip to HELD. w330's own
+# three closure probes (P1g/F415, P1a/P1b/F416) are HELD.
 # (wave-305 class.)
 _CHILD_CASCADE = {
     "w330_redteam_probes.py": {
@@ -667,21 +674,14 @@ def _p6a():
 # Expected BREAK set, green check, main.
 # ---------------------------------------------------------------------------
 
-_EXPECTED_BREAKS = {
-    # Prospectus audit: the w330 prospectus's #1 STEAL ("build
-    # gov/landlock.py") duplicates the wave-266 Landlock tier already
-    # in gov/sandbox.py (+ 3 sandbox-landlock-* codes). Overclaim
-    # demonstrated, documented in REPORT.md (research correction, not
-    # a product finding).
-    "P1f-prospectus-landlock-steal-overclaimed",
-    # F415 (lane 1 owns the closure): unicode-digit version filename
-    # crashes poll() uncoded.
-    "P2a-f415-reprobe-unicode-version-uncoded",
-    # F416 (lane 2 owns the closure): integratedTime / logIndex
-    # digit-limit uncoded crashes.
-    "P2b-f416-reprobe-integratedtime-uncoded",
-    "P2c-f416-reprobe-logindex-uncoded",
-}
+_EXPECTED_BREAKS = set()  # No expected BREAKs: F415/F416 CLOSED, prospectus overclaim acknowledged.
+# (History, kept as comments: F415 CLOSED 2026-10-04 wave-331 lane 1:
+# P2a asserts the coded policy-channel-malformed refusal (HELD);
+# F416 CLOSED 2026-10-04 wave-331 lane 2: P2b/P2c assert the coded
+# evidence-bundle-malformed refusal (HELD); prospectus #1 STEAL
+# overclaim RESOLVED at the wave-331 merge -- tier extracted verbatim
+# to gov/landlock_jail.py + standalone restrict_fs() API, verdict
+# downgraded to ADAPT; P1f asserts the resolution (HELD).)
 
 
 def _green_check():
@@ -735,8 +735,8 @@ def main(argv):
                     if v == "BREAK" and pid.startswith("P")}
     mismatch = probe_breaks ^ _EXPECTED_BREAKS
     print("w331_redteam battery: %d BREAK / %d HELD / %d ERROR "
-          "(4 BREAKs expected: P1f prospectus overclaim, "
-          "P2a/F415, P2b/P2c/F416)"
+          "(0 BREAKs expected: F415/F416 closed, prospectus "
+          "overclaim acknowledged)"
           % (breaks, len(_results) - breaks - errors, errors))
     if mismatch:
         print("BREAK-SET MISMATCH: %r" % (sorted(mismatch),))

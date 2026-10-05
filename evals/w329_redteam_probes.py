@@ -39,7 +39,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2058  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).; Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*)
-FOOTER_OPEN = "F415"  # F409-F414 CLOSED; F415/F416 (LOW, uncoded int() crashes) OPEN (wave-330 lane 3).
+FOOTER_OPEN = "none"  # F409-F416 CLOSED; no open findings (wave-331 merge).
 FOOTER_NEXT = "F417"  # Next free finding number.
 
 _results = []
@@ -805,7 +805,7 @@ def _p5a():
                  "2058/2058/0 sorted unique on raw source literals")
 
 
-@probe("P5b-footer-open-f415-next-f417")
+@probe("P5b-footer-open-none-next-f417")
 def _p5b():
     """Footer: open F415; next free F417 (F414/F416 CLOSED wave-330 lane 1 /
     wave-331 lane 2; F415 OPEN filed wave-330 lane 3)."""
@@ -816,18 +816,18 @@ def _p5b():
                           r"\*\*Open findings: ([^*]*)\.\*\*",
                           footer))
     if not ms:
-        return _break("P5b-footer-open-f415-next-f417",
+        return _break("P5b-footer-open-none-next-f417",
                       "footer line not found")
     m = ms[-1]
     if m.group(1) != "F" + FOOTER_NEXT[1:]:
-        return _break("P5b-footer-open-f415-next-f417",
+        return _break("P5b-footer-open-none-next-f417",
                       "next=%r, want F%s" % (m.group(1), FOOTER_NEXT[1:]))
     opens = m.group(2).strip()
     if opens != FOOTER_OPEN:
-        return _break("P5b-footer-open-f415-next-f417",
+        return _break("P5b-footer-open-none-next-f417",
                       "open=%r, want %r" % (opens, FOOTER_OPEN))
-    return _held("P5b-footer-open-f415-next-f417",
-                 "footer open F415 / next F417")
+    return _held("P5b-footer-open-none-next-f417",
+                 "footer open none / next F417")
 
 
 # ---------------------------------------------------------------------------

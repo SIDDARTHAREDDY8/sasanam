@@ -39,7 +39,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2058  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).; Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*)
-FOOTER_OPEN = "F415"  # F409-F414, F416 CLOSED; F415 (LOW, uncoded int() crash) OPEN (wave-331 lane 2).
+FOOTER_OPEN = "none"  # F409-F416 CLOSED; no open findings (wave-331 merge).
 FOOTER_NEXT = "F417"  # Next free finding number.
 
 _results = []
@@ -379,6 +379,11 @@ def _p1g():
     catches PolicyChannelError. Any feed-dir writer (no signing key
     needed) can crash every poll: loud, fail-closed, but UNCODED --
     the F412-class discipline violation.
+
+    CLOSED 2026-10-04 wave-331 lane 1: the version fragment is now
+    ASCII-digit-gated; unicode-digit fragments refuse coded
+    policy-channel-malformed (folded into the poll report). This probe
+    now asserts the coded refusal (HELD).
     """
     fx = _pfresh()
     _pwrite(fx["feed"], _pdoc(fx["seed"], 1), "pol.v1.json")
@@ -596,22 +601,22 @@ def _p5a():
                  "2058/2058/0 sorted unique on raw source literals")
 
 
-@probe("P5b-footer-open-f415-next-f417")
+@probe("P5b-footer-open-none-next-f417")
 def _p5b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return _break("P5b-footer-open-f415-next-f417",
+        return _break("P5b-footer-open-none-next-f417",
                       "footer line not found")
     next_free, open_now = ms[-1]  # the LAST footer is the live one
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return _break("P5b-footer-open-f415-next-f417",
+        return _break("P5b-footer-open-none-next-f417",
                       "footer open %s / next %s, want open %s / next %s"
                       % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return _held("P5b-footer-open-f415-next-f417",
-                 "footer open F415 / next F417")
+    return _held("P5b-footer-open-none-next-f417",
+                 "footer open none / next F417")
 
 
 # ---------------------------------------------------------------------------
@@ -638,10 +643,11 @@ def _run_child_output(battery, timeout=600):
 
 
 # Battery -> set of BREAK probe IDs that are NOT regressions on this
-# tree. Post wave-330 merge sweep: every child battery's footer-state
-# probes were re-pinned to the merged footer (open F415 / next
-# F417) and F414's closure probe flips to HELD, so all cascade sets are
-# EMPTY. Any child BREAK below is a genuine regression. (wave-305 class.)
+# tree. Post wave-331 merge sweep: every child battery's footer-state
+# probes were re-pinned to the merged footer (open none / next
+# F417) and F414/F415/F416's closure probes flip to HELD, so all
+# cascade sets are EMPTY. Any child BREAK below is a genuine
+# regression. (wave-305 class.)
 _CHILD_CASCADE = {
     "w329_redteam_probes.py": set(),
     "w329_sigb_probes.py": set(),
@@ -711,14 +717,12 @@ def _p6a():
 # Expected BREAK set, green check, main.
 # ---------------------------------------------------------------------------
 
-_EXPECTED_BREAKS = {
-    # F415 (wave-330 lane 3): isdigit()->int() admits unicode digits int()
-    # rejects -> uncoded ValueError out of poll(). Still OPEN.
-    "P1g-policy-channel-unicode-version-uncoded",
-    # F416 CLOSED 2026-10-04 wave-331 lane 2: P1a/P1b now assert the
-    # coded evidence-bundle-malformed refusal (HELD).
-    # F414 CLOSED 2026-10-04 wave-330 lane 1: P2 re-probe is HELD.
-}
+_EXPECTED_BREAKS = set()  # No expected BREAKs: F414/F415/F416 all CLOSED.
+# (History, kept as comments: F415 CLOSED 2026-10-04 wave-331 lane 1:
+# P1g now asserts the coded policy-channel-malformed refusal (HELD);
+# F416 CLOSED 2026-10-04 wave-331 lane 2: P1a/P1b now assert the coded
+# evidence-bundle-malformed refusal (HELD);
+# F414 CLOSED 2026-10-04 wave-330 lane 1: P2 re-probe is HELD.)
 
 
 def _green_check():
@@ -772,7 +776,7 @@ def main(argv):
                     if v == "BREAK" and pid.startswith("P")}
     mismatch = probe_breaks ^ _EXPECTED_BREAKS
     print("w330_redteam battery: %d BREAK / %d HELD / %d ERROR "
-          "(1 BREAK expected: P1g/F415; F414/F416 closed)"
+          "(0 BREAKs expected: F414/F415/F416 closed)"
           % (breaks, len(_results) - breaks - errors, errors))
     if mismatch:
         print("BREAK-SET MISMATCH: %r" % (sorted(mismatch),))

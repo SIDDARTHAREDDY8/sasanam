@@ -474,8 +474,8 @@ def _p2b():
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
     assert "Next free finding: **F417**" in text, "footer next-free wrong"
-    assert "**Open findings: F415.**" in text, "footer open set wrong"
-    _held("P2b-footer-open-f415", "footer open F415 / next F417")
+    assert "**Open findings: none.**" in text, "footer open set wrong"
+    _held("P2b-footer-open-f415", "footer open none / next F417")
 
 
 # ---------------------------------------------------------------------------

@@ -46,7 +46,7 @@ sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2058  # Wave-327 merge pin 2056; wave-328 lane 3 repoints to 2044 (+8 custody-shamir-*); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*)
 
-FOOTER_OPEN = "F415"  # F414 CLOSED wave-330 lane 1; F415 OPEN, F416 CLOSED wave-331 lane 2.
+FOOTER_OPEN = "none"  # F409-F416 CLOSED; no open findings (wave-331 merge).
 FOOTER_NEXT = "F417"
 
 _results = []
@@ -431,9 +431,9 @@ def _p11():
         if "Next free finding" in line:
             m = line
     if m is None or "F415" not in m or "F416" not in m or "F417" not in m:
-        _break("P11-footer-open-F415-F416-next-F417", "footer line wrong: %r" % (m,))
+        _break("P11-footer-open-none-next-F417", "footer line wrong: %r" % (m,))
     else:
-        _held("P11-footer-open-F415-F416-next-F417", "footer open F415 / next F417")
+        _held("P11-footer-open-none-next-F417", "footer open none / next F417")
 
 
 # ---------------------------------------------------------------------------
