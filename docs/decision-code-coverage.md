@@ -1,10 +1,10 @@
 # Decision-code coverage table (generated)
 
-Generated: 2026-10-05T10:11:03Z UTC · registry pin: 2130 · base: wave-339 lane 2
+Generated: 2026-10-05T10:40:00Z UTC · registry pin: 2130 · base: wave-340 lane 2 (coverage round 2)
 
 Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code counts as covered when its literal string appears quoted in at least one ``.py`` file under ``tests/`` or ``evals/``. Production ``emit()`` call sites do not count.
 
-**Covered: 1919 / 2130** · **Gaps: 211**
+**Covered: 1949 / 2130** · **Gaps: 181**
 
 | code | domain | severity | covered | asserted in |
 | ---- | ------ | -------- | ------- | ----------- |
@@ -189,7 +189,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `authz-uncheckable` | authz | medium | yes | evals/w268_authzcombine_probes.py, tests/test_authorization_combine.py |
 | `axis-ceiling-hit` | axis | medium | **NO** |  |
 | `axis-indeterminate` | axis | medium | **NO** |  |
-| `axis-invalid` | axis | high | **NO** |  |
+| `axis-invalid` | axis | high | yes | evals/w340_covgap2_probes.py |
 | `axis-unestablished` | axis | medium | **NO** |  |
 | `bad-artifacts` | corpus | medium | yes | tests/test_corpus_manifest.py |
 | `bad-assertion-shape` | c2pa | medium | yes | evals/w215_c2pa24_probes.py, tests/test_c2pa24_conformance.py |
@@ -215,13 +215,13 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `bad-rules` | pack | medium | **NO** |  |
 | `bad-ruleset` | namespace | medium | yes | tests/test_promotion_artifact_gate.py |
 | `bad-seed` | measurement | medium | **NO** |  |
-| `bad-signature` | signature | high | yes | evals/sign_deploy_namespace_probes.py, tests/test_audit_detect.py, tests/test_corpus_manifest.py (+1) |
+| `bad-signature` | signature | high | yes | evals/sign_deploy_namespace_probes.py, evals/w340_covgap2_probes.py, tests/test_audit_detect.py (+2) |
 | `bad-statement-signature` | scitt | high | yes | tests/test_scitt_receipt.py |
 | `bad-threshold` | quorum | medium | yes | tests/test_corpus_manifest.py |
 | `bad-trust-record` | c2pa | medium | **NO** |  |
 | `bad-trust-signature` | c2pa | high | yes | evals/w215_c2pa24_probes.py, tests/test_c2pa24_conformance.py |
 | `bad-version` | corpus | medium | yes | evals/w261_detector_probes.py, evals/w269_redteam_probes.py |
-| `bad_delegatee` | approval | high | **NO** |  |
+| `bad_delegatee` | approval | high | yes | evals/w340_covgap2_probes.py |
 | `bad_key` | drift | high | yes | evals/w245_packet_conformance_verifier.py |
 | `bad_mac` | drift | high | yes | evals/w35_probes.py, tests/test_drift_budget.py, tests/test_f110_platform_egress.py (+1) |
 | `bad_scope` | approval | high | yes | tests/test_delegation_primitive.py |
@@ -291,9 +291,9 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `bundlescan-rce-global` | bundle | critical | yes | evals/w270_bundlescan_probes.py, evals/w271_redteam_probes.py, evals/w272_f255_probes.py (+2) |
 | `bundlescan-suspicious-global` | bundle | high | yes | evals/w270_bundlescan_probes.py, tests/test_bundle_scan.py, tests/test_bundle_scan_f255.py |
 | `bundlescan-unknown-global` | bundle | medium | yes | evals/w270_bundlescan_probes.py, evals/w272_f255_probes.py, tests/test_bundle_scan.py (+1) |
-| `callauthz-check-error` | callauthz | high | **NO** |  |
+| `callauthz-check-error` | callauthz | high | yes | evals/w340_covgap2_probes.py |
 | `callauthz-denied` | callauthz | high | yes | evals/w260_callauthz_probes.py |
-| `callauthz-not-configured` | callauthz | high | **NO** |  |
+| `callauthz-not-configured` | callauthz | high | yes | evals/w340_covgap2_probes.py |
 | `callback-approval-denied` | callback | medium | yes | evals/w265_callback_probes.py |
 | `callback-approval-expired` | callback | medium | yes | evals/w265_callback_probes.py |
 | `callback-approval-requested` | callback | low | yes | evals/w265_callback_probes.py, tests/test_agent_callbacks.py |
@@ -434,7 +434,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `config-rewritten-privilege` | config | medium | yes | evals/w244_config_trust_probes.py, tests/test_config_trust.py |
 | `config-version-mismatch` | deploy | medium | yes | tests/test_deploy_trust_config.py |
 | `consent_expired` | platform | medium | **NO** |  |
-| `consent_invalid` | platform | high | **NO** |  |
+| `consent_invalid` | platform | high | yes | evals/w340_covgap2_probes.py |
 | `consent_key_required` | platform | medium | yes | tests/test_f110_platform_egress.py |
 | `consent_required` | platform | medium | **NO** |  |
 | `consumption-idempotency-reused` | consumption | high | yes | evals/w234_consumed_probes.py, tests/test_consumption_ledger.py |
@@ -544,7 +544,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `delegation-chain-broken` | delegation-freshness | high | yes | evals/w245_delegation_freshness_probes.py, evals/w299_delegation_identity_probes.py, evals/w299_delegation_probes.py (+6) |
 | `delegation-containment-violated` | containment | high | yes | evals/w242_containment_probes.py, tests/test_wave242_containment.py |
 | `delegation-custody-splice` | delegation | high | yes | evals/w267_f249_probes.py, tests/test_delegation_custody.py |
-| `delegation-decision-mismatch` | capability | critical | **NO** |  |
+| `delegation-decision-mismatch` | capability | critical | yes | evals/w340_covgap2_probes.py |
 | `delegation-depth-exceeded` | delegation | high | yes | evals/w299_delegation_probes.py |
 | `delegation-ephemeral-grant-refused` | delegation | high | yes | evals/w280_fga_probes.py, evals/w281_teleport_probes.py, tests/test_ephemeral_grants.py |
 | `delegation-escrow-violated` | delegation | high | yes | evals/w299_delegation_probes.py, tests/test_delegation.py |
@@ -704,20 +704,20 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `evaltask-bad-scoring-refs` | evidence | medium | **NO** |  |
 | `evaltask-bad-target` | evidence | medium | **NO** |  |
 | `evaltask-bad-task-id` | evidence | medium | **NO** |  |
-| `evaltask-dataset-changed` | evidence | high | **NO** |  |
+| `evaltask-dataset-changed` | evidence | high | yes | evals/w340_covgap2_probes.py |
 | `evaltask-duplicate-dataset` | evidence | medium | yes | evals/w281_redteam_probes.py, tests/test_eval_tasks.py |
 | `evaltask-duplicate-scoring-function` | evidence | medium | **NO** |  |
 | `evaltask-duplicate-task` | evidence | medium | **NO** |  |
-| `evaltask-grader-changed` | evidence | high | **NO** |  |
+| `evaltask-grader-changed` | evidence | high | yes | evals/w340_covgap2_probes.py |
 | `evaltask-grader-crashed` | evidence | high | yes | tests/test_eval_tasks.py |
 | `evaltask-not-json` | evidence | medium | **NO** |  |
 | `evaltask-scoring-not-callable` | evidence | medium | **NO** |  |
 | `evaltask-scoring-source-unavailable` | evidence | medium | **NO** |  |
-| `evaltask-target-crashed` | evidence | high | **NO** |  |
+| `evaltask-target-crashed` | evidence | high | yes | evals/w340_covgap2_probes.py |
 | `evaltask-unknown-dataset` | evidence | medium | yes | tests/test_eval_tasks.py |
 | `evaltask-unknown-scoring-function` | evidence | medium | **NO** |  |
 | `evaltask-unknown-task` | evidence | medium | yes | tests/test_eval_tasks.py |
-| `evaltask-unverifiable` | evidence | high | **NO** |  |
+| `evaltask-unverifiable` | evidence | high | yes | evals/w340_covgap2_probes.py |
 | `evaluation-incomplete-details` | evaluation | high | yes | evals/w233_evalfn_probes.py, evals/w235_boundpermit_probes.py, tests/test_bound_permit.py (+1) |
 | `evaluation-input-swapped` | evaluation | critical | yes | evals/w233_evalfn_probes.py, tests/test_evaluation_function.py |
 | `evaluation-key-role-conflation` | evaluation | high | yes | evals/w233_evalfn_probes.py, tests/test_evaluation_function.py |
@@ -858,7 +858,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `grant-already-consumed` | capability | medium | yes | evals/capability_grant_probes.py, tests/test_capability_grants.py |
 | `grant-attenuation-gap` | grants | high | yes | evals/w235_antiwiden_probes.py, tests/test_grant_attenuation.py |
 | `grant-chain-required` | grants | high | yes | evals/w235_antiwiden_probes.py, tests/test_grant_attenuation.py |
-| `grant-decision-mismatch` | capability | critical | **NO** |  |
+| `grant-decision-mismatch` | capability | critical | yes | evals/w340_covgap2_probes.py |
 | `grant-malformed` | authorization_receipt | medium | yes | tests/test_grant_attenuation.py |
 | `grant-not-minted` | capability | medium | yes | evals/capability_grant_probes.py |
 | `grant-revoked` | authorization_receipt | high | yes | evals/w217_receipt_probes.py, evals/w235_antiwiden_probes.py, tests/test_authorization_receipts.py (+1) |
@@ -1012,7 +1012,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `instruction-provenance-public-channel` | egress | high | yes | evals/w245_egress_propagation_probes.py, tests/test_egress_propagation_guard.py |
 | `instruction-provenance-untrusted` | egress | medium | yes | tests/test_egress_propagation_guard.py |
 | `insufficient_data` | evidence | medium | yes | evals/s4eval_battery.py, tests/test_drift.py, tests/test_drift_budget.py (+2) |
-| `integrity_violation` | sweep | critical | **NO** |  |
+| `integrity_violation` | sweep | critical | yes | evals/w340_covgap2_probes.py |
 | `invalid-signature` | agent_card | high | yes | evals/a2a_card_verifier_probes.py, evals/w214_agentcard_probes.py, tests/test_agent_cards_v1.py |
 | `invalid_target` | approval | medium | **NO** |  |
 | `inventory-catalog-card-malformed` | inventory-catalog | low | yes | evals/w255_inventory_probes.py, tests/test_inventory_catalog.py |
@@ -1037,7 +1037,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `issuance-monitor-misissuance` | issuance | high | yes | evals/w292_revocation_probes.py, evals/w293_redteam_probes.py, evals/w293_sweep_probes.py (+2) |
 | `issuer-malformed` | authorization_receipt | medium | **NO** |  |
 | `issuer-not-allowlisted` | scitt | medium | yes | tests/test_scitt_receipt.py |
-| `jku-not-allowed` | capability | high | **NO** |  |
+| `jku-not-allowed` | capability | high | yes | evals/w340_covgap2_probes.py |
 | `jwks-issuer-unpinned` | jwks | medium | yes | evals/w245_jwks_fetch_probes.py, tests/test_jwks_fetch.py |
 | `jwks-origin-mismatch` | jwks | high | yes | evals/w245_jwks_fetch_probes.py, tests/test_jwks_fetch.py |
 | `jwks-redirect-refused` | jwks | high | yes | evals/w245_jwks_fetch_probes.py, tests/test_jwks_fetch.py |
@@ -1087,7 +1087,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `malformed-context` | mcp | medium | **NO** |  |
 | `malformed-message` | mcp | medium | **NO** |  |
 | `malformed-permit` | mcp | medium | **NO** |  |
-| `malformed-signature-entry` | signature | high | **NO** |  |
+| `malformed-signature-entry` | signature | high | yes | evals/w340_covgap2_probes.py |
 | `malformed-statement` | scitt | medium | yes | tests/test_scitt_receipt.py |
 | `malformed_binding` | deployment | medium | **NO** |  |
 | `malformed_lease` | lease | medium | **NO** |  |
@@ -1105,7 +1105,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `manifest-signature-invalid` | manifest | high | yes | evals/w284_nuclei_probes.py, tests/test_attack_manifest.py |
 | `manifest-template-malformed` | manifest | low | yes | evals/w284_nuclei_probes.py, tests/test_attack_manifest.py |
 | `manifest-template-unsigned` | manifest | medium | yes | evals/w284_nuclei_probes.py, tests/test_attack_manifest.py |
-| `mapping-drift` | mcp | critical | **NO** |  |
+| `mapping-drift` | mcp | critical | yes | evals/w340_covgap2_probes.py |
 | `max_hops_exceeded` | approval | medium | yes | evals/w22_probes.py, tests/test_approvals_d1.py |
 | `mcp-oauth-binding-tampered` | mcp-oauth | high | yes | evals/w245_mcp_oauth_binding_probes.py, evals/w332_mcpoauth_probes.py, evals/w334_prm_probes.py (+1) |
 | `mcp-oauth-cimd-binding-mismatch` | mcp-oauth | high | yes | evals/w339_covgap1_probes.py |
@@ -1155,7 +1155,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `measurement-missing` | measurement | medium | yes | evals/w214_measurement_policy_probes.py |
 | `measurement-unlisted` | measurement | medium | yes | evals/w214_measurement_policy_probes.py |
 | `memory-composed-divergent` | memory_composed | critical | yes | evals/w300_memory_composed_probes.py, evals/w301_redteam_probes.py, tests/test_memory_composed.py |
-| `memory-composed-key-invalid` | memory_composed | high | **NO** |  |
+| `memory-composed-key-invalid` | memory_composed | high | yes | evals/w340_covgap2_probes.py |
 | `memory-composed-key-too-long` | memory_composed | high | yes | evals/w300_memory_composed_probes.py, tests/test_memory_composed.py |
 | `memory-reconcile-conflict-unresolved` | memory_reconcile | medium | yes | evals/w298_memory_reconcile_probes.py, evals/w299_redteam_probes.py, tests/test_memory_reconcile.py |
 | `memory-reconcile-invalid` | memory_reconcile | high | yes | evals/w298_memory_reconcile_probes.py, evals/w299_redteam_probes.py, evals/w300_memory_composed_probes.py (+3) |
@@ -1447,17 +1447,17 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `provlabel-unresolvable-driver` | provlabel | medium | yes | evals/w274_provenance_probes.py, evals/w277_conflict_probes.py, evals/w279_f300_probes.py (+4) |
 | `ptgrant-arg-attribute-missing` | tool_grant | high | yes | evals/w271_ptgrantv2_probes.py, evals/w272_redteam_probes.py, tests/test_tool_grant_v2.py |
 | `ptgrant-arg-bound-violated` | tool_grant | high | yes | evals/w270_ptgrant_probes.py, evals/w271_ptgrantv2_probes.py, evals/w272_redteam_probes.py (+2) |
-| `ptgrant-attenuation-invalid` | tool_grant | high | **NO** |  |
+| `ptgrant-attenuation-invalid` | tool_grant | high | yes | evals/w340_covgap2_probes.py |
 | `ptgrant-audience-mismatch` | tool_grant | high | yes | evals/w270_ptgrant_probes.py, tests/test_tool_grant.py |
 | `ptgrant-batch-tool-cap-exceeded` | tool_grant | medium | yes | evals/w271_ptgrantv2_probes.py, tests/test_tool_grant_v2.py |
 | `ptgrant-caller-unauthorized` | tool_grant | high | yes | evals/w271_ptgrantv2_probes.py, tests/test_tool_grant_v2.py |
-| `ptgrant-cnf-missing` | tool_grant | high | **NO** |  |
+| `ptgrant-cnf-missing` | tool_grant | high | yes | evals/w340_covgap2_probes.py |
 | `ptgrant-context-oversize` | tool_grant | medium | yes | evals/w271_ptgrantv2_probes.py, tests/test_tool_grant_v2.py |
 | `ptgrant-grant-expired` | tool_grant | medium | yes | evals/w270_ptgrant_probes.py, tests/test_tool_grant.py |
 | `ptgrant-grant-malformed` | tool_grant | medium | yes | tests/test_tool_grant.py, tests/test_tool_grant_v2.py |
 | `ptgrant-grant-not-yet-valid` | tool_grant | medium | **NO** |  |
 | `ptgrant-invalid-target` | tool_grant | medium | yes | tests/test_tool_grant.py |
-| `ptgrant-issuer-unknown` | tool_grant | high | **NO** |  |
+| `ptgrant-issuer-unknown` | tool_grant | high | yes | evals/w340_covgap2_probes.py |
 | `ptgrant-jti-reused` | tool_grant | high | yes | evals/w271_redteam_probes.py, evals/w272_f253f254_probes.py, evals/w272_redteam_probes.py (+2) |
 | `ptgrant-link-unverifiable` | tool_grant | medium | yes | tests/test_tool_grant.py |
 | `ptgrant-mandate-drift` | tool_grant | high | yes | evals/w270_ptgrant_probes.py, evals/w271_ptgrantv2_probes.py, evals/w271_redteam_probes.py (+3) |
@@ -1486,7 +1486,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `quorum-insufficient` | quorum | high | yes | evals/w320_quorum_probes.py, evals/w321_redteam_probes.py, tests/test_quorum_approval.py |
 | `quorum-key-reuse` | quorum | high | yes | evals/w320_quorum_probes.py, evals/w321_redteam_probes.py, tests/test_quorum_approval.py |
 | `quorum-malformed` | quorum | medium | yes | evals/w320_quorum_probes.py, evals/w321_redteam_probes.py, tests/test_quorum_approval.py |
-| `quorum-not-met` | quorum | high | **NO** |  |
+| `quorum-not-met` | quorum | high | yes | evals/w340_covgap2_probes.py |
 | `quorum-operation-mismatch` | quorum | medium | yes | evals/w320_quorum_probes.py, evals/w321_redteam_probes.py, tests/test_quorum_approval.py |
 | `quorum-policy-version-invalid` | quorum | high | yes | evals/w320_quorum_probes.py, evals/w321_redteam_probes.py, tests/test_quorum_approval.py |
 | `quorum-replay-refused` | quorum | high | yes | evals/w320_quorum_probes.py, evals/w321_redteam_probes.py |
@@ -1494,13 +1494,13 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `quorum-signature-invalid` | quorum | high | yes | evals/w320_quorum_probes.py, evals/w321_redteam_probes.py |
 | `quorum-unknown-approver` | quorum | medium | yes | evals/w320_quorum_probes.py, evals/w321_redteam_probes.py |
 | `quorum-unreachable` | quorum | high | yes | evals/w320_quorum_probes.py, tests/test_quorum_approval.py |
-| `r3-grant-beyond-document` | r3 | high | **NO** |  |
-| `r3-grant-hash-mismatch` | r3 | high | **NO** |  |
+| `r3-grant-beyond-document` | r3 | high | yes | evals/w340_covgap2_probes.py |
+| `r3-grant-hash-mismatch` | r3 | high | yes | evals/w340_covgap2_probes.py |
 | `r3-malformed` | r3 | medium | **NO** |  |
 | `r3-no-match` | r3 | medium | **NO** |  |
-| `r3-per-call-binding-broken` | r3 | high | **NO** |  |
-| `r3-s256-mismatch` | r3 | high | **NO** |  |
-| `r3-unknown-operation` | r3 | high | **NO** |  |
+| `r3-per-call-binding-broken` | r3 | high | yes | evals/w340_covgap2_probes.py |
+| `r3-s256-mismatch` | r3 | high | yes | evals/w340_covgap2_probes.py |
+| `r3-unknown-operation` | r3 | high | yes | evals/w340_covgap2_probes.py |
 | `r3-vocabulary-unknown` | r3 | high | **NO** |  |
 | `rail-adapter-unknown-verdict` | rail | high | yes | evals/w274_rail_probes.py, evals/w275_redteam_probes.py, evals/w277_conflict_probes.py (+1) |
 | `rail-allow` | rail | low | yes | evals/w275_redteam_probes.py, tests/test_rail_verdict.py |
@@ -1601,7 +1601,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `revocation-applicable` | revocation | high | yes | evals/w243_finality_bound_probes.py, tests/test_finality_bound.py |
 | `revocation-basis-malformed` | revocation | medium | yes | evals/w243_finality_bound_probes.py, tests/test_finality_bound.py |
 | `revocation-basis-tampered` | revocation | critical | yes | evals/w243_finality_bound_probes.py, tests/test_finality_bound.py |
-| `revocation-category-error` | axis | high | **NO** |  |
+| `revocation-category-error` | axis | high | yes | evals/w340_covgap2_probes.py |
 | `revocation-check-unsealed` | revocation | high | yes | evals/w243_finality_bound_probes.py, tests/test_finality_bound.py |
 | `revocation-entry-unverifiable` | revocation | medium | yes | evals/w222_revoke_probes.py, evals/w292_revocation_probes.py, tests/test_absence_revocation.py (+1) |
 | `revocation-inexact-target-refused` | revocation | high | yes | evals/w222_revoke_probes.py, tests/test_absence_revocation.py |
@@ -1617,7 +1617,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `revocation-retired-reuse` | revocation | high | yes | evals/w292_revocation_probes.py, evals/w293_redteam_probes.py, evals/w293_sweep_probes.py (+2) |
 | `revocation-revoked` | revocation | high | yes | evals/w292_revocation_probes.py, evals/w293_redteam_probes.py, evals/w294_f364_probes.py (+1) |
 | `revocation-sink-nonatomic` | revocation | high | yes | evals/w243_finality_bound_probes.py, tests/test_finality_bound.py |
-| `revocation-state-unknown` | axis | high | **NO** |  |
+| `revocation-state-unknown` | axis | high | yes | evals/w340_covgap2_probes.py |
 | `revocation-status-unverifiable` | revocation | high | yes | evals/w292_revocation_probes.py, evals/w293_redteam_probes.py, evals/w294_f364_probes.py (+3) |
 | `revoke_not_authorized` | approval | high | yes | tests/test_delegation_primitive.py |
 | `rollback-detected` | manifest | critical | yes | evals/w219_rollback_probes.py, evals/w228_codes_probes.py, tests/test_version_manifest.py |
@@ -2003,7 +2003,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `unknown-manifest-category` | capability | medium | **NO** |  |
 | `unknown_agent` | discovery | medium | yes | tests/test_discovery_diff.py |
 | `unknown_approval` | approval | medium | **NO** |  |
-| `unknown_delegatee_agent` | approval | high | **NO** |  |
+| `unknown_delegatee_agent` | approval | high | yes | evals/w340_covgap2_probes.py |
 | `unknown_grant` | approval | medium | yes | evals/w42_probes.py, tests/test_delegation_executor_wiring.py, tests/test_delegation_primitive.py |
 | `unknown_issuer` | lease | medium | yes | evals/w78_probes.py, tests/test_w78_supplychain.py |
 | `unknown_parent` | approval | medium | **NO** |  |
@@ -2058,7 +2058,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `vsa-threshold-signature-invalid` | vsa | high | yes | evals/w324_vsa_probes.py, evals/w325_redteam_probes.py, tests/test_vsa_threshold.py |
 | `vsa-threshold-signer-unpinned` | vsa | medium | yes | evals/w324_vsa_probes.py, evals/w325_redteam_probes.py, tests/test_vsa_threshold.py |
 | `vsa-threshold-verdict-not-passed` | vsa | medium | yes | evals/w324_vsa_probes.py |
-| `wall_proof_unreadable` | platform | high | **NO** |  |
+| `wall_proof_unreadable` | platform | high | yes | evals/w340_covgap2_probes.py |
 | `wiring-malformed` | jail | medium | **NO** |  |
 | `wiring-unmapped-mount` | jail | medium | yes | evals/w216_jail_policy_probes.py, tests/test_jail_policy.py |
 | `witness-alert-queue-overflow` | witness | medium | yes | evals/w325_resid_probes.py, tests/test_monitor_alert.py |
@@ -2137,4 +2137,4 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `wrong-keyset-purpose` | key_identity | high | yes | evals/pack_loader_probes.py, tests/test_pack_loader.py |
 | `wrong-purpose` | key_identity | high | yes | evals/tuf_corpus_probes.py, tests/test_audit_detect.py, tests/test_pack_loader.py |
 | `wrong_delegator` | approval | high | yes | tests/test_approvals_d1.py |
-| `wrong_run_identity` | approval | high | **NO** |  |
+| `wrong_run_identity` | approval | high | yes | evals/w340_covgap2_probes.py |
