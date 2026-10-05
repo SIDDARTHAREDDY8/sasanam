@@ -21,6 +21,15 @@ block. The 2 residuals below remain OPEN and verified (roundtrip=True
 through a real parser). This script now pins the RESIDUAL scope:
 prints BREAK while the 2 residuals miss, HELD when they block.
 
+WAVE-346 LANE 1 EXTENSION (2026-10-05): the lane's two-axis review
+verified two further shapes of the same close-when ("sub-threshold
+entity/escape fragments inside base64 runs"): (c) 12 single entities
+spaced inside the run (the whole-text pass was bound at 8 items);
+(d) two/three single escape fragments spaced inside the run (the
+escape analogue of residual b -- per-run decoding needed one layer
+per fragment). Both round-trip through a real parser. They are pinned
+as residuals here and closed by the same lane.
+
 Expected on the OPEN tree: prints BREAK (F436 is OPEN).
 After a closure (the decode layer recognizes the residual shapes):
 prints HELD.
@@ -53,7 +62,7 @@ def _ent(c):
 
 def _shapes(b64):
     # each shape: (payload, real-parser round-trip check)
-    return {
+    shapes = {
         "single-decimal-entity-at-start": (
             _ent(b64[0]) + b64[1:], _rt_html),
         "single-decimal-entity-in-middle": (
@@ -71,6 +80,22 @@ def _shapes(b64):
         "single-octal-fragment": (
             b64[:10] + "\\%03o" % ord(b64[10]) + b64[11:], _rt_js),
     }
+    # Wave-346 lane 1 extension: stacked sub-threshold fragments.
+    parts, idx = [], 0
+    for _ in range(12):
+        parts.append(b64[idx:idx + 3])
+        parts.append("&#%d;" % ord(b64[idx + 3]))
+        idx += 4
+    parts.append(b64[idx:])
+    shapes["twelve-spaced-entities"] = ("".join(parts), _rt_html)
+    shapes["two-spaced-escape-fragments"] = (
+        b64[:10] + "\\x%02x" % ord(b64[10]) + b64[11:30]
+        + "\\x%02x" % ord(b64[30]) + b64[31:], _rt_js)
+    shapes["three-spaced-escape-fragments"] = (
+        b64[:8] + "\\x%02x" % ord(b64[8]) + b64[9:20]
+        + "\\u%04x" % ord(b64[20]) + b64[21:32]
+        + "\\%03o" % ord(b64[32]) + b64[33:], _rt_js)
+    return shapes
 
 
 def _rt_html(payload):
@@ -91,10 +116,12 @@ def main():
     raw_hit = dlp.find_credential(b64) == "dlp-slack-token"
     print("control (plain credential blocks) -> %s" % ("HELD" if control else "BROKEN-CONTROL"))
     print("control (raw base64 of long cred blocks) -> %s" % ("HELD" if raw_hit else "BROKEN-CONTROL"))
-    # Residual scope (wave-345 merge): the 6 shapes absorbed by the F432
-    # closure are documented as HELD-absorbed; BREAK requires the 2
-    # residuals to miss.
-    RESIDUALS = {"single-entity-no-semicolon", "two-entities-25-apart"}
+    # Residual scope (wave-345 merge + wave-346 lane 1 extension): the
+    # 6 shapes absorbed by the F432 closure are documented as
+    # HELD-absorbed; BREAK requires the residuals to miss.
+    RESIDUALS = {"single-entity-no-semicolon", "two-entities-25-apart",
+                 "twelve-spaced-entities", "two-spaced-escape-fragments",
+                 "three-spaced-escape-fragments"}
     misses = {}
     for name, (payload, rt_fn) in _shapes(b64).items():
         assert _LONG not in payload, "payload %s smuggles plaintext" % name

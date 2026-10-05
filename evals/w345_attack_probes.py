@@ -170,24 +170,29 @@ def test_b2_single_hex_entity_pinned():
 
 @_t
 def test_b2_single_entity_no_semicolon_pinned():
-    """F436: single no-semicolon entity evades."""
+    """F436 shape CLOSED by the wave-346 F436 lane: the legacy
+    no-semicolon entity (&#65, recovered by html.unescape) inside a
+    base64 run now decodes via the lenient entity layer and blocks
+    coded. Refusal assertion."""
     b64 = _b64(_LONG)
     payload = "&#%d" % ord(b64[0]) + b64[1:]
     assert _LONG not in payload
-    miss = dlp.find_credential(payload) is None
-    return ("HELD" if miss else "BREAK",
-            "F436 no-semicolon-entity miss reproduced=%s" % miss)
+    held = dlp.find_credential(payload) == "dlp-slack-token"
+    return ("HELD" if held else "BREAK",
+            "F436 no-semicolon-entity now blocks=%s" % held)
 
 
 @_t
 def test_b2_two_entities_apart_pinned():
-    """F436: two entities 25 chars apart (never 2 consecutive) evade."""
+    """F436 shape CLOSED by the wave-346 F436 lane: two single entities
+    25 chars apart inside a base64 run now decode via the whole-text
+    entity pass and block coded. Refusal assertion."""
     b64 = _b64(_LONG)
     payload = _ent(b64[0]) + b64[1:25] + _ent(b64[25]) + b64[26:]
     assert _LONG not in payload
-    miss = dlp.find_credential(payload) is None
-    return ("HELD" if miss else "BREAK",
-            "F436 two-entities-apart miss reproduced=%s" % miss)
+    held = dlp.find_credential(payload) == "dlp-slack-token"
+    return ("HELD" if held else "BREAK",
+            "F436 two-entities-apart now blocks=%s" % held)
 
 
 @_t
@@ -280,14 +285,15 @@ def test_b3_garbage_padded_base64_correctly_ignored():
 
 @_t
 def test_z0_f436_filed_open_with_new_footer():
-    """F436 is filed OPEN with the new footer: pins the filing so the
-    miss cannot go undocumented."""
+    """F436 is CLOSED by the wave-346 F436 lane: the FINDINGS.md entry
+    carries the closure note and the footer is now open none / next
+    F437."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("(F436 filed 2026-10-05, wave-345 lane 5" in text
-          and "LOW, OPEN:" in text
+    ok = ("F436 filed 2026-10-05, wave-345 lane 5" in text
+          and "CLOSED 2026-10-05 wave-346" in text
           and "Next free finding: **F437**" in text
-          and "Open findings: F436." in text)
-    return ("HELD" if ok else "BREAK", "F436 filed open=%s" % ok)
+          and "Open findings: none." in text)
+    return ("HELD" if ok else "BREAK", "F436 closed=%s" % ok)
 
 
 @_t
@@ -301,13 +307,14 @@ def test_z1_taxonomy_pin():
 
 @_t
 def test_z2_redfirst_f436_breaks():
-    """The F436 red-first script prints BREAK on this open tree."""
+    """The F436 red-first script prints HELD on this closed tree
+    (wave-346 F436 lane closed both residuals)."""
     venv_python = os.path.expanduser("~/workspace/.gov-venv/bin/python")
     r = subprocess.run(
         [venv_python, os.path.join(REPO_ROOT, "evals", "w345_f436_redfirst.py")],
         capture_output=True, text=True, timeout=300, cwd=REPO_ROOT,
         env=dict(os.environ, GOV_DEPLOYMENT_MODE="staging"))
-    ok = "BREAK" in r.stdout
+    ok = "HELD" in r.stdout
     return ("HELD" if ok else "BREAK", "redfirst rc=%d" % r.returncode)
 
 

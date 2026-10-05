@@ -214,8 +214,8 @@ def test_b2_f433_css_nospace_closed():
 
 @_t
 def test_b3_f432_f433_filings_pinned():
-    """F432-F435 filed and CLOSED (lanes 1-4), F436 filed OPEN (lane 5): pins
-    the filings and the closed/open footer so none can go undocumented."""
+    """F432-F436 filed and CLOSED (lanes 1-4, wave-346 lane 1): pins
+    the filings and the closed footer so none can go undocumented."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F432 filed 2026-10-05, wave-344 lane 4" in text
           and "(F433 filed 2026-10-05, wave-344 lane 4" in text
@@ -226,10 +226,10 @@ def test_b3_f432_f433_filings_pinned():
           and "(F434 filed 2026-10-05, wave-344 merge" in text
           and "(F435 filed 2026-10-05, wave-344 merge" in text
           and "(F436 filed 2026-10-05, wave-345 lane 5" in text
-          and "LOW, OPEN:" in text
+          and "LOW, CLOSED 2026-10-05 wave-346 lane 1" in text
           and "Next free finding: **F437**" in text
-          and "Open findings: F436." in text)
-    return ("HELD" if ok else "BREAK", "F432-F435 filed+closed, F436 filed open=%s" % ok)
+          and "Open findings: none." in text)
+    return ("HELD" if ok else "BREAK", "F432-F436 filed+closed=%s" % ok)
 
 
 
