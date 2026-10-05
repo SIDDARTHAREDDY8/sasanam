@@ -110,8 +110,9 @@ def main(argv):
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     md = io.StringIO()
     md.write("# Decision-code coverage table (generated)\n\n")
-    md.write("Generated: %s UTC · registry pin: %d · base: wave-342 lane 6 "
-             "(registry hygiene: -4 family-fallback codes, +at-risk emission)\n\n" % (stamp, COVERAGE_PIN))
+    md.write("Generated: %s UTC · registry pin: %d · base: wave-342 merge "
+             "(-4 family-fallback codes removed, +4 label-* codes, +61 behaviorally "
+             "probed, F428 closed / F429 open)\n\n" % (stamp, COVERAGE_PIN))
     md.write("Rule (Bernstein #5569, ADAPT): no row claims coverage "
              "without a test. A code counts as covered when its literal "
              "string appears quoted in at least one ``.py`` file under "
