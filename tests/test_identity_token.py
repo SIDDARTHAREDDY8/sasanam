@@ -302,15 +302,22 @@ class VerifyTokenPresentation(unittest.TestCase):
         self.assertIn("token_digest", reason)
 
     def test_bom_digest_agreement_accepted(self):
+        # Single clock read: _section() and _claims() each call
+        # int(time.time()) independently, so a test spanning a second
+        # boundary would otherwise flake on exp mismatch (wave-336
+        # merge: 1 failure in 3753 under memory pressure).
+        import time as _time
+        now = int(_time.time())
         principal = dict(IDENTITY)
         principal["token_digest"] = "ab" * 32
         packet = dp.sign_packet(
             dp.build_decision_packet(
-                **_kwargs(identity_token=_section(900),
+                **_kwargs(identity_token=_section(900, exp=now + 900),
                          bill_of_materials=_bom(principal=principal))),
             SEED)
         ok, reason = dp.verify_decision_packet(
-            copy.deepcopy(packet), token_claims=_claims(900))
+            copy.deepcopy(packet),
+            token_claims=_claims(900, exp=now + 900, iat=now - 3600))
         self.assertTrue(ok, reason)
 
 
