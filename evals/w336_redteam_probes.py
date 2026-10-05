@@ -78,9 +78,11 @@ P5 (F423 -- OPEN at base, attacked live):
 P6 (honesty):
   P6a  pin 2121: taxonomy 2121/2121/0 sorted-unique on raw source
        literals; all 6 wave-335 codes centrally registered.
-  P6b  footer: open none / next F426 (raw-literal assertion,
-       wave-331 lesson); F424/F425 closed wave-337 lane 1.
-  P6c  F424 and F425 sections present and marked CLOSED; F423 CLOSED.
+  P6b  footer: open F426 / next F427 (raw-literal assertion,
+       wave-331 lesson); F424/F425 closed wave-337 lane 1;
+       F426 filed by wave-337 red-team lane.
+  P6c  F424 and F425 sections present and marked CLOSED; F423 CLOSED;
+       F426 OPEN.
 
 P7 (older closure spot-regressions):
   P7a  F422: burst refuses coded tool-rate-limit-exceeded (wire).
@@ -863,34 +865,32 @@ def P6a():
 
 
 def P6b():
-    """Footer honesty: the last line carries open none and
-    next F426 (raw-literal assertion, wave-331 lesson). F424/F425 were
-    closed by wave-337 lane 1."""
-    pid = "P6b-footer-open-none-next-f426"
+    """Footer honesty: the last line carries open F426 and
+    next F427 (raw-literal assertion, wave-331 lesson). F424/F425 were
+    closed by wave-337 lane 1; F426 filed by the wave-337 red-team lane."""
+    pid = "P6b-footer-open-f426-next-f427"
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               "rb") as f:
         lines = f.read().decode("utf-8").splitlines()
     last = lines[-1] if lines else ""
-    if "Open findings: none." not in last:
-        _break(pid, "last line lacks 'Open findings: none.': %r"
+    if "Open findings: F426." not in last:
+        _break(pid, "last line lacks 'Open findings: F426.': %r"
                % (last[:160],))
         return
-    if "Next free finding: **F426**" not in last:
-        _break(pid, "last line lacks next-F426: %r" % (last[:160],))
+    if "Next free finding: **F427**" not in last:
+        _break(pid, "last line lacks next-F427: %r" % (last[:160],))
         return
-    if not any(l.startswith("## F424 ") for l in lines):
-        _break(pid, "F424 section missing from FINDINGS.md")
-        return
-    if not any(l.startswith("## F425 ") for l in lines):
-        _break(pid, "F425 section missing from FINDINGS.md")
-        return
-    _held(pid, "footer honest: open none / next F426")
+    for fnum in ("F424", "F425", "F426"):
+        if not any(l.startswith("## " + fnum + " ") for l in lines):
+            _break(pid, "%s section missing from FINDINGS.md" % (fnum,))
+            return
+    _held(pid, "footer honest: open F426 / next F427")
 
 
 def P6c():
     """F424/F425 sections are present and marked CLOSED (wave-337 lane
-    1); F423 CLOSED at the wave-336 merge."""
-    pid = "P6c-f424-f425-closed-f423-closed"
+    1); F423 CLOSED at the wave-336 merge; F426 OPEN."""
+    pid = "P6c-f424-f425-closed-f426-open"
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
     for fnum in ("F424", "F425"):
         body = text.split("## " + fnum)[1]
@@ -903,7 +903,12 @@ def P6c():
     if "Status: CLOSED" not in f423_body:
         _break(pid, "F423 not CLOSED at merge")
         return
-    _held(pid, "F424/F425 CLOSED (wave-337 lane 1); F423 CLOSED at merge")
+    f426 = text.split("## F426")[1]
+    f426_body = re.split(r"\n## F\d+|\nNext free finding:", f426)[0]
+    if "Status: OPEN." not in f426_body:
+        _break(pid, "F426 not OPEN at merge")
+        return
+    _held(pid, "F424/F425 CLOSED (wave-337 lane 1); F423 CLOSED at merge; F426 OPEN")
 
 
 # ---------------------------------------------------------------------------
@@ -987,8 +992,8 @@ _PROBES = [
     ("P5a-f423-nul-accepted", P5a),
     ("P5b-f423-crlf-mutated", P5b),
     ("P6a-pin-2121-taxonomy", P6a),
-    ("P6b-footer-open-f424-f425-next-f426", P6b),
-    ("P6c-f424-f425-open-f423-closed", P6c),
+    ("P6b-footer-open-f426-next-f427", P6b),
+    ("P6c-f424-f425-closed-f426-open", P6c),
     ("P7a-f422-burst-coded", P7a),
     ("P7b-f417-port-coded", P7b),
     ("P7c-f420-prm-happy-path", P7c),
