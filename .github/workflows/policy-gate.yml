@@ -1,0 +1,50 @@
+# Policy-change CI gate (wave-346 lane 3).
+#
+# STEAL (mechanism only) from Archestra's CI-gated policy testing:
+# a policy change must pass the evidence tests that pin its affected
+# decision signals BEFORE it lands. scripts/policy_ci_gate.py analyzes
+# the PR diff, selects the evals batteries that pin the affected
+# rules/flags, runs them with green checks enabled, and fails closed
+# when any of them breaks.
+#
+# This workflow is the wiring declaration; the gate itself runs
+# locally with the canonical venv (~/workspace/.gov-venv, built from
+# requirements.lock with --require-hashes). The F75 supply-chain
+# preflight fails closed on a non-venv interpreter, so the venv build
+# below is load-bearing, not ceremony.
+
+name: policy-gate
+
+on:
+  pull_request:
+    paths:
+      - "policies/**"
+      - "gov/policy_observe.py"
+      - "gov/decision_codes.py"
+      - "scripts/policy_ci_gate.py"
+      - "gov/policy_gate.py"
+
+jobs:
+  policy-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the gate diffs against the PR base ref
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build canonical venv
+        run: |
+          python3 -m venv .gov-venv
+          .gov-venv/bin/pip install --require-hashes -r requirements.lock
+      - name: Policy gate (fail closed)
+        env:
+          GOV_VENV: ${{ github.workspace }}/.gov-venv/bin/python
+        run: |
+          "$GOV_VENV" scripts/policy_ci_gate.py \
+            --repo ${{ github.workspace }} \
+            --base ${{ github.event.pull_request.base.sha }} \
+            --head ${{ github.event.pull_request.head.sha }} \
+            --python "$GOV_VENV"
