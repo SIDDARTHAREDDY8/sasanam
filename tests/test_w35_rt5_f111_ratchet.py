@@ -108,9 +108,9 @@ class TestRT5ManifestBypass(unittest.TestCase):
 
     def test_rt5_obfuscated_key_caught_at_egress(self):
         # RT5 variant 3: zero-width-space-obfuscated production key in
-        # scope. The text scan misses it (regex needs the contiguous
-        # shape) -- verify_scope passes, documenting the limitation.
-        # But the payoff -- egressing the DE-obfuscated key -- is
+        # scope. F429 CLOSED 2026-10-05 wave-343 lane 1: verify_scope now
+        # raises (zero-width strip in the DLP normalization pass).
+        # The payoff -- egressing the DE-obfuscated key -- remains
         # denied: the DLP arg scan blocks credential-shaped api_call
         # args, and check_egress would independently mismatch.
         ctx = make_run()
@@ -120,7 +120,13 @@ class TestRT5ManifestBypass(unittest.TestCase):
         _write(scope, "config/cache.dat",
                '{"k": "%s"}' % obfuscated)
         manifest = CredentialManifest()
-        manifest.verify_scope(scope)  # text-scan limitation: no raise
+        # F429 CLOSED 2026-10-05 wave-343 lane 1: the DLP normalization
+        # pass now strips zero-width characters, so the scope text scan
+        # CATCHES the obfuscated key (before: documented text-scan
+        # limitation, no raise).
+        with self.assertRaises(CredentialManifestError) as cm:
+            manifest.verify_scope(scope)
+        self.assertIn("undeclared_credential_in_scope", str(cm.exception))
 
         # The payoff leg: the agent de-obfuscates and egresses.
         ctx2 = self._run()
