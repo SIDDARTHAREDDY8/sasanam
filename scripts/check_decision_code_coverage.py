@@ -39,7 +39,7 @@ import re
 import sys
 import time
 
-COVERAGE_PIN = 2131  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-339 lane 2: registry size after +2 witness codes.; Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); Wave-340 lane 3: pin 2130 -> 2131 (+1 deadctrl-subject-mutated).
+COVERAGE_PIN = 2135  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-339 lane 2: registry size after +2 witness codes.; Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); Wave-340 lane 3: pin 2130 -> 2131 (+1 deadctrl-subject-mutated). Wave-342 lane 3: pin 2131 -> 2135 (+4 label-* codes: label-egress-refused, label-remedy-empty-unliftable, label-annotation-unregistered, label-trust-floor-refused).
 
 # A quoted token that could be a decision code: lowercase alnum runs
 # with dashes/dots/underscores, both quote styles.

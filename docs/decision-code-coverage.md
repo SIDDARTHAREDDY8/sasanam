@@ -1,10 +1,10 @@
 # Decision-code coverage table (generated)
 
-Generated: 2026-10-05T11:47:45Z UTC · registry pin: 2131 · base: wave-341 lane B (coverage round 3)
+Generated: 2026-10-05T12:24:48Z UTC · registry pin: 2135 · base: wave-342 lane 3 (R40 label monoid + remedy plans)
 
 Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code counts as covered when its literal string appears quoted in at least one ``.py`` file under ``tests/`` or ``evals/``. Production ``emit()`` call sites do not count.
 
-**Covered: 1982 / 2131** · **Gaps: 149**
+**Covered: 1986 / 2135** · **Gaps: 149**
 
 | code | domain | severity | covered | asserted in |
 | ---- | ------ | -------- | ------- | ----------- |
@@ -1077,6 +1077,10 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `kms-signer-keyref-invalid` | kms | medium | yes | tests/test_kms_signer.py |
 | `kms-signer-message-too-large` | kms | medium | yes | evals/w226_kms_probes.py, tests/test_kms_signer.py |
 | `kms-signer-refused` | kms | medium | yes | tests/test_kms_signer.py |
+| `label-annotation-unregistered` | label | high | yes | evals/w342_r40_label_probes.py |
+| `label-egress-refused` | label | high | yes | evals/w342_r40_arb_redfirst.py, evals/w342_r40_label_probes.py |
+| `label-remedy-empty-unliftable` | label | high | yes | evals/w342_r40_label_probes.py |
+| `label-trust-floor-refused` | label | high | yes | evals/w342_r40_label_probes.py |
 | `lease_expired` | lease | medium | yes | evals/w78_probes.py, tests/test_decision_codes.py, tests/test_w78_supplychain.py |
 | `lease_missing` | lease | medium | yes | evals/w78_probes.py, tests/test_w78_supplychain.py |
 | `lease_not_yet_valid` | lease | medium | yes | evals/w341_covgap3_probes.py |
@@ -1901,7 +1905,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `tool-budget-unavailable` | velocity | high | yes | evals/w337_ratelimit2_probes.py |
 | `tool-crashed` | capability | medium | **NO** |  |
 | `tool-definition-malformed` | mcp-surface | medium | yes | tests/test_wave243_effect_agreement.py |
-| `tool-executable-content` | mcp-surface | high | yes | evals/w243_threat_model_probes.py, evals/w244_token_scope_probes.py, tests/test_wave243_effect_agreement.py |
+| `tool-executable-content` | mcp-surface | high | yes | evals/w243_threat_model_probes.py, evals/w244_token_scope_probes.py, evals/w341_jsfuck_probes.py (+2) |
 | `tool-failed-no-commit` | capability | medium | yes | evals/capability_grant_probes.py |
 | `tool-guardrail-tripwire` | guardrail | high | yes | evals/w279_triad_probes.py, evals/w281_f306_probes.py, tests/test_tool_guardrails.py |
 | `tool-rate-limit-config-invalid` | velocity | medium | yes | evals/w335_ratelimit_probes.py, evals/w336_redteam_probes.py, evals/w337_redteam_probes.py |
