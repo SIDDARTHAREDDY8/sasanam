@@ -113,12 +113,21 @@ meaning would be unmediated).
 | `governed_tool_middleware` | `(binding) -> GovernedToolMiddleware` | Per-tool `ToolMiddleware` for `FunctionTool.with_middleware(...)`. The tool's own implementation (`call_next`) runs only after the binding returns `"executed"`. |
 | `GovernedToolMiddleware` | async `__call__(call_next, event, context)` | Extracts `event.name` + `serialized_arguments` (fail closed on unparseable/non-object arguments → `MalformedToolCallError`); mediates via the facade. Denied / queued / unregistered calls return a `ToolErrorEvent` carrying the adapter error — the implementation is never invoked. |
 | `GovernedAgentMiddleware` | subclass of `ag2.middleware.BaseMiddleware` | Agent-wide: `on_tool_execution` delegates to the same per-tool enforcement. Register with `ag2.middleware.Middleware(GovernedAgentMiddleware, binding=binding)` in `Agent(..., middleware=[...])`. |
+| `audit_turn_plugins` | `(binding, plugins, declared_tools=()) -> {"plugins", "mediated"}` | **Pre-turn audit of invocation plugins** (ag2 1.1.2 `additional_plugins`): every per-turn contributed tool name must resolve through the binding (`UnregisteredToolError`, fail closed before the turn starts); same-name collisions between plugins or with a declared tool refuse (`PluginToolCollisionError` — AG2's `resolve_tools` keeps one tool per name, later-in-code wins with a warning, so a collision means the governed implementation may silently not be the one answering the call). |
 
 API note: AG2 1.x replaced the 0.9 `ConversableAgent` `hook_lists`
 API with the middleware pipeline; `on_tool_execution` is the
 functional successor of the hook system and is what this module
 targets. Fail-closed at construction: a non-`GovernedBinding` raises
-`TypeError` immediately.
+`TypeError` immediately. **Invocation plugins are mediated:** AG2's
+`_drive_scope` chains per-turn plugin tools into the same tool set
+registered through the agent middleware chain, so
+`GovernedAgentMiddleware.on_tool_execution` mediates them by name
+exactly like declared tools; `audit_turn_plugins` exists because the
+operator never sees them at agent construction time. Residual: a
+plugin tool's OWN tool-level middleware wraps INSIDE the agent
+chain, so it observes/mutates arguments AFTER our mediation
+(split-authorization/execution residual class).
 
 ### Pre-mediation input audit (F62, R14 follow-up)
 

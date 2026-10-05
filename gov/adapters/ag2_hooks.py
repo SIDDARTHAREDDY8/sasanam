@@ -43,11 +43,30 @@ Fail-closed properties:
 * ``ag2`` missing at import time raises ``ImportError`` naming the
   ``'ag2'`` extra, same convention as the other framework adapters.
 
+* Invocation plugins (ag2 1.1.2: plugins passed per-turn via
+  ``additional_plugins``) contribute tools for ONE turn only. AG2's
+  ``_drive_scope`` chains those tools into the same tool set and
+  registers them through the same ``ToolExecutor`` + agent-middleware
+  chain, so :class:`GovernedAgentMiddleware.on_tool_execution`
+  mediates them by name exactly like declared tools -- the operator
+  never sees them at agent construction time, but mediation is
+  identical. :func:`audit_turn_plugins` audits a turn's plugin set
+  BEFORE the turn starts: every contributed name must resolve through
+  the binding, and no name may collide (AG2's ``resolve_tools`` keeps
+  exactly one tool per name, later-in-code wins with a warning).
+
 Residual limitations (see ``gov/adapters/README.md``): in-process
 Python cannot stop code holding its own unmediated reference (a bare
 ``FunctionTool`` not registered with the middleware, a direct call to
 the wrapped Python function). Only hand governed tools / middleware-
-registered agents to agent code. The executor simulates tools; on
+registered agents to agent code. A plugin-contributed ``FunctionTool``
+may also carry its OWN tool-level middleware; tool-level middleware
+wraps INSIDE the agent middleware chain (closest to the tool), so it
+observes/mutates arguments AFTER our ``on_tool_execution``
+mediation -- same split-authorization/execution residual class as the
+executor below: mediation authorizes the arguments as AG2 presented
+them, and in-process code downstream of the mediation point cannot be
+re-authorized. The executor simulates tools; on
 ``"executed"`` the real tool implementation still runs after the
 audited authorization (split authorization/execution).
 """
@@ -63,6 +82,7 @@ except ImportError as _exc:
     ) from _exc
 
 from .core import (
+    AdapterError,
     ApprovalRequiredError,
     GovernedBinding,
     GovernedToolFacade,
@@ -187,8 +207,112 @@ class GovernedAgentMiddleware(BaseMiddleware):
         return await self._tool_middleware(call_next, event, context)
 
 
+class PluginToolCollisionError(AdapterError):
+    """Raised by :func:`audit_turn_plugins` when two AG2 tools answer
+    one name in a single turn's tool set.
+
+    AG2's ``resolve_tools`` keeps exactly one tool per name
+    (later-in-code wins with a warning; a remote peer's tool never
+    overrides one declared in code). A collision means the governed
+    tool the operator audited may silently not be the one answering
+    the call. Fail closed: refuse the turn's plugin set instead of
+    guessing which implementation AG2 kept."""
+
+
+def _plugin_tool_names(plugin):
+    """Duck-typed tool-name extraction for an AG2 ``Plugin``.
+
+    The real ``ag2.Plugin`` collects contributed tools in ``._tools``
+    (``FunctionTool`` instances with ``.name``); tests and minimal
+    integrations may pass stand-ins with the same shape.
+    """
+    tools = getattr(plugin, "_tools", None)
+    if tools is None:
+        raise MalformedToolCallError(
+            "audit_turn_plugins expected a Plugin carrying _tools, got "
+            "%r" % type(plugin).__name__)
+    names = []
+    for tool in tools:
+        name = getattr(tool, "name", None)
+        if not isinstance(name, str) or not name:
+            raise MalformedToolCallError(
+                "a plugin-contributed tool has no usable name: %r"
+                % (tool,))
+        names.append(name)
+    return names
+
+
+def audit_turn_plugins(binding, plugins, declared_tools=()):
+    """Pre-turn audit of AG2 invocation plugins (verified against
+    ag2 1.1.2).
+
+    Invocation plugins (``additional_plugins`` on a turn) contribute
+    tools/middleware/prompts/observers/policies/variables for ONE
+    turn only. AG2's ``_drive_scope`` chains the contributed tools
+    into the turn's tool set and registers them through the same
+    ``ToolExecutor`` + agent-middleware chain as the agent's own
+    tools, so :class:`GovernedAgentMiddleware` mediates them by name
+    exactly like declared tools -- but the operator never sees them
+    at agent construction time. This audit closes the pre-turn gap:
+
+    * every plugin tool name must resolve through ``binding``
+      (:exc:`UnregisteredToolError` -- the same fail-closed refusal
+      the middleware returns at call time, surfaced before the turn
+      starts instead of at first invocation);
+    * no name may appear twice across the plugin set, and no plugin
+      tool may collide with a declared agent tool
+      (:exc:`PluginToolCollisionError` -- AG2's ``resolve_tools``
+      keeps one tool per name, later-in-code wins with a warning; the
+      audit refuses rather than silently letting the governed
+      implementation lose).
+
+    ``declared_tools`` are the agent's own tools (duck-typed, ``.name``
+    or plain names). Returns ``{"plugins": n, "mediated":
+    sorted(names)}`` on success.
+    """
+    if not isinstance(binding, GovernedBinding):
+        raise TypeError("binding must be a GovernedBinding, got %r"
+                        % type(binding).__name__)
+    plugins = list(plugins or [])
+    declared_names = []
+    for tool in declared_tools or ():
+        declared_names.append(getattr(tool, "name", tool))
+
+    seen = {}
+    mediated = []
+    unregistered = []
+    for index, plugin in enumerate(plugins):
+        for name in _plugin_tool_names(plugin):
+            if name in seen or name in declared_names:
+                raise PluginToolCollisionError(
+                    "invocation plugin %d contributes tool %r which "
+                    "collides with %r; AG2 keeps one tool per name, "
+                    "so the governed implementation may silently not "
+                    "be the one answering the call -- refusing the "
+                    "turn's plugin set." % (index, name,
+                                            seen.get(name,
+                                                     "a declared tool")))
+            seen[name] = "plugin %d" % index
+            try:
+                binding.resolve(name)
+            except UnregisteredToolError:
+                unregistered.append(name)
+                continue
+            mediated.append(name)
+    if unregistered:
+        raise UnregisteredToolError(
+            "invocation plugin(s) contribute tool(s) with no binding "
+            "mapping: %s; they would refuse at first call -- refusing "
+            "the turn's plugin set before the turn starts."
+            % ", ".join(sorted(set(unregistered))))
+    return {"plugins": len(plugins),
+            "mediated": sorted(mediated)}
+
+
 __all__ = [
     "GovernedAgentMiddleware",
     "GovernedToolMiddleware",
+    "PluginToolCollisionError",
+    "audit_turn_plugins",
     "governed_tool_middleware",
 ]

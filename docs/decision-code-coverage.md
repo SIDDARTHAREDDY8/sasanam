@@ -1,10 +1,10 @@
 # Decision-code coverage table (generated)
 
-Generated: 2026-10-05T09:00:29Z UTC · registry pin: 2126 · base: wave-338 lane 5
+Generated: 2026-10-05T09:35:31Z UTC · registry pin: 2126 · base: wave-338 lane 5
 
 Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code counts as covered when its literal string appears quoted in at least one ``.py`` file under ``tests/`` or ``evals/``. Production ``emit()`` call sites do not count.
 
-**Covered: 1885 / 2126** · **Gaps: 241**
+**Covered: 1915 / 2126** · **Gaps: 211**
 
 | code | domain | severity | covered | asserted in |
 | ---- | ------ | -------- | ------- | ----------- |
@@ -481,12 +481,12 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `corrob-receipt-subject-mismatch` | corroboration | high | yes | evals/w267_corrob_probes.py, evals/w268_redteam_probes.py, tests/test_corroboration_receipt.py |
 | `corrob-receipt-unbound-issuer` | corroboration | high | yes | evals/w267_corrob_probes.py, evals/w268_redteam_probes.py, tests/test_corroboration_receipt.py |
 | `corrob-vc-proof-invalid` | corroboration | high | yes | evals/w267_corrob_probes.py, tests/test_corroboration_receipt.py |
-| `corroboration-key-inequality` | corroboration | high | **NO** |  |
-| `corroboration-malformed` | corroboration | medium | **NO** |  |
-| `corroboration-signature-invalid` | corroboration | high | **NO** |  |
-| `corroboration-unattested` | corroboration | high | **NO** |  |
-| `corroboration-uncorroborated` | corroboration | high | **NO** |  |
-| `corroboration-untrusted-source` | corroboration | medium | **NO** |  |
+| `corroboration-key-inequality` | corroboration | high | yes | evals/w339_covgap1_probes.py |
+| `corroboration-malformed` | corroboration | medium | yes | evals/w339_covgap1_probes.py |
+| `corroboration-signature-invalid` | corroboration | high | yes | evals/w339_covgap1_probes.py |
+| `corroboration-unattested` | corroboration | high | yes | evals/w339_covgap1_probes.py |
+| `corroboration-uncorroborated` | corroboration | high | yes | evals/w339_covgap1_probes.py |
+| `corroboration-untrusted-source` | corroboration | medium | yes | evals/w339_covgap1_probes.py |
 | `coverage-logbook-chain-broken` | coverage | high | yes | evals/w275_coverage_probes.py, evals/w276_redteam_probes.py, tests/test_coverage_ledger.py |
 | `coverage-refused-backdated-entry` | coverage | medium | yes | evals/w275_coverage_probes.py, evals/w276_redteam_probes.py, evals/w277_f298_probes.py (+2) |
 | `coverage-refused-future-dated-entry` | coverage | medium | yes | evals/w277_f298_probes.py, evals/w278_redteam_probes.py |
@@ -1108,21 +1108,21 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `mapping-drift` | mcp | critical | **NO** |  |
 | `max_hops_exceeded` | approval | medium | yes | evals/w22_probes.py, tests/test_approvals_d1.py |
 | `mcp-oauth-binding-tampered` | mcp-oauth | high | yes | evals/w245_mcp_oauth_binding_probes.py, evals/w332_mcpoauth_probes.py, evals/w334_prm_probes.py (+1) |
-| `mcp-oauth-cimd-binding-mismatch` | mcp-oauth | high | **NO** |  |
-| `mcp-oauth-cimd-credential-present` | mcp-oauth | critical | **NO** |  |
-| `mcp-oauth-cimd-document-malformed` | mcp-oauth | high | **NO** |  |
-| `mcp-oauth-cimd-fetch-non200` | mcp-oauth | high | **NO** |  |
-| `mcp-oauth-cimd-fetch-redirect` | mcp-oauth | high | **NO** |  |
-| `mcp-oauth-cimd-fetch-ssrf-range` | mcp-oauth | critical | **NO** |  |
-| `mcp-oauth-cimd-fetch-timeout` | mcp-oauth | medium | **NO** |  |
-| `mcp-oauth-cimd-fetch-too-large` | mcp-oauth | medium | **NO** |  |
-| `mcp-oauth-cimd-redirect-origin-mismatch` | mcp-oauth | high | **NO** |  |
-| `mcp-oauth-cimd-url-dot-segment` | mcp-oauth | high | **NO** |  |
-| `mcp-oauth-cimd-url-fragment` | mcp-oauth | medium | **NO** |  |
-| `mcp-oauth-cimd-url-not-https` | mcp-oauth | high | **NO** |  |
-| `mcp-oauth-cimd-url-query` | mcp-oauth | medium | **NO** |  |
-| `mcp-oauth-cimd-url-root-path` | mcp-oauth | medium | **NO** |  |
-| `mcp-oauth-cimd-url-userinfo` | mcp-oauth | high | **NO** |  |
+| `mcp-oauth-cimd-binding-mismatch` | mcp-oauth | high | yes | evals/w339_covgap1_probes.py |
+| `mcp-oauth-cimd-credential-present` | mcp-oauth | critical | yes | evals/w339_covgap1_probes.py |
+| `mcp-oauth-cimd-document-malformed` | mcp-oauth | high | yes | evals/w339_covgap1_probes.py |
+| `mcp-oauth-cimd-fetch-non200` | mcp-oauth | high | yes | evals/w339_covgap1_probes.py |
+| `mcp-oauth-cimd-fetch-redirect` | mcp-oauth | high | yes | evals/w339_covgap1_probes.py |
+| `mcp-oauth-cimd-fetch-ssrf-range` | mcp-oauth | critical | yes | evals/w339_covgap1_probes.py |
+| `mcp-oauth-cimd-fetch-timeout` | mcp-oauth | medium | yes | evals/w339_covgap1_probes.py |
+| `mcp-oauth-cimd-fetch-too-large` | mcp-oauth | medium | yes | evals/w339_covgap1_probes.py |
+| `mcp-oauth-cimd-redirect-origin-mismatch` | mcp-oauth | high | yes | evals/w339_covgap1_probes.py |
+| `mcp-oauth-cimd-url-dot-segment` | mcp-oauth | high | yes | evals/w339_covgap1_probes.py |
+| `mcp-oauth-cimd-url-fragment` | mcp-oauth | medium | yes | evals/w339_covgap1_probes.py |
+| `mcp-oauth-cimd-url-not-https` | mcp-oauth | high | yes | evals/w339_covgap1_probes.py |
+| `mcp-oauth-cimd-url-query` | mcp-oauth | medium | yes | evals/w339_covgap1_probes.py |
+| `mcp-oauth-cimd-url-root-path` | mcp-oauth | medium | yes | evals/w339_covgap1_probes.py |
+| `mcp-oauth-cimd-url-userinfo` | mcp-oauth | high | yes | evals/w339_covgap1_probes.py |
 | `mcp-oauth-credential-misbound` | mcp-oauth | high | yes | evals/w245_mcp_oauth_binding_probes.py, tests/test_mcp_oauth_binding.py |
 | `mcp-oauth-fix-gap-refused` | mcp-oauth | high | yes | evals/w245_mcp_oauth_binding_probes.py, tests/test_mcp_oauth_binding.py |
 | `mcp-oauth-iss-mismatched` | mcp-oauth | high | yes | evals/w331_redteam_probes.py, evals/w332_mcpoauth_probes.py, tests/test_mcp_oauth_binding.py |
@@ -1650,7 +1650,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `scan_policy_duplicates` | scan | medium | **NO** |  |
 | `scan_verdict_bad_bytes` | scan | medium | **NO** |  |
 | `scan_verdict_bad_digest` | scan | medium | **NO** |  |
-| `scan_verdict_bad_json` | scan | medium | **NO** |  |
+| `scan_verdict_bad_json` | scan | medium | yes | evals/w339_covgap1_probes.py |
 | `scan_verdict_bad_scanner_name` | scan | medium | yes | tests/test_scan_verdicts.py |
 | `scan_verdict_bad_scanner_version` | scan | medium | **NO** |  |
 | `scan_verdict_bad_severity_counts` | scan | medium | **NO** |  |
@@ -1659,19 +1659,19 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `scan_verdict_bad_verifiers` | scan | medium | **NO** |  |
 | `scan_verdict_born_stale` | scan | medium | **NO** |  |
 | `scan_verdict_empty_window` | scan | medium | **NO** |  |
-| `scan_verdict_future_scan` | scan | medium | **NO** |  |
-| `scan_verdict_malformed_envelope` | scan | medium | **NO** |  |
+| `scan_verdict_future_scan` | scan | medium | yes | evals/w339_covgap1_probes.py |
+| `scan_verdict_malformed_envelope` | scan | medium | yes | evals/w339_covgap1_probes.py |
 | `scan_verdict_missing` | scan | medium | **NO** |  |
 | `scan_verdict_missing_fields` | scan | medium | **NO** |  |
 | `scan_verdict_negative` | scan | medium | **NO** |  |
 | `scan_verdict_no_signer` | scan | medium | **NO** |  |
 | `scan_verdict_no_verifiers` | scan | medium | **NO** |  |
-| `scan_verdict_not_canonical` | scan | medium | **NO** |  |
-| `scan_verdict_payload_type` | scan | medium | **NO** |  |
-| `scan_verdict_scanner_mismatch` | scan | medium | **NO** |  |
-| `scan_verdict_signature_invalid` | scan | high | **NO** |  |
-| `scan_verdict_stale` | scan | medium | **NO** |  |
-| `scan_verdict_target_mismatch` | scan | medium | **NO** |  |
+| `scan_verdict_not_canonical` | scan | medium | yes | evals/w339_covgap1_probes.py |
+| `scan_verdict_payload_type` | scan | medium | yes | evals/w339_covgap1_probes.py |
+| `scan_verdict_scanner_mismatch` | scan | medium | yes | evals/w339_covgap1_probes.py |
+| `scan_verdict_signature_invalid` | scan | high | yes | evals/w339_covgap1_probes.py |
+| `scan_verdict_stale` | scan | medium | yes | evals/w339_covgap1_probes.py |
+| `scan_verdict_target_mismatch` | scan | medium | yes | evals/w339_covgap1_probes.py |
 | `scan_verdict_unknown_fields` | scan | medium | **NO** |  |
 | `scan_verdict_unknown_scanner` | scan | medium | **NO** |  |
 | `scan_verdict_window_too_long` | scan | medium | **NO** |  |
