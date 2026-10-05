@@ -38,9 +38,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
-FOOTER_OPEN = "F429"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
-FOOTER_NEXT = "F430"  # Next free finding number.
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+FOOTER_OPEN = "F430, F431"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
+FOOTER_NEXT = "F432"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -789,23 +789,23 @@ def _p4c():
 # P5: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P5a-pin-taxonomy-2131-sorted")
+@probe("P5a-pin-taxonomy-2134-sorted")
 def _p5a():
     """Taxonomy pin 2100: raw source literals sorted and unique."""
     src = open(os.path.join(REPO, "gov", "decision_codes.py")).read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
     if len(lits) != TAXONOMY_PIN:
-        return _break("P5a-pin-taxonomy-2131-sorted",
+        return _break("P5a-pin-taxonomy-2134-sorted",
                       "want %d, got %d" % (TAXONOMY_PIN, len(lits)))
     if len(set(lits)) != len(lits):
-        return _break("P5a-pin-taxonomy-2131-sorted", "duplicate literals")
+        return _break("P5a-pin-taxonomy-2134-sorted", "duplicate literals")
     if lits != sorted(lits):
-        return _break("P5a-pin-taxonomy-2131-sorted", "not sorted")
-    return _held("P5a-pin-taxonomy-2131-sorted",
-                 "2131/2131/0 sorted unique on raw source literals")
+        return _break("P5a-pin-taxonomy-2134-sorted", "not sorted")
+    return _held("P5a-pin-taxonomy-2134-sorted",
+                 "2134/2134/0 sorted unique on raw source literals")
 
 
-@probe("P5b-footer-open-f429-next-f430")
+@probe("P5b-footer-open-f430-f431-next-f432")
 def _p5b():
     """Footer: open F415; next free F417 (F414/F416 CLOSED wave-330 lane 1 /
     wave-331 lane 2; F415 OPEN filed wave-330 lane 3)."""
@@ -816,17 +816,17 @@ def _p5b():
                           r"\*\*Open findings: ([^*]*)\.\*\*",
                           footer))
     if not ms:
-        return _break("P5b-footer-open-f429-next-f430",
+        return _break("P5b-footer-open-f430-f431-next-f432",
                       "footer line not found")
     m = ms[-1]
     if m.group(1) != "F" + FOOTER_NEXT[1:]:
-        return _break("P5b-footer-open-f429-next-f430",
+        return _break("P5b-footer-open-f430-f431-next-f432",
                       "next=%r, want F%s" % (m.group(1), FOOTER_NEXT[1:]))
     opens = m.group(2).strip()
     if opens != FOOTER_OPEN:
-        return _break("P5b-footer-open-f429-next-f430",
+        return _break("P5b-footer-open-f430-f431-next-f432",
                       "open=%r, want %r" % (opens, FOOTER_OPEN))
-    return _held("P5b-footer-open-f429-next-f430",
+    return _held("P5b-footer-open-f430-f431-next-f432",
                  "footer open none / next F417")
 
 

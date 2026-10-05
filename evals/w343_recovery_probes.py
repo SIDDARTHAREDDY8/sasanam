@@ -34,7 +34,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2131  # Wave-342 merge: pin stays 2131, no new codes
+TAXONOMY_PIN = 2134  # Wave-342 merge: pin stays 2131, no new codes; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 from gov import recovery_guide as rg  # noqa: E402
 from gov import trajectory_labels as tl  # noqa: E402
@@ -93,8 +93,8 @@ def test_p2_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     with open(path) as f:
         last = "".join(f.readlines()[-3:])
-    ok = ("Next free finding: **F430**" in last
-          and "Open findings: F429." in last)
+    ok = ("Next free finding: **F432**" in last
+          and "Open findings: F430, F431." in last)
     return ("HELD" if ok else "BREAK",
             "footer must read open F429 / next F430")
 

@@ -34,7 +34,7 @@ P5 (classical byte-identical): seal with and without the explicit
    `pq_alg_id=None` kwarg produces byte-identical canonical JSON;
    top-level key set is exactly the pre-slot shape; a classical
    bundle round-trips (open returns the statement bytes, verify True).
-P6 (honesty): taxonomy 2131/2131/0 sorted-unique on raw source
+P6 (honesty): taxonomy 2134/2134/0 sorted-unique on raw source
    literals; both new codes centrally registered; footer open none /
    next F421.
 
@@ -79,7 +79,7 @@ from gov import pq_envelope as PQ  # noqa: E402
 from gov import sigstore_bundle as SB  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 _SEED = b"w335-pqslot-test-seed-0000000001"  # 32 bytes
 assert len(_SEED) == 32
 _STMT = b'{"_type":"https://in-toto.io/Statement/v1","subject":[],"predicateType":"x"}'
@@ -357,10 +357,10 @@ def P5b():
 # ---------------------------------------------------------------------------
 
 def P6a():
-    """Pin honesty: taxonomy is 2131/2131/0, sorted and unique on raw
+    """Pin honesty: taxonomy is 2134/2134/0, sorted and unique on raw
     source literals (wave-260 lesson: assert on literals, not the
     deduped dict)."""
-    pid = "P6a-pin-taxonomy-2131-sorted"
+    pid = "P6a-pin-taxonomy-2134-sorted"
     with open(os.path.join(REPO, "gov", "decision_codes.py"),
               encoding="utf-8") as fh:
         src = fh.read()
@@ -375,7 +375,7 @@ def P6a():
     if sorted(codes) != codes:
         _break(pid, "literals not sorted")
         return
-    _held(pid, "taxonomy 2131/2131/0 sorted unique on raw literals")
+    _held(pid, "taxonomy 2134/2134/0 sorted unique on raw literals")
 
 
 def P6b():
@@ -394,12 +394,12 @@ def P6b():
 def P6c():
     """Footer honesty: open none / next F430 (raw literals included --
     wave-331 lesson)."""
-    pid = "P6c-footer-open-f429-next-f430"
+    pid = "P6c-footer-open-f430-f431-next-f432"
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               encoding="utf-8") as fh:
         text = fh.read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F430**" in text
+    ok = ("Next free finding: **F432**" in text
           and m_open and m_open[-1].strip() == "F429")
     if ok:
         _held(pid, "footer: open none / next F430")
@@ -419,9 +419,9 @@ _PROBES = [
     ("P4c-pq-verify-null-slot-classical", P4c),
     ("P5a-pq-classical-byte-identical", P5a),
     ("P5b-pq-classical-roundtrip", P5b),
-    ("P6a-pin-taxonomy-2131-sorted", P6a),
+    ("P6a-pin-taxonomy-2134-sorted", P6a),
     ("P6b-pq-codes-registered", P6b),
-    ("P6c-footer-open-f429-next-f430", P6c),
+    ("P6c-footer-open-f430-f431-next-f432", P6c),
 ]
 
 _EXPECTED_BREAKS = set()

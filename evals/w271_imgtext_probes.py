@@ -45,7 +45,7 @@ from gov.memory_provenance import (  # noqa: E402
 # Lane-local taxonomy pin: 1411 (wave-270 merge) + 4 imgtext-* codes.
 # Counted on raw quoted source literals (the corrected method:
 # bare '"code": ' overcounts helper occurrences).
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 
 EXPECTED_CODES = (

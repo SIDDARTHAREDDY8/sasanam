@@ -7,7 +7,7 @@ What this battery pins:
 
 P1 (real tree): the gate passes on the shipped tree -- 0 orphans, 0 dead
   codes, entry-point set exactly {"gov.approve"}.
-P2 (pin): TAXONOMY_PIN == 2131 and the registry holds 2131 codes.
+P2 (pin): TAXONOMY_PIN == 2134 and the registry holds 2131 codes.
 P3 (footer): open none / next F430.
 P4 (synthetic, red-capable): an orphan gov module fails the gate and is
   named; a module imported only by an orphan is also orphan (fixpoint).
@@ -54,7 +54,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import no_dead_controls as gate  # noqa: E402
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 _EXPECTED_BREAKS = set()  # never {} (wave-331 lesson); breaks documented above
 
@@ -161,20 +161,20 @@ def p1_gate_green_real_tree():
 
 
 def p2_pin():
-    """TAXONOMY_PIN == 2131 and the registry holds 2131 codes."""
+    """TAXONOMY_PIN == 2134 and the registry holds 2131 codes."""
     try:
         codes = gate.registered_codes(REPO_ROOT)
     except Exception:
         return "ERROR", "P2", traceback.format_exc(limit=3)
-    if TAXONOMY_PIN != 2131:
+    if TAXONOMY_PIN != 2134:
         return "BREAK", "P2", "TAXONOMY_PIN = %r, want 2131" % TAXONOMY_PIN
-    if len(codes) != 2131:
+    if len(codes) != 2134:
         return "BREAK", "P2", "registry has %d codes, want 2131" % len(codes)
     return "HELD", "P2", "pin 2131; registry 2131 codes"
 
 
 def p3_footer():
-    """Footer: open F429 / next F430 (raw literals, wave-331 lesson)."""
+    """Footer: open F430, F431 / next F432 (raw literals, wave-331 lesson)."""
     try:
         text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md"),
                     encoding="utf-8").read()
@@ -182,11 +182,11 @@ def p3_footer():
         return "ERROR", "P3", "FINDINGS.md unreadable"
     lines = text.splitlines()
     last = lines[-1] if lines else ""
-    if "Next free finding: **F430**" not in last:
-        return "BREAK", "P3", "footer next-free is not F430"
-    if not re.search(r"\*\*Open findings: F429\.\*\*", last):
-        return "BREAK", "P3", "footer open findings is not F429"
-    return "HELD", "P3", "footer open F429 / next F430"
+    if "Next free finding: **F432**" not in last:
+        return "BREAK", "P3", "footer next-free is not F432"
+    if not re.search(r"\*\*Open findings: F430, F431\.\*\*", last):
+        return "BREAK", "P3", "footer open findings is not F430, F431"
+    return "HELD", "P3", "footer open F430, F431 / next F432"
 
 
 def p4_orphan_module_fails():

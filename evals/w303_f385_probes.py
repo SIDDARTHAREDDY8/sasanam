@@ -55,7 +55,7 @@ from gov import ed25519
 from gov import coordination_lease as cl
 from gov import workflow_branch as wb
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 
 _results = []
@@ -263,7 +263,7 @@ class RepinTest(unittest.TestCase):
         lits = re.findall(r'"code":\s*\'([a-z][a-z0-9-_.]*)\'', src)
         self.assertTrue(_expect_held(
             "repin-pin-1851",
-            len(lits) == 2131 and len(set(lits)) == 2131
+            len(lits) == 2134 and len(set(lits)) == 2134
 
 
             and lits == sorted(lits),

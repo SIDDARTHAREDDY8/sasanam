@@ -65,7 +65,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2131  # Wave-342 merge: pin 2131 (no new codes)
+TAXONOMY_PIN = 2134  # Wave-342 merge: pin 2131 (no new codes); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -132,19 +132,19 @@ def test_a5_nbsp_interleave_already_held():
 
 @_t
 def test_a6_rtl_override_miss_pinned():
-    """F429-class variant (known-open): U+202E right-to-left override
-    defeats the regex; no bidi-control normalization exists. Pinned
-    under the open F429; the F429 closure must strip bidi controls."""
+    """F429-closure residual, re-filed F431 (LOW, OPEN) at the wave-343
+    merge: U+202E right-to-left override defeats the regex; no
+    bidi-control normalization exists. Pinned as HELD-when-reproduced."""
     miss = dlp.find_credential("token=xoxb-\u202e654fed321cba") is None
     return ("HELD" if miss else "BREAK", "F429 rtl miss reproduced=%s" % miss)
 
 
 @_t
 def test_a7_cyrillic_homoglyph_miss_pinned():
-    """F429-class variant (known-open): Cyrillic homoglyphs (U+043E
-    for 'o') do NOT NFKC-fold to ASCII, so the fullwidth-confusable
-    coverage does not catch them; a confusable map is needed. Pinned
-    under the open F429."""
+    """F429-closure residual, re-filed F431 (LOW, OPEN) at the wave-343
+    merge: Cyrillic homoglyphs (U+043E for 'o') do NOT NFKC-fold to
+    ASCII, so the fullwidth-confusable coverage does not catch them; a
+    confusable map is needed. Pinned as HELD-when-reproduced."""
     miss = dlp.find_credential("token=x\u043exb-abc123def456") is None
     return ("HELD" if miss else "BREAK",
             "F429 homoglyph miss reproduced=%s" % miss)
@@ -157,19 +157,21 @@ def test_a8_f430_filing_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F430 filed 2026-10-05, wave-343 lane 3" in text
           and "LOW, OPEN:" in text
-          and "Next free finding: **F431**" in text
-          and "Open findings: F429, F430." in text)
+          and "Next free finding: **F432**" in text
+          and "Open findings: F430, F431." in text)
     return ("HELD" if ok else "BREAK", "F430 filed open=%s" % ok)
 
 
 @_t
 def test_a9_f429_still_open_pinned():
-    """F429 (text-escape) is still OPEN on this tree; its red-first
-    script still prints BREAK."""
+    """F429 (text-escape) is CLOSED 2026-10-05 wave-343 lane 1 (merged);
+    name kept for merge-sweep stability. Pins the closure entry and the
+    merged footer; residuals re-filed as F431."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F429 filed 2026-10-05, wave-342 lane 5" in text
-          and "Open findings: F429, F430." in text)
-    return ("HELD" if ok else "BREAK", "F429 still open=%s" % ok)
+          and "LOW, CLOSED 2026-10-05 wave-343 lane 1" in text
+          and "Open findings: F430, F431." in text)
+    return ("HELD" if ok else "BREAK", "F429 closed=%s" % ok)
 
 
 @_t
@@ -253,7 +255,7 @@ def test_c3_sentinel_visible_in_nested_args():
 def test_pin_taxonomy_2131():
     """Taxonomy pin: 2131 codes, sorted, raw-literal unique."""
     codes = sorted(TAXONOMY)
-    ok = (len(codes) == TAXONOMY_PIN == 2131
+    ok = (len(codes) == TAXONOMY_PIN == 2134
           and codes == sorted(set(codes))
           and all(c == c.strip() for c in codes))
     return ("HELD" if ok else "BREAK",

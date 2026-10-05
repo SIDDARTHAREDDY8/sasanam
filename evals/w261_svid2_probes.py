@@ -42,7 +42,7 @@ from gov import svid_issuer as sv  # noqa: E402
 
 # Wave-261 lane B: pin 1092 -> 1093 (+1 svid-usage-mismatch, F233).
 # Additive only; repointed value-token-only per the wave-256 lesson.
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 
 _PROBES = []

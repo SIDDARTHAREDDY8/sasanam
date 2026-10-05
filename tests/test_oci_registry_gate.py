@@ -16,7 +16,7 @@ for _p in (_TESTS_DIR, os.path.dirname(_TESTS_DIR)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 from gov import decision_codes as DC
 from gov import oci_registry_gate as G

@@ -63,9 +63,9 @@ from gov import evidence_intoto as _intoto  # noqa: E402
 from gov import dsse_envelope as _dsse  # noqa: E402
 from gov.signing import Ed25519Signer, Ed25519Verifier  # noqa: E402
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
-FOOTER_OPEN = "F429"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
-FOOTER_NEXT = "F430"  # Next free finding number.
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+FOOTER_OPEN = "F430, F431"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
+FOOTER_NEXT = "F432"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -449,10 +449,10 @@ def _w6():
 # P: pin + footer regression probes
 # ---------------------------------------------------------------------------
 
-@probe("P1-pin-taxonomy-2131")
+@probe("P1-pin-taxonomy-2134")
 def _p1():
-    pid = "P1-pin-taxonomy-2131"
-    if TAXONOMY_PIN != 2131:
+    pid = "P1-pin-taxonomy-2134"
+    if TAXONOMY_PIN != 2134:
         return _break(pid, "battery pin drifted: %r" % TAXONOMY_PIN)
     lits = []
     with open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -461,11 +461,11 @@ def _p1():
             m = re.search(r'"code"\s*:\s*\'([^\']+)\'', line)
             if m:
                 lits.append(m.group(1))
-    if len(lits) != 2131 or len(set(lits)) != 2131 \
+    if len(lits) != 2134 or len(set(lits)) != 2134 \
             or lits != sorted(lits):
-        return _break(pid, "taxonomy not 2131/2131/0 sorted "
+        return _break(pid, "taxonomy not 2134/2134/0 sorted "
                            "(%d/%d)" % (len(lits), len(set(lits))))
-    return _held(pid, "taxonomy 2131/2131/0 sorted")
+    return _held(pid, "taxonomy 2134/2134/0 sorted")
 
 
 @probe("P2-footer")

@@ -40,7 +40,7 @@ os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w272-prodauth")
 
 # -- spec-pinned protocol constants (NOT imported from the module)
 NOW = 1791000000  # fixed test clock
-PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 ISSUER = "https://issuer.example.com"
 ARC = "1.3.6.1.4.1.99999"
 APPROVAL = "a" * 32

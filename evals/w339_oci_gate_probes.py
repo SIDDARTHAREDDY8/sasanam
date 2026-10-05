@@ -19,7 +19,7 @@ P7  Unknown registry kind => refused; matrix_override can record a
     private registry but can never flip a matrix OUT to IN.
 P8  Same-repository pinning: cross-repository / replica reads refuse
     coded; the #23210 shape (Harbor replica) refuses.
-P9  Pin/taxonomy honesty (2131/2131/0 sorted-unique on raw literals; the
+P9  Pin/taxonomy honesty (2134/2134/0 sorted-unique on raw literals; the
     new code registered) + footer state (open none / next F430).
 P10 Green check (depth-1): tests/test_oci_registry_gate.py as a child.
 
@@ -42,9 +42,9 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 FOOTER_OPEN = ("F428",)
-FOOTER_NEXT = "F430"
+FOOTER_NEXT = "F432"
 
 _EXPECTED_BREAKS = set()
 
@@ -223,11 +223,11 @@ def _p9():
     assert literals == sorted(literals), "taxonomy not sorted"
     assert "oci-registry-onboarding-refused" in DC.TAXONOMY
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
-    assert "Next free finding: **F430**" in text, "footer next free"
-    assert "Open findings: F429." in text, "footer open findings"
+    assert "Next free finding: **F432**" in text, "footer next free"
+    assert "Open findings: F430, F431." in text, "footer open findings"
     assert FOOTER_OPEN == ("F429",) and FOOTER_NEXT == "F430"
     _held("P9-pin-taxonomy",
-          "2131/2131/0 sorted-unique; oci-registry-onboarding-refused "
+          "2134/2134/0 sorted-unique; oci-registry-onboarding-refused "
           "registered; footer open none / next F430")
 
 

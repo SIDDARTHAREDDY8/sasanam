@@ -32,7 +32,7 @@ from gov import decision_codes  # noqa: E402  (taxonomy pin below)
 from gov import ed25519  # noqa: E402
 from gov import peer_attestation as pa  # noqa: E402
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN, (
     "taxonomy pin drift: %d != %d"

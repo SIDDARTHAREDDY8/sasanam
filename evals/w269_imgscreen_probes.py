@@ -48,7 +48,7 @@ try:
 except Exception:
     decision_codes = None
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 
 EXPECTED_CODES = (
@@ -538,7 +538,7 @@ def _c8(impl):
     if len(decision_codes.TAXONOMY) != TAXONOMY_PIN:
         return "BREAK", "pin %d != %d" % (len(decision_codes.TAXONOMY),
                                           TAXONOMY_PIN)
-    return "HELD", "taxonomy pin 1303"
+    return "HELD", "taxonomy pin 2134"
 
 
 # ------------------------------------------------------------------

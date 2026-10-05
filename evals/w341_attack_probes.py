@@ -48,7 +48,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 from gov import dlp  # noqa: E402
 from gov import attack_manifest as am  # noqa: E402
@@ -149,8 +149,8 @@ def test_i6_f428_open_pinned():
     ok = ("(F428 filed 2026-10-05, wave-341 lane C" in text
           and "CLOSED 2026-10-05 wave-342 lane 1" in text
           and "(F429 filed 2026-10-05, wave-342 lane 5" in text
-          and "Next free finding: **F430**" in text
-          and "Open findings: F429." in text)
+          and "Next free finding: **F432**" in text
+          and "Open findings: F430, F431." in text)
     return ("HELD" if ok else "BREAK", "F428 closed/F429 open=%s" % ok)
 
 
@@ -340,7 +340,7 @@ def test_f427_v3_attr_mutation_refused():
 @_t
 def test_pin_taxonomy_2127():
     codes = sorted(TAXONOMY)
-    ok = (len(codes) == TAXONOMY_PIN == 2131
+    ok = (len(codes) == TAXONOMY_PIN == 2134
           and codes == sorted(set(codes))
           and all(c == c.strip() for c in codes))
     return ("HELD" if ok else "BREAK",

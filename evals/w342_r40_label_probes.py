@@ -52,7 +52,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 3: pin 2131 -> 2135 (+4 label-* codes)
+TAXONOMY_PIN = 2134  # Wave-342 lane 3: pin 2131 -> 2135 (+4 label-* codes); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 from gov.trajectory_labels import (  # noqa: E402
     BLOCKED, LABEL_ANNOTATION_UNREGISTERED, LABEL_EGRESS_REFUSED,
@@ -368,7 +368,7 @@ def test_pin_taxonomy_2131():
     codes = sorted(TAXONOMY)
     label_codes = {"label-egress-refused", "label-remedy-empty-unliftable",
                    "label-annotation-unregistered", "label-trust-floor-refused"}
-    ok = (len(codes) == TAXONOMY_PIN == 2131
+    ok = (len(codes) == TAXONOMY_PIN == 2134
           and len(set(codes)) == len(codes)
           and label_codes <= set(codes))
     return ("HELD" if ok else "BREAK",
@@ -381,8 +381,8 @@ def test_footer_state():
     with open(path, encoding="utf-8") as f:
         lines = f.read().splitlines()
     last = lines[-1] if lines else ""
-    ok = ("Next free finding: **F430**" in last
-          and "Open findings: F429." in last)
+    ok = ("Next free finding: **F432**" in last
+          and "Open findings: F430, F431." in last)
     return ("HELD" if ok else "BREAK",
             "footer: %r" % last[:80])
 

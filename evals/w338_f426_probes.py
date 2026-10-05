@@ -58,7 +58,7 @@ from gov.adapters import openai_agents as OAI_SHIM  # noqa: E402
 # the closed tree (wave-331 lesson: empty set, never {}).
 _EXPECTED_BREAKS = set()
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 _results = []
 
@@ -305,9 +305,9 @@ def P1g():
 # ---------------------------------------------------------------------------
 
 def P2a():
-    """Pin 2131: taxonomy 2131/2131/0 sorted-unique on raw literals
+    """Pin 2131: taxonomy 2134/2134/0 sorted-unique on raw literals
     (wave-260 lesson)."""
-    pid = "P2a-pin-taxonomy-2131-sorted"
+    pid = "P2a-pin-taxonomy-2134-sorted"
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     found = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
@@ -318,20 +318,20 @@ def P2a():
     if found != sorted(found):
         _break(pid, "code literals not sorted")
         return
-    _held(pid, "taxonomy 2131/2131/0 sorted-unique on raw literals")
+    _held(pid, "taxonomy 2134/2134/0 sorted-unique on raw literals")
 
 
 def P2b():
     """Footer: open F429 / next F430; F426 and F427 marked CLOSED; F428 marked OPEN."""
-    pid = "P2b-footer-open-f429-next-f430"
+    pid = "P2b-footer-open-f430-f431-next-f432"
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     lines = text.splitlines()
     last = lines[-1] if lines else ""
-    if "Next free finding: **F430**" not in last:
+    if "Next free finding: **F432**" not in last:
         _break(pid, "footer does not read next F429")
         return
-    if "Open findings: F429." not in last:
+    if "Open findings: F430, F431." not in last:
         _break(pid, "footer does not read open F428: %r" % (last[:120],))
         return
     import re as _re
@@ -360,8 +360,8 @@ _PROBES = [
     ("P1e-guardrail-exposes-attributes", P1e),
     ("P1f-wrapped-entry-correspondence", P1f),
     ("P1g-undeclared-name-refused-despite-name-coincidence", P1g),
-    ("P2a-pin-taxonomy-2131-sorted", P2a),
-    ("P2b-footer-open-f429-next-f430", P2b),
+    ("P2a-pin-taxonomy-2134-sorted", P2a),
+    ("P2b-footer-open-f430-f431-next-f432", P2b),
 ]
 
 

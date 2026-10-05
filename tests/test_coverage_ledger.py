@@ -23,7 +23,7 @@ sys.path.insert(0, REPO)
 import gov.coverage_ledger as cl  # noqa: E402
 from gov import decision_codes as dc  # noqa: E402
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 
 T0 = "2026-10-01T12:00:00+00:00"

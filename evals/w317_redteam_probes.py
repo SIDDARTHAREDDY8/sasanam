@@ -35,7 +35,7 @@ P7 (2): F399 seam -- the escalate-terminal ratchet fires at the 4th
 P8 (1): F403 re-probe -- decision_packet standalone offline import still
     broken on the OPEN tree (lane 1 owns the closure; not closed here).
 P9 (2): regressions -- footer (open none / next F409; F405 closed),
-    pin taxonomy 2131/2131/0 sorted.
+    pin taxonomy 2134/2134/0 sorted.
 
 
 P10 (3): robustness acceptance gaming -- enum budget respected,
@@ -904,22 +904,22 @@ def _p9_footer():
         r"Next free finding: \*\*F(\d+)\*\*\. \*\*Open findings: ([^*]*)\*\*",
         text))
     if not m:
-        return _error("P9-footer-open-f429-next-f430",
+        return _error("P9-footer-open-f430-f431-next-f432",
                       "no footer line found")
     last = m[-1]
     nxt, opens = last.group(1), last.group(2)
-    if nxt != "430" or opens.strip().lower().rstrip(".") != "f429":
-        return _break("P9-footer-open-f429-next-f430",
+    if nxt != "430" or opens.strip().lower().rstrip(".") != "f430, f431":
+        return _break("P9-footer-open-f430-f431-next-f432",
                       "footer pins next=%s open=%s (want 430 / F429)"
                       % (nxt, opens))
     if "## F407" not in text:
-        return _break("P9-footer-open-f429-next-f430",
+        return _break("P9-footer-open-f430-f431-next-f432",
                       "F407 entry missing from FINDINGS.md")
-    return _held("P9-footer-open-f429-next-f430",
+    return _held("P9-footer-open-f430-f431-next-f432",
                  "footer pins open F429 / next F430")
 
 
-@probe("P9-pin-taxonomy-2131-sorted")
+@probe("P9-pin-taxonomy-2134-sorted")
 
 
 def _p9_pin():
@@ -929,14 +929,14 @@ def _p9_pin():
                                             "decision_codes.py"),
                                encoding="utf-8").read())
     except Exception as exc:  # noqa: BLE001
-        return _error("P9-pin-taxonomy-2131-sorted", "%r" % (exc,))
-    if len(lits) != 2131 or len(set(lits)) != 2131:
-        return _break("P9-pin-taxonomy-2131-sorted",
-                      "got %d literals / %d unique (want 2131/2131)"
+        return _error("P9-pin-taxonomy-2134-sorted", "%r" % (exc,))
+    if len(lits) != 2134 or len(set(lits)) != 2134:
+        return _break("P9-pin-taxonomy-2134-sorted",
+                      "got %d literals / %d unique (want 2134/2134)"
                       % (len(lits), len(set(lits))))
     if lits != sorted(lits):
-        return _break("P9-pin-taxonomy-2131-sorted", "literals not sorted")
-    return _held("P9-pin-taxonomy-2131-sorted", "2131/2131/0 sorted")
+        return _break("P9-pin-taxonomy-2134-sorted", "literals not sorted")
+    return _held("P9-pin-taxonomy-2134-sorted", "2134/2134/0 sorted")
 
 
 

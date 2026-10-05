@@ -48,7 +48,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 _results = []
 
 
@@ -459,22 +459,22 @@ def _p1o():
 # P2: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P2a-pin-taxonomy-2131")
+@probe("P2a-pin-taxonomy-2134")
 def _p2a():
     from gov.decision_codes import TAXONOMY
     assert len(TAXONOMY) == TAXONOMY_PIN, \
         "taxonomy %d != pin %d" % (len(TAXONOMY), TAXONOMY_PIN)
-    _held("P2a-pin-taxonomy-2131", "taxonomy matches pin")
+    _held("P2a-pin-taxonomy-2134", "taxonomy matches pin")
 
 
-@probe("P2b-footer-open-f429-next-f430")
+@probe("P2b-footer-open-f430-f431-next-f432")
 def _p2b():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
-    assert "Next free finding: **F430**" in text, "footer next-free wrong"
-    assert "**Open findings: F429.**" in text, "footer open set wrong"
-    _held("P2b-footer-open-f429-next-f430", "footer open none / next F430")
+    assert "Next free finding: **F432**" in text, "footer next-free wrong"
+    assert "**Open findings: F430, F431.**" in text, "footer open set wrong"
+    _held("P2b-footer-open-f430-f431-next-f432", "footer open none / next F430")
 
 
 # ---------------------------------------------------------------------------

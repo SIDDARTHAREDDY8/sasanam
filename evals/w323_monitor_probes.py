@@ -23,7 +23,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 
 _results = []
@@ -654,7 +654,7 @@ def _p18():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     # Wave-336 lane 1: repaired stale F412/F413-era assertion.
-    assert "Next free finding: **F430**. **Open findings: F429.**" in text, \
+    assert "Next free finding: **F432**. **Open findings: F430, F431.**" in text, \
         "footer mismatch"
     _held("P18-footer-state", "open none / next F430")
 

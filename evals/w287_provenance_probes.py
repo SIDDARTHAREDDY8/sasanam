@@ -41,7 +41,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 import probe_lines  # noqa: E402  (canonical probe-line form)
 
 # Wave-287 lane 7: pin 1660 -> 1667 (+7 evidence-provenance codes).; Wave-287 merge: pin 1667 -> 1684 (+7 tsa-* +7 evidence-provenance +10 trustvec-*)
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 
 _RESULTS = []

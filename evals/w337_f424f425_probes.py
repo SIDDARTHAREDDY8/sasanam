@@ -36,9 +36,9 @@ import gov.tool_rate_limit as TRL  # noqa: E402
 # closed tree (wave-331 lesson: empty set, never {}).
 _EXPECTED_BREAKS = set()
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
-FOOTER_OPEN = "F429"  # F426 closed wave-338 lane 1.
-FOOTER_NEXT = "F430"
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+FOOTER_OPEN = "F430, F431"  # F426 closed wave-338 lane 1.
+FOOTER_NEXT = "F432"
 
 _results = []
 
@@ -422,8 +422,8 @@ def P2d():
 # ---------------------------------------------------------------------------
 
 def P3a():
-    """Pin 2106: taxonomy 2131/2131/0 sorted-unique on raw literals."""
-    pid = "P3a-pin-taxonomy-2131-sorted"
+    """Pin 2106: taxonomy 2134/2134/0 sorted-unique on raw literals."""
+    pid = "P3a-pin-taxonomy-2134-sorted"
     # Raw-literal uniqueness on the source (wave-260 lesson): a
     # deduped-dict check would miss duplicate code literals.
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -436,20 +436,20 @@ def P3a():
     if found != sorted(found):
         _break(pid, "code literals not sorted")
         return
-    _held(pid, "taxonomy 2131/2131/0 sorted-unique on raw literals")
+    _held(pid, "taxonomy 2134/2134/0 sorted-unique on raw literals")
 
 
 def P3b():
     """Footer: open none / next F430; F424/F425/F426 marked CLOSED."""
-    pid = "P3b-footer-open-f429-next-f430"
+    pid = "P3b-footer-open-f430-f431-next-f432"
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     lines = text.splitlines()
     last = lines[-1] if lines else ""
-    if "Next free finding: **F430**" not in last:
+    if "Next free finding: **F432**" not in last:
         _break(pid, "footer does not read next F427")
         return
-    if "Open findings: F429." not in last:
+    if "Open findings: F430, F431." not in last:
         _break(pid, "footer does not read open none")
         return
     import re as _re
@@ -481,8 +481,8 @@ _PROBES = [
     ("P2b-limiter-failure-record-chained", P2b),
     ("P2c-exceeded-path-unchanged", P2c),
     ("P2d-sweep-boundary-unchanged", P2d),
-    ("P3a-pin-taxonomy-2131-sorted", P3a),
-    ("P3b-footer-open-f429-next-f430", P3b),
+    ("P3a-pin-taxonomy-2134-sorted", P3a),
+    ("P3b-footer-open-f430-f431-next-f432", P3b),
 ]
 
 

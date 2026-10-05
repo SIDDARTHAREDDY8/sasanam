@@ -56,7 +56,7 @@ from gov.signing import Ed25519Signer, Ed25519Verifier  # noqa: E402
 import gov.decision_packet as dp  # noqa: E402
 import gov.ed25519 as ed25519  # noqa: E402
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 
 

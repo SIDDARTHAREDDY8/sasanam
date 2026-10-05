@@ -31,7 +31,7 @@ R23 (Bernstein ADAPT menu):
   orders; ``verify_referrer_binding`` selects identically under referrer
   entry permutations.
 
-P9: taxonomy pin 2131/2131/0 sorted-unique on raw literals (the new
+P9: taxonomy pin 2134/2134/0 sorted-unique on raw literals (the new
 ``oci-bundle-not-verifiable`` code), footer open none / next F430.
 
 Standalone: fresh TMPDIR per run, green checks enabled, depth-1 (the
@@ -54,9 +54,9 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 FOOTER_OPEN = ("F428",)
-FOOTER_NEXT = "F430"
+FOOTER_NEXT = "F432"
 
 _EXPECTED_BREAKS = set()
 
@@ -600,11 +600,11 @@ def _p9():
     assert literals == sorted(literals), "taxonomy not sorted"
     assert "oci-bundle-not-verifiable" in DC.TAXONOMY
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
-    assert "Next free finding: **F430**" in text, "footer next free"
-    assert "Open findings: F429." in text, "footer open findings"
+    assert "Next free finding: **F432**" in text, "footer next free"
+    assert "Open findings: F430, F431." in text, "footer open findings"
     assert FOOTER_OPEN == ("F429",) and FOOTER_NEXT == "F430"
     _held("P9-pin-taxonomy",
-          "2131/2131/0 sorted-unique; oci-bundle-not-verifiable "
+          "2134/2134/0 sorted-unique; oci-bundle-not-verifiable "
           "registered; footer open none / next F430")
 
 

@@ -73,7 +73,7 @@ import probe_lines  # noqa: E402  (canonical probe-line emission)
 
 from gov import approval_tokens as AT  # noqa: E402
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 
 _NOW = 1798765432
@@ -442,7 +442,7 @@ def footer_state():
     # This lane files no findings. Footer lines repeat through history;
     # the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F430**" in text
+    ok = ("Next free finding: **F432**" in text
           and m_open and m_open[-1].strip() == "F429")
     if ok:
         _record("footer-state", "HELD", "footer: open F429 / next F430")

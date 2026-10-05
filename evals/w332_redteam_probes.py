@@ -49,9 +49,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
-FOOTER_OPEN = "F429"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
-FOOTER_NEXT = "F430"  # Next free finding number.
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+FOOTER_OPEN = "F430, F431"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
+FOOTER_NEXT = "F432"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -891,8 +891,9 @@ _GRANDFATHERED_UNREGISTERED = frozenset({
 # untouched): dead-code TAXONOMY_PIN values in two ancient files, and
 # the VERIFIER_TAXONOMY_PIN domain (a different taxonomy, value 33).
 _GRANDFATHERED_PIN_STALE = frozenset({
-    "evals/w259_f225_probes.py",   # TAXONOMY_PIN = 1588 (dead code)
-    "tests/test_replay_manifest.py",  # TAXONOMY_PIN = 1080 (dead code)
+    # Wave-343 merge: both formerly-stale dead-code pins repointed to
+    # 2134 (evals/w259_f225_probes.py, tests/test_replay_manifest.py);
+    # the set is now empty.
 })
 
 
@@ -1019,7 +1020,7 @@ def _p4d():
                     r"EXPECTED_PIN)\s*=\s*(\d+)",
                     src, re.M):
                 count += 1
-                if int(m.group(2)) != 2131:
+                if int(m.group(2)) != 2134:
                     bad.append("%s: %s = %s" % (rel, m.group(1),
                                                m.group(2)))
     if bad:
@@ -1034,38 +1035,38 @@ def _p4d():
 # P5: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P5a-pin-taxonomy-2131-sorted")
+@probe("P5a-pin-taxonomy-2134-sorted")
 def _p5a():
-    if TAXONOMY_PIN != 2131:
-        return _break("P5a-pin-taxonomy-2131-sorted",
+    if TAXONOMY_PIN != 2134:
+        return _break("P5a-pin-taxonomy-2134-sorted",
                       "TAXONOMY_PIN is %r, want 2131" % (TAXONOMY_PIN,))
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
-    if len(lits) != 2131 or len(set(lits)) != 2131 \
+    if len(lits) != 2134 or len(set(lits)) != 2134 \
             or lits != sorted(lits):
-        return _break("P5a-pin-taxonomy-2131-sorted",
-                      "want 2131/2131/0 sorted, got %d/%d/sorted=%s"
+        return _break("P5a-pin-taxonomy-2134-sorted",
+                      "want 2134/2134/0 sorted, got %d/%d/sorted=%s"
                       % (len(lits), len(set(lits)), lits == sorted(lits)))
-    return _held("P5a-pin-taxonomy-2131-sorted",
-                 "2131/2131/0 sorted unique on raw source literals")
+    return _held("P5a-pin-taxonomy-2134-sorted",
+                 "2134/2134/0 sorted unique on raw source literals")
 
 
-@probe("P5b-footer-open-f429-next-f430")
+@probe("P5b-footer-open-f430-f431-next-f432")
 def _p5b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return _break("P5b-footer-open-f429-next-f430",
+        return _break("P5b-footer-open-f430-f431-next-f432",
                       "footer line not found")
     next_free, open_now = ms[-1]  # the LAST footer is the live one
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return _break("P5b-footer-open-f429-next-f430",
+        return _break("P5b-footer-open-f430-f431-next-f432",
                       "footer open %s / next %s, want open %s / next %s"
                       % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return _held("P5b-footer-open-f429-next-f430",
+    return _held("P5b-footer-open-f430-f431-next-f432",
                  "footer open none / next F430")
 
 

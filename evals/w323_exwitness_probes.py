@@ -19,7 +19,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 
 _results = []
@@ -565,7 +565,7 @@ def _p5b():
 # P6: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-2131-sorted")
+@probe("P6-pin-taxonomy-2134-sorted")
 
 
 def _p6a():
@@ -573,9 +573,9 @@ def _p6a():
     n = len(DC.TAXONOMY)
     codes = sorted(DC.TAXONOMY.keys())
     if n == TAXONOMY_PIN and list(DC.TAXONOMY.keys()) == codes:
-        _held("P6-pin-taxonomy-2131-sorted", "2131/2131/0 sorted")
+        _held("P6-pin-taxonomy-2134-sorted", "2134/2134/0 sorted")
     else:
-        _break("P6-pin-taxonomy-2131-sorted",
+        _break("P6-pin-taxonomy-2134-sorted",
                "want 2131/2121/00 sorted, got %d (sorted=%s)"
 
 
@@ -586,8 +586,8 @@ def _p6a():
 def _p6b():
     src = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
     # Wave-336 lane 1: repaired stale F412/F413-era assertions.
-    if ("Next free finding: **F430**" in src
-            and "Open findings: F429." in src):
+    if ("Next free finding: **F432**" in src
+            and "Open findings: F430, F431." in src):
         _held("P6-footer-state", "open none / next F430")
     else:
         _break("P6-footer-state", "footer mismatch")

@@ -16,7 +16,7 @@ from gov import bundle_rsl
 from gov import decision_codes as dc
 from gov import ed25519 as _ed
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 
 NOW = 1790860000

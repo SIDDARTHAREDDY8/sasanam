@@ -47,7 +47,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 _results = []
 
@@ -445,7 +445,7 @@ def _r7():
 # Pin + footer probes.
 # ---------------------------------------------------------------------------
 
-@probe("P8-pin-taxonomy-2131-sorted")
+@probe("P8-pin-taxonomy-2134-sorted")
 def _p8():
     from gov import decision_codes as DC
     codes = sorted(DC.TAXONOMY)
@@ -458,16 +458,16 @@ def _p8():
             "advisory-input-unpinned": "authority"}
     for code, domain in sorted(want.items()):
         assert DC.TAXONOMY[code]["domain"] == domain, code
-    _held("P8-pin-taxonomy-2131-sorted", "2131/2131/0 sorted; new codes ok")
+    _held("P8-pin-taxonomy-2134-sorted", "2134/2134/0 sorted; new codes ok")
 
 
-@probe("P9-footer-open-f429-next-f430")
+@probe("P9-footer-open-f430-f431-next-f432")
 def _p9():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     src = open(path, encoding="utf-8").read()
-    assert "Next free finding: **F430**" in src, "next-free footer"
-    assert "**Open findings: F429.**" in src, "open footer"
-    _held("P9-footer-open-f429-next-f430",
+    assert "Next free finding: **F432**" in src, "next-free footer"
+    assert "**Open findings: F430, F431.**" in src, "open footer"
+    _held("P9-footer-open-f430-f431-next-f432",
           "footer: open none / next F419")
 
 

@@ -32,9 +32,9 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
-FOOTER_OPEN = "F429"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
-FOOTER_NEXT = "F430"  # Next free finding number.
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+FOOTER_OPEN = "F430, F431"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
+FOOTER_NEXT = "F432"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -725,23 +725,23 @@ def _p5g():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2131-sorted")
+@probe("P6a-pin-taxonomy-2134-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
-    if TAXONOMY_PIN != 2131:
-        return _break("P6a-pin-taxonomy-2131-sorted",
+    if TAXONOMY_PIN != 2134:
+        return _break("P6a-pin-taxonomy-2134-sorted",
                       "TAXONOMY_PIN is %r, want 2131" % (TAXONOMY_PIN,))
-    if len(codes) != 2131 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-2131-sorted",
+    if len(codes) != 2134 or codes != sorted(codes):
+        return _break("P6a-pin-taxonomy-2134-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    if len(set(codes)) != 2131:
-        return _break("P6a-pin-taxonomy-2131-sorted",
+    if len(set(codes)) != 2134:
+        return _break("P6a-pin-taxonomy-2134-sorted",
                       "duplicate codes in TAXONOMY")
-    return _held("P6a-pin-taxonomy-2131-sorted", "2131/2131/0 sorted")
+    return _held("P6a-pin-taxonomy-2134-sorted", "2134/2134/0 sorted")
 
 
-@probe("P6b-footer-open-f429-next-f430")
+@probe("P6b-footer-open-f430-f431-next-f432")
 def _p6b():
     text = open(os.path.join(REPO, "evals/FINDINGS.md")).read()
     opens = re.findall(r"\*\*Open findings:\s*([^*]+?)\.\*\*", text)
@@ -749,12 +749,12 @@ def _p6b():
     open_line = opens[-1].strip() if opens else ""
     next_free = nexts[-1].strip() if nexts else ""
     if open_line != FOOTER_OPEN:
-        return _break("P6b-footer-open-f429-next-f430",
+        return _break("P6b-footer-open-f430-f431-next-f432",
                       "open findings %r, want %r" % (open_line, FOOTER_OPEN))
     if next_free != FOOTER_NEXT:
-        return _break("P6b-footer-open-f429-next-f430",
+        return _break("P6b-footer-open-f430-f431-next-f432",
                       "next free %r, want %r" % (next_free, FOOTER_NEXT))
-    return _held("P6b-footer-open-f429-next-f430",
+    return _held("P6b-footer-open-f430-f431-next-f432",
                  "footer open none / next F419")
 
 

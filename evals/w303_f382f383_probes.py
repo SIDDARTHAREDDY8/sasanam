@@ -50,7 +50,7 @@ from gov import delegation_revocation as rev
 from gov import ed25519 as _ed25519
 from gov import workflow as wf
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 
 _results = []
@@ -100,7 +100,7 @@ class BaseStateTest(unittest.TestCase):
 
     def test_taxonomy_pin(self):
         self.assertTrue(_expect_held(
-            "taxonomy-pin", TAXONOMY_PIN == 2131,#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
+            "taxonomy-pin", TAXONOMY_PIN == 2134,#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
             "TAXONOMY_PIN=%s, want 2131" % (TAXONOMY_PIN,)) == "HELD")
 
 

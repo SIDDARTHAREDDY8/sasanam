@@ -52,7 +52,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 from gov.approval_render import _render_text, render_approval  # noqa: E402
 from gov.approvals import sanitize_preview_text  # noqa: E402
@@ -186,7 +186,7 @@ def test_t5_sanitize_preview_inert():
 
 def test_pin_taxonomy_2127():
     codes = sorted(TAXONOMY)
-    ok = (len(codes) == TAXONOMY_PIN == 2131
+    ok = (len(codes) == TAXONOMY_PIN == 2134
           and len(set(codes)) == len(codes))
     return ("HELD" if ok else "BREAK",
             "taxonomy %d/%d sorted-unique" % (len(codes), TAXONOMY_PIN))
@@ -197,8 +197,8 @@ def test_footer_state():
     with open(path, encoding="utf-8") as f:
         lines = f.read().splitlines()
     last = lines[-1] if lines else ""
-    ok = ("Next free finding: **F430**" in last
-          and "Open findings: F429." in last)
+    ok = ("Next free finding: **F432**" in last
+          and "Open findings: F430, F431." in last)
     return ("HELD" if ok else "BREAK",
             "footer last line: %r" % (last[:120],))
 

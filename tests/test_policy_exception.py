@@ -13,7 +13,7 @@ import gov.policy_exception as pe
 from gov.signing import Ed25519Verifier
 
 
-PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 EXPECTED_CODES = (
     "exception-compensating-validation-failed",

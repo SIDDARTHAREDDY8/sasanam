@@ -52,9 +52,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
-FOOTER_OPEN = "F429"  # F422 (filed as F421) CLOSED 2026-10-05 wave-335 lane 2. F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C). F426 closed wave-338 lane 1.
-FOOTER_NEXT = "F430"  # Next free finding number.
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+FOOTER_OPEN = "F430, F431"  # F422 (filed as F421) CLOSED 2026-10-05 wave-335 lane 2. F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C). F426 closed wave-338 lane 1.
+FOOTER_NEXT = "F432"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -565,7 +565,7 @@ def _p10():
         return _break(pid, "footer open %s / next %s, want open %s / next %s"
                       % (open_now.strip(), next_free, FOOTER_OPEN,
                          FOOTER_NEXT))
-    return _held(pid, "taxonomy 2131/2131/0 sorted-unique; 3 codes "
+    return _held(pid, "taxonomy 2134/2134/0 sorted-unique; 3 codes "
                       "registered; F422 CLOSED; footer open F424, F425 / next F426")
 
 

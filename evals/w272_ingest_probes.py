@@ -65,7 +65,7 @@ REV = "ab" * 32          # audit-chain revision referenced by the bundle
 REV_STALE = "cd" * 32    # an old revision
 ISSUER_SEED = bytes([0xA5]) * 32  # deployment freshness-issuer key
 OTHER_SEED = bytes([0x5A]) * 32   # a forger's key
-PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(_HERE)

@@ -20,7 +20,7 @@ P4 (3): F405 re-probe (CLOSED wave-320 lane 1) -- apostrophe-less negation
 P5 (3): wave-319 follow-up spot-check -- 3 of the 70 touched batteries
     re-run beyond their pin probes (w314_provsink, w303_f385, w297_redteam).
 P6 (2): regressions -- footer open none / next F409; pin taxonomy
-    2131/2131/0 sorted on source literals.
+    2134/2134/0 sorted on source literals.
 
 
 
@@ -61,10 +61,10 @@ from tests.keyfixture import scrub_key_env, provision_test_key  # noqa: E402
 
 from evals import probe_lines  # noqa: E402
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
-FOOTER_OPEN = "F429"
-FOOTER_NEXT = "F430"
+FOOTER_OPEN = "F430, F431"
+FOOTER_NEXT = "F432"
 
 _NOW = datetime(2026, 10, 4, 5, 0, 0, tzinfo=timezone.utc)
 _NOW_INT = 1759554000
@@ -715,7 +715,7 @@ def _p5c():
 # P6: regressions (pin + footer)
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-2131-sorted")
+@probe("P6-pin-taxonomy-2134-sorted")
 
 
 def _p6a():
@@ -723,12 +723,12 @@ def _p6a():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2131#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
+    ok = (len(lits) == TAXONOMY_PIN == 2134#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P6-pin-taxonomy-2131-sorted",
-                     "2131/2131/0 sorted")
-    return _break("P6-pin-taxonomy-2131-sorted",
+        return _held("P6-pin-taxonomy-2134-sorted",
+                     "2134/2134/0 sorted")
+    return _break("P6-pin-taxonomy-2134-sorted",
 
 
                  "got %d literals" % (len(lits),))

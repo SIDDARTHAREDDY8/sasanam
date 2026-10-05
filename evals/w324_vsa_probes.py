@@ -21,7 +21,7 @@ sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 _results = []
 
 
@@ -379,7 +379,7 @@ def _p16():
 # P17/P18: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P17-pin-taxonomy-2131-sorted")
+@probe("P17-pin-taxonomy-2134-sorted")
 def _p17():
     from gov import decision_codes as dc
     import re
@@ -391,7 +391,7 @@ def _p17():
                                      len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
     assert len(dc.TAXONOMY) == TAXONOMY_PIN
-    _held("P17-pin-taxonomy-2131-sorted",
+    _held("P17-pin-taxonomy-2134-sorted",
           "%d/%d/0 sorted" % (TAXONOMY_PIN, TAXONOMY_PIN))
 
 
@@ -400,7 +400,7 @@ def _p18():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     # Wave-336 lane 1: repaired stale assertion (never-current text).
-    assert "Next free finding: **F430**. **Open findings: F429.**" in text, \
+    assert "Next free finding: **F432**. **Open findings: F430, F431.**" in text, \
         "footer mismatch"
     _held("P18-footer-state", "open none / next F430")
 

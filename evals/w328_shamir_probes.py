@@ -44,9 +44,9 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
-FOOTER_OPEN = "F429"  # F409-F427 CLOSED; F428 OPEN (wave-341 lane C).
-FOOTER_NEXT = "F430"
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+FOOTER_OPEN = "F430, F431"  # F409-F427 CLOSED; F428 OPEN (wave-341 lane C).
+FOOTER_NEXT = "F432"
 
 _results = []
 
@@ -416,13 +416,13 @@ def _p11():
     src = open(os.path.join(REPO, "gov", "decision_codes.py")).read()
     codes = re.findall(r'"code":\s*["\']([^"\']+)["\']', src)
     if len(codes) != TAXONOMY_PIN or len(set(codes)) != TAXONOMY_PIN:
-        return _break("P11-pin-taxonomy-2131-sorted",
+        return _break("P11-pin-taxonomy-2134-sorted",
                       "want 2131/2121 got %d/%d" % (len(codes), len(set(codes))))
     if codes != sorted(codes):
-        return _break("P11-pin-taxonomy-2131-sorted", "not sorted")
+        return _break("P11-pin-taxonomy-2134-sorted", "not sorted")
     if len(dc.TAXONOMY) != TAXONOMY_PIN:
-        return _break("P11-pin-taxonomy-2131-sorted", "TAXONOMY dict size drift")
-    _held("P11-pin-taxonomy-2131-sorted", "2131/2131/0 sorted unique")
+        return _break("P11-pin-taxonomy-2134-sorted", "TAXONOMY dict size drift")
+    _held("P11-pin-taxonomy-2134-sorted", "2134/2134/0 sorted unique")
     # Footer state.
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
     m = None

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Decision-code coverage table (wave-338 lane 5, R14).
+"""Decision-code coverage table (wave-343 lane 2 (coverage round 5)).
 
 Bernstein #5569 ("no row claims coverage without a test"), ADAPT: the
 decision-code registry (gov/decision_codes.py, 2131 codes) is generated

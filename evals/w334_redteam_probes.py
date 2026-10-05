@@ -97,7 +97,7 @@ from gov import capability_token as CT  # noqa: E402
 from gov import revocation_push as RP  # noqa: E402
 from gov import mcp_oauth_binding as mob  # noqa: E402
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 _NOW = 1798765432
 _AGENT = "agent-A"
 _MISSION = "mission-X"
@@ -740,10 +740,10 @@ def P4a():
 
 
 def P5a():
-    """Pin honesty: taxonomy is 2131/2131/0, sorted and unique on raw
+    """Pin honesty: taxonomy is 2134/2134/0, sorted and unique on raw
     source literals (wave-260 lesson: assert on literals, not the
     deduped dict)."""
-    pid = "P5a-pin-taxonomy-2131-sorted"
+    pid = "P5a-pin-taxonomy-2134-sorted"
     with open(os.path.join(REPO, "gov", "decision_codes.py"),
               encoding="utf-8") as fh:
         src = fh.read()
@@ -758,7 +758,7 @@ def P5a():
     if sorted(codes) != codes:
         _break(pid, "literals not sorted")
         return
-    _held(pid, "taxonomy 2131/2131/0 sorted unique on raw literals")
+    _held(pid, "taxonomy 2134/2134/0 sorted unique on raw literals")
 
 
 def P5b():
@@ -781,12 +781,12 @@ def P5b():
 def P5c():
     """Footer honesty: open none / next F430 (raw literals included --
     wave-331 lesson)."""
-    pid = "P5c-footer-open-f429-next-f430"
+    pid = "P5c-footer-open-f430-f431-next-f432"
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               encoding="utf-8") as fh:
         text = fh.read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F430**" in text
+    ok = ("Next free finding: **F432**" in text
           and m_open and m_open[-1].strip() == "F429")
     if ok:
         _held(pid, "footer: open none / next F430")
@@ -815,9 +815,9 @@ _PROBES = [
     ("P2k-reregistration-refused", P2k),
     ("P3a-f417-closed-coded", P3a),
     ("P4a-f418-closure-holds", P4a),
-    ("P5a-pin-taxonomy-2131-sorted", P5a),
+    ("P5a-pin-taxonomy-2134-sorted", P5a),
     ("P5b-new-codes-registered", P5b),
-    ("P5c-footer-open-f429-next-f430", P5c),
+    ("P5c-footer-open-f430-f431-next-f432", P5c),
 ]
 
 # No expected BREAKs on this tree: every attack shape above is refused

@@ -52,7 +52,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 # existing coded refusals) -- pin unchanged at 1706 (merge composition:
 # the rebuild lane adds 4 provenance-rebuild-* codes, so the composed
 # tree pins at 1710).
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 
 _results = []
@@ -79,7 +79,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "2131/2131/0 sorted")
+    _record("pin-taxonomy", "HELD", "2134/2134/0 sorted")
 
 
 

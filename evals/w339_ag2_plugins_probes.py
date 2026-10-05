@@ -60,7 +60,7 @@ Probes:
   P2b  maybe_auto_approve fires only on the policy file's
        auto_approve: opt-in (deployment-owned); no agent-authorable
        channel pre-approves.
-  P3   pin/taxonomy honesty (2131/2131/0 sorted-unique, footer state).
+  P3   pin/taxonomy honesty (2134/2134/0 sorted-unique, footer state).
   P4   green check (depth-1).
 
 Base: f670892a (wave-338 merge). Pin 2127, footer open none / next
@@ -83,7 +83,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "tests"))
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 # ----------------------------------------------------------------------
 # Stand-in ag2.events / ag2.middleware, faithful to ag2 1.1.2
@@ -496,16 +496,16 @@ def run_p3_probes():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
-    if len(lits) == TAXONOMY_PIN == 2131 and len(set(lits)) == 2131 \
+    if len(lits) == TAXONOMY_PIN == 2134 and len(set(lits)) == 2134 \
             and lits == sorted(lits):
-        _held("P3a", "taxonomy 2131/2131/0 sorted-unique literals")
+        _held("P3a", "taxonomy 2134/2134/0 sorted-unique literals")
     else:
         _break("P3a", "literals %d, unique %d, sorted=%s"
                % (len(lits), len(set(lits)), lits == sorted(lits)))
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    if "Open findings: F429." in text \
-            and "Next free finding: **F430**" in text:
+    if "Open findings: F430, F431." in text \
+            and "Next free finding: **F432**" in text:
         _held("P3b", "footer open none / next F430")
     else:
         _break("P3b", "footer text mismatch")

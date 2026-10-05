@@ -8,7 +8,7 @@ P1 (R9): the non-separable hybrid rule is recorded in the
   ``gov/pq_envelope.py`` module docstring: both algorithms sign a value
   committing to the algorithm set, because side-by-side JSON hybrids
   are broken by field deletion. (Wave-339 prospectus carry-forward.)
-P2 (pin): TAXONOMY_PIN == 2131 and the registry holds 2127 codes.
+P2 (pin): TAXONOMY_PIN == 2134 and the registry holds 2127 codes.
 
 Run standalone with green checks on, fresh TMPDIR.
 
@@ -24,7 +24,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 _R9_MARKERS = (
     "non-separable",
@@ -45,11 +45,11 @@ def p1_r9_docstring_rule():
 
 
 def p2_pin():
-    """TAXONOMY_PIN == 2131 and the registry holds 2127 codes."""
+    """TAXONOMY_PIN == 2134 and the registry holds 2127 codes."""
     from gov.decision_codes import TAXONOMY
-    if TAXONOMY_PIN != 2131:
+    if TAXONOMY_PIN != 2134:
         return "BREAK", "P2", "TAXONOMY_PIN = %r, want 2131" % TAXONOMY_PIN
-    if len(TAXONOMY) != 2131:
+    if len(TAXONOMY) != 2134:
         return "BREAK", "P2", "registry has %d codes, want 2131" % len(TAXONOMY)
     return "HELD", "P2", "pin 2131; registry 2127 codes"
 

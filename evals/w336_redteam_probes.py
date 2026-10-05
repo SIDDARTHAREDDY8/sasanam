@@ -119,7 +119,7 @@ from gov import decision_codes as DC  # noqa: E402
 from gov.policy import PolicyEngine  # noqa: E402
 from tests.harness import make_run  # noqa: E402
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 _NEW_CODES = (
     "identity-refresh-lock-unavailable",
@@ -863,16 +863,16 @@ def P6b():
     """Footer honesty: the last line carries open F426 and
     next F427 (raw-literal assertion, wave-331 lesson). F424/F425 were
     closed by wave-337 lane 1; F426 filed by the wave-337 red-team lane."""
-    pid = "P6b-footer-open-f429-next-f430"
+    pid = "P6b-footer-open-f430-f431-next-f432"
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               "rb") as f:
         lines = f.read().decode("utf-8").splitlines()
     last = lines[-1] if lines else ""
-    if "Open findings: F429." not in last:
-        _break(pid, "last line lacks 'Open findings: F429.': %r"
+    if "Open findings: F430, F431." not in last:
+        _break(pid, "last line lacks 'Open findings: F430, F431.': %r"
                % (last[:160],))
         return
-    if "Next free finding: **F430**" not in last:
+    if "Next free finding: **F432**" not in last:
         _break(pid, "last line lacks next-F427: %r" % (last[:160],))
         return
     for fnum in ("F424", "F425", "F426"):

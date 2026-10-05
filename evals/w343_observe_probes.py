@@ -55,9 +55,9 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2131  # Wave-342 merge: pin 2131 (no new codes in wave-343 lane 5)
-FOOTER_OPEN = "F429"
-FOOTER_NEXT = "F430"
+TAXONOMY_PIN = 2134  # Wave-342 merge: pin 2131 (no new codes in wave-343 lane 5); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+FOOTER_OPEN = "F430, F431"
+FOOTER_NEXT = "F432"
 
 from gov import policy_observe  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -306,7 +306,7 @@ def p8_evaluate_path_and_enforce_shape():
 
 # ---------------------------------------------------------- P9: pin + footer
 def p9_pin_and_footer():
-    ok = _check("P9a pin-taxonomy-2131",
+    ok = _check("P9a pin-taxonomy-2134",
                 len(TAXONOMY) == TAXONOMY_PIN
                 and len(set(TAXONOMY)) == TAXONOMY_PIN,
                 "%d/%d" % (len(TAXONOMY), len(set(TAXONOMY))))

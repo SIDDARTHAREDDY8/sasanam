@@ -19,7 +19,7 @@ Attacks the wave-323 NEW surfaces break-first (base aef2d4e9):
       (provenance-critical-arg-refused); a silent ALLOW is a BREAK.
   P5  Regression -- prior batteries at shipped tallies (child-mode,
       GOV_SKIP_GREEN=1; every tally verified by direct child run).
-  P6  Pin/footer -- 2131/2131/0 sorted on source literals; footer open
+  P6  Pin/footer -- 2134/2134/0 sorted on source literals; footer open
       none / next F409 (no open findings).
 
 Result: no genuine new findings -- every attack refuses coded or is
@@ -75,9 +75,9 @@ from tests.keyfixture import provision_test_key  # noqa: E402
 
 provision_test_key()
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
-FOOTER_OPEN = "F429"  # F409-F427 CLOSED; F428 OPEN (wave-341 lane C).
-FOOTER_NEXT = "F430"
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+FOOTER_OPEN = "F430, F431"  # F409-F427 CLOSED; F428 OPEN (wave-341 lane C).
+FOOTER_NEXT = "F432"
 
 _results = []
 _PROBES = []
@@ -1042,17 +1042,17 @@ def green_check():
 # P6: pin + footer
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-2131-sorted")
+@probe("P6-pin-taxonomy-2134-sorted")
 def _p6a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2131#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
+    ok = (len(lits) == TAXONOMY_PIN == 2134#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P6-pin-taxonomy-2131-sorted", "2131/2131/0 sorted")
-    return _break("P6-pin-taxonomy-2131-sorted",
+        return _held("P6-pin-taxonomy-2134-sorted", "2134/2134/0 sorted")
+    return _break("P6-pin-taxonomy-2134-sorted",
                   "got %d literals" % (len(lits),))
 
 

@@ -37,7 +37,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-289 merge: pin 1706; wave-290 lane 6: pin 1706 -> 1710
 # (+4 provenance-rebuild-* codes).
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 
 _results = []
@@ -71,7 +71,7 @@ def p_taxonomy_pin():
         if code not in lits:
             return _record("pin-taxonomy", "BREAK",
                            "missing literal %r" % (code,))
-    _record("pin-taxonomy", "HELD", "2131/2131/0 sorted, rebuild codes")
+    _record("pin-taxonomy", "HELD", "2134/2134/0 sorted, rebuild codes")
 
 
 

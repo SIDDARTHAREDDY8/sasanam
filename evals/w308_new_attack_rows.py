@@ -125,7 +125,7 @@ from gov.memory_actgate import ActGate  # noqa: E402
 from gov.memory_provenance import MemoryFirewall  # noqa: E402
 from gov.log import read_entries  # noqa: E402
 
-TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
 
 _results = []
