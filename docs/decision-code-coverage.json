@@ -1,7 +1,7 @@
 {
- "generated": "2026-10-05T10:11:03Z",
- "pin": 2130,
- "covered": 1919,
+ "generated": "2026-10-05T10:44:52Z",
+ "pin": 2131,
+ "covered": 1920,
  "gaps": [
   "absence-refused",
   "admission-at-risk-accepted",
@@ -5151,6 +5151,15 @@
     "evals/w328_shamir_probes.py",
     "evals/w329_redteam_probes.py",
     "tests/test_shamir_custody.py"
+   ]
+  },
+  {
+   "code": "deadctrl-subject-mutated",
+   "domain": "deadctrl",
+   "severity": "high",
+   "covered": true,
+   "files": [
+    "evals/w340_ancestry_probes.py"
    ]
   },
   {

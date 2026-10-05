@@ -54,6 +54,15 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 sys.path.insert(0, "/opt/hatch/skills/skill-creator/bin")
+
+# R29 (wave-340): deterministic spend cache. Import is tolerant of both
+# invocation styles: run as `python evals/realmodel_harness.py` (the
+# script's dir is sys.path[0]) and imported as part of the evals package
+# (repo root is on sys.path via the inserts above).
+try:  # noqa: E402
+    import spend_cache as _spend_cache_mod
+except ImportError:  # noqa: E402
+    from evals import spend_cache as _spend_cache_mod
 from dynamic_credentials import (  # noqa: E402
     add_surrogate_to_request,
     dynamic_credential_entry,
@@ -101,13 +110,10 @@ class ModelCallFailed(Exception):
     """Raised when the API call itself fails. Loud, never a skip."""
 
 
-def _conservative_token_estimate(text):
-    """Overestimate token count without tiktoken: ~3 chars/token.
-
-    Deliberately conservative (real ratio is ~4) so the pre-call
-    worst-case estimate can only overshoot, never undershoot.
-    """
-    return max(1, len(text) // 3)
+# R29 (wave-340): single source of truth lives in evals/spend_cache.py;
+# this alias keeps the historical name working for existing callers
+# (e.g. evals/w333_budget_unitcheck.py).
+_conservative_token_estimate = _spend_cache_mod.conservative_token_estimate
 
 
 # ---------------------------------------------------------------------------
@@ -372,11 +378,23 @@ class SpendLedger:
     """
 
     def __init__(self, path=None, mirror_path=None, total_budget=None,
-                 run_cap=None, call_cap=None):
+                 run_cap=None, call_cap=None, spend_cache=None):
         self.path = Path(path or self._default_canonical_path())
         self.mirror_path = Path(
             mirror_path or os.environ.get("REALMODEL_LEDGER_MIRROR",
                                           "/var/tmp/realmodel_ledger.json"))
+        # R29 (wave-340): deterministic spend cache, persisted alongside
+        # the canonical ledger. The cache NEVER authorizes spend -- it
+        # only memoizes the worst-case estimate that precheck() enforces
+        # caps against. Precedence: explicit arg > REALMODEL_SPEND_CACHE
+        # env > ledger-adjacent default.
+        if spend_cache is not None:
+            self.spend_cache = spend_cache
+        else:
+            self.spend_cache = _spend_cache_mod.SpendCache(
+                path=os.environ.get(
+                    "REALMODEL_SPEND_CACHE",
+                    str(self.path.parent / "spend_cache.json")))
         self.total_budget = float(os.environ.get("REALMODEL_BUDGET", "5.00")
                                  if total_budget is None else total_budget)
         self.run_cap = float(os.environ.get("REALMODEL_RUN_CAP", "0.50")
@@ -441,12 +459,18 @@ class SpendLedger:
     def total_spent(self):
         return sum(e.get("est_cost_usd", 0.0) for e in self.entries)
 
-    def worst_case_cost(self, prompt_text, max_tokens, model, prices):
-        pi, po = prices[model]
-        prompt_est = _conservative_token_estimate(prompt_text)
-        return (prompt_est * pi + max_tokens * po) / 1e6
+    def worst_case_cost(self, prompt_text, max_tokens, model, prices,
+                        temperature=0):
+        # R29 (wave-340): the estimate is memoized in the deterministic
+        # spend cache (content-hash keyed; miss recomputes locally with
+        # no network). The returned estimate feeds precheck()'s caps;
+        # the cache itself authorizes nothing.
+        usd, _hit = self.spend_cache.estimate(
+            model, prompt_text, max_tokens, temperature, prices)
+        return usd
 
-    def precheck(self, prompt_text, max_tokens, model, prices, test_name):
+    def precheck(self, prompt_text, max_tokens, model, prices, test_name,
+                 temperature=0):
         """Refuse BEFORE any network I/O if a cap would be breached."""
         if self.total_spent >= self.total_budget:
             raise BudgetRefused(
@@ -454,7 +478,7 @@ class SpendLedger:
                 "harness stops loudly, no API call made"
                 % (self.total_spent, self.total_budget))
         worst = self.worst_case_cost(prompt_text, max_tokens, model,
-                                     prices)
+                                     prices, temperature=temperature)
         if worst > self.call_cap:
             raise BudgetRefused(
                 "per-call cap breached: worst-case $%.4f > cap $%.2f "
@@ -543,7 +567,8 @@ class ModelDriver:
         prompt_text = "\n".join(
             str(m.get("content", "")) for m in messages)
         worst = self.ledger.precheck(prompt_text, self.max_tokens,
-                                     self.model, self.prices, test_name)
+                                     self.model, self.prices, test_name,
+                                     temperature=0)  # backends send temp 0
         out = self.backend.chat(messages, test_name)
         pt = out.get("prompt_tokens", 0)
         ct = out.get("completion_tokens", 0)

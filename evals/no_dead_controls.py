@@ -37,6 +37,15 @@ What this gate checks over ``gov/``:
    text (e.g. checked out by the merge coordinator's own tooling) -- this
    gate never spawns a git subprocess itself (wave-36 supply-chain rule:
    no in-repo git call sites).
+6. **Test-subject pinning (R32, wave-340; Bernstein #6073 ADAPT).** The
+   tree under test is pinned (sha256 of every file's content, via
+   ``evals/subject_pin.py``) before the analysis runs, and the pin is
+   asserted invariant when the analysis finishes. A file modified,
+   added, or removed mid-run (TOCTOU -- a concurrent writer changing
+   the subject under the gate) fails the gate with the coded refusal
+   ``deadctrl-subject-mutated``. The pin covers contents only
+   (``.git``/``__pycache__`` excluded). ``--pin-subject <file>``
+   persists the pin record for the CI log.
 
 Exit codes: 0 = gate passes; 1 = gate refuses (dead surface found);
 2 = usage / gate-internal error (never a pass).
@@ -49,6 +58,15 @@ import os
 import re
 import sys
 import datetime
+
+# R32 (wave-340): test-subject pinning. Tolerant import: the gate runs
+# as `python evals/no_dead_controls.py` (script dir on sys.path) and is
+# imported by batteries with the evals dir on sys.path; both layouts
+# resolve a top-level subject_pin, with the package form as fallback.
+try:
+    import subject_pin as _subject_pin
+except ImportError:
+    from evals import subject_pin as _subject_pin
 
 # Directories whose .py files are live roots: executed by CI or shipped
 # as operator tooling. A missed root can only produce a *loud* false
@@ -484,6 +502,14 @@ def code_raise_sites(root, mods, reached, codes):
                 if fname.endswith(".py"):
                     path = os.path.join(dirpath, fname)
                     scan_file(path, os.path.relpath(path, root))
+    # R32 (wave-340): the gate itself is shipped CI tooling. Codes the
+    # gate emits as coded refusals (e.g. deadctrl-subject-mutated) are
+    # live by emission here -- the gate file is scanned exactly like a
+    # production file. (Tree-checked: this file carries no other
+    # registered-code literals, so no existing code changes status.)
+    gate_file = os.path.join(root, "evals", "no_dead_controls.py")
+    if os.path.isfile(gate_file):
+        scan_file(gate_file, os.path.join("evals", "no_dead_controls.py"))
     return sites
 
 
@@ -627,10 +653,25 @@ class GateResult(object):
         self.allowlist_active = 0
         self.allowlist_removed = 0
         self.notes = []
+        self.subject_digest = None  # R32: test-subject pin, set by evaluate()
 
 
-def evaluate(root, findings_path=None):
+def evaluate(root, findings_path=None, subject_pin_path=None):
     result = GateResult()
+    # R32: pin the test subject BEFORE any analysis. The pin is the
+    # content hash of every file; it is asserted invariant at the end
+    # so a concurrent writer cannot swap the tree under the gate.
+    pin_exclude = ()
+    if subject_pin_path is not None:
+        rel = os.path.relpath(os.path.abspath(subject_pin_path),
+                              os.path.abspath(root))
+        if not rel.startswith(".."):
+            pin_exclude = (rel,)
+    manifest, digest = _subject_pin.pin_tree(root, exclude=pin_exclude)
+    result.subject_digest = digest
+    result.notes.append("subject pinned: %s (%d files)" % (digest, len(manifest)))
+    if subject_pin_path is not None:
+        _subject_pin.write_manifest(subject_pin_path, manifest, digest)
     mods = find_package_modules(root)
     result.module_count = len(mods)
     reached = compute_reached(root, mods)
@@ -679,6 +720,19 @@ def evaluate(root, findings_path=None):
     if violations:
         result.passed = False
     result.violations = violations
+    # R32: assert the subject pin is invariant across the run. Any drift
+    # is a TOCTOU -- the gate analyzed a different tree than it pinned --
+    # and fails the gate with the coded refusal.
+    drift = _subject_pin.verify_tree(root, manifest, exclude=pin_exclude)
+    if drift:
+        result.passed = False
+        shown = ", ".join("%s (%s)" % (rel, kind) for rel, kind in drift[:5])
+        if len(drift) > 5:
+            shown += ", ... +%d more" % (len(drift) - 5)
+        result.violations.append(
+            "deadctrl-subject-mutated: %d file(s) changed under the gate "
+            "(TOCTOU): %s; subject was %s"
+            % (len(drift), shown, digest))
     return result
 
 
@@ -732,6 +786,7 @@ def main(argv=None):
     root = None
     base = None
     findings_path = None
+    pin_subject_path = None
     args = []
     i = 0
     while i < len(argv):
@@ -742,10 +797,13 @@ def main(argv=None):
             base, i = argv[i + 1], i + 2
         elif arg == "--findings" and i + 1 < len(argv):
             findings_path, i = argv[i + 1], i + 2
+        elif arg == "--pin-subject" and i + 1 < len(argv):
+            pin_subject_path, i = argv[i + 1], i + 2
         elif arg in ("-h", "--help"):
             out = sys.stdout
             out.write(__doc__ + "\nusage: no_dead_controls.py [--root DIR] "
-                      "[--base-allowlist FILE] [--findings PATH]\n")
+                      "[--base-allowlist FILE] [--findings PATH] "
+                      "[--pin-subject FILE]\n")
             return 0
         else:
             args.append(arg)
@@ -759,7 +817,8 @@ def main(argv=None):
         sys.stderr.write("not a repo root (no gov/): %s\n" % root)
         return 2
     try:
-        result = evaluate(root, findings_path=findings_path)
+        result = evaluate(root, findings_path=findings_path,
+                          subject_pin_path=pin_subject_path)
     except Exception as exc:  # gate-internal error is never a pass
         sys.stderr.write("gate internal error: %r\n" % exc)
         return 2

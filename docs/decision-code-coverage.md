@@ -1,10 +1,10 @@
 # Decision-code coverage table (generated)
 
-Generated: 2026-10-05T10:11:03Z UTC · registry pin: 2130 · base: wave-339 lane 2
+Generated: 2026-10-05T10:44:52Z UTC · registry pin: 2131 · base: wave-339 lane 2
 
 Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code counts as covered when its literal string appears quoted in at least one ``.py`` file under ``tests/`` or ``evals/``. Production ``emit()`` call sites do not count.
 
-**Covered: 1919 / 2130** · **Gaps: 211**
+**Covered: 1920 / 2131** · **Gaps: 211**
 
 | code | domain | severity | covered | asserted in |
 | ---- | ------ | -------- | ------- | ----------- |
@@ -506,6 +506,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `custody-shamir-insufficient-shares` | custody | medium | yes | evals/w328_shamir_probes.py, evals/w329_redteam_probes.py, tests/test_shamir_custody.py |
 | `custody-shamir-share-malformed` | custody | medium | yes | evals/w328_shamir_probes.py, evals/w329_redteam_probes.py |
 | `custody-shamir-transcript-corrupt` | custody | high | yes | evals/w328_shamir_probes.py, evals/w329_redteam_probes.py, tests/test_shamir_custody.py |
+| `deadctrl-subject-mutated` | deadctrl | high | yes | evals/w340_ancestry_probes.py |
 | `decision-code-digest-malformed` | decision_codes | high | yes | evals/w228_codes_probes.py, tests/test_decision_codes.py |
 | `decision-code-digest-mismatch` | decision_codes | high | yes | evals/w228_codes_probes.py, tests/test_decision_codes.py |
 | `decision-code-malformed` | decision_codes | medium | yes | evals/w228_codes_probes.py, evals/w303_f385_probes.py, tests/test_decision_codes.py (+4) |

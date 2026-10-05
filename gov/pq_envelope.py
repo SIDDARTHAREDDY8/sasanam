@@ -19,6 +19,19 @@ families are deliberately OUTSIDE the closed table: the slot is for
 the standardized pure-PQ signature algorithms, and anything outside
 the table refuses ``evidence-pq-unknown-alg``.
 
+Non-separable hybrid rule (the only hybrid shape we will ever accept):
+
+* If a hybrid ever enters this format, it MUST be non-separable: BOTH
+  algorithms sign a value committing to the algorithm set. A signature
+  over just the payload, with the algorithm names sitting beside it,
+  is separable -- a side-by-side JSON hybrid is broken by field deletion:
+  an attacker strips the PQ signature field and the verifier
+  still accepts the classical one. The cross-binding is what makes the
+  two signatures one inseparable statement.
+* The ``p256_*``/``rsa3072_*`` hybrid forms in the oqs-provider list
+  are separable by this definition and are therefore OUTSIDE the
+  closed table, not a precedent for a future hybrid slot.
+
 Reserve-while-disabled semantics (fail-closed):
 
 * :data:`PQ_ENABLED` is ``False``. There is no code path in this build

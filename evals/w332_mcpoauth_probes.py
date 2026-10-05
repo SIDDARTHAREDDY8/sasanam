@@ -17,7 +17,7 @@ P2  RFC 8707 presentation: A-minted token at B, resourceless token,
     matching-resource control, aud-list control.
 P3  RFC 8707 token response: substituted resource, missing resource.
 P4  refusal vocabulary: every new code literal is centrally registered
-    (wave-329 lesson); pin 2130/2130/0 sorted unique on raw literals.
+    (wave-329 lesson); pin 2131/2131/0 sorted unique on raw literals.
 P5  footer state: open none / next F417.
 P6  depth-1 green check: adjacent MCP OAuth batteries with
     GOV_SKIP_GREEN=1.
@@ -41,7 +41,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2130 # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused)
+TAXONOMY_PIN = 2131 # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); Wave-340 lane 3: pin 2130 -> 2131 (+1 deadctrl-subject-mutated).
 FOOTER_OPEN = "F427"  # F426 closed wave-338 lane 1; F427 OPEN (wave-339 lane 5).
 FOOTER_NEXT = "F428"  # Next free finding number.
 
@@ -356,21 +356,21 @@ def _p4a():
             "4 new codes registered and in module CODES")
 
 
-@probe("P4b-pin-taxonomy-2130-sorted")
+@probe("P4b-pin-taxonomy-2131-sorted")
 def _p4b():
-    if TAXONOMY_PIN != 2130:
-        return ("P4b-pin-taxonomy-2130-sorted", "BREAK",
-                "TAXONOMY_PIN is %r, want 2130" % (TAXONOMY_PIN,))
+    if TAXONOMY_PIN != 2131:
+        return ("P4b-pin-taxonomy-2131-sorted", "BREAK",
+                "TAXONOMY_PIN is %r, want 2131" % (TAXONOMY_PIN,))
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
-    if len(lits) != 2130 or len(set(lits)) != 2130 \
+    if len(lits) != 2131 or len(set(lits)) != 2131 \
             or lits != sorted(lits):
-        return ("P4b-pin-taxonomy-2130-sorted", "BREAK",
-                "want 2130/2130/0 sorted, got %d/%d/sorted=%s"
+        return ("P4b-pin-taxonomy-2131-sorted", "BREAK",
+                "want 2131/2131/0 sorted, got %d/%d/sorted=%s"
                 % (len(lits), len(set(lits)), lits == sorted(lits)))
-    return ("P4b-pin-taxonomy-2130-sorted", "HELD",
-            "2130/2130/0 sorted unique on raw source literals")
+    return ("P4b-pin-taxonomy-2131-sorted", "HELD",
+            "2131/2131/0 sorted unique on raw source literals")
 
 
 # ---------------------------------------------------------------------------

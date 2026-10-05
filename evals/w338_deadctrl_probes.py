@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Wave-338 lane 3: dead-controls CI gate (Bernstein R16 STEAL) regression.
 
-Base: `6cdf5fdd` (wave-337 merge). Pin 2130. Footer open F427 / next F428.
+Base: `6cdf5fdd` (wave-337 merge). Pin 2131. Footer open F427 / next F428.
 
 What this battery pins:
 
 P1 (real tree): the gate passes on the shipped tree -- 0 orphans, 0 dead
   codes, entry-point set exactly {"gov.approve"}.
-P2 (pin): TAXONOMY_PIN == 2130 and the registry holds 2130 codes.
+P2 (pin): TAXONOMY_PIN == 2131 and the registry holds 2131 codes.
 P3 (footer): open F427 / next F428.
 P4 (synthetic, red-capable): an orphan gov module fails the gate and is
   named; a module imported only by an orphan is also orphan (fixpoint).
@@ -54,7 +54,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import no_dead_controls as gate  # noqa: E402
 
-TAXONOMY_PIN = 2130  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-337 merge: pin 2124 (2106 + 15 mcp-oauth-cimd-* + 3 tool-budget-*). No new decision codes this lane.; Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused)
+TAXONOMY_PIN = 2131  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-337 merge: pin 2124 (2106 + 15 mcp-oauth-cimd-* + 3 tool-budget-*). No new decision codes this lane.; Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); Wave-340 lane 3: pin 2130 -> 2131 (+1 deadctrl-subject-mutated).
 
 _EXPECTED_BREAKS = set()  # never {} (wave-331 lesson); breaks documented above
 
@@ -154,22 +154,22 @@ def p1_gate_green_real_tree():
     if problems:
         return "BREAK", "P1", "; ".join(problems)
     return "HELD", "P1", ("gate PASS on real tree: %d modules, %d reached, "
-                          "entry point gov.approve, 2129/2130 codes live, "
+                          "entry point gov.approve, 2130/2131 codes live, "
                           "honesty-mutant-inconclusive allowlisted w/ expiry"
                           % (result.module_count, result.reached_count))
 
 
 def p2_pin():
-    """TAXONOMY_PIN == 2130 and the registry holds 2130 codes."""
+    """TAXONOMY_PIN == 2131 and the registry holds 2131 codes."""
     try:
         codes = gate.registered_codes(REPO_ROOT)
     except Exception:
         return "ERROR", "P2", traceback.format_exc(limit=3)
-    if TAXONOMY_PIN != 2130:
-        return "BREAK", "P2", "TAXONOMY_PIN = %r, want 2130" % TAXONOMY_PIN
-    if len(codes) != 2130:
-        return "BREAK", "P2", "registry has %d codes, want 2130" % len(codes)
-    return "HELD", "P2", "pin 2130; registry 2130 codes"
+    if TAXONOMY_PIN != 2131:
+        return "BREAK", "P2", "TAXONOMY_PIN = %r, want 2131" % TAXONOMY_PIN
+    if len(codes) != 2131:
+        return "BREAK", "P2", "registry has %d codes, want 2131" % len(codes)
+    return "HELD", "P2", "pin 2131; registry 2131 codes"
 
 
 def p3_footer():
