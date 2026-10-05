@@ -364,7 +364,7 @@ def test_e2_refusal_record_deterministic():
 
 
 # ------------------------------------------------------- pin/footer probes
-def test_pin_taxonomy_2131():
+def test_pin_taxonomy_2134():
     codes = sorted(TAXONOMY)
     label_codes = {"label-egress-refused", "label-remedy-empty-unliftable",
                    "label-annotation-unregistered", "label-trust-floor-refused"}
@@ -404,7 +404,7 @@ TESTS = [test_m1_combine_never_ascends,
          test_r4_plan_digest_binds_vocab,
          test_e1_trajectory_digest_recomputable,
          test_e2_refusal_record_deterministic,
-         test_pin_taxonomy_2131,
+         test_pin_taxonomy_2134,
          test_footer_state]
 
 # Exactly one expected BREAK: A0 demonstrates the annotation-arbitrage

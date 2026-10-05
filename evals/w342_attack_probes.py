@@ -269,8 +269,8 @@ def test_c2_within_call_join_still_holds():
 # ---------------------------------------------------------------- pins
 
 @_t
-def test_pin_taxonomy_2131():
-    """Taxonomy pin: 2131 codes, sorted, raw-literal unique."""
+def test_pin_taxonomy_2134():
+    """Taxonomy pin: 2134 codes, sorted, raw-literal unique."""
     codes = sorted(TAXONOMY)
     ok = (len(codes) == TAXONOMY_PIN == 2134
           and codes == sorted(set(codes))

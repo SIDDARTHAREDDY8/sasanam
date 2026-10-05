@@ -252,8 +252,8 @@ def test_c3_sentinel_visible_in_nested_args():
 # ---------------------------------------------------------------- pins
 
 @_t
-def test_pin_taxonomy_2131():
-    """Taxonomy pin: 2131 codes, sorted, raw-literal unique."""
+def test_pin_taxonomy_2134():
+    """Taxonomy pin: 2134 codes, sorted, raw-literal unique."""
     codes = sorted(TAXONOMY)
     ok = (len(codes) == TAXONOMY_PIN == 2134
           and codes == sorted(set(codes))
