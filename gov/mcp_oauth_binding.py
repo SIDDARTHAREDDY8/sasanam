@@ -66,6 +66,20 @@ Refusal vocabulary (domain ``mcp-oauth``, all fail-closed):
   cover its bytes (tamper reported as tamper, never as a shape gap).
 * ``mcp-oauth-verdict-mismatched`` -- a verdict presented for a
   different token endpoint than it was granted for.
+* ``mcp-oauth-iss-missing`` -- the authorization response carries no
+  ``iss`` parameter (RFC 9207 requires the AS to send it); the client
+  cannot identify the issuing AS, so the response is refused.
+* ``mcp-oauth-iss-mismatched`` -- the authorization response ``iss``
+  names a different issuer than the sealed binding (RFC 9207 mix-up
+  shape: a rogue AS's response, or an intercepted response with the
+  issuer substituted).
+* ``mcp-oauth-resource-missing`` -- the token (claims or token
+  response) carries no RFC 8707 resource indicator for the server it
+  is presented to; refused fail-closed.
+* ``mcp-oauth-resource-misbound`` -- the token names a different
+  protected resource than the server it is presented to (RFC 8707
+  cross-server replay: a token minted for server A replayed at
+  server B).
 
 Honest boundaries:
 - Binding MACs prove shared-secret authenticity (HMAC), not
@@ -76,6 +90,18 @@ Honest boundaries:
 - This layer does not fetch metadata over the network; discovery
   transport (TLS pinning, redirect behavior) is deployment-owned.
   Server metadata arrives as an already-fetched dict.
+- These checks bind tokens to issuers and resources; they do not
+  verify a token's own authenticity (signature). The ``iss`` check
+  runs on the authorization response, which arrives over the
+  client-authenticated redirect channel; the ``resource`` check runs
+  on token claims the caller presents. A caller that feeds claims
+  from an unverified token gets binding checks on attacker-chosen
+  bytes -- binding is checked here, authenticity is the caller's
+  (and the AS's) job, stated here so no one mistakes one for the
+  other.
+- The resource server URI is deployment-configured knowledge (like
+  ``issuer_hint``), never derived from server metadata or from the
+  token itself.
 - The credential's own material (client secret, codes, verifiers)
   never passes through this layer; only the AS-issuer label it is
   stored under is checked.
@@ -97,6 +123,10 @@ MCP_OAUTH_FIX_GAP_REFUSED = "mcp-oauth-fix-gap-refused"
 MCP_OAUTH_KEY_MISSING = "mcp-oauth-key-missing"
 MCP_OAUTH_BINDING_TAMPERED = "mcp-oauth-binding-tampered"
 MCP_OAUTH_VERDICT_MISMATCHED = "mcp-oauth-verdict-mismatched"
+MCP_OAUTH_ISS_MISSING = "mcp-oauth-iss-missing"
+MCP_OAUTH_ISS_MISMATCHED = "mcp-oauth-iss-mismatched"
+MCP_OAUTH_RESOURCE_MISSING = "mcp-oauth-resource-missing"
+MCP_OAUTH_RESOURCE_MISBOUND = "mcp-oauth-resource-misbound"
 
 CODES = (
     MCP_OAUTH_ISSUER_UNBOUND,
@@ -107,6 +137,10 @@ CODES = (
     MCP_OAUTH_KEY_MISSING,
     MCP_OAUTH_BINDING_TAMPERED,
     MCP_OAUTH_VERDICT_MISMATCHED,
+    MCP_OAUTH_ISS_MISSING,
+    MCP_OAUTH_ISS_MISMATCHED,
+    MCP_OAUTH_RESOURCE_MISSING,
+    MCP_OAUTH_RESOURCE_MISBOUND,
 )
 
 _BINDING_DOMAIN = b"gov-mcp-oauth-binding/v1\x00"
@@ -367,12 +401,47 @@ def check_server_metadata(sealed_binding, metadata, key):
                         binding_digest=binding_digest)
 
 
-def run_bound_exchange(verdict, token_endpoint, exchange_fn):
+def check_response_iss(verdict, response):
+    """RFC 9207 check of an authorization response against a verdict.
+
+    The verdict already carries the canonical bound issuer, so the
+    response ``iss`` can be checked without re-opening the sealed
+    binding: missing ``iss`` refuses ``mcp-oauth-iss-missing``, a
+    normalized ``iss`` that differs from the verdict's issuer refuses
+    ``mcp-oauth-iss-mismatched``. Returns the normalized issuer on
+    success.
+    """
+    if not isinstance(verdict, OAuthVerdict):
+        _refuse(MCP_OAUTH_VERDICT_MISMATCHED,
+                "no OAuth verdict presented for the iss check")
+    if not isinstance(response, dict):
+        _refuse(MCP_OAUTH_METADATA_MALFORMED,
+                "authorization response must be a dict")
+    iss = response.get("iss")
+    if iss is None:
+        _refuse(MCP_OAUTH_ISS_MISSING,
+                "authorization response carries no iss parameter "
+                "(RFC 9207 requires the AS to send it); refusing "
+                "fail-closed")
+    claimed = _normalize_url(iss, "response iss")
+    if claimed != verdict.issuer:
+        _refuse(MCP_OAUTH_ISS_MISMATCHED,
+                "response iss %r is not the verdict issuer %r"
+                % (claimed, verdict.issuer))
+    return claimed
+
+
+def run_bound_exchange(verdict, token_endpoint, exchange_fn,
+                       authorization_response=None):
     """Execute ``exchange_fn`` only on an exact verdict match.
 
     The choke point: the exchange signature requires the verdict
     object. A verdict granted for another endpoint refuses
     ``mcp-oauth-verdict-mismatched`` and the exchange never runs.
+    When ``authorization_response`` is supplied, its RFC 9207 ``iss``
+    is checked against the verdict's issuer first (missing ->
+    ``mcp-oauth-iss-missing``, rogue -> ``mcp-oauth-iss-mismatched``),
+    so the exchange cannot run on a mixed-up response.
     """
     if not isinstance(verdict, OAuthVerdict):
         _refuse(MCP_OAUTH_VERDICT_MISMATCHED,
@@ -382,4 +451,156 @@ def run_bound_exchange(verdict, token_endpoint, exchange_fn):
         _refuse(MCP_OAUTH_VERDICT_MISMATCHED,
                 "verdict granted for %r, presented for %r"
                 % (verdict.token_endpoint, token_endpoint))
+    if authorization_response is not None:
+        check_response_iss(verdict, authorization_response)
     return exchange_fn()
+
+
+# ---------------------------------------------------------------------------
+# RFC 9207 authorization-server issuer identification (wave-332 lane 2)
+# ---------------------------------------------------------------------------
+
+def validate_authorization_response(sealed_binding, response, key):
+    """Validate an RFC 9207 authorization response against the sealed binding.
+
+    RFC 9207 (OAuth 2.0 Authorization Server Issuer Identification)
+    requires the authorization server to include the ``iss`` parameter
+    in the authorization response, and requires the client to compare
+    it against the issuer identifier it associates with that AS. This
+    defeats the mix-up attack: a response minted by a rogue AS (or an
+    intercepted response with the issuer substituted) is refused even
+    when the rest of the exchange would succeed.
+
+    ``response`` is an EMITTER CLAIM (server-supplied redirect
+    parameters, already parsed into a dict). A response with no
+    ``iss`` refuses ``mcp-oauth-iss-missing`` -- an RFC 9207 AS always
+    sends it, so its absence means the client cannot identify the
+    issuing AS. A normalized ``iss`` that differs from the bound
+    issuer refuses ``mcp-oauth-iss-mismatched``. Returns the
+    normalized issuer on success.
+    """
+    binding, _binding_digest = _unseal_binding(sealed_binding, key)
+    if not isinstance(response, dict):
+        _refuse(MCP_OAUTH_METADATA_MALFORMED,
+                "authorization response must be a dict")
+    iss = response.get("iss")
+    if iss is None:
+        _refuse(MCP_OAUTH_ISS_MISSING,
+                "authorization response carries no iss parameter "
+                "(RFC 9207 requires the AS to send it); refusing "
+                "fail-closed")
+    claimed = _normalize_url(iss, "response iss")
+    if claimed != binding["issuer"]:
+        _refuse(MCP_OAUTH_ISS_MISMATCHED,
+                "response iss %r is not the bound issuer %r"
+                % (claimed, binding["issuer"]))
+    return claimed
+
+
+# ---------------------------------------------------------------------------
+# RFC 8707 resource indicators (wave-332 lane 2)
+# ---------------------------------------------------------------------------
+
+def resource_request_params(resource_server):
+    """Build the RFC 8707 ``resource`` parameter for a token request.
+
+    The client tells the AS which protected resource (MCP server) the
+    token is for, so the AS can audience-restrict the token to that
+    server. Returns ``{"resource": <canonical uri>}``.
+    """
+    return {"resource": _normalize_url(resource_server, "resource_server")}
+
+
+def check_token_response_resource(resource_server, token_response):
+    """Check a token response's RFC 8707 ``resource`` echoes the request.
+
+    Ties the token response back to the resource the client asked for:
+    a response naming a different resource (a substituted token)
+    refuses ``mcp-oauth-resource-misbound``; a response with no
+    ``resource`` refuses ``mcp-oauth-resource-missing``. Returns the
+    normalized resource URI on success.
+    """
+    server = _normalize_url(resource_server, "resource_server")
+    if not isinstance(token_response, dict):
+        _refuse(MCP_OAUTH_METADATA_MALFORMED,
+                "token response must be a dict")
+    resource = token_response.get("resource")
+    if resource is None:
+        _refuse(MCP_OAUTH_RESOURCE_MISSING,
+                "token response carries no resource parameter "
+                "(RFC 8707 requires the AS to return it); refusing "
+                "fail-closed")
+    if _normalize_url(resource, "token response resource") != server:
+        _refuse(MCP_OAUTH_RESOURCE_MISBOUND,
+                "token response bound to %r, requested %r"
+                % (resource, server))
+    return server
+
+
+def _token_resource_candidates(token_claims):
+    """Extract candidate resource values from presented token claims.
+
+    RFC 8707 carries the target in the token response's ``resource``
+    parameter (mirrored into JWT claims by ASes that issue JWT access
+    tokens); RFC 9068 JWT access tokens carry it in ``aud``. Accept
+    ``resource`` (string) or ``aud`` (string or list of strings).
+    """
+    if not isinstance(token_claims, dict):
+        _refuse(MCP_OAUTH_METADATA_MALFORMED,
+                "token claims must be a dict")
+    candidates = []
+    resource = token_claims.get("resource")
+    if resource is not None:
+        if not isinstance(resource, str) or not resource:
+            _refuse(MCP_OAUTH_METADATA_MALFORMED,
+                    "token resource claim must be a non-empty string")
+        candidates.append(resource)
+    aud = token_claims.get("aud")
+    if aud is not None:
+        if isinstance(aud, str):
+            aud = [aud]
+        if not isinstance(aud, (list, tuple)) or not all(
+                isinstance(a, str) and a for a in aud):
+            _refuse(MCP_OAUTH_METADATA_MALFORMED,
+                    "token aud claim must be a string or a list of "
+                    "non-empty strings")
+        candidates.extend(aud)
+    return candidates
+
+
+def check_token_resource(resource_server, token_claims):
+    """Check an access token is bound to the MCP server it is presented to.
+
+    RFC 8707 (Resource Indicators for OAuth 2.0): a token minted for
+    one protected resource must not be accepted at another.
+    ``resource_server`` is deployment-configured (the MCP server this
+    client is about to call -- never derived from server metadata or
+    from the token itself); ``token_claims`` is an EMITTER CLAIM (the
+    presented token's claims). No candidate naming the server refuses
+    ``mcp-oauth-resource-missing``; candidates present but none
+    matching refuse ``mcp-oauth-resource-misbound`` (the
+    A-replayed-at-B shape). A candidate that is not an https URL
+    refuses ``mcp-oauth-metadata-malformed``: the module's URL
+    contract applies to resource indicators too. Returns the
+    normalized resource URI on success.
+
+    Authenticity boundary: this checks *binding*, not token
+    authenticity. The caller must only feed claims from a token whose
+    signature it has verified (or that arrived over the
+    client-authenticated token channel); binding checks on
+    attacker-chosen bytes are meaningless, and this function cannot
+    tell the difference.
+    """
+    server = _normalize_url(resource_server, "resource_server")
+    candidates = _token_resource_candidates(token_claims)
+    if not candidates:
+        _refuse(MCP_OAUTH_RESOURCE_MISSING,
+                "token carries no resource indicator (RFC 8707 "
+                "resource/aud) for the presenting server; refusing "
+                "fail-closed")
+    for candidate in candidates:
+        if _normalize_url(candidate, "token resource candidate") == server:
+            return server
+    _refuse(MCP_OAUTH_RESOURCE_MISBOUND,
+            "token bound to %r, presented at %r"
+            % (candidates, server))

@@ -9,7 +9,7 @@ is CLOSED (lane 1, wave-326 merge) so P2a must be HELD; F408's P17
 must stay HELD. P3 attacks the federated-identity / threshold-VSA /
 offline-verifier seams. P4 is the regression section (F409 HELD;
 F408/F407/F406 HELD). P5 runs prior batteries in child mode
-(GOV_SKIP_GREEN=1). P6 pins the taxonomy (2058) and the footer state.
+(GOV_SKIP_GREEN=1). P6 pins the taxonomy (2062) and the footer state.
 
 Filed finding: F411 (MEDIUM) -- federated-mode mint_identity accepts
 an unverified dict token_claims, bypassing token authentication
@@ -41,7 +41,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
-TAXONOMY_PIN = 2058  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*)
+TAXONOMY_PIN = 2062  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).
 FOOTER_OPEN = "none"  # F409-F416 CLOSED; no open findings (wave-331 merge).
 FOOTER_NEXT = "F417"  # Next free finding number.
 
@@ -930,17 +930,17 @@ def _p5f():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2058-sorted")
+@probe("P6a-pin-taxonomy-2062-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
-    if TAXONOMY_PIN != 2058:
-        return _break("P6a-pin-taxonomy-2058-sorted",
-                      "TAXONOMY_PIN is %r, want 2058" % (TAXONOMY_PIN,))
-    if len(codes) != 2058 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-2058-sorted",
+    if TAXONOMY_PIN != 2062:
+        return _break("P6a-pin-taxonomy-2062-sorted",
+                      "TAXONOMY_PIN is %r, want 2062" % (TAXONOMY_PIN,))
+    if len(codes) != 2062 or codes != sorted(codes):
+        return _break("P6a-pin-taxonomy-2062-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    return _held("P6a-pin-taxonomy-2058-sorted", "2058/2058/0 sorted")
+    return _held("P6a-pin-taxonomy-2062-sorted", "2062/2062/0 sorted")
 
 
 @probe("P6b-footer-open-none-next-f417")
