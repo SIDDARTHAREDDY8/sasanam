@@ -1,0 +1,748 @@
+"""Wave-331 independent red-team battery.
+
+Base: cd353e25 (wave-330 merge). Footer: open F415, F416 / next F417
+(F413/F414 CLOSED; F415/F416 filed by wave-330 lane 3, LOW, OPEN). Pin: 2058.
+
+P1  wave-330 seams not yet broken: gov/shamir_custody.py post-F414
+    (realpath pre-flight games: unresolvable paths, (st_dev,st_ino,
+    basename) key games, case-insensitive residual, TOCTOU between
+    pre-flight and write) and the w330_prospectus.md STEAL-verdict
+    audit (Landlock overclaim vs the wave-266 tier already in
+    gov/sandbox.py; PQC slot absence; MCP OAuth gaps #1/#2 absence).
+P2  F415/F416 re-probes (expected BREAK -- lanes 1/2 own the closures,
+    do NOT fix).
+P3  F414/F413/F412/F411/F410 closure-regression probes (all HELD).
+P4  merge-defect class: no trailing blank line on footer-bearing
+    files (wave-330 scripted-resolution class), code-registration,
+    pin-comment honesty.
+P5  pin 2058 + footer state probes.
+P6  prior batteries in child mode (GOV_SKIP_GREEN=1 in the child env),
+    tallies verified by direct child runs.
+
+gov/ is byte-identical to base: this battery changes no product code
+and files findings only (from F417). No new decision codes from this lane.
+"""
+
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import traceback
+
+os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(REPO, "evals"))
+sys.path.insert(0, REPO)
+
+TAXONOMY_PIN = 2058  # Wave-328 merge: pin 2044 -> 2056 (+12).; Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*).; Wave-330 merge: pin unchanged 2058 (F414/F415/F416: no new codes).
+FOOTER_OPEN = "F415, F416"  # F409-F414 CLOSED; F415/F416 (LOW, uncoded int() crashes) OPEN (wave-330 lane 3).
+FOOTER_NEXT = "F417"  # Next free finding number.
+
+_results = []
+_PROBES = []
+
+
+def _record(pid, verdict, note):
+    _results.append((pid, verdict, note))
+
+
+def _held(pid, note):
+    return (pid, "HELD", note)
+
+
+def _break(pid, note):
+    return (pid, "BREAK", note)
+
+
+def probe(pid):
+    def deco(fn):
+        _PROBES.append((pid, fn))
+        return fn
+    return deco
+
+
+def _safe(pid, fn):
+    try:
+        _record(*fn())
+    except Exception:
+        _record(pid, "ERROR",
+                traceback.format_exc(limit=2).replace("\n", " | ")[:500])
+
+
+def _relabel(pid, fn):
+    _pid, verdict, note = fn()
+    return (pid, verdict, note)
+
+
+def _tmpd():
+    return tempfile.mkdtemp(prefix="w331-", dir=_run_root())
+
+
+def _run_root():
+    d = os.path.join(tempfile.gettempdir(), "w331rt")
+    if not os.path.isdir(d):
+        os.makedirs(d)
+    return d
+
+
+from gov import shamir_custody as sc  # noqa: E402
+
+
+def _shards(n=3, t=2, secret=b"w331-redteam-secret-bytes"):
+    return sc.split(secret, n, t, "ceremony-w331-test")
+
+
+# ---------------------------------------------------------------------------
+# P1: shamir post-F414 seams + w330 prospectus STEAL-verdict audit.
+# ---------------------------------------------------------------------------
+
+@probe("P1a-shamir-distribute-unresolvable-path-refused-coded")
+def _p1a():
+    """F414 residual: paths realpath cannot resolve must refuse coded.
+
+    A null byte in an assignment path makes os.path.realpath raise
+    ValueError; distribute must catch it and refuse coded
+    custody-shamir-distribute-refused -- never guess, never write.
+    (ShamirCustodyError subclasses ValueError, so the coded check
+    must come first.)
+    """
+    d = _tmpd()
+    shards = _shards()
+    assigns = {"a": os.path.join(d, "shard-a"),
+               "b": os.path.join(d, "shard-\x00b")}
+    try:
+        sc.distribute(shards[:2], assigns)
+    except sc.ShamirCustodyError as exc:
+        if exc.code == "custody-shamir-distribute-refused":
+            leftovers = os.listdir(d)
+            if not leftovers:
+                return _held("P1a-shamir-distribute-unresolvable-path-"
+                             "refused-coded",
+                             "null-byte path refused coded, nothing written")
+            return _break("P1a-shamir-distribute-unresolvable-path-"
+                          "refused-coded",
+                          "refused but wrote: %r" % (leftovers,))
+        return _break("P1a-shamir-distribute-unresolvable-path-"
+                      "refused-coded",
+                      "wrong code %r" % (exc.code,))
+    except Exception as exc:
+        return _break("P1a-shamir-distribute-unresolvable-path-"
+                      "refused-coded",
+                      "uncoded %s escapes" % type(exc).__name__)
+    return _break("P1a-shamir-distribute-unresolvable-path-refused-coded",
+                  "null-byte path accepted")
+
+
+@probe("P1b-shamir-distribute-symlink-alias-regression")
+def _p1b():
+    """F414 regression: symlink-aliased assignment pair refuses BEFORE
+    any write (relabeled wave-330 P2, which relabels wave-329 P1h)."""
+    import w330_redteam_probes as w330
+    return _relabel("P1b-shamir-distribute-symlink-alias-regression",
+                    w330._p2)
+
+
+@probe("P1c-shamir-distribute-same-basename-refused-coded")
+def _p1c():
+    """(st_dev, st_ino, basename) key game: two assignments to the same
+    basename in one directory refuse coded before any write; two
+    distinct basenames in one directory distribute fine."""
+    d = _tmpd()
+    shards = _shards(n=4, t=2)
+    # Positive control: distinct basenames, same dir -> manifest.
+    ok = {"a": os.path.join(d, "shard-a"), "b": os.path.join(d, "shard-b")}
+    try:
+        man = sc.distribute(shards[:2], ok)
+    except Exception as exc:
+        return _break("P1c-shamir-distribute-same-basename-refused-coded",
+                      "distinct basenames refused: %s" % (exc,))
+    if set(man) != {"a", "b"}:
+        return _break("P1c-shamir-distribute-same-basename-refused-coded",
+                      "bad manifest %r" % (man,))
+    # Attack: same basename twice -> coded refusal, nothing new written.
+    before = sorted(os.listdir(d))
+    dup = {"a": os.path.join(d, "shard-c"), "b": os.path.join(d, "shard-c")}
+    try:
+        sc.distribute(shards[2:], dup)
+    except sc.ShamirCustodyError as exc:
+        if exc.code != "custody-shamir-distribute-refused":
+            return _break("P1c-shamir-distribute-same-basename-"
+                          "refused-coded",
+                          "wrong code %r" % (exc.code,))
+        if sorted(os.listdir(d)) != before:
+            return _break("P1c-shamir-distribute-same-basename-"
+                          "refused-coded",
+                          "refused but wrote files")
+        return _held("P1c-shamir-distribute-same-basename-refused-coded",
+                     "duplicate basename refused coded, nothing written; "
+                     "distinct basenames distribute")
+    except Exception as exc:
+        return _break("P1c-shamir-distribute-same-basename-refused-coded",
+                      "uncoded %s escapes" % type(exc).__name__)
+    return _break("P1c-shamir-distribute-same-basename-refused-coded",
+                  "duplicate basename accepted")
+
+
+@probe("P1d-shamir-case-insensitive-residual-documented")
+def _p1d():
+    """F414's documented residual: on a case-insensitive filesystem two
+    assignments differing only in filename case collide after the
+    pre-flight. The docstring must say so LOUD (it is a documented
+    limit, not a finding)."""
+    doc = sc.distribute.__doc__ or ""
+    if "case-insensitive" in doc and "case-distinct" in doc:
+        return _held("P1d-shamir-case-insensitive-residual-documented",
+                     "residual documented LOUD in distribute docstring")
+    return _break("P1d-shamir-case-insensitive-residual-documented",
+                  "case-insensitive residual NOT documented")
+
+
+@probe("P1e-shamir-preflight-write-toctou-assessed")
+def _p1e():
+    """TOCTOU between the pre-flight exists-check and _atomic_write.
+
+    The window is real but requires a local writer racing the operator
+    between two checks in one local call. Defense in depth: BOTH
+    distribute's pre-flight AND _atomic_write itself check
+    os.path.exists before writing, so a racing creator gets a LOUD
+    coded refusal, never a silent overwrite. Static probe asserting
+    both checks are present."""
+    src = open(os.path.join(REPO, "gov", "shamir_custody.py"),
+               encoding="utf-8").read()
+    preflight = "refusing to overwrite existing shard file" in src
+    # _atomic_write carries its own exists-check independent of the
+    # distribute pre-flight.
+    atomic_body = src.split("def _atomic_write")[1].split(
+        "def distribute")[0]
+    atomic_check = "os.path.exists(path)" in atomic_body
+    if preflight and atomic_check:
+        return _held("P1e-shamir-preflight-write-toctou-assessed",
+                     "pre-flight + write-time exists checks both present; "
+                     "racer gets loud coded refusal, never silent overwrite")
+    return _break("P1e-shamir-preflight-write-toctou-assessed",
+                  "missing exists check: preflight=%s atomic=%s"
+                  % (preflight, atomic_check))
+
+
+@probe("P1f-prospectus-landlock-steal-overclaimed")
+def _p1f():
+    """w330 prospectus audit: the #1 STEAL ("build gov/landlock.py --
+    only candidate that closes gov/sandbox.py's honestly-documented
+    gap") is overclaimed.
+
+    gov/sandbox.py already carries a full ctypes Landlock LSM tier
+    (wave-266): landlock_available(), use_landlock/require_landlock
+    flags, sandbox-landlock-* decision codes, empirically verified
+    against the kernel ABI. A `grep landlock gov/` -- the tree check
+    the prospectus claims for every STEAL verdict -- finds it
+    instantly. The deliverable is at most an ADAPT (extract a module),
+    never a from-scratch STEAL, and the "honestly-documented gap" it
+    claims to close is already partially closed by that tier.
+    """
+    sandbox = open(os.path.join(REPO, "gov", "sandbox.py"),
+                   encoding="utf-8").read()
+    codes = open(os.path.join(REPO, "gov", "decision_codes.py"),
+                 encoding="utf-8").read()
+    tier = ("def landlock_available" in sandbox
+            and "use_landlock" in sandbox
+            and "require_landlock" in sandbox)
+    coded = ("sandbox-landlock-apply-failed" in codes
+             and "sandbox-landlock-required" in codes
+             and "sandbox-landlock-unavailable" in codes)
+    if tier and coded:
+        return _break("P1f-prospectus-landlock-steal-overclaimed",
+                      "Landlock tier EXISTS in gov/sandbox.py (wave-266) "
+                      "+ 3 sandbox-landlock-* codes registered; the "
+                      "prospectus #1 STEAL duplicates it")
+    return _held("P1f-prospectus-landlock-steal-overclaimed",
+                 "no Landlock tier found (tier=%s coded=%s)"
+                 % (tier, coded))
+
+
+@probe("P1g-prospectus-mcp-oauth-gap1-confirmed-absent")
+def _p1g():
+    """Prospectus gap #1 (RFC 9207 `iss` validation on the MCP client
+    response leg) is genuinely absent: no iss/9207 handling in
+    mcp_oauth_binding.py. The ADAPT verdict stands -- no overclaim."""
+    src = open(os.path.join(REPO, "gov", "mcp_oauth_binding.py"),
+               encoding="utf-8").read()
+    if re.search(r"9207|['\"]iss['\"]", src):
+        return _break("P1g-prospectus-mcp-oauth-gap1-confirmed-absent",
+                      "iss/9207 handling PRESENT -- prospectus wrong")
+    return _held("P1g-prospectus-mcp-oauth-gap1-confirmed-absent",
+                 "RFC 9207 iss response validation absent; ADAPT stands")
+
+
+@probe("P1h-prospectus-mcp-oauth-gap2-confirmed-absent")
+def _p1h():
+    """Prospectus gap #2 (RFC 8707 `resource` parameter on MCP OAuth
+    requests) is genuinely absent from mcp_oauth_binding.py and
+    mcp_invocation_authz.py. The ADAPT verdict stands -- no overclaim."""
+    found = []
+    for mod in ("mcp_oauth_binding.py", "mcp_invocation_authz.py"):
+        src = open(os.path.join(REPO, "gov", mod),
+                   encoding="utf-8").read()
+        if re.search(r"8707|['\"]resource['\"]", src):
+            found.append(mod)
+    if found:
+        return _break("P1h-prospectus-mcp-oauth-gap2-confirmed-absent",
+                      "resource/8707 handling PRESENT in %r" % (found,))
+    return _held("P1h-prospectus-mcp-oauth-gap2-confirmed-absent",
+                 "RFC 8707 resource parameter absent; ADAPT stands")
+
+
+@probe("P1i-prospectus-pq-slot-confirmed-absent")
+def _p1i():
+    """Prospectus §2 next-step 1 (reserved PQ signature slot in the
+    evidence envelope) is genuinely not yet built: no ML-DSA / pq-slot
+    markers in the envelope modules. The ADAPT verdict stands."""
+    found = []
+    for mod in ("evidence_sigstore.py", "evidence_intoto.py",
+                "sigstore_bundle.py", "offline_bundle.py"):
+        path = os.path.join(REPO, "gov", mod)
+        if not os.path.exists(path):
+            continue
+        src = open(path, encoding="utf-8").read()
+        if re.search(r"mldsa|ML-DSA|pq.slot|post.quantum", src, re.I):
+            found.append(mod)
+    if found:
+        return _break("P1i-prospectus-pq-slot-confirmed-absent",
+                      "PQ slot markers PRESENT in %r" % (found,))
+    return _held("P1i-prospectus-pq-slot-confirmed-absent",
+                 "no PQ slot in envelope modules; ADAPT stands")
+
+
+# ---------------------------------------------------------------------------
+# P2: F415/F416 re-probes (expected BREAK; lanes 1/2 own the closures).
+# ---------------------------------------------------------------------------
+
+@probe("P2a-f415-reprobe-unicode-version-uncoded")
+def _p2a():
+    """F415: pol.v².json crashes poll() with bare ValueError."""
+    import w330_redteam_probes as w330
+    return _relabel("P2a-f415-reprobe-unicode-version-uncoded", w330._p1g)
+
+
+@probe("P2b-f416-reprobe-integratedtime-uncoded")
+def _p2b():
+    """F416: 5000-digit integratedTime crashes open_sigstore_bundle
+    with bare ValueError."""
+    import w330_redteam_probes as w330
+    return _relabel("P2b-f416-reprobe-integratedtime-uncoded", w330._p1a)
+
+
+@probe("P2c-f416-reprobe-logindex-uncoded")
+def _p2c():
+    """F416: 5000-digit logIndex crashes open_sigstore_bundle with
+    bare ValueError (valid SET, valid checkpoint)."""
+    import w330_redteam_probes as w330
+    return _relabel("P2c-f416-reprobe-logindex-uncoded", w330._p1b)
+
+
+# ---------------------------------------------------------------------------
+# P3: closure-regression probes (all must stay HELD).
+# ---------------------------------------------------------------------------
+
+@probe("P3a-f414-closure-regression")
+def _p3a():
+    import w330_redteam_probes as w330
+    return _relabel("P3a-f414-closure-regression", w330._p2)
+
+
+@probe("P3b-f413-closure-regression-order")
+def _p3b():
+    import w328_redteam_probes as w328
+    return _relabel("P3b-f413-closure-regression-order", w328._p1b)
+
+
+@probe("P3c-f413-closure-regression-revocation")
+def _p3c():
+    import w328_redteam_probes as w328
+    return _relabel("P3c-f413-closure-regression-revocation", w328._p1c)
+
+
+@probe("P3d-f412-closure-regression")
+def _p3d():
+    import w327_redteam_probes as w327
+    return _relabel("P3d-f412-closure-regression", w327._p1f)
+
+
+@probe("P3e-f411-closure-regression")
+def _p3e():
+    import w327_redteam_probes as w327
+    return _relabel("P3e-f411-closure-regression", w327._p3a)
+
+
+@probe("P3f-f410-closure-regression-t4c")
+def _p3f():
+    import w327_redteam_probes as w327
+    return _relabel("P3f-f410-closure-regression-t4c", w327._p2a)
+
+
+@probe("P3g-f410-closure-regression-t4d")
+def _p3g():
+    import w327_redteam_probes as w327
+    return _relabel("P3g-f410-closure-regression-t4d", w327._p2b)
+
+
+# ---------------------------------------------------------------------------
+# P4: the wave-330 merge defect class.
+# ---------------------------------------------------------------------------
+
+# Grandfathered: ancient batteries (waves 22-47, 139, 141) and one
+# wave-329-repointed file that end with "\n\n". None is read with
+# lines[-1] semantics and none breaks a footer probe -- cosmetic
+# pre-existing debt, documented here, not a regression. The probe
+# below BREAKs only on files BEYOND this inventory (the wave-330
+# merge class was a NEW trailing blank line from scripted
+# resolution).
+_GRANDFATHERED_BLANK_TAIL = frozenset({
+    "evals/artifact_inventory_pin_probes.py",
+    "evals/cross_run_taint_probes.py",
+    "evals/r9_probes.py",
+    "evals/w260_f228_probes.py",
+})
+# Grandfathered (wave-200/206-era) code literals used in gov/ but never
+# centrally registered. Long-standing debt, not a regression: the probe
+# below BREAKs only on codes BEYOND this inventory (the wave-329 merge
+# defect class was NEW codes shipping unregistered).
+_GRANDFATHERED_UNREGISTERED = frozenset({
+    "config-body-mismatch", "config-expired", "config-extra-member",
+    "config-stale", "config-supersede-break", "handoff-required",
+    "pack-activation-approval-required", "pack-activation-denied",
+    "pack-guard-error", "pack-member-digest-mismatch", "pack-member-extra",
+    "pack-member-omitted", "pack-stale", "policy-not-yet-valid",
+})
+
+
+@probe("P4a-no-trailing-blank-line-on-footer-files")
+def _p4a():
+    """Wave-330 merge class: a scripted FINDINGS.md resolution left a
+    trailing blank line that broke a `lines[-1]` footer probe.
+
+    Every footer-bearing file (FINDINGS.md) and every evals/*.py must
+    not end with a BLANK line ("\n\n" at EOF) -- not just non-empty
+    (wave-327 class) but blank-line-free at the tail (wave-330 class).
+    A single POSIX trailing newline is fine; `lines[-1]` footer
+    probes break only on a true blank last line."""
+    bad = []
+    findings = os.path.join(REPO, "evals", "FINDINGS.md")
+    data = open(findings, encoding="utf-8").read()
+    if data.endswith("\n\n") or not data.strip():
+        bad.append("evals/FINDINGS.md")
+    evals_d = os.path.join(REPO, "evals")
+    for fname in sorted(os.listdir(evals_d)):
+        if not fname.endswith(".py"):
+            continue
+        rel = "evals/%s" % (fname,)
+        if rel in _GRANDFATHERED_BLANK_TAIL:
+            continue
+        path = os.path.join(evals_d, fname)
+        tail = open(path, encoding="utf-8").read()
+        if tail.endswith("\n\n") or not tail.strip():
+            bad.append(rel)
+    if bad:
+        return _break("P4a-no-trailing-blank-line-on-footer-files",
+                      "NEW trailing-blank-line files: %r" % (bad[:5],))
+    return _held("P4a-no-trailing-blank-line-on-footer-files",
+                 "no NEW trailing blank lines (+%d grandfathered "
+                 "cosmetic)" % (len(_GRANDFATHERED_BLANK_TAIL),))
+
+
+@probe("P4b-codes-centrally-registered")
+def _p4b():
+    """Wave-329 merge class: vocab-scanned-but-unregistered codes.
+
+    Every code literal passed to _fail/_refuse (or code= kw) anywhere
+    in gov/ must be centrally registered in gov/decision_codes.py --
+    except the 14 grandfathered wave-200/206-era literals inventoried
+    above (long-standing debt, documented here, not a regression).
+    Any NEW unregistered literal BREAKs.
+    """
+    import gov.decision_codes as dc
+    registered = set(dc.TAXONOMY)
+    used = set()
+    for fname in sorted(os.listdir(os.path.join(REPO, "gov"))):
+        if not fname.endswith(".py"):
+            continue
+        src = open(os.path.join(REPO, "gov", fname),
+                   encoding="utf-8").read()
+        for pat in (r'_fail\(\s*"([^"]+)"', r"_fail\(\s*'([^']+)'",
+                    r'_refuse\(\s*"([^"]+)"', r"_refuse\(\s*'([^']+)'",
+                    r'code\s*=\s*"([^"]+)"', r"code\s*=\s*'([^']+)'"):
+            used.update(re.findall(pat, src))
+    # Only code-shaped literals (dotted domain names), not free text.
+    codey = {u for u in used if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)+",
+                                            u)}
+    missing = sorted(codey - registered - _GRANDFATHERED_UNREGISTERED)
+    if missing:
+        return _break("P4b-codes-centrally-registered",
+                      "NEW unregistered code literals: %r" % (missing[:8],))
+    return _held("P4b-codes-centrally-registered",
+                 "%d code literals registered (+%d grandfathered debt)"
+                 % (len(codey - _GRANDFATHERED_UNREGISTERED),
+                    len(_GRANDFATHERED_UNREGISTERED)))
+
+
+@probe("P4c-pin-comments-honest")
+def _p4c():
+    """Every TAXONOMY_PIN/LANE_PIN/EXPECTED_PIN assignment whose
+    trailing comment states a '-> N' final pin must have N equal to
+    the live value: pin-comment drift is the wave-329 merge class."""
+    bad = []
+    live = {}
+    for dirpath, _dirs, files in os.walk(REPO):
+        if "/.git/" in dirpath or "/__pycache__/" in dirpath:
+            continue
+        for fname in files:
+            if not fname.endswith(".py"):
+                continue
+            path = os.path.join(dirpath, fname)
+            try:
+                src = open(path, encoding="utf-8").read()
+            except OSError:
+                continue
+            for m in re.finditer(
+                    r"^(?:\s*)(?:[A-Z_]+\.)?(TAXONOMY_PIN|LANE_PIN|"
+                    r"EXPECTED_PIN)\s*=\s*(\d+)([^\n]*)$",
+                    src, re.M):
+                name, val, rest = m.group(1), int(m.group(2)), m.group(3)
+                live.setdefault(name, set()).add(val)
+                finals = re.findall(r"->\s*(\d+)", rest)
+                if finals and int(finals[-1]) != val:
+                    bad.append("%s:%s -> %s != live %d"
+                               % (os.path.relpath(path, REPO),
+                                  name, finals[-1], val))
+    if bad:
+        return _break("P4c-pin-comments-honest",
+                      "pin-comment drift: %r" % (bad[:5],))
+    vals = {k: sorted(v) for k, v in live.items()}
+    return _held("P4c-pin-comments-honest",
+                 "pin comments honest; live values %r" % (vals,))
+
+
+# ---------------------------------------------------------------------------
+# P5: pin + footer state.
+# ---------------------------------------------------------------------------
+
+@probe("P5a-pin-taxonomy-2058-sorted")
+def _p5a():
+    if TAXONOMY_PIN != 2058:
+        return _break("P5a-pin-taxonomy-2058-sorted",
+                      "TAXONOMY_PIN is %r, want 2058" % (TAXONOMY_PIN,))
+    src = open(os.path.join(REPO, "gov", "decision_codes.py"),
+               encoding="utf-8").read()
+    lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
+    if len(lits) != 2058 or len(set(lits)) != 2058 \
+            or lits != sorted(lits):
+        return _break("P5a-pin-taxonomy-2058-sorted",
+                      "want 2058/2058/0 sorted, got %d/%d/sorted=%s"
+                      % (len(lits), len(set(lits)), lits == sorted(lits)))
+    return _held("P5a-pin-taxonomy-2058-sorted",
+                 "2058/2058/0 sorted unique on raw source literals")
+
+
+@probe("P5b-footer-open-f415-f416-next-f417")
+def _p5b():
+    text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
+                encoding="utf-8").read()
+    ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
+                    r"\*\*Open findings: ([^*]+)\.\*\*", text)
+    if not ms:
+        return _break("P5b-footer-open-f415-f416-next-f417",
+                      "footer line not found")
+    next_free, open_now = ms[-1]  # the LAST footer is the live one
+    if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
+        return _break("P5b-footer-open-f415-f416-next-f417",
+                      "footer open %s / next %s, want open %s / next %s"
+                      % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
+    return _held("P5b-footer-open-f415-f416-next-f417",
+                 "footer open F415, F416 / next F417")
+
+
+# ---------------------------------------------------------------------------
+# P6: prior batteries in child mode.
+# ---------------------------------------------------------------------------
+
+def _run_child_output(battery, timeout=1500):
+    """Run a prior battery as a subprocess; return its raw stdout.
+
+    GOV_SKIP_GREEN=1 in the child env (depth-1 green checks), fresh
+    TMPDIR per child. Raises on timeout; returns text otherwise.
+
+    NOTE (wave-331): several child batteries (w330/w329/w328/w327)
+    carry their own P6a probes that spawn grandchildren, so a child
+    main can take 10+ minutes. The generous timeout avoids false
+    ERRORs; the nesting is their verified design, not this battery's.
+    """
+    env = dict(os.environ)
+    env["GOV_SKIP_GREEN"] = "1"
+    env["GOV_DEPLOYMENT_MODE"] = "staging"
+    tmpd = tempfile.mkdtemp(prefix="w331child-",
+                            dir=_run_root())
+    env["TMPDIR"] = tmpd
+    proc = subprocess.run(
+        [sys.executable, os.path.join(REPO, "evals", battery)],
+        env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        timeout=timeout, cwd=REPO)
+    return proc.stdout.decode("utf-8", "replace")
+
+
+# Battery -> set of BREAK probe IDs that are NOT regressions on this
+# tree. Post wave-330 merge sweep: every child battery's footer-state
+# probes were re-pinned to the merged footer (open F415, F416 / next
+# F417) and F414's closure probe flips to HELD. w330's own three
+# expected BREAKs (P1g/F415, P1a/P1b/F416) are its open findings.
+# (wave-305 class.)
+_CHILD_CASCADE = {
+    "w330_redteam_probes.py": {
+        "P1g-policy-channel-unicode-version-uncoded",
+        "P1a-evidence-sigstore-integratedtime-digitlimit-uncoded",
+        "P1b-evidence-sigstore-logindex-digitlimit-uncoded",
+    },
+    "w329_redteam_probes.py": set(),
+    "w329_sigb_probes.py": set(),
+    "w328_redteam_probes.py": set(),
+    "w328_resid_probes.py": set(),
+    "w328_shamir_probes.py": set(),
+    "w327_redteam_probes.py": set(),
+    "w327_polchan_probes.py": set(),
+    "w326_tufaudit_probes.py": set(),
+    "w326_redteam_probes.py": set(),
+    "w326_standing_probes.py": set(),
+    "w326_sched_probes.py": set(),
+}
+
+
+@probe("P6a-prior-batteries-child-mode-tallies")
+def _p6a():
+    """Prior batteries: every BREAK is inside the documented cascade.
+
+    Runs each prior battery as a subprocess (GOV_SKIP_GREEN=1 in the
+    child env, fresh TMPDIR). A BREAK outside _CHILD_CASCADE -- or any
+    ERROR -- is a genuine regression, not an open finding.
+    """
+    batteries = tuple(sorted(_CHILD_CASCADE))
+    bad = []
+    tallies = []
+    for battery in batteries:
+        try:
+            out = _run_child_output(battery)
+        except Exception as exc:
+            bad.append("%s: ERROR %s" % (battery, exc))
+            continue
+        breaks = set(re.findall(r"^\s*\[BREAK\]\s+([A-Za-z0-9_.\-]+)",
+                                out, re.M))
+        errors = set(re.findall(r"^\s*\[ERROR\]\s+([A-Za-z0-9_.\-]+)",
+                                out, re.M))
+        # Some batteries print no per-probe [BREAK] lines; their
+        # BREAK-SET MISMATCH line carries the unexpected IDs instead.
+        m2 = re.search(r"BREAK-SET MISMATCH:\s*(\[[^\]]*\])", out)
+        if m2:
+            try:
+                import ast as _ast
+                breaks.update(_ast.literal_eval(m2.group(1)))
+            except Exception:
+                pass
+        if errors:
+            bad.append("%s: ERRORs %s" % (battery, sorted(errors)[:3]))
+        outside = breaks - _CHILD_CASCADE[battery]
+        if outside:
+            bad.append("%s: non-cascade BREAKs %s"
+                       % (battery, sorted(outside)[:4]))
+        tallies.append("%s breaks=%d" % (battery, len(breaks)))
+    if bad:
+        return _break("P6a-prior-batteries-child-mode-tallies",
+                      "; ".join(bad[:6]))
+    return _held("P6a-prior-batteries-child-mode-tallies",
+                 "all child BREAKs inside the documented cascade; "
+                 + "; ".join(tallies))
+
+
+# ---------------------------------------------------------------------------
+# Expected BREAK set, green check, main.
+# ---------------------------------------------------------------------------
+
+_EXPECTED_BREAKS = {
+    # Prospectus audit: the w330 prospectus's #1 STEAL ("build
+    # gov/landlock.py") duplicates the wave-266 Landlock tier already
+    # in gov/sandbox.py (+ 3 sandbox-landlock-* codes). Overclaim
+    # demonstrated, documented in REPORT.md (research correction, not
+    # a product finding).
+    "P1f-prospectus-landlock-steal-overclaimed",
+    # F415 (lane 1 owns the closure): unicode-digit version filename
+    # crashes poll() uncoded.
+    "P2a-f415-reprobe-unicode-version-uncoded",
+    # F416 (lane 2 owns the closure): integratedTime / logIndex
+    # digit-limit uncoded crashes.
+    "P2b-f416-reprobe-integratedtime-uncoded",
+    "P2c-f416-reprobe-logindex-uncoded",
+}
+
+
+def _green_check():
+    """Depth-1 green check: adjacent batteries with GOV_SKIP_GREEN=1.
+
+    Honors GOV_SKIP_GREEN (records a skip instead of spawning). Never
+    spawns a battery that spawns another: depth-1 only.
+    """
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        _record("green-check", "HELD",
+                "skipped: GOV_SKIP_GREEN=1 (depth-1 convention)")
+        return
+    for battery in ("w330_redteam_probes.py",
+                    "w329_redteam_probes.py",
+                    "w329_sigb_probes.py"):
+        try:
+            out = _run_child_output(battery)
+        except Exception as exc:
+            _record("green-check", "ERROR",
+                    "%s: %s" % (battery, exc))
+            continue
+        breaks = set(re.findall(r"^\s*\[BREAK\]\s+([A-Za-z0-9_.\-]+)",
+                                out, re.M))
+        errors = set(re.findall(r"^\s*\[ERROR\]\s+([A-Za-z0-9_.\-]+)",
+                                out, re.M))
+        m2 = re.search(r"BREAK-SET MISMATCH:\s*(\[[^\]]*\])", out)
+        if m2:
+            try:
+                import ast as _ast
+                breaks.update(_ast.literal_eval(m2.group(1)))
+            except Exception:
+                pass
+        outside = breaks - _CHILD_CASCADE[battery]
+        if errors or outside:
+            _record("green-check", "BREAK",
+                    "%s: non-cascade %s" %
+                    (battery, sorted(outside | errors)[:4]))
+        else:
+            _record("green-check", "HELD",
+                    "%s: %d breaks, all in cascade" % (battery, len(breaks)))
+
+
+def main(argv):
+    for pid, fn in _PROBES:
+        _safe(pid, fn)
+    _green_check()
+    breaks = sum(1 for _, v, _ in _results if v == "BREAK")
+    errors = sum(1 for _, v, _ in _results if v == "ERROR")
+    # Only probe IDs (not the green-check record) count toward the set.
+    probe_breaks = {pid for pid, v, _ in _results
+                    if v == "BREAK" and pid.startswith("P")}
+    mismatch = probe_breaks ^ _EXPECTED_BREAKS
+    print("w331_redteam battery: %d BREAK / %d HELD / %d ERROR "
+          "(4 BREAKs expected: P1f prospectus overclaim, "
+          "P2a/F415, P2b/P2c/F416)"
+          % (breaks, len(_results) - breaks - errors, errors))
+    if mismatch:
+        print("BREAK-SET MISMATCH: %r" % (sorted(mismatch),))
+        return 2
+    return 0 if errors == 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
