@@ -1,7 +1,7 @@
 """Wave-331 independent red-team battery.
 
 Base: cd353e25 (wave-330 merge). Footer: open F415, F416 / next F417
-(F413/F414 CLOSED; F415/F416 filed by wave-330 lane 3, LOW, OPEN). Pin: 2062.
+(F413/F414 CLOSED; F415/F416 filed by wave-330 lane 3, LOW, OPEN). Pin: 2070.
 
 P1  wave-330 seams not yet broken: gov/shamir_custody.py post-F414
     (realpath pre-flight games: unresolvable paths, (st_dev,st_ino,
@@ -15,7 +15,7 @@ P3  F414/F413/F412/F411/F410 closure-regression probes (all HELD).
 P4  merge-defect class: no trailing blank line on footer-bearing
     files (wave-330 scripted-resolution class), code-registration,
     pin-comment honesty.
-P5  pin 2062 + footer state probes.
+P5  pin 2070 + footer state probes.
 P6  prior batteries in child mode (GOV_SKIP_GREEN=1 in the child env),
     tallies verified by direct child runs.
 
@@ -38,7 +38,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2062  # Wave-328 merge: pin 2044 -> 2056 (+12).; Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*).; Wave-330 merge: pin unchanged 2058 (F414/F415/F416: no new codes). Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).
+TAXONOMY_PIN = 2070  # Wave-328 merge: pin 2044 -> 2056 (+12).; Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*).; Wave-330 merge: pin unchanged 2058 (F414/F415/F416: no new codes). Wave-332 lane 2: pin 2058 -> 2070 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*). # Wave-333 lane 4: pin 2062 -> 2070 (+8 revocation-push-*).
 FOOTER_OPEN = "none"  # F409-F416 CLOSED; no open findings (wave-331 merge).
 FOOTER_NEXT = "F417"  # Next free finding number.
 
@@ -564,21 +564,21 @@ def _p4c():
 # P5: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P5a-pin-taxonomy-2062-sorted")
+@probe("P5a-pin-taxonomy-2070-sorted")
 def _p5a():
-    if TAXONOMY_PIN != 2062:
-        return _break("P5a-pin-taxonomy-2062-sorted",
-                      "TAXONOMY_PIN is %r, want 2062" % (TAXONOMY_PIN,))
+    if TAXONOMY_PIN != 2070:
+        return _break("P5a-pin-taxonomy-2070-sorted",
+                      "TAXONOMY_PIN is %r, want 2070" % (TAXONOMY_PIN,))
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
-    if len(lits) != 2062 or len(set(lits)) != 2062 \
+    if len(lits) != 2070 or len(set(lits)) != 2070 \
             or lits != sorted(lits):
-        return _break("P5a-pin-taxonomy-2062-sorted",
-                      "want 2062/2062/0 sorted, got %d/%d/sorted=%s"
+        return _break("P5a-pin-taxonomy-2070-sorted",
+                      "want 2070/2070/0 sorted, got %d/%d/sorted=%s"
                       % (len(lits), len(set(lits)), lits == sorted(lits)))
-    return _held("P5a-pin-taxonomy-2062-sorted",
-                 "2062/2062/0 sorted unique on raw source literals")
+    return _held("P5a-pin-taxonomy-2070-sorted",
+                 "2070/2070/0 sorted unique on raw source literals")
 
 
 @probe("P5b-footer-open-none-next-f417")

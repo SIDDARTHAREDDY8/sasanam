@@ -1,7 +1,7 @@
 """Wave-332 independent red-team battery.
 
 Base: cef4ad59 (wave-331 merge). Footer: open none / next F417
-(F415/F416 CLOSED wave-331 lanes 1/2; no open findings). Pin: 2062.
+(F415/F416 CLOSED wave-331 lanes 1/2; no open findings). Pin: 2070.
 
 P1  F415/F416 closure regression + fix-seam bypass probes: the
     ASCII-digit fragment gate is audited as a total partition (skip /
@@ -22,8 +22,8 @@ P3  Landlock jail: forked-child confinement probes -- read/write
     enforce, and the inherited-fd residual documented LOUD.
 P4  merge-defect class: no trailing blank line on footer-bearing
     files, code-registration, pin-comment honesty, live pin
-    constants all 2062.
-P5  pin 2062 + footer state probes.
+    constants all 2070.
+P5  pin 2070 + footer state probes.
 P6  F414/F413/F412/F411/F410 closure-regression probes (all HELD).
 P7  prior batteries in child mode (GOV_SKIP_GREEN=1 in the child env),
     tallies verified by direct child runs.
@@ -49,7 +49,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2062  # Wave-331 merge: pin unchanged 2058 (F415/F416: no new codes). Wave-332 merge: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).
+TAXONOMY_PIN = 2070  # Wave-331 merge: pin unchanged 2058 (F415/F416: no new codes). Wave-332 merge: pin 2058 -> 2070 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*). # Wave-333 lane 4: pin 2062 -> 2070 (+8 revocation-push-*).
 FOOTER_OPEN = "none"  # F409-F416 CLOSED; no open findings (wave-331 merge).
 FOOTER_NEXT = "F417"  # Next free finding number.
 
@@ -992,10 +992,10 @@ def _p4c():
                  "pin comments honest; live values %r" % (vals,))
 
 
-@probe("P4d-live-pin-constants-all-2062")
+@probe("P4d-live-pin-constants-all-2070")
 def _p4d():
     """Every live module-level TAXONOMY_PIN/LANE_PIN/EXPECTED_PIN
-    constant equals 2062 -- except the grandfathered dead-code files
+    constant equals 2070 -- except the grandfathered dead-code files
     (wave-331 merge inventory). A stale live pin is the wave-302
     class: the sweep must assert, not just replace."""
     bad = []
@@ -1019,14 +1019,14 @@ def _p4d():
                     r"EXPECTED_PIN)\s*=\s*(\d+)",
                     src, re.M):
                 count += 1
-                if int(m.group(2)) != 2062:
+                if int(m.group(2)) != 2070:
                     bad.append("%s: %s = %s" % (rel, m.group(1),
                                                m.group(2)))
     if bad:
-        return _break("P4d-live-pin-constants-all-2062",
+        return _break("P4d-live-pin-constants-all-2070",
                       "stale live pins: %r" % (bad[:5],))
-    return _held("P4d-live-pin-constants-all-2062",
-                 "%d live pin constants all 2062 (+%d grandfathered "
+    return _held("P4d-live-pin-constants-all-2070",
+                 "%d live pin constants all 2070 (+%d grandfathered "
                  "dead-code)" % (count, len(_GRANDFATHERED_PIN_STALE)))
 
 
@@ -1034,21 +1034,21 @@ def _p4d():
 # P5: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P5a-pin-taxonomy-2062-sorted")
+@probe("P5a-pin-taxonomy-2070-sorted")
 def _p5a():
-    if TAXONOMY_PIN != 2062:
-        return _break("P5a-pin-taxonomy-2062-sorted",
-                      "TAXONOMY_PIN is %r, want 2062" % (TAXONOMY_PIN,))
+    if TAXONOMY_PIN != 2070:
+        return _break("P5a-pin-taxonomy-2070-sorted",
+                      "TAXONOMY_PIN is %r, want 2070" % (TAXONOMY_PIN,))
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
-    if len(lits) != 2062 or len(set(lits)) != 2062 \
+    if len(lits) != 2070 or len(set(lits)) != 2070 \
             or lits != sorted(lits):
-        return _break("P5a-pin-taxonomy-2062-sorted",
-                      "want 2062/2062/0 sorted, got %d/%d/sorted=%s"
+        return _break("P5a-pin-taxonomy-2070-sorted",
+                      "want 2070/2070/0 sorted, got %d/%d/sorted=%s"
                       % (len(lits), len(set(lits)), lits == sorted(lits)))
-    return _held("P5a-pin-taxonomy-2062-sorted",
-                 "2062/2062/0 sorted unique on raw source literals")
+    return _held("P5a-pin-taxonomy-2070-sorted",
+                 "2070/2070/0 sorted unique on raw source literals")
 
 
 @probe("P5b-footer-open-none-next-f417")
