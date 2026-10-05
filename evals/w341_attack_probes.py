@@ -145,8 +145,8 @@ def test_i6_f428_open_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F428 filed 2026-10-05, wave-341 lane C" in text
           and "LOW, OPEN:" in text
-          and "Next free finding: **F429**" in text
-          and "Open findings: F428." in text)
+          and "Next free finding: **F430**" in text
+          and "Open findings: F428, F429." in text)
     return ("HELD" if ok else "BREAK", "F428 filed open=%s" % ok)
 
 
