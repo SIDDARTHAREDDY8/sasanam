@@ -27,7 +27,7 @@ P3 (5): dual-threshold -- signer-set change sealed with anchor
     one key counted once per side (dedup).
 P4 (2): pin 2130/2130/0 sorted on raw source literals (2 new codes:
     witness-policy-dual-threshold-unmet, witness-daemon-state-failed);
-    footer open F427 / next F428.
+    footer open none / next F428.
 
 Result contract: each probe prints [HELD]/[BREAK]/[ERROR]. Exit 0 iff
 no ERROR and no unexpected BREAK. On the OPEN tree (module absent) the
@@ -799,9 +799,9 @@ def _p4b():
         text = fh.read()
     lines = [ln for ln in text.split("\n") if "Next free finding:" in ln]
     line = lines[-1] if lines else ""
-    ok = ("**F428**" in line and "Open findings: F427." in line)
+    ok = ("**F428**" in line and "Open findings: none." in line)
     if ok:
-        return _held("P4-footer-state", "open F427 / next F428")
+        return _held("P4-footer-state", "open none / next F428")
     return _break("P4-footer-state", "footer line: %r" % (line[:120],))
 
 

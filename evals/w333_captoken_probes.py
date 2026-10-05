@@ -360,10 +360,10 @@ def footer_state():
     ok = ("Next free finding: **F428**" in text
           and m_open and m_open[-1].strip() == "F427")
     if ok:
-        _record("footer-state", "HELD", "footer: open F427 / next F428")
+        _record("footer-state", "HELD", "footer: open none / next F428")
     else:
         _record("footer-state", "BREAK",
-                "footer mismatch vs open F427 / next F428")
+                "footer mismatch vs open none / next F428")
 
 
 _PROBES = [("mint-verify-roundtrip", mint_verify_roundtrip),

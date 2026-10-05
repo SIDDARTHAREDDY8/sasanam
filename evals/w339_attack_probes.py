@@ -2,7 +2,7 @@
 """Wave-339 lane 5 (continuous real-model attack, round 7): OCI referrer /
 F426-closure / shape-escape / VSA-honesty seam attacks.
 
-Base: `f670892a` (wave-338 merge). Pin 2130. Footer open F427 / next F428.
+Base: `f670892a` (wave-338 merge). Pin 2130. Footer open none / next F428.
 
 Extends evals/realmodel_harness.py (imported, not modified) with four
 real-model probes against the wave-338 seams:
@@ -361,7 +361,11 @@ def test_b_f426_declared_lie(driver):
         oai.make_tool_input_guardrail(
             support, "read_file", expect_sdk_tool_name="read_file")])])
     try:
-        oai.audit_agent_coverage(agent3)
+        # F427: the honest construction certifies against the
+        # deployment-declared mapping; the declaration alone is never
+        # trusted.
+        oai.audit_agent_coverage(
+            agent3, sdk_tool_map={"read_file": "read_file"})
         pins.append(("control-honest", "certified"))
     except oai.UncoveredSurfaceError:
         pins.append(("control-honest", "refused"))

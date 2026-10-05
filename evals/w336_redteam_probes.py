@@ -77,7 +77,7 @@ P5 (F423 -- OPEN at base, attacked live):
 
 P6 (honesty):
        literals; all 6 wave-335 codes centrally registered.
-  P6b  footer: open F427 / next F428 (raw-literal assertion,
+  P6b  footer: open none / next F428 (raw-literal assertion,
        wave-331 lesson); F424/F425 closed wave-337 lane 1;
        F426 filed by wave-337 red-team lane.
   P6c  F424 and F425 sections present and marked CLOSED; F423 CLOSED;
@@ -863,13 +863,13 @@ def P6b():
     """Footer honesty: the last line carries open F426 and
     next F427 (raw-literal assertion, wave-331 lesson). F424/F425 were
     closed by wave-337 lane 1; F426 filed by the wave-337 red-team lane."""
-    pid = "P6b-footer-open-f427-next-f428"
+    pid = "P6b-footer-open-none-next-f428"
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               "rb") as f:
         lines = f.read().decode("utf-8").splitlines()
     last = lines[-1] if lines else ""
-    if "Open findings: F427." not in last:
-        _break(pid, "last line lacks 'Open findings: F427.': %r"
+    if "Open findings: none." not in last:
+        _break(pid, "last line lacks 'Open findings: none.': %r"
                % (last[:160],))
         return
     if "Next free finding: **F428**" not in last:
@@ -879,7 +879,7 @@ def P6b():
         if not any(l.startswith("## " + fnum + " ") for l in lines):
             _break(pid, "%s section missing from FINDINGS.md" % (fnum,))
             return
-    _held(pid, "footer honest: open F427 / next F428")
+    _held(pid, "footer honest: open none / next F428")
 
 
 def P6c():

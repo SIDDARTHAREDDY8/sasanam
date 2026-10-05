@@ -453,7 +453,7 @@ def _p10():
                       % (open_now.strip(), next_free, FOOTER_OPEN,
                          FOOTER_NEXT))
     return _held(pid, "taxonomy 2130/2130/0 sorted-unique; 8 codes "
-                      "registered; F418 CLOSED; F417 CLOSED; footer open F427 / next F428")
+                      "registered; F418 CLOSED; F417 CLOSED; footer open none / next F428")
 
 
 # ---------------------------------------------------------------------------

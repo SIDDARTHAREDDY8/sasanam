@@ -556,30 +556,30 @@ def _p11a():
                  "2130/2130/0 sorted unique on raw source literals")
 
 
-@probe("P11b-footer-open-f427-next-f428")
+@probe("P11b-footer-open-none-next-f428")
 def _p11b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     # Raw-literal assertions (wave-331 lesson): the footer must read
     # correctly as literal text, not only via constants.
     if "Next free finding: **F428**." not in text:
-        return _break("P11b-footer-open-f427-next-f428",
+        return _break("P11b-footer-open-none-next-f428",
                       "raw literal 'Next free finding: **F428**.' absent")
     if "**Open findings: none.**" not in text:
-        return _break("P11b-footer-open-f427-next-f428",
+        return _break("P11b-footer-open-none-next-f428",
                       "raw literal '**Open findings: none.**' absent")
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return _break("P11b-footer-open-f427-next-f428",
+        return _break("P11b-footer-open-none-next-f428",
                       "footer line not found")
     next_free, open_now = ms[-1]  # the LAST footer is the live one
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return _break("P11b-footer-open-f427-next-f428",
+        return _break("P11b-footer-open-none-next-f428",
                       "footer open %s / next %s, want open %s / next %s"
                       % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return _held("P11b-footer-open-f427-next-f428",
-                 "footer open F427 / next F428 (raw literals + parse)")
+    return _held("P11b-footer-open-none-next-f428",
+                 "footer open none / next F428 (raw literals + parse)")
 
 
 @probe("P11c-codes-centrally-registered")

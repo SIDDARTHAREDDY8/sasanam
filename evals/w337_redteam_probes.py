@@ -48,7 +48,7 @@ P5 (F424/F425 live on this tree): NaN lock timeout escapes refresh()
   uncoded; -1 blocks forever under contention; raising clock escapes
   _check_tool_rate uncoded (no coded denial, no chained record).
 P6 (honesty + regressions): pin 2130/2130/0 sorted-unique on raw
-  literals; footer open F427 / next F428 (F426 closed wave-338 lane 1);
+  literals; footer open none / next F428 (F426 closed wave-338 lane 1);
   F423 NUL now refused coded (closed); F417 non-numeric port refused
   coded; F421 double-refresh exactly-one.
 
@@ -663,7 +663,11 @@ def P3b():
         binding, "write_file", expect_sdk_tool_name="write_file")
     agent = _OAIAgent("ok", [_OAIFunctionTool("write_file", [g])])
     try:
-        rep = OAI_SHIM.audit_agent_coverage(agent)
+        # F427: certification requires the deployment-declared
+        # SDK-tool->framework-tool mapping; the declaration alone is
+        # never trusted.
+        rep = OAI_SHIM.audit_agent_coverage(
+            agent, sdk_tool_map={"write_file": "write_file"})
     except OAI_SHIM.UncoveredSurfaceError as e:
         _break(pid, "correct agent refused: %s" % (str(e)[:100],))
         return
@@ -1112,25 +1116,25 @@ def P6a():
 
 
 def P6b():
-    """Footer honesty: last line carries open F427 / next F428
-    (raw-literal assertion, wave-331 lesson); F426 now CLOSED."""
-    pid = "P6b-footer-open-f427-next-f428"
+    """Footer honesty: last line carries open none / next F428
+    (raw-literal assertion, wave-331 lesson); F426 and F427 now CLOSED."""
+    pid = "P6b-footer-open-none-next-f428"
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               "rb") as f:
         lines = f.read().decode("utf-8").splitlines()
     last = lines[-1] if lines else ""
-    if "Open findings: F427." not in last:
-        _break(pid, "last line lacks 'Open findings: F427.': %r"
+    if "Open findings: none." not in last:
+        _break(pid, "last line lacks 'Open findings: none.': %r"
                % (last[:160],))
         return
     if "Next free finding: **F428**" not in last:
         _break(pid, "last line lacks next-F427: %r" % (last[:160],))
         return
-    for fnum in ("F424", "F425", "F426"):
+    for fnum in ("F424", "F425", "F426", "F427"):
         if not any(l.startswith("## " + fnum + " ") for l in lines):
             _break(pid, "%s section missing from FINDINGS.md" % (fnum,))
             return
-    _held(pid, "footer honest: open F427 / next F428")
+    _held(pid, "footer honest: open none / next F428")
 
 
 def P6c():
@@ -1217,7 +1221,7 @@ _PROBES = [
     ("P5b-f424-negative-hang", P5b),
     ("P5c-f425-limiter-failure-uncoded", P5c),
     ("P6a-pin-2130-taxonomy", P6a),
-    ("P6b-footer-open-f427-next-f428", P6b),
+    ("P6b-footer-open-none-next-f428", P6b),
     ("P6c-f423-nul-refused", P6c),
     ("P6d-f417-port-coded", P6d),
     ("P6e-f421-double-refresh", P6e),

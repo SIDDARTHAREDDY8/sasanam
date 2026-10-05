@@ -21,7 +21,7 @@ Fix (red-first verified on the base tree for all three break shapes):
     escaping uncoded.
 
 No new decision codes (the new error string is guardrail output_info,
-not taxonomy); pin 2124->2126 at the wave-338 merge (+2 oci-*). Footer: open F427 / next F428.
+not taxonomy); pin 2124->2126 at the wave-338 merge (+2 oci-*). Footer: open none / next F428.
 
 $0 spend; synthetic/local; no model calls.
 
@@ -118,6 +118,13 @@ class _OAIAgent:
         self.handoffs = list(handoffs)
 
 
+# F427: the audit trusts the declaration only against the
+# deployment-declared SDK-tool->framework-tool mapping. The F426 probes
+# below pass the mapping so the F426-class refusals are exercised on
+# the name correspondence, not the (also fail-closed) no-mapping path.
+_F426_MAP = {"delete_file": "delete_file", "write_file": "write_file"}
+
+
 def _oai_data(tool_name, arguments):
     return _OAIData(_OAIContext(tool_name, json.dumps(arguments)))
 
@@ -136,7 +143,7 @@ def _audit_refuses(pid, agent, want_fragment):
     """HELD iff the audit raises UncoveredSurfaceError mentioning
     want_fragment. BREAK if it certifies (F426 live)."""
     try:
-        OAI_SHIM.audit_agent_coverage(agent)
+        OAI_SHIM.audit_agent_coverage(agent, sdk_tool_map=_F426_MAP)
     except OAI_SHIM.UncoveredSurfaceError as e:
         if want_fragment in str(e):
             _held(pid, "audit refused: %s" % (str(e)[:120],))
@@ -217,7 +224,7 @@ def P1d():
         expect_sdk_tool_name="delete_file")
     agent = _OAIAgent("ok", [_OAIFunctionTool("delete_file", [guard_d])])
     try:
-        rep = OAI_SHIM.audit_agent_coverage(agent)
+        rep = OAI_SHIM.audit_agent_coverage(agent, sdk_tool_map=_F426_MAP)
     except OAI_SHIM.UncoveredSurfaceError as e:
         _break(pid, "correctly wired agent refused: %s" % (str(e)[:120],))
         return
@@ -269,7 +276,7 @@ def P1f():
         expect_sdk_tool_name="delete_file"))
     agent2 = _OAIAgent("ok", [_OAIFunctionTool("delete_file", [right])])
     try:
-        rep = OAI_SHIM.audit_agent_coverage(agent2)
+        rep = OAI_SHIM.audit_agent_coverage(agent2, sdk_tool_map=_F426_MAP)
     except OAI_SHIM.UncoveredSurfaceError as e:
         _break(pid, "correctly wrapped guardrail refused: %s"
                % (str(e)[:120],))
@@ -315,8 +322,8 @@ def P2a():
 
 
 def P2b():
-    """Footer: open F427 / next F428; F426 marked CLOSED."""
-    pid = "P2b-footer-open-f427-next-f428"
+    """Footer: open none / next F428; F426 and F427 marked CLOSED."""
+    pid = "P2b-footer-open-none-next-f428"
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     lines = text.splitlines()
@@ -324,7 +331,7 @@ def P2b():
     if "Next free finding: **F428**" not in last:
         _break(pid, "footer does not read next F427")
         return
-    if "Open findings: F427." not in last:
+    if "Open findings: none." not in last:
         _break(pid, "footer does not read open none: %r" % (last[:120],))
         return
     import re as _re
@@ -339,7 +346,10 @@ def P2b():
     if "**Status: OPEN.**" in _section("F426"):
         _break(pid, "F426 section still marked OPEN")
         return
-    _held(pid, "footer open F427 / next F428, F426 closed")
+    if "**Status: OPEN.**" in _section("F427"):
+        _break(pid, "F427 section still marked OPEN")
+        return
+    _held(pid, "footer open none / next F428, F426+F427 closed")
 
 
 _PROBES = [
@@ -351,7 +361,7 @@ _PROBES = [
     ("P1f-wrapped-entry-correspondence", P1f),
     ("P1g-undeclared-name-refused-despite-name-coincidence", P1g),
     ("P2a-pin-taxonomy-2130-sorted", P2a),
-    ("P2b-footer-open-f427-next-f428", P2b),
+    ("P2b-footer-open-none-next-f428", P2b),
 ]
 
 

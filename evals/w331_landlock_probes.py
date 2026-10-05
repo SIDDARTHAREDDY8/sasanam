@@ -463,9 +463,9 @@ def _p1():
     return _held(name, "2130/2130/0 sorted; landlock codes present")
 
 
-@probe("P2-footer-open-f427-next-f428")
+@probe("P2-footer-open-none-next-f428")
 def _p2():
-    name = "P2-footer-open-f427-next-f428"
+    name = "P2-footer-open-none-next-f428"
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "

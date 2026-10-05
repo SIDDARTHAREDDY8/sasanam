@@ -32,7 +32,7 @@ R23 (Bernstein ADAPT menu):
   entry permutations.
 
 P9: taxonomy pin 2130/2130/0 sorted-unique on raw literals (the new
-``oci-bundle-not-verifiable`` code), footer open F427 / next F428.
+``oci-bundle-not-verifiable`` code), footer open none / next F428.
 
 Standalone: fresh TMPDIR per run, green checks enabled, depth-1 (the
 green check runs adjacent unit tests with GOV_SKIP_GREEN=1 in the child
@@ -601,11 +601,11 @@ def _p9():
     assert "oci-bundle-not-verifiable" in DC.TAXONOMY
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
     assert "Next free finding: **F428**" in text, "footer next free"
-    assert "Open findings: F427." in text, "footer open findings"
+    assert "Open findings: none." in text, "footer open findings"
     assert FOOTER_OPEN == ("F427",) and FOOTER_NEXT == "F428"
     _held("P9-pin-taxonomy",
           "2130/2130/0 sorted-unique; oci-bundle-not-verifiable "
-          "registered; footer open F427 / next F428")
+          "registered; footer open none / next F428")
 
 
 def _run_child_output(args, timeout):

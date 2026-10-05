@@ -24,7 +24,7 @@ P5  Per-token independence: two distinct tokens refresh concurrently
 P6  _revoke_chain under concurrent mint: a spinner thread mints in a
     loop while the main thread triggers reuse-revocation repeatedly --
     no RuntimeError, refusals stay coded.
-P7  Pin 2106 + footer state (open F427 / next F428; F421 CLOSED);
+P7  Pin 2106 + footer state (open none / next F428; F421 CLOSED);
     taxonomy sorted-unique on raw literals; the new code centrally
     registered.
 P8  Green check (depth-1): honors GOV_SKIP_GREEN; otherwise runs

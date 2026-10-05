@@ -973,7 +973,7 @@ def _p6a():
     return _held("P6a-pin-taxonomy-2130-sorted", "2130/2130/0 sorted")
 
 
-@probe("P6b-footer-open-f427-next-f428")
+@probe("P6b-footer-open-none-next-f428")
 def _p6b():
     text = open(os.path.join(REPO, "evals/FINDINGS.md")).read()
     import re
@@ -982,12 +982,12 @@ def _p6b():
     open_line = opens[-1].strip() if opens else ""
     next_free = nexts[-1].strip() if nexts else ""
     if open_line != FOOTER_OPEN:
-        return _break("P6b-footer-open-f427-next-f428",
+        return _break("P6b-footer-open-none-next-f428",
                       "open findings %r, want %r" % (open_line, FOOTER_OPEN))
     if next_free != FOOTER_NEXT:
-        return _break("P6b-footer-open-f427-next-f428",
+        return _break("P6b-footer-open-none-next-f428",
                       "next free %r, want %r" % (next_free, FOOTER_NEXT))
-    return _held("P6b-footer-open-f427-next-f428",
+    return _held("P6b-footer-open-none-next-f428",
                  "footer open none / next F419")
 
 

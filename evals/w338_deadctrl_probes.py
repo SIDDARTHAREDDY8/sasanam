@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Wave-338 lane 3: dead-controls CI gate (Bernstein R16 STEAL) regression.
 
-Base: `6cdf5fdd` (wave-337 merge). Pin 2130. Footer open F427 / next F428.
+Base: `6cdf5fdd` (wave-337 merge). Pin 2130. Footer open none / next F428.
 
 What this battery pins:
 
 P1 (real tree): the gate passes on the shipped tree -- 0 orphans, 0 dead
   codes, entry-point set exactly {"gov.approve"}.
 P2 (pin): TAXONOMY_PIN == 2130 and the registry holds 2130 codes.
-P3 (footer): open F427 / next F428.
+P3 (footer): open none / next F428.
 P4 (synthetic, red-capable): an orphan gov module fails the gate and is
   named; a module imported only by an orphan is also orphan (fixpoint).
 P5 (synthetic, red-capable): a registered code raised nowhere fails the
@@ -173,7 +173,7 @@ def p2_pin():
 
 
 def p3_footer():
-    """Footer: open F427 / next F428 (raw literals, wave-331 lesson)."""
+    """Footer: open none / next F428 (raw literals, wave-331 lesson)."""
     try:
         text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md"),
                     encoding="utf-8").read()
@@ -183,9 +183,9 @@ def p3_footer():
     last = lines[-1] if lines else ""
     if "Next free finding: **F428**" not in last:
         return "BREAK", "P3", "footer next-free is not F428"
-    if not re.search(r"\*\*Open findings: F427\.\*\*", last):
-        return "BREAK", "P3", "footer open findings is not F427"
-    return "HELD", "P3", "footer open F427 / next F428"
+    if not re.search(r"\*\*Open findings: none\.\*\*", last):
+        return "BREAK", "P3", "footer open findings is not none"
+    return "HELD", "P3", "footer open none / next F428"
 
 
 def p4_orphan_module_fails():

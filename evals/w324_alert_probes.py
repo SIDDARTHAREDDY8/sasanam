@@ -699,7 +699,7 @@ def _p12():
     # F426; F424/F425 closed by wave-337 lane 1).
     assert "Next free finding: **F428**" in src, "next-free footer"
     assert "**Open findings: none.**" in src, "open-none footer"
-    _held("P12-footer-state", "open F427 / next F428")
+    _held("P12-footer-state", "open none / next F428")
 
 
 # ---------------------------------------------------------------------------

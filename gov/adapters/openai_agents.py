@@ -61,6 +61,14 @@ an agent that exposes them:
 
 Those surfaces need separate enforcement points and must never be
 described as covered by this shim.
+
+The audit is POINT-IN-TIME: the SDK resolves an agent's tools *after*
+agent start hooks run (openai-agents #5124), so a deployment that
+mutates ``agent.tools`` after ``audit_agent_coverage`` -- a start hook
+adding, removing, or replacing tools -- voids the certification.
+:func:`coverage_drift` names the drift between a report and the agent's
+current tool set; any non-empty drift means re-audit before the run
+proceeds.
 """
 
 import json
@@ -217,7 +225,12 @@ def make_tool_input_guardrail(binding, framework_tool, *,
         ``FunctionTool``. REQUIRED for :func:`audit_agent_coverage` to
         certify the agent: the audit (F426) refuses any FunctionTool
         whose issued guardrail declares no name, or declares one that
-        does not equal the SDK tool's name.
+        does not equal the SDK tool's name. The declaration alone is
+        not trusted: the audit (F427) additionally verifies the
+        guardrail's ``framework_tool`` against the deployment-declared
+        ``sdk_tool_map`` (SDK tool name -> framework tool name) and
+        refuses any guardrail whose mediated tool disagrees with the
+        mapping.
 
     The issued guardrail function exposes ``framework_tool`` and
     ``expect_sdk_tool_name`` as attributes so the audit can verify the
@@ -387,7 +400,7 @@ def _issued_guardrail_fn(entry):
     return getattr(entry, "guardrail_function", entry)
 
 
-def audit_agent_coverage(agent, *, nested_agent_tools=()):
+def audit_agent_coverage(agent, *, nested_agent_tools=(), sdk_tool_map=None):
     """Fail closed unless every execution surface of an SDK ``Agent`` is
     mediated by this shim.
 
@@ -410,7 +423,22 @@ def audit_agent_coverage(agent, *, nested_agent_tools=()):
       issued guardrail's ``expect_sdk_tool_name`` attribute must equal
       the tool's name (F426). A guardrail that declares no name, or a
       name that does not equal the tool's name, is an uncovered surface
-      -- the audit never certifies guardrail<->tool misattachment.
+      -- the audit never certifies guardrail<->tool misattachment;
+    * F427: the declaration alone is not trusted. The guardrail's
+      ``framework_tool`` attribute is verified against the
+      deployment-declared ``sdk_tool_map`` (SDK tool name ->
+      framework tool name): a tool is certified only when at least one
+      issued guardrail satisfies BOTH ``expect_sdk_tool_name == <sdk
+      tool name>`` AND ``framework_tool == sdk_tool_map[<sdk tool
+      name>]``. A tool with no mapping entry -- or a guardrail whose
+      ``framework_tool`` disagrees with the mapping -- is an uncovered
+      surface, as is any issued guardrail attached to the tool that
+      declares this SDK tool's name while mediating a different
+      framework tool (a declared-name lie present on the tool is a
+      latent miswiring, never certifiable coverage). Deployments that
+      cannot declare the mapping (``sdk_tool_map=None``) must treat
+      every SDK tool as uncovered rather than certifying on the
+      declaration alone.
 
     Returns a coverage report dict on success. Raises
     :exc:`UncoveredSurfaceError` naming every uncovered surface found
@@ -458,7 +486,28 @@ def audit_agent_coverage(agent, *, nested_agent_tools=()):
         # guardrail must DECLARE this SDK tool -- a guardrail built for
         # a different framework tool (or declaring no name at all)
         # certifies nothing, and the audit refuses to certify it.
+        #
+        # F427: the declaration alone is not trusted. The guardrail's
+        # framework_tool is verified against the deployment-declared
+        # sdk_tool_map (SDK tool name -> framework tool name). No
+        # mapping entry for this tool -- or a guardrail whose
+        # framework_tool disagrees with the mapping -- is an uncovered
+        # surface. A guardrail that declares this SDK tool's name while
+        # mediating a different framework tool is a declared-name lie
+        # present on the tool: a latent miswiring, never coverage.
+        declared_framework = None
+        if isinstance(sdk_tool_map, dict):
+            declared_framework = sdk_tool_map.get(tool_name)
+        if not isinstance(declared_framework, str) or not declared_framework:
+            uncovered.append(
+                "tool %r: no deployment-declared SDK-tool->framework-tool "
+                "mapping entry for this tool (sdk_tool_map absent or entry "
+                "missing/unusable) -- the guardrail's declaration alone "
+                "cannot be certified (F427)" % (tool_name,))
+            continue
         matched = False
+        miswired_present = False
+        miswired_mediated = None
         problems = []
         for fn in issued:
             expected = getattr(fn, "expect_sdk_tool_name", None)
@@ -475,13 +524,36 @@ def audit_agent_coverage(agent, *, nested_agent_tools=()):
                     "%r) is attached to SDK tool %r"
                     % (expected, mediated, tool_name))
                 continue
+            if mediated != declared_framework:
+                # Declared-name lie: the guardrail claims this SDK tool
+                # but mediates a different framework tool. A latent
+                # miswiring present on the tool -- never certifiable
+                # coverage, even if a second, honest guardrail is also
+                # attached (F427).
+                miswired_present = True
+                miswired_mediated = mediated
+                problems.append(
+                    "guardrail declaring SDK tool %r mediates framework "
+                    "tool %r, disagreeing with the deployment-declared "
+                    "mapping %r -- declared-name lie (F427)"
+                    % (tool_name, mediated, declared_framework))
+                continue
             matched = True
-            break
+        if miswired_present:
+            uncovered.append(
+                "tool %r: a Sasanam-issued guardrail declaring this SDK "
+                "tool mediates framework tool %r, disagreeing with the "
+                "deployment-declared mapping %r -- the guardrail is "
+                "miswired (F427); refusing to certify"
+                % (tool_name, miswired_mediated, declared_framework))
+            continue
         if not matched:
             uncovered.append(
                 "tool %r: no correctly attached Sasanam-issued "
-                "tool_input_guardrail (%s)" % (tool_name,
-                                              "; ".join(problems)))
+                "tool_input_guardrail (%s) -- and the declaration is not "
+                "trusted without the deployment-declared mapping "
+                "correspondence (F427)" % (tool_name,
+                                          "; ".join(problems)))
             continue
         covered.append(tool_name)
 
@@ -496,4 +568,43 @@ def audit_agent_coverage(agent, *, nested_agent_tools=()):
         "handoffs": [],
         "sdk": "openai-agents",
         "residual": list(RESIDUAL_SURFACES),
+    }
+
+
+def coverage_drift(report, agent):
+    """Name the drift between an :func:`audit_agent_coverage` report and
+    the agent's CURRENT tool set.
+
+    The audit is point-in-time: the SDK resolves an agent's tools
+    *after* agent start hooks run (openai-agents #5124), so a
+    deployment that mutates ``agent.tools`` after the audit -- a start
+    hook adding, removing, or replacing tools -- voids the
+    certification. Call this after any hook that can touch the tool
+    set; any non-empty drift means re-audit before the run proceeds.
+
+    Returns ``{"added": [...], "removed": [...]}``: ``added`` names
+    tools present on the agent now but absent from the report (never
+    audited -- fail closed, re-audit); ``removed`` names reported tools
+    no longer present (the report describes a tool set that no longer
+    exists -- re-audit). Both empty means the report still describes
+    the agent's tool set. Never raises on odd inputs: ``None`` agent
+    or report reads as total drift (everything added/removed).
+    """
+    try:
+        reported = set((report or {}).get("tools") or ())
+    except (AttributeError, TypeError):
+        reported = set()
+    try:
+        tools = list(getattr(agent, "tools", None) or [])
+    except TypeError:
+        tools = []
+    current = set()
+    for tool in tools:
+        try:
+            current.add(getattr(tool, "name", repr(tool)))
+        except Exception:  # noqa: BLE001 - a hostile tool object is drift
+            current.add(repr(tool))
+    return {
+        "added": sorted(current - reported),
+        "removed": sorted(reported - current),
     }

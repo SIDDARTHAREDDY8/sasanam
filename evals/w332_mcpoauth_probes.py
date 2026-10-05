@@ -377,22 +377,22 @@ def _p4b():
 # P5: footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P5-footer-open-f427-next-f428")
+@probe("P5-footer-open-none-next-f428")
 def _p5():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return ("P5-footer-open-f427-next-f428", "BREAK",
+        return ("P5-footer-open-none-next-f428", "BREAK",
                 "footer line not found")
     next_free, open_now = ms[-1]
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return ("P5-footer-open-f427-next-f428", "BREAK",
+        return ("P5-footer-open-none-next-f428", "BREAK",
                 "footer open %s / next %s, want open %s / next %s"
                 % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return ("P5-footer-open-f427-next-f428", "HELD",
-            "footer open F427 / next F428")
+    return ("P5-footer-open-none-next-f428", "HELD",
+            "footer open none / next F428")
 
 
 # ---------------------------------------------------------------------------

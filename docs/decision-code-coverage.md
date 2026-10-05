@@ -1,6 +1,6 @@
 # Decision-code coverage table (generated)
 
-Generated: 2026-10-05T10:11:03Z UTC · registry pin: 2130 · base: wave-339 lane 2
+Generated: 2026-10-05T10:41:49Z UTC · registry pin: 2130 · base: wave-339 lane 2
 
 Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code counts as covered when its literal string appears quoted in at least one ``.py`` file under ``tests/`` or ``evals/``. Production ``emit()`` call sites do not count.
 

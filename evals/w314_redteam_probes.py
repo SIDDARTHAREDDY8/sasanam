@@ -1165,7 +1165,7 @@ def _p_footer_state():
     last = footers[-1]
     # Wave-336 lane 1: footer-state probe repaired -- the F412-era
     # assertion rotted through several merges; assert the live footer.
-    if "Open findings: F427." not in last:
+    if "Open findings: none." not in last:
         raise _Break("footer-state: open findings present: %s" % last[:80])
     if FOOTER_NEXT not in last:
         raise _Break("footer-state: next is not %s: %s" %

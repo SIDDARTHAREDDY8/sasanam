@@ -699,9 +699,9 @@ def _p14c():
                 encoding="utf-8").read()
     if "Next free finding: **F428**" not in text:
         return _break(pid, "footer next != F427")
-    if "Open findings: F427." not in text:
+    if "Open findings: none." not in text:
         return _break(pid, "footer open != none")
-    return _held(pid, "footer open F427 / next F428 (F426 closed)")
+    return _held(pid, "footer open none / next F428 (F426 closed)")
 
 
 # ---------------------------------------------------------------------------

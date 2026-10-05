@@ -805,7 +805,7 @@ def _p5a():
                  "2130/2130/0 sorted unique on raw source literals")
 
 
-@probe("P5b-footer-open-f427-next-f428")
+@probe("P5b-footer-open-none-next-f428")
 def _p5b():
     """Footer: open F415; next free F417 (F414/F416 CLOSED wave-330 lane 1 /
     wave-331 lane 2; F415 OPEN filed wave-330 lane 3)."""
@@ -816,17 +816,17 @@ def _p5b():
                           r"\*\*Open findings: ([^*]*)\.\*\*",
                           footer))
     if not ms:
-        return _break("P5b-footer-open-f427-next-f428",
+        return _break("P5b-footer-open-none-next-f428",
                       "footer line not found")
     m = ms[-1]
     if m.group(1) != "F" + FOOTER_NEXT[1:]:
-        return _break("P5b-footer-open-f427-next-f428",
+        return _break("P5b-footer-open-none-next-f428",
                       "next=%r, want F%s" % (m.group(1), FOOTER_NEXT[1:]))
     opens = m.group(2).strip()
     if opens != FOOTER_OPEN:
-        return _break("P5b-footer-open-f427-next-f428",
+        return _break("P5b-footer-open-none-next-f428",
                       "open=%r, want %r" % (opens, FOOTER_OPEN))
-    return _held("P5b-footer-open-f427-next-f428",
+    return _held("P5b-footer-open-none-next-f428",
                  "footer open none / next F417")
 
 

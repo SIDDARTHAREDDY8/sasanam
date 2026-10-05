@@ -747,7 +747,7 @@ def _p20():
     assert "Next free finding: **F428**" in src, "next-free footer"
     assert "**Open findings: none.**" in src, "open-none footer"
     _held("P20-footer-open-none-next-F426",
-          "footer: open F427 / next F428 (F424/F425 closed wave-337 lane 1)")
+          "footer: open none / next F428 (F424/F425 closed wave-337 lane 1)")
 
 
 # ---------------------------------------------------------------------------

@@ -25,7 +25,7 @@ P8  The window slides: with an injectable clock, calls older than the
     window stop counting.
 P9  Approved-execution sweep is the second boundary: 11 queued +
     approved http_posts refuse coded on the sweep at the 11th.
-P10 Pin 2106 + footer state (open F427 / next F428; F422 CLOSED);
+P10 Pin 2106 + footer state (open none / next F428; F422 CLOSED);
     taxonomy sorted-unique on raw literals; the 3 new codes centrally
     registered.
 P11 Green check (depth-1): honors GOV_SKIP_GREEN; otherwise runs the

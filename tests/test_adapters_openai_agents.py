@@ -305,7 +305,12 @@ class TestAuditAgentCoverage(unittest.TestCase):
         shim = _import_shim()
         ctx = make_run()
         agent, _ = self._clean_agent(shim, ctx)
-        report = shim.audit_agent_coverage(agent)
+        # F427: the audit trusts the declaration only against the
+        # deployment-declared SDK-tool->framework-tool mapping.
+        report = shim.audit_agent_coverage(
+            agent,
+            sdk_tool_map={"write_file": "write_file",
+                          "read_file": "read_file"})
         self.assertEqual(report["handoffs"], [])
         self.assertEqual(sorted(report["tools"]), ["read_file", "write_file"])
 
@@ -397,7 +402,8 @@ class TestAuditAgentCoverage(unittest.TestCase):
                            [_FakeFunctionTool("delete_file",
                                               guardrails=[g])])
         with self.assertRaises(shim.UncoveredSurfaceError) as cm:
-            shim.audit_agent_coverage(agent)
+            shim.audit_agent_coverage(
+                agent, sdk_tool_map={"delete_file": "delete_file"})
         self.assertIn("delete_file", str(cm.exception))
         self.assertIn("expect_sdk_tool_name", str(cm.exception))
 
@@ -414,7 +420,8 @@ class TestAuditAgentCoverage(unittest.TestCase):
                            [_FakeFunctionTool("delete_file",
                                               guardrails=[g])])
         with self.assertRaises(shim.UncoveredSurfaceError) as cm:
-            shim.audit_agent_coverage(agent)
+            shim.audit_agent_coverage(
+                agent, sdk_tool_map={"delete_file": "delete_file"})
         self.assertIn("read_file", str(cm.exception))
         self.assertIn("delete_file", str(cm.exception))
 
@@ -445,6 +452,154 @@ class TestAuditAgentCoverage(unittest.TestCase):
         self.assertEqual(out.behavior["type"], "raise_exception")
         self.assertEqual((out.output_info or {}).get("error"),
                          "guardrail_argument_shape_mismatch")
+
+    # -- F427: declared-name truth is verified against the deployment mapping --
+
+    def _f427_agent(self, shim, binding, framework_tool, expect_name,
+                    sdk_tool="delete_file", guardrails_extra=()):
+        g = shim.make_tool_input_guardrail(binding, framework_tool,
+                                           expect_sdk_tool_name=expect_name)
+        return _FakeAgent("f427", [_FakeFunctionTool(
+            sdk_tool, guardrails=[g] + list(guardrails_extra))])
+
+    def test_f427_declared_name_lie_refused_with_mapping(self):
+        # The F427 break shape: guardrail built for read_file declaring
+        # expect_sdk_tool_name="delete_file", attached to the delete_file
+        # tool. With a deployment-declared mapping, the audit refuses --
+        # the declaration's truth is checked, not just its spelling.
+        shim = _import_shim()
+        ctx = make_run()
+        agent = self._f427_agent(shim, _coder_binding(ctx),
+                                "read_file", "delete_file")
+        with self.assertRaises(shim.UncoveredSurfaceError) as cm:
+            shim.audit_agent_coverage(
+                agent, sdk_tool_map={"delete_file": "delete_file"})
+        text = str(cm.exception)
+        self.assertIn("delete_file", text)
+        self.assertIn("read_file", text)
+        self.assertIn("F427", text)
+
+    def test_f427_honest_mapping_certifies(self):
+        # Regression: the honest construction (mapping-consistent)
+        # still certifies.
+        shim = _import_shim()
+        ctx = make_run()
+        agent = self._f427_agent(shim, _coder_binding(ctx),
+                                "delete_file", "delete_file")
+        rep = shim.audit_agent_coverage(
+            agent, sdk_tool_map={"delete_file": "delete_file"})
+        self.assertEqual(rep["tools"], ["delete_file"])
+
+    def test_f427_no_mapping_treats_tools_as_uncovered(self):
+        # Close-when: deployments that cannot declare the mapping must
+        # treat SDK tools as uncovered rather than certifying on the
+        # declaration alone.
+        shim = _import_shim()
+        ctx = make_run()
+        agent = self._f427_agent(shim, _coder_binding(ctx),
+                                "delete_file", "delete_file")
+        with self.assertRaises(shim.UncoveredSurfaceError) as cm:
+            shim.audit_agent_coverage(agent)
+        self.assertIn("delete_file", str(cm.exception))
+        self.assertIn("F427", str(cm.exception))
+
+    def test_f427_missing_mapping_entry_refused(self):
+        # A tool with no mapping entry is an uncovered surface.
+        shim = _import_shim()
+        ctx = make_run()
+        agent = self._f427_agent(shim, _coder_binding(ctx),
+                                "delete_file", "delete_file")
+        with self.assertRaises(shim.UncoveredSurfaceError) as cm:
+            shim.audit_agent_coverage(
+                agent, sdk_tool_map={"read_file": "read_file"})
+        self.assertIn("delete_file", str(cm.exception))
+
+    def test_f427_disagreeing_mapping_refused(self):
+        # Mapping present but the guardrail's framework_tool disagrees
+        # with it -> refuse.
+        shim = _import_shim()
+        ctx = make_run()
+        agent = self._f427_agent(shim, _coder_binding(ctx),
+                                "delete_file", "delete_file")
+        with self.assertRaises(shim.UncoveredSurfaceError) as cm:
+            shim.audit_agent_coverage(
+                agent, sdk_tool_map={"delete_file": "read_file"})
+        self.assertIn("delete_file", str(cm.exception))
+
+    def test_f427_two_guardrails_miswired_present_refused(self):
+        # A tool carrying [correctly-attached, miswired] guardrails is
+        # refused: the miswired one is a declared-name lie present on
+        # the tool, never certifiable coverage.
+        shim = _import_shim()
+        ctx = make_run()
+        binding = _coder_binding(ctx)
+        honest = shim.make_tool_input_guardrail(
+            binding, "delete_file", expect_sdk_tool_name="delete_file")
+        lie = shim.make_tool_input_guardrail(
+            binding, "read_file", expect_sdk_tool_name="delete_file")
+        agent = _FakeAgent("f427", [_FakeFunctionTool(
+            "delete_file", guardrails=[honest, lie])])
+        with self.assertRaises(shim.UncoveredSurfaceError) as cm:
+            shim.audit_agent_coverage(
+                agent, sdk_tool_map={"delete_file": "delete_file"})
+        self.assertIn("delete_file", str(cm.exception))
+
+    def test_f427_non_string_mapping_value_refused(self):
+        # An unusable mapping entry is fail-closed, not silently
+        # skipped.
+        shim = _import_shim()
+        ctx = make_run()
+        agent = self._f427_agent(shim, _coder_binding(ctx),
+                                "delete_file", "delete_file")
+        with self.assertRaises(shim.UncoveredSurfaceError):
+            shim.audit_agent_coverage(
+                agent, sdk_tool_map={"delete_file": None})
+
+    # -- R34 (#5124): post-audit tool-set drift ------------------------
+
+    def test_coverage_drift_no_drift(self):
+        shim = _import_shim()
+        ctx = make_run()
+        agent, _ = self._clean_agent(shim, ctx)
+        rep = shim.audit_agent_coverage(
+            agent,
+            sdk_tool_map={"write_file": "write_file",
+                          "read_file": "read_file"})
+        self.assertEqual(shim.coverage_drift(rep, agent),
+                         {"added": [], "removed": []})
+
+    def test_coverage_drift_names_added_tool(self):
+        # A start hook adding a tool after the audit voids the
+        # certification (openai-agents #5124: tools resolve after
+        # agent start hooks).
+        shim = _import_shim()
+        ctx = make_run()
+        agent, _ = self._clean_agent(shim, ctx)
+        rep = shim.audit_agent_coverage(
+            agent,
+            sdk_tool_map={"write_file": "write_file",
+                          "read_file": "read_file"})
+        agent.tools.append(_FakeFunctionTool("sneaky_tool"))
+        self.assertEqual(shim.coverage_drift(rep, agent),
+                         {"added": ["sneaky_tool"], "removed": []})
+
+    def test_coverage_drift_names_removed_tool(self):
+        shim = _import_shim()
+        ctx = make_run()
+        agent, _ = self._clean_agent(shim, ctx)
+        rep = shim.audit_agent_coverage(
+            agent,
+            sdk_tool_map={"write_file": "write_file",
+                          "read_file": "read_file"})
+        agent.tools.pop()
+        drift = shim.coverage_drift(rep, agent)
+        self.assertEqual(drift["added"], [])
+        self.assertEqual(len(drift["removed"]), 1)
+
+    def test_coverage_drift_never_raises(self):
+        shim = _import_shim()
+        self.assertEqual(shim.coverage_drift(None, None),
+                         {"added": [], "removed": []})
 
 
 class TestHonestBoundary(unittest.TestCase):

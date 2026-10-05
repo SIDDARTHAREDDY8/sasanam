@@ -689,10 +689,10 @@ def _p7a():
 def _p7b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Open findings: F427." in text, "footer open findings"
+    assert "Open findings: none." in text, "footer open findings"
     assert "Next free finding: **F428**" in text, "footer next free"
     assert "F424" in text and "F425" in text and "F426" in text
-    _held("P7b-footer", "footer open F427 / next F428 (F426 closed)")
+    _held("P7b-footer", "footer open none / next F428 (F426 closed)")
 
 
 # ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@
 
 Base: 6cdf5fdd (wave-337 merge). Pin: 2130 (+1 oci-bundle-not-verifiable,
 wave-339 lane 1; +2 oci-*: oci-layer-media-type-
-mismatch + oci-tag-refused). Footer unchanged: open F427 / next F428
+mismatch + oci-tag-refused). Footer unchanged: open none / next F428
 (no findings filed here).
 
 Builds w337 research prospectus R17 (OCI referrer transport for keyed
@@ -27,7 +27,7 @@ P7  Harbor caveat (documented, tested): replica without replicated
 P8  Predicate-type annotation: extracted from the sealed VSA statement;
     explicit override honored.
 P9  Pin/taxonomy honesty (2130/2130/0 sorted-unique on raw literals;
-    new codes registered) + footer state (open F427 / next F428).
+    new codes registered) + footer state (open none / next F428).
 P10 Green check (depth-1): tests/test_oci_referrer.py as a child.
 
 gov/ changes in this lane: gov/oci_referrer.py (new) +
@@ -393,12 +393,12 @@ def _p9():
         assert code in DC.TAXONOMY, code
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
     assert "Next free finding: **F428**" in text, "footer next free"
-    assert "Open findings: F427." in text, "footer open findings"
+    assert "Open findings: none." in text, "footer open findings"
     assert FOOTER_OPEN == ("F427",) and FOOTER_NEXT == "F428"
     _held("P9-pin-taxonomy",
           "2130/2130/0 sorted-unique; 4 oci-* codes registered "
           "(+oci-bundle-not-verifiable +oci-registry-onboarding-refused); "
-          "footer open F427 / next F428")
+          "footer open none / next F428")
 
 
 def _run_child_output(args, timeout):

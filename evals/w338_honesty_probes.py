@@ -3,7 +3,7 @@
 not-verified list + coverage-table check (w337 prospectus R13/R14/R15).
 
 Base: 6cdf5fdd (wave-337 merge). Pin: 2124->2126 at the wave-338 merge (+2 oci-*).
-Footer unchanged: open F427 / next F428 (no findings filed here).
+Footer unchanged: open none / next F428 (no findings filed here).
 
 R13 (Bernstein GHSA-xw82-w5hr-hrm2, GHSA-4r8r-jx5c-w954 -- SKIP the
 fixes, ADAPT the pins): the tree is structurally defended on all three
@@ -367,9 +367,9 @@ def _p6a():
 def _p6b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Open findings: F427." in text, "footer open findings"
+    assert "Open findings: none." in text, "footer open findings"
     assert "Next free finding: **F428**" in text, "footer next free"
-    _held("P6b-footer", "footer open F427 / next F428 (unchanged)")
+    _held("P6b-footer", "footer open none / next F428 (unchanged)")
 
 
 # ---------------------------------------------------------------------------

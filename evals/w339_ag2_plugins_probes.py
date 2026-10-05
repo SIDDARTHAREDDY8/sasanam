@@ -83,7 +83,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "tests"))
 
-TAXONOMY_PIN = 2130  # Wave-338 merge (f670892a). Footer: open F427 / next F428.; Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused)
+TAXONOMY_PIN = 2130  # Wave-338 merge (f670892a). Footer: open none / next F428.; Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused)
 
 # ----------------------------------------------------------------------
 # Stand-in ag2.events / ag2.middleware, faithful to ag2 1.1.2
@@ -504,9 +504,9 @@ def run_p3_probes():
                % (len(lits), len(set(lits)), lits == sorted(lits)))
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    if "Open findings: F427." in text \
+    if "Open findings: none." in text \
             and "Next free finding: **F428**" in text:
-        _held("P3b", "footer open F427 / next F428")
+        _held("P3b", "footer open none / next F428")
     else:
         _break("P3b", "footer text mismatch")
 
