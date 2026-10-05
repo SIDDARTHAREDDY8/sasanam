@@ -40,7 +40,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2130  # Wave-339 merge: pin 2126 -> 2130 (+4 codes)
+TAXONOMY_PIN = 2131  # Wave-339 merge: pin 2126 -> 2130 (+4 codes); wave-340 merge: pin 2130 -> 2131
 
 from gov.adapters import openai_agents as oai  # noqa: E402
 from gov.adapters.core import GovernedBinding  # noqa: E402
@@ -101,22 +101,27 @@ def _support_binding():
                                                 "dev-org"))
 
 
-def _audit_certifies(agent):
+def _audit_certifies(agent, sdk_tool_map=None):
     try:
-        oai.audit_agent_coverage(agent)
+        oai.audit_agent_coverage(agent, sdk_tool_map=sdk_tool_map)
         return True
     except oai.UncoveredSurfaceError:
         return False
 
 
+_HONEST_MAP = {"read_file": "read_file", "delete_file": "delete_file"}
+
+
 # ---------------------------------------------------------------- E: F427 class
 
 def test_e1_honest_guardrail_certifies():
-    """Control: an honestly-wired guardrail still certifies."""
+    """Control: an honestly-wired guardrail still certifies when the
+    deployment-declared mapping agrees (closed-tree contract)."""
     b = _support_binding()
     g = oai.make_tool_input_guardrail(b, "read_file",
                                       expect_sdk_tool_name="read_file")
-    ok = _audit_certifies(_Agent([_Tool("read_file", [g])]))
+    ok = _audit_certifies(_Agent([_Tool("read_file", [g])]),
+                          sdk_tool_map=_HONEST_MAP)
     return ("HELD" if ok else "BREAK",
             "honest guardrail certified=%s" % ok)
 
@@ -149,12 +154,16 @@ def test_e3_attr_mutation_fails_closed():
     g = oai.make_tool_input_guardrail(b, "read_file",
                                       expect_sdk_tool_name="read_file")
     g.expect_sdk_tool_name = "delete_file"  # post-issuance lie
-    certified = _audit_certifies(_Agent([_Tool("delete_file", [g])]))
+    certified = _audit_certifies(_Agent([_Tool("delete_file", [g])]),
+                                 sdk_tool_map=_HONEST_MAP)
     out = g(_Data(_Ctx("delete_file", json.dumps({"path": "v"}))))
     fails_closed = out.behavior.get("type") != "allow"
-    ok = certified and fails_closed
+    # closed-tree contract: the mutated guardrail is refused coded at
+    # audit (mapping disagrees), and the runtime still refuses -- the
+    # divergence remains fail-closed.
+    ok = (not certified) and fails_closed
     return ("HELD" if ok else "BREAK",
-            "certified=%s runtime_refuses=%s" % (certified, fails_closed))
+            "refused=%s runtime_refuses=%s" % ((not certified), fails_closed))
 
 
 # ---------------------------------------------------------------- F: witness daemon
@@ -404,9 +413,9 @@ def test_h4_revoked_hint_passes_by_design():
 
 # ---------------------------------------------------------------- pin
 
-def test_pin_taxonomy_2130():
+def test_pin_taxonomy_2131():
     codes = sorted(TAXONOMY)
-    ok = (len(codes) == TAXONOMY_PIN == 2130
+    ok = (len(codes) == TAXONOMY_PIN == 2131
           and len(set(codes)) == len(codes))
     return ("HELD" if ok else "BREAK",
             "taxonomy %d/%d sorted-unique" % (len(codes), TAXONOMY_PIN))
@@ -430,7 +439,7 @@ TESTS = [test_e1_honest_guardrail_certifies,
          test_h2_tlog_entries_refused,
          test_h3_message_signature_refused,
          test_h4_revoked_hint_passes_by_design,
-         test_pin_taxonomy_2130]
+         test_pin_taxonomy_2131]
 
 _EXPECTED_BREAKS = set()  # this battery asserts HELD everywhere
 

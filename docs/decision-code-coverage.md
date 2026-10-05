@@ -1,10 +1,10 @@
 # Decision-code coverage table (generated)
 
-Generated: 2026-10-05T10:40:00Z UTC · registry pin: 2130 · base: wave-340 lane 2 (coverage round 2)
+Generated: 2026-10-05T11:08:38Z UTC · registry pin: 2131 · base: wave-340 merge
 
 Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code counts as covered when its literal string appears quoted in at least one ``.py`` file under ``tests/`` or ``evals/``. Production ``emit()`` call sites do not count.
 
-**Covered: 1949 / 2130** · **Gaps: 181**
+**Covered: 1950 / 2131** · **Gaps: 181**
 
 | code | domain | severity | covered | asserted in |
 | ---- | ------ | -------- | ------- | ----------- |
@@ -506,6 +506,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `custody-shamir-insufficient-shares` | custody | medium | yes | evals/w328_shamir_probes.py, evals/w329_redteam_probes.py, tests/test_shamir_custody.py |
 | `custody-shamir-share-malformed` | custody | medium | yes | evals/w328_shamir_probes.py, evals/w329_redteam_probes.py |
 | `custody-shamir-transcript-corrupt` | custody | high | yes | evals/w328_shamir_probes.py, evals/w329_redteam_probes.py, tests/test_shamir_custody.py |
+| `deadctrl-subject-mutated` | deadctrl | high | yes | evals/w340_ancestry_probes.py |
 | `decision-code-digest-malformed` | decision_codes | high | yes | evals/w228_codes_probes.py, tests/test_decision_codes.py |
 | `decision-code-digest-mismatch` | decision_codes | high | yes | evals/w228_codes_probes.py, tests/test_decision_codes.py |
 | `decision-code-malformed` | decision_codes | medium | yes | evals/w228_codes_probes.py, evals/w303_f385_probes.py, tests/test_decision_codes.py (+4) |
@@ -1207,7 +1208,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `oci-manifest-malformed` | oci | medium | yes | evals/w322_redteam_probes.py, tests/test_oci_distribution.py |
 | `oci-referrers-malformed` | oci | low | yes | evals/w322_redteam_probes.py, evals/w323_redteam_probes.py, evals/w324_redteam_probes.py (+2) |
 | `oci-referrers-unavailable` | oci | medium | yes | evals/w321_oci_probes.py, evals/w324_redteam_probes.py, evals/w338_oci_probes.py (+2) |
-| `oci-registry-onboarding-refused` | oci | medium | yes | evals/w338_oci_probes.py, evals/w339_oci_gate_probes.py |
+| `oci-registry-onboarding-refused` | oci | medium | yes | evals/w338_oci_probes.py, evals/w339_oci_gate_probes.py, evals/w340_attack_probes.py |
 | `oci-subject-mismatch` | oci | high | yes | evals/w321_oci_probes.py, evals/w322_redteam_probes.py, evals/w338_oci_probes.py (+3) |
 | `oci-tag-refused` | oci | medium | yes | evals/w338_oci_probes.py, tests/test_oci_referrer.py |
 | `offline-verify-anchor-invalid` | witness | high | yes | evals/w324_offver_probes.py, evals/w325_redteam_probes.py |
@@ -1757,13 +1758,13 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `sigstore-keyed-keyid-mismatch` | evbundle | medium | yes | evals/w321_sigstore_probes.py, evals/w322_redteam_probes.py, evals/w329_sigb_probes.py |
 | `sigstore-keyed-malformed` | evbundle | medium | **NO** |  |
 | `sigstore-keyed-media-type` | evbundle | medium | yes | evals/w321_sigstore_probes.py, evals/w322_redteam_probes.py |
-| `sigstore-keyed-message-signature-unexpected` | evbundle | medium | yes | evals/w321_sigstore_probes.py, evals/w322_redteam_probes.py, tests/test_sigstore_bundle.py |
+| `sigstore-keyed-message-signature-unexpected` | evbundle | medium | yes | evals/w321_sigstore_probes.py, evals/w322_redteam_probes.py, evals/w340_attack_probes.py (+1) |
 | `sigstore-keyed-multi-signature` | evbundle | medium | yes | evals/w321_sigstore_probes.py, evals/w322_redteam_probes.py, tests/test_sigstore_bundle.py |
-| `sigstore-keyed-payload-type` | evbundle | medium | yes | evals/w322_redteam_probes.py |
+| `sigstore-keyed-payload-type` | evbundle | medium | yes | evals/w322_redteam_probes.py, evals/w340_attack_probes.py |
 | `sigstore-keyed-signature-invalid` | evbundle | medium | yes | evals/w321_sigstore_probes.py, evals/w322_redteam_probes.py, evals/w329_sigb_probes.py (+1) |
 | `sigstore-keyed-subject-mismatch` | evbundle | medium | yes | evals/w321_sigstore_probes.py, evals/w322_redteam_probes.py, tests/test_sigstore_bundle.py |
 | `sigstore-keyed-timestamp-unexpected` | evbundle | medium | yes | evals/w321_sigstore_probes.py, evals/w322_redteam_probes.py |
-| `sigstore-keyed-tlog-unexpected` | evbundle | medium | yes | evals/w321_sigstore_probes.py, evals/w322_redteam_probes.py |
+| `sigstore-keyed-tlog-unexpected` | evbundle | medium | yes | evals/w321_sigstore_probes.py, evals/w322_redteam_probes.py, evals/w340_attack_probes.py |
 | `sigstore-keyed-verification-material` | evbundle | medium | yes | evals/w321_sigstore_probes.py, evals/w322_redteam_probes.py |
 | `single-use-issuer-revoked` | single_use | high | yes | evals/w226_singleuse_probes.py, tests/test_single_use.py |
 | `single-use-lifecycle-refused` | single_use | medium | yes | evals/w229_reconcile_probes.py, tests/test_single_use_lifecycle.py |

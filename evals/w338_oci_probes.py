@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Wave-338 lane 4 battery: OCI referrer transport (gov/oci_referrer.py).
 
-Base: 6cdf5fdd (wave-337 merge). Pin: 2130 (+1 oci-bundle-not-verifiable,
+Base: 6cdf5fdd (wave-337 merge). Pin: 2131 (+1 oci-bundle-not-verifiable,
 wave-339 lane 1; +2 oci-*: oci-layer-media-type-
 mismatch + oci-tag-refused). Footer unchanged: open none / next F428
 (no findings filed here).
@@ -26,7 +26,7 @@ P7  Harbor caveat (documented, tested): replica without replicated
     registry-supplied "verified" badge is never an input to any verdict.
 P8  Predicate-type annotation: extracted from the sealed VSA statement;
     explicit override honored.
-P9  Pin/taxonomy honesty (2130/2130/0 sorted-unique on raw literals;
+P9  Pin/taxonomy honesty (2131/2131/0 sorted-unique on raw literals;
     new codes registered) + footer state (open none / next F428).
 P10 Green check (depth-1): tests/test_oci_referrer.py as a child.
 
@@ -51,8 +51,8 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2130  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable). # Wave-338 lane 4: pin 2124 -> 2126 (+2 oci-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused)
-FOOTER_OPEN = ("F427",)
+TAXONOMY_PIN = 2131  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable). # Wave-338 lane 4: pin 2124 -> 2126 (+2 oci-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); wave-340 merge: pin 2130 -> 2131
+FOOTER_OPEN = ()
 FOOTER_NEXT = "F428"
 
 _EXPECTED_BREAKS = set()
@@ -394,9 +394,9 @@ def _p9():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
     assert "Next free finding: **F428**" in text, "footer next free"
     assert "Open findings: none." in text, "footer open findings"
-    assert FOOTER_OPEN == ("F427",) and FOOTER_NEXT == "F428"
+    assert FOOTER_OPEN == () and FOOTER_NEXT == "F428"
     _held("P9-pin-taxonomy",
-          "2130/2130/0 sorted-unique; 4 oci-* codes registered "
+          "2131/2131/0 sorted-unique; 4 oci-* codes registered "
           "(+oci-bundle-not-verifiable +oci-registry-onboarding-refused); "
           "footer open none / next F428")
 

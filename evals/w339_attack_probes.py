@@ -2,7 +2,7 @@
 """Wave-339 lane 5 (continuous real-model attack, round 7): OCI referrer /
 F426-closure / shape-escape / VSA-honesty seam attacks.
 
-Base: `f670892a` (wave-338 merge). Pin 2130. Footer open none / next F428.
+Base: `f670892a` (wave-338 merge). Pin 2131. Footer open none / next F428.
 
 Extends evals/realmodel_harness.py (imported, not modified) with four
 real-model probes against the wave-338 seams:

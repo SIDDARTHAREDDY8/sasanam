@@ -1,7 +1,7 @@
 {
- "generated": "2026-10-05T10:40:00Z",
- "pin": 2130,
- "covered": 1949,
+ "generated": "2026-10-05T11:08:38Z",
+ "pin": 2131,
+ "covered": 1950,
  "gaps": [
   "absence-refused",
   "admission-at-risk-accepted",
@@ -5132,6 +5132,15 @@
     "evals/w328_shamir_probes.py",
     "evals/w329_redteam_probes.py",
     "tests/test_shamir_custody.py"
+   ]
+  },
+  {
+   "code": "deadctrl-subject-mutated",
+   "domain": "deadctrl",
+   "severity": "high",
+   "covered": true,
+   "files": [
+    "evals/w340_ancestry_probes.py"
    ]
   },
   {
@@ -12285,7 +12294,8 @@
    "covered": true,
    "files": [
     "evals/w338_oci_probes.py",
-    "evals/w339_oci_gate_probes.py"
+    "evals/w339_oci_gate_probes.py",
+    "evals/w340_attack_probes.py"
    ]
   },
   {
@@ -17889,6 +17899,7 @@
    "files": [
     "evals/w321_sigstore_probes.py",
     "evals/w322_redteam_probes.py",
+    "evals/w340_attack_probes.py",
     "tests/test_sigstore_bundle.py"
    ]
   },
@@ -17909,7 +17920,8 @@
    "severity": "medium",
    "covered": true,
    "files": [
-    "evals/w322_redteam_probes.py"
+    "evals/w322_redteam_probes.py",
+    "evals/w340_attack_probes.py"
    ]
   },
   {
@@ -17952,7 +17964,8 @@
    "covered": true,
    "files": [
     "evals/w321_sigstore_probes.py",
-    "evals/w322_redteam_probes.py"
+    "evals/w322_redteam_probes.py",
+    "evals/w340_attack_probes.py"
    ]
   },
   {
