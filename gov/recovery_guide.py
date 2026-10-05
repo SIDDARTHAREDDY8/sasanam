@@ -18,6 +18,19 @@ Name note: ``gov/recovery.py`` is the wave-77 recovery controller
 (checkpoint/verify/resume/halt). This module is separate: it never
 touches run state, keys, or sessions -- only refusal records.
 
+Recovery sessions (wave-346 lane 4): the guide says what to do; a
+``RecoverySession`` (opened via ``open_session``) tracks what was
+actually done. Each session carries a machine-readable step protocol
+(stable step ids, preconditions, verification text), records every
+step attempt as a digest-chained event, refines guidance after failed
+attempts (fixed templates only -- never inventing remedies), and links
+its final chain digest into the ``BlockJournal`` as a "session-link"
+entry (which never affects retry numbering). The load-bearing promise:
+there is no lift/permit/unmark API anywhere -- ``refusal_lifted()``
+is a constant False sentinel, dependent steps attempted before their
+preconditions raise loudly instead of being skipped, and completing
+every step changes nothing about the refusal.
+
 What this module is NOT:
 
 * It is not an enforcement path. It imports nothing that authorizes,
@@ -545,11 +558,14 @@ def view_from_record(record: Mapping) -> RefusalView:
 class BlockMark:
     """One journaled block mark.
 
-    ``attempt_kind`` is "initial" or "retry"; a retry points ``retry_of``
-    at the initial mark's id and counts up ``attempt_no``. ``absolute``
-    is True for absolute-deny refusals (no authority can permit).
-    ``advisory`` carries the retry-storm notice once the threshold is
-    reached (UX text, not enforcement).
+    ``attempt_kind`` is "initial", "retry", or "session-link" (a recovery
+    session chained into the journal; see ``BlockJournal.link_session``).
+    A retry points ``retry_of`` at the initial mark's id and counts up
+    ``attempt_no``. ``absolute`` is True for absolute-deny refusals (no
+    authority can permit). ``advisory`` carries the retry-storm notice
+    once the threshold is reached (UX text, not enforcement). For
+    session-link entries ``retry_of`` holds the session id and
+    ``link_final`` holds the session's final chain digest.
     """
 
     mark_id: str
@@ -563,14 +579,16 @@ class BlockMark:
     chain_digest: str
     advisory: Optional[str] = None
     noted_at: Optional[str] = None
+    link_final: Optional[str] = None
 
     def to_record(self) -> Dict:
         return {"absolute": self.absolute, "advisory": self.advisory,
                 "attempt_kind": self.attempt_kind,
                 "attempt_no": self.attempt_no,
                 "chain_digest": self.chain_digest, "code": self.code,
-                "mark_id": self.mark_id, "noted_at": self.noted_at,
-                "prev": self.prev, "request_digest": self.request_digest,
+                "link_final": self.link_final, "mark_id": self.mark_id,
+                "noted_at": self.noted_at, "prev": self.prev,
+                "request_digest": self.request_digest,
                 "retry_of": self.retry_of}
 
 
@@ -623,6 +641,37 @@ class BlockJournal:
         self._head = chain
         return entry
 
+    def link_session(self, session) -> BlockMark:
+        """Chain a recovery session's digest trail into the journal.
+
+        The link is typed "session-link": it shares the session's
+        request digest but is deliberately NOT counted as a retry --
+        retry numbering for the request is unaffected. ``session`` is
+        any object exposing ``session_id``, ``request_digest``,
+        ``code``, and ``head()`` (see ``RecoverySession``). Linking
+        twice raises.
+        """
+        if getattr(session, "_linked", False):
+            raise RecoveryGuideError("session is already linked to a journal")
+        session_id = session.session_id
+        final = session.head()
+        if not session_id or not final:
+            raise RecoveryGuideError(
+                "link_session needs a session with an id and a chain head")
+        mark_id = _sha(("session-link:v1|%s|%s|%s"
+                        % (session_id, final, self._head)).encode("utf-8"))
+        chain = _sha(("block-mark-chain:v1|%s|%s"
+                      % (self._head, mark_id)).encode("utf-8"))
+        entry = BlockMark(
+            mark_id=mark_id, request_digest=session.request_digest,
+            code=session.code, attempt_kind="session-link",
+            retry_of=session_id, attempt_no=0, absolute=False,
+            prev=self._head, chain_digest=chain, link_final=final)
+        self._entries.append(entry)
+        session._linked = True
+        self._head = chain
+        return entry
+
     def head(self) -> str:
         return self._head
 
@@ -638,11 +687,30 @@ class BlockJournal:
         head = _journal_init
         seen: Dict[str, list] = {}
         for e in self._entries:
+            if e.attempt_kind == "session-link":
+                # Session-link entries are not retries: they must not
+                # affect retry numbering (``seen``) or the absolute-deny
+                # recomputation. Recompute the link formula only.
+                exp_id = _sha(("session-link:v1|%s|%s|%s"
+                               % (e.retry_of, e.link_final,
+                                  head)).encode("utf-8"))
+                if e.mark_id != exp_id:
+                    return False
+                head = _sha(("block-mark-chain:v1|%s|%s"
+                             % (head, exp_id)).encode("utf-8"))
+                if e.chain_digest != head:
+                    return False
+                if e.attempt_no != 0 or e.absolute or not e.retry_of \
+                        or not e.link_final:
+                    return False
+                continue
             prior = seen.get(e.request_digest, [])
             if prior:
                 exp_kind, exp_of, exp_no = "retry", prior[0], len(prior) + 1
             else:
                 exp_kind, exp_of, exp_no = "initial", None, 1
+            if e.attempt_kind not in ("initial", "retry"):
+                return False
             if (e.attempt_kind != exp_kind or e.retry_of != exp_of
                     or e.attempt_no != exp_no):
                 return False
@@ -666,6 +734,417 @@ class BlockJournal:
         return [e.to_record() for e in self._entries]
 
 
+# ------------------------------------------------------- recovery sessions
+# Recovery-as-product loop (wave-346 lane 4): the guide tells the operator
+# what to do; the session tracks what was actually done. A RecoverySession
+# is a per-block, digest-chained record of attempted recovery steps with a
+# machine-readable step protocol (stable step ids, preconditions,
+# verification). It is NOT an enforcement path: there is no lift/permit
+# API anywhere here -- ``refusal_lifted()`` is a constant False sentinel,
+# and dependent steps attempted before their preconditions raise loudly
+# instead of being skipped.
+
+#: Outcomes accepted by ``RecoverySession.attempt_step``.
+_STEP_OUTCOMES = frozenset({"attempted", "succeeded", "failed"})
+
+_session_chain_init = hashlib.sha256(
+    b"recovery-session-chain:v1:init").hexdigest()
+
+
+@dataclass(frozen=True)
+class RecoveryStepSpec:
+    """One machine-followable recovery step.
+
+    ``step_id`` is stable across calls (e.g. "step-withhold-resubmit").
+    ``preconditions`` lists the step_ids that must report "succeeded"
+    before this step may be attempted -- an early attempt raises
+    ``RecoveryGuideError`` instead of being skipped. ``verification``
+    names what the agent must re-check after performing the step; it
+    never claims the refusal is lifted.
+    """
+
+    step_id: str
+    remedy: str
+    kind: str
+    title: str
+    detail: str
+    prerequisite: str
+    preconditions: Tuple[str, ...] = ()
+    verification: str = ""
+
+    def to_record(self) -> Dict:
+        return {"detail": self.detail, "kind": self.kind,
+                "preconditions": list(self.preconditions),
+                "prerequisite": self.prerequisite, "remedy": self.remedy,
+                "step_id": self.step_id, "title": self.title,
+                "verification": self.verification}
+
+
+# What the agent must re-check after each remedy step. Fixed text: the
+# refusal is never claimed lifted, re-submissions are always fresh
+# requests at the enforcement seam.
+_step_verification = {
+    "authorize": (
+        "Re-submit the ORIGINAL request at the enforcement seam: the "
+        "refusal persists until a recorded approval for THIS action "
+        "digest exists. The session never grants -- only the enforcement "
+        "path evaluates."),
+    "accept": (
+        "Submit the narrowed request at the enforcement seam: it is "
+        "evaluated fresh. A new refusal is a NEW request with its own "
+        "session, not a lift of this one."),
+    "withhold": (
+        "The transformed request is a fresh request at the enforcement "
+        "seam. A new refusal gets its own block mark and its own "
+        "session -- open a new session instead of extending this one."),
+    "sanitize": (
+        "The transformed request is a fresh request at the enforcement "
+        "seam. A new refusal gets its own block mark and its own "
+        "session -- open a new session instead of extending this one."),
+    "derive": (
+        "Release only the derivative; the raw bytes stay refused. A new "
+        "refusal is a NEW request with its own session."),
+    "redispatch": (
+        "Confirm the recipient satisfies the trust floor the refusal "
+        "named, then dispatch at the enforcement seam -- it evaluates "
+        "fresh."),
+    "fork": (
+        "Verify the return attestation before using the subagent's "
+        "result; the parent trajectory must never have seen the raw "
+        "sensitive bytes."),
+}
+
+_procedural_verification = (
+    "The verdict stands for the request as evaluated. Any re-submission "
+    "is a new request at the enforcement seam.")
+
+# Remedies that split into two session steps: the base step plus a
+# follow-up whose preconditions bind the base. The follow-up never adds
+# a remedy -- it is the verification half of the same remedy.
+_step_followups = {
+    "accept": ("sign", "Sign a risk acceptance",
+               "Attach a signed risk acceptance naming the residual risk "
+               "to the narrowed request and submit it -- evaluated fresh, "
+               "not as a retry of the blocked request.",
+               "authority to sign a risk acceptance for the residual risk",
+               "Submit with the signed acceptance: the enforcement seam "
+               "evaluates it fresh. A new refusal is a NEW request with "
+               "its own session."),
+    "withhold": ("resubmit", "Re-submit with the spans removed",
+                 "Re-submit the payload with only the remaining content. "
+                 "The new request carries a new request digest and is "
+                 "evaluated as a fresh request, not a retry of the "
+                 "blocked one.",
+                 "the withhold step reported succeeded",
+                 "A new refusal is a NEW request with its own block mark "
+                 "-- open a new session for it rather than extending "
+                 "this one."),
+    "sanitize": ("resubmit", "Re-submit the sanitized payload",
+                 "Re-submit the sanitizer's output. The new request is "
+                 "evaluated fresh at the enforcement seam; the guide "
+                 "binds the sanitizer, it does not verify it.",
+                 "the sanitize step reported succeeded",
+                 "A new refusal is a NEW request with its own block mark "
+                 "-- open a new session for it rather than extending "
+                 "this one."),
+    "derive": ("release", "Release the derivative",
+               "Release the computed derivative instead of the raw bytes.",
+               "the derive step reported succeeded",
+               "Release only the derivative; the raw bytes stay refused. "
+               "A new refusal is a NEW request with its own session."),
+    "redispatch": ("confirm", "Confirm the trust floor",
+                   "Confirm the chosen recipient satisfies the trust "
+                   "floor the refusal named, then dispatch.",
+                   "the redispatch step reported succeeded",
+                   "Dispatch at the enforcement seam -- it evaluates "
+                   "fresh. A new refusal is a NEW request with its own "
+                   "session."),
+    "fork": ("attest", "Attest the subagent return path",
+             "Run the sensitive reads in the isolated context and "
+             "verify the return attestation before using the result.",
+             "the fork step reported succeeded",
+             "Verify the return attestation; the parent trajectory must "
+             "never have seen the raw sensitive bytes."),
+}
+
+# Progressive guidance after a failed step attempt. Fixed templates only
+# -- they rephrase the step's own guidance and never name a remedy
+# outside the session's plan vocabulary.
+_guidance_templates = {
+    "generic": (
+        "The step did not succeed. Re-check the prerequisite before "
+        "re-attempting; dependent steps stay locked until this one "
+        "reports succeeded. The refusal stands regardless -- the "
+        "enforcement seam decides, never this session."),
+    "authorize": (
+        "Filing alone changed nothing: confirm the named authority "
+        "approved THIS action digest -- a pending, mis-bound, or "
+        "different-digest approval is not a lift. If no authority is "
+        "reachable, stop retrying and escalate to a human operator; the "
+        "storm advisory applies."),
+    "resubmit": (
+        "The re-submission was refused again. That refusal is a SEPARATE "
+        "request with its own block mark -- open a new session for it "
+        "instead of extending this one. Continuing identical retries "
+        "trips the storm advisory and changes nothing."),
+}
+
+
+def _session_steps(guide: RecoveryGuide) -> Tuple[RecoveryStepSpec, ...]:
+    """Expand a guide's steps into the session's machine-readable protocol.
+
+    Every step comes from the guide -- which comes verbatim from the
+    refusal's own remedy plan -- so no remedy can be invented here.
+    """
+    specs = []
+    for gs in guide.steps:
+        if gs.kind == "procedural":
+            base_id = "step-procedural-%s" % gs.remedy
+            verification = _procedural_verification
+        else:
+            base_id = "step-%s" % gs.remedy
+            verification = _step_verification.get(gs.remedy, "")
+        specs.append(RecoveryStepSpec(
+            step_id=base_id, remedy=gs.remedy, kind=gs.kind,
+            title=gs.title, detail=gs.detail,
+            prerequisite=gs.prerequisite, preconditions=(),
+            verification=verification))
+        if gs.kind == "remedy" and gs.remedy in _step_followups:
+            suffix, title, detail, prerequisite, verification = \
+                _step_followups[gs.remedy]
+            specs.append(RecoveryStepSpec(
+                step_id="%s-%s" % (base_id, suffix), remedy=gs.remedy,
+                kind="remedy-followup", title=title, detail=detail,
+                prerequisite=prerequisite, preconditions=(base_id,),
+                verification=verification))
+    return tuple(specs)
+
+
+def guidance_after_failure(step_id: str, fail_count: int,
+                           allowed_remedies: FrozenSet[str]) -> str:
+    """Progressive guidance for a step that reported a failure.
+
+    The guidance is chosen from fixed templates only; the templates are
+    verified at call time to name no remedy outside ``allowed_remedies``
+    (the session's plan vocabulary) -- if a template ever violated that,
+    this raises instead of inventing a remedy.
+    """
+    if fail_count < 1:
+        raise RecoveryGuideError("guidance_after_failure needs fail_count>=1")
+    if step_id.startswith("step-authorize"):
+        template = _guidance_templates["authorize"]
+    elif step_id.endswith(("-resubmit", "-release", "-confirm", "-sign",
+                           "-attest")):
+        template = _guidance_templates["resubmit"]
+    else:
+        template = _guidance_templates["generic"]
+    _assert_no_invented_remedies(template, allowed_remedies)
+    return template
+
+
+def _assert_no_invented_remedies(text: str,
+                                 allowed_remedies: FrozenSet[str]) -> None:
+    """The never-invent rule, executable: every remedy-vocabulary name
+    in the text must be inside the plan's own vocabulary."""
+    import re
+    words = set(re.findall(r"[a-z][a-z-]*", text.lower()))
+    invented = (words & _remedy_names) - set(allowed_remedies)
+    if invented:
+        raise RecoveryGuideError(
+            "guidance invents remedies outside the plan vocabulary: %s"
+            % sorted(invented))
+
+
+class RecoverySession:
+    """A per-block recovery session digest-chained into the BlockJournal.
+
+    Created only through :func:`open_session`. The session records what
+    the operator/agent actually did: every step attempt is a
+    digest-chained event. There is deliberately no lift/permit/unmark
+    API -- ``refusal_lifted()`` always returns False, and completing
+    every step changes nothing about the refusal; the enforcement seam
+    re-evaluates.
+    """
+
+    def __init__(self, session_id: str, mark_id: str, view: RefusalView,
+                 guide: RecoveryGuide,
+                 steps: Tuple[RecoveryStepSpec, ...]):
+        if not session_id or not mark_id:
+            raise RecoveryGuideError("a session needs an id and a mark")
+        self.session_id = session_id
+        self.mark_id = mark_id
+        self.request_digest = view.request_digest
+        self.code = view.code
+        self.guide_digest = guide.guide_digest
+        self.notice = guide.notice
+        self.unliftable = guide.unliftable
+        self._steps = tuple(steps)
+        self._by_id = {s.step_id: s for s in steps}
+        self._completed = set()
+        self._failed: Dict[str, int] = {}
+        self._events = []
+        self._linked = False
+        self._head = _sha((_session_chain_init + "|" + session_id
+                           ).encode("utf-8"))
+        self._record("opened", None, None)
+
+    # ------------------------------------------------------------ events
+    def _record(self, event: str, step_id: Optional[str],
+                outcome: Optional[str]) -> Dict:
+        seq = len(self._events) + 1
+        body = {"chain": "recovery-session-chain:v1", "event": event,
+                "outcome": outcome, "prev": self._head, "seq": seq,
+                "session_id": self.session_id, "step_id": step_id}
+        digest = _sha(_canonical(body))
+        rec = dict(body)
+        rec["chain_digest"] = digest
+        self._events.append(rec)
+        self._head = digest
+        return rec
+
+    def head(self) -> str:
+        return self._head
+
+    def verify_chain(self) -> bool:
+        """Recompute every session event link. False on any tampering."""
+        head = _sha((_session_chain_init + "|" + self.session_id
+                     ).encode("utf-8"))
+        completed = set()
+        for rec in self._events:
+            if rec.get("chain") != "recovery-session-chain:v1" \
+                    or rec.get("session_id") != self.session_id:
+                return False
+            body = {k: v for k, v in rec.items() if k != "chain_digest"}
+            if _sha(_canonical(body)) != rec.get("chain_digest"):
+                return False
+            if rec.get("prev") != head:
+                return False
+            head = rec["chain_digest"]
+            if rec["event"] == "step-attempted" \
+                    and rec.get("outcome") == "succeeded":
+                completed.add(rec["step_id"])
+        return head == self._head
+
+    # ------------------------------------------------------------- steps
+    def steps(self) -> Tuple[RecoveryStepSpec, ...]:
+        return self._steps
+
+    def completed(self) -> Tuple[str, ...]:
+        return tuple(sorted(self._completed))
+
+    def next_steps(self) -> Tuple[RecoveryStepSpec, ...]:
+        """Steps ready now: preconditions complete, not yet succeeded."""
+        ready = []
+        for spec in self._steps:
+            if spec.step_id in self._completed:
+                continue
+            if all(p in self._completed for p in spec.preconditions):
+                ready.append(spec)
+        return tuple(ready)
+
+    def is_complete(self) -> bool:
+        """Every step reported succeeded (vacuous for unliftable: no
+        steps exist, the record IS the notice)."""
+        return all(s.step_id in self._completed for s in self._steps)
+
+    def attempt_step(self, step_id: str, outcome: str,
+                     note: str = "") -> Dict:
+        """Record a step attempt.
+
+        ``outcome`` is one of "attempted", "succeeded", "failed".
+        Attempting a step whose preconditions are not complete raises
+        ``RecoveryGuideError`` LOUDLY -- steps cannot be skipped, and
+        the failed attempt is NOT recorded (the chain is untouched).
+        """
+        if outcome not in _STEP_OUTCOMES:
+            raise RecoveryGuideError(
+                "unknown step outcome: %r" % (outcome,))
+        spec = self._by_id.get(step_id)
+        if spec is None:
+            raise RecoveryGuideError("unknown step id: %r" % (step_id,))
+        missing = [p for p in spec.preconditions
+                   if p not in self._completed]
+        if missing:
+            raise RecoveryGuideError(
+                "step %r is locked: preconditions not complete: %s"
+                % (step_id, ", ".join(missing)))
+        rec = self._record("step-attempted", step_id, outcome)
+        if outcome == "succeeded":
+            self._completed.add(step_id)
+            self._record("step-completed", step_id, outcome)
+        elif outcome == "failed":
+            self._failed[step_id] = self._failed.get(step_id, 0) + 1
+        return rec
+
+    def guidance_for(self, step_id: str) -> str:
+        """Current guidance for a step: the step detail, refined by the
+        fixed progressive templates once it has failed."""
+        spec = self._by_id.get(step_id)
+        if spec is None:
+            raise RecoveryGuideError("unknown step id: %r" % (step_id,))
+        fails = self._failed.get(step_id, 0)
+        if fails < 1:
+            return spec.detail
+        allowed = frozenset(s.remedy for s in self._steps)
+        return guidance_after_failure(step_id, fails, allowed)
+
+    # ------------------------------------------------------- the promise
+    def refusal_lifted(self) -> bool:
+        """ALWAYS False. This is the load-bearing promise of the module:
+        a recovery session records attempts; it can never lift, weaken,
+        or clear a refusal. There is no API here that can change the
+        verdict -- completing every step changes nothing about it."""
+        return False
+
+    # ------------------------------------------------------------- export
+    def protocol(self) -> Dict:
+        """The machine-readable recovery protocol: stable step ids,
+        preconditions, verification, attempt history, and the promise."""
+        return {
+            "code": self.code,
+            "completed": list(self.completed()),
+            "guide_digest": self.guide_digest,
+            "mark_id": self.mark_id,
+            "next": [s.step_id for s in self.next_steps()],
+            "notice": self.notice,
+            "refusal_lifted": self.refusal_lifted(),
+            "request_digest": self.request_digest,
+            "session_id": self.session_id,
+            "steps": [s.to_record() for s in self._steps],
+            "unliftable": self.unliftable,
+        }
+
+    def export_to_journal(self, journal: "BlockJournal") -> BlockMark:
+        """Chain this session's digest trail into the journal.
+
+        The journal records the session's final chain digest as a
+        "session-link" entry; retry numbering for the request is
+        unaffected. Linking twice raises.
+        """
+        return journal.link_session(self)
+
+
+def open_session(view: RefusalView, journal: "BlockJournal", *,
+                 noted_at: Optional[str] = None) -> RecoverySession:
+    """Open a recovery session for a normalized refusal view.
+
+    The refusal is marked in the journal (retry-linking applies), the
+    guide is built, and the session's steps come verbatim from the
+    refusal's own remedy plan. Records in, records out: nothing here
+    touches enforcement.
+    """
+    if not isinstance(view, RefusalView):
+        raise RecoveryGuideError("open_session needs a RefusalView")
+    if not isinstance(journal, BlockJournal):
+        raise RecoveryGuideError("open_session needs a BlockJournal")
+    guide = build_guide(view)
+    mark = journal.mark(view.request_digest, view.code, noted_at=noted_at)
+    session_id = _sha(("recovery-session:v1|%s|%s"
+                       % (mark.mark_id, guide.guide_digest)).encode("utf-8"))
+    return RecoverySession(session_id, mark.mark_id, view, guide,
+                           _session_steps(guide))
+
+
 def retry_advisory(mark: BlockMark) -> Optional[str]:
     """The UX advisory for a retry mark, if the storm threshold tripped."""
     return mark.advisory
@@ -677,10 +1156,14 @@ __all__ = [
     "BlockMark",
     "RecoveryGuideError",
     "RecoveryGuide",
-    "RecoveryStep",
+    "RecoverySession",
+    "RecoveryStepSpec",
     "RefusalView",
+    "RecoveryStep",
     "build_guide",
     "canonical_request_digest",
+    "guidance_after_failure",
+    "open_session",
     "retry_advisory",
     "view_from_diagnostics",
     "view_from_record",
