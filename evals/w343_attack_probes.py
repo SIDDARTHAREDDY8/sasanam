@@ -157,8 +157,8 @@ def test_a8_f430_filing_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F430 filed 2026-10-05, wave-343 lane 3" in text
           and "LOW, OPEN:" in text
-          and "Next free finding: **F432**" in text
-          and "Open findings: F430, F431." in text)
+          and "Next free finding: **F434**" in text
+          and "Open findings: F430, F431, F432, F433." in text)
     return ("HELD" if ok else "BREAK", "F430 filed open=%s" % ok)
 
 
@@ -170,7 +170,7 @@ def test_a9_f429_still_open_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F429 filed 2026-10-05, wave-342 lane 5" in text
           and "LOW, CLOSED 2026-10-05 wave-343 lane 1" in text
-          and "Open findings: F430, F431." in text)
+          and "Open findings: F430, F431, F432, F433." in text)
     return ("HELD" if ok else "BREAK", "F429 closed=%s" % ok)
 
 
