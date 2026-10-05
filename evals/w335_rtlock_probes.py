@@ -53,8 +53,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2106  # Wave-335 lane 3: pin 2100 -> 2101 (+1 identity-refresh-lock-unavailable, F421). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
-FOOTER_OPEN = "none"  # F421 CLOSED 2026-10-05 (wave-335 lane 3).
+TAXONOMY_PIN = 2121  # Wave-335 lane 3: pin 2100 -> 2101 (+1 identity-refresh-lock-unavailable, F421). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*)
+FOOTER_OPEN = "F424, F425"  # F421 CLOSED 2026-10-05 (wave-335 lane 3).
 FOOTER_NEXT = "F426"  # Next free finding number.
 
 _results = []
@@ -363,8 +363,8 @@ def _p7():
         "footer open-findings mismatch"
     assert "## F421" in text and "CLOSED 2026-10-05 wave-335 lane 3" in text, \
         "F421 closure not recorded"
-    return _held(pid, "taxonomy 2106/2106/0 sorted-unique; new code "
-                      "registered; F421 CLOSED; footer open none / next F426")
+    return _held(pid, "taxonomy 2121/2121/0 sorted-unique; new code "
+                      "registered; F421 CLOSED; footer open F424, F425 / next F426")
 
 
 # ---------------------------------------------------------------------------

@@ -40,7 +40,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2106 # 2012 + witness-alert-queue-overflow +; Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening (witness-alert-queue-overflow + export-witness-policy-version-below-minimum) + 6 federated-identity-*); Wave-326 lane 2: pin 2020 -> 2027 (+7: 6 supplychain-standing-* + 1 supplychain-feed-outside-trust-boundary); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
+TAXONOMY_PIN = 2121 # 2012 + witness-alert-queue-overflow +; Wave-325 merge: pin 2018 -> 2020 (+8: 2 residual-hardening (witness-alert-queue-overflow + export-witness-policy-version-below-minimum) + 6 federated-identity-*); Wave-326 lane 2: pin 2020 -> 2027 (+7: 6 supplychain-standing-* + 1 supplychain-feed-outside-trust-boundary); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*)
 # export-witness-policy-version-below-minimum
 
 
@@ -717,7 +717,7 @@ def _p18():
 # Pin + footer state probes.
 # ---------------------------------------------------------------------------
 
-@probe("P19-pin-taxonomy-2106-sorted")
+@probe("P19-pin-taxonomy-2121-sorted")
 def _p19():
     from gov import decision_codes as DC
     import re
@@ -726,7 +726,7 @@ def _p19():
     codes = re.findall(r'"code":\s*["\']([^"\']+)["\']', src)
     # Uniqueness on raw source literals (the wave-260 lesson: the
     # deduped dict cannot see duplicate literals).
-    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2106, (#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
+    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2121, (#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
         len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
     for code in ("witness-alert-queue-overflow",
@@ -735,7 +735,7 @@ def _p19():
         entry = DC.TAXONOMY[code]
         assert entry["domain"] == "witness", entry
         assert entry["severity"] == "medium", entry
-    _held("P19-pin-taxonomy-2106-sorted", "2106/2106/0 sorted; new codes ok")
+    _held("P19-pin-taxonomy-2121-sorted", "2121/2121/0 sorted; new codes ok")
 
 
 @probe("P20-footer-open-none-next-F426")

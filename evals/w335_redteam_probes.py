@@ -98,8 +98,8 @@ P4 (closure regressions):
   P4d  F418 CLOSED: a signed revocation event terminates a bound
        in-flight session coded revocation-push-session-terminated.
 
-P5 (honesty): pin 2106 taxonomy sorted-unique on raw literals; all 23
-     wave-334 codes centrally registered; footer open none / next F426.
+P5 (honesty): pin 2121 taxonomy sorted-unique on raw literals; all 23
+     wave-334 codes centrally registered; footer open F424, F425 / next F426.
 
 P6 (older closure spot-regressions, adopted from w332):
   P6a  F415: unicode-digit version fragment refuses coded
@@ -151,7 +151,7 @@ from gov import mcp_oauth_binding as MOB  # noqa: E402
 from gov import revocation_push as RP  # noqa: E402
 from gov import decision_codes as DC  # noqa: E402
 
-TAXONOMY_PIN = 2106 # Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
+TAXONOMY_PIN = 2121 # Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*)
 
 _NOW = 1798765432
 _ISS = "https://as.example.com"
@@ -1322,17 +1322,17 @@ _FINDINGS_MD = os.path.join(REPO, "evals", "FINDINGS.md")
 
 
 def P5a():
-    """Pin honesty: TAXONOMY_PIN is 2106 and the registry's sorted
+    """Pin honesty: TAXONOMY_PIN is 2121 and the registry's sorted
     unique key order holds on raw source literals."""
-    pid = "P5a-pin-taxonomy-2106-sorted"
-    if TAXONOMY_PIN != 2106:
-        _break(pid, "TAXONOMY_PIN %r != 2106" % (TAXONOMY_PIN,))
+    pid = "P5a-pin-taxonomy-2121-sorted"
+    if TAXONOMY_PIN != 2121:
+        _break(pid, "TAXONOMY_PIN %r != 2121" % (TAXONOMY_PIN,))
         return
     # The canonical pin constant lives in gov/guac_graph.py (wave-302
     # lesson); the battery-local literal must agree with it.
     from gov import guac_graph as GG  # noqa: E402
-    if GG.TAXONOMY_PIN != 2106:
-        _break(pid, "guac_graph.TAXONOMY_PIN %r != 2106" % (GG.TAXONOMY_PIN,))
+    if GG.TAXONOMY_PIN != 2121:
+        _break(pid, "guac_graph.TAXONOMY_PIN %r != 2121" % (GG.TAXONOMY_PIN,))
         return
     codes = sorted(DC.TAXONOMY.keys())
     if list(DC.TAXONOMY.keys()) != codes:
@@ -1341,7 +1341,7 @@ def P5a():
     if len(codes) != len(set(codes)):
         _break(pid, "duplicate taxonomy keys")
         return
-    _held(pid, "pin 2106 honest; taxonomy sorted-unique")
+    _held(pid, "pin 2121 honest; taxonomy sorted-unique")
 
 
 def P5b():
@@ -1457,7 +1457,7 @@ _PROBES = [
     ("P4b-f419-closed", P4b),
     ("P4c-f420-closed", P4c),
     ("P4d-f418-closed", P4d),
-    ("P5a-pin-taxonomy-2106-sorted", P5a),
+    ("P5a-pin-taxonomy-2121-sorted", P5a),
     ("P5b-23-codes-registered", P5b),
     ("P5c-footer-open-none-next-f426", P5c),
     ("P6a-f415-unicode-digit", P6a),
