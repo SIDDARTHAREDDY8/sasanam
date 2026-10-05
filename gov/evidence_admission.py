@@ -548,6 +548,11 @@ def admit_at_risk(admission_error, exception_store, now=None):
 
     A refusal caused by the integrity floor can NEVER be accepted at
     risk -- it refuses LOUD with ``admission-exception-refused``.
+
+    The returned ADMIT-AT-RISK record carries the machine decision code
+    ``admission-at-risk-accepted`` (``AT_RISK_ACCEPTED``): the refusal
+    was real, and its acceptance is an audited operator-risk event,
+    never an upgrade of the refusal itself.
     """
     if not isinstance(admission_error, AdmissionError):
         _fail(EXCEPTION_REFUSED,
@@ -586,6 +591,7 @@ def admit_at_risk(admission_error, exception_store, now=None):
               % (policy_id,))
     record = {
         "verdict": "ADMIT-AT-RISK",
+        "code": AT_RISK_ACCEPTED,
         "policy_id": policy_id,
         "refused_decision_digest": digest,
         "exception_digest": result["exception_digest"],

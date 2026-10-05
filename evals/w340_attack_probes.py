@@ -40,7 +40,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2131  # Wave-339 merge: pin 2126 -> 2130 (+4 codes); wave-340 merge: pin 2130 -> 2131
+TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 from gov.adapters import openai_agents as oai  # noqa: E402
 from gov.adapters.core import GovernedBinding  # noqa: E402
@@ -413,9 +413,9 @@ def test_h4_revoked_hint_passes_by_design():
 
 # ---------------------------------------------------------------- pin
 
-def test_pin_taxonomy_2131():
+def test_pin_taxonomy_2127():
     codes = sorted(TAXONOMY)
-    ok = (len(codes) == TAXONOMY_PIN == 2131
+    ok = (len(codes) == TAXONOMY_PIN == 2127
           and len(set(codes)) == len(codes))
     return ("HELD" if ok else "BREAK",
             "taxonomy %d/%d sorted-unique" % (len(codes), TAXONOMY_PIN))
@@ -439,7 +439,7 @@ TESTS = [test_e1_honest_guardrail_certifies,
          test_h2_tlog_entries_refused,
          test_h3_message_signature_refused,
          test_h4_revoked_hint_passes_by_design,
-         test_pin_taxonomy_2131]
+         test_pin_taxonomy_2127]
 
 _EXPECTED_BREAKS = set()  # this battery asserts HELD everywhere
 

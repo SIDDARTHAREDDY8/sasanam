@@ -73,7 +73,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2131  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-337 lane 5: pin 2106 -> 2109 (+3 tool-budget-*).; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); Wave-340 lane 3: pin 2130 -> 2131 (+1 deadctrl-subject-mutated).
+TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 FOOTER_OPEN = "F428"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
 FOOTER_NEXT = "F429"  # Next free finding number.
 
@@ -651,9 +651,9 @@ def _p13():
 # P14 -- pin + footer honesty.
 # ---------------------------------------------------------------------------
 
-@probe("P14a-pin-taxonomy-2131-sorted")
+@probe("P14a-pin-taxonomy-2127-sorted")
 def _p14a():
-    pid = "P14a-pin-taxonomy-2131-sorted"
+    pid = "P14a-pin-taxonomy-2127-sorted"
     from gov.guac_graph import TAXONOMY_PIN as _pin
     if _pin != TAXONOMY_PIN:
         return _break(pid, "guac_graph pin %r != battery pin %r"
@@ -671,7 +671,7 @@ def _p14a():
     if len(literals) != TAXONOMY_PIN or len(set(literals)) != TAXONOMY_PIN:
         return _break(pid, "raw literal count %d/%d != pin"
                       % (len(literals), len(set(literals))))
-    return _held(pid, "2131/2131/0 sorted unique on raw source literals")
+    return _held(pid, "2127/2127/0 sorted unique on raw source literals")
 
 
 @probe("P14b-new-codes-centrally-registered")

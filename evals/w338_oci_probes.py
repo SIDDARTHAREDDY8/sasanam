@@ -26,7 +26,7 @@ P7  Harbor caveat (documented, tested): replica without replicated
     registry-supplied "verified" badge is never an input to any verdict.
 P8  Predicate-type annotation: extracted from the sealed VSA statement;
     explicit override honored.
-P9  Pin/taxonomy honesty (2131/2131/0 sorted-unique on raw literals;
+P9  Pin/taxonomy honesty (2127/2127/0 sorted-unique on raw literals;
     new codes registered) + footer state (open none / next F428).
 P10 Green check (depth-1): tests/test_oci_referrer.py as a child.
 
@@ -51,7 +51,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2131  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable). # Wave-338 lane 4: pin 2124 -> 2126 (+2 oci-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); wave-340 merge: pin 2130 -> 2131
+TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 FOOTER_OPEN = ("F428",)
 FOOTER_NEXT = "F429"
 
@@ -396,7 +396,7 @@ def _p9():
     assert "Open findings: F428." in text, "footer open findings"
     assert FOOTER_OPEN == ("F428",) and FOOTER_NEXT == "F428"
     _held("P9-pin-taxonomy",
-          "2131/2131/0 sorted-unique; 4 oci-* codes registered "
+          "2127/2127/0 sorted-unique; 4 oci-* codes registered "
           "(+oci-bundle-not-verifiable +oci-registry-onboarding-refused); "
           "footer open none / next F428")
 

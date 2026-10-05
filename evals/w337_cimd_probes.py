@@ -21,7 +21,7 @@ P5  Pre-registration intake (mock fetcher/resolver -- all SSRF cases
     pinned verification.
 P6  Deliberate deviations pinned (no logo prefetch, no loopback
     exception, no CIMD Service, fetch-scheme fold, pin-mismatch fold).
-P7  Pin/taxonomy honesty (2131/2131/0 sorted-unique, 15 codes
+P7  Pin/taxonomy honesty (2127/2127/0 sorted-unique, 15 codes
     registered, footer state).
 P8  Green check (depth-1): tests/test_decision_codes.py as a child.
 
@@ -42,7 +42,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2131  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*).; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); Wave-340 lane 3: pin 2130 -> 2131 (+1 deadctrl-subject-mutated).
+TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 FOOTER_OPEN = ("F428",)  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
 FOOTER_NEXT = "F429"
 
@@ -671,7 +671,7 @@ def _p7a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
-    assert len(lits) == TAXONOMY_PIN == 2131, \
+    assert len(lits) == TAXONOMY_PIN == 2127, \
         "literal count %d != pin %d" % (len(lits), TAXONOMY_PIN)
     assert len(set(lits)) == TAXONOMY_PIN, "duplicate code literals"
     assert lits == sorted(lits), "literals not sorted"
@@ -681,7 +681,7 @@ def _p7a():
     assert all(dc.TAXONOMY[c]["domain"] == "mcp-oauth"
                for c in CIMD.CIMD_CODES)
     assert len(CIMD.CIMD_CODES) == 15
-    _held("P7a-taxonomy-pin", "2131/2131/0 sorted-unique; 15 cimd codes "
+    _held("P7a-taxonomy-pin", "2127/2127/0 sorted-unique; 15 cimd codes "
                               "registered in domain mcp-oauth")
 
 

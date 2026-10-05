@@ -7,7 +7,7 @@ What this battery pins:
 
 P1 (real tree): the gate passes on the shipped tree -- 0 orphans, 0 dead
   codes, entry-point set exactly {"gov.approve"}.
-P2 (pin): TAXONOMY_PIN == 2131 and the registry holds 2131 codes.
+P2 (pin): TAXONOMY_PIN == 2127 and the registry holds 2127 codes.
 P3 (footer): open none / next F428.
 P4 (synthetic, red-capable): an orphan gov module fails the gate and is
   named; a module imported only by an orphan is also orphan (fixpoint).
@@ -54,7 +54,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import no_dead_controls as gate  # noqa: E402
 
-TAXONOMY_PIN = 2131  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-337 merge: pin 2124 (2106 + 15 mcp-oauth-cimd-* + 3 tool-budget-*). No new decision codes this lane.; Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); wave-340 merge: pin 2130 -> 2131
+TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 _EXPECTED_BREAKS = set()  # never {} (wave-331 lesson); breaks documented above
 
@@ -154,22 +154,23 @@ def p1_gate_green_real_tree():
     if problems:
         return "BREAK", "P1", "; ".join(problems)
     return "HELD", "P1", ("gate PASS on real tree: %d modules, %d reached, "
-                          "entry point gov.approve, 2129/2131 codes live, "
+                          "entry point gov.approve, %d/%d codes live, "
                           "honesty-mutant-inconclusive allowlisted w/ expiry"
-                          % (result.module_count, result.reached_count))
+                          % (result.module_count, result.reached_count,
+                             result.live_code_count, result.code_count))
 
 
 def p2_pin():
-    """TAXONOMY_PIN == 2131 and the registry holds 2131 codes."""
+    """TAXONOMY_PIN == 2127 and the registry holds 2127 codes."""
     try:
         codes = gate.registered_codes(REPO_ROOT)
     except Exception:
         return "ERROR", "P2", traceback.format_exc(limit=3)
-    if TAXONOMY_PIN != 2131:
-        return "BREAK", "P2", "TAXONOMY_PIN = %r, want 2131" % TAXONOMY_PIN
-    if len(codes) != 2131:
-        return "BREAK", "P2", "registry has %d codes, want 2131" % len(codes)
-    return "HELD", "P2", "pin 2131; registry 2131 codes"
+    if TAXONOMY_PIN != 2127:
+        return "BREAK", "P2", "TAXONOMY_PIN = %r, want 2127" % TAXONOMY_PIN
+    if len(codes) != 2127:
+        return "BREAK", "P2", "registry has %d codes, want 2127" % len(codes)
+    return "HELD", "P2", "pin 2127; registry 2127 codes"
 
 
 def p3_footer():

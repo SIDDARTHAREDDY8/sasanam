@@ -16,7 +16,7 @@ for _p in (_TESTS_DIR, os.path.dirname(_TESTS_DIR)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2131  # Wave-339 lane 3: pin 2126 -> 2127 (+1 oci-registry-onboarding-refused); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); Wave-340 lane 3: pin 2130 -> 2131 (+1 deadctrl-subject-mutated).
+TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 from gov import decision_codes as DC
 from gov import oci_registry_gate as G

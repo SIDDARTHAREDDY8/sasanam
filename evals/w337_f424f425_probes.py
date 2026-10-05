@@ -36,7 +36,7 @@ import gov.tool_rate_limit as TRL  # noqa: E402
 # closed tree (wave-331 lesson: empty set, never {}).
 _EXPECTED_BREAKS = set()
 
-TAXONOMY_PIN = 2131  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-336: no new codes this lane, pin unchanged.; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); wave-340 merge: pin 2130 -> 2131
+TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 FOOTER_OPEN = "F428"  # F426 closed wave-338 lane 1.
 FOOTER_NEXT = "F429"
 
@@ -422,8 +422,8 @@ def P2d():
 # ---------------------------------------------------------------------------
 
 def P3a():
-    """Pin 2106: taxonomy 2131/2131/0 sorted-unique on raw literals."""
-    pid = "P3a-pin-taxonomy-2131-sorted"
+    """Pin 2106: taxonomy 2127/2127/0 sorted-unique on raw literals."""
+    pid = "P3a-pin-taxonomy-2127-sorted"
     # Raw-literal uniqueness on the source (wave-260 lesson): a
     # deduped-dict check would miss duplicate code literals.
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -436,7 +436,7 @@ def P3a():
     if found != sorted(found):
         _break(pid, "code literals not sorted")
         return
-    _held(pid, "taxonomy 2131/2131/0 sorted-unique on raw literals")
+    _held(pid, "taxonomy 2127/2127/0 sorted-unique on raw literals")
 
 
 def P3b():
@@ -481,7 +481,7 @@ _PROBES = [
     ("P2b-limiter-failure-record-chained", P2b),
     ("P2c-exceeded-path-unchanged", P2c),
     ("P2d-sweep-boundary-unchanged", P2d),
-    ("P3a-pin-taxonomy-2131-sorted", P3a),
+    ("P3a-pin-taxonomy-2127-sorted", P3a),
     ("P3b-footer-open-f428-next-f429", P3b),
 ]
 

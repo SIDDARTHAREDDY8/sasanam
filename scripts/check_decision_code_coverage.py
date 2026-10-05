@@ -2,7 +2,7 @@
 """Decision-code coverage table (wave-338 lane 5, R14).
 
 Bernstein #5569 ("no row claims coverage without a test"), ADAPT: the
-decision-code registry (gov/decision_codes.py, 2131 codes) is generated
+decision-code registry (gov/decision_codes.py, 2127 codes) is generated
 into a coverage table, and NO row may claim coverage without at least
 one test/eval probe asserting that code.
 
@@ -13,7 +13,7 @@ quoted (``'code'`` or ``"code"``) in at least one ``.py`` file under
 about production reachability (that is R16's dead-controls gate).
 
 Exit codes (CI-checkable):
-  0 -- table generated; all 2131 codes have >= 1 asserting probe.
+  0 -- table generated; all 2127 codes have >= 1 asserting probe.
   1 -- table generated; GAPS EXIST (listed at the end of stdout and in
        the outputs). The table is still written -- the gaps are the
        deliverable, for the closure lanes to work down.
@@ -39,7 +39,7 @@ import re
 import sys
 import time
 
-COVERAGE_PIN = 2135  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-339 lane 2: registry size after +2 witness codes.; Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); Wave-340 lane 3: pin 2130 -> 2131 (+1 deadctrl-subject-mutated). Wave-342 lane 3: pin 2131 -> 2135 (+4 label-* codes: label-egress-refused, label-remedy-empty-unliftable, label-annotation-unregistered, label-trust-floor-refused).
+COVERAGE_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes: single-use-refused, evidence-refused, key-identity-refused, spiffe-refused).
 
 # A quoted token that could be a decision code: lowercase alnum runs
 # with dashes/dots/underscores, both quote styles.
@@ -110,8 +110,8 @@ def main(argv):
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     md = io.StringIO()
     md.write("# Decision-code coverage table (generated)\n\n")
-    md.write("Generated: %s UTC · registry pin: %d · base: wave-342 lane 4 "
-             "(coverage round 4)\n\n" % (stamp, COVERAGE_PIN))
+    md.write("Generated: %s UTC · registry pin: %d · base: wave-342 lane 6 "
+             "(registry hygiene: -4 family-fallback codes, +at-risk emission)\n\n" % (stamp, COVERAGE_PIN))
     md.write("Rule (Bernstein #5569, ADAPT): no row claims coverage "
              "without a test. A code counts as covered when its literal "
              "string appears quoted in at least one ``.py`` file under "

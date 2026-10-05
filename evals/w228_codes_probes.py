@@ -187,6 +187,21 @@ _NON_CODES = frozenset([
 ])
 
 
+# Wave-342 lane 6: family-fallback base-class ``code`` defaults. Each of
+# these lives on an exception base class whose every concrete subclass
+# overrides ``code``; no raise site in gov/ ever raises the base class
+# directly (verified by w342_deadcode_probes.test_a7). They are
+# implementation vocabulary (a defensive default so a subclass that
+# forgot to override still carries a meaningful family code), not
+# evidence vocabulary: the taxonomy maps emitted refusal strings only.
+_FAMILY_FALLBACK_CODES = frozenset({
+    "single-use-refused",    # gov/single_use.py: SingleUseError
+    "evidence-refused",      # gov/single_use.py: EvidenceError
+    "key-identity-refused",  # gov/key_identity.py: KeyIdentityError
+    "spiffe-refused",        # gov/spiffe_credential_provider.py: SpiffeError
+})
+
+
 def _const_used_as_code(text, name):
     for m in re.finditer(r'\b%s\b' % re.escape(name), text):
         pre = text[max(0, m.start() - 100):m.start()]
@@ -236,6 +251,15 @@ def _scan_vocabulary():
             if m.group(1) not in _NON_CODES:
                 codes.add(m.group(1))
     codes -= _NON_CODES
+    # Wave-342 lane 6: family-fallback base-class codes. These
+    # class-level ``code`` defaults live on exception base classes whose
+    # every concrete subclass overrides ``code``; no raise site ever
+    # emits the base value (all raise sites use the subclass). They are
+    # implementation vocabulary, not evidence vocabulary -- see the
+    # amended inventory idiom 1 in gov/decision_codes.py. A NEW base
+    # class with this shape is still picked up by _CLASS_ATTR_RE and
+    # fails test_509 until its fate is decided here.
+    codes -= _FAMILY_FALLBACK_CODES
     # Curated: memory-inbox pending-review reasons are refusal strings
     # by construction (fail-closed pending review), not literals.
     codes.update({"untrusted_tier", "tainted_run", "carrier_mismatch"})
