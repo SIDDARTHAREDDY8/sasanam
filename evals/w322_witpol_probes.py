@@ -18,7 +18,7 @@ P3 (3): contract probes -- verify returns the verified VALUES (dict),
     change breaks); trust anchor authority (doc-declared signers do not
     count, only the anchor's do).
 P4 (2): regressions -- footer open none / next F409; pin taxonomy
-    2083/2083/0 sorted on source literals.
+    2088/2088/0 sorted on source literals.
 
 
 
@@ -51,7 +51,7 @@ from gov import checkpoint_note as CN  # noqa: E402
 from gov.witness_log import WitnessLog  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
-TAXONOMY_PIN = 2083#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*) # Wave-334 lane 6: pin 2077 -> 2083 (+6 incident-gpai9-*).
+TAXONOMY_PIN = 2088#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*)
 
 
 FOOTER_OPEN = "F413"
@@ -534,7 +534,7 @@ def _p3c():
 # P4: regressions
 # ---------------------------------------------------------------------------
 
-@probe("P4-pin-taxonomy-2083-sorted")
+@probe("P4-pin-taxonomy-2088-sorted")
 
 
 def _p4a():
@@ -542,11 +542,11 @@ def _p4a():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2083#Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*)
+    ok = (len(lits) == TAXONOMY_PIN == 2088#Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*)
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P4-pin-taxonomy-2083-sorted", "2083/2083/0 sorted")
-    return _break("P4-pin-taxonomy-2083-sorted",
+        return _held("P4-pin-taxonomy-2088-sorted", "2088/2088/0 sorted")
+    return _break("P4-pin-taxonomy-2088-sorted",
 
 
                   "got %d literals" % (len(lits),))
