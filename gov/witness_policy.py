@@ -27,9 +27,12 @@ What it provides:
   soft False (the witness_consistency contract).
 * :func:`check_policy_update` -- verifies a new document AND enforces
   TUF N+1 version monotonicity plus policy_id continuity: the
-  stale-policy replay defense. A key DROP requires a threshold-signed
-  strictly-newer version -- the threshold signature IS the drop
-  authorization; there is no separate drop ceremony.
+  stale-policy replay defense. When the policy-signer SET changes, TUF
+  section 5.3 dual-threshold applies: threshold(old set) AND
+  threshold(new set) signatures over the new document, refused
+  ``witness-policy-dual-threshold-unmet``. A key DROP requires a
+  threshold-signed strictly-newer version -- the threshold signature IS
+  the drop authorization; there is no separate drop ceremony.
 * :func:`active_witnesses` -- the quorum-eligible set right now
   (validity window covers ``now``, status qualified/usable).
 * :func:`verifier_inputs` -- ``{operator_vkeys, witness_vkeys,
@@ -89,6 +92,7 @@ WITNESS_POLICY_SIGNATURE_INVALID = "witness-policy-signature-invalid"
 WITNESS_POLICY_THRESHOLD_UNMET = "witness-policy-threshold-unmet"
 WITNESS_POLICY_VERSION_ROLLBACK = "witness-policy-version-rollback"
 WITNESS_POLICY_ID_MISMATCH = "witness-policy-id-mismatch"
+WITNESS_POLICY_DUAL_THRESHOLD_UNMET = "witness-policy-dual-threshold-unmet"
 
 __all__ = [
     "SCHEMA",
@@ -611,7 +615,73 @@ def check_policy_update(old_policy, new_doc, trust_anchor, now=None):
         _refuse(WITNESS_POLICY_VERSION_ROLLBACK,
                 "new version %d does not exceed old version %d" % (
                     new["version"], old_policy["version"]))
+    _enforce_dual_threshold(old_policy, new_doc, new)
     return new
+
+
+def _signer_key_set(signers):
+    """The (key_id, public_key) identity set of a policy-signer list."""
+    out = set()
+    for s in signers or ():
+        if isinstance(s, dict):
+            out.add((s.get("key_id"), s.get("public_key")))
+    return out
+
+
+def _count_valid_signatures(sigs, signers, msg):
+    """Count distinct valid signatures over ``msg`` from ``signers``.
+
+    Unknown keyids are ignored (MUST-ignore, the rotation rule); a
+    KNOWN signer's bad signature refuses
+    ``witness-policy-signature-invalid`` (forgery signal, never
+    ignored). Each key counts once however many times it signed.
+    """
+    _cn, ed = _deps()
+    authorized = {s["key_id"]: bytes.fromhex(s["public_key"])
+                  for s in signers}
+    valid_from = set()
+    for s in sigs:
+        keyid = s["keyid"].lower()
+        pub = authorized.get(keyid)
+        if pub is None:
+            continue
+        if ed.verify(pub, msg, bytes.fromhex(s["sig"])) is not True:
+            _refuse(WITNESS_POLICY_SIGNATURE_INVALID,
+                    "signature from authorized signer %s... does not "
+                    "verify -- forgery signal" % (keyid[:8],))
+        valid_from.add(keyid)
+    return len(valid_from)
+
+
+def _enforce_dual_threshold(old_policy, new_doc, new):
+    """TUF section 5.3: a change to the policy-signer SET must be
+    authorized by threshold(old set) AND threshold(new set) signatures
+    over the new document -- the rotation cannot be self-authorized by
+    either side alone. An unchanged signer set keeps the anchor-only
+    behavior (the trust anchor remains the authority).
+
+    Refuses ``witness-policy-dual-threshold-unmet`` when either side
+    falls short. Returns None on success.
+    """
+    old_signers = old_policy.get("policy_signers")
+    new_signers = new["policy_signers"]
+    if _signer_key_set(old_signers) == _signer_key_set(new_signers):
+        return
+    old_threshold = old_policy.get("policy_threshold")
+    new_threshold = new["policy_threshold"]
+    if (not _is_int(old_threshold) or old_threshold < 1
+            or not _is_int(new_threshold) or new_threshold < 1):
+        _refuse(WITNESS_POLICY_MALFORMED,
+                "policy thresholds must be positive ints")
+    sigs = _check_envelope(new_doc)
+    msg = canonical_policy_bytes(_public_body(new))
+    old_ok = _count_valid_signatures(sigs, old_signers, msg)
+    new_ok = _count_valid_signatures(sigs, new_signers, msg)
+    if old_ok < old_threshold or new_ok < new_threshold:
+        _refuse(WITNESS_POLICY_DUAL_THRESHOLD_UNMET,
+                "signer-set change needs threshold(old)=%d "
+                "(have %d) AND threshold(new)=%d (have %d)"
+                % (old_threshold, old_ok, new_threshold, new_ok))
 
 
 # ---------------------------------------------------------------------------

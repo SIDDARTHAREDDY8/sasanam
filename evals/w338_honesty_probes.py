@@ -31,7 +31,7 @@ R14 (Bernstein #5569 "no row claims coverage without a test"):
   P5  coverage checker runs, writes the generated table, and reports
       honestly: exit 1 with the gap list (gaps are the deliverable --
       NOT hand-closed this lane), exit 2 on a pin mismatch.
-P6  Pin/taxonomy honesty (2126/2126/0 sorted-unique, footer state).
+P6  Pin/taxonomy honesty (2128/2128/0 sorted-unique, footer state).
 P7  Green check (depth-1): tests/test_evidence_verify_offline as a
     child with GOV_SKIP_GREEN=1.
 
@@ -65,7 +65,7 @@ sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "tests"))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
-TAXONOMY_PIN = 2126  # Wave-338 lane 5: pin at 6cdf5fdd.
+TAXONOMY_PIN = 2128  # Wave-338 lane 5: pin at 6cdf5fdd.
 FOOTER_OPEN = ("F426",)
 FOOTER_NEXT = "F427"
 
@@ -328,8 +328,8 @@ def _p5():
     assert os.path.isfile(md) and os.path.isfile(js), \
         "checker did not write the generated table"
     doc = json.load(open(js, encoding="utf-8"))
-    assert doc["pin"] == TAXONOMY_PIN == 2126, "table pin mismatch"
-    assert len(doc["codes"]) == 2126
+    assert doc["pin"] == TAXONOMY_PIN == 2128, "table pin mismatch"
+    assert len(doc["codes"]) == 2128
     gaps = doc["gaps"]
     if proc.returncode == 1:
         assert gaps, "exit 1 must come with a gap list"
@@ -339,7 +339,7 @@ def _p5():
     elif proc.returncode == 0:
         assert not gaps, "exit 0 with gaps is dishonest"
         _held("P5-coverage-checker-reports-honestly",
-              "exit 0; all 2126 codes covered")
+              "exit 0; all 2128 codes covered")
     else:
         raise AssertionError("checker exit %d: %s"
                              % (proc.returncode, proc.stderr[-400:]))
@@ -355,12 +355,12 @@ def _p6a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
-    assert len(lits) == TAXONOMY_PIN == 2126, \
+    assert len(lits) == TAXONOMY_PIN == 2128, \
         "literal count %d != pin %d" % (len(lits), TAXONOMY_PIN)
     assert len(set(lits)) == TAXONOMY_PIN, "duplicate code literals"
     assert lits == sorted(lits), "literals not sorted"
     assert len(dc.TAXONOMY) == TAXONOMY_PIN
-    _held("P6a-taxonomy-pin", "2126/2126/0 sorted-unique literals")
+    _held("P6a-taxonomy-pin", "2128/2128/0 sorted-unique literals")
 
 
 @_probe("P6b-footer")

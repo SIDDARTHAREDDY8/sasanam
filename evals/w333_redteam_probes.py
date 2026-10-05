@@ -33,8 +33,8 @@ P3  Binding + choke point: tampered MAC, attacker-sealed binding,
     issuer_hint mismatch, credential AS mismatch, http seal.
 P4  F415/F416 closure regressions (relabelled w332 probes).
 P5  Shamir write-time residual (relabelled w332 probe).
-P6  Pin/footer honesty: taxonomy 2126/2126/0 on raw literals,
-    footer open none / next F417, live pin constants == 2126.
+P6  Pin/footer honesty: taxonomy 2128/2128/0 on raw literals,
+    footer open none / next F417, live pin constants == 2128.
 P7  Child mode: w332_mcpoauth battery, BREAKs inside the cascade.
 """
 
@@ -51,7 +51,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2126 # Wave-332 merge: pin 2058 -> 2062 (+4 mcp-oauth-*).; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
+TAXONOMY_PIN = 2128 # Wave-332 merge: pin 2058 -> 2062 (+4 mcp-oauth-*).; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
 FOOTER_OPEN = "none"  # All findings CLOSED; F426 closed wave-338 lane 1.
 FOOTER_NEXT = "F427"  # Next free finding number.
 
@@ -574,21 +574,21 @@ def _p5a():
 # P6: pin + footer honesty.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2126-sorted")
+@probe("P6a-pin-taxonomy-2128-sorted")
 def _p6a():
-    if TAXONOMY_PIN != 2126:
-        return _break("P6a-pin-taxonomy-2126-sorted",
-                      "TAXONOMY_PIN is %r, want 2126" % (TAXONOMY_PIN,))
+    if TAXONOMY_PIN != 2128:
+        return _break("P6a-pin-taxonomy-2128-sorted",
+                      "TAXONOMY_PIN is %r, want 2128" % (TAXONOMY_PIN,))
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
-    if len(lits) != 2126 or len(set(lits)) != 2126 \
+    if len(lits) != 2128 or len(set(lits)) != 2128 \
             or lits != sorted(lits):
-        return _break("P6a-pin-taxonomy-2126-sorted",
-                      "want 2126/2126/0 sorted, got %d/%d/sorted=%s"
+        return _break("P6a-pin-taxonomy-2128-sorted",
+                      "want 2128/2128/0 sorted, got %d/%d/sorted=%s"
                       % (len(lits), len(set(lits)), lits == sorted(lits)))
-    return _held("P6a-pin-taxonomy-2126-sorted",
-                 "2126/2126/0 sorted unique on raw source literals")
+    return _held("P6a-pin-taxonomy-2128-sorted",
+                 "2128/2128/0 sorted unique on raw source literals")
 
 
 @probe("P6b-footer-open-none-next-f427")
@@ -639,13 +639,13 @@ def _p6c():
             for m in re.finditer(r"^TAXONOMY_PIN\s*=\s*(\d+)", src, re.M):
                 if rel in grandfathered:
                     continue
-                if int(m.group(1)) != 2126:
+                if int(m.group(1)) != 2128:
                     bad.append("%s:%s" % (rel, m.group(1)))
     if bad:
         return _break("P6c-pin-constants-2121-live",
                       "stale pin constants: %s" % (bad[:6],))
     return _held("P6c-pin-constants-2121-live",
-                 "all live module-level TAXONOMY_PIN == 2126")
+                 "all live module-level TAXONOMY_PIN == 2128")
 
 
 # ---------------------------------------------------------------------------

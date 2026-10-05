@@ -1,10 +1,10 @@
 # Decision-code coverage table (generated)
 
-Generated: 2026-10-05T09:00:29Z UTC · registry pin: 2126 · base: wave-338 lane 5
+Generated: 2026-10-05T09:46:26Z UTC · registry pin: 2128 · base: wave-339 lane 2
 
 Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code counts as covered when its literal string appears quoted in at least one ``.py`` file under ``tests/`` or ``evals/``. Production ``emit()`` call sites do not count.
 
-**Covered: 1885 / 2126** · **Gaps: 241**
+**Covered: 1887 / 2128** · **Gaps: 241**
 
 | code | domain | severity | covered | asserted in |
 | ---- | ------ | -------- | ------- | ----------- |
@@ -2070,7 +2070,8 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `witness-consistency-fork-detected` | witness | high | yes | evals/w319_witness_probes.py, evals/w320_redteam_probes.py, evals/w322_witpub_probes.py (+4) |
 | `witness-consistency-invalid` | witness | medium | yes | evals/w319_witness_probes.py, evals/w322_witpub_probes.py, evals/w323_monitor_probes.py (+2) |
 | `witness-consistency-missing` | witness | medium | yes | evals/w319_witness_probes.py, tests/test_witness_consistency.py |
-| `witness-cosignature-invalid` | witness | medium | yes | evals/w319_witness_probes.py, evals/w322_witpub_probes.py, evals/w323_redteam_probes.py (+2) |
+| `witness-cosignature-invalid` | witness | medium | yes | evals/w319_witness_probes.py, evals/w322_witpub_probes.py, evals/w323_redteam_probes.py (+3) |
+| `witness-daemon-state-failed` | witness | high | yes | evals/w339_witness_probes.py, tests/test_witness_daemon.py |
 | `witness-gossip-conflict` | witness | high | yes | evals/w319_witness_probes.py, evals/w320_redteam_probes.py |
 | `witness-intermediates-missing` | witness | high | yes | evals/w240_witness_config_probes.py, tests/test_witness_config_rule.py |
 | `witness-log-checkpoint-malformed` | witness | medium | yes | tests/test_witness_log.py |
@@ -2086,18 +2087,19 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `witness-monitor-state-corrupt` | witness | high | yes | evals/w323_monitor_probes.py, evals/w324_redteam_probes.py, tests/test_witness_monitor.py |
 | `witness-monitor-state-mismatch` | witness | high | yes | evals/w323_monitor_probes.py, tests/test_witness_monitor.py |
 | `witness-monitor-state-missing` | witness | high | yes | evals/w323_monitor_probes.py, evals/w324_redteam_probes.py, tests/test_witness_monitor.py |
-| `witness-note-malformed` | witness | medium | yes | evals/w322_witpub_probes.py, evals/w323_redteam_probes.py, tests/test_witness_publish.py |
+| `witness-note-malformed` | witness | medium | yes | evals/w322_witpub_probes.py, evals/w323_redteam_probes.py, tests/test_witness_daemon.py (+1) |
+| `witness-policy-dual-threshold-unmet` | witness | high | yes | evals/w339_witness_probes.py, tests/test_witness_daemon.py |
 | `witness-policy-duplicate-witness` | witness | medium | yes | evals/w322_witpol_probes.py, evals/w323_redteam_probes.py, tests/test_witness_policy.py |
 | `witness-policy-expired` | witness | medium | yes | evals/w322_witpol_probes.py |
 | `witness-policy-id-mismatch` | witness | medium | yes | evals/w322_witpol_probes.py, evals/w323_monitor_probes.py, evals/w323_redteam_probes.py (+1) |
 | `witness-policy-key-unverifiable` | witness | medium | yes | evals/w322_witpol_probes.py |
 | `witness-policy-malformed` | witness | medium | yes | evals/w323_monitor_probes.py, evals/w324_redteam_probes.py, tests/test_witness_consistency.py (+1) |
-| `witness-policy-signature-invalid` | witness | medium | yes | evals/w322_witpol_probes.py, evals/w323_redteam_probes.py, tests/test_witness_policy.py |
+| `witness-policy-signature-invalid` | witness | medium | yes | evals/w322_witpol_probes.py, evals/w323_redteam_probes.py, tests/test_witness_daemon.py (+1) |
 | `witness-policy-threshold-invalid` | witness | medium | yes | evals/w322_witpol_probes.py, tests/test_witness_policy.py |
 | `witness-policy-threshold-unmet` | witness | medium | yes | evals/w322_witpol_probes.py, evals/w323_redteam_probes.py, tests/test_witness_policy.py |
 | `witness-policy-unknown-field` | witness | medium | yes | evals/w322_witpol_probes.py, evals/w323_redteam_probes.py, evals/w325_resid_probes.py (+1) |
 | `witness-policy-version-rollback` | witness | medium | yes | evals/w322_witpol_probes.py, evals/w323_monitor_probes.py, evals/w323_redteam_probes.py (+2) |
-| `witness-publish-quorum-unmet` | witness | medium | yes | evals/w322_witpub_probes.py, evals/w323_redteam_probes.py, tests/test_witness_publish.py |
+| `witness-publish-quorum-unmet` | witness | medium | yes | evals/w322_witpub_probes.py, evals/w323_redteam_probes.py, evals/w339_witness_probes.py (+2) |
 | `witness-publish-rollback` | witness | high | yes | evals/w322_witpub_probes.py, evals/w323_monitor_probes.py, evals/w323_redteam_probes.py (+2) |
 | `witness-quorum-unmet` | witness | medium | yes | evals/w319_witness_probes.py, evals/w320_redteam_probes.py, evals/w322_witpub_probes.py (+4) |
 | `witness-rekor-anchor-expired` | witness | medium | yes | evals/w314_rekor_probes.py, evals/w315_redteam_probes.py, tests/test_witness_rekor.py |

@@ -1,7 +1,7 @@
 {
- "generated": "2026-10-05T09:00:29Z",
- "pin": 2126,
- "covered": 1885,
+ "generated": "2026-10-05T09:46:26Z",
+ "pin": 2128,
+ "covered": 1887,
  "gaps": [
   "absence-refused",
   "admission-at-risk-accepted",
@@ -21022,7 +21022,18 @@
     "evals/w322_witpub_probes.py",
     "evals/w323_redteam_probes.py",
     "evals/w324_redteam_probes.py",
+    "evals/w339_witness_probes.py",
     "tests/test_witness_publish.py"
+   ]
+  },
+  {
+   "code": "witness-daemon-state-failed",
+   "domain": "witness",
+   "severity": "high",
+   "covered": true,
+   "files": [
+    "evals/w339_witness_probes.py",
+    "tests/test_witness_daemon.py"
    ]
   },
   {
@@ -21188,7 +21199,18 @@
    "files": [
     "evals/w322_witpub_probes.py",
     "evals/w323_redteam_probes.py",
+    "tests/test_witness_daemon.py",
     "tests/test_witness_publish.py"
+   ]
+  },
+  {
+   "code": "witness-policy-dual-threshold-unmet",
+   "domain": "witness",
+   "severity": "high",
+   "covered": true,
+   "files": [
+    "evals/w339_witness_probes.py",
+    "tests/test_witness_daemon.py"
    ]
   },
   {
@@ -21252,6 +21274,7 @@
    "files": [
     "evals/w322_witpol_probes.py",
     "evals/w323_redteam_probes.py",
+    "tests/test_witness_daemon.py",
     "tests/test_witness_policy.py"
    ]
   },
@@ -21309,6 +21332,8 @@
    "files": [
     "evals/w322_witpub_probes.py",
     "evals/w323_redteam_probes.py",
+    "evals/w339_witness_probes.py",
+    "tests/test_witness_daemon.py",
     "tests/test_witness_publish.py"
    ]
   },

@@ -7,7 +7,7 @@ What this battery pins:
 
 P1 (real tree): the gate passes on the shipped tree -- 0 orphans, 0 dead
   codes, entry-point set exactly {"gov.approve"}.
-P2 (pin): TAXONOMY_PIN == 2126 and the registry holds 2126 codes.
+P2 (pin): TAXONOMY_PIN == 2128 and the registry holds 2128 codes.
 P3 (footer): open none / next F427.
 P4 (synthetic, red-capable): an orphan gov module fails the gate and is
   named; a module imported only by an orphan is also orphan (fixpoint).
@@ -54,7 +54,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import no_dead_controls as gate  # noqa: E402
 
-TAXONOMY_PIN = 2126  # Wave-337 merge: pin 2124 (2106 + 15 mcp-oauth-cimd-* + 3 tool-budget-*). No new decision codes this lane.
+TAXONOMY_PIN = 2128  # Wave-337 merge: pin 2124 (2106 + 15 mcp-oauth-cimd-* + 3 tool-budget-*). No new decision codes this lane.
 
 _EXPECTED_BREAKS = set()  # never {} (wave-331 lesson); breaks documented above
 
@@ -160,16 +160,16 @@ def p1_gate_green_real_tree():
 
 
 def p2_pin():
-    """TAXONOMY_PIN == 2126 and the registry holds 2126 codes."""
+    """TAXONOMY_PIN == 2128 and the registry holds 2128 codes."""
     try:
         codes = gate.registered_codes(REPO_ROOT)
     except Exception:
         return "ERROR", "P2", traceback.format_exc(limit=3)
-    if TAXONOMY_PIN != 2126:
-        return "BREAK", "P2", "TAXONOMY_PIN = %r, want 2126" % TAXONOMY_PIN
-    if len(codes) != 2126:
-        return "BREAK", "P2", "registry has %d codes, want 2126" % len(codes)
-    return "HELD", "P2", "pin 2126; registry 2126 codes"
+    if TAXONOMY_PIN != 2128:
+        return "BREAK", "P2", "TAXONOMY_PIN = %r, want 2128" % TAXONOMY_PIN
+    if len(codes) != 2128:
+        return "BREAK", "P2", "registry has %d codes, want 2128" % len(codes)
+    return "HELD", "P2", "pin 2128; registry 2128 codes"
 
 
 def p3_footer():
