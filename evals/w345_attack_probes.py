@@ -281,13 +281,16 @@ def test_b3_garbage_padded_base64_correctly_ignored():
 @_t
 def test_z0_f436_filed_open_with_new_footer():
     """F436 is filed OPEN with the new footer: pins the filing so the
-    miss cannot go undocumented."""
+    miss cannot go undocumented. (Wave-346 lane 6 filed F437/F438, so
+    the footer moved to open F436, F437, F438 / next F439.)"""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F436 filed 2026-10-05, wave-345 lane 5" in text
+          and "(F437 filed 2026-10-05, wave-346 lane 6" in text
+          and "(F438 filed 2026-10-05, wave-346 lane 6" in text
           and "LOW, OPEN:" in text
-          and "Next free finding: **F437**" in text
-          and "Open findings: F436." in text)
-    return ("HELD" if ok else "BREAK", "F436 filed open=%s" % ok)
+          and "Next free finding: **F439**" in text
+          and "Open findings: F436, F437, F438." in text)
+    return ("HELD" if ok else "BREAK", "F436/F437/F438 filed open=%s" % ok)
 
 
 @_t

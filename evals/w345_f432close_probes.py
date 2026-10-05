@@ -31,8 +31,8 @@ Probes:
       fast with no exceptions.
   P7  layering: URL-encoded single-escape credentials block via the
       2-layer decode budget.
-  P8  pin + footer: taxonomy pin 2134, footer open F433, F434, F435 /
-      next F436.
+  P8  pin + footer: taxonomy pin 2134, footer open F436, F437, F438 /
+      next F439 (wave-346 lane 6 filed F437/F438).
 
 Usage:
   ~/workspace/.gov-venv/bin/python evals/w345_f432close_probes.py
@@ -52,8 +52,8 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2134  # Wave-345: pin 2134 (no new codes in wave-345 lane 1)
-FOOTER_OPEN = "F436"
-FOOTER_NEXT = "F437"
+FOOTER_OPEN = "F436, F437, F438"
+FOOTER_NEXT = "F439"
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -197,7 +197,7 @@ def p8_pin_and_footer():
     footer = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ok and ("Next free finding: **%s**" % FOOTER_NEXT) in footer
     ok = ok and ("Open findings: %s." % FOOTER_OPEN) in footer
-    return _check("p8: pin 2134, footer open F436 / next F437",
+    return _check("p8: pin 2134, footer open F436, F437, F438 / next F439",
                   ok, footer[-60:])
 
 
