@@ -15,18 +15,21 @@ A conservative entropy tripwire blocks high-entropy tokens that appear next
 to credential keywords (``password``, ``api_key``, ...) even when they do
 not match a known format.
 
-ENCODING-AWARE MATCHING (F2, extended F8). The credential patterns above
+ENCODING-AWARE MATCHING (F2, extended F8, F428). The credential patterns above
 are syntactic, so an attacker can smuggle a credential past them with one
-encoding step (hex, base64, base32, URL-encoding). ``find_credential``
+encoding step (hex, base64, base32, URL-encoding, JSFuck). ``find_credential``
 therefore decodes likely encodings BEFORE pattern matching, bounded to 2
 layers: each layer finds candidate encoded runs, decodes only those that
 validate (base64/base32 round-trip / even-length hex / percent-decoding
-that changes the text) AND decode to mostly-printable ASCII, then re-runs
+that changes the text / strict static JSFuck evaluation) AND decode to
+mostly-printable ASCII, then re-runs
 the credential rules on the decoded variants. Innocent base64-looking text
 (random tokens, hashes) decodes to binary and is rejected by the printable
 check, so it is never blocked; text whose DECODED form matches a credential
 regex is blocked because the decoded content genuinely contains a
-credential-shaped string.
+credential-shaped string. The JSFuck decoder is a strict bounded
+evaluator, never a JS engine: undecodable runs are ignored, and
+Function() (arbitrary code) always fails closed.
 
 FORM VARIANTS (F8). Every candidate string (the original text and each
 decoded variant) is also checked whitespace-stripped and reversed: those
@@ -315,17 +318,25 @@ def _shannon_entropy(text):
 
 
 # ------------------------------------------------- encoding-aware matching
-# F2: decode likely encodings BEFORE credential pattern matching, bounded to
+# F2/F428: decode likely encodings BEFORE credential pattern matching, bounded to
 # 2 layers. Every candidate must VALIDATE (strict decode + round-trip for
-# base64, even-length for hex) and decode to mostly-printable ASCII;
+# base64, even-length for hex, strict static evaluation for JSFuck) and decode
+# to mostly-printable ASCII;
 # otherwise it is not a hidden credential, it is a random token/hash, and it
 # is ignored. This keeps innocent base64-looking text unblocked.
 
 _B64_RUN = re.compile(r"[A-Za-z0-9+/\-_]{24,}={0,2}")
 _HEX_RUN = re.compile(r"(?:[0-9a-fA-F]{2}){16,}")
 _B32_RUN = re.compile(r"[A-Z2-7]{24,}={0,6}")
+# F428: JSFuck is a JS-execution encoding over the alphabet []()!+- (unary
+# minus included). A run of 64+ alphabet chars is essentially never
+# innocent text; genuine single-char JSFuck is shorter but a single
+# decoded char can never match a credential rule, so the threshold only
+# gates decode ATTEMPTS, never blocking decisions.
+_JSFUCK_RUN = re.compile(r"[\[\]()!+\-]{64,}")
 _WS_RUN = re.compile(r"\s+")
 _MAX_DECODE_BYTES = 4096  # bound on any single decoded blob
+_MAX_JSFUCK_BYTES = 100000  # bound on a JSFuck run (artifact: 34635)
 _MAX_CANDIDATES = 8       # bound on decode attempts per layer
 
 
@@ -413,6 +424,385 @@ def _try_b32_decode(run):
         return None
 
 
+# --------------------------------------------------- F428: JSFuck decoding
+# JSFuck is a JS-execution encoding: arbitrary JS written with only the
+# characters []()!+- (unary minus included). Salt Labs vs Manus (2026-10-03)
+# showed it used for prompt-injection in the wild; the wave-341 attack lane
+# showed a JSFuck-encoded slack token missing every DLP seam while the
+# plain/base64/hex/base32 forms all block.
+#
+# A static decoder is safe here because it never executes: it is a strict,
+# bounded recursive-descent evaluator for the JSFuck construction set that
+# real encoders emit (literals ![]/!![]/+/-, string coercion, indexing,
+# the "constructor"/"toString" member ladder, and calls of the safe
+# primitive constructors String/Number/Boolean). Anything outside that set
+# — notably Function() (arbitrary code) — fails closed: the run is not a
+# decodable payload and is ignored, exactly like a base64 run that fails
+# round-trip validation. The decoded text must additionally be
+# mostly-printable ASCII and differ from the input before it becomes a
+# variant, so the false-positive surface stays where it already was: the
+# credential regexes themselves. A run that merely LOOKS like JSFuck but
+# decodes to innocent text (or fails to decode) never blocks.
+
+
+class _JSFuckFail(Exception):
+    """Strict-decode failure: the run is not decodable JSFuck."""
+
+
+_JSFuck_UNDEF = ("undef", None)
+
+# V8 Function.prototype.toString forms for the callable surface the
+# decoder supports. The artifact was node-verified (V8); a non-V8 form
+# simply fails closed (no variant), it never mis-decodes.
+_JSFUCK_FUNC_SOURCE = {
+    "filter": "function filter() { [native code] }",
+    "flat": "function flat() { [native code] }",
+    "map": "function map() { [native code] }",
+    "fill": "function fill() { [native code] }",
+    "find": "function find() { [native code] }",
+    "includes": "function includes() { [native code] }",
+    "indexOf": "function indexOf() { [native code] }",
+    "join": "function join() { [native code] }",
+    "sort": "function sort() { [native code] }",
+    "reverse": "function reverse() { [native code] }",
+    "slice": "function slice() { [native code] }",
+    "entries": "function entries() { [native code] }",
+    "keys": "function keys() { [native code] }",
+    "values": "function values() { [native code] }",
+    "String": "function String() { [native code] }",
+    "Number": "function Number() { [native code] }",
+    "Boolean": "function Boolean() { [native code] }",
+    "Array": "function Array() { [native code] }",
+    "Function": "function Function() { [native code] }",
+}
+
+_JSFUCK_ARR_MEMBERS = set(_JSFUCK_FUNC_SOURCE) | {"constructor", "length"}
+
+
+def _jsfuck_truthy(v):
+    k = v[0]
+    if k == "undef":
+        return False
+    if k == "bool":
+        return v[1]
+    if k == "num":
+        return v[1] != 0 and v[1] == v[1]  # nonzero and not NaN
+    if k == "str":
+        return len(v[1]) > 0
+    return True  # arrays and functions are truthy
+
+
+def _jsfuck_primitive(v):
+    k = v[0]
+    if k in ("undef", "bool", "num", "str"):
+        return v
+    if k == "arr":
+        # Array.prototype.toString: join(",").
+        return ("str", ",".join(_jsfuck_to_string(e) for e in v[1]))
+    if k == "func":
+        try:
+            return ("str", _JSFUCK_FUNC_SOURCE[v[1]])
+        except KeyError:
+            raise _JSFuckFail("unknown function %r" % (v[1],))
+    raise _JSFuckFail("uncoercible %r" % (k,))
+
+
+def _jsfuck_to_number(v):
+    v = _jsfuck_primitive(v)
+    k = v[0]
+    if k == "undef":
+        return float("nan")
+    if k == "bool":
+        return 1.0 if v[1] else 0.0
+    if k == "num":
+        return v[1]
+    s = v[1].strip()
+    if s == "":
+        return 0.0
+    if s in ("Infinity", "+Infinity"):
+        return float("inf")
+    if s == "-Infinity":
+        return float("-inf")
+    try:
+        if (s[:2].lower() == "0x" and len(s) > 2
+                and all(c in "0123456789abcdefABCDEF" for c in s[2:])):
+            return float(int(s, 16))
+        return float(s)
+    except ValueError:
+        return float("nan")
+
+
+def _jsfuck_to_string(v):
+    v = _jsfuck_primitive(v)
+    k = v[0]
+    if k == "undef":
+        return "undefined"
+    if k == "bool":
+        return "true" if v[1] else "false"
+    if k == "num":
+        n = v[1]
+        if n != n:
+            return "NaN"
+        if n == float("inf"):
+            return "Infinity"
+        if n == float("-inf"):
+            return "-Infinity"
+        if n == int(n) and abs(n) < 1e21:
+            return str(int(n))
+        return repr(n)
+    return v[1]
+
+
+def _jsfuck_num_to_string_radix(n, radix):
+    """Number.prototype.toString(radix), integer n, radix 2..36."""
+    if n != n:
+        return "NaN"
+    if n == float("inf"):
+        return "Infinity"
+    if n == float("-inf"):
+        return "-Infinity"
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    neg = n < 0
+    n = int(abs(n))
+    if n == 0:
+        return "0"
+    out = ""
+    while n:
+        out = digits[n % radix] + out
+        n //= radix
+    return ("-" if neg else "") + out
+
+
+class _JSFuckParser:
+    """Strict recursive-descent evaluator for the JSFuck subset.
+
+    Grammar (fully parenthesized, encoder-emitted):
+      expr    := unary (("+" | "-") unary)*
+      unary   := ("!" | "+" | "-")* postfix
+      postfix := primary (("[" expr "]") | call)*
+      primary := "[]" | "(" expr ")"
+      call    := "(" (expr ("," expr)*)? ")"
+    """
+
+    def __init__(self, text, max_steps=2000000, max_depth=600):
+        self.t = text
+        self.n = len(text)
+        self.i = 0
+        self.steps = 0
+        self.max_steps = max_steps
+        self.max_depth = max_depth
+
+    def _step(self):
+        self.steps += 1
+        if self.steps > self.max_steps:
+            raise _JSFuckFail("step budget")
+
+    def peek(self):
+        return self.t[self.i] if self.i < self.n else ""
+
+    def parse(self, depth=0):
+        if depth > self.max_depth:
+            raise _JSFuckFail("depth")
+        v = self._parse_add(depth + 1)
+        if self.i != self.n:
+            raise _JSFuckFail("trailing input")
+        return v
+
+    def _parse_add(self, depth):
+        self._step()
+        v = self._parse_unary(depth)
+        while self.peek() in ("+", "-"):
+            op = self.t[self.i]
+            self.i += 1
+            rhs = self._parse_unary(depth)
+            v = self._apply_add(v, rhs, op)
+        return v
+
+    def _parse_unary(self, depth):
+        self._step()
+        ch = self.peek()
+        if ch == "!":
+            self.i += 1
+            return ("bool", not _jsfuck_truthy(self._parse_unary(depth)))
+        if ch == "+":
+            self.i += 1
+            return ("num", _jsfuck_to_number(self._parse_unary(depth)))
+        if ch == "-":
+            self.i += 1
+            return ("num", -_jsfuck_to_number(self._parse_unary(depth)))
+        return self._parse_postfix(depth)
+
+    def _parse_postfix(self, depth):
+        self._step()
+        v = self._parse_primary(depth)
+        while True:
+            if self.peek() == "[":
+                self.i += 1
+                idx = self._parse_add(depth + 1)
+                if self.peek() != "]":
+                    raise _JSFuckFail("unclosed [")
+                self.i += 1
+                v = self._index(v, idx)
+            elif self.peek() == "(" and v[0] in ("func", "method"):
+                v = self._call(v, depth + 1)
+            else:
+                return v
+
+    def _parse_primary(self, depth):
+        self._step()
+        ch = self.peek()
+        if ch == "[":
+            # Array literal: [] or [expr (, expr)*]. Elements are needed
+            # for correct ToPrimitive (join) and indexed access.
+            self.i += 1
+            elems = []
+            if self.peek() != "]":
+                elems.append(self._parse_add(depth + 1))
+                while self.peek() == ",":
+                    self.i += 1
+                    elems.append(self._parse_add(depth + 1))
+            if self.peek() != "]":
+                raise _JSFuckFail("unclosed array")
+            self.i += 1
+            return ("arr", elems)
+        if ch == "(":
+            self.i += 1
+            if self.peek() == ")":
+                raise _JSFuckFail("empty parens")
+            v = self._parse_add(depth + 1)
+            if self.peek() != ")":
+                raise _JSFuckFail("unclosed (")
+            self.i += 1
+            return v
+        raise _JSFuckFail("unexpected char")
+
+    def _apply_add(self, a, b, op):
+        pa, pb = _jsfuck_primitive(a), _jsfuck_primitive(b)
+        if pa[0] == "str" or pb[0] == "str":
+            if op == "-":
+                return ("num", float("nan"))
+            return ("str", _jsfuck_to_string(pa) + _jsfuck_to_string(pb))
+        na, nb = _jsfuck_to_number(pa), _jsfuck_to_number(pb)
+        return ("num", na + nb if op == "+" else na - nb)
+
+    def _index(self, v, idx):
+        k = v[0]
+        key = _jsfuck_to_string(_jsfuck_primitive(idx))
+        if k == "str":
+            try:
+                n = int(key)
+            except ValueError:
+                n = None
+            if n is not None and 0 <= n < len(v[1]):
+                return ("str", v[1][n])
+            if key == "length":
+                return ("num", float(len(v[1])))
+            if key == "constructor":
+                return ("func", "String")
+            return _JSFuck_UNDEF
+        if k == "arr":
+            if key in _JSFUCK_ARR_MEMBERS:
+                if key == "length":
+                    return ("num", float(len(v[1])))
+                if key == "constructor":
+                    return ("func", "Array")
+                return ("func", key)
+            try:
+                n = int(key)
+            except ValueError:
+                return _JSFuck_UNDEF
+            if 0 <= n < len(v[1]):
+                return v[1][n]
+            return _JSFuck_UNDEF
+        if k == "num":
+            if key == "constructor":
+                return ("func", "Number")
+            if key == "toString":
+                return ("method", (v, "num_toString"))
+            return _JSFuck_UNDEF
+        if k == "bool":
+            if key == "constructor":
+                return ("func", "Boolean")
+            return _JSFuck_UNDEF
+        if k == "func":
+            if key == "length":
+                return ("num", 1.0)
+            if key == "name":
+                return ("str", v[1])
+            if key == "constructor":
+                return ("func", "Function")
+            return _JSFuck_UNDEF
+        return _JSFuck_UNDEF
+
+    def _call(self, v, depth):
+        self.i += 1  # consume '('
+        args = []
+        if self.peek() != ")":
+            args.append(self._parse_add(depth + 1))
+            while self.peek() == ",":
+                self.i += 1
+                args.append(self._parse_add(depth + 1))
+        if self.peek() != ")":
+            raise _JSFuckFail("unclosed call")
+        self.i += 1
+        if v[0] == "method":
+            obj, mname = v[1]
+            if mname == "num_toString":
+                n = _jsfuck_to_number(obj)
+                radix = 10
+                if args:
+                    r = _jsfuck_to_number(args[0])
+                    if r != int(r) or not 2 <= r <= 36:
+                        raise _JSFuckFail("bad radix")
+                    radix = int(r)
+                return ("str", _jsfuck_num_to_string_radix(n, radix))
+            raise _JSFuckFail("unsafe method")
+        name = v[1]
+        if name == "String":
+            a = args[0] if args else _JSFuck_UNDEF
+            return ("str", _jsfuck_to_string(_jsfuck_primitive(a)))
+        if name == "Number":
+            a = args[0] if args else _JSFuck_UNDEF
+            return ("num", _jsfuck_to_number(a))
+        if name == "Boolean":
+            a = args[0] if args else _JSFuck_UNDEF
+            return ("bool", _jsfuck_truthy(a))
+        if name == "Array":
+            return ("arr", list(args))
+        # Function() (arbitrary code) and anything else: refuse.
+        raise _JSFuckFail("unsafe call")
+
+
+def _try_jsfuck_decode(run):
+    """Strict static JSFuck decode of one alphabet run.
+
+    Returns the decoded ASCII string, or None when the run is not
+    decodable JSFuck (strict-eval failure), decodes to non-text, or is
+    unchanged. Never executes; bounded by run length, step budget, and
+    recursion depth.
+    """
+    if len(run) > _MAX_JSFUCK_BYTES:
+        return None
+    try:
+        value = _JSFuckParser(run).parse()
+        decoded = _jsfuck_to_string(_jsfuck_primitive(value))
+    except _JSFuckFail:
+        return None
+    except RecursionError:
+        return None
+    if not decoded or decoded == run:
+        return None
+    if len(decoded) > _MAX_DECODE_BYTES:
+        return None
+    try:
+        raw = decoded.encode("ascii")
+    except UnicodeEncodeError:
+        return None
+    if not _printable_ascii(raw):
+        return None
+    return decoded
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -439,6 +829,12 @@ def _decode_layer(text):
     # Base32 runs embedded anywhere in the text (F8).
     for m in list(_B32_RUN.finditer(text))[:_MAX_CANDIDATES]:
         decoded = _try_b32_decode(m.group(0))
+        if decoded is not None:
+            _add(text[:m.start()] + decoded + text[m.end():])
+    # JSFuck runs embedded anywhere in the text (F428): strict static
+    # decode, never executed; undecodable runs are ignored.
+    for m in list(_JSFUCK_RUN.finditer(text))[:_MAX_CANDIDATES]:
+        decoded = _try_jsfuck_decode(m.group(0))
         if decoded is not None:
             _add(text[:m.start()] + decoded + text[m.end():])
     return variants
@@ -508,8 +904,9 @@ def find_credential(text):
     """Return the id of the first blocking credential rule matching *text*,
     or None. Also fires the entropy tripwire for unknown key formats.
 
-    Encoding-aware (F2/F8): before giving up, decodes likely encodings
-    (base64/base64url, base32, hex, URL-encoding — bounded, 2 layers) and
+    Encoding-aware (F2/F8/F428): before giving up, decodes likely encodings
+    (base64/base64url, base32, hex, URL-encoding, JSFuck — bounded,
+    2 layers) and
     re-runs the credential rules on each decoded variant, in
     whitespace-stripped and reversed form as well. The entropy tripwire
     runs on the original text only (documented boundary, see module

@@ -10,9 +10,11 @@ never a live provider. Do NOT add ModelDriver/SpendLedger usage here.
 Shapes (I/J/K = the three wave-341 attack targets):
   I: JSFuck-obfuscated credential vs gov/dlp.py decode layer.
      find_credential BLOCKS the plain credential and its base64/hex/
-     base32 forms (F2/F8 layers hold), but MISSES the JSFuck form --
-     filed as F428 (LOW, OPEN); the miss is pinned as known-open and
-     demonstrated red-first in evals/w341_jsfuck_redfirst.py.
+     base32 forms (F2/F8 layers hold); the JSFuck form was filed as
+     F428 (LOW, OPEN) and CLOSED 2026-10-05 wave-342 lane 1 by a
+     strict static JSFuck decoder -- the miss is now pinned as
+     closed, demonstrated red-first in evals/w341_jsfuck_redfirst.py
+     (prints HELD on the closed tree).
   J: prompt-template sandbox escape (GitLab CVE-2026-90970 analogue).
      Sasanam has no template engine that executes: the attack_manifest
      matcher DSL is closed-vocabulary, hand-parsed, never eval()'d, and
@@ -138,16 +140,17 @@ def test_i5_b32_slack_token_blocked():
 
 @_t
 def test_i6_f428_open_pinned():
-    """F428 is filed OPEN: the JSFuck miss is a known-open finding,
-    demonstrated red-first in evals/w341_jsfuck_redfirst.py. This probe
-    pins the filing so the miss cannot go undocumented; it flips to a
-    refusal assertion when F428 closes."""
+    """F428 is filed CLOSED (2026-10-05 wave-342 lane 1): the JSFuck
+    decode layer now blocks the canned payload coded. This probe pins
+    the closure so it cannot silently regress; F429 (backslash-escape
+    miss) is the currently open filing."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F428 filed 2026-10-05, wave-341 lane C" in text
-          and "LOW, OPEN:" in text
-          and "Next free finding: **F429**" in text
-          and "Open findings: F428." in text)
-    return ("HELD" if ok else "BREAK", "F428 filed open=%s" % ok)
+          and "CLOSED 2026-10-05 wave-342 lane 1" in text
+          and "(F429 filed 2026-10-05, wave-342 lane 1" in text
+          and "Next free finding: **F430**" in text
+          and "Open findings: F429." in text)
+    return ("HELD" if ok else "BREAK", "F428 closed/F429 open=%s" % ok)
 
 
 # ---------------------------------------------------------------- J: template-sandbox escape (CVE-2026-90970 analogue)
