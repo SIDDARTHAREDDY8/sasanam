@@ -58,7 +58,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2077  # Wave-332 merge: pin 2062. Wave-333 lane 4: pin 2062 -> 2070 (+8 revocation-push-*).; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*)
-FOOTER_OPEN = "F417"  # F417 OPEN (redteam bare-port); F418 (revpush) CLOSED at wave-333 merge.
+FOOTER_OPEN = "none"  # F417 CLOSED 2026-10-05 (wave-334 lane 1); F418 (revpush) CLOSED at wave-333 merge.
 FOOTER_NEXT = "F419"  # Next free finding number.
 
 _results = []
@@ -436,11 +436,13 @@ def _p10():
         return _break(pid, "F418 not marked CLOSED in FINDINGS.md")
     if "RENUMBERED F417->F418" not in f418_body:
         return _break(pid, "F418 renumber note absent in FINDINGS.md")
-    # F417 (redteam bare-port) stays OPEN.
+    # F417 (redteam bare-port) CLOSED 2026-10-05 by wave-334 lane 1
+    # (port guard: any ValueError refuses coded
+    # mcp-oauth-metadata-malformed).
     f417 = text.split("## F417")[1]
     f417_body = _re.split(r"\n## F\d+|\nNext free finding:", f417)[0]
-    if "**Status: OPEN.**" not in f417_body:
-        return _break(pid, "F417 not marked OPEN in FINDINGS.md")
+    if "**Status: CLOSED" not in f417_body:
+        return _break(pid, "F417 not marked CLOSED in FINDINGS.md")
     ms = _re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                      r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
@@ -451,7 +453,7 @@ def _p10():
                       % (open_now.strip(), next_free, FOOTER_OPEN,
                          FOOTER_NEXT))
     return _held(pid, "taxonomy 2077/2077/0 sorted-unique; 8 codes "
-                      "registered; F418 CLOSED; footer open F417 / next F419")
+                      "registered; F418 CLOSED; F417 CLOSED; footer open none / next F419")
 
 
 # ---------------------------------------------------------------------------

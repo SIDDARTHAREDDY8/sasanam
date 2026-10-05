@@ -35,7 +35,7 @@ Probe map:
       approval-token-capability-mismatch).
   digest-binds-all-four: the context digest changes when exactly one of
       the four bound inputs changes, and is stable for identical inputs.
-  pin-taxonomy / footer-state: standard pins (2077; open F417 / next F419).
+  pin-taxonomy / footer-state: standard pins (2077; open none / next F419).
 
 Deterministic across 2 runs; $0 spend; synthetic/local. Stdlib only
 apart from gov/capability_token.py + gov/approval_tokens.py (real
@@ -359,12 +359,12 @@ def footer_state():
     # the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
     ok = ("Next free finding: **F419**" in text
-          and m_open and m_open[-1].strip() == "F417")
+          and m_open and m_open[-1].strip() == "none")
     if ok:
-        _record("footer-state", "HELD", "footer: open F417 / next F419")
+        _record("footer-state", "HELD", "footer: open none / next F419")
     else:
         _record("footer-state", "BREAK",
-                "footer mismatch vs open F417 / next F419")
+                "footer mismatch vs open none / next F419")
 
 
 _PROBES = [("mint-verify-roundtrip", mint_verify_roundtrip),

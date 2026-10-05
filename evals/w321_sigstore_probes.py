@@ -52,7 +52,7 @@ TAXONOMY_PIN = 2077#Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lo
 
 
 FOOTER_OPEN = "none"  # F409-F416 CLOSED; no open findings (wave-331 merge).
-FOOTER_NEXT = "F417"
+FOOTER_NEXT = "F419"  # F417 CLOSED 2026-10-05 (wave-334 lane 1); no open findings.
 
 _results = []
 _PROBES = []

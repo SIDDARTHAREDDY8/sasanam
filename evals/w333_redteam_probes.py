@@ -52,8 +52,8 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2077  # Wave-332 merge: pin 2058 -> 2062 (+4 mcp-oauth-*).; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*)
-FOOTER_OPEN = "F417"  # F417 OPEN (filed wave-333 lane 5: mcp-oauth malformed-port uncoded crash).
-FOOTER_NEXT = "F419"  # Next free finding number (F417 OPEN, F418 closed at wave-333 merge).
+FOOTER_OPEN = "none"  # F417 CLOSED 2026-10-05 (wave-334 lane 1: port guard; no open findings).
+FOOTER_NEXT = "F419"  # Next free finding number (F417 closed wave-334 lane 1; F418 closed at wave-333 merge).
 
 _results = []
 _PROBES = []
@@ -256,16 +256,14 @@ def _p1i():
 
 @probe("P1j-oauth-malformed-port-uncoded")
 def _p1j():
-    """F417 (OPEN, filed wave-333 lane 5): a non-numeric port in an
-    attacker-influenced URL escapes _normalize_url as a BARE
-    ValueError. Root cause: `port = parts.port` raises before the
-    `isinstance(port, (int, type(None)))` guard below it ever runs --
-    the guard is dead code. The iss is an EMITTER CLAIM
-    (server-supplied redirect parameters): a rogue AS can crash the
-    client uncoded instead of taking the coded
-    mcp-oauth-metadata-malformed refusal. Same root cause reaches
-    token aud/resource claims and issuer_hint (all funnel through
-    _normalize_url)."""
+    """F417 (CLOSED 2026-10-05, wave-334 lane 1): a non-numeric port in an
+    attacker-influenced URL used to escape _normalize_url as a BARE
+    ValueError (`port = parts.port` raised before the isinstance guard
+    below it ever ran -- dead code). Now the .port access is guarded so
+    any ValueError refuses coded mcp-oauth-metadata-malformed. The iss
+    is an EMITTER CLAIM (server-supplied redirect parameters); token
+    aud/resource claims and issuer_hint funnel through the same
+    _normalize_url and refuse coded too."""
     sealed = _sealed()
     return _expect_code(
         "P1j-oauth-malformed-port-uncoded",
@@ -593,30 +591,30 @@ def _p6a():
                  "2077/2077/0 sorted unique on raw source literals")
 
 
-@probe("P6b-footer-open-f417-next-f419")
+@probe("P6b-footer-open-none-next-f419")
 def _p6b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     # Raw-literal assertions (wave-331 lesson): the footer must read
     # correctly as literal text, not only via constants.
     if "Next free finding: **F419**." not in text:
-        return _break("P6b-footer-open-f417-next-f419",
+        return _break("P6b-footer-open-none-next-f419",
                       "raw literal 'Next free finding: **F419**.' absent")
-    if "**Open findings: F417.**" not in text:
-        return _break("P6b-footer-open-f417-next-f419",
-                      "raw literal '**Open findings: F417.**' absent")
+    if "**Open findings: none.**" not in text:
+        return _break("P6b-footer-open-none-next-f419",
+                      "raw literal '**Open findings: none.**' absent")
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return _break("P6b-footer-open-f417-next-f419",
+        return _break("P6b-footer-open-none-next-f419",
                       "footer line not found")
     next_free, open_now = ms[-1]  # the LAST footer is the live one
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return _break("P6b-footer-open-f417-next-f419",
+        return _break("P6b-footer-open-none-next-f419",
                       "footer open %s / next %s, want open %s / next %s"
                       % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return _held("P6b-footer-open-f417-next-f419",
-                 "footer open F417 / next F419 (raw literals + parse)")
+    return _held("P6b-footer-open-none-next-f419",
+                 "footer open none / next F419 (raw literals + parse)")
 
 
 @probe("P6c-pin-constants-2077-live")
@@ -672,21 +670,13 @@ def _run_child_output(battery, timeout=1800):
 
 
 # Battery -> set of BREAK probe IDs that are NOT regressions on this
-# tree. All are the expected footer-maintenance cascade from this
-# lane's F417 filing (footer moved to open F417 / next F419 at merge); the
-# wave-333 merge repoints them (wave-305 lesson). Not product
-# regressions.
+# tree. The F417-filing footer cascade (footer open F417 / next F419)
+# is closed: F417 was closed 2026-10-05 by wave-334 lane 1 and every
+# battery's footer probe was repointed to open none / next F419
+# (wave-305/331 lessons), so all children are expected fully green.
 _CHILD_CASCADE = {
-    "w332_mcpoauth_probes.py": set(),  # footer probe now asserts open F417/next F419: green on merged tree.
-    "w332_redteam_probes.py": {
-        # Its own P5b footer probe, plus its P7a deep-cascade probe:
-        # P7a aggregates w331_redteam / w331_landlock / w330_redteam,
-        # each of which carries exactly one footer BREAK from the
-        # F417 filing (verified directly 2026-10-05: 1/25/0,
-        # 1/13/0, 1/21/0 -- the single BREAK in each is the footer
-        # probe, no other breaks).
-        "P5b-footer-open-f417-next-f419",  # green on merged tree; P7a children green too.
-    },
+    "w332_mcpoauth_probes.py": set(),  # footer probe asserts open none/next F419: green.
+    "w332_redteam_probes.py": set(),  # P5b + P7a children all assert open none/next F419: green.
 }
 
 # P7a runs only the battery directly adjacent to this lane's new
@@ -729,7 +719,7 @@ def _p7a():
 # Expected BREAK set, green check, main.
 # ---------------------------------------------------------------------------
 
-_EXPECTED_BREAKS = {"P1j-oauth-malformed-port-uncoded"}  # F417 OPEN (filed wave-333 lane 5).
+_EXPECTED_BREAKS = set()  # F417 CLOSED 2026-10-05, wave-334 lane 1.
 
 
 def _green_check():
@@ -784,7 +774,7 @@ def main(argv):
                     if v == "BREAK" and pid.startswith("P")}
     mismatch = probe_breaks ^ _EXPECTED_BREAKS
     print("w333_redteam battery: %d BREAK / %d HELD / %d ERROR "
-          "(1 BREAK expected: F417 open, P1j)"
+          "(0 BREAK expected: F417 closed, P1j HELD)"
           % (breaks, len(_results) - breaks - errors, errors))
     if mismatch:
         print("BREAK-SET MISMATCH: %r" % (sorted(mismatch),))

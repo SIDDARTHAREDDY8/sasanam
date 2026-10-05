@@ -431,9 +431,9 @@ def _p11():
         if "Next free finding" in line:
             m = line
     if m is None or "F415" not in m or "F416" not in m or "F417" not in m:
-        _break("P11-footer-open-none-next-F417", "footer line wrong: %r" % (m,))
+        _break("P11-footer-open-none-next-F419", "footer line wrong: %r" % (m,))
     else:
-        _held("P11-footer-open-none-next-F417", "footer open none / next F417")
+        _held("P11-footer-open-none-next-F419", "footer open none / next F419")
 
 
 # ---------------------------------------------------------------------------

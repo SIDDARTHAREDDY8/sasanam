@@ -462,14 +462,14 @@ def _p8():
     _held("P8-pin-taxonomy-2077-sorted", "2077/2077/0 sorted; new codes ok")
 
 
-@probe("P9-footer-open-f417-next-f419")
+@probe("P9-footer-open-none-next-f419")
 def _p9():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     src = open(path, encoding="utf-8").read()
     assert "Next free finding: **F419**" in src, "next-free footer"
-    assert "**Open findings: F417.**" in src, "open footer"
-    _held("P9-footer-open-f417-next-f419",
-          "footer: open F417 / next F419")
+    assert "**Open findings: none.**" in src, "open footer"
+    _held("P9-footer-open-none-next-f419",
+          "footer: open none / next F419")
 
 
 # ---------------------------------------------------------------------------

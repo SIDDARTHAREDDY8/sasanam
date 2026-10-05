@@ -201,12 +201,17 @@ def _normalize_url(value, name):
     if scheme != "https" or not host:
         _refuse(MCP_OAUTH_METADATA_MALFORMED,
                 "%s %r must be an https URL with a host" % (name, value))
-    port = parts.port
+    # F417: parts.port raises ValueError on a non-numeric (or
+    # out-of-range) port. Guard the access itself so the escape refuses
+    # coded mcp-oauth-metadata-malformed. (The isinstance check that
+    # used to sit below was dead code: .port returns int/None or raises.)
+    try:
+        port = parts.port
+    except ValueError:
+        _refuse(MCP_OAUTH_METADATA_MALFORMED,
+                "%s %r has a non-numeric port" % (name, value))
     netloc = host if port in (None, 443) else "%s:%d" % (host, port)
     path = parts.path.rstrip("/") if parts.path else ""
-    if not isinstance(port, (int, type(None))):
-        _refuse(MCP_OAUTH_METADATA_MALFORMED,
-                "%s %r has an unparseable port" % (name, value))
     return "https://%s%s" % (netloc, path)
 
 
