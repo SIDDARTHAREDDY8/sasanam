@@ -63,7 +63,7 @@ for _p in (REPO, os.path.join(REPO, "tests"), os.path.join(REPO, "evals")):
 
 from gov import approval_tokens as AT  # noqa: E402
 
-TAXONOMY_PIN = 2126 # Wave-332 merge pin 2062 + 7 capability-token-*; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)# (agent/mission/tools/policy-stale/malformed/tampered/expired), wave-333
+TAXONOMY_PIN = 2127 # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable). Wave-332 merge pin 2062 + 7 capability-token-*; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)# (agent/mission/tools/policy-stale/malformed/tampered/expired), wave-333
 # lane 3. The 4 red probes still BREAK (documented prospectus gap); the
 # old approval_tokens seam is untouched by this lane.
 # (agent/mission/tools/policy-stale/malformed/tampered/expired), wave-333

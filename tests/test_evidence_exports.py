@@ -233,8 +233,9 @@ class TestExportIntegrity(unittest.TestCase):
         self.assertEqual(len(manifest["inclusion_bundles"]), len(tl))
         for item in manifest["inclusion_bundles"]:
             self.assertIsNone(item["bundle"])
-            self.assertIn("signed checkpoint",
-                          item["unavailable_reason"])
+            # Wave-339 R22: bounded vocabulary, not raw exception text.
+            self.assertEqual(item["unavailable_reason"],
+                             "no-covering-checkpoint")
             seq = item["seq"]
             self.assertEqual(tl[seq]["hash"], entries[seq]["hash"])
         # No signer configured: stated explicitly, not implied.

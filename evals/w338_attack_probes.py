@@ -2,7 +2,7 @@
 """Wave-338 lane 2 (continuous real-model attack, round 6): CIMD / budget /
 glob / F426 seam attacks.
 
-Base: `6cdf5fdd` (wave-337 merge). Pin 2126. Footer open none / next F427.
+Base: `6cdf5fdd` (wave-337 merge). Pin 2127. Footer open none / next F427.
 
 Extends evals/realmodel_harness.py (imported, not modified) with four
 real-model probes against the wave-337 seams:

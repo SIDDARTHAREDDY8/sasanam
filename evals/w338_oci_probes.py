@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Wave-338 lane 4 battery: OCI referrer transport (gov/oci_referrer.py).
 
-Base: 6cdf5fdd (wave-337 merge). Pin: 2126 (+2 oci-*: oci-layer-media-type-
+Base: 6cdf5fdd (wave-337 merge). Pin: 2127 (+1 oci-bundle-not-verifiable,
+wave-339 lane 1; +2 oci-*: oci-layer-media-type-
 mismatch + oci-tag-refused). Footer unchanged: open none / next F427
 (no findings filed here).
 
@@ -25,8 +26,8 @@ P7  Harbor caveat (documented, tested): replica without replicated
     registry-supplied "verified" badge is never an input to any verdict.
 P8  Predicate-type annotation: extracted from the sealed VSA statement;
     explicit override honored.
-P9  Pin/taxonomy honesty (2126/2126/0 sorted-unique on raw literals;
-    both new codes registered) + footer state (open none / next F427).
+P9  Pin/taxonomy honesty (2127/2127/0 sorted-unique on raw literals;
+    new codes registered) + footer state (open none / next F427).
 P10 Green check (depth-1): tests/test_oci_referrer.py as a child.
 
 gov/ changes in this lane: gov/oci_referrer.py (new) +
@@ -50,7 +51,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2126  # Wave-338 lane 4: pin 2124 -> 2126 (+2 oci-*)
+TAXONOMY_PIN = 2127  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable). # Wave-338 lane 4: pin 2124 -> 2126 (+2 oci-*)
 FOOTER_OPEN = ("F426",)
 FOOTER_NEXT = "F427"
 
@@ -394,7 +395,8 @@ def _p9():
     assert "Open findings: none." in text, "footer open findings"
     assert FOOTER_OPEN == ("F426",) and FOOTER_NEXT == "F427"
     _held("P9-pin-taxonomy",
-          "2126/2126/0 sorted-unique; 2 oci-* codes registered; "
+          "2127/2127/0 sorted-unique; 3 oci-* codes registered "
+          "(+oci-bundle-not-verifiable); "
           "footer open none / next F427")
 
 

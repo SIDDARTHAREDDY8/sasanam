@@ -2023,6 +2023,63 @@ def _inclusion_material(path, seqs):
     return entries, out
 
 
+#: Bounded vocabulary for inclusion-proof unavailability (wave-339 R22).
+#: Sealed manifests are SIGNED over ``unavailable_reason``, so the reason
+#: must be bounded machine text, not unbounded exception text: a raw
+#: ``str(exc)`` can carry file paths, sequence internals, or future
+#: message rewordings past the signature boundary. ``gov/log.py`` raises
+#: these failures, so ``gov/log.py`` owns the vocabulary; both the
+#: builder (``gov/evidence_bundle.py``, ``gov/evidence_exports.py``) and
+#: the consumer read the same code out of the manifest, so claim bytes
+#: stay consistent across the sign/verify boundary.
+INCLUSION_UNAVAILABLE_REASONS = frozenset({
+    "no-covering-checkpoint",   # no signed checkpoint covers the seq
+    "checkpoint-root-mismatch",  # checkpoint merkle_root != log
+    "log-integrity-failure",     # seqs not dense (log tampering/gap)
+    "proof-unavailable",         # generic: proof could not be produced
+})
+
+
+def inclusion_unavailable_reason(exc):
+    """Map a :func:`prove_inclusion` failure to the bounded vocabulary.
+
+    ``exc`` is the ``ValueError`` raised by :func:`_inclusion_material`.
+    Returns one of :data:`INCLUSION_UNAVAILABLE_REASONS` -- never the
+    exception text. Total by construction: any unrecognized message maps
+    to ``"proof-unavailable"`` (the proof could not be produced; the
+    reason is unclassified, and saying so honestly beats inventing a
+    specific one).
+    """
+    msg = str(exc)
+    if msg.startswith("no signed checkpoint covers seq"):
+        return "no-covering-checkpoint"
+    if msg.startswith("checkpoint@") and "merkle_root does not match" in msg:
+        return "checkpoint-root-mismatch"
+    if msg.startswith("log seq not dense"):
+        return "log-integrity-failure"
+    if msg.startswith("seq ") and "out of range" in msg:
+        return "proof-unavailable"
+    return "proof-unavailable"
+
+
+def name_inclusion_reason(reason):
+    """Downgrade an artifact's ``unavailable_reason`` to the vocabulary.
+
+    Consumer-side half of the R22 bounded-reason contract: the verifier
+    only *names* reasons it can verify. ``None`` (proof present) passes
+    through; a reason in :data:`INCLUSION_UNAVAILABLE_REASONS` passes
+    through; anything else -- a legacy pre-vocabulary artifact's raw
+    exception text, or a value the sealer invented -- is honestly
+    downgraded to ``"proof-unavailable"``. The claim construction itself
+    stays verbatim (the signature binds the operator's exact words, and
+    the builder/verifier claim mirrors must stay byte-identical); this
+    applies only where the verifier *interprets* the reason.
+    """
+    if reason is None or reason in INCLUSION_UNAVAILABLE_REASONS:
+        return reason
+    return "proof-unavailable"
+
+
 def prove_inclusion(path, seq):
     """Build an offline inclusion bundle for entry ``seq`` (CT auditor).
 

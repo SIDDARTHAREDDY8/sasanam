@@ -1,10 +1,10 @@
 # Decision-code coverage table (generated)
 
-Generated: 2026-10-05T09:00:29Z UTC · registry pin: 2126 · base: wave-338 lane 5
+Generated: 2026-10-05T09:52:23Z UTC · registry pin: 2127 · base: wave-338 lane 5
 
 Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code counts as covered when its literal string appears quoted in at least one ``.py`` file under ``tests/`` or ``evals/``. Production ``emit()`` call sites do not count.
 
-**Covered: 1885 / 2126** · **Gaps: 241**
+**Covered: 1886 / 2127** · **Gaps: 241**
 
 | code | domain | severity | covered | asserted in |
 | ---- | ------ | -------- | ------- | ----------- |
@@ -1202,6 +1202,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `obligation-unfulfilled` | obligation | high | yes | evals/w241_probe_classes_probes.py, tests/test_wave241_probe_classes.py |
 | `oci-artifact-type-mismatch` | oci | medium | yes | evals/w321_oci_probes.py, evals/w322_redteam_probes.py, tests/test_oci_distribution.py |
 | `oci-blob-digest-mismatch` | oci | critical | yes | evals/w321_oci_probes.py, evals/w322_redteam_probes.py, evals/w338_oci_probes.py (+2) |
+| `oci-bundle-not-verifiable` | oci | medium | yes | evals/w339_verifiable_probes.py |
 | `oci-layer-media-type-mismatch` | oci | medium | yes | evals/w338_oci_probes.py, tests/test_oci_referrer.py |
 | `oci-manifest-malformed` | oci | medium | yes | evals/w322_redteam_probes.py, tests/test_oci_distribution.py |
 | `oci-referrers-malformed` | oci | low | yes | evals/w322_redteam_probes.py, evals/w323_redteam_probes.py, evals/w324_redteam_probes.py (+2) |

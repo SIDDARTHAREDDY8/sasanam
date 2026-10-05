@@ -473,7 +473,8 @@ class EvidenceBundle:
             except ValueError as ex:
                 coverage.append({"seq": e["seq"], "hash": e["hash"],
                                  "has_bundle": False,
-                                 "unavailable_reason": str(ex)})
+                                 "unavailable_reason":
+                                     _log.inclusion_unavailable_reason(ex)})
             else:
                 coverage.append({"seq": e["seq"], "hash": e["hash"],
                                  "has_bundle": True,
@@ -951,7 +952,7 @@ class EvidenceBundle:
                 b = _log.prove_inclusion(self.log_path, seq)
             except ValueError as e:
                 b = None
-                reason = str(e)
+                reason = _log.inclusion_unavailable_reason(e)
             else:
                 reason = None
                 covered += 1
@@ -1340,7 +1341,7 @@ def log_evidence_bundle_receipt(manifest, action_log, *, signer=None):
                                       entry["seq"])
     except ValueError as e:
         bundle = None
-        reason = str(e)
+        reason = _log.inclusion_unavailable_reason(e)
     else:
         reason = None
     manifest["receipt"] = {

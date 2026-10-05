@@ -401,6 +401,25 @@ def attach_keyed_bundle(transport, base_url, repository, subject_digest,
                 "bundle mediaType %r is not the keyed Sigstore bundle media "
                 "type -- refusing to attach non-bundle content as a bundle "
                 "referrer" % (bundle_obj.get("mediaType"),))
+    # Bernstein #6371 (wave-339 R22, verifiable-only): the builder refuses
+    # bundles the offline verifier cannot verify. open_keyed_bundle
+    # structurally refuses bundles with tlog/timestamp claims (unverifiable
+    # log claims), a messageSignature alongside the envelope, a non-keyed
+    # payload type, more or fewer than one signature, a missing DSSE
+    # envelope, or malformed verification material -- so attach refuses
+    # them too. Never emit a bundle containing a payload the verifier
+    # cannot verify. Verifiability, not validity: Ed25519 verification and
+    # hint pinning stay the consumer's job. (Imported locally: this
+    # module stays dependency-free at import time.)
+    from gov.sigstore_bundle import (KeyedBundleError,
+                                     check_keyed_bundle_structure)
+    try:
+        check_keyed_bundle_structure(bundle_obj)
+    except KeyedBundleError as exc:
+        _refuse("oci-bundle-not-verifiable",
+                "bundle is not verifiable by the offline verifier: %s "
+                "-- refusing to attach unverifiable evidence"
+                % (exc.code,))
     if predicate_type is None:
         predicate_type = _extract_predicate_type(bundle_obj)
     elif not isinstance(predicate_type, str) or not predicate_type:

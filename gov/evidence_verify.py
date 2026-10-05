@@ -504,6 +504,34 @@ _SIG_ENVELOPE_FIELDS = frozenset({"ed_sig", "sig_key_id",
 _CHECKPOINT_SIG_DOMAIN = b"gov-checkpoint-sig/v1\x00"
 _SINGLE_ROSTER_MARK = "single:1-of-1:"
 
+# Vendored gov/log.py::INCLUSION_UNAVAILABLE_REASONS (wave-339 R22): the
+# bounded vocabulary for inclusion-proof unavailability. The standalone
+# verifier must run without the engine, so the four reason words are
+# repeated here; evals/w339_verifiable_probes.py pins the two sets
+# equal, so a vocabulary change that forgets this copy goes red.
+_INCLUSION_UNAVAILABLE_REASONS = frozenset({
+    "no-covering-checkpoint",
+    "checkpoint-root-mismatch",
+    "log-integrity-failure",
+    "proof-unavailable",
+})
+
+
+def _name_inclusion_reason(reason):
+    """Downgrade an artifact's ``unavailable_reason`` to the vocabulary.
+
+    Mirrors ``gov.log.name_inclusion_reason``: the verifier only *names*
+    reasons it can verify. ``None`` passes through; anything outside the
+    vocabulary (a legacy pre-vocabulary artifact's raw exception text)
+    is honestly downgraded to ``"proof-unavailable"``. The signed claim
+    itself is reconstructed verbatim (the signature binds the operator's
+    exact words); this applies only where the verifier interprets the
+    reason.
+    """
+    if reason is None or reason in _INCLUSION_UNAVAILABLE_REASONS:
+        return reason
+    return "proof-unavailable"
+
 
 def _canonical_entry(entry):
     """Canonical bytes for one log entry (excludes chain hash + sig
@@ -2020,7 +2048,10 @@ def v12_receipt(ctx):
         if not reason:
             return c.fail("receipt has no inclusion bundle and no "
                           "reason")
-        detail += "; bundle unavailable (%s)" % reason
+        # The verifier names only reasons it can verify (wave-339 R22):
+        # a legacy raw-text reason is honestly downgraded.
+        detail += "; bundle unavailable (%s)" % _name_inclusion_reason(
+            reason)
     else:
         # Verify the receipt's own inclusion bundle (its checkpoint is
         # newer than the window heads, so membership is not required —
