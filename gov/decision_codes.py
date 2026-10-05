@@ -11240,6 +11240,19 @@ TAXONOMY = {
         "evidence_kinds_required": ['digest'],
         "reverify_steps": ['recompute'],
     },
+    'oci-layer-media-type-mismatch': {
+        "domain": 'oci',
+        "code": 'oci-layer-media-type-mismatch',
+        "human": 'OCI referrer transport: the keyed-bundle layer is not the '
+                 'Sigstore bundle media type '
+                 '(application/vnd.dev.sigstore.bundle.v0.3+json) -- the '
+                 'registry served, or the caller supplied, content that is '
+                 'not a keyed Sigstore bundle; refused fail-closed, never '
+                 'attached or pulled as bundle evidence',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
     'oci-manifest-malformed': {
         "domain": 'oci',
         "code": 'oci-manifest-malformed',
@@ -11281,6 +11294,18 @@ TAXONOMY = {
                  'manifest for a different subject; refused fail-closed, '
                  'never returns the wrong evidence',
         "severity": 'high',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'oci-tag-refused': {
+        "domain": 'oci',
+        "code": 'oci-tag-refused',
+        "human": 'OCI referrer transport: a tag (or other non-digest '
+                 'reference) was supplied where a canonical digest is '
+                 'required -- digest-only addressing by construction; tags '
+                 'are mutable and can never be bundle identity; refused '
+                 'fail-closed',
+        "severity": 'medium',
         "evidence_kinds_required": ['digest'],
         "reverify_steps": ['recompute'],
     },
