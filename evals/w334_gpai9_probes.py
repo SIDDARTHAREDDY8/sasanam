@@ -38,7 +38,7 @@ P9  Retention: floor = max(doc, incident) + 5y; purge 1 day early
     allowed; later-of rule; Feb-29 edge.
 P10 Suspicion-inclusive awareness: "suspected" starts the clock
     identically to "established".
-P11 Pin/footer honesty: taxonomy 2127/2127/0 on raw literals,
+P11 Pin/footer honesty: taxonomy 2131/2131/0 on raw literals,
     footer open none / next F421, 6 new codes centrally registered.
 """
 
@@ -53,9 +53,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
-FOOTER_OPEN = "F428"  # F423/F424/F425 CLOSED; F426 closed wave-338 lane 1. F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
-FOOTER_NEXT = "F429"  # Next free finding number.
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+FOOTER_OPEN = "F429"  # F423/F424/F425 CLOSED; F426 closed wave-338 lane 1. F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
+FOOTER_NEXT = "F430"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -531,18 +531,18 @@ def _p10a():
 # P11 -- pin + footer honesty.
 # ---------------------------------------------------------------------------
 
-@probe("P11a-pin-taxonomy-2127-sorted")
+@probe("P11a-pin-taxonomy-2131-sorted")
 def _p11a():
-    if TAXONOMY_PIN != 2127:
-        return _break("P11a-pin-taxonomy-2127-sorted",
-                      "TAXONOMY_PIN is %r, want 2127" % (TAXONOMY_PIN,))
+    if TAXONOMY_PIN != 2131:
+        return _break("P11a-pin-taxonomy-2131-sorted",
+                      "TAXONOMY_PIN is %r, want 2131" % (TAXONOMY_PIN,))
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
-    if len(lits) != 2127 or len(set(lits)) != 2127 \
+    if len(lits) != 2131 or len(set(lits)) != 2131 \
             or lits != sorted(lits):
-        return _break("P11a-pin-taxonomy-2127-sorted",
-                      "want 2127/2127/0 sorted, got %d/%d/sorted=%s"
+        return _break("P11a-pin-taxonomy-2131-sorted",
+                      "want 2131/2131/0 sorted, got %d/%d/sorted=%s"
                       % (len(lits), len(set(lits)), lits == sorted(lits)))
     for c in ("incident-gpai9-final-overdue", "incident-gpai9-incomplete",
               "incident-gpai9-initial-overdue",
@@ -550,36 +550,36 @@ def _p11a():
               "incident-gpai9-malformed",
               "incident-gpai9-retention-violation"):
         if lits.count(c) != 1:
-            return _break("P11a-pin-taxonomy-2127-sorted",
+            return _break("P11a-pin-taxonomy-2131-sorted",
                           "code %s literal count %d" % (c, lits.count(c)))
-    return _held("P11a-pin-taxonomy-2127-sorted",
-                 "2127/2127/0 sorted unique on raw source literals")
+    return _held("P11a-pin-taxonomy-2131-sorted",
+                 "2131/2131/0 sorted unique on raw source literals")
 
 
-@probe("P11b-footer-open-f428-next-f429")
+@probe("P11b-footer-open-f429-next-f430")
 def _p11b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     # Raw-literal assertions (wave-331 lesson): the footer must read
     # correctly as literal text, not only via constants.
-    if "Next free finding: **F429**." not in text:
-        return _break("P11b-footer-open-f428-next-f429",
-                      "raw literal 'Next free finding: **F429**.' absent")
-    if "**Open findings: F428.**" not in text:
-        return _break("P11b-footer-open-f428-next-f429",
-                      "raw literal '**Open findings: F428.**' absent")
+    if "Next free finding: **F430**." not in text:
+        return _break("P11b-footer-open-f429-next-f430",
+                      "raw literal 'Next free finding: **F430**.' absent")
+    if "**Open findings: F429.**" not in text:
+        return _break("P11b-footer-open-f429-next-f430",
+                      "raw literal '**Open findings: F429.**' absent")
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return _break("P11b-footer-open-f428-next-f429",
+        return _break("P11b-footer-open-f429-next-f430",
                       "footer line not found")
     next_free, open_now = ms[-1]  # the LAST footer is the live one
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return _break("P11b-footer-open-f428-next-f429",
+        return _break("P11b-footer-open-f429-next-f430",
                       "footer open %s / next %s, want open %s / next %s"
                       % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return _held("P11b-footer-open-f428-next-f429",
-                 "footer open none / next F428 (raw literals + parse)")
+    return _held("P11b-footer-open-f429-next-f430",
+                 "footer open none / next F430 (raw literals + parse)")
 
 
 @probe("P11c-codes-centrally-registered")
@@ -604,9 +604,9 @@ def _p11c():
     if wrong:
         return _break("P11c-codes-centrally-registered",
                       "bad entry shape: %s" % wrong)
-    if len(dc.TAXONOMY) != 2127:
+    if len(dc.TAXONOMY) != 2131:
         return _break("P11c-codes-centrally-registered",
-                      "TAXONOMY has %d entries, want 2127"
+                      "TAXONOMY has %d entries, want 2131"
                       % len(dc.TAXONOMY))
     return _held("P11c-codes-centrally-registered",
                  "all 6 gpai9 codes centrally registered; TAXONOMY=2100")
@@ -628,9 +628,9 @@ def _green_check():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
-    if len(lits) != 2127 or len(set(lits)) != 2127:
+    if len(lits) != 2131 or len(set(lits)) != 2131:
         _record("green-check", "BREAK",
-                "taxonomy %d/%d, want 2127/2121" % (len(lits), len(set(lits))))
+                "taxonomy %d/%d, want 2131/2121" % (len(lits), len(set(lits))))
         return
     for artifact in ("<<<<<<<", ">>>>>>>", ".orig", ".rej"):
         for root, dirs, files in os.walk(REPO):
@@ -641,7 +641,7 @@ def _green_check():
                             "merge artifact: %s" % fn)
                     return
     _record("green-check", "HELD",
-            "taxonomy 2127/2127/0; no merge artifacts (depth-1, local)")
+            "taxonomy 2131/2131/0; no merge artifacts (depth-1, local)")
 
 
 def main(argv):

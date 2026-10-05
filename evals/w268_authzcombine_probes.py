@@ -46,7 +46,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 
 # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
 # Asserted lane-locally; the merge coordinator repoints at merge.
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 _STUB_SRC = '''

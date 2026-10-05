@@ -43,7 +43,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 # This lane mints no governance decision codes (the verifier taxonomy is
 # the verifier's own surface); the decision-code pin moved 1900 -> 1906 at
 # the wave-318 merge via lane 3's six trust-root-* codes.
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 # The verifier gains one typed code (EXTENSION_SCHEMA_INVALID): 16 -> 17.
 # Wave-318 lane 3 adds six trust-root-* chain codes: 17 -> 23.
@@ -260,7 +260,7 @@ def p_pin_taxonomy():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "2127/2127/0 sorted")
+    _record("pin-taxonomy", "HELD", "2131/2131/0 sorted")
 
 
 
@@ -271,8 +271,8 @@ def p_footer_state():
         text = fh.read()
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
     m_open = re.findall(r"Open findings: ([^.]*)\.", text)
-    ok = (m_next and m_next[-1] == "F429"
-          and m_open and m_open[-1].strip() == "F428")
+    ok = (m_next and m_next[-1] == "F430"
+          and m_open and m_open[-1].strip() == "F429")
     _record("footer-state", "HELD" if ok else "BREAK",
             "open F412 / next F413" if ok else "footer drift")
 

@@ -125,7 +125,7 @@ from gov.memory_actgate import ActGate  # noqa: E402
 from gov.memory_provenance import MemoryFirewall  # noqa: E402
 from gov.log import read_entries  # noqa: E402
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 _results = []
@@ -547,15 +547,15 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    want_open = "F428"  # wave-316: F398/F399/F400 OPEN (wave-315
-    # Wave-342 lane 6: repointed to open F428 / next F429 (footer-state probe audit).
+    want_open = "F429"  # wave-316: F398/F399/F400 OPEN (wave-315
+    # Wave-342 lane 6: repointed to open F429 / next F430 (footer-state probe audit).
     # merge footer); F393-F397 all CLOSED.
-    if nxt != 429 or open_s != want_open:
+    if nxt != 430 or open_s != want_open:
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F429 open 'F428')"
-                       % (nxt, open_s, want_open))
+                       "footer drift: next F%d open %r (want next 430 open 'F429')"
+                       % (nxt, open_s))
     _record("footer-state", "HELD",
-            "footer pins open F428 / next F429")
+            "footer pins open F429 / next F430")
 
 
 # ---------------------------------------------------------------------------

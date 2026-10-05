@@ -12,7 +12,7 @@ Attacks the wave-321 NEW surfaces break-first:
       (provenance-critical-arg-refused); a silent ALLOW is a BREAK.
   P4  Regression -- the four wave-321 batteries must match their shipped
       tallies (child-mode, GOV_SKIP_GREEN=1).
-  P5  Pin/footer -- 2127/2127/0 sorted on source literals; footer
+  P5  Pin/footer -- 2131/2131/0 sorted on source literals; footer
       open none / next F409 (F406 closed, F407 closed; see
 
 
@@ -58,10 +58,10 @@ from tests.keyfixture import provision_test_key  # noqa: E402
 
 provision_test_key()
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
-FOOTER_OPEN = "F428"
-FOOTER_NEXT = "F429"
+FOOTER_OPEN = "F429"
+FOOTER_NEXT = "F430"
 
 _results = []
 
@@ -834,7 +834,7 @@ def green_check():
         _record("green-" + n, v, note)
 
 
-@probe("P4-pin-taxonomy-2127-sorted")
+@probe("P4-pin-taxonomy-2131-sorted")
 
 
 def _p5a():
@@ -842,11 +842,11 @@ def _p5a():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2127#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
+    ok = (len(lits) == TAXONOMY_PIN == 2131#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P4-pin-taxonomy-2127-sorted", "2127/2127/0 sorted")
-    return _break("P4-pin-taxonomy-2127-sorted",
+        return _held("P4-pin-taxonomy-2131-sorted", "2131/2131/0 sorted")
+    return _break("P4-pin-taxonomy-2131-sorted",
 
 
                   "got %d literals" % (len(lits),))

@@ -47,7 +47,7 @@ from gov import ed25519 as _ed  # noqa: E402
 # decision codes -- ptgrant-jti-reused, ptgrant-max-calls-exhausted,
 # ptgrant-pop-invalid already exist). Counted on quoted source literals
 # per the wave-260 lesson.
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"

@@ -35,9 +35,9 @@ P8 (ag2 malformed): unparseable / non-object arguments return
 P9 (optional-extra convention): without the framework installed the
    adapter module raises ImportError naming the extra; with it, import
    succeeds.
-P10 (honesty): taxonomy 2127/2127/0 sorted-unique on raw source
+P10 (honesty): taxonomy 2131/2131/0 sorted-unique on raw source
    literals; no new decision codes (adapters reuse existing outcomes);
-   footer open none / next F428.
+   footer open none / next F430.
 
 Framework-real probes (P1-P8) SKIP cleanly when crewai/ag2 are not
 installed (optional extras, same convention as the LangChain adapter
@@ -84,7 +84,7 @@ for _p in (REPO, os.path.join(REPO, "tests"), os.path.join(REPO, "evals")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 try:
     from pydantic import BaseModel, ConfigDict, Field
     from gov.adapters.crewai_tools import (
@@ -421,7 +421,7 @@ def P9a():
 
 
 def P10a():
-    pid = "P10a-pin-taxonomy-2127-sorted"
+    pid = "P10a-pin-taxonomy-2131-sorted"
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     codes = re.findall(r'''"code":\s*['"]([^'"]+)['"]''', src)
@@ -440,15 +440,15 @@ def P10a():
 
 
 def P10b():
-    pid = "P10b-footer-open-f428-next-f429"
+    pid = "P10b-footer-open-f429-next-f430"
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F429**" in text
-          and m_open and m_open[-1].strip() == "F428")
+    ok = ("Next free finding: **F430**" in text
+          and m_open and m_open[-1].strip() == "F429")
     (_held if ok else _break)(
-        pid, "footer: open none / next F428" if ok
-        else "footer mismatch vs open none / next F428")
+        pid, "footer: open none / next F430" if ok
+        else "footer mismatch vs open none / next F430")
 
 
 _PROBES = [
@@ -462,7 +462,7 @@ _PROBES = [
     ("P7a-ag2-denied-error-event", P7a),
     ("P8a-ag2-malformed-and-unregistered", P8a),
     ("P9a-adapter-extra-convention", P9a),
-    ("P10a-pin-taxonomy-2127-sorted", P10a),
+    ("P10a-pin-taxonomy-2131-sorted", P10a),
     ("P10b-footer-open-f424-f425-next-f426", P10b),
 ]
 

@@ -87,7 +87,7 @@ def green_check():
 # Taxonomy pin (closure-only lane: gov/decision_codes.py untouched; pin 1750)
 # ---------------------------------------------------------------------------
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
                      # lane 3 closes F369: correctness fix, no new codes.
 

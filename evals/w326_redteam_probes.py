@@ -41,9 +41,9 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
-FOOTER_OPEN = "F428"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
-FOOTER_NEXT = "F429"  # Next free finding number.
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+FOOTER_OPEN = "F429"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
+FOOTER_NEXT = "F430"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -960,20 +960,20 @@ def _p5f():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2127-sorted")
+@probe("P6a-pin-taxonomy-2131-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
-    if TAXONOMY_PIN != 2127:
-        return _break("P6a-pin-taxonomy-2127-sorted",
-                      "TAXONOMY_PIN is %r, want 2127" % (TAXONOMY_PIN,))
-    if len(codes) != 2127 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-2127-sorted",
+    if TAXONOMY_PIN != 2131:
+        return _break("P6a-pin-taxonomy-2131-sorted",
+                      "TAXONOMY_PIN is %r, want 2131" % (TAXONOMY_PIN,))
+    if len(codes) != 2131 or codes != sorted(codes):
+        return _break("P6a-pin-taxonomy-2131-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    return _held("P6a-pin-taxonomy-2127-sorted", "2127/2127/0 sorted")
+    return _held("P6a-pin-taxonomy-2131-sorted", "2131/2131/0 sorted")
 
 
-@probe("P6b-footer-open-f428-next-f429")
+@probe("P6b-footer-open-f429-next-f430")
 def _p6b():
     text = open(os.path.join(REPO, "evals/FINDINGS.md")).read()
     import re
@@ -982,12 +982,12 @@ def _p6b():
     open_line = opens[-1].strip() if opens else ""
     next_free = nexts[-1].strip() if nexts else ""
     if open_line != FOOTER_OPEN:
-        return _break("P6b-footer-open-f428-next-f429",
+        return _break("P6b-footer-open-f429-next-f430",
                       "open findings %r, want %r" % (open_line, FOOTER_OPEN))
     if next_free != FOOTER_NEXT:
-        return _break("P6b-footer-open-f428-next-f429",
+        return _break("P6b-footer-open-f429-next-f430",
                       "next free %r, want %r" % (next_free, FOOTER_NEXT))
-    return _held("P6b-footer-open-f428-next-f429",
+    return _held("P6b-footer-open-f429-next-f430",
                  "footer open none / next F419")
 
 

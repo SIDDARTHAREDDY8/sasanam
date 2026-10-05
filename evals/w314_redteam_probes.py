@@ -42,10 +42,10 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
-FOOTER_OPEN = "F428"
-FOOTER_NEXT = "F429"
+FOOTER_OPEN = "F429"
+FOOTER_NEXT = "F430"
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -1165,7 +1165,7 @@ def _p_footer_state():
     last = footers[-1]
     # Wave-336 lane 1: footer-state probe repaired -- the F412-era
     # assertion rotted through several merges; assert the live footer.
-    if "Open findings: F428." not in last:
+    if "Open findings: F429." not in last:
         raise _Break("footer-state: open findings present: %s" % last[:80])
     if FOOTER_NEXT not in last:
         raise _Break("footer-state: next is not %s: %s" %

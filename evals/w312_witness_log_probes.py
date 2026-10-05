@@ -80,7 +80,7 @@ import probe_lines
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Pin moves 1841 -> 1851: +8 witness-log-* +2 evidence-bundle-witness-*.
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 from gov import witness_log as wl
@@ -298,7 +298,7 @@ def p_pin_taxonomy():
     if len(new) != 10:
         return _record("pin-taxonomy", "BREAK",
                        "want 10 new witness codes, got %d" % len(new))
-    _record("pin-taxonomy", "HELD", "2127/2127/0 sorted, +10 witness codes")
+    _record("pin-taxonomy", "HELD", "2131/2131/0 sorted, +10 witness codes")
 
 
 
@@ -311,8 +311,8 @@ def p_footer_state():
     m_open = re.findall(r"Open findings: ([^.]*)", text)
     # Footer lines repeat through history; the LAST one is current.
     # Wave-316 merge footer: F398/F399/F400 CLOSED; F401/F402/F403 OPEN; next F404.
-    ok = (m_next and m_next[-1] == "F429"
-          and m_open and m_open[-1].strip() == "F428")
+    ok = (m_next and m_next[-1] == "F430"
+          and m_open and m_open[-1].strip() == "F429")
     _record("footer-state", "HELD" if ok else "BREAK",
             "open F412 / next F413" if ok else "footer drift")
 

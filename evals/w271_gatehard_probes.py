@@ -40,7 +40,7 @@ NOW = 1791000000  # fixed test clock (2026-10-01-ish)
 # grep -o '"code": ' overcounts; quoted-literal extraction is canonical).
 import re as _re  # noqa: E402
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 _GATEHARD_CODES = (
     "gatehard-monitor-would-deny",

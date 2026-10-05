@@ -51,7 +51,7 @@ import evals.w261_redteam_probes as w261rt  # noqa: E402  (F235 pin probe)
 # Wave-262 lane A adds no decision codes: the F235 fix reuses the
 # existing poldist-bundle-malformed. Replace the VALUE only, never
 # repoint blindly (wave-256 lesson).
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 _PROBES = []

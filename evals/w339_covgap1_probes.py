@@ -15,7 +15,7 @@ tautologies:
           gov/corroborated_consumption.py.
   S1-S9   scan_verdict_* (9): emission/verification refusals in
           gov/scan_verdicts.py.
-  P0      pin/taxonomy honesty (2127/2127/0 sorted-unique, footer state).
+  P0      pin/taxonomy honesty (2131/2131/0 sorted-unique, footer state).
   PZ      green check (depth-1): adjacent suites as children with
           GOV_SKIP_GREEN=1.
 
@@ -39,7 +39,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "tests"))
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 _results = []
 
@@ -396,17 +396,17 @@ def run_pin_footer_probes():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
-    if len(lits) == TAXONOMY_PIN == 2127 and len(set(lits)) == 2127 \
+    if len(lits) == TAXONOMY_PIN == 2131 and len(set(lits)) == 2131 \
             and lits == sorted(lits):
-        _held("P0a", "taxonomy 2127/2127/0 sorted-unique literals")
+        _held("P0a", "taxonomy 2131/2131/0 sorted-unique literals")
     else:
         _break("P0a", "literals %d, unique %d, sorted=%s"
                % (len(lits), len(set(lits)), lits == sorted(lits)))
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    if "Open findings: F428." in text \
-            and "Next free finding: **F429**" in text:
-        _held("P0b", "footer open F428 / next F429")
+    if "Open findings: F429." in text \
+            and "Next free finding: **F430**" in text:
+        _held("P0b", "footer open F429 / next F430")
     else:
         _break("P0b", "footer text mismatch")
 

@@ -37,7 +37,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 MANIFEST_FORMAT = "sasanam-replay-manifest/v1"
 GENESIS = "00" * 32  # 64 hex chars, like the module's GENESIS_HASH
 NOW = 1790960000  # fixed test clock (2026-10-02-ish)
-PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(_HERE)

@@ -70,7 +70,7 @@ provision_test_key()
 from gov import intent_slice as _isl  # noqa: E402
 import decomp_corpus_gen as _gen  # noqa: E402
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 CORPUS = os.path.join(REPO, "evals", "artifacts", "decomp_corpus_v1.jsonl")
 _USER = ["Summarize the quarterly report. Do not send any data externally."]
@@ -296,11 +296,11 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    if nxt != 429 or open_s != "F428":
+    if nxt != 430 or open_s != "F429":
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F429 "
-                       "open 'F428')" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open F428 / next F429")
+                       "open 'F429')" % (nxt, open_s))
+    _record("footer-state", "HELD", "footer pins open F429 / next F430")
 
 
 # ---------------------------------------------------------------------------

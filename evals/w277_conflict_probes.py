@@ -53,7 +53,7 @@ import gov.instruction_provenance as prov  # noqa: E402
 import gov.rail_verdict as rv               # noqa: E402
 import probe_lines  # noqa: E402  (canonical probe-line form)
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 

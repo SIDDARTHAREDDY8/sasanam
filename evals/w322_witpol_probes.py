@@ -18,7 +18,7 @@ P3 (3): contract probes -- verify returns the verified VALUES (dict),
     change breaks); trust anchor authority (doc-declared signers do not
     count, only the anchor's do).
 P4 (2): regressions -- footer open none / next F409; pin taxonomy
-    2127/2127/0 sorted on source literals.
+    2131/2131/0 sorted on source literals.
 
 
 
@@ -51,10 +51,10 @@ from gov import checkpoint_note as CN  # noqa: E402
 from gov.witness_log import WitnessLog  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
-FOOTER_OPEN = "F428"
-FOOTER_NEXT = "F429"
+FOOTER_OPEN = "F429"
+FOOTER_NEXT = "F430"
 
 _results = []
 _PROBES = []
@@ -533,7 +533,7 @@ def _p3c():
 # P4: regressions
 # ---------------------------------------------------------------------------
 
-@probe("P4-pin-taxonomy-2127-sorted")
+@probe("P4-pin-taxonomy-2131-sorted")
 
 
 def _p4a():
@@ -541,11 +541,11 @@ def _p4a():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2127#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
+    ok = (len(lits) == TAXONOMY_PIN == 2131#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P4-pin-taxonomy-2127-sorted", "2127/2127/0 sorted")
-    return _break("P4-pin-taxonomy-2127-sorted",
+        return _held("P4-pin-taxonomy-2131-sorted", "2131/2131/0 sorted")
+    return _break("P4-pin-taxonomy-2131-sorted",
 
 
                   "got %d literals" % (len(lits),))

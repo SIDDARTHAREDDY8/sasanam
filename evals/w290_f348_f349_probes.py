@@ -50,7 +50,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 # Wave-289 merge: pin 1706. This lane adds no decision codes. (Merge
 # composition: the rebuild lane adds 4 provenance-rebuild-* codes, so
 # the composed tree pins at 1710.)
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 _results = []

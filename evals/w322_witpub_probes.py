@@ -20,7 +20,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 _results = []
@@ -476,7 +476,7 @@ def _p14():
 # P15: regressions -- pin taxonomy + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P15-pin-taxonomy-2127-sorted")
+@probe("P15-pin-taxonomy-2131-sorted")
 
 
 def _p15():
@@ -484,12 +484,12 @@ def _p15():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2127#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
+    ok = (len(lits) == TAXONOMY_PIN == 2131#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        _held("P15-pin-taxonomy-2127-sorted", "2127/2127/0 sorted")
+        _held("P15-pin-taxonomy-2131-sorted", "2131/2131/0 sorted")
     else:
-        _break("P15-pin-taxonomy-2127-sorted",
+        _break("P15-pin-taxonomy-2131-sorted",
 
 
                "got %d literals" % (len(lits),))
@@ -503,8 +503,8 @@ def _p15b():
     # states and must not match.
     opens = re.findall(r"Open findings: ([A-Za-z0-9, ]*)\.", text)
     nexts = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-    if opens and nexts and opens[-1] == "F428" and nexts[-1] == "F429":
-        _held("P15-footer-state", "open F428 / next F429")
+    if opens and nexts and opens[-1] == "F429" and nexts[-1] == "F430":
+        _held("P15-footer-state", "open F429 / next F430")
     else:
         _break("P15-footer-state", "footer=%r next=%r"
                % (opens[-1] if opens else None,

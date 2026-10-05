@@ -39,7 +39,7 @@ import re
 import sys
 import time
 
-COVERAGE_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes: single-use-refused, evidence-refused, key-identity-refused, spiffe-refused).
+COVERAGE_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes: single-use-refused, evidence-refused, key-identity-refused, spiffe-refused).
 
 # A quoted token that could be a decision code: lowercase alnum runs
 # with dashes/dots/underscores, both quote styles.

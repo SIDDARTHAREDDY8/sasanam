@@ -24,7 +24,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 _results = []
 
 
@@ -676,18 +676,18 @@ def _p17():
 # P11: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P11-pin-taxonomy-2127-sorted")
+@probe("P11-pin-taxonomy-2131-sorted")
 def _p11():
     from gov import decision_codes as dc
     import re
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     codes = re.findall(r'"code":\s*["\']([^"\']+)["\']', src)
-    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2127, (#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
+    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2131, (#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
         len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
     assert "witness-alert-wrapper-error" in dc.TAXONOMY
-    _held("P11-pin-taxonomy-2127-sorted", "2127/2127/0 sorted")
+    _held("P11-pin-taxonomy-2131-sorted", "2131/2131/0 sorted")
 
 
 @probe("P12-footer-state")
@@ -697,9 +697,9 @@ def _p12():
     # Wave-337 lane 1: probe repaired -- the F417-era assertion rotted
     # through many merges; assert the live footer (open none / next
     # F426; F424/F425 closed by wave-337 lane 1).
-    assert "Next free finding: **F429**" in src, "next-free footer"
-    assert "**Open findings: F428.**" in src, "open-none footer"
-    _held("P12-footer-state", "open none / next F428")
+    assert "Next free finding: **F430**" in src, "next-free footer"
+    assert "**Open findings: F429.**" in src, "open-none footer"
+    _held("P12-footer-state", "open none / next F430")
 
 
 # ---------------------------------------------------------------------------

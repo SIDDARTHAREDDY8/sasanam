@@ -15,7 +15,7 @@ from gov import delegation_chain as dc
 from gov import decision_codes as dcd
 from gov import ed25519
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 NOW = 4000000000.0

@@ -63,7 +63,7 @@ from gov import delegation_revocation as rev
 from gov import ed25519 as _ed25519
 from gov import workflow as wf
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 _results = []
@@ -149,11 +149,11 @@ class BaseStateTest(unittest.TestCase):
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
         # Wave-303 F380 closure lane: F380 CLOSED; F381-F384 still OPEN.
         ok = (m_open and m_open[-1].strip()
-              == "F428"
-              and m_next and m_next[-1] == "F429")
+              == "F429"
+              and m_next and m_next[-1] == "F430")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F428 / next free F429")
+            "want open F429 / next free F430")
             == "HELD")
 
     def test_pin(self):

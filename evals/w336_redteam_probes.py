@@ -77,7 +77,7 @@ P5 (F423 -- OPEN at base, attacked live):
 
 P6 (honesty):
        literals; all 6 wave-335 codes centrally registered.
-  P6b  footer: open none / next F428 (raw-literal assertion,
+  P6b  footer: open none / next F430 (raw-literal assertion,
        wave-331 lesson); F424/F425 closed wave-337 lane 1;
        F426 filed by wave-337 red-team lane.
   P6c  F424 and F425 sections present and marked CLOSED; F423 CLOSED;
@@ -119,7 +119,7 @@ from gov import decision_codes as DC  # noqa: E402
 from gov.policy import PolicyEngine  # noqa: E402
 from tests.harness import make_run  # noqa: E402
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 _NEW_CODES = (
     "identity-refresh-lock-unavailable",
@@ -863,23 +863,23 @@ def P6b():
     """Footer honesty: the last line carries open F426 and
     next F427 (raw-literal assertion, wave-331 lesson). F424/F425 were
     closed by wave-337 lane 1; F426 filed by the wave-337 red-team lane."""
-    pid = "P6b-footer-open-f428-next-f429"
+    pid = "P6b-footer-open-f429-next-f430"
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               "rb") as f:
         lines = f.read().decode("utf-8").splitlines()
     last = lines[-1] if lines else ""
-    if "Open findings: F428." not in last:
-        _break(pid, "last line lacks 'Open findings: F428.': %r"
+    if "Open findings: F429." not in last:
+        _break(pid, "last line lacks 'Open findings: F429.': %r"
                % (last[:160],))
         return
-    if "Next free finding: **F429**" not in last:
+    if "Next free finding: **F430**" not in last:
         _break(pid, "last line lacks next-F427: %r" % (last[:160],))
         return
     for fnum in ("F424", "F425", "F426"):
         if not any(l.startswith("## " + fnum + " ") for l in lines):
             _break(pid, "%s section missing from FINDINGS.md" % (fnum,))
             return
-    _held(pid, "footer honest: open none / next F428")
+    _held(pid, "footer honest: open none / next F430")
 
 
 def P6c():

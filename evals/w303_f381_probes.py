@@ -42,7 +42,7 @@ import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 
 from gov import workflow_idempotency as idem
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 _results = []
@@ -98,11 +98,11 @@ class BaseStateTest(unittest.TestCase):
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
         # Wave-316 merge footer: F398/F399/F400 CLOSED; F401/F402/F403 OPEN; next F404.
-        ok = (m_open and m_open[-1].strip() == "F428"
-              and m_next and m_next[-1] == "F429")
+        ok = (m_open and m_open[-1].strip() == "F429"
+              and m_next and m_next[-1] == "F430")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F406 / next free F407") == "HELD")
+            "want open F429 / next free F430") == "HELD")
 
     def test_pin(self):
         with open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -113,7 +113,7 @@ class BaseStateTest(unittest.TestCase):
               and lits == sorted(lits))
         self.assertTrue(_expect_held(
             "taxonomy-pin",
-            ok and TAXONOMY_PIN == 2127,#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
+            ok and TAXONOMY_PIN == 2131,#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
 
 
             "%d literals / %d unique / sorted=%s"

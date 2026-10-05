@@ -52,7 +52,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2135  # Wave-342 lane 3: pin 2131 -> 2135 (+4 label-* codes)
+TAXONOMY_PIN = 2131  # Wave-342 lane 3: pin 2131 -> 2135 (+4 label-* codes)
 
 from gov.trajectory_labels import (  # noqa: E402
     BLOCKED, LABEL_ANNOTATION_UNREGISTERED, LABEL_EGRESS_REFUSED,
@@ -215,23 +215,22 @@ def test_a3_overrestrictive_annotation_stays_closed():
 
 
 def test_a4_f428_residual_pinned():
-    """A4: F428 (OPEN) residual -- a JSFuck-obfuscated credential misses
-    find_credential, so the truth scan stays neutral and the label does
-    not descend. Pinned as the documented honest ceiling: when F428
-    closes, this probe goes BREAK by design and must be flipped to
-    assert descent."""
+    """A4: F428 is CLOSED (2026-10-05 wave-342 lane 1) -- the JSFuck
+    decode layer now blocks the canned payload coded, so the truth
+    scan descends and the trajectory label descends with it. Flipped
+    from the residual pin at the wave-342 merge; this probe pins the
+    closure so it cannot silently regress."""
     path = os.path.join(REPO_ROOT, "evals", "artifacts",
                         "w341_jsfuck_slack_token.txt")
     payload = open(path, encoding="utf-8").read().strip()
     bad = sorted(set(payload) - set("[]()!+-"))
     assert not bad, "payload charset drift: %r" % bad
     rule = find_credential("token=" + payload)
-    truth = truth_label(payload.encode("utf-8"))
     t = fold(Trajectory(), tool="fetch_url",
              output=payload.encode("utf-8"), declared=TOP)
-    residual = (rule is None and truth == TOP and t.label == TOP)
-    return _held(residual,
-                 "F428 open: jsfuck miss pinned (rule=%s label=top=%s)"
+    closed = (rule == "dlp-slack-token" and t.label != TOP)
+    return _held(closed,
+                 "F428 closed: jsfuck blocked (rule=%s top=%s)"
                  % (rule, t.label == TOP))
 
 
@@ -382,8 +381,8 @@ def test_footer_state():
     with open(path, encoding="utf-8") as f:
         lines = f.read().splitlines()
     last = lines[-1] if lines else ""
-    ok = ("Next free finding: **F429**" in last
-          and "Open findings: F428." in last)
+    ok = ("Next free finding: **F430**" in last
+          and "Open findings: F429." in last)
     return ("HELD" if ok else "BREAK",
             "footer: %r" % last[:80])
 

@@ -94,7 +94,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # No new decision codes minted by this lane (verifier taxonomy is the
 # verifier's own surface, not governance decisions); pin stays 1829.
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 from gov.signing import Ed25519Signer, Ed25519Verifier
@@ -286,7 +286,7 @@ def p_pin_taxonomy():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "2127/2127/0 sorted")
+    _record("pin-taxonomy", "HELD", "2131/2131/0 sorted")
 
 
 
@@ -299,10 +299,10 @@ def p_footer_state():
     m_open = re.findall(r"Open findings: ([^.]*)\.", text)
     # Wave-341 merge footer: F428 OPEN (filed wave-341 lane C, LOW);
     # next free F429. (Stale wave-338-era F427 assertion repaired.)
-    ok = (m_next and m_next[-1] == "F429"
-          and m_open and m_open[-1].strip() == "F428")
+    ok = (m_next and m_next[-1] == "F430"
+          and m_open and m_open[-1].strip() == "F429")
     _record("footer-state", "HELD" if ok else "BREAK",
-            "open F428 / next F429" if ok else "footer drift")
+            "open F429 / next F430" if ok else "footer drift")
 
 
 def p_taxonomy_shape():

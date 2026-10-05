@@ -80,10 +80,10 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "tests"))
 
-TAXONOMY_PIN = 2131  # Wave-341 merge (c47ab9e8). Footer: open F428 / next F429.
+TAXONOMY_PIN = 2131  # Wave-341 merge (c47ab9e8). Footer: open F429 / next F430.
 
-FOOTER_OPEN = "F428"
-FOOTER_NEXT = "F429"
+FOOTER_OPEN = "F429"
+FOOTER_NEXT = "F430"
 
 _results = []
 
@@ -146,7 +146,7 @@ def p0():
     want = "Next free finding: **%s**. **Open findings: %s.**" % (
         FOOTER_NEXT, FOOTER_OPEN)
     if want in footer:
-        _held("P0b", "footer open F428 / next F429")
+        _held("P0b", "footer open F429 / next F430")
     else:
         _break("P0b", "footer text mismatch")
 

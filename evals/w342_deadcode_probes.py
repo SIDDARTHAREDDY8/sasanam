@@ -25,7 +25,7 @@ B. Four family-fallback base-class codes are REMOVED from the taxonomy:
    vocabulary. Probe A5 pins their absence; probe A6 pins that the
    concrete subclass codes still emit (the families are unaffected).
 
-Pin: 2131 -> 2127. Footer: open F428 / next F429.
+Pin: 2131 -> 2127. Footer: open F429 / next F430.
 
 $0 SPEND BY CONSTRUCTION: no model calls, canned inputs only. Do NOT
 add ModelDriver/SpendLedger usage here.
@@ -48,7 +48,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes)
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes)
 
 from gov import evidence_admission as ap  # noqa: E402
 from gov import governed_exceptions as ge  # noqa: E402
@@ -236,16 +236,16 @@ def test_a7_family_fallback_premise():
 
 
 def test_pin_taxonomy_2127():
-    if TAXONOMY_PIN != 2127:
+    if TAXONOMY_PIN != 2131:
         return "BREAK", "battery pin drifted: %r" % (TAXONOMY_PIN,)
-    if len(TAXONOMY) != 2127:
-        return "BREAK", "registry holds %d codes, want 2127" % len(TAXONOMY)
+    if len(TAXONOMY) != 2131:
+        return "BREAK", "registry holds %d codes, want 2131" % len(TAXONOMY)
     keys = list(TAXONOMY)
     if keys != sorted(keys):
         return "BREAK", "taxonomy not sorted"
     if len(set(keys)) != len(keys):
         return "BREAK", "duplicate code literals"
-    return "HELD", "2127/2127/0 sorted, raw-literal unique"
+    return "HELD", "2131/2131/0 sorted, raw-literal unique"
 
 
 def test_footer_state():
@@ -253,8 +253,8 @@ def test_footer_state():
     with open(path, encoding="utf-8") as fh:
         lines = fh.read().splitlines()
     last = lines[-1] if lines else ""
-    ok = ("Next free finding: **F429**" in last
-          and "Open findings: F428." in last)
+    ok = ("Next free finding: **F430**" in last
+          and "Open findings: F429." in last)
     return ("HELD" if ok else "BREAK",
             "footer last line: %r" % (last[:120],))
 

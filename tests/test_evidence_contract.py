@@ -24,7 +24,7 @@ from gov.decision_codes import TAXONOMY  # noqa: E402
 APPROVAL = "a" * 32
 INTENT = "d" * 64
 
-LANE_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+LANE_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 

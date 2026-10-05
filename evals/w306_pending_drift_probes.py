@@ -66,7 +66,7 @@ from gov import delegation_revocation as drv  # noqa: E402
 from gov import ed25519  # noqa: E402
 from gov import workflow as wf  # noqa: E402
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 AT = 1_700_000_000
@@ -275,8 +275,8 @@ def p_footer_state():
     m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
     # Wave-308 lane A: F391 CLOSED; footer open F395 / next F396.
-    ok = (m_open and m_open[-1].strip() == "F428"
-          and m_next and m_next[-1] == "F429")
+    ok = (m_open and m_open[-1].strip() == "F429"
+          and m_next and m_next[-1] == "F430")
     if ok:
         _record("footer-state", "HELD", "open F411 / next F412")
     else:

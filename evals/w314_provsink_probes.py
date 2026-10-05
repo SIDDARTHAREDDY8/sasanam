@@ -75,7 +75,7 @@ import probe_lines  # noqa: E402  (canonical probe-line emission)
 from gov import provenance_labels as PL  # noqa: E402
 from gov import provenance_sink as PS  # noqa: E402
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 _results = []
@@ -370,10 +370,10 @@ def pin_taxonomy():
                       "provenance-sink-redacted",
                       "provenance-sink-refused",
                       "provenance-sink-unknown-tool")]
-    ok = (len(keys) == TAXONOMY_PIN == 2127 and len(mine) == 9#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
+    ok = (len(keys) == TAXONOMY_PIN == 2131 and len(mine) == 9#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
           and keys == sorted(keys) and len(set(keys)) == len(keys))
     _held("pin-taxonomy", ok,
-          "taxonomy 2127/2127/0 sorted, 9 wave-314 codes present"
+          "taxonomy 2131/2131/0 sorted, 9 wave-314 codes present"
 
 
           if ok else "taxonomy pin mismatch")
@@ -384,11 +384,11 @@ def footer_state():
     # Wave-323 lane 1: F407 CLOSED; F428 OPEN; next F429.
     # Footer lines repeat through history; the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F429**" in text
-          and m_open and m_open[-1].strip() == "F428")
+    ok = ("Next free finding: **F430**" in text
+          and m_open and m_open[-1].strip() == "F429")
     _held("footer-state", ok,
-          "footer: open F428 / next F429" if ok
-          else "footer mismatch vs open F428 / next F429")
+          "footer: open F429 / next F430" if ok
+          else "footer mismatch vs open F429 / next F430")
 
 
 PROBES = [label_roundtrip, label_tamper_content, label_tamper_trust,

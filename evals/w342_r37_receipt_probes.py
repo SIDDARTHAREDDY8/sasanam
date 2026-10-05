@@ -121,10 +121,10 @@ def test_r3_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     with open(path) as f:
         last = "".join(f.readlines()[-3:])
-    ok = ("Next free finding: **F429**" in last
-          and "Open findings: F428." in last)
+    ok = ("Next free finding: **F430**" in last
+          and "Open findings: F429." in last)
     return ("HELD" if ok else "BREAK",
-            "footer must read open F428 / next F429")
+            "footer must read open F429 / next F430")
 
 
 def test_r4_single_bit_flips_all_tampered():

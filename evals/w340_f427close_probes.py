@@ -60,7 +60,7 @@ from tests.keyfixture import provision_test_key  # noqa: E402
 provision_test_key()
 from tests.harness import make_run  # noqa: E402
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 _results = []
 
@@ -342,9 +342,9 @@ def P1k():
 # ---------------------------------------------------------------------------
 
 def P2a():
-    """Pin 2131: taxonomy 2127/2127/0 sorted-unique on raw literals
+    """Pin 2131: taxonomy 2131/2131/0 sorted-unique on raw literals
     (wave-260 lesson)."""
-    pid = "P2a-pin-taxonomy-2127-sorted"
+    pid = "P2a-pin-taxonomy-2131-sorted"
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     found = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
@@ -357,16 +357,16 @@ def P2a():
 
 
 def P2b():
-    """Footer: open none / next F428; F426 and F427 marked CLOSED."""
-    pid = "P2b-footer-open-f428-next-f429"
+    """Footer: open none / next F430; F426 and F427 marked CLOSED."""
+    pid = "P2b-footer-open-f429-next-f430"
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     lines = text.splitlines()
     last = lines[-1] if lines else ""
-    if "Next free finding: **F429**" not in last:
-        _break(pid, "footer does not read next F428: %r" % (last[:120],))
+    if "Next free finding: **F430**" not in last:
+        _break(pid, "footer does not read next F430: %r" % (last[:120],))
         return
-    if "Open findings: F428." not in last:
+    if "Open findings: F429." not in last:
         _break(pid, "footer does not read open none: %r" % (last[:120],))
         return
 
@@ -384,7 +384,7 @@ def P2b():
     if "CLOSED" not in _section("F427"):
         _break(pid, "F427 section has no CLOSED marker")
         return
-    _held(pid, "footer open none / next F428, F426+F427 closed")
+    _held(pid, "footer open none / next F430, F426+F427 closed")
 
 
 # ---------------------------------------------------------------------------
@@ -534,8 +534,8 @@ _PROBES = [
     ("P1i-r8v1-construction-lie-coded-refusal", P1i),
     ("P1j-r8v2-wrapper-delegate-coded-refusal", P1j),
     ("P1k-r8v3-attr-mutation-coded-refusal", P1k),
-    ("P2a-pin-taxonomy-2127-sorted", P2a),
-    ("P2b-footer-open-f428-next-f429", P2b),
+    ("P2a-pin-taxonomy-2131-sorted", P2a),
+    ("P2b-footer-open-f429-next-f430", P2b),
     ("P3a-r34-approvals-scoped-to-owning-agent", P3a),
     ("P3b-r34-approval-sees-validated-arguments", P3b),
     ("P3c-r34-post-audit-tool-mutation-drift", P3c),

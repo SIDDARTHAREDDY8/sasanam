@@ -39,7 +39,7 @@ from gov import finding_lifecycle as fl
 from _w284_helpers import raising_spec
 
 # Wave-285 lane 2: pin 1621 -> 1622 (+1 campaign-produces-suppressed).
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 

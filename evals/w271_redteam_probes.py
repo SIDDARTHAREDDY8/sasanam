@@ -88,7 +88,7 @@ from gov.signing import Ed25519Signer, Ed25519Verifier  # noqa: E402
 
 # Merge pin: 1411 (wave-270 merge). Counted on QUOTED source literals
 # ("code": '...') -- the bare '"code": ' substring overcounts by 2.
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"

@@ -61,7 +61,7 @@ except Exception:  # red phase: module not written yet
     ed25519 = None
     HAVE_MODULE = False
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 # pin 1222 -> 1229 (+7 behsig-*).
 

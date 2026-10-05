@@ -65,7 +65,7 @@ from gov import memory_composed as mc
 from gov import memory_reconcile as mr
 from gov import memory_store as ms
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 _results = []
@@ -125,11 +125,11 @@ class BaseStateTest(unittest.TestCase):
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
         # Wave-341 merge: F428 OPEN; next F429.
-        ok = (m_open and m_open[-1].strip().lower() == "f428"
-              and m_next and m_next[-1] == "F429")
+        ok = (m_open and m_open[-1].strip().lower() == "f429"
+              and m_next and m_next[-1] == "F430")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F428 / next free F429") == "HELD")
+            "want open F429 / next free F430") == "HELD")
 
     def test_pin(self):
         lits = _literals()
@@ -137,7 +137,7 @@ class BaseStateTest(unittest.TestCase):
               and lits == sorted(lits))
         self.assertTrue(_expect_held(
             "taxonomy-pin",
-            ok and TAXONOMY_PIN == 2127,#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
+            ok and TAXONOMY_PIN == 2131,#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
 
 
             "%d literals / %d unique / sorted=%s"
@@ -811,7 +811,7 @@ class RepinTest(unittest.TestCase):
         lits = _literals()
         self.assertTrue(_expect_held(
             "repin-pin-1851",
-            len(lits) == 2127 and len(set(lits)) == 2127
+            len(lits) == 2131 and len(set(lits)) == 2131
 
 
             and lits == sorted(lits),

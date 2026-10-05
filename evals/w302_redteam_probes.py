@@ -78,7 +78,7 @@ from gov import workflow_idempotency as idem
 from gov import workflow_routing as wr
 from gov import workflow_saga as saga
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 _results = []
@@ -134,11 +134,11 @@ class BaseStateTest(unittest.TestCase):
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
         # Wave-324 merge footer: F408 CLOSED; open F428; next F429.
         ok = (m_open and m_open[-1].strip()
-              == "F428"
-              and m_next and m_next[-1] == "F429")
+              == "F429"
+              and m_next and m_next[-1] == "F430")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F428 / next free F429")
+            "want open F429 / next free F430")
             == "HELD")
 
     def test_pin(self):
@@ -147,7 +147,7 @@ class BaseStateTest(unittest.TestCase):
               and lits == sorted(lits))
         self.assertTrue(_expect_held(
             "taxonomy-pin",
-            ok and TAXONOMY_PIN == 2127,#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
+            ok and TAXONOMY_PIN == 2131,#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
 
 
             "%d literals / %d unique / sorted=%s"

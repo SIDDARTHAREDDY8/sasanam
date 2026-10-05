@@ -71,7 +71,7 @@ import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 import probe_lines  # noqa: E402  (canonical probe-line form)
 
 # Wave-307 merge pin 1827; this lane mints +1 coord-lease-manager-mismatch.
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 LEASE_MISMATCH = "coord-lease-manager-mismatch"
 
@@ -109,7 +109,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "2127/2127/0 sorted")
+    _record("pin-taxonomy", "HELD", "2131/2131/0 sorted")
 
 
 
@@ -125,12 +125,12 @@ def p_footer_state():
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
     # Wave-322 lane 1 repoint: footer open none / next F409 (F406 CLOSED).
-    # Wave-342 lane 6: repointed to open F428 / next F429 (footer-state probe audit).
-    if nxt != 429 or open_s != "F428":
+    # Wave-342 lane 6: repointed to open F429 / next F430 (footer-state probe audit).
+    if nxt != 430 or open_s != "F429":
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F429 "
-                       "open 'F428')" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open F428 / next F429")
+                       "open 'F429')" % (nxt, open_s))
+    _record("footer-state", "HELD", "footer pins open F429 / next F430")
 
 
 class _RubberStampManager:

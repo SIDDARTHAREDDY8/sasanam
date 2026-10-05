@@ -33,8 +33,8 @@ P3  Binding + choke point: tampered MAC, attacker-sealed binding,
     issuer_hint mismatch, credential AS mismatch, http seal.
 P4  F415/F416 closure regressions (relabelled w332 probes).
 P5  Shamir write-time residual (relabelled w332 probe).
-P6  Pin/footer honesty: taxonomy 2127/2127/0 on raw literals,
-    footer open none / next F417, live pin constants == 2127.
+P6  Pin/footer honesty: taxonomy 2131/2131/0 on raw literals,
+    footer open none / next F417, live pin constants == 2131.
 P7  Child mode: w332_mcpoauth battery, BREAKs inside the cascade.
 """
 
@@ -51,9 +51,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
-FOOTER_OPEN = "F428"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
-FOOTER_NEXT = "F429"  # Next free finding number.
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+FOOTER_OPEN = "F429"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
+FOOTER_NEXT = "F430"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -574,50 +574,50 @@ def _p5a():
 # P6: pin + footer honesty.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2127-sorted")
+@probe("P6a-pin-taxonomy-2131-sorted")
 def _p6a():
-    if TAXONOMY_PIN != 2127:
-        return _break("P6a-pin-taxonomy-2127-sorted",
-                      "TAXONOMY_PIN is %r, want 2127" % (TAXONOMY_PIN,))
+    if TAXONOMY_PIN != 2131:
+        return _break("P6a-pin-taxonomy-2131-sorted",
+                      "TAXONOMY_PIN is %r, want 2131" % (TAXONOMY_PIN,))
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
-    if len(lits) != 2127 or len(set(lits)) != 2127 \
+    if len(lits) != 2131 or len(set(lits)) != 2131 \
             or lits != sorted(lits):
-        return _break("P6a-pin-taxonomy-2127-sorted",
-                      "want 2127/2127/0 sorted, got %d/%d/sorted=%s"
+        return _break("P6a-pin-taxonomy-2131-sorted",
+                      "want 2131/2131/0 sorted, got %d/%d/sorted=%s"
                       % (len(lits), len(set(lits)), lits == sorted(lits)))
-    return _held("P6a-pin-taxonomy-2127-sorted",
-                 "2127/2127/0 sorted unique on raw source literals")
+    return _held("P6a-pin-taxonomy-2131-sorted",
+                 "2131/2131/0 sorted unique on raw source literals")
 
 
-@probe("P6b-footer-open-f428-next-f429")
+@probe("P6b-footer-open-f429-next-f430")
 def _p6b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     # Raw-literal assertions (wave-331 lesson): the footer must read
     # correctly as literal text, not only via constants.
-    if "Next free finding: **F429**." not in text:
-        return _break("P6b-footer-open-f428-next-f429",
-                      "raw literal 'Next free finding: **F429**.' absent")
-    if "**Open findings: F428.**" not in text:
-        return _break("P6b-footer-open-f428-next-f429",
-                      "raw literal '**Open findings: F428.**' absent")
+    if "Next free finding: **F430**." not in text:
+        return _break("P6b-footer-open-f429-next-f430",
+                      "raw literal 'Next free finding: **F430**.' absent")
+    if "**Open findings: F429.**" not in text:
+        return _break("P6b-footer-open-f429-next-f430",
+                      "raw literal '**Open findings: F429.**' absent")
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return _break("P6b-footer-open-f428-next-f429",
+        return _break("P6b-footer-open-f429-next-f430",
                       "footer line not found")
     next_free, open_now = ms[-1]  # the LAST footer is the live one
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return _break("P6b-footer-open-f428-next-f429",
+        return _break("P6b-footer-open-f429-next-f430",
                       "footer open %s / next %s, want open %s / next %s"
                       % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return _held("P6b-footer-open-f428-next-f429",
-                 "footer open none / next F428 (raw literals + parse)")
+    return _held("P6b-footer-open-f429-next-f430",
+                 "footer open none / next F430 (raw literals + parse)")
 
 
-@probe("P6c-pin-constants-2127-live")
+@probe("P6c-pin-constants-2131-live")
 def _p6c():
     """Wave-302 lesson: every live module-level TAXONOMY_PIN constant
     must equal the new pin; stale values hide in files the
@@ -639,13 +639,13 @@ def _p6c():
             for m in re.finditer(r"^TAXONOMY_PIN\s*=\s*(\d+)", src, re.M):
                 if rel in grandfathered:
                     continue
-                if int(m.group(1)) != 2127:
+                if int(m.group(1)) != 2131:
                     bad.append("%s:%s" % (rel, m.group(1)))
     if bad:
-        return _break("P6c-pin-constants-2127-live",
+        return _break("P6c-pin-constants-2131-live",
                       "stale pin constants: %s" % (bad[:6],))
-    return _held("P6c-pin-constants-2127-live",
-                 "all live module-level TAXONOMY_PIN == 2127")
+    return _held("P6c-pin-constants-2131-live",
+                 "all live module-level TAXONOMY_PIN == 2131")
 
 
 # ---------------------------------------------------------------------------

@@ -52,7 +52,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 import probe_lines  # noqa: E402  (canonical probe-line form)
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 _results = []
@@ -89,7 +89,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "2127/2127/0 sorted")
+    _record("pin-taxonomy", "HELD", "2131/2131/0 sorted")
 
 
 
@@ -102,10 +102,10 @@ def p_footer_state():
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
     # Wave-316 merge footer: F398/F399/F400 CLOSED; F401/F402/F403 OPEN; next F404.
     ok = (m_open and m_open[-1].strip()
-          == "F428"
-          and m_next and m_next[-1] == "F429")
+          == "F429"
+          and m_next and m_next[-1] == "F430")
     _record("footer-state", "HELD" if ok else "BREAK",
-            "want open F406 / next free F407")
+            "want open F429 / next free F430")
 
 
 def _al():

@@ -24,7 +24,7 @@ P5  Per-token independence: two distinct tokens refresh concurrently
 P6  _revoke_chain under concurrent mint: a spinner thread mints in a
     loop while the main thread triggers reuse-revocation repeatedly --
     no RuntimeError, refusals stay coded.
-P7  Pin 2106 + footer state (open none / next F428; F421 CLOSED);
+P7  Pin 2106 + footer state (open none / next F430; F421 CLOSED);
     taxonomy sorted-unique on raw literals; the new code centrally
     registered.
 P8  Green check (depth-1): honors GOV_SKIP_GREEN; otherwise runs
@@ -53,9 +53,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
-FOOTER_OPEN = "F428"  # F421 CLOSED 2026-10-05 (wave-335 lane 3). F426 closed wave-338 lane 1.
-FOOTER_NEXT = "F429"  # Next free finding number.
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+FOOTER_OPEN = "F429"  # F421 CLOSED 2026-10-05 (wave-335 lane 3). F426 closed wave-338 lane 1.
+FOOTER_NEXT = "F430"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -363,7 +363,7 @@ def _p7():
         "footer open-findings mismatch"
     assert "## F421" in text and "CLOSED 2026-10-05 wave-335 lane 3" in text, \
         "F421 closure not recorded"
-    return _held(pid, "taxonomy 2127/2127/0 sorted-unique; new code "
+    return _held(pid, "taxonomy 2131/2131/0 sorted-unique; new code "
                       "registered; F421 CLOSED; footer open F424, F425 / next F426")
 
 

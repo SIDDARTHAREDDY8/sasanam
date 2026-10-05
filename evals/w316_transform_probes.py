@@ -41,7 +41,7 @@ from gov.provenance_labels import TrustLevel as T
 NOW = 1790000000  # fixed "now" for token verification
 ISSUER = "w316-probe-approver"
 
-EXPECTED_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+EXPECTED_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 
@@ -449,8 +449,8 @@ def p20():
         return ("ERROR", "footer line unparseable")
     nxt = int(m.group(1))
     open_s = opens.group(1).strip()
-    if nxt == 429 and open_s == "F428":
-        return _held("footer pins open F428 / next F429")
+    if nxt == 430 and open_s == "F429":
+        return _held("footer pins open F429 / next F430")
     return _break("footer is F%d / %s" % (nxt, open_s))
 
 

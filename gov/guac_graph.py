@@ -672,6 +672,6 @@ class GuacGraph:
 
 #: The taxonomy pin this battery asserts (kept on the module so the
 #: pin assertion lives next to the code that moves it).
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 

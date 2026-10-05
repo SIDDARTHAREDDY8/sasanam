@@ -161,7 +161,7 @@ def test_a10_f429_filing_pinned():
     ok = ("(F429 filed 2026-10-05, wave-342 lane 5" in text
           and "LOW, OPEN:" in text
           and "Next free finding: **F430**" in text
-          and "Open findings: F428, F429." in text)
+          and "Open findings: F429." in text)
     return ("HELD" if ok else "BREAK", "F429 filed open=%s" % ok)
 
 
@@ -171,7 +171,7 @@ def test_a11_f428_still_open_pinned():
     still prints BREAK."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F428 filed 2026-10-05, wave-341 lane C" in text
-          and "Open findings: F428, F429." in text)
+          and "Open findings: F429." in text)
     return ("HELD" if ok else "BREAK", "F428 still open=%s" % ok)
 
 

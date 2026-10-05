@@ -23,7 +23,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 _results = []
 
 
@@ -853,7 +853,7 @@ def _p5f():
 # P6: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-2127-sorted")
+@probe("P6-pin-taxonomy-2131-sorted")
 def _p6():
     from gov import decision_codes as DC
     n = len(DC.TAXONOMY)
@@ -861,7 +861,7 @@ def _p6():
     keys = list(DC.TAXONOMY.keys())
     assert keys == sorted(keys), "taxonomy not sorted"
     assert len(set(keys)) == n, "taxonomy not unique"
-    _held("P6-pin-taxonomy-2127-sorted", "%d/%d/0 sorted" % (n, n))
+    _held("P6-pin-taxonomy-2131-sorted", "%d/%d/0 sorted" % (n, n))
 
 
 @probe("P6-footer-state")
@@ -869,9 +869,9 @@ def _p6b():
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               encoding="utf-8") as f:
         text = f.read()
-    if "Next free finding: **F429**" in text \
-            and "**Open findings: F428.**" in text:
-        _held("P6-footer-state", "open F428 / next F429")
+    if "Next free finding: **F430**" in text \
+            and "**Open findings: F429.**" in text:
+        _held("P6-footer-state", "open F429 / next F430")
     else:
         _break("P6-footer-state", "footer mismatch")
 

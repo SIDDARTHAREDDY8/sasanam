@@ -54,8 +54,8 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
-FOOTER_NEXT = "F429"  # Next free finding number (wave-337 merge: F426 filed by red team).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+FOOTER_NEXT = "F430"  # Next free finding number (wave-337 merge: F426 filed by red team).
 
 _results = []
 _PROBES = []
@@ -315,7 +315,7 @@ def p3():
     if "Next free finding: **%s**." % FOOTER_NEXT not in text:
         _break(pid, "footer next-free mismatch")
         return
-    if "**Open findings: F428.**" not in text:
+    if "**Open findings: F429.**" not in text:
         _break(pid, "footer open-findings mismatch (want open F426)")
         return
     if "## F423 " not in text:

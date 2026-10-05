@@ -57,7 +57,7 @@ from gov import policy_ci as pci
 from gov import approval_quorum as aq
 from gov import ed25519 as _ed25519
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -131,8 +131,8 @@ class BaseStateTest(unittest.TestCase):
                 # Wave-303 lane 4 re-pin: F384 CLOSED by this lane.
 # Wave-304 lane A re-pin: F385 CLOSED; lane footer open F386 / next free F387.
         # Wave-303 merge re-pin: open F385,F386 / next free F387.
-        ok = (m_open and m_open[-1].strip() == "F428"
-              and m_next and m_next[-1] == "F429")
+        ok = (m_open and m_open[-1].strip() == "F429"
+              and m_next and m_next[-1] == "F430")
         self.assertTrue(_expect_held(
             "footer-state", ok,
             "open=%r next=%r" % (

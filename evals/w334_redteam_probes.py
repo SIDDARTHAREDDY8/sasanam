@@ -97,7 +97,7 @@ from gov import capability_token as CT  # noqa: E402
 from gov import revocation_push as RP  # noqa: E402
 from gov import mcp_oauth_binding as mob  # noqa: E402
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 _NOW = 1798765432
 _AGENT = "agent-A"
 _MISSION = "mission-X"
@@ -740,10 +740,10 @@ def P4a():
 
 
 def P5a():
-    """Pin honesty: taxonomy is 2127/2127/0, sorted and unique on raw
+    """Pin honesty: taxonomy is 2131/2131/0, sorted and unique on raw
     source literals (wave-260 lesson: assert on literals, not the
     deduped dict)."""
-    pid = "P5a-pin-taxonomy-2127-sorted"
+    pid = "P5a-pin-taxonomy-2131-sorted"
     with open(os.path.join(REPO, "gov", "decision_codes.py"),
               encoding="utf-8") as fh:
         src = fh.read()
@@ -758,7 +758,7 @@ def P5a():
     if sorted(codes) != codes:
         _break(pid, "literals not sorted")
         return
-    _held(pid, "taxonomy 2127/2127/0 sorted unique on raw literals")
+    _held(pid, "taxonomy 2131/2131/0 sorted unique on raw literals")
 
 
 def P5b():
@@ -779,19 +779,19 @@ def P5b():
 
 
 def P5c():
-    """Footer honesty: open none / next F428 (raw literals included --
+    """Footer honesty: open none / next F430 (raw literals included --
     wave-331 lesson)."""
-    pid = "P5c-footer-open-f428-next-f429"
+    pid = "P5c-footer-open-f429-next-f430"
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               encoding="utf-8") as fh:
         text = fh.read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F429**" in text
-          and m_open and m_open[-1].strip() == "F428")
+    ok = ("Next free finding: **F430**" in text
+          and m_open and m_open[-1].strip() == "F429")
     if ok:
-        _held(pid, "footer: open none / next F428")
+        _held(pid, "footer: open none / next F430")
     else:
-        _break(pid, "footer mismatch vs open none / next F428")
+        _break(pid, "footer mismatch vs open none / next F430")
 
 _PROBES = [
     ("P1a-nul-in-join-fields", P1a),
@@ -815,9 +815,9 @@ _PROBES = [
     ("P2k-reregistration-refused", P2k),
     ("P3a-f417-closed-coded", P3a),
     ("P4a-f418-closure-holds", P4a),
-    ("P5a-pin-taxonomy-2127-sorted", P5a),
+    ("P5a-pin-taxonomy-2131-sorted", P5a),
     ("P5b-new-codes-registered", P5b),
-    ("P5c-footer-open-f428-next-f429", P5c),
+    ("P5c-footer-open-f429-next-f430", P5c),
 ]
 
 # No expected BREAKs on this tree: every attack shape above is refused

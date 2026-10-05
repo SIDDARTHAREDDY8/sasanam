@@ -47,7 +47,7 @@ except ImportError:
 # Wave-261 feature lane 3: +4 detector-* machine codes -> 1092 -> 1096.
 # Assert on the deduped dict AND on raw source literals (wave-260 lesson:
 # duplicate "code" literals are invisible to len(TAXONOMY)).
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 _PROBES = []

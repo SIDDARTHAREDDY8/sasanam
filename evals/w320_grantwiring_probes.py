@@ -32,7 +32,7 @@ ApprovalQueue.decide / ToolExecutor.execute_approved):
   human-edited-args-break-scope: the human edits the recipient at
       decide() time -> the grant no longer covers the call ->
       sweep refuses (grantneg-scope-mismatch).
-  pin-taxonomy / footer-state: standard pins (1964; open F428 / next F429).
+  pin-taxonomy / footer-state: standard pins (1964; open F429 / next F430).
 """
 
 import hashlib
@@ -288,11 +288,11 @@ def p_pin_taxonomy():
     import re
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == 2127 and len(set(lits)) == len(lits)
+    ok = (len(lits) == 2131 and len(set(lits)) == len(lits)
           and lits == sorted(lits)
-          and len(dc.TAXONOMY) == 2127)
-    return _held("pin-taxonomy-2127-sorted", ok,
-                 "2127/2127/0 sorted" if ok
+          and len(dc.TAXONOMY) == 2131)
+    return _held("pin-taxonomy-2131-sorted", ok,
+                 "2131/2131/0 sorted" if ok
 
 
                  else "taxonomy drift: %d literals" % len(lits))
@@ -304,8 +304,8 @@ def p_footer_state():
     import re
     m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-    ok = (m_open and m_open[-1].strip() == "F428"
-          and m_next and m_next[-1] == "F429")
+    ok = (m_open and m_open[-1].strip() == "F429"
+          and m_next and m_next[-1] == "F430")
     return _held("footer-state", ok,
                  "open F412 / next F413" if ok
                  else "footer drift: %r / %r" % (m_open[-1:], m_next[-1:]))
@@ -322,7 +322,7 @@ PROBES = [
     ("expired-between-queue-and-execution",
      p_expired_between_queue_and_execution),
     ("human-edited-args-break-scope", p_human_edited_args_break_scope),
-    ("pin-taxonomy-2127-sorted", p_pin_taxonomy),
+    ("pin-taxonomy-2131-sorted", p_pin_taxonomy),
 
 
     ("footer-state", p_footer_state),

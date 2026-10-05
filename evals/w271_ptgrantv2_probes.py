@@ -45,7 +45,7 @@ from gov import ed25519  # noqa: E402
 # ptgrant-caller-unauthorized, ptgrant-context-oversize,
 # ptgrant-mandate-unreachable, ptgrant-predicate-hash-mismatch).
 # Asserted lane-locally; the merge coordinator repoints at merge.
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 NEW_CODES = [

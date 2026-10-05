@@ -12,7 +12,7 @@ from gov import evidence_anchor as _ea
 from gov import evidence_receipt as _er
 from gov import timestamp_authority as tsa
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 TSA_SEED = bytes(range(32))

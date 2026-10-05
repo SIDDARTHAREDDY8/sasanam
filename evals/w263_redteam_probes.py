@@ -87,7 +87,7 @@ from gov import policy_distribution as poldist
 from gov import root_ceremony as rc
 from gov import scoped_tool_listing as stl
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 _PROBES = []

@@ -107,7 +107,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 # Pin 1851 (wave-312 lane D: 1841 -> 1851, +10 witness codes). This lane mints no
 # codes (red team only; F397 needs no new code -- the fix is an `at`
 # bound, not a refusal), so the pin stays 1851.
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 AT = 1000000
@@ -146,7 +146,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "2127/2127/0 sorted")
+    _record("pin-taxonomy", "HELD", "2131/2131/0 sorted")
 
 
 
@@ -162,13 +162,13 @@ def p_footer_state():
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
     # Wave-313 lane A footer: F397 CLOSED; no open findings.
-    # Wave-342 lane 6: repointed to open F428 / next F429 (footer-state probe audit).
-    if nxt != 429 or open_s != "F428":
+    # Wave-342 lane 6: repointed to open F429 / next F430 (footer-state probe audit).
+    if nxt != 430 or open_s != "F429":
         return _record("footer-state", "BREAK",
                        "footer pins next F%d open '%s', want next F429 "
                        "open 'F428'" % (nxt, open_s))
     _record("footer-state", "HELD",
-            "footer pins open F428 / next F429")
+            "footer pins open F429 / next F430")
 
 # ------------------------------------------------------------------
 # Shared scaffolds

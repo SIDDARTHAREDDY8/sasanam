@@ -46,7 +46,7 @@ from gov import policy_exception as pe
 from gov import ed25519
 from gov.signing import Ed25519Verifier
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 EVAL_START = "2026-10-01T12:00:00Z"

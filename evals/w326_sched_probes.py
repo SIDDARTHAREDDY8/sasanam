@@ -45,7 +45,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 _results = []
 
@@ -471,7 +471,7 @@ def _p14():
 # Pin + footer state probes.
 # ---------------------------------------------------------------------------
 
-@probe("P15-pin-taxonomy-2127-sorted")
+@probe("P15-pin-taxonomy-2131-sorted")
 def _p15():
     from gov import decision_codes as DC
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -480,7 +480,7 @@ def _p15():
         r'\"code\":\s*[\"\']([^\"\']+)[\"\']', src)
     # Uniqueness on raw source literals (the wave-260 lesson: the
     # deduped dict cannot see duplicate literals).
-    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2127, (#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
+    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2131, (#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
         len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
     for code in ("supplychain-scan-malformed",
@@ -493,16 +493,16 @@ def _p15():
         assert code in DC.TAXONOMY, "new code %r not registered" % code
         entry = DC.TAXONOMY[code]
         assert entry["domain"] == "supplychain", entry
-    _held("P15-pin-taxonomy-2127-sorted", "2127/2127/0 sorted; new codes ok")
+    _held("P15-pin-taxonomy-2131-sorted", "2131/2131/0 sorted; new codes ok")
 
 
-@probe("P16-footer-open-f428-next-f429")
+@probe("P16-footer-open-f429-next-f430")
 def _p16():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     src = open(path, encoding="utf-8").read()
-    assert "Next free finding: **F429**" in src, "next-free footer"
-    assert "**Open findings: F428.**" in src, "open footer"
-    _held("P16-footer-open-f428-next-f429",
+    assert "Next free finding: **F430**" in src, "next-free footer"
+    assert "**Open findings: F429.**" in src, "open footer"
+    _held("P16-footer-open-f429-next-f430",
           "footer: open none / next F419")
 
 

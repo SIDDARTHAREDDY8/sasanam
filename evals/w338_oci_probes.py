@@ -3,7 +3,7 @@
 
 Base: 6cdf5fdd (wave-337 merge). Pin: 2131 (+1 oci-bundle-not-verifiable,
 wave-339 lane 1; +2 oci-*: oci-layer-media-type-
-mismatch + oci-tag-refused). Footer unchanged: open none / next F428
+mismatch + oci-tag-refused). Footer unchanged: open none / next F430
 (no findings filed here).
 
 Builds w337 research prospectus R17 (OCI referrer transport for keyed
@@ -26,8 +26,8 @@ P7  Harbor caveat (documented, tested): replica without replicated
     registry-supplied "verified" badge is never an input to any verdict.
 P8  Predicate-type annotation: extracted from the sealed VSA statement;
     explicit override honored.
-P9  Pin/taxonomy honesty (2127/2127/0 sorted-unique on raw literals;
-    new codes registered) + footer state (open none / next F428).
+P9  Pin/taxonomy honesty (2131/2131/0 sorted-unique on raw literals;
+    new codes registered) + footer state (open none / next F430).
 P10 Green check (depth-1): tests/test_oci_referrer.py as a child.
 
 gov/ changes in this lane: gov/oci_referrer.py (new) +
@@ -51,9 +51,9 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 FOOTER_OPEN = ("F428",)
-FOOTER_NEXT = "F429"
+FOOTER_NEXT = "F430"
 
 _EXPECTED_BREAKS = set()
 
@@ -392,13 +392,13 @@ def _p9():
                  "oci-bundle-not-verifiable", "oci-registry-onboarding-refused"):
         assert code in DC.TAXONOMY, code
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
-    assert "Next free finding: **F429**" in text, "footer next free"
-    assert "Open findings: F428." in text, "footer open findings"
-    assert FOOTER_OPEN == ("F428",) and FOOTER_NEXT == "F428"
+    assert "Next free finding: **F430**" in text, "footer next free"
+    assert "Open findings: F429." in text, "footer open findings"
+    assert FOOTER_OPEN == ("F429",) and FOOTER_NEXT == "F430"
     _held("P9-pin-taxonomy",
-          "2127/2127/0 sorted-unique; 4 oci-* codes registered "
+          "2131/2131/0 sorted-unique; 4 oci-* codes registered "
           "(+oci-bundle-not-verifiable +oci-registry-onboarding-refused); "
-          "footer open none / next F428")
+          "footer open none / next F430")
 
 
 def _run_child_output(args, timeout):

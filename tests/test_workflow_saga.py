@@ -15,7 +15,7 @@ import unittest
 from gov import decision_codes
 from gov import workflow_saga as ws
 
-PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 class CrashSim(BaseException):

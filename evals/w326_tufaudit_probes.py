@@ -43,7 +43,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 from gov import bundle_refresh as br  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 # ---------------------------------------------------------------------------
 # Fixture: a miniature TUF repository in memory.

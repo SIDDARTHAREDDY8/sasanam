@@ -50,11 +50,11 @@ import probe_lines  # noqa: E402  (canonical probe-line emission)
 from gov import provenance_labels as PL  # noqa: E402
 from gov import provenance_sink as PS  # noqa: E402
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
-FOOTER_NEXT = "F429"
-FOOTER_OPEN = "F428"
+FOOTER_NEXT = "F430"
+FOOTER_OPEN = "F429"
 
 _results = []
 PROBES = []

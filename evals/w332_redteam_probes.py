@@ -49,9 +49,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
-FOOTER_OPEN = "F428"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
-FOOTER_NEXT = "F429"  # Next free finding number.
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+FOOTER_OPEN = "F429"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
+FOOTER_NEXT = "F430"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -992,10 +992,10 @@ def _p4c():
                  "pin comments honest; live values %r" % (vals,))
 
 
-@probe("P4d-live-pin-constants-all-2127")
+@probe("P4d-live-pin-constants-all-2131")
 def _p4d():
     """Every live module-level TAXONOMY_PIN/LANE_PIN/EXPECTED_PIN
-    constant equals 2127 -- except the grandfathered dead-code files
+    constant equals 2131 -- except the grandfathered dead-code files
     (wave-331 merge inventory). A stale live pin is the wave-302
     class: the sweep must assert, not just replace."""
     bad = []
@@ -1019,14 +1019,14 @@ def _p4d():
                     r"EXPECTED_PIN)\s*=\s*(\d+)",
                     src, re.M):
                 count += 1
-                if int(m.group(2)) != 2127:
+                if int(m.group(2)) != 2131:
                     bad.append("%s: %s = %s" % (rel, m.group(1),
                                                m.group(2)))
     if bad:
-        return _break("P4d-live-pin-constants-all-2127",
+        return _break("P4d-live-pin-constants-all-2131",
                       "stale live pins: %r" % (bad[:5],))
-    return _held("P4d-live-pin-constants-all-2127",
-                 "%d live pin constants all 2127 (+%d grandfathered "
+    return _held("P4d-live-pin-constants-all-2131",
+                 "%d live pin constants all 2131 (+%d grandfathered "
                  "dead-code)" % (count, len(_GRANDFATHERED_PIN_STALE)))
 
 
@@ -1034,39 +1034,39 @@ def _p4d():
 # P5: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P5a-pin-taxonomy-2127-sorted")
+@probe("P5a-pin-taxonomy-2131-sorted")
 def _p5a():
-    if TAXONOMY_PIN != 2127:
-        return _break("P5a-pin-taxonomy-2127-sorted",
-                      "TAXONOMY_PIN is %r, want 2127" % (TAXONOMY_PIN,))
+    if TAXONOMY_PIN != 2131:
+        return _break("P5a-pin-taxonomy-2131-sorted",
+                      "TAXONOMY_PIN is %r, want 2131" % (TAXONOMY_PIN,))
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
-    if len(lits) != 2127 or len(set(lits)) != 2127 \
+    if len(lits) != 2131 or len(set(lits)) != 2131 \
             or lits != sorted(lits):
-        return _break("P5a-pin-taxonomy-2127-sorted",
-                      "want 2127/2127/0 sorted, got %d/%d/sorted=%s"
+        return _break("P5a-pin-taxonomy-2131-sorted",
+                      "want 2131/2131/0 sorted, got %d/%d/sorted=%s"
                       % (len(lits), len(set(lits)), lits == sorted(lits)))
-    return _held("P5a-pin-taxonomy-2127-sorted",
-                 "2127/2127/0 sorted unique on raw source literals")
+    return _held("P5a-pin-taxonomy-2131-sorted",
+                 "2131/2131/0 sorted unique on raw source literals")
 
 
-@probe("P5b-footer-open-f428-next-f429")
+@probe("P5b-footer-open-f429-next-f430")
 def _p5b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return _break("P5b-footer-open-f428-next-f429",
+        return _break("P5b-footer-open-f429-next-f430",
                       "footer line not found")
     next_free, open_now = ms[-1]  # the LAST footer is the live one
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return _break("P5b-footer-open-f428-next-f429",
+        return _break("P5b-footer-open-f429-next-f430",
                       "footer open %s / next %s, want open %s / next %s"
                       % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return _held("P5b-footer-open-f428-next-f429",
-                 "footer open none / next F428")
+    return _held("P5b-footer-open-f429-next-f430",
+                 "footer open none / next F430")
 
 
 # ---------------------------------------------------------------------------

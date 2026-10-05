@@ -83,7 +83,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-304 merge pin 1827; this lane mints no codes (red team only), so
 # the pin stays 1827. The merge-time sweep repoints to the wave-305 pin.
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 _results = []
@@ -120,7 +120,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "2127/2127/0 sorted")
+    _record("pin-taxonomy", "HELD", "2131/2131/0 sorted")
 
 
 
@@ -136,13 +136,13 @@ def p_footer_state():
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
     # Wave-312 merge footer: F396 CLOSED (lane A); F397 OPEN (lane C).
-    # Wave-342 lane 6: repointed to open F428 / next F429 (footer-state probe audit).
-    if nxt != 429 or open_s != "F428":
+    # Wave-342 lane 6: repointed to open F429 / next F430 (footer-state probe audit).
+    if nxt != 430 or open_s != "F429":
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F429 open "
-                       "'F428')" % (nxt, open_s))
+                       "footer drift: next F%d open %r (want next F430 open "
+                       "'F429')" % (nxt, open_s))
     _record("footer-state", "HELD",
-            "footer: open F428 / next F429")
+            "footer: open F429 / next F430")
 
 
 AT = 1_700_000_000

@@ -35,9 +35,9 @@ if REPO_ROOT not in sys.path:
 
 from gov import landlock_jail as lj  # noqa: E402
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
-FOOTER_OPEN = "F428"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
-FOOTER_NEXT = "F429"  # Next free finding number.
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+FOOTER_OPEN = "F429"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
+FOOTER_NEXT = "F430"  # Next free finding number.
 
 PROBES = []
 
@@ -440,32 +440,32 @@ def _e5():
 # P-group: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P1-pin-taxonomy-2127")
+@probe("P1-pin-taxonomy-2131")
 def _p1():
-    name = "P1-pin-taxonomy-2127"
-    if TAXONOMY_PIN != 2127:
-        return _break(name, "TAXONOMY_PIN is %r, want 2127"
+    name = "P1-pin-taxonomy-2131"
+    if TAXONOMY_PIN != 2131:
+        return _break(name, "TAXONOMY_PIN is %r, want 2131"
                       % (TAXONOMY_PIN,))
     import re as _re
     lits = _re.findall(r'"code"\s*:\s*\'([^\']+)\'',
                        open(os.path.join(REPO_ROOT, "gov",
                                          "decision_codes.py"),
                             encoding="utf-8").read())
-    if len(lits) != 2127 or len(set(lits)) != 2127 \
+    if len(lits) != 2131 or len(set(lits)) != 2131 \
             or lits != sorted(lits):
-        return _break(name, "taxonomy not 2127/2127/0 sorted "
+        return _break(name, "taxonomy not 2131/2131/0 sorted "
                              "(got %d/%d)" % (len(lits), len(set(lits))))
     for code in ("sandbox-landlock-apply-failed",
                  "sandbox-landlock-required",
                  "sandbox-landlock-unavailable"):
         if code not in lits:
             return _break(name, "missing code %s" % (code,))
-    return _held(name, "2127/2127/0 sorted; landlock codes present")
+    return _held(name, "2131/2131/0 sorted; landlock codes present")
 
 
-@probe("P2-footer-open-f428-next-f429")
+@probe("P2-footer-open-f429-next-f430")
 def _p2():
-    name = "P2-footer-open-f428-next-f429"
+    name = "P2-footer-open-f429-next-f430"
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "

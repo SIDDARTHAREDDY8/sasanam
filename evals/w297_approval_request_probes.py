@@ -52,7 +52,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 # Wave-297 lane 1: pin 1757 -> 1757 (+4 approval-request-digest-missing,
 # approval-request-expired, approval-request-forgery,
 # approval-request-invalid).
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 try:

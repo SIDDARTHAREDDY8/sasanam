@@ -47,7 +47,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 # Wave-285 merge: pin 1621 -> 1641 (+1 campaign-produces-suppressed
 # +1 inventory-identity-collision +7 anchor-* +11 exception-*).
 # This lane adds no decision codes.
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 _results = []

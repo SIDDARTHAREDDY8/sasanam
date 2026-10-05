@@ -17,7 +17,7 @@ P2  RFC 8707 presentation: A-minted token at B, resourceless token,
     matching-resource control, aud-list control.
 P3  RFC 8707 token response: substituted resource, missing resource.
 P4  refusal vocabulary: every new code literal is centrally registered
-    (wave-329 lesson); pin 2127/2127/0 sorted unique on raw literals.
+    (wave-329 lesson); pin 2131/2131/0 sorted unique on raw literals.
 P5  footer state: open none / next F417.
 P6  depth-1 green check: adjacent MCP OAuth batteries with
     GOV_SKIP_GREEN=1.
@@ -41,9 +41,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
-FOOTER_OPEN = "F428"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
-FOOTER_NEXT = "F429"  # Next free finding number.
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+FOOTER_OPEN = "F429"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
+FOOTER_NEXT = "F430"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -356,43 +356,43 @@ def _p4a():
             "4 new codes registered and in module CODES")
 
 
-@probe("P4b-pin-taxonomy-2127-sorted")
+@probe("P4b-pin-taxonomy-2131-sorted")
 def _p4b():
-    if TAXONOMY_PIN != 2127:
-        return ("P4b-pin-taxonomy-2127-sorted", "BREAK",
-                "TAXONOMY_PIN is %r, want 2127" % (TAXONOMY_PIN,))
+    if TAXONOMY_PIN != 2131:
+        return ("P4b-pin-taxonomy-2131-sorted", "BREAK",
+                "TAXONOMY_PIN is %r, want 2131" % (TAXONOMY_PIN,))
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
-    if len(lits) != 2127 or len(set(lits)) != 2127 \
+    if len(lits) != 2131 or len(set(lits)) != 2131 \
             or lits != sorted(lits):
-        return ("P4b-pin-taxonomy-2127-sorted", "BREAK",
-                "want 2127/2127/0 sorted, got %d/%d/sorted=%s"
+        return ("P4b-pin-taxonomy-2131-sorted", "BREAK",
+                "want 2131/2131/0 sorted, got %d/%d/sorted=%s"
                 % (len(lits), len(set(lits)), lits == sorted(lits)))
-    return ("P4b-pin-taxonomy-2127-sorted", "HELD",
-            "2127/2127/0 sorted unique on raw source literals")
+    return ("P4b-pin-taxonomy-2131-sorted", "HELD",
+            "2131/2131/0 sorted unique on raw source literals")
 
 
 # ---------------------------------------------------------------------------
 # P5: footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P5-footer-open-f428-next-f429")
+@probe("P5-footer-open-f429-next-f430")
 def _p5():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return ("P5-footer-open-f428-next-f429", "BREAK",
+        return ("P5-footer-open-f429-next-f430", "BREAK",
                 "footer line not found")
     next_free, open_now = ms[-1]
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return ("P5-footer-open-f428-next-f429", "BREAK",
+        return ("P5-footer-open-f429-next-f430", "BREAK",
                 "footer open %s / next %s, want open %s / next %s"
                 % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return ("P5-footer-open-f428-next-f429", "HELD",
-            "footer open none / next F428")
+    return ("P5-footer-open-f429-next-f430", "HELD",
+            "footer open none / next F430")
 
 
 # ---------------------------------------------------------------------------

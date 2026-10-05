@@ -55,7 +55,7 @@ from gov import ed25519
 from gov import coordination_lease as cl
 from gov import workflow_branch as wb
 
-TAXONOMY_PIN = 2127  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
+TAXONOMY_PIN = 2131  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).
 
 
 _results = []
@@ -263,7 +263,7 @@ class RepinTest(unittest.TestCase):
         lits = re.findall(r'"code":\s*\'([a-z][a-z0-9-_.]*)\'', src)
         self.assertTrue(_expect_held(
             "repin-pin-1851",
-            len(lits) == 2127 and len(set(lits)) == 2127
+            len(lits) == 2131 and len(set(lits)) == 2131
 
 
             and lits == sorted(lits),
@@ -278,8 +278,8 @@ class FooterStateTest(unittest.TestCase):
         # Anchor to the LAST matches: the footer, not historical entries.
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-                # Wave-342 lane 6: repointed to open F428 / next F429 (footer-state probe audit).
-        want_open, want_next = "F428", "F429"  # wave-323 lane 1: F407 closed
+                # Wave-342 lane 6: repointed to open F429 / next F430 (footer-state probe audit).
+        want_open, want_next = "F429", "F430"  # wave-323 lane 1: F407 closed
         self.assertTrue(_expect_held(
             "footer-state",
             m_open and m_open[-1].strip() == want_open
