@@ -10378,7 +10378,63 @@ TAXONOMY = {
         "evidence_kinds_required": ['gate-record'],
         "reverify_steps": ['recompute'],
     },
-    'mcp-oauth-resource-misbound': {
+    'mcp-oauth-prm-challenge-malformed': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-prm-challenge-malformed',
+        "human": 'the WWW-Authenticate header carries no usable '
+                 'resource_metadata parameter (RFC 9728 section 5.1); '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },    'mcp-oauth-prm-cross-origin': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-prm-cross-origin',
+        "human": 'the resource_metadata URL is not same-origin as the '
+                 'deployment-configured resource server; refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },    'mcp-oauth-prm-fetch-refused': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-prm-fetch-refused',
+        "human": 'the PRM fetch was refused: no fetcher supplied, the '
+                 'fetcher failed, or the URL failed the SSRF guards '
+                 '(RFC 9728 section 7.7); no implicit network, refused '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },    'mcp-oauth-prm-issuer-unlisted': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-prm-issuer-unlisted',
+        "human": 'the PRM authorization_servers list is present but does '
+                 'not list the sealed binding issuer (AS-substitution '
+                 'shape); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['binding', 'prm-document'],
+        "reverify_steps": ['recompute'],
+    },    'mcp-oauth-prm-malformed': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-prm-malformed',
+        "human": 'a protected resource metadata document, PRM URL, or '
+                 'resource identifier is malformed (RFC 9728 shape '
+                 'validation); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['prm-document', 'gate-record'],
+        "reverify_steps": ['recompute'],
+    },    'mcp-oauth-prm-resource-mismatched': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-prm-resource-mismatched',
+        "human": 'the PRM document resource value is not the '
+                 'deployment-configured resource identifier (RFC 9728 '
+                 'section 3.3 impersonation shape); the data MUST NOT be '
+                 'used; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['prm-document', 'resource'],
+        "reverify_steps": ['recompute'],
+    },    'mcp-oauth-resource-misbound': {
         "domain": 'mcp-oauth',
         "code": 'mcp-oauth-resource-misbound',
         "human": 'an access token bound to one protected resource is '
