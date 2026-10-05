@@ -74,7 +74,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2124  # Wave-337 lane 5: pin 2106 -> 2109 (+3 tool-budget-*).; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
-FOOTER_OPEN = "F426"  # No new findings in this lane.
+FOOTER_OPEN = "none"  # F426 closed wave-338 lane 1; nothing open.
 FOOTER_NEXT = "F427"  # Next free finding number.
 
 _results = []
@@ -698,10 +698,10 @@ def _p14c():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     if "Next free finding: **F427**" not in text:
-        return _break(pid, "footer next != F426")
-    if "Open findings: F426." not in text:
-        return _break(pid, "footer open != F424, F425")
-    return _held(pid, "footer open F424, F425 / next F426")
+        return _break(pid, "footer next != F427")
+    if "Open findings: none." not in text:
+        return _break(pid, "footer open != none")
+    return _held(pid, "footer open none / next F427 (F426 closed)")
 
 
 # ---------------------------------------------------------------------------

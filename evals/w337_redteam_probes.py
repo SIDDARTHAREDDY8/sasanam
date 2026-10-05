@@ -31,13 +31,14 @@ P2 (ag2 middleware): malformed JSON / non-dict args -> ToolErrorEvent,
   queued -> ToolErrorEvent w/ ApprovalRequiredError + approval_id;
   TealTiger-style outer limiter denying first -> tool never runs, and our
   audit sees nothing (composition-ordering note, not a finding).
-P3 (oai guardrail shim): P3a F426 (this lane) -- a guardrail built for
-  one framework tool attached to a DIFFERENT SDK FunctionTool passes
-  audit_agent_coverage, so calls are mediated under the WRONG tool's
-  policy (certified miswiring); misattached arg shapes can also crash
-  the guardrail uncoded (KeyError). Correctly attached guardrails pass
-  audit; as_tool()/hosted/handoff surfaces refused; malformed JSON trips
-  the wire; expect_sdk_tool_name mismatch trips the wire.
+P3 (oai guardrail shim): P3a F426 (CLOSED wave-338 lane 1) -- a guardrail
+  built for one framework tool attached to a DIFFERENT SDK FunctionTool
+  is now refused by audit_agent_coverage (undeclared/mismatched declared
+  name); misattached arg shapes refuse coded
+  guardrail_argument_shape_mismatch (no uncoded KeyError). Correctly
+  attached guardrails (declared name matches) pass audit; as_tool()/
+  hosted/handoff surfaces refused; malformed JSON trips the wire;
+  expect_sdk_tool_name mismatch trips the wire.
 P4 (langgraph recipe): queued pauses via interrupt with the approval_id;
   resume mismatch / premature / vanished-record all fail closed;
   client update_state arg-tampering cannot smuggle a different action
@@ -47,12 +48,12 @@ P5 (F424/F425 live on this tree): NaN lock timeout escapes refresh()
   uncoded; -1 blocks forever under contention; raising clock escapes
   _check_tool_rate uncoded (no coded denial, no chained record).
 P6 (honesty + regressions): pin 2124/2124/0 sorted-unique on raw
-  literals; footer open F424, F425, F426 / next F427; F423 NUL now refused
-  coded (closed); F417 non-numeric port refused coded; F421
-  double-refresh exactly-one.
+  literals; footer open none / next F427 (F426 closed wave-338 lane 1);
+  F423 NUL now refused coded (closed); F417 non-numeric port refused
+  coded; F421 double-refresh exactly-one.
 
 Verdicts: HELD = behavior matches the pin; BREAK = genuine open
-finding (F424/F425/F426 shapes); ERROR = probe/harness problem.
+finding (F424/F425 shapes); ERROR = probe/harness problem.
 No findings manufactured -- a 0-break battery is honest.
 
 $0 spend; synthetic/local; no model calls.
@@ -652,11 +653,14 @@ def P3a():
 
 
 def P3b():
-    """Correctly attached guardrails pass audit."""
+    """Correctly attached guardrails pass audit: the guardrail declares
+    the SDK tool's name (expect_sdk_tool_name), so the audit can verify
+    the correspondence (F426 strict close-when)."""
     pid = "P3b-oai-correct-attachment-passes"
     ctx = _make_run()
     binding = _coder_binding(ctx)
-    g = OAI_SHIM.make_tool_input_guardrail(binding, "write_file")
+    g = OAI_SHIM.make_tool_input_guardrail(
+        binding, "write_file", expect_sdk_tool_name="write_file")
     agent = _OAIAgent("ok", [_OAIFunctionTool("write_file", [g])])
     try:
         rep = OAI_SHIM.audit_agent_coverage(agent)
@@ -1108,15 +1112,15 @@ def P6a():
 
 
 def P6b():
-    """Footer honesty: last line carries open F424, F425, F426 / next
-    F427 (raw-literal assertion, wave-331 lesson)."""
-    pid = "P6b-footer-open-f426-next-f427"
+    """Footer honesty: last line carries open none / next F427
+    (raw-literal assertion, wave-331 lesson); F426 now CLOSED."""
+    pid = "P6b-footer-open-none-next-f427"
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               "rb") as f:
         lines = f.read().decode("utf-8").splitlines()
     last = lines[-1] if lines else ""
-    if "Open findings: F426." not in last:
-        _break(pid, "last line lacks 'Open findings: F426.': %r"
+    if "Open findings: none." not in last:
+        _break(pid, "last line lacks 'Open findings: none.': %r"
                % (last[:160],))
         return
     if "Next free finding: **F427**" not in last:
@@ -1126,7 +1130,7 @@ def P6b():
         if not any(l.startswith("## " + fnum + " ") for l in lines):
             _break(pid, "%s section missing from FINDINGS.md" % (fnum,))
             return
-    _held(pid, "footer honest: open F424, F425, F426 / next F427")
+    _held(pid, "footer honest: open none / next F427")
 
 
 def P6c():
@@ -1213,7 +1217,7 @@ _PROBES = [
     ("P5b-f424-negative-hang", P5b),
     ("P5c-f425-limiter-failure-uncoded", P5c),
     ("P6a-pin-2124-taxonomy", P6a),
-    ("P6b-footer-open-f426-next-f427", P6b),
+    ("P6b-footer-open-none-next-f427", P6b),
     ("P6c-f423-nul-refused", P6c),
     ("P6d-f417-port-coded", P6d),
     ("P6e-f421-double-refresh", P6e),

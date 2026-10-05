@@ -43,7 +43,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2124  # Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*).; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
-FOOTER_OPEN = ("F426",)
+FOOTER_OPEN = ()  # F426 closed wave-338 lane 1; nothing open.
 FOOTER_NEXT = "F427"
 
 _results = []
@@ -689,10 +689,10 @@ def _p7a():
 def _p7b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Open findings: F426." in text, "footer open findings"
+    assert "Open findings: none." in text, "footer open findings"
     assert "Next free finding: **F427**" in text, "footer next free"
-    assert "F424" in text and "F425" in text
-    _held("P7b-footer", "footer open F424, F425 / next F426 (unchanged)")
+    assert "F424" in text and "F425" in text and "F426" in text
+    _held("P7b-footer", "footer open none / next F427 (F426 closed)")
 
 
 # ---------------------------------------------------------------------------

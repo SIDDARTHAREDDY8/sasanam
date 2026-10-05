@@ -12,7 +12,7 @@ windowed_count() -- the call is guarded, so the caller always sees the
 coded tool-rate-limiter-unavailable denial and its chained refusal record
 (carrying rate_windowed_count=None when the wire is unfit to count).
 
-Pin 2106. Footer: open none / next F426.
+Pin 2106. Footer: open none / next F427 (F426 closed wave-338 lane 1).
 """
 import os
 import re
@@ -37,7 +37,7 @@ import gov.tool_rate_limit as TRL  # noqa: E402
 _EXPECTED_BREAKS = set()
 
 TAXONOMY_PIN = 2124  # Wave-336: no new codes this lane, pin unchanged.; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
-FOOTER_OPEN = "F426"
+FOOTER_OPEN = "none"  # F426 closed wave-338 lane 1.
 FOOTER_NEXT = "F427"
 
 _results = []
@@ -440,8 +440,8 @@ def P3a():
 
 
 def P3b():
-    """Footer: open none / next F426; F424/F425 marked CLOSED."""
-    pid = "P3b-footer-open-f426-next-f427"
+    """Footer: open none / next F427; F424/F425/F426 marked CLOSED."""
+    pid = "P3b-footer-open-none-next-f427"
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     lines = text.splitlines()
@@ -449,8 +449,8 @@ def P3b():
     if "Next free finding: **F427**" not in last:
         _break(pid, "footer does not read next F427")
         return
-    if "Open findings: F426." not in last:
-        _break(pid, "footer does not read open F426")
+    if "Open findings: none." not in last:
+        _break(pid, "footer does not read open none")
         return
     import re as _re
     def _section(tag):
@@ -460,11 +460,11 @@ def P3b():
         rest = text[m.end():]
         n = _re.search(r"^## \S", rest, _re.M)
         return rest[:n.start()] if n else rest
-    for tag in ("F424", "F425"):
+    for tag in ("F424", "F425", "F426"):
         if "**Status: OPEN.**" in _section(tag):
             _break(pid, "%s section still marked OPEN" % tag)
             return
-    _held(pid, "footer open F426 / next F427, F424+F425 closed")
+    _held(pid, "footer open none / next F427, F424+F425+F426 closed")
 
 
 _PROBES = [
@@ -482,7 +482,7 @@ _PROBES = [
     ("P2c-exceeded-path-unchanged", P2c),
     ("P2d-sweep-boundary-unchanged", P2d),
     ("P3a-pin-taxonomy-2124-sorted", P3a),
-    ("P3b-footer-open-f426-next-f427", P3b),
+    ("P3b-footer-open-none-next-f427", P3b),
 ]
 
 

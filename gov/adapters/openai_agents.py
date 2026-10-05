@@ -36,7 +36,8 @@ SDK's native tool-guardrail pipeline (verified against openai-agents
   (:exc:`UncoveredSurfaceError`) unless every execution surface of an SDK
   ``Agent`` is mediated: no handoffs, no non-``FunctionTool`` tools, no
   ``Agent.as_tool()`` nested tools, and every ``FunctionTool`` carries
-  one of this module's issued guardrails.
+  one of this module's issued guardrails that DECLARES that tool (its
+  ``expect_sdk_tool_name`` equals the tool's name -- F426).
 
 The ``agents`` package is an OPTIONAL dependency: the shim works with
 the real ``ToolGuardrailFunctionOutput`` when the SDK is installed and
@@ -143,8 +144,10 @@ _ISSUED_GUARDRAILS = weakref.WeakSet()
 class UncoveredSurfaceError(AdapterError):
     """Raised by :func:`audit_agent_coverage` when an SDK agent exposes an
     execution surface this shim cannot mediate (hosted/built-in tools,
-    handoffs, ``as_tool()`` nested runs, or a function tool without one
-    of our guardrails). Fail closed: never certify partial coverage."""
+    handoffs, ``as_tool()`` nested runs, a function tool without one
+    of our guardrails, or a function tool whose issued guardrail does
+    not declare that tool -- F426 misattachment). Fail closed: never
+    certify partial coverage."""
 
 
 def _extract_tool_context(data):
@@ -211,7 +214,14 @@ def make_tool_input_guardrail(binding, framework_tool, *,
         When given, the guardrail fails closed unless
         ``data.context.tool_name`` equals it -- catches the
         misconfiguration of attaching this guardrail to the wrong
-        ``FunctionTool``.
+        ``FunctionTool``. REQUIRED for :func:`audit_agent_coverage` to
+        certify the agent: the audit (F426) refuses any FunctionTool
+        whose issued guardrail declares no name, or declares one that
+        does not equal the SDK tool's name.
+
+    The issued guardrail function exposes ``framework_tool`` and
+    ``expect_sdk_tool_name`` as attributes so the audit can verify the
+    guardrail<->tool correspondence even in principle (F426).
 
     Returns a plain (sync -- the SDK accepts ``MaybeAwaitable``)
     function ``(data) -> ToolGuardrailFunctionOutput`` ready for
@@ -266,6 +276,28 @@ def make_tool_input_guardrail(binding, framework_tool, *,
                 "error": "mediation_error",
                 "detail": str(exc),
             })
+        except KeyError as exc:
+            # F426 second shape: arg-shape mismatch between the attached
+            # SDK tool's argument schema and the mediated framework
+            # tool's expected args (e.g. a write_file guardrail called
+            # with send_email arguments) makes the executor's arg-shape
+            # access raise a bare KeyError. A bare exception escaping
+            # the guardrail breaks the coded-refusal contract exactly on
+            # the miswired path, so it is refused CODED here -- still
+            # fail closed (raise_exception), never allow, never execute.
+            # Note: KeyError from inside mediation is read as an
+            # argument-shape failure. This trades a little diagnostic
+            # precision (an executor-internal KeyError would also land
+            # here) for never letting an uncoded exception escape the
+            # guardrail; every path here refuses, so no masking can
+            # produce an allow.
+            return output_cls.raise_exception({
+                "governance": "sasanam",
+                "error": "guardrail_argument_shape_mismatch",
+                "detail": ("mediated framework tool %r raised KeyError "
+                           "%r for the supplied arguments; failing "
+                           "closed." % (framework_tool, exc)),
+            })
         status = result.get("status")
         if status == "executed":
             return output_cls.allow({
@@ -316,6 +348,13 @@ def make_tool_input_guardrail(binding, framework_tool, *,
 
     if name:
         sasanam_tool_input_guardrail.__name__ = name
+    # F426: expose the mediated framework tool and the declared expected
+    # SDK tool name as attributes so audit_agent_coverage can verify the
+    # guardrail<->tool correspondence even in principle. Guardrails
+    # issued before this change have no such attributes and are read as
+    # declaring no name -- the audit refuses to certify them.
+    sasanam_tool_input_guardrail.framework_tool = framework_tool
+    sasanam_tool_input_guardrail.expect_sdk_tool_name = expect_sdk_tool_name
     _ISSUED_GUARDRAILS.add(sasanam_tool_input_guardrail)
     return sasanam_tool_input_guardrail
 
@@ -338,6 +377,16 @@ def _is_issued_guardrail(entry):
     return fn in _ISSUED_GUARDRAILS
 
 
+def _issued_guardrail_fn(entry):
+    """Unwrap one issued guardrail entry to the raw issued function.
+
+    The SDK's ``ToolInputGuardrail`` wrapper carries the function as
+    ``.guardrail_function``; a raw function entry is already the
+    issued function.
+    """
+    return getattr(entry, "guardrail_function", entry)
+
+
 def audit_agent_coverage(agent, *, nested_agent_tools=()):
     """Fail closed unless every execution surface of an SDK ``Agent`` is
     mediated by this shim.
@@ -357,7 +406,11 @@ def audit_agent_coverage(agent, *, nested_agent_tools=()):
       tool calls, so these are uncovered surfaces;
     * every ``FunctionTool`` must carry at least one guardrail issued by
       :func:`make_tool_input_guardrail` (raw function or wrapped in the
-      SDK's ``ToolInputGuardrail``).
+      SDK's ``ToolInputGuardrail``) that DECLARES this SDK tool: the
+      issued guardrail's ``expect_sdk_tool_name`` attribute must equal
+      the tool's name (F426). A guardrail that declares no name, or a
+      name that does not equal the tool's name, is an uncovered surface
+      -- the audit never certifies guardrail<->tool misattachment.
 
     Returns a coverage report dict on success. Raises
     :exc:`UncoveredSurfaceError` naming every uncovered surface found
@@ -394,10 +447,41 @@ def audit_agent_coverage(agent, *, nested_agent_tools=()):
                 "tool calls" % (tool_name,))
             continue
         guardrails = list(getattr(tool, "tool_input_guardrails", None) or [])
-        if not any(_is_issued_guardrail(g) for g in guardrails):
+        issued = [_issued_guardrail_fn(g) for g in guardrails
+                  if _is_issued_guardrail(g)]
+        if not issued:
             uncovered.append(
                 "tool %r: FunctionTool without a Sasanam-issued "
                 "tool_input_guardrail" % (tool_name,))
+            continue
+        # F426: verify the guardrail<->tool correspondence. The issued
+        # guardrail must DECLARE this SDK tool -- a guardrail built for
+        # a different framework tool (or declaring no name at all)
+        # certifies nothing, and the audit refuses to certify it.
+        matched = False
+        problems = []
+        for fn in issued:
+            expected = getattr(fn, "expect_sdk_tool_name", None)
+            mediated = getattr(fn, "framework_tool", None)
+            if not isinstance(expected, str) or not expected:
+                problems.append(
+                    "guardrail for framework tool %r declares no "
+                    "expect_sdk_tool_name -- miswiring cannot be ruled "
+                    "out" % (mediated,))
+                continue
+            if expected != tool_name:
+                problems.append(
+                    "guardrail declaring SDK tool %r (framework tool "
+                    "%r) is attached to SDK tool %r"
+                    % (expected, mediated, tool_name))
+                continue
+            matched = True
+            break
+        if not matched:
+            uncovered.append(
+                "tool %r: no correctly attached Sasanam-issued "
+                "tool_input_guardrail (%s)" % (tool_name,
+                                              "; ".join(problems)))
             continue
         covered.append(tool_name)
 
