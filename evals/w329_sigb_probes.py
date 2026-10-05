@@ -63,7 +63,7 @@ from gov import evidence_intoto as _intoto  # noqa: E402
 from gov import dsse_envelope as _dsse  # noqa: E402
 from gov.signing import Ed25519Signer, Ed25519Verifier  # noqa: E402
 
-TAXONOMY_PIN = 2083  # Wave-328 merge: pin 2044 -> 2056 (+12). This lane adds no taxonomy codes.; Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*)
+TAXONOMY_PIN = 2083  # Wave-328 merge: pin 2044 -> 2056 (+12). This lane adds no taxonomy codes.; Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*) # Wave-334 lane 6: pin 2077 -> 2083 (+6 incident-gpai9-*).
 
 FOOTER_OPEN = "none"  # F417 CLOSED 2026-10-05 (wave-334 lane 1); no open findings.
 FOOTER_NEXT = "F419"  # Next free finding number (F417 OPEN, F418 closed at wave-333 merge).

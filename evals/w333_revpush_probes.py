@@ -57,7 +57,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2083  # Wave-332 merge: pin 2062. Wave-333 lane 4: pin 2062 -> 2070 (+8 revocation-push-*).; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*)
+TAXONOMY_PIN = 2083  # Wave-332 merge: pin 2062. Wave-333 lane 4: pin 2062 -> 2070 (+8 revocation-push-*).; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*) # Wave-334 lane 6: pin 2077 -> 2083 (+6 incident-gpai9-*).
 FOOTER_OPEN = "none"  # F417 CLOSED 2026-10-05 (wave-334 lane 1); F418 (revpush) CLOSED at wave-333 merge.
 FOOTER_NEXT = "F419"  # Next free finding number.
 

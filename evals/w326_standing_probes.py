@@ -28,7 +28,7 @@ from gov import ed25519 as ed  # noqa: E402
 from gov import knowledge_ingest as ki  # noqa: E402
 from gov import standing_verdicts as sv  # noqa: E402
 
-TAXONOMY_PIN = 2083  # 2020 + 7 standing-verdict codes (wave-326 lane 2); Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*)
+TAXONOMY_PIN = 2083  # 2020 + 7 standing-verdict codes (wave-326 lane 2); Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*) # Wave-334 lane 6: pin 2077 -> 2083 (+6 incident-gpai9-*).
 
 _results = []
 
