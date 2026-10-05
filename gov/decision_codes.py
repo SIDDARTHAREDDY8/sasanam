@@ -14587,6 +14587,86 @@ TAXONOMY = {
         "evidence_kinds_required": ['revocation-registry', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'revocation-push-event-malformed': {
+        "domain": 'revocation-push',
+        "code": 'revocation-push-event-malformed',
+        "human": 'revocation-push: the event envelope violates the typed '
+                 'schema (event_id, event_type, subject, issued_at); '
+                 'refused before any fan-out',
+        "severity": 'medium',
+        "evidence_kinds_required": ['revocation-event'],
+        "reverify_steps": ['recompute'],
+    },
+    'revocation-push-event-replayed': {
+        "domain": 'revocation-push',
+        "code": 'revocation-push-event-replayed',
+        "human": 'revocation-push: duplicate event_id; the original '
+                 'receipt is returned idempotently, bound sessions are '
+                 'not re-terminated, callbacks fire exactly once',
+        "severity": 'low',
+        "evidence_kinds_required": ['revocation-event'],
+        "reverify_steps": ['recompute'],
+    },
+    'revocation-push-event-unsigned': {
+        "domain": 'revocation-push',
+        "code": 'revocation-push-event-unsigned',
+        "human": 'revocation-push: the hub requires signed events and '
+                 'the event carries no (or a bad) HMAC; an '
+                 'unauthenticated kill channel is a session-DoS vector; '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['revocation-event', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'revocation-push-refused': {
+        "domain": 'revocation-push',
+        "code": 'revocation-push-refused',
+        "human": 'revocation-push: the hub refused a caller-side misuse '
+                 '(bad registration shape, duplicate session id, hub '
+                 're-entry from a terminate callback); fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['revocation-event'],
+        "reverify_steps": ['recompute'],
+    },
+    'revocation-push-session-suspended': {
+        "domain": 'revocation-push',
+        "code": 'revocation-push-session-suspended',
+        "human": 'revocation-push: the terminate callback raised or the '
+                 'liveness probe could not confirm the kill; the session '
+                 'is suspended fail-closed and may not continue silently',
+        "severity": 'high',
+        "evidence_kinds_required": ['revocation-event', 'session-binding'],
+        "reverify_steps": ['recompute'],
+    },
+    'revocation-push-session-terminated': {
+        "domain": 'revocation-push',
+        "code": 'revocation-push-session-terminated',
+        "human": 'revocation-push: a revocation event matched the '
+                 'session subject; the in-flight session was terminated '
+                 'via its kill callback (F417 closure)',
+        "severity": 'low',
+        "evidence_kinds_required": ['revocation-event', 'session-binding'],
+        "reverify_steps": ['recompute'],
+    },
+    'revocation-push-session-unknown': {
+        "domain": 'revocation-push',
+        "code": 'revocation-push-session-unknown',
+        "human": 'revocation-push: require_live on a session id the hub '
+                 'never registered; liveness of an unregistered session '
+                 'cannot be proven; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['session-binding'],
+        "reverify_steps": ['recompute'],
+    },
+    'revocation-push-subject-unbound': {
+        "domain": 'revocation-push',
+        "code": 'revocation-push-subject-unbound',
+        "human": 'revocation-push: the event subject matches no live '
+                 'registered session; acknowledged, nothing terminated',
+        "severity": 'low',
+        "evidence_kinds_required": ['revocation-event'],
+        "reverify_steps": ['recompute'],
+    },
     'revocation-refused': {
         "domain": 'revocation',
         "code": 'revocation-refused',

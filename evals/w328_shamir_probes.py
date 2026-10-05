@@ -27,7 +27,7 @@ What the battery pins:
    (custody-shamir-ceremony-mismatch).
 10. Transcript: chain verifies; tampering refuses coded
     custody-shamir-transcript-corrupt; never appends to a broken chain.
-11. Pin 2069 + footer open F415 / next F417 (wave-330 merge: F414 closed, F415/F416 filed).
+11. Pin 2077 + footer open F415 / next F417 (wave-330 merge: F414 closed, F415/F416 filed).
 
 Staging default is set at module level (the harness refuses the declared
 ungoverned_ack in production mode).
@@ -44,7 +44,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2069  # Wave-327 merge pin 2056; wave-328 lane 3 repoints to 2044 (+8 custody-shamir-*); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*)
+TAXONOMY_PIN = 2077  # Wave-327 merge pin 2056; wave-328 lane 3 repoints to 2044 (+8 custody-shamir-*); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*)
 
 FOOTER_OPEN = "none"  # F409-F416 CLOSED; no open findings (wave-331 merge).
 FOOTER_NEXT = "F417"
@@ -417,13 +417,13 @@ def _p11():
     src = open(os.path.join(REPO, "gov", "decision_codes.py")).read()
     codes = re.findall(r'"code":\s*["\']([^"\']+)["\']', src)
     if len(codes) != TAXONOMY_PIN or len(set(codes)) != TAXONOMY_PIN:
-        return _break("P11-pin-taxonomy-2069-sorted",
-                      "want 2069/2069 got %d/%d" % (len(codes), len(set(codes))))
+        return _break("P11-pin-taxonomy-2077-sorted",
+                      "want 2077/2077 got %d/%d" % (len(codes), len(set(codes))))
     if codes != sorted(codes):
-        return _break("P11-pin-taxonomy-2069-sorted", "not sorted")
+        return _break("P11-pin-taxonomy-2077-sorted", "not sorted")
     if len(dc.TAXONOMY) != TAXONOMY_PIN:
-        return _break("P11-pin-taxonomy-2069-sorted", "TAXONOMY dict size drift")
-    _held("P11-pin-taxonomy-2069-sorted", "2069/2069/0 sorted unique")
+        return _break("P11-pin-taxonomy-2077-sorted", "TAXONOMY dict size drift")
+    _held("P11-pin-taxonomy-2077-sorted", "2077/2077/0 sorted unique")
     # Footer state.
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
     m = None
