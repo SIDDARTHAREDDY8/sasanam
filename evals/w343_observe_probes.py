@@ -37,7 +37,7 @@ Probes:
       does not become a silent allow (anti fail-open).
   P8  evaluate() path stamps policy_mode too; enforce-mode decisions
       are byte-identical (no policy_mode key in to_dict).
-  P9  pin + footer: taxonomy 2131, footer open F429 / next F430.
+  P9  pin + footer: taxonomy 2131, footer open F430, F431 / next F432.
 
 Usage:
   ~/workspace/.gov-venv/bin/python evals/w343_observe_probes.py

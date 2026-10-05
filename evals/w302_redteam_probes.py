@@ -135,7 +135,7 @@ class BaseStateTest(unittest.TestCase):
         # Wave-324 merge footer: F408 CLOSED; open F428; next F429.
         ok = (m_open and m_open[-1].strip()
               == "F429"
-              and m_next and m_next[-1] == "F430")
+              and m_next and m_next[-1] == "F432")
         self.assertTrue(_expect_held(
             "footer-state", ok,
             "want open F429 / next free F430")

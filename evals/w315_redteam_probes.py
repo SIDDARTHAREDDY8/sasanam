@@ -929,7 +929,7 @@ def _footer():
                       "footer is %s / %s, want F430 / F429"
                       % (num, opens))
     return _held("footer-open-f430-f431-next-f432",
-                 "footer: open F429 / next F430")
+                 "footer: open F430, F431 / next F432")
 
 
 # ---------------------------------------------------------------------------

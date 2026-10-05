@@ -860,7 +860,7 @@ def run_pin_footer_probes():
                 encoding="utf-8").read()
     if "Open findings: F430, F431." in text \
             and "Next free finding: **F432**" in text:
-        _held("P0b", "footer open F429 / next F430")
+        _held("P0b", "footer open F430, F431 / next F432")
     else:
         _break("P0b", "footer text mismatch")
 

@@ -163,12 +163,12 @@ def p_footer_state():
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
     # Wave-313 lane A footer: F397 CLOSED; no open findings.
     # Wave-342 lane 6: repointed to open F429 / next F430 (footer-state probe audit).
-    if nxt != 430 or open_s != "F429":
+    if nxt != 432 or open_s != "F430, F431":
         return _record("footer-state", "BREAK",
                        "footer pins next F%d open '%s', want next F429 "
                        "open 'F428'" % (nxt, open_s))
     _record("footer-state", "HELD",
-            "footer pins open F429 / next F430")
+            "footer pins open F430, F431 / next F432")
 
 # ------------------------------------------------------------------
 # Shared scaffolds

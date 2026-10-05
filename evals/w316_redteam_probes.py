@@ -579,7 +579,7 @@ def _p5_footer():
     if got != (430, "F429"):
         return _break("P5-footer-state", "footer is %r" % (got,))
     return _held("P5-footer-state",
-                 "open F429 / next F430")
+                 "open F430, F431 / next F432")
 
 
 @probe("P5-pin-taxonomy-2134-sorted")

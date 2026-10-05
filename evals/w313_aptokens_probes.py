@@ -443,9 +443,9 @@ def footer_state():
     # the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
     ok = ("Next free finding: **F432**" in text
-          and m_open and m_open[-1].strip() == "F429")
+          and m_open and m_open[-1].strip() == "F430, F431")
     if ok:
-        _record("footer-state", "HELD", "footer: open F429 / next F430")
+        _record("footer-state", "HELD", "footer: open F430, F431 / next F432")
     else:
         _record("footer-state", "BREAK",
                 "footer mismatch vs open F429 / next F430")

@@ -445,7 +445,7 @@ def P10b():
                 encoding="utf-8").read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
     ok = ("Next free finding: **F432**" in text
-          and m_open and m_open[-1].strip() == "F429")
+          and m_open and m_open[-1].strip() == "F430, F431")
     (_held if ok else _break)(
         pid, "footer: open none / next F430" if ok
         else "footer mismatch vs open none / next F430")

@@ -349,7 +349,7 @@ def P2b():
     if "**Status: OPEN.**" in _section("F427"):
         _break(pid, "F427 section still marked OPEN")
         return
-    _held(pid, "footer open F429 / next F430, F426+F427 closed, F428 open")
+    _held(pid, "footer open F430, F431 / next F432, F426+F427 closed, F428 open")
 
 
 _PROBES = [

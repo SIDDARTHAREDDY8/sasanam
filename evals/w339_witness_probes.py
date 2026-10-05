@@ -801,7 +801,7 @@ def _p4b():
     line = lines[-1] if lines else ""
     ok = ("**F430**" in line and "Open findings: F430, F431." in line)
     if ok:
-        return _held("P4-footer-state", "open F429 / next F430")
+        return _held("P4-footer-state", "open F430, F431 / next F432")
     return _break("P4-footer-state", "footer line: %r" % (line[:120],))
 
 
