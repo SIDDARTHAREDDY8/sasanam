@@ -33,8 +33,8 @@ P3  Binding + choke point: tampered MAC, attacker-sealed binding,
     issuer_hint mismatch, credential AS mismatch, http seal.
 P4  F415/F416 closure regressions (relabelled w332 probes).
 P5  Shamir write-time residual (relabelled w332 probe).
-P6  Pin/footer honesty: taxonomy 2062/2062/0 on raw literals,
-    footer open none / next F417, live pin constants == 2062.
+P6  Pin/footer honesty: taxonomy 2077/2077/0 on raw literals,
+    footer open none / next F417, live pin constants == 2077.
 P7  Child mode: w332_mcpoauth battery, BREAKs inside the cascade.
 """
 
@@ -51,9 +51,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2062  # Wave-332 merge: pin 2058 -> 2062 (+4 mcp-oauth-*).
+TAXONOMY_PIN = 2077  # Wave-332 merge: pin 2058 -> 2062 (+4 mcp-oauth-*).; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*)
 FOOTER_OPEN = "F417"  # F417 OPEN (filed wave-333 lane 5: mcp-oauth malformed-port uncoded crash).
-FOOTER_NEXT = "F418"  # Next free finding number.
+FOOTER_NEXT = "F419"  # Next free finding number (F417 OPEN, F418 closed at wave-333 merge).
 
 _results = []
 _PROBES = []
@@ -576,50 +576,50 @@ def _p5a():
 # P6: pin + footer honesty.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2062-sorted")
+@probe("P6a-pin-taxonomy-2077-sorted")
 def _p6a():
-    if TAXONOMY_PIN != 2062:
-        return _break("P6a-pin-taxonomy-2062-sorted",
-                      "TAXONOMY_PIN is %r, want 2062" % (TAXONOMY_PIN,))
+    if TAXONOMY_PIN != 2077:
+        return _break("P6a-pin-taxonomy-2077-sorted",
+                      "TAXONOMY_PIN is %r, want 2077" % (TAXONOMY_PIN,))
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
-    if len(lits) != 2062 or len(set(lits)) != 2062 \
+    if len(lits) != 2077 or len(set(lits)) != 2077 \
             or lits != sorted(lits):
-        return _break("P6a-pin-taxonomy-2062-sorted",
-                      "want 2062/2062/0 sorted, got %d/%d/sorted=%s"
+        return _break("P6a-pin-taxonomy-2077-sorted",
+                      "want 2077/2077/0 sorted, got %d/%d/sorted=%s"
                       % (len(lits), len(set(lits)), lits == sorted(lits)))
-    return _held("P6a-pin-taxonomy-2062-sorted",
-                 "2062/2062/0 sorted unique on raw source literals")
+    return _held("P6a-pin-taxonomy-2077-sorted",
+                 "2077/2077/0 sorted unique on raw source literals")
 
 
-@probe("P6b-footer-open-f417-next-f418")
+@probe("P6b-footer-open-f417-next-f419")
 def _p6b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     # Raw-literal assertions (wave-331 lesson): the footer must read
     # correctly as literal text, not only via constants.
-    if "Next free finding: **F418**." not in text:
-        return _break("P6b-footer-open-f417-next-f418",
-                      "raw literal 'Next free finding: **F418**.' absent")
+    if "Next free finding: **F419**." not in text:
+        return _break("P6b-footer-open-f417-next-f419",
+                      "raw literal 'Next free finding: **F419**.' absent")
     if "**Open findings: F417.**" not in text:
-        return _break("P6b-footer-open-f417-next-f418",
+        return _break("P6b-footer-open-f417-next-f419",
                       "raw literal '**Open findings: F417.**' absent")
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return _break("P6b-footer-open-f417-next-f418",
+        return _break("P6b-footer-open-f417-next-f419",
                       "footer line not found")
     next_free, open_now = ms[-1]  # the LAST footer is the live one
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return _break("P6b-footer-open-f417-next-f418",
+        return _break("P6b-footer-open-f417-next-f419",
                       "footer open %s / next %s, want open %s / next %s"
                       % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return _held("P6b-footer-open-f417-next-f418",
-                 "footer open F417 / next F418 (raw literals + parse)")
+    return _held("P6b-footer-open-f417-next-f419",
+                 "footer open F417 / next F419 (raw literals + parse)")
 
 
-@probe("P6c-pin-constants-2062-live")
+@probe("P6c-pin-constants-2077-live")
 def _p6c():
     """Wave-302 lesson: every live module-level TAXONOMY_PIN constant
     must equal the new pin; stale values hide in files the
@@ -641,13 +641,13 @@ def _p6c():
             for m in re.finditer(r"^TAXONOMY_PIN\s*=\s*(\d+)", src, re.M):
                 if rel in grandfathered:
                     continue
-                if int(m.group(1)) != 2062:
+                if int(m.group(1)) != 2077:
                     bad.append("%s:%s" % (rel, m.group(1)))
     if bad:
-        return _break("P6c-pin-constants-2062-live",
+        return _break("P6c-pin-constants-2077-live",
                       "stale pin constants: %s" % (bad[:6],))
-    return _held("P6c-pin-constants-2062-live",
-                 "all live module-level TAXONOMY_PIN == 2062")
+    return _held("P6c-pin-constants-2077-live",
+                 "all live module-level TAXONOMY_PIN == 2077")
 
 
 # ---------------------------------------------------------------------------
@@ -673,11 +673,11 @@ def _run_child_output(battery, timeout=1800):
 
 # Battery -> set of BREAK probe IDs that are NOT regressions on this
 # tree. All are the expected footer-maintenance cascade from this
-# lane's F417 filing (footer moved to open F417 / next F418); the
+# lane's F417 filing (footer moved to open F417 / next F419 at merge); the
 # wave-333 merge repoints them (wave-305 lesson). Not product
 # regressions.
 _CHILD_CASCADE = {
-    "w332_mcpoauth_probes.py": {"P5-footer-open-none-next-f417"},
+    "w332_mcpoauth_probes.py": set(),  # footer probe now asserts open F417/next F419: green on merged tree.
     "w332_redteam_probes.py": {
         # Its own P5b footer probe, plus its P7a deep-cascade probe:
         # P7a aggregates w331_redteam / w331_landlock / w330_redteam,
@@ -685,8 +685,7 @@ _CHILD_CASCADE = {
         # F417 filing (verified directly 2026-10-05: 1/25/0,
         # 1/13/0, 1/21/0 -- the single BREAK in each is the footer
         # probe, no other breaks).
-        "P5b-footer-open-none-next-f417",
-        "P7a-prior-batteries-child-mode-tallies",
+        "P5b-footer-open-f417-next-f419",  # green on merged tree; P7a children green too.
     },
 }
 

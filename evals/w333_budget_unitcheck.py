@@ -37,15 +37,19 @@ def check(name, cond, detail=""):
     print("[%s] %s %s" % (PASS if cond else FAIL, name, detail))
 
 
+PRICES = h.OpenAIBackend.PRICES
+
+
 def fresh_ledger(**kw):
     d = tempfile.mkdtemp(prefix="w333-ledger-")
-    return h.SpendLedger(path=os.path.join(d, "ledger.json"), **kw)
+    return h.SpendLedger(path=os.path.join(d, "ledger.json"),
+                         mirror_path=os.path.join(d, "mirror.json"), **kw)
 
 
 # 1. per-call cap refused before network
 L = fresh_ledger(total_budget=5.0, run_cap=0.50, call_cap=0.05)
 try:
-    L.precheck("x" * 3000000, 150, "gpt-4o-mini", "unit-overcall")
+    L.precheck("x" * 3000000, 150, "gpt-4o-mini", PRICES, "unit-overcall")
     check("call-cap-refused", False, "precheck did not raise")
 except h.BudgetRefused as e:
     check("call-cap-refused", True, str(e)[:80])
@@ -53,7 +57,7 @@ except h.BudgetRefused as e:
 # 2. per-run cap refused
 L2 = fresh_ledger(total_budget=5.0, run_cap=0.00001, call_cap=0.05)
 try:
-    L2.precheck("hello", 150, "gpt-4o-mini", "unit-overrun")
+    L2.precheck("hello", 150, "gpt-4o-mini", PRICES, "unit-overrun")
     check("run-cap-refused", False, "precheck did not raise")
 except h.BudgetRefused as e:
     check("run-cap-refused", True, str(e)[:80])
@@ -61,7 +65,7 @@ except h.BudgetRefused as e:
 # 3. total budget refused
 L3 = fresh_ledger(total_budget=0.0, run_cap=0.50, call_cap=0.05)
 try:
-    L3.precheck("hello", 150, "gpt-4o-mini", "unit-overtotal")
+    L3.precheck("hello", 150, "gpt-4o-mini", PRICES, "unit-overtotal")
     check("total-cap-refused", False, "precheck did not raise")
 except h.BudgetRefused as e:
     check("total-cap-refused", True, str(e)[:80])
@@ -72,8 +76,8 @@ check("worst-case-conservative", est >= 100, "400 chars -> %d tokens" % est)
 
 # 5. record() accumulates and persists
 L4 = fresh_ledger()
-L4.precheck("hello world", 150, "gpt-4o-mini", "unit-ok")
-c = L4.record("gpt-4o-mini", 100, 50, "unit-ok", 0.0001)
+L4.precheck("hello world", 150, "gpt-4o-mini", PRICES, "unit-ok")
+c = L4.record("openai", "gpt-4o-mini", 100, 50, "unit-ok", 0.0001, PRICES)
 check("record-accumulates", L4.run_spent == c and c > 0,
       "run_spent=$%.6f" % L4.run_spent)
 disk = json.loads(Path(L4.path).read_text())
@@ -107,7 +111,7 @@ except h.ModelCallFailed as e:
     check("parser-loud-on-garbage", True, str(e)[:70])
 
 # 9. attack-JSON parser tolerates one fenced block
-url, payload = h._parse_attack_json(
+url, payload = h._parse_url_payload(
     '```json\n{"url": "https://x/y", "payload": {"a": "b"}}\n```',
     "unit-fence")
 check("parser-tolerates-fence",

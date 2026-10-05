@@ -42,8 +42,8 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2077  # Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*)
-FOOTER_OPEN = "none"  # No open findings (wave-331 merge closed F415/F416).
-FOOTER_NEXT = "F417"  # Next free finding number.
+FOOTER_OPEN = "F417"  # F417 OPEN (wave-333 merge).
+FOOTER_NEXT = "F419"  # Next free finding number (F417 OPEN, F418 closed at wave-333 merge).
 
 _results = []
 _PROBES = []
@@ -377,22 +377,22 @@ def _p4b():
 # P5: footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P5-footer-open-none-next-f417")
+@probe("P5-footer-open-f417-next-f419")
 def _p5():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return ("P5-footer-open-none-next-f417", "BREAK",
+        return ("P5-footer-open-f417-next-f419", "BREAK",
                 "footer line not found")
     next_free, open_now = ms[-1]
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return ("P5-footer-open-none-next-f417", "BREAK",
+        return ("P5-footer-open-f417-next-f419", "BREAK",
                 "footer open %s / next %s, want open %s / next %s"
                 % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return ("P5-footer-open-none-next-f417", "HELD",
-            "footer open none / next F417")
+    return ("P5-footer-open-f417-next-f419", "HELD",
+            "footer open F417 / next F419")
 
 
 # ---------------------------------------------------------------------------

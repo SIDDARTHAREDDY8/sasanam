@@ -1,7 +1,7 @@
 """Wave-333 revocation-push battery (F417 closure).
 
-Base: 43d539c7 (wave-332 merge). Footer: open none / next F418
-(F417 CLOSED wave-333 lane 4). Pin: 2070 (+8 revocation-push-*).
+Base: 43d539c7 (wave-332 merge). Footer at merge: open F417 / next F419
+(F418 CLOSED = revpush F417 renumbered; F417 OPEN = redteam bare-port). Pin: 2077 (+15: 7 capability-token-* + 8 revocation-push-*).
 
 P1  Mid-flight revocation terminates the bound session coded: a
     session registered against a credential subject executes step 1, a
@@ -30,7 +30,7 @@ P8  All three event types fan out (credential-revoked,
     mission-cancelled, agent-deauthorized).
 P9  require_live semantics: live passes; terminated refuses coded;
     never-registered refuses coded revocation-push-session-unknown.
-P10 Pin 2070 + footer state (open none / next F418; F417 CLOSED);
+P10 Pin 2077 + footer state (open F417 / next F419; F418 CLOSED);
     taxonomy sorted-unique on raw literals; the 8 new codes centrally
     registered.
 P11 Green check (depth-1): honors GOV_SKIP_GREEN; otherwise runs the
@@ -38,8 +38,8 @@ P11 Green check (depth-1): honors GOV_SKIP_GREEN; otherwise runs the
     with GOV_SKIP_GREEN=1 (fresh TMPDIR).
 
 gov/ changes in this lane: new gov/revocation_push.py (+8 codes in
-gov/decision_codes.py, pin 2062 -> 2070). Findings: F417 filed then
-CLOSED here.
+gov/decision_codes.py, pin 2062 -> 2077 at merge). Findings: F417 filed then
+CLOSED here; renumbered F417->F418 at the wave-333 merge (redteam filed F417 first).
 """
 
 import hashlib
@@ -58,8 +58,8 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2077  # Wave-332 merge: pin 2062. Wave-333 lane 4: pin 2062 -> 2070 (+8 revocation-push-*).; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*)
-FOOTER_OPEN = "none"  # F417 CLOSED wave-333 lane 4; no open findings.
-FOOTER_NEXT = "F418"  # Next free finding number.
+FOOTER_OPEN = "F417"  # F417 OPEN (redteam bare-port); F418 (revpush) CLOSED at wave-333 merge.
+FOOTER_NEXT = "F419"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -412,9 +412,9 @@ def _p9():
 # P10 -- pin + footer.
 # ---------------------------------------------------------------------------
 
-@probe("P10-pin-2070-footer-f418")
+@probe("P10-pin-2077-footer-f419")
 def _p10():
-    pid = "P10-pin-2070-footer-f418"
+    pid = "P10-pin-2077-footer-f419"
     import re as _re
     src = open(os.path.join(REPO, "gov", "decision_codes.py")).read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
@@ -428,11 +428,19 @@ def _p10():
         if c not in dc.TAXONOMY:
             return _break(pid, "code %r not centrally registered" % c)
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
+    # F418 = revpush's finding, renumbered F417->F418 at the wave-333 merge.
+    f418 = text.split("## F418")[1]
+    # F418 section ends at the next "## F" heading or the footer line.
+    f418_body = _re.split(r"\n## F\d+|\nNext free finding:", f418)[0]
+    if "Status: CLOSED" not in f418_body:
+        return _break(pid, "F418 not marked CLOSED in FINDINGS.md")
+    if "RENUMBERED F417->F418" not in f418_body:
+        return _break(pid, "F418 renumber note absent in FINDINGS.md")
+    # F417 (redteam bare-port) stays OPEN.
     f417 = text.split("## F417")[1]
-    # F417 section ends at the next "## F" heading or the footer line.
     f417_body = _re.split(r"\n## F\d+|\nNext free finding:", f417)[0]
-    if "Status: CLOSED" not in f417_body:
-        return _break(pid, "F417 not marked CLOSED in FINDINGS.md")
+    if "**Status: OPEN.**" not in f417_body:
+        return _break(pid, "F417 not marked OPEN in FINDINGS.md")
     ms = _re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                      r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
@@ -442,8 +450,8 @@ def _p10():
         return _break(pid, "footer open %s / next %s, want open %s / next %s"
                       % (open_now.strip(), next_free, FOOTER_OPEN,
                          FOOTER_NEXT))
-    return _held(pid, "taxonomy 2070/2070/0 sorted-unique; 8 codes "
-                      "registered; footer open none / next F418")
+    return _held(pid, "taxonomy 2077/2077/0 sorted-unique; 8 codes "
+                      "registered; F418 CLOSED; footer open F417 / next F419")
 
 
 # ---------------------------------------------------------------------------

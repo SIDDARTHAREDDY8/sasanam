@@ -39,8 +39,8 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2077  # Wave-328 merge: pin 2044 -> 2056 (+12).; Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*).; Wave-330 merge: pin unchanged 2058 (F414/F415/F416: no new codes). Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*)
-FOOTER_OPEN = "none"  # F409-F416 CLOSED; no open findings (wave-331 merge).
-FOOTER_NEXT = "F417"  # Next free finding number.
+FOOTER_OPEN = "F417"  # F417 OPEN (wave-333 merge).
+FOOTER_NEXT = "F419"  # Next free finding number (F417 OPEN, F418 closed at wave-333 merge).
 
 _results = []
 _PROBES = []
@@ -581,22 +581,22 @@ def _p5a():
                  "2077/2077/0 sorted unique on raw source literals")
 
 
-@probe("P5b-footer-open-none-next-f417")
+@probe("P5b-footer-open-f417-next-f419")
 def _p5b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return _break("P5b-footer-open-none-next-f417",
+        return _break("P5b-footer-open-f417-next-f419",
                       "footer line not found")
     next_free, open_now = ms[-1]  # the LAST footer is the live one
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return _break("P5b-footer-open-none-next-f417",
+        return _break("P5b-footer-open-f417-next-f419",
                       "footer open %s / next %s, want open %s / next %s"
                       % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return _held("P5b-footer-open-none-next-f417",
-                 "footer open none / next F417")
+    return _held("P5b-footer-open-f417-next-f419",
+                 "footer open F417 / next F419")
 
 
 # ---------------------------------------------------------------------------
@@ -634,11 +634,7 @@ def _run_child_output(battery, timeout=1500):
 # three closure probes (P1g/F415, P1a/P1b/F416) are HELD.
 # (wave-305 class.)
 _CHILD_CASCADE = {
-    "w330_redteam_probes.py": {
-        "P1g-policy-channel-unicode-version-uncoded",
-        "P1a-evidence-sigstore-integratedtime-digitlimit-uncoded",
-        "P1b-evidence-sigstore-logindex-digitlimit-uncoded",
-    },
+    "w330_redteam_probes.py": set(),  # wave-333 merge: F415/F416 probes re-pinned HELD at wave-331; footer green.
     "w329_redteam_probes.py": set(),
     "w329_sigb_probes.py": set(),
     "w328_redteam_probes.py": set(),

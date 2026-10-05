@@ -33,7 +33,7 @@ Probe map:
   P1d-tool-set-drift-replay: token minted when the mission allowed
       {send_email} verifies after the tool set widened to
       {send_email, delete_file}.
-  pin-taxonomy / footer-state: standard pins (2069; open none / next F417).
+  pin-taxonomy / footer-state: standard pins (2077; open F417 / next F419).
 
 Deterministic across 2 runs; $0 spend; synthetic/local. Stdlib only
 apart from gov/approval_tokens.py (real product code, no stubs).
@@ -202,13 +202,13 @@ def footer_state():
     # This lane files no findings. Footer lines repeat through history;
     # the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F417**" in text
-          and m_open and m_open[-1].strip() == "none")
+    ok = ("Next free finding: **F419**" in text
+          and m_open and m_open[-1].strip() == "F417")
     if ok:
-        _record("footer-state", "HELD", "footer: open none / next F417")
+        _record("footer-state", "HELD", "footer: open F417 / next F419")
     else:
         _record("footer-state", "BREAK",
-                "footer mismatch vs open none / next F417")
+                "footer mismatch vs open F417 / next F419")
 
 
 _PROBES = [("P1a", P1a), ("P1b", P1b), ("P1c", P1c), ("P1d", P1d),
