@@ -10246,6 +10246,27 @@ TAXONOMY = {
         "evidence_kinds_required": ['binding', 'gate-record'],
         "reverify_steps": ['recompute'],
     },
+    'mcp-oauth-iss-mismatched': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-iss-mismatched',
+        "human": 'the authorization response iss parameter names a '
+                 'different issuer than the sealed authorization-server '
+                 'binding (RFC 9207 mix-up shape); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['binding', 'authorization-response'],
+        "reverify_steps": ['recompute'],
+    },
+    'mcp-oauth-iss-missing': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-iss-missing',
+        "human": 'the authorization response carries no iss parameter '
+                 '(RFC 9207 requires the authorization server to send '
+                 'it); the issuing server cannot be identified; refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['binding', 'authorization-response'],
+        "reverify_steps": ['recompute'],
+    },
     'mcp-oauth-issuer-unbound': {
         "domain": 'mcp-oauth',
         "code": 'mcp-oauth-issuer-unbound',
@@ -10283,6 +10304,26 @@ TAXONOMY = {
                  'fail-closed',
         "severity": 'medium',
         "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mcp-oauth-resource-misbound': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-resource-misbound',
+        "human": 'an access token bound to one protected resource is '
+                 'presented at another (RFC 8707 cross-server replay); '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['token-claims', 'resource'],
+        "reverify_steps": ['recompute'],
+    },
+    'mcp-oauth-resource-missing': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-resource-missing',
+        "human": 'an access token carries no resource indicator for the '
+                 'server it is presented to (RFC 8707); refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['token-claims', 'resource'],
         "reverify_steps": ['recompute'],
     },
     'mcp-oauth-verdict-mismatched': {
