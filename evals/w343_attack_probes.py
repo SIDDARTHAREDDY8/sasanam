@@ -163,7 +163,8 @@ def test_a8_f430_filing_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     entry = ("(F430 filed 2026-10-05, wave-343 lane 3" in text
              and "LOW, CLOSED 2026-10-05 wave-344 lane 1" in text
-             and "Open findings: F433, F434, F435." in text)
+             and "Open findings: F434, F435." in text)
+
     refusal = (dlp.find_credential('token="xoxb-abc123" + "def456"')
                == "dlp-slack-token")
     ok = entry and refusal
@@ -179,7 +180,8 @@ def test_a9_f429_still_open_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F429 filed 2026-10-05, wave-342 lane 5" in text
           and "LOW, CLOSED 2026-10-05 wave-343 lane 1" in text
-          and "Open findings: F433, F434, F435." in text)
+          and "Open findings: F434, F435." in text)
+
     return ("HELD" if ok else "BREAK", "F429 closed=%s" % ok)
 
 
