@@ -1,14 +1,12 @@
 {
- "generated": "2026-10-05T11:08:38Z",
+ "generated": "2026-10-05T11:47:45Z",
  "pin": 2131,
- "covered": 1950,
+ "covered": 1982,
  "gaps": [
   "absence-refused",
   "admission-at-risk-accepted",
   "alg-refused",
-  "approval-record-undigestible",
   "arap-error",
-  "artifact_unreadable",
   "assessment_malformed",
   "attenuation-refused",
   "attest_absence",
@@ -42,22 +40,16 @@
   "ceremony-not-keyholder",
   "ceremony-unknown-ceremony",
   "checkpoint-refused",
-  "child-refused-op",
   "clear_cross_run_lineage",
-  "commit-path-escape",
-  "commit-right-missing",
   "compute_candidate",
   "config-malformed",
   "consent_expired",
   "consent_required",
-  "consumption-journal-write-failed",
   "contradictory_declaration",
-  "delegation-unknown-parent",
   "digest-linkage-refused",
   "digest-role-missing",
   "display-attestation-error",
   "empty_reason",
-  "envelope-bad-header",
   "envelope-bad-sample",
   "envelope-sample-too-large",
   "envelope-too-many-samples",
@@ -76,33 +68,27 @@
   "evaltask-scoring-source-unavailable",
   "evaltask-unknown-scoring-function",
   "evidence-bundle-payload-type-refused",
-  "evidence-bundle-witness-key-unavailable",
   "evidence-refused",
   "faithfulness-error",
-  "grantneg-registry-withdrawn",
   "hop_token_refs",
   "hybrid-gate-refused",
   "identity_key_of",
   "input_closure_digest",
   "invalid_target",
-  "inventory-identity-collision",
   "issuer-malformed",
   "keep_evidence_types",
   "keep_subject_fields",
   "key-identity-refused",
-  "lease_not_yet_valid",
   "make_link_record",
   "malformed-context",
   "malformed-message",
   "malformed-permit",
   "malformed_binding",
-  "malformed_lease",
   "missing-skill-id",
   "no_framing_store",
   "no_resolved_target",
   "offline-verify-anchor-unsupported",
   "offline-verify-internal",
-  "outside_sandbox",
   "permit-refused",
   "policy-delta-evaluation-error",
   "policy-envelope-malformed",
@@ -110,15 +96,11 @@
   "posture-refused",
   "precommit_refused",
   "preexec_child_died",
-  "preexec_recheck_timeout",
   "proof.envelope",
   "proof.type",
   "propose_release",
   "provisioned_required",
-  "ptgrant-grant-not-yet-valid",
-  "r3-malformed",
   "r3-no-match",
-  "r3-vocabulary-unknown",
   "rail-instruction-chunk-masked",
   "ratify-policy-unsatisfied",
   "receipt-malformed",
@@ -126,13 +108,10 @@
   "recover_torn_tail",
   "replay-refused",
   "reverify-refused",
-  "revocation-push-refused",
   "run_limits",
-  "sandbox-refused",
   "scan_gate",
   "scan_policy",
   "scan_policy_duplicates",
-  "scan_verdict_bad_bytes",
   "scan_verdict_bad_digest",
   "scan_verdict_bad_scanner_version",
   "scan_verdict_bad_severity_counts",
@@ -144,36 +123,25 @@
   "scan_verdict_missing",
   "scan_verdict_missing_fields",
   "scan_verdict_negative",
-  "scan_verdict_no_signer",
   "scan_verdict_no_verifiers",
   "scan_verdict_unknown_fields",
   "scan_verdict_unknown_scanner",
   "scan_verdict_window_too_long",
-  "shield-bad-id",
-  "shield-bad-params",
-  "shield-bad-provider-kind",
-  "shield-no-run",
-  "shield-non-verdict",
-  "signer-error",
   "sigstore-keyed-envelope",
   "sigstore-keyed-malformed",
   "single-use-refused",
   "spawn_failed",
   "spiffe-refused",
-  "store_lock_unavailable",
   "subject-not-allowlisted",
-  "subject-unanchored",
   "subject_claims",
   "svr-refused",
   "tool-crashed",
   "tool-timed-out",
   "tool_ratings",
-  "toolcall-exception-scope-mismatch",
   "toolcall-regex-unsafe",
   "ttl_out_of_range",
   "typed-action-refused",
   "typed-context",
-  "unknown-grant-id",
   "unknown-manifest-category",
   "unknown_approval",
   "unknown_parent",
@@ -1243,8 +1211,10 @@
    "code": "approval-record-undigestible",
    "domain": "capability",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "approval-record-unresolvable",
@@ -1530,8 +1500,10 @@
    "code": "artifact_unreadable",
    "domain": "load_gate",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "assessment_from_future",
@@ -3976,8 +3948,10 @@
    "code": "child-refused-op",
    "domain": "capability",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "claim-invalid-grant",
@@ -4183,15 +4157,19 @@
    "code": "commit-path-escape",
    "domain": "capability",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "commit-right-missing",
    "domain": "capability",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "commit-unknown-token",
@@ -4434,8 +4412,10 @@
    "code": "consumption-journal-write-failed",
    "domain": "consumption",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "consumption-key-malformed",
@@ -5953,8 +5933,10 @@
    "code": "delegation-unknown-parent",
    "domain": "capability",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "delegation-version-mismatch",
@@ -6929,8 +6911,10 @@
    "code": "envelope-bad-header",
    "domain": "envelope",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "envelope-bad-sample",
@@ -7766,8 +7750,10 @@
    "code": "evidence-bundle-witness-key-unavailable",
    "domain": "evbundle",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "evidence-bundle-witness-missing",
@@ -7797,6 +7783,7 @@
     "evals/w312_redteam_probes.py",
     "evals/w313_redteam_probes.py",
     "evals/w329_sigb_probes.py",
+    "evals/w341_covgap3_probes.py",
     "tests/test_evidence_sigstore.py"
    ]
   },
@@ -8968,8 +8955,10 @@
    "code": "grantneg-registry-withdrawn",
    "domain": "grantneg",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "grantneg-scope-mismatch",
@@ -10493,8 +10482,10 @@
    "code": "inventory-identity-collision",
    "domain": "inventory-query",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "inventory-pack-drift",
@@ -11032,8 +11023,10 @@
    "code": "lease_not_yet_valid",
    "domain": "lease",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "lease_revoked",
@@ -11131,8 +11124,10 @@
    "code": "malformed_lease",
    "domain": "lease",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "mandate-constraint-exceeded",
@@ -12625,8 +12620,10 @@
    "code": "outside_sandbox",
    "domain": "deployment",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "pack-expired",
@@ -14194,8 +14191,10 @@
    "code": "preexec_recheck_timeout",
    "domain": "platform",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "presentation-missing",
@@ -14909,8 +14908,10 @@
    "code": "ptgrant-grant-not-yet-valid",
    "domain": "tool_grant",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "ptgrant-invalid-target",
@@ -15341,8 +15342,10 @@
    "code": "r3-malformed",
    "domain": "r3",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "r3-no-match",
@@ -15375,15 +15378,18 @@
    "severity": "high",
    "covered": true,
    "files": [
-    "evals/w340_covgap2_probes.py"
+    "evals/w340_covgap2_probes.py",
+    "evals/w341_covgap3_probes.py"
    ]
   },
   {
    "code": "r3-vocabulary-unknown",
    "domain": "r3",
    "severity": "high",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "rail-adapter-unknown-verdict",
@@ -16447,8 +16453,10 @@
    "code": "revocation-push-refused",
    "domain": "revocation-push",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "revocation-push-session-suspended",
@@ -16818,8 +16826,10 @@
    "code": "sandbox-refused",
    "domain": "capability",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "satisfied-missing",
@@ -16874,8 +16884,10 @@
    "code": "scan_verdict_bad_bytes",
    "domain": "scan",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "scan_verdict_bad_digest",
@@ -16994,8 +17006,10 @@
    "code": "scan_verdict_no_signer",
    "domain": "scan",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "scan_verdict_no_verifiers",
@@ -17506,22 +17520,28 @@
    "code": "shield-bad-id",
    "domain": "guardrail",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "shield-bad-params",
    "domain": "guardrail",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "shield-bad-provider-kind",
    "domain": "guardrail",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "shield-bad-verdict",
@@ -17545,15 +17565,19 @@
    "code": "shield-no-run",
    "domain": "guardrail",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "shield-non-verdict",
    "domain": "guardrail",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "shield-remote-no-endpoint",
@@ -17801,8 +17825,10 @@
    "code": "signer-error",
    "domain": "jail",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "signer-hash-downshift-refused",
@@ -18431,8 +18457,10 @@
    "code": "store_lock_unavailable",
    "domain": "approval",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "sub_threshold",
@@ -18463,8 +18491,10 @@
    "code": "subject-unanchored",
    "domain": "mcp",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "subject_claims",
@@ -19541,8 +19571,10 @@
    "code": "toolcall-exception-scope-mismatch",
    "domain": "toolcall",
    "severity": "low",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "toolcall-exception-suppressed",
@@ -20366,8 +20398,10 @@
    "code": "unknown-grant-id",
    "domain": "capability",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w341_covgap3_probes.py"
+   ]
   },
   {
    "code": "unknown-kid",
