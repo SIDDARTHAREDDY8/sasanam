@@ -18,8 +18,10 @@ Shapes (A/B/C = the three wave-342 attack targets):
      the coded dlp-slack-token refusals are pinned in section A and
      demonstrated red-first in
      evals/w342_textescape_redfirst.py. aaencode/jjencode-style shapes
-     are JS-execution encodings, the same mechanism as F428's JSFuck,
-     and are covered by F428's close-when (not re-filed).
+     are JS-execution encodings, the same mechanism as F428's JSFuck;
+     wave-343 re-filed the non-JSFuck residual (JS string
+     concatenation) as F430 (LOW, OPEN) because the shipped F428
+     parser is JSFuck-alphabet-specific.
   B: annotation-arbitrage shapes (R40, OpenAPPA-informed). The audit's
      treatment follows registry-bound issuance, not bare attributes: a
      hand-crafted function carrying map-consistent expect_sdk_tool_name
@@ -38,7 +40,9 @@ Shapes (A/B/C = the three wave-342 attack targets):
      aggregation is claimed. Sequential individually-authorized recon
      queries are authorized use, not a bypass. HELD as documented
      boundaries, not findings.
-  F428: still OPEN on this tree (filing pinned).
+  F428: CLOSED by the wave-342 merge (filing pinned); the non-JSFuck
+  JS-execution-encoding residual (string concatenation) is filed as
+  F430 (LOW, OPEN) in wave-343.
 
 Usage:
   ~/workspace/.gov-venv/bin/python evals/w342_attack_probes.py
@@ -163,19 +167,19 @@ def test_a10_f429_filing_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F429 filed 2026-10-05, wave-342 lane 5" in text
           and "LOW, CLOSED 2026-10-05 wave-343 lane 1" in text
-          and "Next free finding: **F430**." in text
-          and "Open findings: none." in text)
+          and "Next free finding: **F432**" in text
+          and "Open findings: F430, F431." in text)
     return ("HELD" if ok else "BREAK", "F429 filed closed=%s" % ok)
 
 
 @_t
 def test_a11_f428_still_open_pinned():
     """F428 (JSFuck) is CLOSED (2026-10-05 wave-342 lane 1); pins the
-    closure entry and the open-none footer."""
+    closure entry and the merged footer (open F430, F431 / next F432)."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F428 filed 2026-10-05, wave-341 lane C" in text
           and "LOW, CLOSED 2026-10-05 wave-342 lane 1" in text
-          and "Open findings: none." in text)
+          and "Open findings: F430, F431." in text)
     return ("HELD" if ok else "BREAK", "F428 closed=%s" % ok)
 
 
