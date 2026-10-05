@@ -174,6 +174,11 @@ _NON_CODES = frozenset([
     # Wave-321 merge: gov/sigstore_bundle.py error-message prefix
     # (function name in a human ValueError message, not a decision code).
     "open_keyed_bundle",
+    # Wave-335 merge: gov/policy.py + gov/tool_rate_limit.py config-key
+    # prefix in human ValueError messages ("tool_rate_limits: ...",
+    # "tool_rate_limits[%r]: ...") -- a policy section name, not a
+    # decision code (the coded refusal is tool-rate-limit-config-invalid).
+    "tool_rate_limits",
 ])
 
 

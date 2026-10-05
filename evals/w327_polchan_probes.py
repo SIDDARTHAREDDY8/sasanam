@@ -48,7 +48,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2100 # Wave-326 merge pin; wave-327 lane 3 repoints to 2044 (+9 policy-channel-*); Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*).
+TAXONOMY_PIN = 2106 # Wave-326 merge pin; wave-327 lane 3 repoints to 2044 (+9 policy-channel-*); Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
 
 _results = []
 
@@ -460,12 +460,12 @@ def _p1o():
 # P2: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P2a-pin-taxonomy-2100")
+@probe("P2a-pin-taxonomy-2106")
 def _p2a():
     from gov.decision_codes import TAXONOMY
     assert len(TAXONOMY) == TAXONOMY_PIN, \
         "taxonomy %d != pin %d" % (len(TAXONOMY), TAXONOMY_PIN)
-    _held("P2a-pin-taxonomy-2100", "taxonomy matches pin")
+    _held("P2a-pin-taxonomy-2106", "taxonomy matches pin")
 
 
 @probe("P2b-footer-open-none-next-f419")
@@ -474,7 +474,7 @@ def _p2b():
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
     assert "Next free finding: **F419**" in text, "footer next-free wrong"
-    assert "**Open findings: none.**" in text, "footer open set wrong"
+    assert "**Open findings: F423.**" in text, "footer open set wrong"
     _held("P2b-footer-open-none-next-f419", "footer open none / next F419")
 
 

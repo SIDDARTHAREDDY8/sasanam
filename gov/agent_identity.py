@@ -70,6 +70,7 @@ import hashlib
 import hmac
 import json
 import secrets
+import threading
 import time
 from collections import OrderedDict
 
@@ -574,6 +575,13 @@ _MAX_IDENTITY_LIFETIME = 3600
 _TOKEN_LEEWAY = 60
 _DEFAULT_REFRESH_LIFETIME = 86400
 
+# F421: bound on per-token rotation-lock acquisition in refresh(). A
+# refresh that cannot serialize its check-then-set refuses fail-closed
+# (identity-refresh-lock-unavailable) instead of proceeding unlocked or
+# blocking forever. Deployments may override per-store via the
+# lock_timeout_seconds constructor argument (tests inject short values).
+_REFRESH_LOCK_TIMEOUT_SECONDS = 5.0
+
 
 class ClaimNormalizationError(Exception):
     """Upstream claim set refused. ``code`` is the taxonomy refusal code."""
@@ -832,12 +840,23 @@ class RefreshTokenStore(object):
     """
 
     def __init__(self, lifetime_seconds=_DEFAULT_REFRESH_LIFETIME,
-                 time_fn=None):
+                 time_fn=None, lock_timeout_seconds=None):
         if lifetime_seconds < 1:
             raise ValueError("lifetime_seconds must be >= 1")
         self._lifetime = int(lifetime_seconds)
         self._time_fn = time_fn or time.time
         self._tokens = {}  # refresh_id -> record
+        # Per-token rotation locks (F421): the check-then-set on
+        # ``rotated`` in refresh() must be serialized per token, never
+        # globally -- a global lock would serialize all refreshes
+        # deployment-wide. ``_rt_locks_guard`` protects only the lock
+        # registry itself and is never held while acquiring a token lock.
+        self._rt_locks = {}  # refresh_id -> threading.Lock
+        self._rt_locks_guard = threading.Lock()
+        self._lock_timeout = (
+            _REFRESH_LOCK_TIMEOUT_SECONDS
+            if lock_timeout_seconds is None
+            else float(lock_timeout_seconds))
 
     def _now(self, now):
         return int(now) if now is not None else int(self._time_fn())
@@ -875,9 +894,23 @@ class RefreshTokenStore(object):
         return refresh_id, secret
 
     def _revoke_chain(self, chain_id):
-        for rec in self._tokens.values():
+        # Snapshot: refresh() holds a per-token lock while this runs, and
+        # a concurrent mint_refresh() on another thread may insert into
+        # _tokens -- iterating the live dict would raise RuntimeError.
+        for rec in list(self._tokens.values()):
             if rec["chain_id"] == chain_id:
                 rec["revoked"] = True
+
+    def _lock_for(self, refresh_id):
+        """Return the per-token rotation lock, creating it if absent.
+
+        Only the short-lived registry guard is held here; the returned
+        token lock is always acquired AFTER the guard is released, so no
+        lock-ordering deadlock is possible (a thread never holds two
+        locks at once on this path).
+        """
+        with self._rt_locks_guard:
+            return self._rt_locks.setdefault(refresh_id, threading.Lock())
 
     def refresh(self, issuer, refresh_id, secret, audience, now=None):
         """Exchange a refresh token for a new SHORT identity token plus a
@@ -887,6 +920,17 @@ class RefreshTokenStore(object):
         The identity comes from re-normalizing the stored raw claims.
         The identity token always uses the issuer's short default
         lifetime -- there is no lifetime parameter here by design.
+
+        F421: the rotated-flag check-then-set is serialized by a
+        per-token lock. The unknown/secret pre-check stays outside the
+        lock (read-only, no oracle change); everything from the
+        rotated/revoked/expiry checks through ``rotated = True`` runs
+        under the token's lock, so a concurrent double-refresh yields
+        exactly one success and the loser hits the reuse-detection
+        path. If the lock cannot be acquired within the timeout the
+        refresh is refused fail-closed
+        (``identity-refresh-lock-unavailable``) -- it never proceeds
+        unlocked.
         """
         current = self._now(now)
         rec = self._tokens.get(refresh_id)
@@ -898,6 +942,21 @@ class RefreshTokenStore(object):
             raise IdentityTokenRejection(
                 "identity-refresh-unknown",
                 "refresh token unknown or secret mismatch")
+        lock = self._lock_for(refresh_id)
+        if not lock.acquire(timeout=self._lock_timeout):
+            # Fail closed: serializing the rotation is a safety
+            # property, not an optimization. Never refresh unlocked.
+            raise IdentityTokenRejection(
+                "identity-refresh-lock-unavailable",
+                "could not serialize refresh-token rotation; "
+                "refusing rather than refreshing unlocked")
+        try:
+            return self._refresh_locked(issuer, rec, audience, current)
+        finally:
+            lock.release()
+
+    def _refresh_locked(self, issuer, rec, audience, current):
+        """refresh() body: runs with the token's rotation lock held."""
         if current > rec["exp"]:
             raise IdentityTokenRejection(
                 "identity-refresh-expired",

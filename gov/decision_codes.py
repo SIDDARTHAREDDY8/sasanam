@@ -73,7 +73,7 @@ import json
 
 try:
     from .action_capsule import seal_capsule, verify_capsule
-except ImportError:  # standalone: composition needs the capsule module
+except ImportError:# standalone: composition needs the capsule module
     seal_capsule = None
     verify_capsule = None
 
@@ -7238,6 +7238,28 @@ TAXONOMY = {
         "evidence_kinds_required": ['evidence', 'attestation'],
         "reverify_steps": ['check-evidence-present', 'check-evidence-verifiable'],
     },
+    'evidence-pq-not-enabled': {
+        "domain": 'evbundle',
+        "code": 'evidence-pq-not-enabled',
+        "human": 'reserved PQ envelope slot: the bundle/seal names a PQ'
+                 ' algorithm identifier, but PQ verification is not enabled'
+                 ' in this build; refused fail-closed (no PQ signature was'
+                 ' checked)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-parse-bundle', 'check-pq-slot-disabled'],
+    },
+    'evidence-pq-unknown-alg': {
+        "domain": 'evbundle',
+        "code": 'evidence-pq-unknown-alg',
+        "human": 'reserved PQ envelope slot: pqAlgId names an identifier'
+                 ' outside the closed PQ table (19 identifiers: mldsa44/65/87,'
+                 ' falcon512/padded/1024, 12 slh-dsa variants); refused'
+                 ' fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['re-parse-bundle', 'check-pq-alg-table'],
+    },
     'evidence-quality-empty-evidence': {
         "domain": 'evidence-quality',
         "code": 'evidence-quality-empty-evidence',
@@ -8842,6 +8864,16 @@ TAXONOMY = {
         "code": 'identity-refresh-expired',
         "human": 'the refresh token was past its expiry; no new identity '
                  'token was issued, refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-refresh-lock-unavailable': {
+        "domain": 'identity',
+        "code": 'identity-refresh-lock-unavailable',
+        "human": 'the per-token rotation lock could not be acquired within '
+                 'the timeout, so the refresh was refused fail-closed '
+                 'rather than proceeding unlocked (F421)',
         "severity": 'medium',
         "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
@@ -17437,6 +17469,40 @@ TAXONOMY = {
         "evidence_kinds_required": ['guardrail-tripwire'],
         "reverify_steps": ['recompute'],
     },
+    'tool-rate-limit-config-invalid': {
+        "domain": 'velocity',
+        "code": 'tool-rate-limit-config-invalid',
+        "human": 'per-tool rate limiting: the deployment\'s '
+                 'tool_rate_limits: policy section is malformed '
+                 '(non-mapping, bad tool name, unknown key, missing '
+                 'window_secs/max_calls, non-positive window, or '
+                 'negative call budget); the executor never constructs '
+                 'on uninterpretable velocity policy',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-declaration'],
+        "reverify_steps": ['recompute'],
+    },
+    'tool-rate-limit-exceeded': {
+        "domain": 'velocity',
+        "code": 'tool-rate-limit-exceeded',
+        "human": 'per-tool rate limiting: the tool\'s sliding-window '
+                 'execution count exceeded its configured limit; this '
+                 'call is refused coded -- the run continues, unlike '
+                 'the F162 class tripwire which pauses the whole run',
+        "severity": 'medium',
+        "evidence_kinds_required": ['windowed-count', 'policy-declaration'],
+        "reverify_steps": ['recompute'],
+    },
+    'tool-rate-limiter-unavailable': {
+        "domain": 'velocity',
+        "code": 'tool-rate-limiter-unavailable',
+        "human": 'per-tool rate limiting: the limiter itself failed '
+                 'unexpectedly at call time; fail closed -- the call '
+                 'is denied, never allowed unlimited',
+        "severity": 'high',
+        "evidence_kinds_required": ['limiter-state'],
+        "reverify_steps": ['recompute'],
+    },
     'tool-scope-undeclared': {
         "domain": 'token-scope',
         "code": 'tool-scope-undeclared',
@@ -19818,7 +19884,7 @@ def emit(refusal_string, evidence_digests=(), detail=""):
     is always False -- the code is evidence, never authorization.
     ``evidence_digests`` must be digest-shaped (64 lowercase hex).
     """
-    entry = code_for(refusal_string)  # fail-closed on unmapped
+    entry = code_for(refusal_string)# fail-closed on unmapped
     digests = _check_digests(evidence_digests)
     if detail is None:
         detail = ""
@@ -19862,7 +19928,7 @@ def replay(machine_code):
     if machine_code.get("v") != DECISION_CODE_VERSION:
         raise DecisionCodeError(MALFORMED, "bad version")
     refusal = machine_code.get("refusal")
-    entry = code_for(refusal)  # fail-closed on unmapped
+    entry = code_for(refusal)# fail-closed on unmapped
     if machine_code.get("code") != refusal:
         raise DecisionCodeError(MALFORMED, "code/refusal mismatch")
     for key in ("domain", "severity", "human"):
@@ -19930,11 +19996,11 @@ def attach_decision_code(capsule, machine_code):
     if seal_capsule is None or verify_capsule is None:
         raise DecisionCodeError(
             MALFORMED, "action-capsule composition needs gov.action_capsule")
-    checked = replay(machine_code)  # strict; tampering refuses here
-    require_evidence_only(checked)  # no authority semantics, ever
+    checked = replay(machine_code)# strict; tampering refuses here
+    require_evidence_only(checked)# no authority semantics, ever
     if not isinstance(capsule, dict):
         raise DecisionCodeError(MALFORMED, "capsule must be a dict")
-    body = verify_capsule(capsule)  # replay; tampering refuses here
+    body = verify_capsule(capsule)# replay; tampering refuses here
     new_effect = dict(body["effect"])
     new_effect["decision_code_digest"] = machine_code_digest(checked)
     new_effect["decision_code"] = checked["refusal"]
@@ -19955,10 +20021,10 @@ def verify_capsule_decision_code(capsule, machine_code):
     if verify_capsule is None:
         raise DecisionCodeError(
             MALFORMED, "action-capsule composition needs gov.action_capsule")
-    checked = replay(machine_code)  # strict; tampering refuses here
+    checked = replay(machine_code)# strict; tampering refuses here
     if not isinstance(capsule, dict):
         raise DecisionCodeError(MALFORMED, "capsule must be a dict")
-    body = verify_capsule(capsule)  # replay; tampering refuses here
+    body = verify_capsule(capsule)# replay; tampering refuses here
     linked = body["effect"].get("decision_code_digest")
     if not isinstance(linked, str):
         raise DecisionCodeError(

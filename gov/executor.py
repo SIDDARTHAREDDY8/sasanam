@@ -166,6 +166,7 @@ from .log import (_verify, newest_refusal_ts_per_flag, read_entries,
 from .memory_provenance import MemoryQuarantineError, instruction_shaping_reason
 from . import citation_provenance as _citation_provenance
 from . import capability_gate as _capability_gate
+from . import tool_rate_limit as _tool_rate
 from . import velocity as _velocity
 
 _SEND_TOOLS = ("send_email", "http_post")
@@ -2209,6 +2210,18 @@ class ToolExecutor:
         self._tempo_paused = False
         self._tempo_resume_aid = None
         self._tempo_trip_class = None  # class that tripped, if paused
+        # F421 (LOW): per-tool sliding-window rate limiting. Built from
+        # the deployment's policy over conservative built-ins (absent
+        # section = default-enforced, never disabled -- F162
+        # precedent). The wire shares the executor's monotonic clock
+        # source (self._tempo_clock), so test/deterministic clock
+        # injection applies to both velocity wires. Malformed
+        # deployment config refuses coded
+        # tool-rate-limit-config-invalid at construction: the executor
+        # never runs on uninterpretable velocity policy.
+        self._tool_rate_wire = _tool_rate.ToolRateWire(
+            self._tool_rate_cfg(),
+            clock=lambda: self._tempo_clock())
         # F167 (MEDIUM): the pause survives executor rotation (the F60
         # fresh-executor-per-sweep deployment pattern). The pause is
         # derived from the run's own chained log — the trip path chains
@@ -6884,6 +6897,15 @@ class ToolExecutor:
         cfg.update(getattr(self.policy, "tempo", None) or {})
         return cfg
 
+    def _tool_rate_cfg(self):
+        """Effective per-tool rate limits (F421): policy values over
+        conservative built-ins (absent section = default-enforced,
+        never disabled). Returns {tool: (window_secs, max_calls)}."""
+        cfg = dict(_tool_rate.DEFAULT_TOOL_LIMITS)
+        cfg.update(_tool_rate.normalize_section(
+            getattr(self.policy, "tool_rate_limits", None) or {}))
+        return cfg
+
     def _velocity_cfg(self):
         """Effective cross-run velocity config: policy values over
         conservative defaults (F162: absent section no longer
@@ -7058,6 +7080,71 @@ class ToolExecutor:
         self._tempo_resume_aid = aid
         raise _velocity.VelocityTempoTripError(trip_msg)
 
+    def _check_tool_rate(self, identity, tool, audit_identity=None):
+        """Charge one EXECUTION against the per-tool rate wire (F421).
+
+        Called at the two F33 execution boundaries (direct allow path
+        and the approved-execution sweep), BEFORE ``_charge_tempo``:
+        the finer, more specific refusal fires first. On exceed: chain
+        a coded refusal record and raise code-first
+        ``ToolRateLimitExceeded`` fail-closed -- the call is refused;
+        the run continues (deliberately finer than the F162 whole-run
+        pause). Tools with no configured limit are uncharged
+        (documented residual).
+
+        ``identity`` is the calling AgentIdentity on the call() path.
+        On the approved-execution sweep there is no calling identity:
+        pass None and ``audit_identity`` (a plain agent-info dict from
+        the approval record) for the refusal record.
+
+        Fail-closed on limiter failure: any unexpected exception from
+        the wire becomes a coded ``tool-rate-limiter-unavailable``
+        denial -- a broken limiter denies, never allows unlimited.
+        """
+        _ai = audit_identity or {}
+        try:
+            self._tool_rate_wire.charge(tool)
+            return
+        except _tool_rate.ToolRateLimitExceeded as exc:
+            code = exc.code
+            detail = exc.detail
+        except Exception as wire_exc:  # noqa: BLE001 -- fail closed
+            code = "tool-rate-limiter-unavailable"
+            detail = ("per-tool rate limiter failed unexpectedly for "
+                      "tool %r: %s" % (tool, wire_exc))
+        window_secs, max_calls = self._tool_rate_wire.limits.get(
+            tool, (0.0, 0))
+        try:
+            observed = self._tool_rate_wire.windowed_count(tool)
+        except _tool_rate.ToolRateLimitError:
+            observed = max_calls + 1
+        refusal_entry = {
+            "event": "tool_call",
+            "run_id": self.run_id,
+            "agent_id": (identity.agent_id if identity is not None
+                         else _ai.get("agent_id", "system")),
+            "role": (identity.role if identity is not None
+                     else _ai.get("role", "system")),
+            "principal": (identity.principal if identity is not None
+                          else _ai.get("principal", "system")),
+            "tool": tool,
+            "decision": "tool_call_refused",
+            "policy_id": "tool-rate-limit",
+            "flag": code,
+            "matched_rules": [],
+            "rate_window_secs": window_secs,
+            "rate_limit": max_calls,
+            "rate_windowed_count": observed,
+            "reason": detail,
+        }
+        # Chain the refusal BEFORE raising: the evidence must exist
+        # even if the raise path is mishandled upstream. An append
+        # failure raises and nothing executes (fail closed).
+        self.log.append(refusal_entry)
+        if code == "tool-rate-limit-exceeded":
+            raise _tool_rate.ToolRateLimitExceeded(code, detail)
+        raise _tool_rate.ToolRateLimiterUnavailable(code, detail)
+
     def resume_after_velocity_pause(self, approval_id):
         """Resume a tempo-paused run after HUMAN re-approval.
 
@@ -7133,6 +7220,15 @@ class ToolExecutor:
         # next call would re-trip inside the still-hot window and the
         # resume would be useless).
         self._tempo_wire.reset(self._tempo_trip_class)
+        # F421: the tripped class's per-tool windows start fresh too --
+        # otherwise the very next call would hit the per-tool wire
+        # inside the still-hot window and the resume would be useless.
+        # (No tripped class on budget-exhaustion pauses: nothing to
+        # reset then.)
+        if self._tempo_trip_class is not None:
+            for _rt_tool in _velocity.ACTION_CLASSES.get(
+                    self._tempo_trip_class, ()):
+                self._tool_rate_wire.reset_tool(_rt_tool)
         self._tempo_trip_class = None
         return {"status": "resumed", "approval_id": approval_id}
 
@@ -11442,6 +11538,12 @@ class ToolExecutor:
                 matched_rules=[])
 
         if decision.effect == "allow":
+            # F421 (LOW): charge the per-tool rate wire at this
+            # execution boundary, BEFORE the class tempo wire and the
+            # side effect. The finer, more specific refusal fires
+            # first; an exceed refuses this call coded
+            # tool-rate-limit-exceeded (the run continues).
+            self._check_tool_rate(identity, tool)
             # F162 (HIGH): charge the per-class tempo wire at this
             # execution boundary, BEFORE the side effect. A trip
             # pauses the whole run fail-closed (raises) — the call
@@ -13433,20 +13535,28 @@ class ToolExecutor:
                             policy_id="capability-gate-execution-refused")
                     continue
 
+            # F421: charge the per-tool rate wire at this execution
+            # boundary too (approved executions are executions),
+            # BEFORE the class tempo wire. There is no calling
+            # identity on the sweep path: the refusal record carries
+            # the approval record's agent info.
+            _rec_identity = rec.get("identity") or {}
+            _rec_audit = {
+                "agent_id": rec.get("agent_id"),
+                "role": rec.get("role"),
+                "principal": _rec_identity.get("principal"),
+            }
+            self._check_tool_rate(None, rec["tool"],
+                                 audit_identity=_rec_audit)
             # F162: charge the per-class tempo wire at this execution
             # boundary too (approved executions are executions). A trip
             # pauses the run fail-closed before the side effect. There
             # is no calling identity on the sweep path: the trip record
             # carries the approval record's agent info, and resume
             # requires an operator-filed velocity_resume approval.
-            _rec_identity = rec.get("identity") or {}
             self._charge_tempo(
                 None, rec["tool"],
-                audit_identity={
-                    "agent_id": rec.get("agent_id"),
-                    "role": rec.get("role"),
-                    "principal": _rec_identity.get("principal"),
-                })
+                audit_identity=_rec_audit)
             # Wave-313 (Row 7 step 3): capability/argument-bound approval
             # token. decide() mints the token and MAC-binds it on the
             # record; the sweep re-verifies it here as an ADDITIONAL

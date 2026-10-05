@@ -20,7 +20,7 @@ P4 (3): F405 re-probe (CLOSED wave-320 lane 1) -- apostrophe-less negation
 P5 (3): wave-319 follow-up spot-check -- 3 of the 70 touched batteries
     re-run beyond their pin probes (w314_provsink, w303_f385, w297_redteam).
 P6 (2): regressions -- footer open none / next F409; pin taxonomy
-    2100/2100/0 sorted on source literals.
+    2106/2106/0 sorted on source literals.
 
 
 
@@ -61,11 +61,11 @@ from tests.keyfixture import scrub_key_env, provision_test_key  # noqa: E402
 
 from evals import probe_lines  # noqa: E402
 
-TAXONOMY_PIN = 2100 #Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*).
+TAXONOMY_PIN = 2106 #Wave-326 lane 1: pin 2020 -> 2021 (+1 witness-alert-state-lost); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
 
 
-FOOTER_OPEN = "none"
-FOOTER_NEXT = "F421"
+FOOTER_OPEN = "F423"
+FOOTER_NEXT = "F424"
 
 _NOW = datetime(2026, 10, 4, 5, 0, 0, tzinfo=timezone.utc)
 _NOW_INT = 1759554000
@@ -716,7 +716,7 @@ def _p5c():
 # P6: regressions (pin + footer)
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-2100-sorted")
+@probe("P6-pin-taxonomy-2106-sorted")
 
 
 def _p6a():
@@ -724,12 +724,12 @@ def _p6a():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2100#Wave-333 merge: pin 2069 -> 2100 (+8 revocation-push-*)
+    ok = (len(lits) == TAXONOMY_PIN == 2106#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P6-pin-taxonomy-2100-sorted",
-                     "2100/2100/0 sorted")
-    return _break("P6-pin-taxonomy-2100-sorted",
+        return _held("P6-pin-taxonomy-2106-sorted",
+                     "2106/2106/0 sorted")
+    return _break("P6-pin-taxonomy-2106-sorted",
 
 
                  "got %d literals" % (len(lits),))

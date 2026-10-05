@@ -233,8 +233,13 @@ class TestDecisionBOM(unittest.TestCase):
         self.assertEqual(rec["final_effect"], "deny")
 
 
-def _executor(run_dir, advisors):
+def _executor(run_dir, advisors, tool_rate_limits=None):
     policy = PolicyEngine("policies/default.yaml")
+    if tool_rate_limits is not None:
+        # Wave-335: per-tool rate limiting is default-enforced; tests that
+        # hammer one tool for non-velocity reasons (e.g. BOM-chain
+        # integrity under concurrency) opt into a permissive budget here.
+        policy.tool_rate_limits = tool_rate_limits
     log = ActionLog(run_dir / "actions.jsonl")
     approvals = ApprovalQueue(run_dir, log)
     kw = dict(ledger_path=run_dir / "egress_ledger.jsonl",
@@ -288,7 +293,12 @@ class TestExecutorWiring(unittest.TestCase):
     def test_concurrent_calls_keep_bom_chain_intact(self):
         import threading
         d = Path(tempfile.mkdtemp(prefix="adv_ut_"))
-        ex, log = _executor(d, [_Noop()])
+        # 40 rapid write_file calls exceed the default 30/60s per-tool
+        # budget; this test hammers for BOM-chain integrity, not velocity,
+        # so it opts into a permissive budget (wave-335).
+        ex, log = _executor(d, [_Noop()],
+                            tool_rate_limits={"write_file": {"window_secs": 60,
+                                                            "max_calls": 1000}})
         ident = ex.mint_identity("a1", "coder", "u1")
         errors = []
 

@@ -153,7 +153,8 @@ KNOWN_RULE_FIELDS = frozenset(
 KNOWN_TOP_LEVEL_KEYS = frozenset(
     {"version", "roles", "rate_limit", "egress", "approvals",
      "auto_approve", "campaign_allowlist", "delegation", "log_limits",
-     "budgets", "run_limits", "velocity", "tempo", "policies",
+     "budgets", "run_limits", "velocity", "tempo", "tool_rate_limits",
+     "policies",
      "critical_windows"})
 
 KNOWN_APPROVALS_KEYS = frozenset(
@@ -520,6 +521,11 @@ class PolicyEngine:
         # F162: per-run, per-action-class time-window tempo tripwires.
         # Absent = {} here; the executor applies conservative defaults.
         self.tempo = self._normalize_tempo(cfg.get("tempo"))
+        # F421: per-tool rate limits. Normalized fail-closed; the raw
+        # mapping is kept (the executor validates it coded at wire
+        # construction).
+        self.tool_rate_limits = self._normalize_tool_rate_limits(
+            cfg.get("tool_rate_limits"))
         # S1: AgentSpec DSL provenance. apply_dsl() fills these in when a
         # DSL source is promoted; without a DSL they stay null and
         # behavior is unchanged.
@@ -802,6 +808,54 @@ class PolicyEngine:
                         % (key, v))
                 out[key] = v
         return out
+
+    @staticmethod
+    def _normalize_tool_rate_limits(cfg):
+        """Normalize the ``tool_rate_limits:`` section (F421).
+
+        Shape: ``{tool_name: {window_secs: <positive number>,
+        max_calls: <non-negative int>}}``. Returns the raw mapping for
+        the executor to validate coded (``tool-rate-limit-config-
+        invalid``) at wire construction. Absent section -> {} (the
+        executor applies conservative built-in defaults -- F162
+        precedent: absent never disables the guard). Malformed values
+        raise ValueError (fail closed at load).
+        """
+        if cfg is None:
+            return {}
+        if not isinstance(cfg, dict):
+            raise ValueError("tool_rate_limits must be a mapping")
+        for tool, spec in cfg.items():
+            if not isinstance(tool, str) or not tool:
+                raise ValueError(
+                    "tool_rate_limits: tool name must be a non-empty "
+                    "string, got %r" % (tool,))
+            if not isinstance(spec, dict):
+                raise ValueError(
+                    "tool_rate_limits[%r] must be a mapping, got %r"
+                    % (tool, spec))
+            for key in spec:
+                if key not in ("window_secs", "max_calls"):
+                    raise ValueError(
+                        "tool_rate_limits[%r]: unknown key %r"
+                        % (tool, key))
+            if "window_secs" not in spec or "max_calls" not in spec:
+                raise ValueError(
+                    "tool_rate_limits[%r]: need both window_secs and "
+                    "max_calls" % (tool,))
+            w, m = spec["window_secs"], spec["max_calls"]
+            if isinstance(w, bool) or not isinstance(w, (int, float)) \
+                    or w <= 0:
+                raise ValueError(
+                    "tool_rate_limits[%r].window_secs must be a positive "
+                    "number, got %r" % (tool, w))
+            if isinstance(m, bool) or not isinstance(m, int) or m < 0:
+                raise ValueError(
+                    "tool_rate_limits[%r].max_calls must be a "
+                    "non-negative integer, got %r" % (tool, m))
+        return {t: {"window_secs": float(s["window_secs"]),
+                   "max_calls": s["max_calls"]}
+                for t, s in cfg.items()}
 
     @staticmethod
     def _normalize_auto_approve(cfg):

@@ -63,7 +63,7 @@ for _p in (REPO, os.path.join(REPO, "tests"), os.path.join(REPO, "evals")):
 
 from gov import approval_tokens as AT  # noqa: E402
 
-TAXONOMY_PIN = 2100 # Wave-332 merge pin 2062 + 7 capability-token-*; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*).
+TAXONOMY_PIN = 2106 # Wave-332 merge pin 2062 + 7 capability-token-*; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
 # (agent/mission/tools/policy-stale/malformed/tampered/expired), wave-333
 # lane 3. The 4 red probes still BREAK (documented prospectus gap); the
 # old approval_tokens seam is untouched by this lane.

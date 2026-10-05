@@ -40,7 +40,7 @@ P7  F417-class containment at this seam: a non-numeric port in a
 P8  Tampered sealed binding still reports mcp-oauth-binding-tampered
     (never misreported as a PRM shape error); end-to-end
     discover_and_verify_prm with a stub fetcher returns a verdict.
-P9  Pin 2100 + footer state (open none / next F421; F420 CLOSED);
+P9  Pin 2100 + footer state (open F421 / next F422; F420 CLOSED);
     taxonomy sorted-unique on raw literals; the 6 new codes centrally
     registered.
 P10 Green check (depth-1): honors GOV_SKIP_GREEN; otherwise runs the
@@ -66,9 +66,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2100 # Wave-334 lane 3: pin 2077 -> 2083 (+6 mcp-oauth-prm-*).; Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*).
-FOOTER_OPEN = "none"  # F417 CLOSED 2026-10-05 (wave-334 lane 1); F420 CLOSED in-lane (filed as F419, renumbered).
-FOOTER_NEXT = "F421"  # Next free finding number.
+TAXONOMY_PIN = 2106 # Wave-334 lane 3: pin 2077 -> 2083 (+6 mcp-oauth-prm-*).; Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
+FOOTER_OPEN = "F423"  # F423 OPEN 2026-10-05 (wave-335 lane 5 independent red team: PRM control-char finding; filed as F421, renumbered at merge).
+FOOTER_NEXT = "F424"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -524,8 +524,8 @@ def _p9():
         return _break(pid, "footer open %s / next %s, want open %s / next %s"
                       % (open_now.strip(), next_free, FOOTER_OPEN,
                          FOOTER_NEXT))
-    return _held(pid, "taxonomy 2100/2100/0 sorted-unique; 6 codes "
-                      "registered; F420 CLOSED; footer open none / next F421")
+    return _held(pid, "taxonomy 2106/2106/0 sorted-unique; 6 codes "
+                      "registered; F420 CLOSED; footer open F421 / next F422")
 
 
 # ---------------------------------------------------------------------------

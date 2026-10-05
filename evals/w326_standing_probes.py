@@ -28,7 +28,7 @@ from gov import ed25519 as ed  # noqa: E402
 from gov import knowledge_ingest as ki  # noqa: E402
 from gov import standing_verdicts as sv  # noqa: E402
 
-TAXONOMY_PIN = 2100 # 2020 + 7 standing-verdict codes (wave-326 lane 2); Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*).
+TAXONOMY_PIN = 2106 # 2020 + 7 standing-verdict codes (wave-326 lane 2); Wave-328 lane 2: pin 2044 -> 2047 (+3: 1 supplychain-scan-already-registered + 1 advisory-version-tie + 1 advisory-input-unpinned); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
 
 _results = []
 
@@ -391,7 +391,7 @@ def _p9():
         _cleanup(root)
 
 
-@probe("P10-pin-taxonomy-2100-sorted")
+@probe("P10-pin-taxonomy-2106-sorted")
 def _p10():
     import re
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -401,7 +401,7 @@ def _p10():
         "want %d/%d/0, got %d/%d" % (TAXONOMY_PIN, TAXONOMY_PIN,
                                     len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
-    _held("P10-pin-taxonomy-2100-sorted",
+    _held("P10-pin-taxonomy-2106-sorted",
           "%d/%d/0 sorted" % (TAXONOMY_PIN, TAXONOMY_PIN))
 
 
@@ -409,7 +409,7 @@ def _p10():
 def _p11():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Next free finding: **F419**. **Open findings: none.**" in text, \
+    assert "Next free finding: **F419**. **Open findings: F423.**" in text, \
         "footer mismatch"
     _held("P11-footer-state", "open none / next F419")
 

@@ -106,6 +106,17 @@ module):
   evidence digest (artifact + signature + key binding, CVE-2026-22703
   lesson).
 
+Reserved post-quantum slot (wave-335 lane 4, format only): the bundle
+format reserves the top-level ``pqAlgId`` field naming a PQ signature
+algorithm from the closed :mod:`gov.pq_envelope` table. The slot is
+DISABLED in this build -- sealing with it refuses
+``evidence-pq-not-enabled`` (unknown identifiers refuse
+``evidence-pq-unknown-alg``), and a bundle carrying it is refused
+before any classical signature work, so a PQ-claimed bundle can never
+be verified down the Ed25519 path (algorithm-confusion kill).
+Classical bundles (slot absent) seal and verify byte-identically to
+the pre-slot format.
+
 Stdlib only. $0 spend. Synthetic/local testing. No network.
 """
 
@@ -117,6 +128,7 @@ import hashlib
 import json
 
 from gov import dsse_envelope as _dsse
+from gov import pq_envelope as _pq
 from gov.signing import Ed25519Verifier
 
 __all__ = [
@@ -153,6 +165,25 @@ class KeyedBundleError(Exception):
 
 def _refuse(code, detail):
     raise KeyedBundleError("%s: %s" % (code, detail), code=code)
+
+
+def _pq_gate(pq_alg_id, where):
+    """Reserved-PQ-slot gate (wave-335 lane 4, format only).
+
+    Parses the ``pqAlgId`` identifier against the closed table, then
+    refuses: the slot is reserved/disabled in this build, so any real
+    USE (seal or verify) is refused fail-closed. Re-raises as
+    :class:`KeyedBundleError` so the bundle seam keeps one exception
+    type; the machine ``code`` string is preserved verbatim.
+    """
+    try:
+        _pq.pq_use_refused(pq_alg_id)
+    except _pq.PQEnvelopeError as exc:
+        _refuse(exc.code, "%s: %s" % (where, exc))
+    # pq_use_refused never returns; the line below is unreachable by
+    # construction (kept as a backstop, never a silent pass).
+    _refuse("evidence-pq-not-enabled",
+            "%s: unreachable PQ gate fallthrough" % where)
 
 
 def _malformed(detail):
@@ -240,26 +271,37 @@ def _seal_one(statement_bytes, signer, payload_type):
 
 
 def seal_keyed_bundle(statement_bytes, signer,
-                      payload_type=SASANAM_PAYLOAD_TYPE):
+                      payload_type=SASANAM_PAYLOAD_TYPE, *, pq_alg_id=None):
     """Seal statement bytes into ONE keyed Sigstore bundle.
 
     ``signer`` is a ``gov.signing.Signer`` (``sign()`` over bytes,
     ``public_key`` 32 raw bytes). The envelope carries exactly one
     signature; use :func:`seal_keyed_bundle_fanout` for multiple
     signers.
+
+    ``pq_alg_id`` is the RESERVED post-quantum slot (wave-335 lane 4,
+    format only): this build never seals a PQ-claimed bundle, so any
+    non-None value refuses ``evidence-pq-not-enabled``
+    (``evidence-pq-unknown-alg`` for identifiers outside the closed
+    table). With ``pq_alg_id=None`` (the default) the sealed bytes are
+    byte-identical to the pre-slot format.
     """
     if not isinstance(payload_type, str) or not payload_type:
         _malformed("seal_keyed_bundle: payload_type must be a non-empty str")
+    if pq_alg_id is not None:
+        _pq_gate(pq_alg_id, "seal_keyed_bundle")
     return _seal_one(statement_bytes, signer, payload_type)
 
 
 def seal_keyed_bundle_fanout(statement_bytes, signers,
-                             payload_type=SASANAM_PAYLOAD_TYPE):
+                             payload_type=SASANAM_PAYLOAD_TYPE, *,
+                             pq_alg_id=None):
     """Seal statement bytes once per signer: one bundle per signature.
 
     Returns a list of bundle dicts, each with exactly one DSSE
     signature (the proto's one-signature-per-envelope MUST). Refuses an
-    empty signer list.
+    empty signer list. ``pq_alg_id`` is the reserved PQ slot -- see
+    :func:`seal_keyed_bundle`; any non-None value refuses.
     """
     signers = list(signers) if signers is not None else []
     if not signers:
@@ -267,6 +309,8 @@ def seal_keyed_bundle_fanout(statement_bytes, signers,
     if not isinstance(payload_type, str) or not payload_type:
         _malformed("seal_keyed_bundle_fanout: payload_type must be a "
                    "non-empty str")
+    if pq_alg_id is not None:
+        _pq_gate(pq_alg_id, "seal_keyed_bundle_fanout")
     return [_seal_one(statement_bytes, s, payload_type) for s in signers]
 
 
@@ -317,6 +361,18 @@ def open_keyed_bundle(bundle, public_key,
         _refuse("sigstore-keyed-message-signature-unexpected",
                 "keyed bundles are DSSE-envelope bundles; "
                 "messageSignature refused")
+
+    # --- reserved PQ slot (wave-335 lane 4, format only) ---
+    # A bundle carrying ``pqAlgId`` claims post-quantum provenance.
+    # This build has no PQ verifier, so the bundle is refused BEFORE
+    # any classical signature work: verifying a PQ-claimed bundle down
+    # the Ed25519 path would be algorithm confusion. Unknown
+    # identifiers refuse ``evidence-pq-unknown-alg``; known ones refuse
+    # ``evidence-pq-not-enabled``. Absent (or null) slot: the classical
+    # path below, byte-identical to the pre-slot format.
+    _pq_slot = bundle.get("pqAlgId")
+    if _pq_slot is not None:
+        _pq_gate(_pq_slot, "open_keyed_bundle")
 
     # --- verificationMaterial: form-(1) oneof, strictly ---
     vm = bundle.get("verificationMaterial")
