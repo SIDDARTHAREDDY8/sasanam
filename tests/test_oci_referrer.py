@@ -30,7 +30,7 @@ from gov import evidence_intoto as _intoto
 from gov import decision_codes as DC
 from gov.signing import Ed25519Signer
 
-TAXONOMY_PIN = 2126  # Wave-338 lane 4: pin 2124 -> 2126 (+2 oci-*)
+TAXONOMY_PIN = 2127  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable). # Wave-338 lane 4: pin 2124 -> 2126 (+2 oci-*)
 
 _SEED = bytes(range(32))
 _SIGNER = Ed25519Signer(_SEED)

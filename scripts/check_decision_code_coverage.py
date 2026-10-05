@@ -39,7 +39,7 @@ import re
 import sys
 import time
 
-COVERAGE_PIN = 2126  # Wave-338 lane 5: registry size at 6cdf5fdd.
+COVERAGE_PIN = 2127  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable). Wave-338 lane 5: registry size at 6cdf5fdd.
 
 # A quoted token that could be a decision code: lowercase alnum runs
 # with dashes/dots/underscores, both quote styles.

@@ -11240,6 +11240,22 @@ TAXONOMY = {
         "evidence_kinds_required": ['digest'],
         "reverify_steps": ['recompute'],
     },
+    'oci-bundle-not-verifiable': {
+        "domain": 'oci',
+        "code": 'oci-bundle-not-verifiable',
+        "human": 'OCI referrer transport: the keyed bundle the caller asked '
+                 'to attach is structurally unverifiable -- the offline '
+                 'verifier cannot evaluate it (tlog/timestamp claims, a '
+                 'messageSignature alongside the envelope, a non-keyed '
+                 'payload type, more or fewer than one signature, a '
+                 'missing DSSE envelope, or malformed verification '
+                 'material); the builder attaches only bundles the verifier '
+                 'can verify (wave-339 R22, Bernstein #6371); refused '
+                 'fail-closed, never attached as bundle evidence',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
     'oci-layer-media-type-mismatch': {
         "domain": 'oci',
         "code": 'oci-layer-media-type-mismatch',

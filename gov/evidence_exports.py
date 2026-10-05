@@ -333,7 +333,7 @@ class IncidentReport:
                 b = self._logmod.prove_inclusion(self.log_path, t["seq"])
             except ValueError as e:
                 b = None
-                reason = str(e)
+                reason = self._logmod.inclusion_unavailable_reason(e)
             else:
                 reason = None
                 covered += 1

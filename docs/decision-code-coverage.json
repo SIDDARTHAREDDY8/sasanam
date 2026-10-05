@@ -1,7 +1,7 @@
 {
- "generated": "2026-10-05T09:00:29Z",
- "pin": 2126,
- "covered": 1885,
+ "generated": "2026-10-05T09:52:23Z",
+ "pin": 2127,
+ "covered": 1886,
  "gaps": [
   "absence-refused",
   "admission-at-risk-accepted",
@@ -12205,6 +12205,15 @@
     "evals/w338_oci_probes.py",
     "tests/test_oci_distribution.py",
     "tests/test_oci_referrer.py"
+   ]
+  },
+  {
+   "code": "oci-bundle-not-verifiable",
+   "domain": "oci",
+   "severity": "medium",
+   "covered": true,
+   "files": [
+    "evals/w339_verifiable_probes.py"
    ]
   },
   {

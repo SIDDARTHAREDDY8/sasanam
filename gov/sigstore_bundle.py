@@ -324,26 +324,29 @@ def _b64_decode(value, where):
         _malformed("%s: invalid base64" % where)
 
 
-def open_keyed_bundle(bundle, public_key,
-                      expected_payload_type=SASANAM_PAYLOAD_TYPE):
-    """Verify a keyed bundle and return the verified payload bytes.
+def check_keyed_bundle_structure(bundle,
+                                 expected_payload_type=SASANAM_PAYLOAD_TYPE):
+    """Keyless structural check: is this bundle *verifiable*?
 
-    ``public_key`` is the 32-byte raw Ed25519 key the auditor pins --
-    the ONLY key a signature may verify under. A malformed ``public_key``
-    is a programmer error and raises ``ValueError`` loudly (it is caller
-    configuration, never attacker input). Raises coded
-    :class:`KeyedBundleError` on any bundle refusal; returns the exact parsed
-    payload bytes (the buffer the signature was verified over) on
-    success. Never returns unverified bytes.
+    Runs every :func:`open_keyed_bundle` check that does not need the
+    pinned key: the bundle is a JSON object with the Sigstore bundle
+    media type, carries no ``messageSignature`` alongside the DSSE
+    envelope, passes the reserved PQ-slot gate, carries form-(1)
+    verification material (hint present as a string; the hint-to-pinned-
+    key binding is the verifier's job, not this check's), carries no
+    tlog/timestamp claims (unverifiable offline), and carries a
+    well-shaped single-signature DSSE envelope with the expected
+    payload type.
+
+    Raises coded :class:`KeyedBundleError` on any structural refusal.
+    Returns None on success. This is the builder-side half of the
+    wave-339 R22 contract (Bernstein #6371: builders never emit a
+    bundle containing a payload the verifier cannot verify) -- e.g.
+    ``gov/oci_referrer.py::attach_keyed_bundle`` calls it before
+    putting anything on the wire. Signature validity and hint pinning
+    stay the consumer's job: this check proves *verifiability*, not
+    *validity*.
     """
-    # Programmer error: loud, not a bundle refusal. (gov/signing.py
-    # raises ValueError for bad key material too.) verify_keyed_bundle
-    # deliberately lets this propagate instead of folding it into False.
-    if (not isinstance(public_key, (bytes, bytearray))
-            or len(public_key) != 32):
-        raise ValueError("open_keyed_bundle: public_key must be 32 raw "
-                         "bytes, got %s" % type(public_key).__name__)
-    pub = bytes(public_key)
     if not isinstance(bundle, dict):
         _malformed("bundle must be a JSON object")
 
@@ -372,7 +375,7 @@ def open_keyed_bundle(bundle, public_key,
     # path below, byte-identical to the pre-slot format.
     _pq_slot = bundle.get("pqAlgId")
     if _pq_slot is not None:
-        _pq_gate(_pq_slot, "open_keyed_bundle")
+        _pq_gate(_pq_slot, "check_keyed_bundle_structure")
 
     # --- verificationMaterial: form-(1) oneof, strictly ---
     vm = bundle.get("verificationMaterial")
@@ -399,11 +402,9 @@ def open_keyed_bundle(bundle, public_key,
     if not isinstance(hint, str):
         _refuse("sigstore-keyed-verification-material",
                 "publicKey.hint must be a string")
-    # Hint consistency: empty (spike-proven cosign shape) or the pinned
-    # key's fingerprint. Anything else names a key we do not pin.
-    if hint not in ("", key_hint(pub)):
-        _refuse("sigstore-keyed-hint-mismatch",
-                "hint does not name the pinned key")
+    # NOTE: hint-to-pinned-key binding is NOT checked here -- it needs
+    # the pinned key, which the builder side may not hold. The verifier
+    # (open_keyed_bundle) enforces it before any signature work.
 
     # --- tlog / timestamp: absent or empty, never accepted blind ---
     tlog = bundle.get("tlogEntries", [])
@@ -468,6 +469,53 @@ def open_keyed_bundle(bundle, public_key,
     if len(sig) != 64:
         _refuse("sigstore-keyed-signature-invalid",
                 "signature must be 64 bytes, got %d" % len(sig))
+    return None
+
+
+def open_keyed_bundle(bundle, public_key,
+                      expected_payload_type=SASANAM_PAYLOAD_TYPE):
+    """Verify a keyed bundle and return the verified payload bytes.
+
+    ``public_key`` is the 32-byte raw Ed25519 key the auditor pins --
+    the ONLY key a signature may verify under. A malformed ``public_key``
+    is a programmer error and raises ``ValueError`` loudly (it is caller
+    configuration, never attacker input). Raises coded
+    :class:`KeyedBundleError` on any bundle refusal; returns the exact parsed
+    payload bytes (the buffer the signature was verified over) on
+    success. Never returns unverified bytes.
+    """
+    # Programmer error: loud, not a bundle refusal. (gov/signing.py
+    # raises ValueError for bad key material too.) verify_keyed_bundle
+    # deliberately lets this propagate instead of folding it into False.
+    if (not isinstance(public_key, (bytes, bytearray))
+            or len(public_key) != 32):
+        raise ValueError("open_keyed_bundle: public_key must be 32 raw "
+                         "bytes, got %s" % type(public_key).__name__)
+    pub = bytes(public_key)
+    # Verifiability (keyless) first, then pinning, then the signature.
+    # check_keyed_bundle_structure performs every structural check below
+    # that does not need the pinned key; behavior is identical to the
+    # previous inline form (hint pinning moves after the structural
+    # checks; both are coded fail-closed refusals).
+    check_keyed_bundle_structure(bundle, expected_payload_type)
+
+    # --- hint pinning: the envelope names the pinned key or names none ---
+    # The hint is the envelope's only key identifier (keyid MUST be
+    # empty), so a hint naming a different key is an envelope for the
+    # wrong trust root. Refuse before any signature work -- this is the
+    # check the builder side cannot perform without the pinned key.
+    hint = bundle["verificationMaterial"]["publicKey"].get("hint", "")
+    if hint not in ("", key_hint(pub)):
+        _refuse("sigstore-keyed-hint-mismatch",
+                "publicKey.hint %r names a different key than the pinned "
+                "key (hint %r)" % (hint, key_hint(pub)))
+
+    # --- re-extract the already-validated envelope fields ---
+    env = bundle["dsseEnvelope"]
+    payload = _b64_decode(env.get("payload"), "dsseEnvelope.payload")
+    payload_type = env.get("payloadType")
+    sig = _b64_decode(env.get("signatures")[0].get("sig"),
+                      "dsseEnvelope.signatures[0].sig")
 
     # --- the signature check: PAE(payloadType, payload) under the PINNED key ---
     pae_bytes = _dsse.pae(payload_type, payload)
