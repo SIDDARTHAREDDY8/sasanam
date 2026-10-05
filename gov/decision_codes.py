@@ -10152,6 +10152,50 @@ TAXONOMY = {
         "evidence_kinds_required": ['lease', 'timestamp', 'revocation-registry'],
         "reverify_steps": ['check-expiry', 'check-revocation'],
     },
+    'label-annotation-unregistered': {
+        "domain": 'label',
+        "code": 'label-annotation-unregistered',
+        "human": 'trajectory label fold: the tool has no '
+                 'deployment-declared annotation in the registry; refusing '
+                 'to fold an undeclared tool surface (fail closed, '
+                 'F427-style truth binding)',
+        "severity": 'high',
+        "evidence_kinds_required": ['tool-name', 'registry'],
+        "reverify_steps": ['recompute'],
+    },
+    'label-egress-refused': {
+        "domain": 'label',
+        "code": 'label-egress-refused',
+        "human": 'trajectory label check: the proposed recipient is '
+                 'outside the trajectory audience; refusing with a '
+                 'structured remedy plan (authorize/accept/withhold/'
+                 'sanitize/derive/redispatch/fork)',
+        "severity": 'high',
+        "evidence_kinds_required": ['trajectory-digest', 'remedy-plan'],
+        "reverify_steps": ['recompute'],
+    },
+    'label-remedy-empty-unliftable': {
+        "domain": 'label',
+        "code": 'label-remedy-empty-unliftable',
+        "human": 'trajectory label check: the trajectory carries the '
+                 'absolute-deny mark; no authority can permit the dispatch; '
+                 'the EMPTY remedy plan is the proof of unliftability, '
+                 'relative to the implemented remedy vocabulary version '
+                 'bound in the plan digest',
+        "severity": 'high',
+        "evidence_kinds_required": ['trajectory-digest', 'remedy-plan'],
+        "reverify_steps": ['recompute'],
+    },
+    'label-trust-floor-refused': {
+        "domain": 'label',
+        "code": 'label-trust-floor-refused',
+        "human": 'trajectory label check: the trajectory trust tier is '
+                 'below the recipient trust floor; refusing with a '
+                 'structured remedy plan',
+        "severity": 'high',
+        "evidence_kinds_required": ['trajectory-digest', 'remedy-plan'],
+        "reverify_steps": ['recompute'],
+    },
     'lineage-gap': {
         "domain": 'evaluation',
         "code": 'lineage-gap',

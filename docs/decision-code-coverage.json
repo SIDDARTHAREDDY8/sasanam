@@ -1,7 +1,7 @@
 {
- "generated": "2026-10-05T11:47:45Z",
- "pin": 2131,
- "covered": 1982,
+ "generated": "2026-10-05T12:24:48Z",
+ "pin": 2135,
+ "covered": 1986,
  "gaps": [
   "absence-refused",
   "admission-at-risk-accepted",
@@ -10999,6 +10999,43 @@
    ]
   },
   {
+   "code": "label-annotation-unregistered",
+   "domain": "label",
+   "severity": "high",
+   "covered": true,
+   "files": [
+    "evals/w342_r40_label_probes.py"
+   ]
+  },
+  {
+   "code": "label-egress-refused",
+   "domain": "label",
+   "severity": "high",
+   "covered": true,
+   "files": [
+    "evals/w342_r40_arb_redfirst.py",
+    "evals/w342_r40_label_probes.py"
+   ]
+  },
+  {
+   "code": "label-remedy-empty-unliftable",
+   "domain": "label",
+   "severity": "high",
+   "covered": true,
+   "files": [
+    "evals/w342_r40_label_probes.py"
+   ]
+  },
+  {
+   "code": "label-trust-floor-refused",
+   "domain": "label",
+   "severity": "high",
+   "covered": true,
+   "files": [
+    "evals/w342_r40_label_probes.py"
+   ]
+  },
+  {
    "code": "lease_expired",
    "domain": "lease",
    "severity": "medium",
@@ -19412,6 +19449,8 @@
    "files": [
     "evals/w243_threat_model_probes.py",
     "evals/w244_token_scope_probes.py",
+    "evals/w341_jsfuck_probes.py",
+    "evals/w341_tmpl_escape_probes.py",
     "tests/test_wave243_effect_agreement.py"
    ]
   },
