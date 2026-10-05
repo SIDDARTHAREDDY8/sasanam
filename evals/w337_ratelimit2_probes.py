@@ -73,7 +73,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2127  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable). Wave-337 lane 5: pin 2106 -> 2109 (+3 tool-budget-*).; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
+TAXONOMY_PIN = 2128  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-337 lane 5: pin 2106 -> 2109 (+3 tool-budget-*).; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
 FOOTER_OPEN = "none"  # F426 closed wave-338 lane 1; nothing open.
 FOOTER_NEXT = "F427"  # Next free finding number.
 
@@ -651,9 +651,9 @@ def _p13():
 # P14 -- pin + footer honesty.
 # ---------------------------------------------------------------------------
 
-@probe("P14a-pin-taxonomy-2127-sorted")
+@probe("P14a-pin-taxonomy-2128-sorted")
 def _p14a():
-    pid = "P14a-pin-taxonomy-2127-sorted"
+    pid = "P14a-pin-taxonomy-2128-sorted"
     from gov.guac_graph import TAXONOMY_PIN as _pin
     if _pin != TAXONOMY_PIN:
         return _break(pid, "guac_graph pin %r != battery pin %r"
@@ -671,7 +671,7 @@ def _p14a():
     if len(literals) != TAXONOMY_PIN or len(set(literals)) != TAXONOMY_PIN:
         return _break(pid, "raw literal count %d/%d != pin"
                       % (len(literals), len(set(literals))))
-    return _held(pid, "2127/2127/0 sorted unique on raw source literals")
+    return _held(pid, "2128/2128/0 sorted unique on raw source literals")
 
 
 @probe("P14b-new-codes-centrally-registered")

@@ -39,7 +39,7 @@ import re
 import sys
 import time
 
-COVERAGE_PIN = 2127  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable). Wave-338 lane 5: registry size at 6cdf5fdd.
+COVERAGE_PIN = 2128  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-339 lane 2: registry size after +2 witness codes.
 
 # A quoted token that could be a decision code: lowercase alnum runs
 # with dashes/dots/underscores, both quote styles.
@@ -110,8 +110,8 @@ def main(argv):
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     md = io.StringIO()
     md.write("# Decision-code coverage table (generated)\n\n")
-    md.write("Generated: %s UTC · registry pin: %d · base: wave-338 "
-             "lane 5\n\n" % (stamp, COVERAGE_PIN))
+    md.write("Generated: %s UTC · registry pin: %d · base: wave-339 "
+             "lane 2\n\n" % (stamp, COVERAGE_PIN))
     md.write("Rule (Bernstein #5569, ADAPT): no row claims coverage "
              "without a test. A code counts as covered when its literal "
              "string appears quoted in at least one ``.py`` file under "

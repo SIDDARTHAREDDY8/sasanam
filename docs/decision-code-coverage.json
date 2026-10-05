@@ -1,7 +1,7 @@
 {
- "generated": "2026-10-05T09:52:23Z",
- "pin": 2127,
- "covered": 1886,
+ "generated": "2026-10-05T09:46:26Z",
+ "pin": 2128,
+ "covered": 1887,
  "gaps": [
   "absence-refused",
   "admission-at-risk-accepted",
@@ -12208,15 +12208,6 @@
    ]
   },
   {
-   "code": "oci-bundle-not-verifiable",
-   "domain": "oci",
-   "severity": "medium",
-   "covered": true,
-   "files": [
-    "evals/w339_verifiable_probes.py"
-   ]
-  },
-  {
    "code": "oci-layer-media-type-mismatch",
    "domain": "oci",
    "severity": "medium",
@@ -21031,7 +21022,18 @@
     "evals/w322_witpub_probes.py",
     "evals/w323_redteam_probes.py",
     "evals/w324_redteam_probes.py",
+    "evals/w339_witness_probes.py",
     "tests/test_witness_publish.py"
+   ]
+  },
+  {
+   "code": "witness-daemon-state-failed",
+   "domain": "witness",
+   "severity": "high",
+   "covered": true,
+   "files": [
+    "evals/w339_witness_probes.py",
+    "tests/test_witness_daemon.py"
    ]
   },
   {
@@ -21197,7 +21199,18 @@
    "files": [
     "evals/w322_witpub_probes.py",
     "evals/w323_redteam_probes.py",
+    "tests/test_witness_daemon.py",
     "tests/test_witness_publish.py"
+   ]
+  },
+  {
+   "code": "witness-policy-dual-threshold-unmet",
+   "domain": "witness",
+   "severity": "high",
+   "covered": true,
+   "files": [
+    "evals/w339_witness_probes.py",
+    "tests/test_witness_daemon.py"
    ]
   },
   {
@@ -21261,6 +21274,7 @@
    "files": [
     "evals/w322_witpol_probes.py",
     "evals/w323_redteam_probes.py",
+    "tests/test_witness_daemon.py",
     "tests/test_witness_policy.py"
    ]
   },
@@ -21318,6 +21332,8 @@
    "files": [
     "evals/w322_witpub_probes.py",
     "evals/w323_redteam_probes.py",
+    "evals/w339_witness_probes.py",
+    "tests/test_witness_daemon.py",
     "tests/test_witness_publish.py"
    ]
   },

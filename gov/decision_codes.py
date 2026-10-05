@@ -19354,6 +19354,16 @@ TAXONOMY = {
         "evidence_kinds_required": ['witness-log'],
         "reverify_steps": ['re-verify-witness-checkpoint'],
     },
+    'witness-daemon-state-failed': {
+        "domain": 'witness',
+        "code": 'witness-daemon-state-failed',
+        "human": 'witness daemon: the checkpoint state store could not be '
+                 'read or updated; the witness refuses to cosign rather '
+                 'than risk a state rollback; fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['re-verify-witness-checkpoint'],
+    },
     'witness-gossip-conflict': {
         "domain": 'witness',
         "code": 'witness-gossip-conflict',
@@ -19517,6 +19527,17 @@ TAXONOMY = {
                  'checkpoint body, or bad origin/size/root/timestamp '
                  'fields); refused fail-closed',
         "severity": 'medium',
+        "evidence_kinds_required": ['witness-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'witness-policy-dual-threshold-unmet': {
+        "domain": 'witness',
+        "code": 'witness-policy-dual-threshold-unmet',
+        "human": 'witness policy: the update changes the policy-signer set '
+                 'but lacks threshold(old set) AND threshold(new set) '
+                 'signatures (TUF section 5.3); a rotation cannot be '
+                 'self-authorized by one side alone; refused fail-closed',
+        "severity": 'high',
         "evidence_kinds_required": ['witness-log'],
         "reverify_steps": ['recompute'],
     },
