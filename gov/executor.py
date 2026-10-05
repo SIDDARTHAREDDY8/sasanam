@@ -7100,6 +7100,10 @@ class ToolExecutor:
         Fail-closed on limiter failure: any unexpected exception from
         the wire becomes a coded ``tool-rate-limiter-unavailable``
         denial -- a broken limiter denies, never allows unlimited.
+        F425: the diagnostic ``windowed_count()`` is itself guarded,
+        so it can never re-invoke a broken wire and mask the coded
+        denial with an uncoded escape; on a broken wire the record
+        carries ``rate_windowed_count=None`` (unfit to count).
         """
         _ai = audit_identity or {}
         try:
@@ -7118,6 +7122,13 @@ class ToolExecutor:
             observed = self._tool_rate_wire.windowed_count(tool)
         except _tool_rate.ToolRateLimitError:
             observed = max_calls + 1
+        except Exception:  # noqa: BLE001 -- F425: the diagnostic must
+            # never mask the coded denial. On a wire failure the limiter
+            # is too broken to report a count; the coded
+            # tool-rate-limiter-unavailable refusal (with its chained
+            # record) is what the caller always sees. None = wire was
+            # unfit to count.
+            observed = None
         refusal_entry = {
             "event": "tool_call",
             "run_id": self.run_id,

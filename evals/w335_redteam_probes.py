@@ -99,7 +99,7 @@ P4 (closure regressions):
        in-flight session coded revocation-push-session-terminated.
 
 P5 (honesty): pin 2106 taxonomy sorted-unique on raw literals; all 23
-     wave-334 codes centrally registered; footer open F424, F425 / next F426.
+     wave-334 codes centrally registered; footer open none / next F426.
 
 P6 (older closure spot-regressions, adopted from w332):
   P6a  F415: unicode-digit version fragment refuses coded
@@ -1365,16 +1365,17 @@ def P5b():
 
 def P5c():
     """Footer honesty: the last line of evals/FINDINGS.md carries open
-    F424, F425 and next F426 (raw-literal assertion, wave-331 lesson). F423
+    none and next F426 (raw-literal assertion, wave-331 lesson). F423
     was this lane's genuine finding (filed as F421, renumbered at the
     wave-335 merge per the wave-272 earliest-filed rule) and was
-    CLOSED 2026-10-05 by wave-336 lane 1."""
-    pid = "P5c-footer-open-f424-f425-next-f426"
+    CLOSED 2026-10-05 by wave-336 lane 1; F424/F425 were closed
+    2026-10-05 by wave-337 lane 1."""
+    pid = "P5c-footer-open-none-next-f426"
     with open(_FINDINGS_MD, "rb") as f:
         lines = f.read().decode("utf-8").splitlines()
     last = lines[-1] if lines else ""
-    if "Open findings: F424, F425" not in last:
-        _break(pid, "last line lacks 'Open findings: F424, F425': %r" % (last[:120],))
+    if "Open findings: none" not in last:
+        _break(pid, "last line lacks 'Open findings: none': %r" % (last[:120],))
         return
     if "Next free finding: **F426**" not in last:
         _break(pid, "last line lacks next-F426: %r" % (last[:120],))
@@ -1385,7 +1386,7 @@ def P5c():
     if "CLOSED 2026-10-05 wave-336 lane 1" not in "\n".join(lines):
         _break(pid, "F423 closure not recorded in FINDINGS.md")
         return
-    _held(pid, "footer honest: open F424, F425 / next F426")
+    _held(pid, "footer honest: open none / next F426")
 
 
 # ---------------------------------------------------------------------------
@@ -1458,7 +1459,7 @@ _PROBES = [
     ("P4d-f418-closed", P4d),
     ("P5a-pin-taxonomy-2106-sorted", P5a),
     ("P5b-23-codes-registered", P5b),
-    ("P5c-footer-open-f424-f425-next-f426", P5c),
+    ("P5c-footer-open-none-next-f426", P5c),
     ("P6a-f415-unicode-digit", P6a),
     ("P6b-f416-int64-boundary", P6b),
     ("P6c-f414-symlink-alias", P6c),

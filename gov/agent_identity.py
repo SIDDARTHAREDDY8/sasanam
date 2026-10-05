@@ -69,6 +69,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import secrets
 import threading
 import time
@@ -580,6 +581,9 @@ _DEFAULT_REFRESH_LIFETIME = 86400
 # (identity-refresh-lock-unavailable) instead of proceeding unlocked or
 # blocking forever. Deployments may override per-store via the
 # lock_timeout_seconds constructor argument (tests inject short values).
+# F424: the timeout must be a finite number >= 0, validated at
+# construction; 0 means one non-blocking acquire attempt (still the
+# coded lock-unavailable refusal when the lock is held).
 _REFRESH_LOCK_TIMEOUT_SECONDS = 5.0
 
 
@@ -853,10 +857,38 @@ class RefreshTokenStore(object):
         # registry itself and is never held while acquiring a token lock.
         self._rt_locks = {}  # refresh_id -> threading.Lock
         self._rt_locks_guard = threading.Lock()
+        # F424: validate at construction. A NaN timeout makes
+        # lock.acquire() raise a bare ValueError (uncoded escape, the
+        # F417 class); a negative timeout blocks forever, voiding the
+        # documented bound. Deployment-time config errors fail fast.
         self._lock_timeout = (
             _REFRESH_LOCK_TIMEOUT_SECONDS
             if lock_timeout_seconds is None
-            else float(lock_timeout_seconds))
+            else self._validate_lock_timeout(lock_timeout_seconds))
+
+    @staticmethod
+    def _validate_lock_timeout(value):
+        """Validate the F421 rotation-lock acquisition timeout (F424).
+
+        Must be a finite number >= 0. 0 means one non-blocking attempt
+        (``threading.Lock.acquire(timeout=0)`` never blocks) -- the
+        refusal path is still the coded
+        ``identity-refresh-lock-unavailable`` when the lock is held.
+        Raises ValueError at construction for NaN/inf/negative values
+        or anything that does not coerce to a number: a misconfigured
+        deployment fails fast and loud, never at refresh time.
+        """
+        try:
+            timeout = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(
+                "lock_timeout_seconds must be a finite number >= 0, "
+                "got %r" % (value,))
+        if not math.isfinite(timeout) or timeout < 0:
+            raise ValueError(
+                "lock_timeout_seconds must be a finite number >= 0, "
+                "got %r" % (value,))
+        return timeout
 
     def _now(self, now):
         return int(now) if now is not None else int(self._time_fn())
