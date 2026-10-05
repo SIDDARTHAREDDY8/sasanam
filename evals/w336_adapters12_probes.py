@@ -440,12 +440,12 @@ def P10a():
 
 
 def P10b():
-    pid = "P10b-footer-open-none-next-f428"
+    pid = "P10b-footer-open-f428-next-f429"
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F428**" in text
-          and m_open and m_open[-1].strip() == "F427")
+    ok = ("Next free finding: **F429**" in text
+          and m_open and m_open[-1].strip() == "F428")
     (_held if ok else _break)(
         pid, "footer: open none / next F428" if ok
         else "footer mismatch vs open none / next F428")

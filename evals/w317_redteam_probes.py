@@ -904,18 +904,18 @@ def _p9_footer():
         r"Next free finding: \*\*F(\d+)\*\*\. \*\*Open findings: ([^*]*)\*\*",
         text))
     if not m:
-        return _error("P9-footer-open-none-next-F409",
+        return _error("P9-footer-open-f428-next-f429",
                       "no footer line found")
     last = m[-1]
     nxt, opens = last.group(1), last.group(2)
-    if nxt != "408" or opens.strip().lower().rstrip(".") != "F424, F425":
-        return _break("P9-footer-open-none-next-F409",
-                      "footer pins next=%s open=%s (want 408 / none)"
+    if nxt != "429" or opens.strip().lower().rstrip(".") != "f428":
+        return _break("P9-footer-open-f428-next-f429",
+                      "footer pins next=%s open=%s (want 429 / F428)"
                       % (nxt, opens))
     if "## F407" not in text:
-        return _break("P9-footer-open-none-next-F409",
+        return _break("P9-footer-open-f428-next-f429",
                       "F407 entry missing from FINDINGS.md")
-    return _held("P9-footer-open-none-next-F409",
+    return _held("P9-footer-open-f428-next-f429",
                  "footer pins open none / next F409")
 
 

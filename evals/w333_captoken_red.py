@@ -201,13 +201,13 @@ def footer_state():
     # This lane files no findings. Footer lines repeat through history;
     # the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F419**" in text
-          and m_open and m_open[-1].strip() == "F427")
+    ok = ("Next free finding: **F429**" in text
+          and m_open and m_open[-1].strip() == "F428")
     if ok:
-        _record("footer-state", "HELD", "footer: open none / next F419")
+        _record("footer-state", "HELD", "footer: open F428 / next F429")
     else:
         _record("footer-state", "BREAK",
-                "footer mismatch vs open none / next F419")
+                "footer mismatch vs open F428 / next F429")
 
 
 _PROBES = [("P1a", P1a), ("P1b", P1b), ("P1c", P1c), ("P1d", P1d),

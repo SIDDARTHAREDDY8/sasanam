@@ -322,17 +322,17 @@ def P2a():
 
 
 def P2b():
-    """Footer: open none / next F428; F426 and F427 marked CLOSED."""
-    pid = "P2b-footer-open-none-next-f428"
+    """Footer: open F428 / next F429; F426 and F427 marked CLOSED; F428 marked OPEN."""
+    pid = "P2b-footer-open-f428-next-f429"
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     lines = text.splitlines()
     last = lines[-1] if lines else ""
-    if "Next free finding: **F428**" not in last:
-        _break(pid, "footer does not read next F427")
+    if "Next free finding: **F429**" not in last:
+        _break(pid, "footer does not read next F429")
         return
-    if "Open findings: none." not in last:
-        _break(pid, "footer does not read open none: %r" % (last[:120],))
+    if "Open findings: F428." not in last:
+        _break(pid, "footer does not read open F428: %r" % (last[:120],))
         return
     import re as _re
 
@@ -349,7 +349,7 @@ def P2b():
     if "**Status: OPEN.**" in _section("F427"):
         _break(pid, "F427 section still marked OPEN")
         return
-    _held(pid, "footer open none / next F428, F426+F427 closed")
+    _held(pid, "footer open F428 / next F429, F426+F427 closed, F428 open")
 
 
 _PROBES = [
@@ -361,7 +361,7 @@ _PROBES = [
     ("P1f-wrapped-entry-correspondence", P1f),
     ("P1g-undeclared-name-refused-despite-name-coincidence", P1g),
     ("P2a-pin-taxonomy-2131-sorted", P2a),
-    ("P2b-footer-open-none-next-f428", P2b),
+    ("P2b-footer-open-f428-next-f429", P2b),
 ]
 
 

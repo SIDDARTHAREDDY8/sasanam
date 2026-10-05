@@ -381,14 +381,14 @@ def pin_taxonomy():
 
 def footer_state():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
-    # Wave-323 lane 1: F407 CLOSED; no open findings; next F409.
+    # Wave-323 lane 1: F407 CLOSED; F428 OPEN; next F429.
     # Footer lines repeat through history; the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F413**" in text
-          and m_open and m_open[-1].strip() == "F412")
+    ok = ("Next free finding: **F429**" in text
+          and m_open and m_open[-1].strip() == "F428")
     _held("footer-state", ok,
-          "footer: open none / next F409" if ok
-          else "footer mismatch vs open none / next F409")
+          "footer: open F428 / next F429" if ok
+          else "footer mismatch vs open F428 / next F429")
 
 
 PROBES = [label_roundtrip, label_tamper_content, label_tamper_trust,

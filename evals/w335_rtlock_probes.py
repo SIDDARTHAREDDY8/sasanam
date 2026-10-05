@@ -54,8 +54,8 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2131  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-335 lane 3: pin 2100 -> 2101 (+1 identity-refresh-lock-unavailable, F421). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); Wave-340 lane 3: pin 2130 -> 2131 (+1 deadctrl-subject-mutated).
-FOOTER_OPEN = "F427"  # F421 CLOSED 2026-10-05 (wave-335 lane 3). F426 closed wave-338 lane 1.
-FOOTER_NEXT = "F428"  # Next free finding number.
+FOOTER_OPEN = "F428"  # F421 CLOSED 2026-10-05 (wave-335 lane 3). F426 closed wave-338 lane 1.
+FOOTER_NEXT = "F429"  # Next free finding number.
 
 _results = []
 _PROBES = []

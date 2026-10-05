@@ -115,12 +115,12 @@ class DecisionTraceAttackTest(unittest.TestCase):
         # the footer line (~6000 chars from EOF as the history chain
         # grows), so this anchors to the LAST footer matches in the
         # full file, like the w299+ batteries. Wave-323 lane 1 re-pin:
-        # F407 CLOSED. Merged footer: open findings: none / next F409.
+        # F407 CLOSED. Merged footer: open findings: F428 / next F429.
         text = open(path, encoding="utf-8").read()
         m_open = _re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = _re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-        ok = (m_open and m_open[-1].strip() == "F411"
-              and m_next and m_next[-1] == "F412")
+        ok = (m_open and m_open[-1].strip() == "F428"
+              and m_next and m_next[-1] == "F429")
         self.assertTrue(_expect_held("footer-state", ok,
                                     "footer disagrees") == "HELD")
 

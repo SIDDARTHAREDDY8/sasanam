@@ -43,8 +43,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2131  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*).; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); Wave-340 lane 3: pin 2130 -> 2131 (+1 deadctrl-subject-mutated).
-FOOTER_OPEN = ()  # F426 closed wave-338 lane 1; F427 CLOSED wave-340 lane 1.
-FOOTER_NEXT = "F428"
+FOOTER_OPEN = ("F428",)  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
+FOOTER_NEXT = "F429"
 
 _results = []
 _PROBES = []
@@ -689,8 +689,8 @@ def _p7a():
 def _p7b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Open findings: none." in text, "footer open findings"
-    assert "Next free finding: **F428**" in text, "footer next free"
+    assert "Open findings: F428." in text, "footer open findings"
+    assert "Next free finding: **F429**" in text, "footer next free"
     assert "F424" in text and "F425" in text and "F426" in text
     _held("P7b-footer", "footer open none / next F428 (F426 closed)")
 

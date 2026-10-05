@@ -55,8 +55,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2131  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); wave-340 merge: pin 2130 -> 2131
-FOOTER_OPEN = ()
-FOOTER_NEXT = "F428"
+FOOTER_OPEN = ("F428",)
+FOOTER_NEXT = "F429"
 
 _EXPECTED_BREAKS = set()
 
@@ -600,9 +600,9 @@ def _p9():
     assert literals == sorted(literals), "taxonomy not sorted"
     assert "oci-bundle-not-verifiable" in DC.TAXONOMY
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
-    assert "Next free finding: **F428**" in text, "footer next free"
-    assert "Open findings: none." in text, "footer open findings"
-    assert FOOTER_OPEN == () and FOOTER_NEXT == "F428"
+    assert "Next free finding: **F429**" in text, "footer next free"
+    assert "Open findings: F428." in text, "footer open findings"
+    assert FOOTER_OPEN == ("F428",) and FOOTER_NEXT == "F428"
     _held("P9-pin-taxonomy",
           "2131/2131/0 sorted-unique; oci-bundle-not-verifiable "
           "registered; footer open none / next F428")

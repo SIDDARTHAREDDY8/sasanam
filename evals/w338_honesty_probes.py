@@ -66,8 +66,8 @@ sys.path.insert(0, os.path.join(REPO, "tests"))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
 TAXONOMY_PIN = 2131  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-338 lane 5: pin at 6cdf5fdd.; Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); Wave-340 lane 3: pin 2130 -> 2131 (+1 deadctrl-subject-mutated).
-FOOTER_OPEN = ()
-FOOTER_NEXT = "F428"
+FOOTER_OPEN = ("F428",)
+FOOTER_NEXT = "F429"
 
 _results = []
 _PROBES = []
@@ -367,8 +367,8 @@ def _p6a():
 def _p6b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Open findings: none." in text, "footer open findings"
-    assert "Next free finding: **F428**" in text, "footer next free"
+    assert "Open findings: F428." in text, "footer open findings"
+    assert "Next free finding: **F429**" in text, "footer next free"
     _held("P6b-footer", "footer open none / next F428 (unchanged)")
 
 

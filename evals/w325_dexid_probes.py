@@ -430,7 +430,7 @@ def _p18():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     # Wave-336 lane 1: repaired stale assertion (never-current text).
-    assert "Next free finding: **F428**. **Open findings: none.**" in text, \
+    assert "Next free finding: **F429**. **Open findings: F428.**" in text, \
         "footer mismatch"
     _held("P18-footer-state", "open none / next F428")
 

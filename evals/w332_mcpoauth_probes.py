@@ -42,8 +42,8 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2131 # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); Wave-340 lane 3: pin 2130 -> 2131 (+1 deadctrl-subject-mutated).
-FOOTER_OPEN = "F427"  # F426 closed wave-338 lane 1; F427 OPEN (wave-339 lane 5).
-FOOTER_NEXT = "F428"  # Next free finding number.
+FOOTER_OPEN = "F428"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
+FOOTER_NEXT = "F429"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -377,21 +377,21 @@ def _p4b():
 # P5: footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P5-footer-open-none-next-f428")
+@probe("P5-footer-open-f428-next-f429")
 def _p5():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return ("P5-footer-open-none-next-f428", "BREAK",
+        return ("P5-footer-open-f428-next-f429", "BREAK",
                 "footer line not found")
     next_free, open_now = ms[-1]
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return ("P5-footer-open-none-next-f428", "BREAK",
+        return ("P5-footer-open-f428-next-f429", "BREAK",
                 "footer open %s / next %s, want open %s / next %s"
                 % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return ("P5-footer-open-none-next-f428", "HELD",
+    return ("P5-footer-open-f428-next-f429", "HELD",
             "footer open none / next F428")
 
 

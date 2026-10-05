@@ -57,3 +57,6 @@ Flip trigger = ML-DSA landing in a cosign release (cosign#4960 is CLOSED "not pl
 
 ---
 REPORT AND STOP — no follow-on work dispatched; nothing pushed.
+
+---
+**MERGE NOTE (wave-341 merge coordinator, 2026-10-05):** R37 in this file is CONFIRMED (first-filed, wave-341 Lane F). The wave-341 Lane A (OpenAPPA) report's competing "R37" claim was renumbered to **R40** (annotation arbitrage). Full research-ID state after wave-341: R36 PQ trigger (open, not fired), R37 Bernstein #6392 COSE_Sign1 run-receipt (steal candidate), R38 doxx.net (low priority), R39 rogue-SQL-recon loops (battery candidate), R40 OpenAPPA annotation arbitrage (build candidates: label monoid + remedy plans).

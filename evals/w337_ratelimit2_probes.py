@@ -74,8 +74,8 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2131  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-337 lane 5: pin 2106 -> 2109 (+3 tool-budget-*).; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); Wave-340 lane 3: pin 2130 -> 2131 (+1 deadctrl-subject-mutated).
-FOOTER_OPEN = "F427"  # F426 closed wave-338 lane 1; F427 OPEN (wave-339 lane 5).
-FOOTER_NEXT = "F428"  # Next free finding number.
+FOOTER_OPEN = "F428"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
+FOOTER_NEXT = "F429"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -697,9 +697,9 @@ def _p14c():
     # the file tail -- search the whole document.
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    if "Next free finding: **F428**" not in text:
+    if "Next free finding: **F429**" not in text:
         return _break(pid, "footer next != F427")
-    if "Open findings: none." not in text:
+    if "Open findings: F428." not in text:
         return _break(pid, "footer open != none")
     return _held(pid, "footer open none / next F428 (F426 closed)")
 

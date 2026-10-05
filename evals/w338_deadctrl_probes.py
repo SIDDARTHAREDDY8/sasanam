@@ -181,9 +181,9 @@ def p3_footer():
         return "ERROR", "P3", "FINDINGS.md unreadable"
     lines = text.splitlines()
     last = lines[-1] if lines else ""
-    if "Next free finding: **F428**" not in last:
+    if "Next free finding: **F429**" not in last:
         return "BREAK", "P3", "footer next-free is not F428"
-    if not re.search(r"\*\*Open findings: none\.\*\*", last):
+    if not re.search(r"\*\*Open findings: F428\.\*\*", last):
         return "BREAK", "P3", "footer open findings is not none"
     return "HELD", "P3", "footer open none / next F428"
 

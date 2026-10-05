@@ -149,11 +149,11 @@ class BaseStateTest(unittest.TestCase):
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
         # Wave-303 F380 closure lane: F380 CLOSED; F381-F384 still OPEN.
         ok = (m_open and m_open[-1].strip()
-              == "F411"
-              and m_next and m_next[-1] == "F412")
+              == "F428"
+              and m_next and m_next[-1] == "F429")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F406 / next free F407")
+            "want open F428 / next free F429")
             == "HELD")
 
     def test_pin(self):

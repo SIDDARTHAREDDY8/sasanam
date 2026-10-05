@@ -55,7 +55,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2131  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-336 lane 1: no new codes; pin unchanged 2106.; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); Wave-340 lane 3: pin 2130 -> 2131 (+1 deadctrl-subject-mutated).
-FOOTER_NEXT = "F428"  # Next free finding number (wave-337 merge: F426 filed by red team).
+FOOTER_NEXT = "F429"  # Next free finding number (wave-337 merge: F426 filed by red team).
 
 _results = []
 _PROBES = []
@@ -315,7 +315,7 @@ def p3():
     if "Next free finding: **%s**." % FOOTER_NEXT not in text:
         _break(pid, "footer next-free mismatch")
         return
-    if "**Open findings: none.**" not in text:
+    if "**Open findings: F428.**" not in text:
         _break(pid, "footer open-findings mismatch (want open F426)")
         return
     if "## F423 " not in text:

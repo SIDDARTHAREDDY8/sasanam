@@ -141,7 +141,7 @@ def p0():
         _held("P0a", "taxonomy 2131/2131/0 sorted-unique literals")
     footer = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                   encoding="utf-8").read()
-    want = "Next free finding: **F428**. **Open findings: none.**"
+    want = "Next free finding: **F429**. **Open findings: F428.**"
     if want in footer:
         _held("P0b", "footer open none / next F428")
     else:

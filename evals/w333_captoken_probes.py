@@ -354,16 +354,16 @@ def footer_state():
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               encoding="utf-8") as fh:
         text = fh.read()
-    # This lane files no findings. Footer lines repeat through history;
-    # the LAST one is current.
+    # Wave-341 merge footer: F428 OPEN (filed wave-341 lane C, LOW); next F429.
+    # Footer lines repeat through history; the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F428**" in text
-          and m_open and m_open[-1].strip() == "F427")
+    ok = ("Next free finding: **F429**" in text
+          and m_open and m_open[-1].strip() == "F428")
     if ok:
-        _record("footer-state", "HELD", "footer: open none / next F428")
+        _record("footer-state", "HELD", "footer: open F428 / next F429")
     else:
         _record("footer-state", "BREAK",
-                "footer mismatch vs open none / next F428")
+                "footer mismatch vs open F428 / next F429")
 
 
 _PROBES = [("mint-verify-roundtrip", mint_verify_roundtrip),

@@ -171,3 +171,6 @@ the breadth of the 18-row program — none of which APPA touches.
 **REPORT AND STOP.** No follow-on lanes dispatched. Recommended parent actions: record R37
 (annotation-arbitrage attack class) for adapter audits; queue the label-monoid + remedy-plan
 patterns as wave-342+ build candidates; mark Archestra WATCH-HIGH in the landscape.
+
+---
+**MERGE NOTE (wave-341 merge coordinator, 2026-10-05):** this lane report's "R37" (annotation arbitrage) collided with wave-341 Lane F's R37 (Bernstein #6392 COSE_Sign1 run-receipt pattern, first-filed 2026-10-05T11:29Z). First-filing order (wave-272 convention): Lane F keeps R37; the OpenAPPA "annotation arbitrage" attack class is renumbered **R40**. References to R37 above mean R40.

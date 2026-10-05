@@ -32,7 +32,7 @@ ApprovalQueue.decide / ToolExecutor.execute_approved):
   human-edited-args-break-scope: the human edits the recipient at
       decide() time -> the grant no longer covers the call ->
       sweep refuses (grantneg-scope-mismatch).
-  pin-taxonomy / footer-state: standard pins (1964; open none / next F409).
+  pin-taxonomy / footer-state: standard pins (1964; open F428 / next F429).
 """
 
 import hashlib
@@ -304,8 +304,8 @@ def p_footer_state():
     import re
     m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-    ok = (m_open and m_open[-1].strip() == "F412"
-          and m_next and m_next[-1] == "F413")
+    ok = (m_open and m_open[-1].strip() == "F428"
+          and m_next and m_next[-1] == "F429")
     return _held("footer-state", ok,
                  "open F412 / next F413" if ok
                  else "footer drift: %r / %r" % (m_open[-1:], m_next[-1:]))

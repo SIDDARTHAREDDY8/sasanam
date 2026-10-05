@@ -37,8 +37,8 @@ import gov.tool_rate_limit as TRL  # noqa: E402
 _EXPECTED_BREAKS = set()
 
 TAXONOMY_PIN = 2131  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-336: no new codes this lane, pin unchanged.; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused); wave-340 merge: pin 2130 -> 2131
-FOOTER_OPEN = "F427"  # F426 closed wave-338 lane 1.
-FOOTER_NEXT = "F428"
+FOOTER_OPEN = "F428"  # F426 closed wave-338 lane 1.
+FOOTER_NEXT = "F429"
 
 _results = []
 
@@ -441,15 +441,15 @@ def P3a():
 
 def P3b():
     """Footer: open none / next F428; F424/F425/F426 marked CLOSED."""
-    pid = "P3b-footer-open-none-next-f428"
+    pid = "P3b-footer-open-f428-next-f429"
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     lines = text.splitlines()
     last = lines[-1] if lines else ""
-    if "Next free finding: **F428**" not in last:
+    if "Next free finding: **F429**" not in last:
         _break(pid, "footer does not read next F427")
         return
-    if "Open findings: none." not in last:
+    if "Open findings: F428." not in last:
         _break(pid, "footer does not read open none")
         return
     import re as _re
@@ -482,7 +482,7 @@ _PROBES = [
     ("P2c-exceeded-path-unchanged", P2c),
     ("P2d-sweep-boundary-unchanged", P2d),
     ("P3a-pin-taxonomy-2131-sorted", P3a),
-    ("P3b-footer-open-none-next-f428", P3b),
+    ("P3b-footer-open-f428-next-f429", P3b),
 ]
 
 
