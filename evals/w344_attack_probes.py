@@ -91,15 +91,15 @@ def test_a0_plain_slack_token_blocked():
 @_t
 def test_a1_arrayjoin_miss_pinned():
     """A1-#2: JS Array.join evaluates to the credential in any JS
-    engine but matches no decode layer -- verified MISS on the merged
-    tree. Pinned as a known-open variant under F430 (filed OPEN, same
-    JS-execution-encoding mechanism class); flips to a refusal
-    assertion when F430 closes."""
-    shape = ("['x','o','x','b','-','a','b','c','1','2','3',"
-             "'d','e','f','4','5','6'].join('')")
-    miss = dlp.find_credential("token=" + shape) is None
-    return ("HELD" if miss else "BREAK",
-            "F430 arrayjoin miss reproduced=%s" % miss)
+    engine -- verified MISS on the wave-344 merged tree, re-filed as
+    F434 (LOW, OPEN) at the wave-344 merge. F434 CLOSED 2026-10-05
+    wave-345 lane 3: the shape now refuses coded dlp-slack-token
+    (flipped from the miss pin to a refusal assertion on closure,
+    per the standing wave-306 rule)."""
+    shape = ("[" + ", ".join("'%s'" % ch for ch in _CRED) + "].join('')")
+    refused = dlp.find_credential("token=" + shape) == "dlp-slack-token"
+    return ("HELD" if refused else "BREAK",
+            "F434 arrayjoin refused coded=%s" % refused)
 
 
 @_t
@@ -217,7 +217,7 @@ def test_b3_f432_f433_filings_pinned():
           and "(F433 filed 2026-10-05, wave-344 lane 4" in text
           and "LOW, OPEN:" in text
           and "Next free finding: **F436**" in text
-          and "Open findings: F432, F433, F434, F435." in text)
+          and "Open findings: F432, F433, F435." in text)
     return ("HELD" if ok else "BREAK", "F432/F433 filed open=%s" % ok)
 
 

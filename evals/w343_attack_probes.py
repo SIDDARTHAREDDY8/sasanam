@@ -163,7 +163,7 @@ def test_a8_f430_filing_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     entry = ("(F430 filed 2026-10-05, wave-343 lane 3" in text
              and "LOW, CLOSED 2026-10-05 wave-344 lane 1" in text
-             and "Open findings: F432, F433, F434, F435." in text)
+             and "Open findings: F432, F433, F435." in text)
     refusal = (dlp.find_credential('token="xoxb-abc123" + "def456"')
                == "dlp-slack-token")
     ok = entry and refusal
@@ -179,8 +179,26 @@ def test_a9_f429_still_open_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F429 filed 2026-10-05, wave-342 lane 5" in text
           and "LOW, CLOSED 2026-10-05 wave-343 lane 1" in text
-          and "Open findings: F432, F433, F434, F435." in text)
+          and "Open findings: F432, F433, F435." in text)
     return ("HELD" if ok else "BREAK", "F429 closed=%s" % ok)
+
+
+@_t
+def test_a11_f434_filing_pinned():
+    """F434 is CLOSED 2026-10-05 wave-345 lane 3: pins the closure entry;
+    the Array.join shape now refuses coded dlp-slack-token (filed OPEN at
+    the wave-344 merge as an F430-closure residual; flipped to a refusal
+    assertion on closure). The payload is built from _CRED at runtime so
+    no credential-shaped literal sits in source."""
+    text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
+    entry = ("(F434 filed 2026-10-05, wave-344 merge" in text
+             and "LOW, CLOSED 2026-10-05 wave-345 lane 3" in text
+             and "Open findings: F432, F433, F435." in text)
+    payload = "[" + ", ".join("'%s'" % ch for ch in _CRED) + "].join('')"
+    refusal = dlp.find_credential(payload) == "dlp-slack-token"
+    ok = entry and refusal
+    return ("HELD" if ok else "BREAK",
+            "F434 closed=%s refusal=%s" % (entry, refusal))
 
 
 @_t
