@@ -59,7 +59,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2106 # Wave-333 merge: pin 2077.; Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
+TAXONOMY_PIN = 2121 # Wave-333 merge: pin 2077.; Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*)
 FOOTER_OPEN = "F424, F425"  # F423 CLOSED 2026-10-05 wave-336 lane 1; no open findings: PRM control-char finding; filed as F421, renumbered at merge).
 FOOTER_NEXT = "F426"  # Next free finding number.
 
@@ -452,7 +452,7 @@ def _p8():
                       % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
     if "## F419" not in foot or "Status: CLOSED" not in foot.split("## F419")[1][:2500]:
         return _break(pid, "F419 entry not CLOSED")
-    return _held(pid, "taxonomy 2106/2106/0 sorted unique; 11 codes "
+    return _held(pid, "taxonomy 2121/2121/0 sorted unique; 11 codes "
                       "registered; footer open F421 / next F422; F419 CLOSED")
 
 

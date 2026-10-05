@@ -66,7 +66,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2106 # Wave-334 lane 3: pin 2077 -> 2083 (+6 mcp-oauth-prm-*).; Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
+TAXONOMY_PIN = 2121 # Wave-334 lane 3: pin 2077 -> 2083 (+6 mcp-oauth-prm-*).; Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*)
 FOOTER_OPEN = "F424, F425"  # F423 CLOSED 2026-10-05 wave-336 lane 1; no open findings: PRM control-char finding; filed as F421, renumbered at merge).
 FOOTER_NEXT = "F426"  # Next free finding number.
 
@@ -524,7 +524,7 @@ def _p9():
         return _break(pid, "footer open %s / next %s, want open %s / next %s"
                       % (open_now.strip(), next_free, FOOTER_OPEN,
                          FOOTER_NEXT))
-    return _held(pid, "taxonomy 2106/2106/0 sorted-unique; 6 codes "
+    return _held(pid, "taxonomy 2121/2121/0 sorted-unique; 6 codes "
                       "registered; F420 CLOSED; footer open F421 / next F422")
 
 

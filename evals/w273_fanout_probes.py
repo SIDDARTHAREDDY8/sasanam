@@ -245,8 +245,8 @@ def red_c02_pin():
     # Wave-316 re-pin: 1700 -> 1888 (wave-315 merge pin; +10 vsa-packet-*
     # codes). Expectation pin only -- taxonomy pin value itself is the
     # lane lead's job.
-    if len(codes) == 2106 and len(set(codes)) == 2106:
-        situation("c02", "pin 2106/2106/0", "HELD")
+    if len(codes) == 2121 and len(set(codes)) == 2121:
+        situation("c02", "pin 2121/2121/0", "HELD")
 
 
     else:

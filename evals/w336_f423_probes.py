@@ -33,7 +33,7 @@ P2   Legitimate controls: a valid PRM URL passes check_prm_url and
      RFC 9728 3.1; the challenge path parses a clean header;
      percent-encoded %0D is NOT a raw control char and passes shape
      validation (the guard is on the raw wire value only).
-P3   Pin 2106/2106/0 sorted-unique on raw literals; no new codes;
+P3   Pin 2121/2121/0 sorted-unique on raw literals; no new codes;
      footer open F424, F425 / next F426; F423 CLOSED recorded.
 P4   Green check (depth-1): honors GOV_SKIP_GREEN; otherwise runs
      evals/w335_redteam_probes.py as a child with GOV_SKIP_GREEN=1
@@ -56,7 +56,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2106  # Wave-336 lane 1: no new codes; pin unchanged 2106.
+TAXONOMY_PIN = 2121  # Wave-336 lane 1: no new codes; pin unchanged 2106.; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*)
 FOOTER_NEXT = "F426"  # Next free finding number.
 
 _results = []
@@ -288,7 +288,7 @@ def p2():
 
 @_probe("P3")
 def p3():
-    """Pin 2106/2106/0 sorted-unique on raw literals; no new codes;
+    """Pin 2121/2121/0 sorted-unique on raw literals; no new codes;
     footer open F424, F425 / next F426; F423 CLOSED recorded."""
     pid = "P3-pin-footer"
     if len(dc.TAXONOMY) != TAXONOMY_PIN:
@@ -328,7 +328,7 @@ def p3():
     if "CLOSED 2026-10-05 wave-336 lane 1" not in text:
         _break(pid, "F423 closure not recorded")
         return
-    _held(pid, "taxonomy 2106/2106/0 sorted-unique; F423 CLOSED; "
+    _held(pid, "taxonomy 2121/2121/0 sorted-unique; F423 CLOSED; "
                "footer open F424, F425 / next F426")
 
 

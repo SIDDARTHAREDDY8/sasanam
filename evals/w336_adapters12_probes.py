@@ -35,7 +35,7 @@ P8 (ag2 malformed): unparseable / non-object arguments return
 P9 (optional-extra convention): without the framework installed the
    adapter module raises ImportError naming the extra; with it, import
    succeeds.
-P10 (honesty): taxonomy 2106/2106/0 sorted-unique on raw source
+P10 (honesty): taxonomy 2121/2121/0 sorted-unique on raw source
    literals; no new decision codes (adapters reuse existing outcomes);
    footer open F424, F425 / next F426.
 
@@ -84,7 +84,7 @@ for _p in (REPO, os.path.join(REPO, "tests"), os.path.join(REPO, "evals")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2106  # Wave-335 merge: pin 2100 -> 2106 (+6 codes). No new codes this lane.
+TAXONOMY_PIN = 2121  # Wave-335 merge: pin 2100 -> 2106 (+6 codes). No new codes this lane.; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*)
 
 try:
     from pydantic import BaseModel, ConfigDict, Field
@@ -422,7 +422,7 @@ def P9a():
 
 
 def P10a():
-    pid = "P10a-pin-taxonomy-2106-sorted"
+    pid = "P10a-pin-taxonomy-2121-sorted"
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     codes = re.findall(r'''"code":\s*['"]([^'"]+)['"]''', src)
@@ -463,7 +463,7 @@ _PROBES = [
     ("P7a-ag2-denied-error-event", P7a),
     ("P8a-ag2-malformed-and-unregistered", P8a),
     ("P9a-adapter-extra-convention", P9a),
-    ("P10a-pin-taxonomy-2106-sorted", P10a),
+    ("P10a-pin-taxonomy-2121-sorted", P10a),
     ("P10b-footer-open-f424-f425-next-f426", P10b),
 ]
 
