@@ -56,7 +56,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2134  # Wave-343 lane 4: base 2131 + 3 ownership codes
-FOOTER_OPEN = "F432, F433, F434, F435"
+FOOTER_OPEN = "F433, F434, F435"
 FOOTER_NEXT = "F436"
 
 from gov import ownership_inference as oi  # noqa: E402

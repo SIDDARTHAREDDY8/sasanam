@@ -863,13 +863,13 @@ def P6b():
     """Footer honesty: the last line carries open F426 and
     next F427 (raw-literal assertion, wave-331 lesson). F424/F425 were
     closed by wave-337 lane 1; F426 filed by the wave-337 red-team lane."""
-    pid = "P6b-footer-open-f432-f433-f434-f435-next-f436"
+    pid = "P6b-footer-open-f433-f434-f435-next-f436"
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               "rb") as f:
         lines = f.read().decode("utf-8").splitlines()
     last = lines[-1] if lines else ""
-    if "Open findings: F432, F433, F434, F435." not in last:
-        _break(pid, "last line lacks 'Open findings: F432, F433, F434, F435.': %r"
+    if "Open findings: F433, F434, F435." not in last:
+        _break(pid, "last line lacks 'Open findings: F433, F434, F435.': %r"
                % (last[:160],))
         return
     if "Next free finding: **F436**" not in last:

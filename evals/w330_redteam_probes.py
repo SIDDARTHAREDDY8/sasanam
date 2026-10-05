@@ -39,7 +39,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = "F432, F433, F434, F435"  # F414/F415/F416/F417/F423/F424/F425 CLOSED; F426 closed wave-338 lane 1.
+FOOTER_OPEN = "F433, F434, F435"  # F414/F415/F416/F417/F423/F424/F425 CLOSED; F426 closed wave-338 lane 1.
 FOOTER_NEXT = "F436"  # Next free finding number.
 
 _results = []
@@ -601,21 +601,21 @@ def _p5a():
                  "2134/2134/0 sorted unique on raw source literals")
 
 
-@probe("P5b-footer-open-f432-f433-f434-f435-next-f436")
+@probe("P5b-footer-open-f433-f434-f435-next-f436")
 def _p5b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return _break("P5b-footer-open-f432-f433-f434-f435-next-f436",
+        return _break("P5b-footer-open-f433-f434-f435-next-f436",
                       "footer line not found")
     next_free, open_now = ms[-1]  # the LAST footer is the live one
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return _break("P5b-footer-open-f432-f433-f434-f435-next-f436",
+        return _break("P5b-footer-open-f433-f434-f435-next-f436",
                       "footer open %s / next %s, want open %s / next %s"
                       % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return _held("P5b-footer-open-f432-f433-f434-f435-next-f436",
+    return _held("P5b-footer-open-f433-f434-f435-next-f436",
                  "footer open none / next F419")
 
 

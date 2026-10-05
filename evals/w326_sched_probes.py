@@ -496,13 +496,13 @@ def _p15():
     _held("P15-pin-taxonomy-2134-sorted", "2134/2134/0 sorted; new codes ok")
 
 
-@probe("P16-footer-open-f432-f433-f434-f435-next-f436")
+@probe("P16-footer-open-f433-f434-f435-next-f436")
 def _p16():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     src = open(path, encoding="utf-8").read()
     assert "Next free finding: **F436**" in src, "next-free footer"
-    assert "**Open findings: F432, F433, F434, F435.**" in src, "open footer"
-    _held("P16-footer-open-f432-f433-f434-f435-next-f436",
+    assert "**Open findings: F433, F434, F435.**" in src, "open footer"
+    _held("P16-footer-open-f433-f434-f435-next-f436",
           "footer: open none / next F419")
 
 

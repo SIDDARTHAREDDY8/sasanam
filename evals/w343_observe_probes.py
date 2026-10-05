@@ -37,7 +37,7 @@ Probes:
       does not become a silent allow (anti fail-open).
   P8  evaluate() path stamps policy_mode too; enforce-mode decisions
       are byte-identical (no policy_mode key in to_dict).
-  P9  pin + footer: taxonomy 2131, footer open F432, F433, F434, F435 / next F436.
+  P9  pin + footer: taxonomy 2131, footer open F433, F434, F435 / next F436.
 
 Usage:
   ~/workspace/.gov-venv/bin/python evals/w343_observe_probes.py
@@ -56,7 +56,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2134  # Wave-342 merge: pin 2131 (no new codes in wave-343 lane 5); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = "F432, F433, F434, F435"
+FOOTER_OPEN = "F433, F434, F435"
 FOOTER_NEXT = "F436"
 
 from gov import policy_observe  # noqa: E402

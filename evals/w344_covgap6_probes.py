@@ -26,7 +26,7 @@ hostile input.
   PZ green check (depth-1): adjacent suites as children with
      GOV_SKIP_GREEN=1.
 
-Base: 1a800558 (wave-343 merge). Pin 2134, footer open F432, F433, F434, F435 /
+Base: 1a800558 (wave-343 merge). Pin 2134, footer open F433, F434, F435 /
 next F432. No gov/ changes in this lane. Findings: none filed (all
 probes HELD on the base; a genuine BREAK would be filed as F432+).
 

@@ -122,7 +122,7 @@ def test_r3_footer_state():
     with open(path) as f:
         last = "".join(f.readlines()[-3:])
     ok = ("Next free finding: **F436**" in last
-          and "Open findings: F432, F433, F434, F435." in last)
+          and "Open findings: F433, F434, F435." in last)
     return ("HELD" if ok else "BREAK",
             "footer must read open F429 / next F430")
 

@@ -781,13 +781,13 @@ def P5b():
 def P5c():
     """Footer honesty: open none / next F430 (raw literals included --
     wave-331 lesson)."""
-    pid = "P5c-footer-open-f432-f433-f434-f435-next-f436"
+    pid = "P5c-footer-open-f433-f434-f435-next-f436"
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               encoding="utf-8") as fh:
         text = fh.read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
     ok = ("Next free finding: **F436**" in text
-          and m_open and m_open[-1].strip() == "F432, F433, F434, F435")
+          and m_open and m_open[-1].strip() == "F433, F434, F435")
     if ok:
         _held(pid, "footer: open none / next F430")
     else:
@@ -817,7 +817,7 @@ _PROBES = [
     ("P4a-f418-closure-holds", P4a),
     ("P5a-pin-taxonomy-2134-sorted", P5a),
     ("P5b-new-codes-registered", P5b),
-    ("P5c-footer-open-f432-f433-f434-f435-next-f436", P5c),
+    ("P5c-footer-open-f433-f434-f435-next-f436", P5c),
 ]
 
 # No expected BREAKs on this tree: every attack shape above is refused

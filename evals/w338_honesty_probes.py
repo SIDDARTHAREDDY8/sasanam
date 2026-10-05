@@ -367,7 +367,7 @@ def _p6a():
 def _p6b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Open findings: F432, F433, F434, F435." in text, "footer open findings"
+    assert "Open findings: F433, F434, F435." in text, "footer open findings"
     assert "Next free finding: **F436**" in text, "footer next free"
     _held("P6b-footer", "footer open none / next F430 (unchanged)")
 

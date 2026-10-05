@@ -168,18 +168,18 @@ def test_a10_f429_filing_pinned():
     ok = ("(F429 filed 2026-10-05, wave-342 lane 5" in text
           and "LOW, CLOSED 2026-10-05 wave-343 lane 1" in text
           and "Next free finding: **F436**" in text
-          and "Open findings: F432, F433, F434, F435." in text)
+          and "Open findings: F433, F434, F435." in text)
     return ("HELD" if ok else "BREAK", "F429 filed closed=%s" % ok)
 
 
 @_t
 def test_a11_f428_still_open_pinned():
     """F428 (JSFuck) is CLOSED (2026-10-05 wave-342 lane 1); pins the
-    closure entry and the merged footer (open F432, F433, F434, F435 / next F436)."""
+    closure entry and the merged footer (open F433, F434, F435 / next F436)."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F428 filed 2026-10-05, wave-341 lane C" in text
           and "LOW, CLOSED 2026-10-05 wave-342 lane 1" in text
-          and "Open findings: F432, F433, F434, F435." in text)
+          and "Open findings: F433, F434, F435." in text)
     return ("HELD" if ok else "BREAK", "F428 closed=%s" % ok)
 
 

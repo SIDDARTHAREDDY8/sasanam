@@ -698,7 +698,7 @@ def _p12():
     # through many merges; assert the live footer (open none / next
     # F426; F424/F425 closed by wave-337 lane 1).
     assert "Next free finding: **F436**" in src, "next-free footer"
-    assert "**Open findings: F432, F433, F434, F435.**" in src, "open-none footer"
+    assert "**Open findings: F433, F434, F435.**" in src, "open-none footer"
     _held("P12-footer-state", "open none / next F430")
 
 

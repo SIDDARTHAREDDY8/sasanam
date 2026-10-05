@@ -18,9 +18,11 @@ demand the mandatory space (``\\HHHHHH<space>``). So
 space-free) decodes to the credential in any CSS parser, but
 find_credential misses it while the control blocks.
 
-When F432/F433 close (decode layer handles sub-threshold escape runs
-and space-free CSS termination, or refuses obfuscation-shaped runs
-coded), this prints HELD.
+F432 CLOSED 2026-10-05 wave-345 lane 1 (decode layer widens the
+escape gate from 2+ to 1+ escapes): the five F432 shapes now print HIT
+and the script prints HELD. The two F433 shapes (space-free CSS
+termination) still MISS -- F433 is a separate closure lane; this
+script doubles as its red-first until it closes.
 """
 import os
 

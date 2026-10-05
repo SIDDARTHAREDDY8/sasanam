@@ -54,7 +54,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = "F432, F433, F434, F435"  # F423/F424/F425 CLOSED; F426 closed wave-338 lane 1. F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
+FOOTER_OPEN = "F433, F434, F435"  # F423/F424/F425 CLOSED; F426 closed wave-338 lane 1. F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
 FOOTER_NEXT = "F436"  # Next free finding number.
 
 _results = []
@@ -556,29 +556,29 @@ def _p11a():
                  "2134/2134/0 sorted unique on raw source literals")
 
 
-@probe("P11b-footer-open-f432-f433-f434-f435-next-f436")
+@probe("P11b-footer-open-f433-f434-f435-next-f436")
 def _p11b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     # Raw-literal assertions (wave-331 lesson): the footer must read
     # correctly as literal text, not only via constants.
     if "Next free finding: **F436**." not in text:
-        return _break("P11b-footer-open-f432-f433-f434-f435-next-f436",
+        return _break("P11b-footer-open-f433-f434-f435-next-f436",
                       "raw literal 'Next free finding: **F432**.' absent")
-    if "**Open findings: F432, F433, F434, F435.**" not in text:
-        return _break("P11b-footer-open-f432-f433-f434-f435-next-f436",
-                      "raw literal '**Open findings: F432, F433, F434, F435.**' absent")
+    if "**Open findings: F433, F434, F435.**" not in text:
+        return _break("P11b-footer-open-f433-f434-f435-next-f436",
+                      "raw literal '**Open findings: F433, F434, F435.**' absent")
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return _break("P11b-footer-open-f432-f433-f434-f435-next-f436",
+        return _break("P11b-footer-open-f433-f434-f435-next-f436",
                       "footer line not found")
     next_free, open_now = ms[-1]  # the LAST footer is the live one
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return _break("P11b-footer-open-f432-f433-f434-f435-next-f436",
+        return _break("P11b-footer-open-f433-f434-f435-next-f436",
                       "footer open %s / next %s, want open %s / next %s"
                       % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return _held("P11b-footer-open-f432-f433-f434-f435-next-f436",
+    return _held("P11b-footer-open-f433-f434-f435-next-f436",
                  "footer open none / next F430 (raw literals + parse)")
 
 

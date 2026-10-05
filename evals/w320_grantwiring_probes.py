@@ -304,7 +304,7 @@ def p_footer_state():
     import re
     m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-    ok = (m_open and m_open[-1].strip() == "F432, F433, F434, F435"
+    ok = (m_open and m_open[-1].strip() == "F433, F434, F435"
           and m_next and m_next[-1] == "F436")
     return _held("footer-state", ok,
                  "open F412 / next F413" if ok

@@ -1118,13 +1118,13 @@ def P6a():
 def P6b():
     """Footer honesty: last line carries open none / next F430
     (raw-literal assertion, wave-331 lesson); F426 and F427 now CLOSED."""
-    pid = "P6b-footer-open-f432-f433-f434-f435-next-f436"
+    pid = "P6b-footer-open-f433-f434-f435-next-f436"
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               "rb") as f:
         lines = f.read().decode("utf-8").splitlines()
     last = lines[-1] if lines else ""
-    if "Open findings: F432, F433, F434, F435." not in last:
-        _break(pid, "last line lacks 'Open findings: F432, F433, F434, F435.': %r"
+    if "Open findings: F433, F434, F435." not in last:
+        _break(pid, "last line lacks 'Open findings: F433, F434, F435.': %r"
                % (last[:160],))
         return
     if "Next free finding: **F436**" not in last:
@@ -1221,7 +1221,7 @@ _PROBES = [
     ("P5b-f424-negative-hang", P5b),
     ("P5c-f425-limiter-failure-uncoded", P5c),
     ("P6a-pin-2131-taxonomy", P6a),
-    ("P6b-footer-open-f432-f433-f434-f435-next-f436", P6b),
+    ("P6b-footer-open-f433-f434-f435-next-f436", P6b),
     ("P6c-f423-nul-refused", P6c),
     ("P6d-f417-port-coded", P6d),
     ("P6e-f421-double-refresh", P6e),
