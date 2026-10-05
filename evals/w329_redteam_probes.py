@@ -1,7 +1,7 @@
 """Wave-329 independent red-team battery.
 
 Base: dd034c36 (wave-328 merge). Footer: open F415 / next F417
-(F413/F414 CLOSED; F415/F416 filed by wave-330 lane 3, LOW, OPEN). Pin: 2062.
+(F413/F414 CLOSED; F415/F416 filed by wave-330 lane 3, LOW, OPEN). Pin: 2069.
 
 P1  wave-328 seams not yet broken: Shamir custody (share forgery,
     ceremony mixing, duplicates, length drift, commitment games,
@@ -14,7 +14,7 @@ P4  merge-defect class: wave-328's pin-only --theirs clobbering of
     semantic changes (P1a/P1h rewrites, _EXPECTED_BREAKS) -- probe the
     shipped tree actually contains the lane-2 semantics and pin
     comments match the pin value.
-P5  pin 2062 + footer state probes.
+P5  pin 2069 + footer state probes.
 P6  prior batteries in child mode (GOV_SKIP_GREEN=1 in the child env),
     tallies verified by direct child runs.
 
@@ -38,7 +38,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2062  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).; Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).
+TAXONOMY_PIN = 2069  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*).; Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*)
 FOOTER_OPEN = "none"  # F409-F416 CLOSED; no open findings (wave-331 merge).
 FOOTER_NEXT = "F417"  # Next free finding number.
 
@@ -789,20 +789,20 @@ def _p4c():
 # P5: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P5a-pin-taxonomy-2062-sorted")
+@probe("P5a-pin-taxonomy-2069-sorted")
 def _p5a():
-    """Taxonomy pin 2062: raw source literals sorted and unique."""
+    """Taxonomy pin 2069: raw source literals sorted and unique."""
     src = open(os.path.join(REPO, "gov", "decision_codes.py")).read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
     if len(lits) != TAXONOMY_PIN:
-        return _break("P5a-pin-taxonomy-2062-sorted",
+        return _break("P5a-pin-taxonomy-2069-sorted",
                       "want %d, got %d" % (TAXONOMY_PIN, len(lits)))
     if len(set(lits)) != len(lits):
-        return _break("P5a-pin-taxonomy-2062-sorted", "duplicate literals")
+        return _break("P5a-pin-taxonomy-2069-sorted", "duplicate literals")
     if lits != sorted(lits):
-        return _break("P5a-pin-taxonomy-2062-sorted", "not sorted")
-    return _held("P5a-pin-taxonomy-2062-sorted",
-                 "2062/2062/0 sorted unique on raw source literals")
+        return _break("P5a-pin-taxonomy-2069-sorted", "not sorted")
+    return _held("P5a-pin-taxonomy-2069-sorted",
+                 "2069/2069/0 sorted unique on raw source literals")
 
 
 @probe("P5b-footer-open-none-next-f417")

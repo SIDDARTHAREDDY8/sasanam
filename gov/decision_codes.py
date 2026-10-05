@@ -2861,6 +2861,78 @@ TAXONOMY = {
         "evidence_kinds_required": ['agent-card', 'signature', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'capability-token-agent-mismatch': {
+        "domain": 'capability',
+        "code": 'capability-token-agent-mismatch',
+        "human": 'context-bound capability token: the presenting agent is '
+                 'not the agent the token was minted for; a token minted '
+                 'for one agent never authorizes another',
+        "severity": 'high',
+        "evidence_kinds_required": ['capability-token', 'binding'],
+        "reverify_steps": ['recompute'],
+    },
+    'capability-token-expired': {
+        "domain": 'capability',
+        "code": 'capability-token-expired',
+        "human": 'context-bound capability token: the token\'s time box '
+                 'elapsed; an expired token authorizes nothing -- '
+                 're-approval mints a fresh token',
+        "severity": 'medium',
+        "evidence_kinds_required": ['capability-token'],
+        "reverify_steps": ['recompute'],
+    },
+    'capability-token-malformed': {
+        "domain": 'capability',
+        "code": 'capability-token-malformed',
+        "human": 'context-bound capability token: malformed shape -- '
+                 'missing fields, bad version, unbindable context values, '
+                 'or a token from the future; uninterpretable tokens '
+                 'authorize nothing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['capability-token'],
+        "reverify_steps": ['recompute'],
+    },
+    'capability-token-mission-mismatch': {
+        "domain": 'capability',
+        "code": 'capability-token-mission-mismatch',
+        "human": 'context-bound capability token: the presented mission is '
+                 'not the mission the token was minted for; a token minted '
+                 'for one mission never authorizes another',
+        "severity": 'high',
+        "evidence_kinds_required": ['capability-token', 'binding'],
+        "reverify_steps": ['recompute'],
+    },
+    'capability-token-policy-stale': {
+        "domain": 'capability',
+        "code": 'capability-token-policy-stale',
+        "human": 'context-bound capability token: the presented policy '
+                 'version is not the policy version the token was minted '
+                 'under; a policy rotation invalidates old tokens -- '
+                 're-approval under the current policy mints a fresh token',
+        "severity": 'high',
+        "evidence_kinds_required": ['capability-token', 'binding'],
+        "reverify_steps": ['recompute'],
+    },
+    'capability-token-tampered': {
+        "domain": 'capability',
+        "code": 'capability-token-tampered',
+        "human": 'context-bound capability token: the seal does not '
+                 'recompute over the token body under any keyring epoch -- '
+                 'the token was edited after minting',
+        "severity": 'critical',
+        "evidence_kinds_required": ['capability-token', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'capability-token-tools-mismatch': {
+        "domain": 'capability',
+        "code": 'capability-token-tools-mismatch',
+        "human": 'context-bound capability token: the presented tool set '
+                 'is not the tool set the token was minted for; a token '
+                 'minted for one tool set never authorizes a different one',
+        "severity": 'high',
+        "evidence_kinds_required": ['capability-token', 'binding'],
+        "reverify_steps": ['recompute'],
+    },
     'capability_assessment_expired': {
         "domain": 'capability',
         "code": 'capability_assessment_expired',

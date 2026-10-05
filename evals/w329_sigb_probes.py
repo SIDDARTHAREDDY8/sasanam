@@ -27,7 +27,7 @@ W (6): witness-backed CVE analogues -- entry transplant binding
     (CVE-2026-22703), witness-time window (CVE-2026-24122), always-on content
     checks (CVE-2026-39395), crash-never-success (CVE-2026-44310). All HELD
     on base.
-P (2): taxonomy pin 2062 (this lane registers no taxonomy codes -- the
+P (2): taxonomy pin 2069 (this lane registers no taxonomy codes -- the
     module's refusals are bundle-scoped codes by design) and footer
     open F415 / next F417 (wave-330 merge: F414 closed, F415/F416 filed).
 
@@ -63,7 +63,7 @@ from gov import evidence_intoto as _intoto  # noqa: E402
 from gov import dsse_envelope as _dsse  # noqa: E402
 from gov.signing import Ed25519Signer, Ed25519Verifier  # noqa: E402
 
-TAXONOMY_PIN = 2062  # Wave-328 merge: pin 2044 -> 2056 (+12). This lane adds no taxonomy codes.; Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).
+TAXONOMY_PIN = 2069  # Wave-328 merge: pin 2044 -> 2056 (+12). This lane adds no taxonomy codes.; Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*)
 
 FOOTER_OPEN = "none"  # F409-F416 CLOSED; no open findings (wave-331 merge).
 FOOTER_NEXT = "F417"
@@ -450,10 +450,10 @@ def _w6():
 # P: pin + footer regression probes
 # ---------------------------------------------------------------------------
 
-@probe("P1-pin-taxonomy-2062")
+@probe("P1-pin-taxonomy-2069")
 def _p1():
-    pid = "P1-pin-taxonomy-2062"
-    if TAXONOMY_PIN != 2062:
+    pid = "P1-pin-taxonomy-2069"
+    if TAXONOMY_PIN != 2069:
         return _break(pid, "battery pin drifted: %r" % TAXONOMY_PIN)
     lits = []
     with open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -462,11 +462,11 @@ def _p1():
             m = re.search(r'"code"\s*:\s*\'([^\']+)\'', line)
             if m:
                 lits.append(m.group(1))
-    if len(lits) != 2062 or len(set(lits)) != 2062 \
+    if len(lits) != 2069 or len(set(lits)) != 2069 \
             or lits != sorted(lits):
-        return _break(pid, "taxonomy not 2062/2062/0 sorted "
+        return _break(pid, "taxonomy not 2069/2069/0 sorted "
                            "(%d/%d)" % (len(lits), len(set(lits))))
-    return _held(pid, "taxonomy 2062/2062/0 sorted")
+    return _held(pid, "taxonomy 2069/2069/0 sorted")
 
 
 @probe("P2-footer")
