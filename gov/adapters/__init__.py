@@ -6,6 +6,8 @@ lives in :mod:`gov.adapters.core`; the framework shims are:
 
 * :mod:`gov.adapters.generic`    -- decorator + context-manager registry
 * :mod:`gov.adapters.langchain_tools` -- LangChain ``StructuredTool`` shim
+* :mod:`gov.adapters.crewai_tools`   -- CrewAI ``BaseTool`` shim
+* :mod:`gov.adapters.ag2_hooks`      -- AG2 1.x tool-execution middleware
 * :mod:`gov.adapters.mcp_adapter`     -- MCP ``ClientSession`` wrapper
 * :mod:`gov.adapters.openai_loop`     -- OpenAI-style function-call loop
 

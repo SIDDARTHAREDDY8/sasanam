@@ -86,6 +86,40 @@ so they never reached mediation, the DLP scan, or the approval record.
 Mediation is synchronous in `_arun` (the executor is in-memory); no
 thread-hopping of the audit path.
 
+### `gov.adapters.crewai_tools` — CrewAI shim (verified: crewai 1.15.23)
+
+| Name | Signature | Behavior |
+|---|---|---|
+| `make_governed_crewai_tool` | `(binding, name, description, args_schema, framework_tool=None, on_denied="raise", on_queued="raise", **tool_kwargs) -> GovernedCrewTool` | `framework_tool` defaults to `name`; unregistered names raise at **construction**. No `func` attribute exists on `BaseTool` (unlike `Tool`), so there is no raw callable to steal. |
+| `GovernedCrewTool` | subclass of `crewai.tools.BaseTool` | `run` → `_run` and `arun` → `_arun` route through the binding and return `normalize_result(...)` JSON. Denied → `ToolDeniedError`; queued → `ApprovalRequiredError`. |
+
+`run` → `_run` funnels into the overridden method (pinned by test
+against the installed crewai version; fails loudly on drift).
+**F62 class:** `BaseTool.run` calls `_validate_kwargs` before `_run`,
+which validates against `args_schema` with
+`model_validate(kwargs).model_dump()` — with pydantic's default
+`extra="ignore"`, undeclared kwargs are silently dropped there and never
+reach mediation, the DLP scan, or the approval record. Construction
+(and reassignment, and a re-check immediately before mediation)
+therefore refuses any `args_schema` that does not declare
+`extra="allow"`. Positional args are refused outright (`run()` skips
+schema validation entirely when `args` is non-empty, so guessing their
+meaning would be unmediated).
+
+### `gov.adapters.ag2_hooks` — AG2 shim (verified: ag2 1.1.2)
+
+| Name | Signature | Behavior |
+|---|---|---|
+| `governed_tool_middleware` | `(binding) -> GovernedToolMiddleware` | Per-tool `ToolMiddleware` for `FunctionTool.with_middleware(...)`. The tool's own implementation (`call_next`) runs only after the binding returns `"executed"`. |
+| `GovernedToolMiddleware` | async `__call__(call_next, event, context)` | Extracts `event.name` + `serialized_arguments` (fail closed on unparseable/non-object arguments → `MalformedToolCallError`); mediates via the facade. Denied / queued / unregistered calls return a `ToolErrorEvent` carrying the adapter error — the implementation is never invoked. |
+| `GovernedAgentMiddleware` | subclass of `ag2.middleware.BaseMiddleware` | Agent-wide: `on_tool_execution` delegates to the same per-tool enforcement. Register with `ag2.middleware.Middleware(GovernedAgentMiddleware, binding=binding)` in `Agent(..., middleware=[...])`. |
+
+API note: AG2 1.x replaced the 0.9 `ConversableAgent` `hook_lists`
+API with the middleware pipeline; `on_tool_execution` is the
+functional successor of the hook system and is what this module
+targets. Fail-closed at construction: a non-`GovernedBinding` raises
+`TypeError` immediately.
+
 ### Pre-mediation input audit (F62, R14 follow-up)
 
 Every adapter was audited for the F62 hole — anything that filters or drops
@@ -94,6 +128,8 @@ inputs *before* the executor's DLP scan sees them:
 | Adapter | Input path | Verdict |
 |---|---|---|
 | `langchain_tools` | langchain-core `_parse_input` coerces against `args_schema` | **Fixed:** construction (and later reassignment) of `args_schema` raises unless it declares `extra="allow"`; JSON-schema dicts are passed through unchanged by `_parse_input` and are allowed. |
+| `crewai_tools` | CrewAI `BaseTool._validate_kwargs` coerces against `args_schema` | **Fixed:** same rule as langchain — construction, reassignment, and a pre-mediation re-check all require `extra="allow"`. Positional args refused (validation skipped entirely when `args` non-empty). |
+| `ag2_hooks` | `ToolCallEvent.serialized_arguments` (JSON parse, no coercion) | **Clean:** arguments pass through unmodified; malformed shapes refuse coded `MalformedToolCallError` before the binding. |
 | `core` (`GovernedBinding.call` / `GovernedToolFacade.call`) | `**kwargs` straight to `executor.call` | Clean: no filtering. The executor pops only documented framing kwargs (`justification`, `on_behalf_of`, `delegated_by` — agent-supplied metadata, not tool inputs); the DLP scan runs on the raw remainder. |
 | `generic` (`governed` wrapper) | `**kwargs` straight to `binding.call`; positional args raise fail-closed | Clean: no schema coercion, no drop. |
 | `mcp_adapter` (`call_tool`) | full `arguments` dict mediated via `binding.call(name, **dict(arguments))` | Clean: no filtering of tool arguments. `session_kwargs` (transport-level, e.g. `read_timeout_seconds`) go only to the session, never the executor — documented above, not a governance drop. |
@@ -153,6 +189,14 @@ message so the model can react and continue.
 
 - langchain-core **1.6.3** (funnel `invoke→run→_run` verified; drift-pinned
   by `test_funnel_assumption_pinned`).
+- crewai **1.15.23** (funnel `run→_run` verified; drift-pinned by
+  `test_funnel_assumption_pinned`; optional extra, not in the base
+  requirements).
+- ag2 **1.1.2** (middleware API `BaseMiddleware.on_tool_execution` /
+  `ToolMiddleware` verified; optional extra, not in the base
+  requirements). Note: the 0.9 `ConversableAgent` `hook_lists` API is
+  superseded; `gov/adapters/ag2_hooks.py` targets the 1.x middleware
+  pipeline.
 - MCP Python SDK **2.2.0** (`ClientSession.call_tool` signature; wrapper only
   needs a coroutine `call_tool`, so it is tolerant of SDK drift).
 - Everything else is stdlib + the `gov` package itself. `$0` spend, no
