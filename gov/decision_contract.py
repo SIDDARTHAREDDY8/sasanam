@@ -303,6 +303,15 @@ class Decision:
     # into per-window digests by the executor; NEVER returned to the
     # agent as interrupts (R1 warn-fatigue).
     warnings: Tuple[str, ...] = ()
+    # Wave-343 (per-policy observe->enforce rollout): the DEPLOYMENT
+    # mode of the policy that produced this decision. Orthogonal to
+    # the per-rule ladder ``mode`` above: a whole policy deployed in
+    # observe evaluates for real but takes no enforcement action.
+    # "enforce" is the resting default; "observe" is declared on
+    # every record the deployment produces. Import cycle note:
+    # gov/policy_observe.py imports this module, so the vocabulary
+    # is spelled out here rather than imported.
+    policy_mode: str = "enforce"
 
     def __post_init__(self):
         if self.effect not in ("allow", "require_approval", "deny"):
@@ -336,6 +345,10 @@ class Decision:
                 raise ContractError(
                     "Decision.warnings entries must be non-empty strings, "
                     "got %r" % (w,))
+        if self.policy_mode not in ("enforce", "observe"):
+            raise ContractError(
+                "Decision.policy_mode must be enforce/observe, got %r"
+                % (self.policy_mode,))
         # Frozen dataclass: normalize via object.__setattr__.
         object.__setattr__(self, "nominal_effect", nominal)
         object.__setattr__(self, "warnings", tuple(self.warnings))
@@ -360,7 +373,8 @@ class Decision:
                               diagnostics=self.diagnostics,
                               nominal_effect=self.nominal_effect,
                               mode=self.mode,
-                              warnings=self.warnings)
+                              warnings=self.warnings,
+                              policy_mode=self.policy_mode)
 
     def to_dict(self) -> Dict[str, Any]:
         d = {"effect": self.effect, "allowed": self.allowed,
@@ -379,4 +393,9 @@ class Decision:
             d["nominal_effect"] = self.nominal_effect
             d["mode"] = self.mode
             d["warnings"] = list(self.warnings)
+        # Wave-343: per-policy deployment mode is serialized only when
+        # it carries information -- enforce-mode decisions keep their
+        # byte-identical serialized shape.
+        if self.policy_mode == "observe":
+            d["policy_mode"] = "observe"
         return d
