@@ -15,13 +15,16 @@ A conservative entropy tripwire blocks high-entropy tokens that appear next
 to credential keywords (``password``, ``api_key``, ...) even when they do
 not match a known format.
 
-ENCODING-AWARE MATCHING (F2, extended F8, F428). The credential patterns above
+ENCODING-AWARE MATCHING (F2, extended F8, F428, F429). The credential patterns above
 are syntactic, so an attacker can smuggle a credential past them with one
-encoding step (hex, base64, base32, URL-encoding, JSFuck). ``find_credential``
+encoding step (hex, base64, base32, URL-encoding, JSFuck, text escapes).
+``find_credential``
 therefore decodes likely encodings BEFORE pattern matching, bounded to 2
 layers: each layer finds candidate encoded runs, decodes only those that
 validate (base64/base32 round-trip / even-length hex / percent-decoding
-that changes the text / strict static JSFuck evaluation) AND decode to
+that changes the text / strict static JSFuck evaluation / strict
+backslash-escape, numeric-HTML-entity, and UTF-16-null decodes / NFKC +
+zero-width confusable normalization) AND decode to
 mostly-printable ASCII, then re-runs
 the credential rules on the decoded variants. Innocent base64-looking text
 (random tokens, hashes) decodes to binary and is rejected by the printable
@@ -29,7 +32,9 @@ check, so it is never blocked; text whose DECODED form matches a credential
 regex is blocked because the decoded content genuinely contains a
 credential-shaped string. The JSFuck decoder is a strict bounded
 evaluator, never a JS engine: undecodable runs are ignored, and
-Function() (arbitrary code) always fails closed.
+Function() (arbitrary code) always fails closed. The text-escape decoders
+(F429) are likewise strict static transforms -- malformed, surrogate, or
+out-of-range sequences decode to nothing, never to a guess.
 
 FORM VARIANTS (F8). Every candidate string (the original text and each
 decoded variant) is also checked whitespace-stripped and reversed: those
@@ -57,6 +62,7 @@ import base64
 import hashlib
 import math
 import re
+import unicodedata
 from urllib.parse import unquote, unquote_plus, urlparse
 
 # ---------------------------------------------------------------- patterns
@@ -318,9 +324,10 @@ def _shannon_entropy(text):
 
 
 # ------------------------------------------------- encoding-aware matching
-# F2/F428: decode likely encodings BEFORE credential pattern matching, bounded to
-# 2 layers. Every candidate must VALIDATE (strict decode + round-trip for
-# base64, even-length for hex, strict static evaluation for JSFuck) and decode
+# F2/F428/F429: decode likely encodings BEFORE credential pattern matching,
+# bounded to 2 layers. Every candidate must VALIDATE (strict decode +
+# round-trip for base64, even-length for hex, strict static evaluation for
+# JSFuck, strict static decode for text escapes) and decode
 # to mostly-printable ASCII;
 # otherwise it is not a hidden credential, it is a random token/hash, and it
 # is ignored. This keeps innocent base64-looking text unblocked.
@@ -334,6 +341,20 @@ _B32_RUN = re.compile(r"[A-Z2-7]{24,}={0,6}")
 # decoded char can never match a credential rule, so the threshold only
 # gates decode ATTEMPTS, never blocking decisions.
 _JSFUCK_RUN = re.compile(r"[\[\]()!+\-]{64,}")
+# F429: text-escape runs. Backslash escapes (\uXXXX / \UXXXXXXXX / \xXX
+# / octal / CSS \HHHHHH<space>) need 2+ consecutive escapes before a decode is
+# attempted -- a lone backslash in prose or a Windows path never forms
+# a run, and a run that decodes to non-credential text never blocks.
+_ESC_RUN = re.compile(
+    r"(?:\\(?:u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|x[0-9a-fA-F]{2}|[0-9a-fA-F]{1,6} "
+    r"|[0-7]{1,3})){2,}")
+# F429: numeric HTML entities (&#x..; / &#..;), 2+ consecutive.
+_ENTITY_RUN = re.compile(r"(?:&#[xX][0-9a-fA-F]{1,6};|&#[0-9]{1,7};){2,}")
+# F429: UTF-16 null-interleaved runs (ASCII bytes separated by NULs).
+_UTF16N_RUN = re.compile(r"(?:[\x20-\x7e]\x00){4,}|(?:\x00[\x20-\x7e]){4,}")
+# F429: zero-width / invisible joiners stripped by the confusable
+# normalizer (whole-string variant, alongside NFKC).
+_ZERO_WIDTH_RUN = re.compile("[\u200b\u200c\u200d\ufeff]")
 _WS_RUN = re.compile(r"\s+")
 _MAX_DECODE_BYTES = 4096  # bound on any single decoded blob
 _MAX_JSFUCK_BYTES = 100000  # bound on a JSFuck run (artifact: 34635)
@@ -803,6 +824,144 @@ def _try_jsfuck_decode(run):
     return decoded
 
 
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+_OCT_DIGITS = frozenset("01234567")
+_ENTITY_ONE = re.compile(r"&#([xX][0-9a-fA-F]{1,6}|[0-9]{1,7});")
+
+
+def _safe_chr(cp):
+    """chr(cp), or None for out-of-range / surrogate code points.
+
+    Surrogates are rejected rather than pair-combined: credential rules
+    are ASCII-only, so a non-BMP decode can never match -- rejecting is
+    the strict, safe choice.
+    """
+    if 0 <= cp <= 0x10FFFF and not 0xD800 <= cp <= 0xDFFF:
+        return chr(cp)
+    return None
+
+
+def _decode_one_escape(run, i):
+    """Decode one backslash escape at run[i] == '\\\\'.
+
+    Priority is deterministic: \\uXXXX / \\UXXXXXXXX, \\xXX, then CSS
+    (1-6 hex + mandatory single space, so ``\\78 `` decodes as 0x78
+    rather than octal ``\\7`` + ``8 ``), then octal (1-3 digits, Python
+    semantics). Returns (char, next_index) or None when the escape is
+    malformed -- the whole run is then ignored.
+    """
+    n = len(run)
+    c = run[i + 1]
+    if c == "u":
+        h = run[i + 2:i + 6]
+        if len(h) != 4 or any(ch not in _HEX_DIGITS for ch in h):
+            return None
+        ch = _safe_chr(int(h, 16))
+        return (ch, i + 6) if ch is not None else None
+    if c == "U":
+        h = run[i + 2:i + 10]
+        if len(h) != 8 or any(ch not in _HEX_DIGITS for ch in h):
+            return None
+        ch = _safe_chr(int(h, 16))
+        return (ch, i + 10) if ch is not None else None
+    if c == "x":
+        h = run[i + 2:i + 4]
+        if len(h) != 2 or any(ch not in _HEX_DIGITS for ch in h):
+            return None
+        ch = _safe_chr(int(h, 16))
+        return (ch, i + 4) if ch is not None else None
+    j = i + 1
+    while j < n and j < i + 7 and run[j] in _HEX_DIGITS:
+        j += 1
+    if j > i + 1 and j < n and run[j] == " ":
+        ch = _safe_chr(int(run[i + 1:j], 16))
+        return (ch, j + 1) if ch is not None else None
+    j = i + 1
+    while j < n and j < i + 4 and run[j] in _OCT_DIGITS:
+        j += 1
+    if j == i + 1:
+        return None
+    ch = _safe_chr(int(run[i + 1:j], 8))
+    return (ch, j) if ch is not None else None
+
+
+def _ascii_printable_or_none(decoded):
+    """Gate a decoded variant: ASCII, printable, length-bounded."""
+    if not decoded or len(decoded) > _MAX_DECODE_BYTES:
+        return None
+    try:
+        raw = decoded.encode("ascii")
+    except UnicodeEncodeError:
+        return None
+    if not _printable_ascii(raw):
+        return None
+    return decoded
+
+
+def _try_escape_decode(run):
+    """Strict static decode of one backslash-escape run (F429).
+
+    Returns the decoded string, or None when the run is not fully
+    decodable, decodes to non-text, or is unchanged. Never evals.
+    """
+    if len(run) > 6 * _MAX_DECODE_BYTES:
+        return None
+    out = []
+    i = 0
+    n = len(run)
+    while i < n:
+        if run[i] != "\\" or i + 1 >= n:
+            return None
+        r = _decode_one_escape(run, i)
+        if r is None:
+            return None
+        ch, i = r
+        out.append(ch)
+    return _ascii_printable_or_none("".join(out))
+
+
+def _try_entity_decode(run):
+    """Strict static decode of one numeric-HTML-entity run (F429).
+
+    Returns the decoded string, or None when any entity is malformed,
+    out of range, a surrogate, or the decode is not ASCII text.
+    """
+    out = []
+    pos = 0
+    for m in _ENTITY_ONE.finditer(run):
+        if m.start() != pos:
+            return None
+        body = m.group(1)
+        cp = int(body[1:], 16) if body[0] in "xX" else int(body, 10)
+        ch = _safe_chr(cp)
+        if ch is None:
+            return None
+        out.append(ch)
+        pos = m.end()
+    if pos != len(run) or not out:
+        return None
+    return _ascii_printable_or_none("".join(out))
+
+
+def _try_utf16_null_decode(run):
+    """Decode one UTF-16 null-interleaved run (F429) by stripping NULs."""
+    return _ascii_printable_or_none(run.replace("\x00", ""))
+
+
+def _normalize_confusables(text):
+    """Whole-string confusable normalization variant (F429).
+
+    NFKC folds fullwidth and compatibility confusables to ASCII;
+    zero-width joiners are stripped. Returns the normalized string, or
+    None when it is unchanged. This is a VARIANT for the decode layer --
+    the original text is still scanned as-is.
+    """
+    norm = unicodedata.normalize("NFKC", text)
+    if _ZERO_WIDTH_RUN.search(norm):
+        norm = _ZERO_WIDTH_RUN.sub("", norm)
+    return norm if norm != text else None
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -814,6 +973,13 @@ def _decode_layer(text):
     # URL-encoding layer (whole-string: %XX sequences / '+' separators).
     for dec in (unquote(text), unquote_plus(text)):
         _add(dec)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # Confusable-normalization layer (whole-string, F429): NFKC folds
+    # fullwidth/compatibility confusables; zero-width joiners stripped.
+    norm = _normalize_confusables(text)
+    if norm is not None:
+        _add(norm)
         if len(variants) >= _MAX_CANDIDATES:
             return variants
     # Hex runs embedded anywhere in the text.
@@ -835,6 +1001,22 @@ def _decode_layer(text):
     # decode, never executed; undecodable runs are ignored.
     for m in list(_JSFUCK_RUN.finditer(text))[:_MAX_CANDIDATES]:
         decoded = _try_jsfuck_decode(m.group(0))
+        if decoded is not None:
+            _add(text[:m.start()] + decoded + text[m.end():])
+    # Backslash-escape runs (F429): strict static \uXXXX / \xXX /
+    # octal / CSS-escape decode; undecodable runs are ignored.
+    for m in list(_ESC_RUN.finditer(text))[:_MAX_CANDIDATES]:
+        decoded = _try_escape_decode(m.group(0))
+        if decoded is not None:
+            _add(text[:m.start()] + decoded + text[m.end():])
+    # Numeric HTML-entity runs (F429): strict &#x..; / &#..; decode.
+    for m in list(_ENTITY_RUN.finditer(text))[:_MAX_CANDIDATES]:
+        decoded = _try_entity_decode(m.group(0))
+        if decoded is not None:
+            _add(text[:m.start()] + decoded + text[m.end():])
+    # UTF-16 null-interleaved runs (F429): strip the NUL bytes.
+    for m in list(_UTF16N_RUN.finditer(text))[:_MAX_CANDIDATES]:
+        decoded = _try_utf16_null_decode(m.group(0))
         if decoded is not None:
             _add(text[:m.start()] + decoded + text[m.end():])
     return variants
@@ -904,9 +1086,10 @@ def find_credential(text):
     """Return the id of the first blocking credential rule matching *text*,
     or None. Also fires the entropy tripwire for unknown key formats.
 
-    Encoding-aware (F2/F8/F428): before giving up, decodes likely encodings
-    (base64/base64url, base32, hex, URL-encoding, JSFuck — bounded,
-    2 layers) and
+    Encoding-aware (F2/F8/F428/F429): before giving up, decodes likely encodings
+    (base64/base64url, base32, hex, URL-encoding, JSFuck, backslash
+    escapes, numeric HTML entities, UTF-16 null-interleave, confusable
+    normalization -- bounded, 2 layers) and
     re-runs the credential rules on each decoded variant, in
     whitespace-stripped and reversed form as well. The entropy tripwire
     runs on the original text only (documented boundary, see module

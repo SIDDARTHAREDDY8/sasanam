@@ -20,7 +20,8 @@ Probes:
       Function() / unknown constructs / malformed runs fail closed
       (no variant, no crash, no hang).
   P4  end-to-end: scan_value and scan_tool_args block the JSFuck form.
-  P5  F429 filing pin: backslash-escape forms still miss (OPEN finding).
+  P5  F429 closure pin: backslash-escape forms now block coded
+      (F429 CLOSED 2026-10-05 wave-343 lane 1).
 
 Usage:
   ~/workspace/.gov-venv/bin/python evals/w342_f428close_probes.py
@@ -40,7 +41,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2131  # Wave-341 merge: pin 2131 (no new codes in wave-342 lane 1)
-FOOTER_OPEN = "F429"
+FOOTER_OPEN = "none"
 FOOTER_NEXT = "F430"
 
 from gov import dlp  # noqa: E402
@@ -162,8 +163,11 @@ def p4_end_to_end():
     return ok
 
 
-# ------------------------------------------------------- P5: F429 filing pin
+# ------------------------------------------------------- P5: F429 closure pin
 def p5_f429_still_open():
+    """F429 CLOSED 2026-10-05 wave-343 lane 1: the backslash-escape
+    forms the F428 lane filed as F429 now block coded dlp-slack-token.
+    Name kept for merge-sweep stability."""
     ok = True
     forms = {
         "unicode \\uXXXX": "".join("\\u%04x" % ord(c) for c in PLAIN),
@@ -171,8 +175,8 @@ def p5_f429_still_open():
     }
     for name, form in forms.items():
         r = dlp.find_credential("token=" + form)
-        ok = _check("P5 %s still misses (F429 OPEN)" % name, r is None,
-                    "rule=%s" % r) and ok
+        ok = _check("P5 %s now blocks coded (F429 CLOSED)" % name,
+                    r == "dlp-slack-token", "rule=%s" % r) and ok
     return ok
 
 
@@ -184,7 +188,7 @@ def p6_pin_and_footer():
                 "%d/%d" % (len(TAXONOMY), len(set(TAXONOMY)))) and ok
     last = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
                 ).read().splitlines()[-1]
-    ok = _check("P6b footer open F429/next F430",
+    ok = _check("P6b footer open none/next F430",
                 ("Next free finding: **%s**." % FOOTER_NEXT) in last
                 and ("Open findings: %s." % FOOTER_OPEN) in last,
                 last[:60]) and ok
