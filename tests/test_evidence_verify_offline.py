@@ -300,6 +300,59 @@ class TestPipeline(unittest.TestCase):
             v.verify(bb, vb, time_source=self._clock(), trust_root=root)
 
 
+class TestNotVerifiedList(unittest.TestCase):
+    """Wave-338 (R15, Bernstein #5069): the VSA summary lists what the
+    run did NOT cover, alongside what passed."""
+
+    def _clock(self):
+        return v.FixedClock("t", NOW)
+
+    def test_skipped_stages_listed_with_reasons(self):
+        vb, bb = _good_bundle()
+        rep = v.verify(bb, vb, time_source=self._clock())
+        self.assertEqual(rep["verificationResult"], "PASSED")
+        nv = rep["notVerified"]
+        self.assertIsInstance(nv, list)
+        stages = {s["stage"] for s in nv}
+        # No trust chain supplied, no witness entries, no
+        # witness-consistency mode, legacy schema bundle.
+        self.assertEqual(stages, {"trust-chain", "trust-chain-expiry",
+                                 "witness", "witness-consistency",
+                                 "schema-2.0-extension"})
+        for s in nv:
+            self.assertTrue(s["stage"])
+            self.assertTrue(s["reason"])
+
+    def test_existence_only_marks_predicate_content(self):
+        vb, bb = _good_bundle()
+        rep = v.verify(bb, vb, time_source=self._clock(),
+                       existence_only=True)
+        stages = {s["stage"] for s in rep["notVerified"]}
+        self.assertIn("predicate-content", stages)
+        self.assertNotIn("schema-2.0-extension", stages)
+        # Full mode evaluates predicate content: not listed.
+        rep2 = v.verify(bb, vb, time_source=self._clock())
+        self.assertNotIn("predicate-content",
+                         {s["stage"] for s in rep2["notVerified"]})
+
+    def test_transcript_names_blind_spots(self):
+        vb, bb = _good_bundle()
+        rep = v.verify(bb, vb, time_source=self._clock())
+        text = v.render_transcript(rep)
+        self.assertIn("NOT verified by this run", text)
+        self.assertIn("[skip] witness:", text)
+        # The PASSED banner still says what PASSED means.
+        self.assertIn("PASSED != ALLOW", text)
+
+    def test_machine_json_carries_not_verified(self):
+        vb, bb = _good_bundle()
+        rep = v.verify(bb, vb, time_source=self._clock())
+        doc = v.machine_report(rep)
+        self.assertEqual({s["stage"] for s in doc["notVerified"]},
+                         {"trust-chain", "trust-chain-expiry", "witness",
+                          "witness-consistency", "schema-2.0-extension"})
+
+
 class TestTranscript(unittest.TestCase):
     def test_human_transcript_has_banner(self):
         vb, bb = _good_bundle()

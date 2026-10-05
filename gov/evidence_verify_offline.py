@@ -1709,8 +1709,26 @@ def verify(bundle_bytes, verification_bundle, trust_root=None,
     :class:`VerificationError` on any check failure, or
     :class:`InternalError` when the verifier itself is broken.
     Zero network I/O on this path by construction.
+
+    Wave-338 (R15): the report carries ``notVerified`` -- the stages
+    the pipeline did NOT evaluate this run (trust-chain, witness,
+    witness-consistency, predicate content under existence-only, the
+    schema-2.0 extension gate on legacy bundles), each with its
+    bypass reason. The human transcript prints them after the pass
+    list. PASSED stays evidence input (PASSED != ALLOW); the blind
+    spots are part of the verdict, not footnotes.
     """
     checks = []
+
+    # Wave-338 (R15, Bernstein #5069 "the panel lists what a run did not
+    # cover"): stages the pipeline did NOT evaluate are recorded as
+    # machine-readable blind spots on the VSA summary alongside the
+    # passes -- verificationResult PASSED is evidence input, and the
+    # report must name its own coverage honestly.
+    not_verified = []
+
+    def _skip(stage, reason):
+        not_verified.append({"stage": stage, "reason": reason})
 
     def _pass(step, detail):
         checks.append({"step": step, "result": "pass", "detail": detail})
@@ -1772,6 +1790,16 @@ def verify(bundle_bytes, verification_bundle, trust_root=None,
               "tip root (content %s)"
               % (chain_tip["chain_version"], _fmt_time(now),
                  chain_tip["content_hash"][:16]))
+    else:
+        # R15: no versioned chain supplied -- rotation + freshness are
+        # NOT evaluated; the compiled-in or caller-supplied root was
+        # used as-is.
+        _skip("trust-chain",
+              "no versioned trust-root chain supplied: rotation and "
+              "freshness not evaluated (root used as-is)")
+        _skip("trust-chain-expiry",
+              "no versioned trust-root chain supplied: tip validity at "
+              "bundle time not evaluated")
 
     # -- step 1: parse --
     if not isinstance(bundle_bytes, (bytes, bytearray)) \
@@ -1876,6 +1904,19 @@ def verify(bundle_bytes, verification_bundle, trust_root=None,
                     " + %d required claim(s)"
                     % len(policy["required_predicate_claims"]),
                     v2_note))
+    # R15: predicate content not evaluated in existence-only mode, and
+    # the schema-2.0 extension gate not evaluated on legacy bundles --
+    # the report names both blind spots.
+    if existence_only:
+        _skip("predicate-content",
+              "existence-only mode: signature and binding verified; "
+              "predicate content NOT evaluated")
+    elif statement["predicate"].get("evidence_schema_version") != \
+            _schema_v2().EVIDENCE_SCHEMA_V2:
+        _skip("schema-2.0-extension",
+              "statement does not claim evidence-schema/2.0: legacy "
+              "predicate rules applied; AU-3/CC8.1 extension claims not "
+              "validated")
 
     # -- step 6: digest (same-bytes) --
     if canonical(statement) != payload:
@@ -1944,6 +1985,12 @@ def verify(bundle_bytes, verification_bundle, trust_root=None,
               "tree_size %d, index %d)"
               % (witness_info["log_id"][:16], witness_info["tree_size"],
                  witness_info["log_index"]))
+    else:
+        # R15: no witness anchoring evaluated for this run.
+        _skip("witness",
+              "bundle carries no witness entries and the signed policy "
+              "does not require witness anchoring: log-backed "
+              "consistency not evaluated")
 
     # -- witness-consistency stage (conditional, wave-319 lane 3):
     # runs only when the signed policy configures the
@@ -1952,6 +1999,12 @@ def verify(bundle_bytes, verification_bundle, trust_root=None,
     # skipped). Bundles without the policy section keep the exact
     # legacy behavior above.
     wc_info = None
+    if policy["witness_consistency"] is None:
+        # R15: witness-consistency mode not evaluated for this run.
+        _skip("witness-consistency",
+              "signed policy configures no witness-consistency mode: "
+              "witness cosignature quorum and log-growth proof not "
+              "evaluated")
     if policy["witness_consistency"] is not None:
         wc = _witness_consistency()
         raw_ev = vb.get("consistency_evidence")
@@ -2028,6 +2081,12 @@ def verify(bundle_bytes, verification_bundle, trust_root=None,
                                "verified": n_ts},
         "witness": witness_info,
         "witness_consistency": wc_info,
+        # R15 (Bernstein #5069 "the panel lists what a run did not
+        # cover"): stages the pipeline did NOT evaluate, each with the
+        # reason it was bypassed. Empty when every conditional stage
+        # ran -- a PASSED report with an empty list claims full
+        # coverage honestly.
+        "notVerified": not_verified,
         "existenceOnly": bool(existence_only),
         "checks": checks,
     }
@@ -2069,6 +2128,13 @@ def render_transcript(report):
     lines.append("The following checks were performed:")
     for c in report["checks"]:
         lines.append("  [pass] %s: %s" % (c["step"], c["detail"]))
+    # R15: the panel lists what the run did NOT cover -- blind spots
+    # are part of the transcript, not hidden behind PASSED.
+    not_verified = report.get("notVerified") or []
+    if not_verified:
+        lines.append("The following were NOT verified by this run:")
+        for s in not_verified:
+            lines.append("  [skip] %s: %s" % (s["stage"], s["reason"]))
     lines.append("NOTE: verificationResult PASSED is evidence input, not "
                  "an authorization decision (PASSED != ALLOW).")
     return "\n".join(lines) + "\n"
