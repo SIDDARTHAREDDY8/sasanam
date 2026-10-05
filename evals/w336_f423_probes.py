@@ -34,7 +34,7 @@ P2   Legitimate controls: a valid PRM URL passes check_prm_url and
      percent-encoded %0D is NOT a raw control char and passes shape
      validation (the guard is on the raw wire value only).
 P3   Pin 2106/2106/0 sorted-unique on raw literals; no new codes;
-     footer open F424, F425 / next F426; F423 CLOSED recorded.
+     footer open F424, F425, F426 / next F427; F423 CLOSED recorded.
 P4   Green check (depth-1): honors GOV_SKIP_GREEN; otherwise runs
      evals/w335_redteam_probes.py as a child with GOV_SKIP_GREEN=1
      (fresh TMPDIR) -- it owns the PRM seam's regression probes.
@@ -57,7 +57,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2106  # Wave-336 lane 1: no new codes; pin unchanged 2106.
-FOOTER_NEXT = "F426"  # Next free finding number.
+FOOTER_NEXT = "F427"  # Next free finding number (F426 filed wave-337).
 
 _results = []
 _PROBES = []
@@ -289,7 +289,7 @@ def p2():
 @_probe("P3")
 def p3():
     """Pin 2106/2106/0 sorted-unique on raw literals; no new codes;
-    footer open F424, F425 / next F426; F423 CLOSED recorded."""
+    footer open F424, F425, F426 / next F427; F423 CLOSED recorded."""
     pid = "P3-pin-footer"
     if len(dc.TAXONOMY) != TAXONOMY_PIN:
         _break(pid, "pin: want %d, got %d"
@@ -319,8 +319,8 @@ def p3():
     if "Next free finding: **%s**." % FOOTER_NEXT not in text:
         _break(pid, "footer next-free mismatch")
         return
-    if "**Open findings: F424, F425.**" not in text:
-        _break(pid, "footer open-findings mismatch (want open F424, F425)")
+    if "**Open findings: F424, F425, F426.**" not in text:
+        _break(pid, "footer open-findings mismatch (want open F424, F425, F426)")
         return
     if "## F423 " not in text:
         _break(pid, "F423 section missing from FINDINGS.md")
@@ -329,7 +329,7 @@ def p3():
         _break(pid, "F423 closure not recorded")
         return
     _held(pid, "taxonomy 2106/2106/0 sorted-unique; F423 CLOSED; "
-               "footer open F424, F425 / next F426")
+               "footer open F424, F425, F426 / next F427")
 
 
 # ---------------------------------------------------------------------------
