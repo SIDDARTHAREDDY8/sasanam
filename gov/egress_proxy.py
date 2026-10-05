@@ -792,9 +792,15 @@ class ReadinessGate(object):
 
     def wait_ready(self, timeout=5.0):
         """Poll the readiness flag (deployment: poll the listen socket).
-        Returns True iff the proxy became ready in time."""
-        deadline = time.time() + timeout
-        while time.time() < deadline:
+        Returns True iff the proxy became ready in time.
+
+        Wave-339 (R20): the deadline uses ``time.monotonic()``, not
+        ``time.time()``. The wall clock can step under NTP: a forward
+        step truncated the readiness window (spurious ProxyNotReadyError),
+        a backward step stalled the launcher. A timeout is a duration,
+        so it is measured on the monotonic clock."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
             if self.proxy.ready:
                 return True
             time.sleep(0.01)

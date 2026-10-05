@@ -22,6 +22,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 _TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 for _p in (_TESTS_DIR, os.path.dirname(_TESTS_DIR)):
@@ -485,6 +486,59 @@ class TestReadinessRace(unittest.TestCase):
         gate = ReadinessGate(proxy)
         self.assertTrue(gate.launch(lambda: "child-ran", timeout=1.0)
                         == "child-ran")
+
+    def test_wait_ready_ignores_ntp_forward_step(self):
+        # Wave-339 (R20): the readiness deadline is monotonic. A wall-clock
+        # forward step (NTP) must NOT truncate the 5s readiness window.
+        policy = base_policy()
+        proxy = EgressProxy(policy)  # never marked ready
+        gate = ReadinessGate(proxy)
+        mono = [1000.0]
+        calls = [0]
+
+        def fake_monotonic():
+            calls[0] += 1
+            mono[0] += 0.01  # 10ms per poll iteration: monotonic reality
+            return mono[0]
+
+        def jumping_wall_clock():
+            # Wall clock steps +10s mid-wait -- must be IGNORED.
+            return 1000.0 if calls[0] < 6 else 1010.0
+
+        import gov.egress_proxy as _ep
+        with mock.patch.object(_ep.time, "monotonic",
+                               side_effect=fake_monotonic), \
+             mock.patch.object(_ep.time, "time",
+                               side_effect=jumping_wall_clock), \
+             mock.patch.object(_ep.time, "sleep", lambda s: None):
+            self.assertFalse(gate.wait_ready(timeout=5.0))
+        # ~500 monotonic iterations (5s / 10ms); the +10s wall jump changed
+        # nothing. A wall-clock deadline would have exited after ~5 calls.
+        self.assertGreater(calls[0], 400)
+
+    def test_wait_ready_ignores_ntp_backward_step(self):
+        # Wave-339 (R20): a wall-clock BACKWARD step must not stall the
+        # launcher past the timeout either.
+        policy = base_policy()
+        proxy = EgressProxy(policy)
+        gate = ReadinessGate(proxy)
+        mono = [1000.0]
+        calls = [0]
+
+        def fake_monotonic():
+            calls[0] += 1
+            mono[0] += 0.01
+            return mono[0]
+
+        with mock.patch.object(sys.modules["gov.egress_proxy"].time,
+                               "monotonic", side_effect=fake_monotonic), \
+             mock.patch.object(sys.modules["gov.egress_proxy"].time,
+                               "time", return_value=500.0), \
+             mock.patch.object(sys.modules["gov.egress_proxy"].time,
+                               "sleep", lambda s: None):
+            self.assertFalse(gate.wait_ready(timeout=5.0))
+        self.assertGreater(calls[0], 400)
+        self.assertLess(calls[0], 700)
 
 
 # ---------------------------------------------------------------------------

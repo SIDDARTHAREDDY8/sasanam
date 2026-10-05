@@ -11286,6 +11286,20 @@ TAXONOMY = {
         "evidence_kinds_required": ['digest'],
         "reverify_steps": ['recompute'],
     },
+    'oci-registry-onboarding-refused': {
+        "domain": 'oci',
+        "code": 'oci-registry-onboarding-refused',
+        "human": 'OCI registry onboarding gate: the registry endpoint or '
+                 'distribution path is not certified for evidence '
+                 'distribution -- live Referrers-API probe inconclusive, '
+                 'probe disagrees with the trust matrix, unknown registry '
+                 'kind, or a forbidden path (e.g. Harbor replication); '
+                 'refused fail-closed, never distribute on an uncertified '
+                 'path',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
     'oci-subject-mismatch': {
         "domain": 'oci',
         "code": 'oci-subject-mismatch',
