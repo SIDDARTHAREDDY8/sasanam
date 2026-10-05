@@ -33,8 +33,10 @@ P2 (executor integration -- both F33 boundaries):
   P2a  one direct execution charges exactly once (no double-charge).
   P2b  burst refuses coded tool-rate-limit-exceeded with a chained
        tool_call_refused log record carrying the coded flag.
-  P2c  limiter failure (raising clock) becomes coded
-       tool-rate-limiter-unavailable -- deny, never unlimited.
+  P2c  F425 CLOSED (wave-337 lane 1): limiter failure (raising
+       clock) becomes coded tool-rate-limiter-unavailable -- the
+       diagnostic windowed_count() is guarded, so the coded denial
+       and its chained refusal record always win.
   P2d  approved-execution sweep charges the wire: 11 queued+approved
        http_posts refuse coded on the sweep at the 11th.
 
@@ -48,10 +50,10 @@ P3 (refresh-token per-token locks):
   P3d  lock registry is lazy (no lock at mint) and unbounded
        (documented residual, mirrors _tokens growth -- pinned fact,
        not a finding).
-  P3e  F424 (this lane): lock_timeout_seconds is UNVALIDATED -- NaN
-       escapes refresh() as a bare ValueError (F417-class uncoded
-       exception); negative silently voids the documented bound and
-       blocks forever. BREAK, finding filed.
+  P3e  F424 CLOSED (wave-337 lane 1): lock_timeout_seconds is now
+       VALIDATED at construction -- NaN/inf/negative refuse with
+       ValueError; 0 is the documented non-blocking attempt with the
+       coded lock-unavailable refusal when contended.
 
 P4 (reserved PQ slot):
   P4a  bundle carrying pqAlgId="mldsa44" (otherwise valid) refuses
@@ -76,9 +78,9 @@ P5 (F423 -- OPEN at base, attacked live):
 P6 (honesty):
   P6a  pin 2106: taxonomy 2106/2106/0 sorted-unique on raw source
        literals; all 6 wave-335 codes centrally registered.
-  P6b  footer: open F424, F425 / next F426 (raw-literal assertion,
-       wave-331 lesson).
-  P6c  F424 and F425 sections present and marked OPEN; F423 CLOSED.
+  P6b  footer: open none / next F426 (raw-literal assertion,
+       wave-331 lesson); F424/F425 closed wave-337 lane 1.
+  P6c  F424 and F425 sections present and marked CLOSED; F423 CLOSED.
 
 P7 (older closure spot-regressions):
   P7a  F422: burst refuses coded tool-rate-limit-exceeded (wire).
@@ -427,9 +429,9 @@ def P2b():
 def P2c():
     """Limiter failure (raising clock) must become coded
     tool-rate-limiter-unavailable -- a broken limiter denies, never
-    allows unlimited. F425 (this lane): the fail-closed handler's own
-    diagnostic windowed_count() re-invokes the broken clock, so the
-    RAW exception escapes uncoded and no refusal record is chained."""
+    allows unlimited. F425 CLOSED (wave-337 lane 1): the fail-closed
+    handler's diagnostic windowed_count() is guarded, so the coded
+    denial always wins."""
     pid = "P2c-limiter-failure-denies-coded"
     run, ex, ident = _mkrun()
     def _boom():
@@ -627,48 +629,41 @@ def P3d():
 
 
 def P3e():
-    """F424 (this lane): lock_timeout_seconds is UNVALIDATED at
-    construction. NaN -> bare ValueError escapes refresh() uncoded
-    (F417-class); negative -> lock.acquire(timeout=-1) blocks FOREVER,
-    silently voiding the documented 5s bound."""
+    """F424 CLOSED (wave-337 lane 1): lock_timeout_seconds is now
+    VALIDATED at construction. NaN/inf/negative/non-numeric refuse
+    with ValueError (fail-fast, deployment time); 0 is the documented
+    single non-blocking attempt (still the coded
+    identity-refresh-lock-unavailable refusal when contended).
+    Wave-306 lesson: this probe demonstrated the BREAK on the open
+    tree; on the closed tree it asserts the coded/fail-fast closure."""
     pid = "P3e-timeout-unvalidated"
-    # Sub-case 1: NaN -> uncoded ValueError from refresh().
+    for bad in (float("nan"), float("inf"), float("-inf"), -1, -0.5, "abc"):
+        try:
+            AI.RefreshTokenStore(time_fn=lambda: 2000.0,
+                                 lock_timeout_seconds=bad)
+        except ValueError:
+            continue
+        except Exception as e:  # noqa: BLE001
+            _break(pid, "timeout %r: want ValueError, got %r" % (bad, e))
+            return
+        _break(pid, "timeout %r accepted (F424 still live)" % (bad,))
+        return
+    # Zero semantics: one non-blocking attempt, coded refusal.
     store = AI.RefreshTokenStore(time_fn=lambda: 2000.0,
-                                 lock_timeout_seconds=float("nan"))
+                                 lock_timeout_seconds=0)
     issuer = AI.IdentityTokenIssuer(b"7" * 32)
     rid, secret = _mint(store)
+    lock = store._lock_for(rid)
+    lock.acquire()
     code = _code_of(lambda: store.refresh(issuer, rid, secret, "aud",
                                           now=2001))
-    if code is None:
-        _break(pid, "NaN timeout: refresh succeeded?!")
-        return
-    if not str(code).startswith("UNEXPECTED"):
-        _break(pid, "NaN timeout: want uncoded escape, got coded %r" % (code,))
-        return
-    # Sub-case 2: negative -> unbounded block under contention.
-    store2 = AI.RefreshTokenStore(time_fn=lambda: 2000.0,
-                                  lock_timeout_seconds=-1)
-    rid2, secret2 = _mint(store2)
-    lock = store2._lock_for(rid2)
-    lock.acquire()
-    done = []
-
-    def worker():
-        try:
-            store2.refresh(issuer, rid2, secret2, "aud", now=2001)
-            done.append("finished")
-        except Exception as e:  # noqa: BLE001
-            done.append("raised:%r" % (e,))
-    t = threading.Thread(target=worker, daemon=True)
-    t.start()
-    t.join(4)
     lock.release()
-    if done:
-        _break(pid, "negative timeout: contended acquire returned: %r"
-               % (done,))
+    if code != "identity-refresh-lock-unavailable":
+        _break(pid, "0 timeout: want coded lock-unavailable, got %r"
+               % (code,))
         return
-    _break(pid, "F424: NaN timeout escapes uncoded ValueError; -1 blocks "
-           "forever under contention (documented 5s bound voided)")
+    _held(pid, "NaN/inf/negative refuse at construction; 0 non-blocking "
+               "and coded when contended")
 
 # ---------------------------------------------------------------------------
 # P4: reserved PQ slot.
@@ -868,15 +863,16 @@ def P6a():
 
 
 def P6b():
-    """Footer honesty: the last line carries open F424, F425 and
-    next F426 (raw-literal assertion, wave-331 lesson)."""
-    pid = "P6b-footer-open-f424-f425-next-f426"
+    """Footer honesty: the last line carries open none and
+    next F426 (raw-literal assertion, wave-331 lesson). F424/F425 were
+    closed by wave-337 lane 1."""
+    pid = "P6b-footer-open-none-next-f426"
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               "rb") as f:
         lines = f.read().decode("utf-8").splitlines()
     last = lines[-1] if lines else ""
-    if "Open findings: F424, F425" not in last:
-        _break(pid, "last line lacks 'Open findings: F424, F425': %r"
+    if "Open findings: none." not in last:
+        _break(pid, "last line lacks 'Open findings: none.': %r"
                % (last[:160],))
         return
     if "Next free finding: **F426**" not in last:
@@ -888,25 +884,26 @@ def P6b():
     if not any(l.startswith("## F425 ") for l in lines):
         _break(pid, "F425 section missing from FINDINGS.md")
         return
-    _held(pid, "footer honest: open F424, F425 / next F426")
+    _held(pid, "footer honest: open none / next F426")
 
 
 def P6c():
-    """F424/F425 sections are present and marked OPEN; F423 CLOSED at the wave-336 merge."""
-    pid = "P6c-f424-f425-open-f423-closed"
+    """F424/F425 sections are present and marked CLOSED (wave-337 lane
+    1); F423 CLOSED at the wave-336 merge."""
+    pid = "P6c-f424-f425-closed-f423-closed"
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
     for fnum in ("F424", "F425"):
         body = text.split("## " + fnum)[1]
         body = re.split(r"\n## F\d+|\nNext free finding:", body)[0]
-        if "Status: OPEN" not in body:
-            _break(pid, "%s not marked OPEN" % (fnum,))
+        if "Status: CLOSED" not in body:
+            _break(pid, "%s not marked CLOSED" % (fnum,))
             return
     f423 = text.split("## F423")[1]
     f423_body = re.split(r"\n## F\d+|\nNext free finding:", f423)[0]
     if "Status: CLOSED" not in f423_body:
         _break(pid, "F423 not CLOSED at merge")
         return
-    _held(pid, "F424/F425 OPEN (filed this lane); F423 CLOSED at merge")
+    _held(pid, "F424/F425 CLOSED (wave-337 lane 1); F423 CLOSED at merge")
 
 
 # ---------------------------------------------------------------------------
@@ -990,16 +987,17 @@ _PROBES = [
     ("P5a-f423-nul-accepted", P5a),
     ("P5b-f423-crlf-mutated", P5b),
     ("P6a-pin-2106-taxonomy", P6a),
-    ("P6b-footer-open-f424-f425-next-f426", P6b),
-    ("P6c-f424-f425-open-f423-closed", P6c),
+    ("P6b-footer-open-none-next-f426", P6b),
+    ("P6c-f424-f425-closed-f423-closed", P6c),
     ("P7a-f422-burst-coded", P7a),
     ("P7b-f417-port-coded", P7b),
     ("P7c-f420-prm-happy-path", P7c),
 ]
 
 _EXPECTED_BREAKS = set()  # never {} (wave-331 lesson); breaks documented below
-# Expected tally on the wave-336 merged tree: 2 BREAK (P2c F425 live,
-# P3e F424 live) / 28 HELD / 0 ERROR, plus 4 green-check children below.
+# Expected tally on the wave-337 closed tree: 0 BREAK / 34 HELD /
+# 0 ERROR (P2c F425 and P3e F424 now assert their closures). On the
+# wave-336 merged tree the tally was 2/32/0.
 # The 2 breaks are genuine open findings, not battery bugs: P2c is filed
 # as F425, P3e as F424. P5a/P5b are F423 (CLOSED at the wave-336 merge,
 # held on coded refusal).

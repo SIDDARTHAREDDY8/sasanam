@@ -37,7 +37,7 @@ P9 (optional-extra convention): without the framework installed the
    succeeds.
 P10 (honesty): taxonomy 2106/2106/0 sorted-unique on raw source
    literals; no new decision codes (adapters reuse existing outcomes);
-   footer open F424, F425 / next F426.
+   footer open none / next F426.
 
 Framework-real probes (P1-P8) SKIP cleanly when crewai/ag2 are not
 installed (optional extras, same convention as the LangChain adapter
@@ -441,15 +441,15 @@ def P10a():
 
 
 def P10b():
-    pid = "P10b-footer-open-f424-f425-next-f426"
+    pid = "P10b-footer-open-none-next-f426"
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
     ok = ("Next free finding: **F426**" in text
-          and m_open and m_open[-1].strip() == "F424, F425")
+          and m_open and m_open[-1].strip() == "none")
     (_held if ok else _break)(
-        pid, "footer: open F424, F425 / next F426" if ok
-        else "footer mismatch vs open F424, F425 / next F426")
+        pid, "footer: open none / next F426" if ok
+        else "footer mismatch vs open none / next F426")
 
 
 _PROBES = [
@@ -464,7 +464,7 @@ _PROBES = [
     ("P8a-ag2-malformed-and-unregistered", P8a),
     ("P9a-adapter-extra-convention", P9a),
     ("P10a-pin-taxonomy-2106-sorted", P10a),
-    ("P10b-footer-open-f424-f425-next-f426", P10b),
+    ("P10b-footer-open-none-next-f426", P10b),
 ]
 
 _EXPECTED_BREAKS = set()
