@@ -1,7 +1,7 @@
 """Wave-334 MCP server-side token guard battery (F419 closure).
 
 Base: a40c2ef4 (wave-333 merge). Footer at close: open F417 / next F420
-(F419 CLOSED here). Pin: 2088 (+11 mcp-server-auth-*).
+(F419 CLOSED here). Pin: 2100 (+11 mcp-server-auth-*).
 
 P1  F419 red-first, cross-resource replay: a token minted for resource
     A presented at resource B refuses coded
@@ -30,7 +30,7 @@ P6  Valid token at the right resource with covering scope returns an
 P7  Verifier rejection (raising verifier, non-dict claims) refuses
     coded mcp-server-auth-token-invalid; the challenge never leaks
     token bytes and strips header-injection characters.
-P8  Pin 2088 + footer state (open F417 / next F420; F419 CLOSED);
+P8  Pin 2100 + footer state (open none / next F421; F419 CLOSED);
     taxonomy sorted-unique on raw literals; the 11 new codes centrally
     registered.
 P9  Green check (depth-1): honors GOV_SKIP_GREEN; otherwise runs the
@@ -59,9 +59,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2088  # Wave-333 merge: pin 2077.; Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*)
-FOOTER_OPEN = "F417"  # F417 OPEN (redteam bare-port); F419 (server-authz) CLOSED here.
-FOOTER_NEXT = "F420"  # Next free finding number.
+TAXONOMY_PIN = 2100 # Wave-333 merge: pin 2077.; Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*).
+FOOTER_OPEN = "none"  # F417 CLOSED 2026-10-05 (wave-334 lane 1); F419 (server-authz) CLOSED here.
+FOOTER_NEXT = "F421"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -420,9 +420,9 @@ def _p7():
 # P8 -- pin + footer.
 # ---------------------------------------------------------------------------
 
-@probe("P8-pin-2088-footer-f419-closed")
+@probe("P8-pin-2100-footer-f419-closed")
 def _p8():
-    pid = "P8-pin-2088-footer-f419-closed"
+    pid = "P8-pin-2100-footer-f419-closed"
     with open(os.path.join(REPO, "gov", "decision_codes.py"),
               encoding="utf-8") as fh:
         src = fh.read()
@@ -452,8 +452,8 @@ def _p8():
                       % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
     if "## F419" not in foot or "Status: CLOSED" not in foot.split("## F419")[1][:2500]:
         return _break(pid, "F419 entry not CLOSED")
-    return _held(pid, "taxonomy 2088/2088/0 sorted unique; 11 codes "
-                      "registered; footer open F417 / next F420; F419 CLOSED")
+    return _held(pid, "taxonomy 2100/2100/0 sorted unique; 11 codes "
+                      "registered; footer open none / next F421; F419 CLOSED")
 
 
 # ---------------------------------------------------------------------------

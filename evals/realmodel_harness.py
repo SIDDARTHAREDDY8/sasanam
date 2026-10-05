@@ -386,6 +386,11 @@ class SpendLedger:
         self.run_spent = 0.0
         self.entries = []
         self._load()
+        # Wave-334 merge: ensure the canonical ledger file exists on
+        # startup (not just on first record). If _load() found nothing
+        # (fresh disk, no mirror), _save() creates the empty ledger now.
+        if not self.path.exists():
+            self._save()
 
     @staticmethod
     def _default_canonical_path():

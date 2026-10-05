@@ -9,7 +9,7 @@ is CLOSED (lane 1, wave-326 merge) so P2a must be HELD; F408's P17
 must stay HELD. P3 attacks the federated-identity / threshold-VSA /
 offline-verifier seams. P4 is the regression section (F409 HELD;
 F408/F407/F406 HELD). P5 runs prior batteries in child mode
-(GOV_SKIP_GREEN=1). P6 pins the taxonomy (2088) and the footer state.
+(GOV_SKIP_GREEN=1). P6 pins the taxonomy (2100) and the footer state.
 
 Filed finding: F411 (MEDIUM) -- federated-mode mint_identity accepts
 an unverified dict token_claims, bypassing token authentication
@@ -41,9 +41,9 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
-TAXONOMY_PIN = 2088  # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*)
+TAXONOMY_PIN = 2100 # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*).
 FOOTER_OPEN = "none"  # F417 CLOSED 2026-10-05 (wave-334 lane 1); no open findings.
-FOOTER_NEXT = "F419"  # Next free finding number (F417 OPEN, F418 closed at wave-333 merge).
+FOOTER_NEXT = "F421"  # Next free finding number (F417 OPEN, F418 closed at wave-333 merge).
 
 _results = []
 _PROBES = []
@@ -960,17 +960,17 @@ def _p5f():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2088-sorted")
+@probe("P6a-pin-taxonomy-2100-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
-    if TAXONOMY_PIN != 2088:
-        return _break("P6a-pin-taxonomy-2088-sorted",
-                      "TAXONOMY_PIN is %r, want 2088" % (TAXONOMY_PIN,))
-    if len(codes) != 2088 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-2088-sorted",
+    if TAXONOMY_PIN != 2100:
+        return _break("P6a-pin-taxonomy-2100-sorted",
+                      "TAXONOMY_PIN is %r, want 2100" % (TAXONOMY_PIN,))
+    if len(codes) != 2100 or codes != sorted(codes):
+        return _break("P6a-pin-taxonomy-2100-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    return _held("P6a-pin-taxonomy-2088-sorted", "2088/2088/0 sorted")
+    return _held("P6a-pin-taxonomy-2100-sorted", "2100/2100/0 sorted")
 
 
 @probe("P6b-footer-open-none-next-f419")

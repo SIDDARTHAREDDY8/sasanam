@@ -27,7 +27,7 @@ W (6): witness-backed CVE analogues -- entry transplant binding
     (CVE-2026-22703), witness-time window (CVE-2026-24122), always-on content
     checks (CVE-2026-39395), crash-never-success (CVE-2026-44310). All HELD
     on base.
-P (2): taxonomy pin 2088 (this lane registers no taxonomy codes -- the
+P (2): taxonomy pin 2100 (this lane registers no taxonomy codes -- the
     module's refusals are bundle-scoped codes by design) and footer
     open F415 / next F417 (wave-330 merge: F414 closed, F415/F416 filed).
 
@@ -63,10 +63,10 @@ from gov import evidence_intoto as _intoto  # noqa: E402
 from gov import dsse_envelope as _dsse  # noqa: E402
 from gov.signing import Ed25519Signer, Ed25519Verifier  # noqa: E402
 
-TAXONOMY_PIN = 2088  # Wave-328 merge: pin 2044 -> 2056 (+12). This lane adds no taxonomy codes.; Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*)
+TAXONOMY_PIN = 2100 # Wave-328 merge: pin 2044 -> 2056 (+12). This lane adds no taxonomy codes.; Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*).
 
 FOOTER_OPEN = "none"  # F417 CLOSED 2026-10-05 (wave-334 lane 1); no open findings.
-FOOTER_NEXT = "F419"  # Next free finding number (F417 OPEN, F418 closed at wave-333 merge).
+FOOTER_NEXT = "F421"  # Next free finding number (F417 OPEN, F418 closed at wave-333 merge).
 
 _results = []
 _PROBES = []
@@ -450,10 +450,10 @@ def _w6():
 # P: pin + footer regression probes
 # ---------------------------------------------------------------------------
 
-@probe("P1-pin-taxonomy-2088")
+@probe("P1-pin-taxonomy-2100")
 def _p1():
-    pid = "P1-pin-taxonomy-2088"
-    if TAXONOMY_PIN != 2088:
+    pid = "P1-pin-taxonomy-2100"
+    if TAXONOMY_PIN != 2100:
         return _break(pid, "battery pin drifted: %r" % TAXONOMY_PIN)
     lits = []
     with open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -462,11 +462,11 @@ def _p1():
             m = re.search(r'"code"\s*:\s*\'([^\']+)\'', line)
             if m:
                 lits.append(m.group(1))
-    if len(lits) != 2088 or len(set(lits)) != 2088 \
+    if len(lits) != 2100 or len(set(lits)) != 2100 \
             or lits != sorted(lits):
-        return _break(pid, "taxonomy not 2088/2088/0 sorted "
+        return _break(pid, "taxonomy not 2100/2100/0 sorted "
                            "(%d/%d)" % (len(lits), len(set(lits))))
-    return _held(pid, "taxonomy 2088/2088/0 sorted")
+    return _held(pid, "taxonomy 2100/2100/0 sorted")
 
 
 @probe("P2-footer")

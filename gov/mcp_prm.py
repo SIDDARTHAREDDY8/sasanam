@@ -1,6 +1,6 @@
 """RFC 9728 Protected Resource Metadata verification for MCP OAuth clients.
 
-Wave-334 lane 3 (F419 closure). The base tree had no Protected
+Wave-334 lane 3 (F420 closure; filed as F419, renumbered at merge). The base tree had no Protected
 Resource Metadata verification primitive at all: a resource's PRM
 document (RFC 9728 section 3.2) was never cross-checked against the
 sealed authorization-server binding, so an integrator following RFC

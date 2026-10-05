@@ -1,9 +1,9 @@
-"""Wave-334 PRM battery (F419 closure).
+"""Wave-334 PRM battery (F420 closure; filed as F419, renumbered).
 
 Base: a40c2ef4 (wave-333 merge). Footer at lane: open F417 / next F420
-(F419 filed then CLOSED here). Pin: 2083 (+6 mcp-oauth-prm-*).
+(F420 filed then CLOSED here; filed as F419, renumbered). Pin: 2100 (+6 mcp-oauth-prm-*).
 
-P1  F419 red-first, now closed: the forged PRM (attacker AS in
+P1  F420 red-first, now closed: the forged PRM (attacker AS in
     authorization_servers, mismatched resource) refuses coded
     mcp-oauth-prm-issuer-unlisted / mcp-oauth-prm-resource-mismatched
     (on the base tree there was no code path taking a PRM document
@@ -40,7 +40,7 @@ P7  F417-class containment at this seam: a non-numeric port in a
 P8  Tampered sealed binding still reports mcp-oauth-binding-tampered
     (never misreported as a PRM shape error); end-to-end
     discover_and_verify_prm with a stub fetcher returns a verdict.
-P9  Pin 2083 + footer state (open F417 / next F420; F419 CLOSED);
+P9  Pin 2100 + footer state (open none / next F421; F420 CLOSED);
     taxonomy sorted-unique on raw literals; the 6 new codes centrally
     registered.
 P10 Green check (depth-1): honors GOV_SKIP_GREEN; otherwise runs the
@@ -50,7 +50,7 @@ P10 Green check (depth-1): honors GOV_SKIP_GREEN; otherwise runs the
 gov/ changes in this lane: new gov/mcp_prm.py (+6 codes in
 gov/decision_codes.py, pin 2077 -> 2083); bound_issuer() accessor
 added to gov/mcp_oauth_binding.py (no behavior change). Findings:
-F419 filed then CLOSED here.
+F420 filed then CLOSED here.
 """
 
 import os
@@ -66,9 +66,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2083  # Wave-334 lane 3: pin 2077 -> 2083 (+6 mcp-oauth-prm-*).
-FOOTER_OPEN = "F417"  # F417 OPEN (redteam bare-port); F419 CLOSED in-lane.
-FOOTER_NEXT = "F420"  # Next free finding number.
+TAXONOMY_PIN = 2100 # Wave-334 lane 3: pin 2077 -> 2083 (+6 mcp-oauth-prm-*).; Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*).
+FOOTER_OPEN = "none"  # F417 CLOSED 2026-10-05 (wave-334 lane 1); F420 CLOSED in-lane (filed as F419, renumbered).
+FOOTER_NEXT = "F421"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -139,7 +139,7 @@ def _expect_code(pid, want, fn, *args, **kwargs):
 
 
 # ---------------------------------------------------------------------------
-# P1 -- F419 red-first, now closed.
+# P1 -- F420 red-first, now closed.
 # ---------------------------------------------------------------------------
 
 @probe("P1a-prm-forged-issuer-unlisted")
@@ -488,9 +488,9 @@ def _p8b():
 # P9 -- pin + footer.
 # ---------------------------------------------------------------------------
 
-@probe("P9-pin-2083-footer-f420")
+@probe("P9-pin-2100-footer-f420")
 def _p9():
-    pid = "P9-pin-2083-footer-f420"
+    pid = "P9-pin-2100-footer-f420"
     src = open(os.path.join(REPO, "gov", "decision_codes.py")).read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
     n = len(dc.TAXONOMY)
@@ -503,16 +503,16 @@ def _p9():
         if c not in dc.TAXONOMY:
             return _break(pid, "code %r not centrally registered" % c)
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
-    # F419 filed then CLOSED in this lane.
-    f419 = text.split("## F419")[1]
-    f419_body = re.split(r"\n## F\d+|\nNext free finding:", f419)[0]
-    if "Status: CLOSED" not in f419_body:
-        return _break(pid, "F419 not marked CLOSED in FINDINGS.md")
-    # F417 (redteam bare-port) stays OPEN.
+    # F420 (filed as F419, renumbered at wave-334 merge) CLOSED in this lane.
+    f420 = text.split("## F420")[1]
+    f420_body = re.split(r"\n## F\d+|\nNext free finding:", f420)[0]
+    if "Status: CLOSED" not in f420_body:
+        return _break(pid, "F420 not marked CLOSED in FINDINGS.md")
+    # F417 (redteam bare-port) CLOSED by wave-334 lane 1.
     f417 = text.split("## F417")[1]
     f417_body = re.split(r"\n## F\d+|\nNext free finding:", f417)[0]
-    if "**Status: OPEN.**" not in f417_body:
-        return _break(pid, "F417 not marked OPEN in FINDINGS.md")
+    if "Status: CLOSED" not in f417_body:
+        return _break(pid, "F417 not marked CLOSED in FINDINGS.md")
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
@@ -522,8 +522,8 @@ def _p9():
         return _break(pid, "footer open %s / next %s, want open %s / next %s"
                       % (open_now.strip(), next_free, FOOTER_OPEN,
                          FOOTER_NEXT))
-    return _held(pid, "taxonomy 2083/2083/0 sorted-unique; 6 codes "
-                      "registered; F419 CLOSED; footer open F417 / next F420")
+    return _held(pid, "taxonomy 2100/2100/0 sorted-unique; 6 codes "
+                      "registered; F420 CLOSED; footer open none / next F421")
 
 
 # ---------------------------------------------------------------------------

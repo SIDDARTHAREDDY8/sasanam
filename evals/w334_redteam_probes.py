@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Wave-334 lane 5 independent red team: break the wave-333 tree.
 
-Base: `a40c2ef4` (wave-333 merge). Pin 2077. Footer open F417 / next F419.
+Base: `a40c2ef4` (wave-333 merge). Pin 2100. Footer open none / next F421.
 
 New attack surface under test: `gov/capability_token.py`
 (context-bound capability tokens, +7 codes) and `gov/revocation_push.py`
@@ -54,8 +54,8 @@ P3 (F417 OPEN-state pin): the non-numeric-port shape still escapes
      _normalize_url as a bare ValueError -- F417 open as documented.
 P4 (F418 CLOSED): revocation event terminates a bound in-flight session
      coded revocation-push-session-terminated.
-P5 (honesty): pin 2077 taxonomy sorted-unique on raw literals; all 15 new
-     codes centrally registered; footer open F417 / next F419.
+P5 (honesty): pin 2100 taxonomy sorted-unique on raw literals; all 15 new
+     codes centrally registered; footer open none / next F421.
 
 Verdicts:
   HELD  = behavior matches the pin (attack refused coded / legitimate
@@ -97,7 +97,7 @@ from gov import capability_token as CT  # noqa: E402
 from gov import revocation_push as RP  # noqa: E402
 from gov import mcp_oauth_binding as mob  # noqa: E402
 
-TAXONOMY_PIN = 2077  # Wave-333 merge: 2062 + 7 capability-token-* + 8 revocation-push-*.
+TAXONOMY_PIN = 2100 # Wave-333 merge: 2062 + 7 capability-token-* + 8 revocation-push-*.; Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*).
 
 _NOW = 1798765432
 _AGENT = "agent-A"
@@ -742,10 +742,10 @@ def P4a():
 
 
 def P5a():
-    """Pin honesty: taxonomy is 2077/2077/0, sorted and unique on raw
+    """Pin honesty: taxonomy is 2100/2100/0, sorted and unique on raw
     source literals (wave-260 lesson: assert on literals, not the
     deduped dict)."""
-    pid = "P5a-pin-taxonomy-2077-sorted"
+    pid = "P5a-pin-taxonomy-2100-sorted"
     with open(os.path.join(REPO, "gov", "decision_codes.py"),
               encoding="utf-8") as fh:
         src = fh.read()
@@ -760,7 +760,7 @@ def P5a():
     if sorted(codes) != codes:
         _break(pid, "literals not sorted")
         return
-    _held(pid, "taxonomy 2077/2077/0 sorted unique on raw literals")
+    _held(pid, "taxonomy 2100/2100/0 sorted unique on raw literals")
 
 
 def P5b():
@@ -781,19 +781,19 @@ def P5b():
 
 
 def P5c():
-    """Footer honesty: open F417 / next F419 (raw literals included --
+    """Footer honesty: open none / next F421 (raw literals included --
     wave-331 lesson)."""
-    pid = "P5c-footer-open-f417-next-f419"
+    pid = "P5c-footer-open-none-next-f421"
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               encoding="utf-8") as fh:
         text = fh.read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F419**" in text
-          and m_open and m_open[-1].strip() == "F417")
+    ok = ("Next free finding: **F421**" in text
+          and m_open and m_open[-1].strip() == "none")
     if ok:
-        _held(pid, "footer: open F417 / next F419")
+        _held(pid, "footer: open none / next F421")
     else:
-        _break(pid, "footer mismatch vs open F417 / next F419")
+        _break(pid, "footer mismatch vs open none / next F421")
 
 _PROBES = [
     ("P1a-nul-in-join-fields", P1a),
@@ -817,9 +817,9 @@ _PROBES = [
     ("P2k-reregistration-refused", P2k),
     ("P3a-f417-open-bare-port", P3a),
     ("P4a-f418-closure-holds", P4a),
-    ("P5a-pin-taxonomy-2077-sorted", P5a),
+    ("P5a-pin-taxonomy-2100-sorted", P5a),
     ("P5b-new-codes-registered", P5b),
-    ("P5c-footer-open-f417-next-f419", P5c),
+    ("P5c-footer-open-none-next-f421", P5c),
 ]
 
 # No expected BREAKs on this tree: every attack shape above is refused

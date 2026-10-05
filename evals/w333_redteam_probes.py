@@ -33,8 +33,8 @@ P3  Binding + choke point: tampered MAC, attacker-sealed binding,
     issuer_hint mismatch, credential AS mismatch, http seal.
 P4  F415/F416 closure regressions (relabelled w332 probes).
 P5  Shamir write-time residual (relabelled w332 probe).
-P6  Pin/footer honesty: taxonomy 2088/2088/0 on raw literals,
-    footer open none / next F417, live pin constants == 2088.
+P6  Pin/footer honesty: taxonomy 2100/2100/0 on raw literals,
+    footer open none / next F417, live pin constants == 2100.
 P7  Child mode: w332_mcpoauth battery, BREAKs inside the cascade.
 """
 
@@ -51,9 +51,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2088  # Wave-332 merge: pin 2058 -> 2062 (+4 mcp-oauth-*).; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*)
+TAXONOMY_PIN = 2100 # Wave-332 merge: pin 2058 -> 2062 (+4 mcp-oauth-*).; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*).
 FOOTER_OPEN = "none"  # F417 CLOSED 2026-10-05 (wave-334 lane 1: port guard; no open findings).
-FOOTER_NEXT = "F419"  # Next free finding number (F417 closed wave-334 lane 1; F418 closed at wave-333 merge).
+FOOTER_NEXT = "F421"  # Next free finding number (F417 closed wave-334 lane 1; F418 closed at wave-333 merge).
 
 _results = []
 _PROBES = []
@@ -574,21 +574,21 @@ def _p5a():
 # P6: pin + footer honesty.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2088-sorted")
+@probe("P6a-pin-taxonomy-2100-sorted")
 def _p6a():
-    if TAXONOMY_PIN != 2088:
-        return _break("P6a-pin-taxonomy-2088-sorted",
-                      "TAXONOMY_PIN is %r, want 2088" % (TAXONOMY_PIN,))
+    if TAXONOMY_PIN != 2100:
+        return _break("P6a-pin-taxonomy-2100-sorted",
+                      "TAXONOMY_PIN is %r, want 2100" % (TAXONOMY_PIN,))
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
-    if len(lits) != 2088 or len(set(lits)) != 2088 \
+    if len(lits) != 2100 or len(set(lits)) != 2100 \
             or lits != sorted(lits):
-        return _break("P6a-pin-taxonomy-2088-sorted",
-                      "want 2088/2088/0 sorted, got %d/%d/sorted=%s"
+        return _break("P6a-pin-taxonomy-2100-sorted",
+                      "want 2100/2100/0 sorted, got %d/%d/sorted=%s"
                       % (len(lits), len(set(lits)), lits == sorted(lits)))
-    return _held("P6a-pin-taxonomy-2088-sorted",
-                 "2088/2088/0 sorted unique on raw source literals")
+    return _held("P6a-pin-taxonomy-2100-sorted",
+                 "2100/2100/0 sorted unique on raw source literals")
 
 
 @probe("P6b-footer-open-none-next-f419")
@@ -617,7 +617,7 @@ def _p6b():
                  "footer open none / next F419 (raw literals + parse)")
 
 
-@probe("P6c-pin-constants-2088-live")
+@probe("P6c-pin-constants-2100-live")
 def _p6c():
     """Wave-302 lesson: every live module-level TAXONOMY_PIN constant
     must equal the new pin; stale values hide in files the
@@ -639,13 +639,13 @@ def _p6c():
             for m in re.finditer(r"^TAXONOMY_PIN\s*=\s*(\d+)", src, re.M):
                 if rel in grandfathered:
                     continue
-                if int(m.group(1)) != 2088:
+                if int(m.group(1)) != 2100:
                     bad.append("%s:%s" % (rel, m.group(1)))
     if bad:
-        return _break("P6c-pin-constants-2088-live",
+        return _break("P6c-pin-constants-2100-live",
                       "stale pin constants: %s" % (bad[:6],))
-    return _held("P6c-pin-constants-2088-live",
-                 "all live module-level TAXONOMY_PIN == 2088")
+    return _held("P6c-pin-constants-2100-live",
+                 "all live module-level TAXONOMY_PIN == 2100")
 
 
 # ---------------------------------------------------------------------------

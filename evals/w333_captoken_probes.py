@@ -35,7 +35,7 @@ Probe map:
       approval-token-capability-mismatch).
   digest-binds-all-four: the context digest changes when exactly one of
       the four bound inputs changes, and is stable for identical inputs.
-  pin-taxonomy / footer-state: standard pins (2088; open none / next F419).
+  pin-taxonomy / footer-state: standard pins (2100; open none / next F419).
 
 Deterministic across 2 runs; $0 spend; synthetic/local. Stdlib only
 apart from gov/capability_token.py + gov/approval_tokens.py (real
@@ -67,7 +67,7 @@ for _p in (REPO, os.path.join(REPO, "tests"), os.path.join(REPO, "evals")):
 
 from gov import capability_token as CT  # noqa: E402
 
-TAXONOMY_PIN = 2088  # Wave-332 merge pin 2062 + 7 capability-token-*; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*)
+TAXONOMY_PIN = 2100 # Wave-332 merge pin 2062 + 7 capability-token-*; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*).
 # (agent/mission/tools/policy-stale/malformed/tampered/expired).
 # (agent/mission/tools/policy-stale/malformed/tampered/expired).
 
