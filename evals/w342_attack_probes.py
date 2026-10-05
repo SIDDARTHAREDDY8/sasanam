@@ -16,8 +16,10 @@ Shapes (A/B/C = the three wave-342 attack targets):
      confusables, and zero-width joiners -- filed as F429 (LOW, OPEN);
      the misses are pinned as known-open and demonstrated red-first in
      evals/w342_textescape_redfirst.py. aaencode/jjencode-style shapes
-     are JS-execution encodings, the same mechanism as F428's JSFuck,
-     and are covered by F428's close-when (not re-filed).
+     are JS-execution encodings, the same mechanism as F428's JSFuck;
+     wave-343 re-filed the non-JSFuck residual (JS string
+     concatenation) as F430 (LOW, OPEN) because the shipped F428
+     parser is JSFuck-alphabet-specific.
   B: annotation-arbitrage shapes (R40, OpenAPPA-informed). The audit's
      treatment follows registry-bound issuance, not bare attributes: a
      hand-crafted function carrying map-consistent expect_sdk_tool_name
@@ -36,7 +38,9 @@ Shapes (A/B/C = the three wave-342 attack targets):
      aggregation is claimed. Sequential individually-authorized recon
      queries are authorized use, not a bypass. HELD as documented
      boundaries, not findings.
-  F428: still OPEN on this tree (filing pinned).
+  F428: CLOSED by the wave-342 merge (filing pinned); the non-JSFuck
+  JS-execution-encoding residual (string concatenation) is filed as
+  F430 (LOW, OPEN) in wave-343.
 
 Usage:
   ~/workspace/.gov-venv/bin/python evals/w342_attack_probes.py
@@ -160,19 +164,20 @@ def test_a10_f429_filing_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F429 filed 2026-10-05, wave-342 lane 5" in text
           and "LOW, OPEN:" in text
-          and "Next free finding: **F430**" in text
-          and "Open findings: F429." in text)
+          and "Next free finding: **F431**" in text
+          and "Open findings: F429, F430." in text)
     return ("HELD" if ok else "BREAK", "F429 filed open=%s" % ok)
 
 
 @_t
 def test_a11_f428_still_open_pinned():
-    """F428 (JSFuck) is still OPEN on this tree; its red-first script
-    still prints BREAK."""
+    """F428 (JSFuck) filing is pinned; F428 is CLOSED as of the
+    wave-342 merge (see its CLOSED entry), while the footer moved to
+    open F429, F430 / next F431 with the wave-343 F430 filing."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F428 filed 2026-10-05, wave-341 lane C" in text
-          and "Open findings: F429." in text)
-    return ("HELD" if ok else "BREAK", "F428 still open=%s" % ok)
+          and "Open findings: F429, F430." in text)
+    return ("HELD" if ok else "BREAK", "F428 filing pinned=%s" % ok)
 
 
 @_t
