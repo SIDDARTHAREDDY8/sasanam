@@ -58,8 +58,8 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2106 # Wave-332 merge: pin 2062. Wave-333 lane 4: pin 2062 -> 2070 (+8 revocation-push-*).; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
-FOOTER_OPEN = "none"  # F417 CLOSED 2026-10-05 (wave-334 lane 1); F418 (revpush) CLOSED at wave-333 merge.
-FOOTER_NEXT = "F424"  # Next free finding number.
+FOOTER_OPEN = "F424, F425"  # F417 CLOSED 2026-10-05 (wave-334 lane 1); F418 (revpush) CLOSED at wave-333 merge.
+FOOTER_NEXT = "F426"  # Next free finding number.
 
 _results = []
 _PROBES = []

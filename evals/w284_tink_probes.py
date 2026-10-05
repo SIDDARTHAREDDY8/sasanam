@@ -412,7 +412,7 @@ def p_ceremony_half_finished_visible():
                            "ceremony state lost across persistence")
         # Abandon recovers: the new key is disabled, ceremony cleared.
         ks2.abandon_ceremony(reason="operator cancelled")
-        if ks2.ceremony_state()["phase"] != "none":
+        if ks2.ceremony_state()["phase"] != "F424, F425":
             return _record("ceremony-visible", "BREAK",
                            "abandon did not clear ceremony")
         if ks2.key_status("master-c") != "disabled":

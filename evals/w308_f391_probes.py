@@ -126,7 +126,7 @@ def p_footer_state():
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
     # Wave-322 lane 1 repoint: footer open none / next F409 (F406 CLOSED).
-    if nxt != 407 or open_s != "none":
+    if nxt != 407 or open_s != "F424, F425":
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F409 "
                        "open 'none')" % (nxt, open_s))

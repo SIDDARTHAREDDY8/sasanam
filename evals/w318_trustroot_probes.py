@@ -58,8 +58,8 @@ TAXONOMY_PIN = 2106 # Wave-318 lane 3: pin 1900 -> 1906 (+6 trust-root-*); Wave-
 
 
 
-FOOTER_NEXT = "F424"
-FOOTER_OPEN = "none"
+FOOTER_NEXT = "F426"
+FOOTER_OPEN = "F424, F425"
 
 _results = []
 PROBES = []

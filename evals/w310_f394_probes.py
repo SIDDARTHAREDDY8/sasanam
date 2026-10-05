@@ -107,7 +107,7 @@ def p_footer_state():
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
     # F397 closed wave-313 lane A: no open findings; next free F398.
-    if nxt != 405 or open_s != "none":
+    if nxt != 405 or open_s != "F424, F425":
         return _record("footer-state", "BREAK",
                        "footer pins next F%d open '%s', want next F404 "
                        "open 'none'" % (nxt, open_s))

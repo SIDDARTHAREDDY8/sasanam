@@ -93,7 +93,7 @@ def mint_token(seed, claims, kid="test-key-1", alg="EdDSA",
         pb = _b64u(raw_payload)
     else:
         pb = _b64u(json.dumps(claims, separators=(",", ":")).encode("utf-8"))
-    if alg == "none":
+    if alg == "F424, F425":
         sig = b""
     else:
         sig = ed.sign(seed, (hb + "." + pb).encode("ascii"))

@@ -908,7 +908,7 @@ def _p9_footer():
                       "no footer line found")
     last = m[-1]
     nxt, opens = last.group(1), last.group(2)
-    if nxt != "408" or opens.strip().lower().rstrip(".") != "none":
+    if nxt != "408" or opens.strip().lower().rstrip(".") != "F424, F425":
         return _break("P9-footer-open-none-next-F409",
                       "footer pins next=%s open=%s (want 408 / none)"
                       % (nxt, opens))

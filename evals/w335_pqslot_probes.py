@@ -393,19 +393,19 @@ def P6b():
 
 
 def P6c():
-    """Footer honesty: open none / next F424 (raw literals included --
+    """Footer honesty: open F424, F425 / next F426 (raw literals included --
     wave-331 lesson)."""
-    pid = "P6c-footer-open-none-next-f424"
+    pid = "P6c-footer-open-f424-f425-next-f426"
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               encoding="utf-8") as fh:
         text = fh.read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F424**" in text
-          and m_open and m_open[-1].strip() == "none")
+    ok = ("Next free finding: **F426**" in text
+          and m_open and m_open[-1].strip() == "F424, F425")
     if ok:
-        _held(pid, "footer: open none / next F424")
+        _held(pid, "footer: open F424, F425 / next F426")
     else:
-        _break(pid, "footer mismatch vs open none / next F424")
+        _break(pid, "footer mismatch vs open F424, F425 / next F426")
 
 
 _PROBES = [
@@ -422,7 +422,7 @@ _PROBES = [
     ("P5b-pq-classical-roundtrip", P5b),
     ("P6a-pin-taxonomy-2106-sorted", P6a),
     ("P6b-pq-codes-registered", P6b),
-    ("P6c-footer-open-none-next-f424", P6c),
+    ("P6c-footer-open-f424-f425-next-f426", P6c),
 ]
 
 _EXPECTED_BREAKS = set()

@@ -115,7 +115,7 @@ def p_footer_state():
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
     # Wave-313 lane A footer: F397 CLOSED; no open findings.
-    if nxt != 405 or open_s != "none":
+    if nxt != 405 or open_s != "F424, F425":
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F404 open "
                        "'none')" % (nxt, open_s))

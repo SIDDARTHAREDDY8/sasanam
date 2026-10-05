@@ -925,7 +925,7 @@ def _footer():
                       "no footer parsed")
     num, opens = feet[-1]
     opens = opens.strip().lower().rstrip(".")
-    if num != "F409" or opens != "none":
+    if num != "F409" or opens != "F424, F425":
         return _break("footer-open-none-next-F409",
                       "footer is %s / %s, want F409 / none"
                       % (num, opens))

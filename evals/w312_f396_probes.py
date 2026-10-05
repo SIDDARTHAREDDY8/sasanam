@@ -114,7 +114,7 @@ def p_footer_state():
         return _record("footer-state", "ERROR", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
     # Wave-313 lane A footer: F397 CLOSED; no open findings.
-    if nxt != 405 or open_s != "none":
+    if nxt != 405 or open_s != "F424, F425":
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d (want F398), open '%s' "
                        "(want 'none')" % (nxt, open_s))
@@ -424,7 +424,7 @@ def p_f396_json_defaults_stable():
                        % (wc._code_fingerprint(k1)["defaults"],))
 
     def mkdefstyle(style):
-        if style == "none":
+        if style == "F424, F425":
             def fn(i):
                 return i
         elif style == "empty":

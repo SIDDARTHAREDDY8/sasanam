@@ -2,7 +2,7 @@
 
 Base: 0fd4f736 (wave-334 merge). Footer at wave-335 merge: open F423 / next F424
 (F422 filed as F421 then CLOSED here; renumbered at merge; F423 CLOSED 2026-10-05
-wave-336 lane 1, footer now open none / next F424). Pin: 2106 (+3 tool-rate-*).
+wave-336 lane 1, footer now open F424, F425 / next F426). Pin: 2106 (+3 tool-rate-*).
 
 P1  F422 red-first, now closed: the red script's burst -- 29 http_post
     executions inside 60s with no coded intervention on the base tree
@@ -25,7 +25,7 @@ P8  The window slides: with an injectable clock, calls older than the
     window stop counting.
 P9  Approved-execution sweep is the second boundary: 11 queued +
     approved http_posts refuse coded on the sweep at the 11th.
-P10 Pin 2106 + footer state (open none / next F424; F422 CLOSED);
+P10 Pin 2106 + footer state (open F424, F425 / next F426; F422 CLOSED);
     taxonomy sorted-unique on raw literals; the 3 new codes centrally
     registered.
 P11 Green check (depth-1): honors GOV_SKIP_GREEN; otherwise runs the
@@ -53,8 +53,8 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2106 # Wave-335 lane 2: pin 2100 -> 2103 (+3 tool-rate-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
-FOOTER_OPEN = "none"  # F422 (filed as F421) CLOSED 2026-10-05 wave-335 lane 2.
-FOOTER_NEXT = "F424"  # Next free finding number.
+FOOTER_OPEN = "F424, F425"  # F422 (filed as F421) CLOSED 2026-10-05 wave-335 lane 2.
+FOOTER_NEXT = "F426"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -566,7 +566,7 @@ def _p10():
                       % (open_now.strip(), next_free, FOOTER_OPEN,
                          FOOTER_NEXT))
     return _held(pid, "taxonomy 2106/2106/0 sorted-unique; 3 codes "
-                      "registered; F422 CLOSED; footer open none / next F424")
+                      "registered; F422 CLOSED; footer open F424, F425 / next F426")
 
 
 # ---------------------------------------------------------------------------

@@ -54,8 +54,8 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2106 # Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*). Wave-334 lane 6: pin 2077 -> 2083 (+6 incident-gpai9-*).; Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).
-FOOTER_OPEN = "none"  # F423 CLOSED 2026-10-05 wave-336 lane 1; no open findings: PRM control-char finding; filed as F421, renumbered at merge).
-FOOTER_NEXT = "F424"  # Next free finding number.
+FOOTER_OPEN = "F424, F425"  # F423 CLOSED 2026-10-05 wave-336 lane 1; no open findings: PRM control-char finding; filed as F421, renumbered at merge).
+FOOTER_NEXT = "F426"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -556,30 +556,30 @@ def _p11a():
                  "2106/2106/0 sorted unique on raw source literals")
 
 
-@probe("P11b-footer-open-none-next-f424")
+@probe("P11b-footer-open-f424-f425-next-f426")
 def _p11b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     # Raw-literal assertions (wave-331 lesson): the footer must read
     # correctly as literal text, not only via constants.
-    if "Next free finding: **F424**." not in text:
-        return _break("P11b-footer-open-none-next-f424",
-                      "raw literal 'Next free finding: **F424**.' absent")
-    if "**Open findings: none.**" not in text:
-        return _break("P11b-footer-open-none-next-f424",
-                      "raw literal '**Open findings: none.**' absent")
+    if "Next free finding: **F426**." not in text:
+        return _break("P11b-footer-open-f424-f425-next-f426",
+                      "raw literal 'Next free finding: **F426**.' absent")
+    if "**Open findings: F424, F425.**" not in text:
+        return _break("P11b-footer-open-f424-f425-next-f426",
+                      "raw literal '**Open findings: F424, F425.**' absent")
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return _break("P11b-footer-open-none-next-f424",
+        return _break("P11b-footer-open-f424-f425-next-f426",
                       "footer line not found")
     next_free, open_now = ms[-1]  # the LAST footer is the live one
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return _break("P11b-footer-open-none-next-f424",
+        return _break("P11b-footer-open-f424-f425-next-f426",
                       "footer open %s / next %s, want open %s / next %s"
                       % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return _held("P11b-footer-open-none-next-f424",
-                 "footer open none / next F424 (raw literals + parse)")
+    return _held("P11b-footer-open-f424-f425-next-f426",
+                 "footer open F424, F425 / next F426 (raw literals + parse)")
 
 
 @probe("P11c-codes-centrally-registered")
