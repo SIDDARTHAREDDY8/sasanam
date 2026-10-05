@@ -673,6 +673,11 @@ def _run_battery(rel):
 @probe("P5-spot-w314-provsink")
 def _p5a():
     """w314_provsink (touched by the follow-up): 0 BREAK expected."""
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        # Depth-1 convention (evals/GREEN_CHECK_CONTRACT.md rule 5): in
+        # child mode this probe must not spawn nested battery runs.
+        return _held("P5-spot-w314-provsink",
+                     "skipped: GOV_SKIP_GREEN=1 (depth-1 convention)")
     r = _run_battery("evals/w314_provsink_probes.py")
     if r == (0, 23, 0):
         return _held("P5-spot-w314-provsink", "0/23/0")
@@ -682,6 +687,11 @@ def _p5a():
 @probe("P5-spot-w303-f385")
 def _p5b():
     """w303_f385 (touched by the follow-up): 0 BREAK expected."""
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        # Depth-1 convention (evals/GREEN_CHECK_CONTRACT.md rule 5): in
+        # child mode this probe must not spawn nested battery runs.
+        return _held("P5-spot-w303-f385",
+                     "skipped: GOV_SKIP_GREEN=1 (depth-1 convention)")
     r = _run_battery("evals/w303_f385_probes.py")
     if r == (0, 13, 0):
         return _held("P5-spot-w303-f385", "0/13/0")
@@ -691,6 +701,11 @@ def _p5b():
 @probe("P5-spot-w297-redteam")
 def _p5c():
     """w297_redteam (touched by the follow-up): 0 BREAK expected."""
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        # Depth-1 convention (evals/GREEN_CHECK_CONTRACT.md rule 5): in
+        # child mode this probe must not spawn nested battery runs.
+        return _held("P5-spot-w297-redteam",
+                     "skipped: GOV_SKIP_GREEN=1 (depth-1 convention)")
     r = _run_battery("evals/w297_redteam_probes.py")
     if r == (0, 53, 0):
         return _held("P5-spot-w297-redteam", "0/53/0")

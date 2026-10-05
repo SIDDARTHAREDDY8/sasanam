@@ -633,6 +633,11 @@ def _p6a():
     child env, fresh TMPDIR). A BREAK outside _CHILD_CASCADE -- or any
     ERROR -- is a genuine regression, not an open finding.
     """
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        # Depth-1 convention (evals/GREEN_CHECK_CONTRACT.md rule 5): in
+        # child mode this probe must not spawn nested battery runs.
+        return _held("P6a-prior-batteries-child-mode-tallies",
+                     "skipped: GOV_SKIP_GREEN=1 (depth-1 convention)")
     batteries = tuple(sorted(_CHILD_CASCADE))
     bad = []
     tallies = []

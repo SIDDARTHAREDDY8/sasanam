@@ -657,36 +657,66 @@ def green_check():
 
 @probe("P5b-green-w327-redteam")
 def _p5b():
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        # Depth-1 convention (evals/GREEN_CHECK_CONTRACT.md rule 5): in
+        # child mode this probe must not spawn nested battery runs.
+        return ("P5b-green-w327-redteam", "HELD",
+                "skipped: GOV_SKIP_GREEN=1 (depth-1 convention)")
     name, verdict, note = _run_green_eval(*_GREEN_EVALS[0])
     return ("P5b-green-w327-redteam", verdict, note)
 
 
 @probe("P5c-green-w327-polchan")
 def _p5c():
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        # Depth-1 convention (evals/GREEN_CHECK_CONTRACT.md rule 5): in
+        # child mode this probe must not spawn nested battery runs.
+        return ("P5c-green-w327-polchan", "HELD",
+                "skipped: GOV_SKIP_GREEN=1 (depth-1 convention)")
     name, verdict, note = _run_green_eval(*_GREEN_EVALS[1])
     return ("P5c-green-w327-polchan", verdict, note)
 
 
 @probe("P5d-green-w326-tufaudit")
 def _p5d():
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        # Depth-1 convention (evals/GREEN_CHECK_CONTRACT.md rule 5): in
+        # child mode this probe must not spawn nested battery runs.
+        return ("P5d-green-w326-tufaudit", "HELD",
+                "skipped: GOV_SKIP_GREEN=1 (depth-1 convention)")
     name, verdict, note = _run_green_eval(*_GREEN_EVALS[2])
     return ("P5d-green-w326-tufaudit", verdict, note)
 
 
 @probe("P5e-green-w326-redteam")
 def _p5e():
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        # Depth-1 convention (evals/GREEN_CHECK_CONTRACT.md rule 5): in
+        # child mode this probe must not spawn nested battery runs.
+        return ("P5e-green-w326-redteam", "HELD",
+                "skipped: GOV_SKIP_GREEN=1 (depth-1 convention)")
     name, verdict, note = _run_green_eval(*_GREEN_EVALS[3])
     return ("P5e-green-w326-redteam", verdict, note)
 
 
 @probe("P5f-green-w326-standing")
 def _p5f():
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        # Depth-1 convention (evals/GREEN_CHECK_CONTRACT.md rule 5): in
+        # child mode this probe must not spawn nested battery runs.
+        return ("P5f-green-w326-standing", "HELD",
+                "skipped: GOV_SKIP_GREEN=1 (depth-1 convention)")
     name, verdict, note = _run_green_eval(*_GREEN_EVALS[4])
     return ("P5f-green-w326-standing", verdict, note)
 
 
 @probe("P5g-green-w326-sched")
 def _p5g():
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        # Depth-1 convention (evals/GREEN_CHECK_CONTRACT.md rule 5): in
+        # child mode this probe must not spawn nested battery runs.
+        return ("P5g-green-w326-sched", "HELD",
+                "skipped: GOV_SKIP_GREEN=1 (depth-1 convention)")
     name, verdict, note = _run_green_eval(*_GREEN_EVALS[5])
     return ("P5g-green-w326-sched", verdict, note)
 

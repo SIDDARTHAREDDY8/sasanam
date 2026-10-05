@@ -651,6 +651,11 @@ def _run_battery(path, expect, break_must_contain=None):
 
 @probe("P5-green-approval-tokens")
 def _p5_apt():
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        # Depth-1 convention (evals/GREEN_CHECK_CONTRACT.md rule 5): in
+        # child mode this probe must not spawn nested battery runs.
+        return ("P5-green-approval-tokens", "HELD",
+                "skipped: GOV_SKIP_GREEN=1 (depth-1 convention)")
     # footer re-pinned at the wave-316 merge: 0 BREAK expected
     verdict, note = _run_battery(
         os.path.join(REPO, "evals", "w313_aptokens_probes.py"), (0, 21, 0))
@@ -659,6 +664,11 @@ def _p5_apt():
 
 @probe("P5-green-plan-policy")
 def _p5_plan():
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        # Depth-1 convention (evals/GREEN_CHECK_CONTRACT.md rule 5): in
+        # child mode this probe must not spawn nested battery runs.
+        return ("P5-green-plan-policy", "HELD",
+                "skipped: GOV_SKIP_GREEN=1 (depth-1 convention)")
     # footer re-pinned at the wave-316 merge: 0 BREAK expected
     verdict, note = _run_battery(
         os.path.join(REPO, "evals", "w313_plancheck_probes.py"), (0, 23, 0))
@@ -667,6 +677,11 @@ def _p5_plan():
 
 @probe("P5-green-vsa")
 def _p5_vsa():
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        # Depth-1 convention (evals/GREEN_CHECK_CONTRACT.md rule 5): in
+        # child mode this probe must not spawn nested battery runs.
+        return ("P5-green-vsa", "HELD",
+                "skipped: GOV_SKIP_GREEN=1 (depth-1 convention)")
     verdict, note = _run_battery(
         os.path.join(REPO, "evals", "w315_vsa_probes.py"), (0, 20, 0))
     return ("P5-green-vsa", verdict, note)
@@ -674,6 +689,11 @@ def _p5_vsa():
 
 @probe("P5-green-w315-redteam")
 def _p5_w315():
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        # Depth-1 convention (evals/GREEN_CHECK_CONTRACT.md rule 5): in
+        # child mode this probe must not spawn nested battery runs.
+        return ("P5-green-w315-redteam", "HELD",
+                "skipped: GOV_SKIP_GREEN=1 (depth-1 convention)")
     # F398/F399 CLOSED at the wave-316 merge; footer re-pinned
     verdict, note = _run_battery(
         os.path.join(REPO, "evals", "w315_redteam_probes.py"), (0, 39, 0))
@@ -682,6 +702,11 @@ def _p5_w315():
 
 @probe("P5-green-w280-redteam")
 def _p5_w280():
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        # Depth-1 convention (evals/GREEN_CHECK_CONTRACT.md rule 5): in
+        # child mode this probe must not spawn nested battery runs.
+        return ("P5-green-w280-redteam", "HELD",
+                "skipped: GOV_SKIP_GREEN=1 (depth-1 convention)")
     verdict, note = _run_battery(
         os.path.join(REPO, "evals", "w280_redteam_probes.py"), (0, 24, 0))
     return ("P5-green-w280-redteam", verdict, note)

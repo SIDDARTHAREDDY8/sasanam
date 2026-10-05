@@ -926,6 +926,11 @@ def _p6a():
     not the F414-closure footer cascade. Observed tallies on this tree are
     recorded in the note for the merge coordinator's sweep.
     """
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        # Depth-1 convention (evals/GREEN_CHECK_CONTRACT.md rule 5): in
+        # child mode this probe must not spawn nested battery runs.
+        return _held("P6a-prior-batteries-child-mode-tallies",
+                     "skipped: GOV_SKIP_GREEN=1 (depth-1 convention)")
     bad = []
     tallies = []
     for battery, marker, fmt in _CHILD_TALLIES:
