@@ -22,9 +22,9 @@ Shapes (A/B/C = the three wave-343 attack targets):
        from it (the "remove comments" recipe has no recipient
        behavior) -- discarded, not filed.
      - Non-breaking-space interleave is already caught (HELD).
-     - RTL-override (U+202E) and Cyrillic-homoglyph shapes miss the
-       decode layer: F429-class normalization variants, pinned as
-       known-open under F429 (filed OPEN).
+     - RTL-override (U+202E) and Cyrillic-homoglyph shapes missed
+       the decode layer: filed F431 (LOW); CLOSED 2026-10-05 wave-344
+       lane 2 (bidi normalization + Cyrillic-homoglyph map).
   B: trajectory-label overlay (R40, wave-342) attack shapes.
      - "Unregistered annotation defaults to a higher-trust label" is
        FALSE on the real code: strict mode raises
@@ -131,23 +131,27 @@ def test_a5_nbsp_interleave_already_held():
 
 
 @_t
-def test_a6_rtl_override_miss_pinned():
-    """F429-closure residual, re-filed F431 (LOW, OPEN) at the wave-343
-    merge: U+202E right-to-left override defeats the regex; no
-    bidi-control normalization exists. Pinned as HELD-when-reproduced."""
-    miss = dlp.find_credential("token=xoxb-\u202e654fed321cba") is None
-    return ("HELD" if miss else "BREAK", "F429 rtl miss reproduced=%s" % miss)
+def test_a6_rtl_override_blocked():
+    """F431 (LOW) CLOSED 2026-10-05 wave-344 lane 2: the decode layer
+    strips bidi controls and reverses RLO-governed runs to visual
+    order, so the U+202E + reversed-tail shape now blocks coded
+    dlp-slack-token. Was pinned as known-open (miss) before closure."""
+    rule = dlp.find_credential("token=xoxb-\u202e654fed321cba")
+    held = rule == "dlp-slack-token"
+    return ("HELD" if held else "BREAK",
+            "F431 rtl-override shape rule=%s" % rule)
 
 
 @_t
-def test_a7_cyrillic_homoglyph_miss_pinned():
-    """F429-closure residual, re-filed F431 (LOW, OPEN) at the wave-343
-    merge: Cyrillic homoglyphs (U+043E for 'o') do NOT NFKC-fold to
-    ASCII, so the fullwidth-confusable coverage does not catch them; a
-    confusable map is needed. Pinned as HELD-when-reproduced."""
-    miss = dlp.find_credential("token=x\u043exb-abc123def456") is None
-    return ("HELD" if miss else "BREAK",
-            "F429 homoglyph miss reproduced=%s" % miss)
+def test_a7_cyrillic_homoglyph_blocked():
+    """F431 (LOW) CLOSED 2026-10-05 wave-344 lane 2: the decode layer
+    applies a bounded static Cyrillic-homoglyph map beyond NFKC, so
+    the U+043E-for-'o' shape now blocks coded dlp-slack-token. Was
+    pinned as known-open (miss) before closure."""
+    rule = dlp.find_credential("token=x\u043exb-abc123def456")
+    held = rule == "dlp-slack-token"
+    return ("HELD" if held else "BREAK",
+            "F431 cyrillic-homoglyph shape rule=%s" % rule)
 
 
 @_t
@@ -158,7 +162,7 @@ def test_a8_f430_filing_pinned():
     ok = ("(F430 filed 2026-10-05, wave-343 lane 3" in text
           and "LOW, OPEN:" in text
           and "Next free finding: **F432**" in text
-          and "Open findings: F430, F431." in text)
+          and "Open findings: F430." in text)
     return ("HELD" if ok else "BREAK", "F430 filed open=%s" % ok)
 
 
@@ -170,7 +174,7 @@ def test_a9_f429_still_open_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F429 filed 2026-10-05, wave-342 lane 5" in text
           and "LOW, CLOSED 2026-10-05 wave-343 lane 1" in text
-          and "Open findings: F430, F431." in text)
+          and "Open findings: F430." in text)
     return ("HELD" if ok else "BREAK", "F429 closed=%s" % ok)
 
 

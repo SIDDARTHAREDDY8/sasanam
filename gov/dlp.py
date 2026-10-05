@@ -355,6 +355,54 @@ _UTF16N_RUN = re.compile(r"(?:[\x20-\x7e]\x00){4,}|(?:\x00[\x20-\x7e]){4,}")
 # F429: zero-width / invisible joiners stripped by the confusable
 # normalizer (whole-string variant, alongside NFKC).
 _ZERO_WIDTH_RUN = re.compile("[\u200b\u200c\u200d\ufeff]")
+# F431: bidi-override controls (U+202A-U+202E, U+2066-U+2069). An
+# attacker interleaves RLO (U+202E) so the VISUAL rendering shows the
+# credential while the byte sequence does not match. The bidi
+# normalizer strips every control and reverses right-to-left-governed
+# runs (RLO and RLE) to visual order; LRO/LRE/isolates keep logical
+# order (FSI's first-strong is content-dependent -- the strip variant
+# still catches logical-order credentials inside them). Bounded,
+# static, never executes.
+_BIDI_RLO = "\u202e"
+_BIDI_LRO = "\u202d"
+_BIDI_RLE = "\u202b"
+_BIDI_REVERSING = frozenset((_BIDI_RLO, _BIDI_RLE))  # RTL display order
+_BIDI_EMBED = frozenset(("\u202a",))                   # LRE (LTR: no reverse)
+_BIDI_ISOLATE = frozenset(("\u2066", "\u2067", "\u2068"))  # LRI, RLI, FSI
+_BIDI_POP = frozenset(("\u202c", "\u2069"))            # PDF, PDI
+_BIDI_ALL = (_BIDI_REVERSING | frozenset((_BIDI_LRO,)) | _BIDI_EMBED
+             | _BIDI_ISOLATE | _BIDI_POP)
+_MAX_BIDI_CONTROLS = 128  # bound on processed bidi controls per text
+# F431: Cyrillic homoglyphs that do NOT NFKC-fold to ASCII (U+043E
+# stays U+043E under NFKC). Bounded static map of verified visual
+# homoglyphs, applied after NFKC in the confusable normalizer. Every
+# entry is pinned by evals/w344_f431close_probes.py.
+_CYRILLIC_HOMOGLYPHS = {
+    "\u0430": "a",  # CYRILLIC SMALL LETTER A
+    "\u0435": "e",  # CYRILLIC SMALL LETTER IE
+    "\u043e": "o",  # CYRILLIC SMALL LETTER O (F431 verified miss)
+    "\u0440": "p",  # CYRILLIC SMALL LETTER ER
+    "\u0441": "c",  # CYRILLIC SMALL LETTER ES
+    "\u0445": "x",  # CYRILLIC SMALL LETTER HA
+    "\u0456": "i",  # CYRILLIC SMALL LETTER BYELORUSSIAN-UKRAINIAN I
+    "\u0458": "j",  # CYRILLIC SMALL LETTER JE
+    "\u0455": "s",  # CYRILLIC SMALL LETTER DZE
+    "\u043c": "m",  # CYRILLIC SMALL LETTER EM
+    "\u043a": "k",  # CYRILLIC SMALL LETTER KA
+    "\u043d": "H",  # CYRILLIC SMALL LETTER EN (looks like capital H)
+    "\u0410": "A",  # CYRILLIC CAPITAL LETTER A
+    "\u0412": "B",  # CYRILLIC CAPITAL LETTER VE
+    "\u0421": "C",  # CYRILLIC CAPITAL LETTER ES
+    "\u0415": "E",  # CYRILLIC CAPITAL LETTER IE
+    "\u041d": "H",  # CYRILLIC CAPITAL LETTER EN
+    "\u041a": "K",  # CYRILLIC CAPITAL LETTER KA
+    "\u041c": "M",  # CYRILLIC CAPITAL LETTER EM
+    "\u041e": "O",  # CYRILLIC CAPITAL LETTER O
+    "\u0420": "P",  # CYRILLIC CAPITAL LETTER ER
+    "\u0422": "T",  # CYRILLIC CAPITAL LETTER TE
+    "\u0425": "X",  # CYRILLIC CAPITAL LETTER HA
+}
+_CYRILLIC_FOLD = {ord(k): v for k, v in _CYRILLIC_HOMOGLYPHS.items()}
 _WS_RUN = re.compile(r"\s+")
 _MAX_DECODE_BYTES = 4096  # bound on any single decoded blob
 _MAX_JSFUCK_BYTES = 100000  # bound on a JSFuck run (artifact: 34635)
@@ -949,16 +997,61 @@ def _try_utf16_null_decode(run):
 
 
 def _normalize_confusables(text):
-    """Whole-string confusable normalization variant (F429).
+    """Whole-string confusable normalization variant (F429, F431).
 
     NFKC folds fullwidth and compatibility confusables to ASCII;
-    zero-width joiners are stripped. Returns the normalized string, or
-    None when it is unchanged. This is a VARIANT for the decode layer --
+    zero-width joiners are stripped; then the bounded static
+    Cyrillic-homoglyph map (F431) folds lookalikes NFKC does not
+    cover (U+043E and kin). Returns the normalized string, or None
+    when it is unchanged. This is a VARIANT for the decode layer --
     the original text is still scanned as-is.
     """
     norm = unicodedata.normalize("NFKC", text)
     if _ZERO_WIDTH_RUN.search(norm):
         norm = _ZERO_WIDTH_RUN.sub("", norm)
+    folded = norm.translate(_CYRILLIC_FOLD)
+    if folded != norm:
+        norm = folded
+    return norm if norm != text else None
+
+
+def _normalize_bidi(text):
+    """Whole-string bidi-control normalization variant (F431).
+
+    Strips every bidi-override control (U+202A-U+202E, U+2066-U+2069)
+    and reverses right-to-left-governed runs (RLO, RLE) to visual
+    order, approximating what a renderer displays: an override/embed/
+    isolate opens a frame at the current position, PDF/PDI closes the
+    innermost frame (reversing it when it is RTL-governed), unclosed
+    frames close at end of string, unmatched pops are dropped. Beyond
+    _MAX_BIDI_CONTROLS controls the variant degrades to strip-only
+    (still deterministic). Returns the normalized string, or None when
+    there is nothing to normalize. A VARIANT -- the original text is
+    still scanned as-is.
+    """
+    if not any(c in _BIDI_ALL for c in text):
+        return None
+    if sum(1 for c in text if c in _BIDI_ALL) > _MAX_BIDI_CONTROLS:
+        stripped = "".join(c for c in text if c not in _BIDI_ALL)
+        return stripped if stripped != text else None
+    out = []
+    stack = []  # (reversing, out_start_index) frames
+    for c in text:
+        if c in _BIDI_REVERSING:
+            stack.append((True, len(out)))
+        elif c == _BIDI_LRO or c in _BIDI_EMBED or c in _BIDI_ISOLATE:
+            stack.append((False, len(out)))
+        elif c in _BIDI_POP:
+            if stack:
+                reversing, start = stack.pop()
+                if reversing:
+                    out[start:] = out[start:][::-1]
+        else:
+            out.append(c)
+    for reversing, start in reversed(stack):
+        if reversing:
+            out[start:] = out[start:][::-1]
+    norm = "".join(out)
     return norm if norm != text else None
 
 
@@ -980,6 +1073,13 @@ def _decode_layer(text):
     norm = _normalize_confusables(text)
     if norm is not None:
         _add(norm)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # Bidi-override normalization (whole-string, F431): strip bidi
+    # controls, reverse RTL-governed runs to visual order.
+    bidi = _normalize_bidi(text)
+    if bidi is not None:
+        _add(bidi)
         if len(variants) >= _MAX_CANDIDATES:
             return variants
     # Hex runs embedded anywhere in the text.
@@ -1086,9 +1186,10 @@ def find_credential(text):
     """Return the id of the first blocking credential rule matching *text*,
     or None. Also fires the entropy tripwire for unknown key formats.
 
-    Encoding-aware (F2/F8/F428/F429): before giving up, decodes likely encodings
+    Encoding-aware (F2/F8/F428/F429/F431): before giving up, decodes likely encodings
     (base64/base64url, base32, hex, URL-encoding, JSFuck, backslash
     escapes, numeric HTML entities, UTF-16 null-interleave, confusable
+    normalization incl. the Cyrillic-homoglyph map, bidi-override
     normalization -- bounded, 2 layers) and
     re-runs the credential rules on each decoded variant, in
     whitespace-stripped and reversed form as well. The entropy tripwire
