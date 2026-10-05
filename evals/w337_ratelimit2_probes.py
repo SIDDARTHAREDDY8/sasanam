@@ -73,9 +73,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2128  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-337 lane 5: pin 2106 -> 2109 (+3 tool-budget-*).; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
-FOOTER_OPEN = "none"  # F426 closed wave-338 lane 1; nothing open.
-FOOTER_NEXT = "F427"  # Next free finding number.
+TAXONOMY_PIN = 2130  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-337 lane 5: pin 2106 -> 2109 (+3 tool-budget-*).; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused)
+FOOTER_OPEN = "F427"  # F426 closed wave-338 lane 1; F427 OPEN (wave-339 lane 5).
+FOOTER_NEXT = "F428"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -651,9 +651,9 @@ def _p13():
 # P14 -- pin + footer honesty.
 # ---------------------------------------------------------------------------
 
-@probe("P14a-pin-taxonomy-2128-sorted")
+@probe("P14a-pin-taxonomy-2130-sorted")
 def _p14a():
-    pid = "P14a-pin-taxonomy-2128-sorted"
+    pid = "P14a-pin-taxonomy-2130-sorted"
     from gov.guac_graph import TAXONOMY_PIN as _pin
     if _pin != TAXONOMY_PIN:
         return _break(pid, "guac_graph pin %r != battery pin %r"
@@ -671,7 +671,7 @@ def _p14a():
     if len(literals) != TAXONOMY_PIN or len(set(literals)) != TAXONOMY_PIN:
         return _break(pid, "raw literal count %d/%d != pin"
                       % (len(literals), len(set(literals))))
-    return _held(pid, "2128/2128/0 sorted unique on raw source literals")
+    return _held(pid, "2130/2130/0 sorted unique on raw source literals")
 
 
 @probe("P14b-new-codes-centrally-registered")
@@ -697,11 +697,11 @@ def _p14c():
     # the file tail -- search the whole document.
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    if "Next free finding: **F427**" not in text:
+    if "Next free finding: **F428**" not in text:
         return _break(pid, "footer next != F427")
-    if "Open findings: none." not in text:
+    if "Open findings: F427." not in text:
         return _break(pid, "footer open != none")
-    return _held(pid, "footer open none / next F427 (F426 closed)")
+    return _held(pid, "footer open F427 / next F428 (F426 closed)")
 
 
 # ---------------------------------------------------------------------------

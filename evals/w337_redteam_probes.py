@@ -47,8 +47,8 @@ P4 (langgraph recipe): queued pauses via interrupt with the approval_id;
 P5 (F424/F425 live on this tree): NaN lock timeout escapes refresh()
   uncoded; -1 blocks forever under contention; raising clock escapes
   _check_tool_rate uncoded (no coded denial, no chained record).
-P6 (honesty + regressions): pin 2128/2128/0 sorted-unique on raw
-  literals; footer open none / next F427 (F426 closed wave-338 lane 1);
+P6 (honesty + regressions): pin 2130/2130/0 sorted-unique on raw
+  literals; footer open F427 / next F428 (F426 closed wave-338 lane 1);
   F423 NUL now refused coded (closed); F417 non-numeric port refused
   coded; F421 double-refresh exactly-one.
 
@@ -86,7 +86,7 @@ for _p in (REPO, os.path.join(REPO, "tests"), os.path.join(REPO, "evals")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2128  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-336 merge. No new decision codes this lane.; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
+TAXONOMY_PIN = 2130  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-336 merge. No new decision codes this lane.; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused)
 # ---------------------------------------------------------------------------
 # Import-time stand-ins: crewai / ag2 are not installed in the canonical
 # venv. Inject minimal fake modules so the PURE-PYTHON shim logic (the
@@ -1088,9 +1088,9 @@ def P5c():
 # ---------------------------------------------------------------------------
 
 def P6a():
-    """Pin 2106: taxonomy 2128/2128/0 sorted-unique on raw source
+    """Pin 2106: taxonomy 2130/2130/0 sorted-unique on raw source
     literals (wave-260 lesson); 6 wave-335 codes registered."""
-    pid = "P6a-pin-2128-taxonomy"
+    pid = "P6a-pin-2130-taxonomy"
     src = open(os.path.join(REPO, "gov", "decision_codes.py")).read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
     n = len(DC.TAXONOMY)
@@ -1108,29 +1108,29 @@ def P6a():
         if c not in DC.TAXONOMY:
             _break(pid, "code %r not centrally registered" % (c,))
             return
-    _held(pid, "2128/2128/0 sorted-unique; 6 wave-335 codes registered")
+    _held(pid, "2130/2130/0 sorted-unique; 6 wave-335 codes registered")
 
 
 def P6b():
-    """Footer honesty: last line carries open none / next F427
+    """Footer honesty: last line carries open F427 / next F428
     (raw-literal assertion, wave-331 lesson); F426 now CLOSED."""
-    pid = "P6b-footer-open-none-next-f427"
+    pid = "P6b-footer-open-f427-next-f428"
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               "rb") as f:
         lines = f.read().decode("utf-8").splitlines()
     last = lines[-1] if lines else ""
-    if "Open findings: none." not in last:
-        _break(pid, "last line lacks 'Open findings: none.': %r"
+    if "Open findings: F427." not in last:
+        _break(pid, "last line lacks 'Open findings: F427.': %r"
                % (last[:160],))
         return
-    if "Next free finding: **F427**" not in last:
+    if "Next free finding: **F428**" not in last:
         _break(pid, "last line lacks next-F427: %r" % (last[:160],))
         return
     for fnum in ("F424", "F425", "F426"):
         if not any(l.startswith("## " + fnum + " ") for l in lines):
             _break(pid, "%s section missing from FINDINGS.md" % (fnum,))
             return
-    _held(pid, "footer honest: open none / next F427")
+    _held(pid, "footer honest: open F427 / next F428")
 
 
 def P6c():
@@ -1216,8 +1216,8 @@ _PROBES = [
     ("P5a-f424-nan-uncoded", P5a),
     ("P5b-f424-negative-hang", P5b),
     ("P5c-f425-limiter-failure-uncoded", P5c),
-    ("P6a-pin-2128-taxonomy", P6a),
-    ("P6b-footer-open-none-next-f427", P6b),
+    ("P6a-pin-2130-taxonomy", P6a),
+    ("P6b-footer-open-f427-next-f428", P6b),
     ("P6c-f423-nul-refused", P6c),
     ("P6d-f417-port-coded", P6d),
     ("P6e-f421-double-refresh", P6e),

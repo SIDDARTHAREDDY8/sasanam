@@ -21,7 +21,7 @@ P5  Pre-registration intake (mock fetcher/resolver -- all SSRF cases
     pinned verification.
 P6  Deliberate deviations pinned (no logo prefetch, no loopback
     exception, no CIMD Service, fetch-scheme fold, pin-mismatch fold).
-P7  Pin/taxonomy honesty (2128/2128/0 sorted-unique, 15 codes
+P7  Pin/taxonomy honesty (2130/2130/0 sorted-unique, 15 codes
     registered, footer state).
 P8  Green check (depth-1): tests/test_decision_codes.py as a child.
 
@@ -42,9 +42,9 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2128  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*).; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
-FOOTER_OPEN = ()  # F426 closed wave-338 lane 1; nothing open.
-FOOTER_NEXT = "F427"
+TAXONOMY_PIN = 2130  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*).; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused)
+FOOTER_OPEN = ("F427",)  # F426 closed wave-338 lane 1; F427 OPEN (wave-339 lane 5).
+FOOTER_NEXT = "F428"
 
 _results = []
 _PROBES = []
@@ -671,7 +671,7 @@ def _p7a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
-    assert len(lits) == TAXONOMY_PIN == 2128, \
+    assert len(lits) == TAXONOMY_PIN == 2130, \
         "literal count %d != pin %d" % (len(lits), TAXONOMY_PIN)
     assert len(set(lits)) == TAXONOMY_PIN, "duplicate code literals"
     assert lits == sorted(lits), "literals not sorted"
@@ -681,7 +681,7 @@ def _p7a():
     assert all(dc.TAXONOMY[c]["domain"] == "mcp-oauth"
                for c in CIMD.CIMD_CODES)
     assert len(CIMD.CIMD_CODES) == 15
-    _held("P7a-taxonomy-pin", "2128/2128/0 sorted-unique; 15 cimd codes "
+    _held("P7a-taxonomy-pin", "2130/2130/0 sorted-unique; 15 cimd codes "
                               "registered in domain mcp-oauth")
 
 
@@ -689,10 +689,10 @@ def _p7a():
 def _p7b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Open findings: none." in text, "footer open findings"
-    assert "Next free finding: **F427**" in text, "footer next free"
+    assert "Open findings: F427." in text, "footer open findings"
+    assert "Next free finding: **F428**" in text, "footer next free"
     assert "F424" in text and "F425" in text and "F426" in text
-    _held("P7b-footer", "footer open none / next F427 (F426 closed)")
+    _held("P7b-footer", "footer open F427 / next F428 (F426 closed)")
 
 
 # ---------------------------------------------------------------------------

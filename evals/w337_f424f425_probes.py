@@ -12,7 +12,7 @@ windowed_count() -- the call is guarded, so the caller always sees the
 coded tool-rate-limiter-unavailable denial and its chained refusal record
 (carrying rate_windowed_count=None when the wire is unfit to count).
 
-Pin 2106. Footer: open none / next F427 (F426 closed wave-338 lane 1).
+Pin 2106. Footer: open F427 / next F428 (F426 closed wave-338 lane 1).
 """
 import os
 import re
@@ -36,9 +36,9 @@ import gov.tool_rate_limit as TRL  # noqa: E402
 # closed tree (wave-331 lesson: empty set, never {}).
 _EXPECTED_BREAKS = set()
 
-TAXONOMY_PIN = 2128  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-336: no new codes this lane, pin unchanged.; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
-FOOTER_OPEN = "none"  # F426 closed wave-338 lane 1.
-FOOTER_NEXT = "F427"
+TAXONOMY_PIN = 2130  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-336: no new codes this lane, pin unchanged.; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused)
+FOOTER_OPEN = "F427"  # F426 closed wave-338 lane 1.
+FOOTER_NEXT = "F428"
 
 _results = []
 
@@ -422,8 +422,8 @@ def P2d():
 # ---------------------------------------------------------------------------
 
 def P3a():
-    """Pin 2106: taxonomy 2128/2128/0 sorted-unique on raw literals."""
-    pid = "P3a-pin-taxonomy-2128-sorted"
+    """Pin 2106: taxonomy 2130/2130/0 sorted-unique on raw literals."""
+    pid = "P3a-pin-taxonomy-2130-sorted"
     # Raw-literal uniqueness on the source (wave-260 lesson): a
     # deduped-dict check would miss duplicate code literals.
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -436,20 +436,20 @@ def P3a():
     if found != sorted(found):
         _break(pid, "code literals not sorted")
         return
-    _held(pid, "taxonomy 2128/2128/0 sorted-unique on raw literals")
+    _held(pid, "taxonomy 2130/2130/0 sorted-unique on raw literals")
 
 
 def P3b():
-    """Footer: open none / next F427; F424/F425/F426 marked CLOSED."""
-    pid = "P3b-footer-open-none-next-f427"
+    """Footer: open F427 / next F428; F424/F425/F426 marked CLOSED."""
+    pid = "P3b-footer-open-f427-next-f428"
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     lines = text.splitlines()
     last = lines[-1] if lines else ""
-    if "Next free finding: **F427**" not in last:
+    if "Next free finding: **F428**" not in last:
         _break(pid, "footer does not read next F427")
         return
-    if "Open findings: none." not in last:
+    if "Open findings: F427." not in last:
         _break(pid, "footer does not read open none")
         return
     import re as _re
@@ -464,7 +464,7 @@ def P3b():
         if "**Status: OPEN.**" in _section(tag):
             _break(pid, "%s section still marked OPEN" % tag)
             return
-    _held(pid, "footer open none / next F427, F424+F425+F426 closed")
+    _held(pid, "footer open F427 / next F428, F424+F425+F426 closed")
 
 
 _PROBES = [
@@ -481,8 +481,8 @@ _PROBES = [
     ("P2b-limiter-failure-record-chained", P2b),
     ("P2c-exceeded-path-unchanged", P2c),
     ("P2d-sweep-boundary-unchanged", P2d),
-    ("P3a-pin-taxonomy-2128-sorted", P3a),
-    ("P3b-footer-open-none-next-f427", P3b),
+    ("P3a-pin-taxonomy-2130-sorted", P3a),
+    ("P3b-footer-open-f427-next-f428", P3b),
 ]
 
 

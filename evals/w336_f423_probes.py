@@ -54,8 +54,8 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2128  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-336 lane 1: no new codes; pin unchanged 2106.; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
-FOOTER_NEXT = "F427"  # Next free finding number (wave-337 merge: F426 filed by red team).
+TAXONOMY_PIN = 2130  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-336 lane 1: no new codes; pin unchanged 2106.; Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused)
+FOOTER_NEXT = "F428"  # Next free finding number (wave-337 merge: F426 filed by red team).
 
 _results = []
 _PROBES = []

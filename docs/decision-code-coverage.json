@@ -1,7 +1,7 @@
 {
- "generated": "2026-10-05T09:35:31Z",
- "pin": 2126,
- "covered": 1915,
+ "generated": "2026-10-05T10:11:03Z",
+ "pin": 2130,
+ "covered": 1919,
  "gaps": [
   "absence-refused",
   "admission-at-risk-accepted",
@@ -12220,6 +12220,16 @@
    ]
   },
   {
+   "code": "oci-bundle-not-verifiable",
+   "domain": "oci",
+   "severity": "medium",
+   "covered": true,
+   "files": [
+    "evals/w338_oci_probes.py",
+    "evals/w339_verifiable_probes.py"
+   ]
+  },
+  {
    "code": "oci-layer-media-type-mismatch",
    "domain": "oci",
    "severity": "medium",
@@ -12266,6 +12276,16 @@
    ]
   },
   {
+   "code": "oci-registry-onboarding-refused",
+   "domain": "oci",
+   "severity": "medium",
+   "covered": true,
+   "files": [
+    "evals/w338_oci_probes.py",
+    "evals/w339_oci_gate_probes.py"
+   ]
+  },
+  {
    "code": "oci-subject-mismatch",
    "domain": "oci",
    "severity": "high",
@@ -12274,6 +12294,7 @@
     "evals/w321_oci_probes.py",
     "evals/w322_redteam_probes.py",
     "evals/w338_oci_probes.py",
+    "evals/w339_attack_probes.py",
     "tests/test_oci_distribution.py",
     "tests/test_oci_referrer.py"
    ]
@@ -21052,7 +21073,18 @@
     "evals/w322_witpub_probes.py",
     "evals/w323_redteam_probes.py",
     "evals/w324_redteam_probes.py",
+    "evals/w339_witness_probes.py",
     "tests/test_witness_publish.py"
+   ]
+  },
+  {
+   "code": "witness-daemon-state-failed",
+   "domain": "witness",
+   "severity": "high",
+   "covered": true,
+   "files": [
+    "evals/w339_witness_probes.py",
+    "tests/test_witness_daemon.py"
    ]
   },
   {
@@ -21218,7 +21250,18 @@
    "files": [
     "evals/w322_witpub_probes.py",
     "evals/w323_redteam_probes.py",
+    "tests/test_witness_daemon.py",
     "tests/test_witness_publish.py"
+   ]
+  },
+  {
+   "code": "witness-policy-dual-threshold-unmet",
+   "domain": "witness",
+   "severity": "high",
+   "covered": true,
+   "files": [
+    "evals/w339_witness_probes.py",
+    "tests/test_witness_daemon.py"
    ]
   },
   {
@@ -21282,6 +21325,7 @@
    "files": [
     "evals/w322_witpol_probes.py",
     "evals/w323_redteam_probes.py",
+    "tests/test_witness_daemon.py",
     "tests/test_witness_policy.py"
    ]
   },
@@ -21339,6 +21383,8 @@
    "files": [
     "evals/w322_witpub_probes.py",
     "evals/w323_redteam_probes.py",
+    "evals/w339_witness_probes.py",
+    "tests/test_witness_daemon.py",
     "tests/test_witness_publish.py"
    ]
   },

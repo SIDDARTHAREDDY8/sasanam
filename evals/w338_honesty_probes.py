@@ -3,7 +3,7 @@
 not-verified list + coverage-table check (w337 prospectus R13/R14/R15).
 
 Base: 6cdf5fdd (wave-337 merge). Pin: 2124->2126 at the wave-338 merge (+2 oci-*).
-Footer unchanged: open none / next F427 (no findings filed here).
+Footer unchanged: open F427 / next F428 (no findings filed here).
 
 R13 (Bernstein GHSA-xw82-w5hr-hrm2, GHSA-4r8r-jx5c-w954 -- SKIP the
 fixes, ADAPT the pins): the tree is structurally defended on all three
@@ -31,7 +31,7 @@ R14 (Bernstein #5569 "no row claims coverage without a test"):
   P5  coverage checker runs, writes the generated table, and reports
       honestly: exit 1 with the gap list (gaps are the deliverable --
       NOT hand-closed this lane), exit 2 on a pin mismatch.
-P6  Pin/taxonomy honesty (2128/2128/0 sorted-unique, footer state).
+P6  Pin/taxonomy honesty (2130/2130/0 sorted-unique, footer state).
 P7  Green check (depth-1): tests/test_evidence_verify_offline as a
     child with GOV_SKIP_GREEN=1.
 
@@ -65,9 +65,9 @@ sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "tests"))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
-TAXONOMY_PIN = 2128  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-338 lane 5: pin at 6cdf5fdd.
-FOOTER_OPEN = ("F426",)
-FOOTER_NEXT = "F427"
+TAXONOMY_PIN = 2130  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-338 lane 5: pin at 6cdf5fdd.; Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused)
+FOOTER_OPEN = ("F427",)
+FOOTER_NEXT = "F428"
 
 _results = []
 _PROBES = []
@@ -328,8 +328,8 @@ def _p5():
     assert os.path.isfile(md) and os.path.isfile(js), \
         "checker did not write the generated table"
     doc = json.load(open(js, encoding="utf-8"))
-    assert doc["pin"] == TAXONOMY_PIN == 2128, "table pin mismatch"
-    assert len(doc["codes"]) == 2128
+    assert doc["pin"] == TAXONOMY_PIN == 2130, "table pin mismatch"
+    assert len(doc["codes"]) == 2130
     gaps = doc["gaps"]
     if proc.returncode == 1:
         assert gaps, "exit 1 must come with a gap list"
@@ -339,7 +339,7 @@ def _p5():
     elif proc.returncode == 0:
         assert not gaps, "exit 0 with gaps is dishonest"
         _held("P5-coverage-checker-reports-honestly",
-              "exit 0; all 2128 codes covered")
+              "exit 0; all 2130 codes covered")
     else:
         raise AssertionError("checker exit %d: %s"
                              % (proc.returncode, proc.stderr[-400:]))
@@ -355,21 +355,21 @@ def _p6a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
-    assert len(lits) == TAXONOMY_PIN == 2128, \
+    assert len(lits) == TAXONOMY_PIN == 2130, \
         "literal count %d != pin %d" % (len(lits), TAXONOMY_PIN)
     assert len(set(lits)) == TAXONOMY_PIN, "duplicate code literals"
     assert lits == sorted(lits), "literals not sorted"
     assert len(dc.TAXONOMY) == TAXONOMY_PIN
-    _held("P6a-taxonomy-pin", "2128/2128/0 sorted-unique literals")
+    _held("P6a-taxonomy-pin", "2130/2130/0 sorted-unique literals")
 
 
 @_probe("P6b-footer")
 def _p6b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Open findings: none." in text, "footer open findings"
-    assert "Next free finding: **F427**" in text, "footer next free"
-    _held("P6b-footer", "footer open none / next F427 (unchanged)")
+    assert "Open findings: F427." in text, "footer open findings"
+    assert "Next free finding: **F428**" in text, "footer next free"
+    _held("P6b-footer", "footer open F427 / next F428 (unchanged)")
 
 
 # ---------------------------------------------------------------------------

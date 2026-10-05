@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Wave-338 lane 4 battery: OCI referrer transport (gov/oci_referrer.py).
 
-Base: 6cdf5fdd (wave-337 merge). Pin: 2127 (+1 oci-bundle-not-verifiable,
+Base: 6cdf5fdd (wave-337 merge). Pin: 2130 (+1 oci-bundle-not-verifiable,
 wave-339 lane 1; +2 oci-*: oci-layer-media-type-
-mismatch + oci-tag-refused). Footer unchanged: open none / next F427
+mismatch + oci-tag-refused). Footer unchanged: open F427 / next F428
 (no findings filed here).
 
 Builds w337 research prospectus R17 (OCI referrer transport for keyed
@@ -26,8 +26,8 @@ P7  Harbor caveat (documented, tested): replica without replicated
     registry-supplied "verified" badge is never an input to any verdict.
 P8  Predicate-type annotation: extracted from the sealed VSA statement;
     explicit override honored.
-P9  Pin/taxonomy honesty (2127/2127/0 sorted-unique on raw literals;
-    new codes registered) + footer state (open none / next F427).
+P9  Pin/taxonomy honesty (2130/2130/0 sorted-unique on raw literals;
+    new codes registered) + footer state (open F427 / next F428).
 P10 Green check (depth-1): tests/test_oci_referrer.py as a child.
 
 gov/ changes in this lane: gov/oci_referrer.py (new) +
@@ -51,9 +51,9 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2127  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable). # Wave-338 lane 4: pin 2124 -> 2126 (+2 oci-*)
-FOOTER_OPEN = ("F426",)
-FOOTER_NEXT = "F427"
+TAXONOMY_PIN = 2130  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable). # Wave-338 lane 4: pin 2124 -> 2126 (+2 oci-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused)
+FOOTER_OPEN = ("F427",)
+FOOTER_NEXT = "F428"
 
 _EXPECTED_BREAKS = set()
 
@@ -388,16 +388,17 @@ def _p9():
     assert len(literals) == len(set(literals)) == TAXONOMY_PIN, \
         "taxonomy not sorted-unique on raw literals"
     assert literals == sorted(literals), "taxonomy not sorted"
-    for code in ("oci-tag-refused", "oci-layer-media-type-mismatch"):
+    for code in ("oci-tag-refused", "oci-layer-media-type-mismatch",
+                 "oci-bundle-not-verifiable", "oci-registry-onboarding-refused"):
         assert code in DC.TAXONOMY, code
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
-    assert "Next free finding: **F427**" in text, "footer next free"
-    assert "Open findings: none." in text, "footer open findings"
-    assert FOOTER_OPEN == ("F426",) and FOOTER_NEXT == "F427"
+    assert "Next free finding: **F428**" in text, "footer next free"
+    assert "Open findings: F427." in text, "footer open findings"
+    assert FOOTER_OPEN == ("F427",) and FOOTER_NEXT == "F428"
     _held("P9-pin-taxonomy",
-          "2127/2127/0 sorted-unique; 3 oci-* codes registered "
-          "(+oci-bundle-not-verifiable); "
-          "footer open none / next F427")
+          "2130/2130/0 sorted-unique; 4 oci-* codes registered "
+          "(+oci-bundle-not-verifiable +oci-registry-onboarding-refused); "
+          "footer open F427 / next F428")
 
 
 def _run_child_output(args, timeout):

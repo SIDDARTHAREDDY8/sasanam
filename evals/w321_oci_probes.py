@@ -440,13 +440,13 @@ def p_artifact_type_gated():
 def p_pin_taxonomy():
     import gov.guac_graph as gg
     pin = gg.TAXONOMY_PIN
-    assert pin == 2128, "want 2021, got %d" % pin
+    assert pin == 2130, "want 2021, got %d" % pin
     from gov import decision_codes as dc
     codes = sorted(dc.TAXONOMY.keys())
-    assert len(codes) == len(set(codes)) == 2128, \
+    assert len(codes) == len(set(codes)) == 2130, \
         "taxonomy not 2021/unique: %d" % len(codes)
     assert codes == sorted(codes), "taxonomy not sorted"
-    _record("pin-taxonomy-2128-sorted", "HELD", "2128/2128/0 sorted")
+    _record("pin-taxonomy-2130-sorted", "HELD", "2130/2130/0 sorted")
 
 
 
@@ -455,9 +455,9 @@ def p_footer_state():
     with open(os.path.join(REPO, "evals", "FINDINGS.md")) as f:
         text = f.read()
     # Wave-336 lane 1: repaired stale F412/F413-era assertions.
-    assert "Open findings: none." in text, "footer must show open none"
-    assert "Next free finding: **F427**" in text, "next free must be F427"
-    _record("footer-state", "HELD", "open none / next F427")
+    assert "Open findings: F427." in text, "footer must show open none"
+    assert "Next free finding: **F428**" in text, "next free must be F427"
+    _record("footer-state", "HELD", "open F427 / next F428")
 
 
 def green_check():

@@ -59,9 +59,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2128 # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-333 merge: pin 2077.; Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
-FOOTER_OPEN = "none"  # F423/F424/F425 CLOSED; F426 closed wave-338 lane 1.
-FOOTER_NEXT = "F427"  # Next free finding number.
+TAXONOMY_PIN = 2130 # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-333 merge: pin 2077.; Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused)
+FOOTER_OPEN = "F427"  # F423/F424/F425 CLOSED; F426 closed wave-338 lane 1.
+FOOTER_NEXT = "F428"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -420,9 +420,9 @@ def _p7():
 # P8 -- pin + footer.
 # ---------------------------------------------------------------------------
 
-@probe("P8-pin-2128-footer-f427")
+@probe("P8-pin-2130-footer-f427")
 def _p8():
-    pid = "P8-pin-2128-footer-f427"
+    pid = "P8-pin-2130-footer-f427"
     with open(os.path.join(REPO, "gov", "decision_codes.py"),
               encoding="utf-8") as fh:
         src = fh.read()
@@ -452,7 +452,7 @@ def _p8():
                       % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
     if "## F419" not in foot or "Status: CLOSED" not in foot.split("## F419")[1][:2500]:
         return _break(pid, "F419 entry not CLOSED")
-    return _held(pid, "taxonomy 2128/2128/0 sorted unique; 11 codes "
+    return _held(pid, "taxonomy 2130/2130/0 sorted unique; 11 codes "
                       "registered; footer open F421 / next F422; F419 CLOSED")
 
 

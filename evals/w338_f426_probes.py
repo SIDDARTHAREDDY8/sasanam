@@ -21,7 +21,7 @@ Fix (red-first verified on the base tree for all three break shapes):
     escaping uncoded.
 
 No new decision codes (the new error string is guardrail output_info,
-not taxonomy); pin 2124->2126 at the wave-338 merge (+2 oci-*). Footer: open none / next F427.
+not taxonomy); pin 2124->2126 at the wave-338 merge (+2 oci-*). Footer: open F427 / next F428.
 
 $0 spend; synthetic/local; no model calls.
 
@@ -58,7 +58,7 @@ from gov.adapters import openai_agents as OAI_SHIM  # noqa: E402
 # the closed tree (wave-331 lesson: empty set, never {}).
 _EXPECTED_BREAKS = set()
 
-TAXONOMY_PIN = 2128  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-338 lane 1: no new decision codes; pin unchanged.
+TAXONOMY_PIN = 2130  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable).  Wave-338 lane 1: no new decision codes; pin unchanged.; Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused)
 
 _results = []
 
@@ -298,9 +298,9 @@ def P1g():
 # ---------------------------------------------------------------------------
 
 def P2a():
-    """Pin 2128: taxonomy 2128/2128/0 sorted-unique on raw literals
+    """Pin 2130: taxonomy 2130/2130/0 sorted-unique on raw literals
     (wave-260 lesson)."""
-    pid = "P2a-pin-taxonomy-2128-sorted"
+    pid = "P2a-pin-taxonomy-2130-sorted"
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     found = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
@@ -311,20 +311,20 @@ def P2a():
     if found != sorted(found):
         _break(pid, "code literals not sorted")
         return
-    _held(pid, "taxonomy 2128/2128/0 sorted-unique on raw literals")
+    _held(pid, "taxonomy 2130/2130/0 sorted-unique on raw literals")
 
 
 def P2b():
-    """Footer: open none / next F427; F426 marked CLOSED."""
-    pid = "P2b-footer-open-none-next-f427"
+    """Footer: open F427 / next F428; F426 marked CLOSED."""
+    pid = "P2b-footer-open-f427-next-f428"
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     lines = text.splitlines()
     last = lines[-1] if lines else ""
-    if "Next free finding: **F427**" not in last:
+    if "Next free finding: **F428**" not in last:
         _break(pid, "footer does not read next F427")
         return
-    if "Open findings: none." not in last:
+    if "Open findings: F427." not in last:
         _break(pid, "footer does not read open none: %r" % (last[:120],))
         return
     import re as _re
@@ -339,7 +339,7 @@ def P2b():
     if "**Status: OPEN.**" in _section("F426"):
         _break(pid, "F426 section still marked OPEN")
         return
-    _held(pid, "footer open none / next F427, F426 closed")
+    _held(pid, "footer open F427 / next F428, F426 closed")
 
 
 _PROBES = [
@@ -350,8 +350,8 @@ _PROBES = [
     ("P1e-guardrail-exposes-attributes", P1e),
     ("P1f-wrapped-entry-correspondence", P1f),
     ("P1g-undeclared-name-refused-despite-name-coincidence", P1g),
-    ("P2a-pin-taxonomy-2128-sorted", P2a),
-    ("P2b-footer-open-none-next-f427", P2b),
+    ("P2a-pin-taxonomy-2130-sorted", P2a),
+    ("P2b-footer-open-f427-next-f428", P2b),
 ]
 
 

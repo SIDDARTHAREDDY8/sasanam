@@ -31,8 +31,8 @@ R23 (Bernstein ADAPT menu):
   orders; ``verify_referrer_binding`` selects identically under referrer
   entry permutations.
 
-P9: taxonomy pin 2127/2127/0 sorted-unique on raw literals (the new
-``oci-bundle-not-verifiable`` code), footer open none / next F427.
+P9: taxonomy pin 2130/2130/0 sorted-unique on raw literals (the new
+``oci-bundle-not-verifiable`` code), footer open F427 / next F428.
 
 Standalone: fresh TMPDIR per run, green checks enabled, depth-1 (the
 green check runs adjacent unit tests with GOV_SKIP_GREEN=1 in the child
@@ -54,9 +54,9 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2127  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable)
-FOOTER_OPEN = ()
-FOOTER_NEXT = "F427"
+TAXONOMY_PIN = 2130  # Wave-339 lane 1: pin 2126 -> 2127 (+1 oci-bundle-not-verifiable); Wave-339 merge: pin 2128 -> 2130 (+4 codes: oci-bundle-not-verifiable, witness-policy-dual-threshold-unmet, witness-daemon-state-failed, oci-registry-onboarding-refused)
+FOOTER_OPEN = ("F427",)
+FOOTER_NEXT = "F428"
 
 _EXPECTED_BREAKS = set()
 
@@ -600,12 +600,12 @@ def _p9():
     assert literals == sorted(literals), "taxonomy not sorted"
     assert "oci-bundle-not-verifiable" in DC.TAXONOMY
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
-    assert "Next free finding: **F427**" in text, "footer next free"
-    assert "Open findings: none." in text, "footer open findings"
-    assert FOOTER_OPEN == () and FOOTER_NEXT == "F427"
+    assert "Next free finding: **F428**" in text, "footer next free"
+    assert "Open findings: F427." in text, "footer open findings"
+    assert FOOTER_OPEN == ("F427",) and FOOTER_NEXT == "F428"
     _held("P9-pin-taxonomy",
-          "2127/2127/0 sorted-unique; oci-bundle-not-verifiable "
-          "registered; footer open none / next F427")
+          "2130/2130/0 sorted-unique; oci-bundle-not-verifiable "
+          "registered; footer open F427 / next F428")
 
 
 def _run_child_output(args, timeout):
