@@ -143,18 +143,19 @@ def p4_honest_single_backslash_text_unaffected():
 
 # ---------------------------------------------------------------- P5: F433 scope
 def p5_f433_shapes_still_miss():
-    # F433 (space-free CSS escape termination) is a SEPARATE closure
-    # lane; its shapes must not be silently absorbed by F432.
+    # F433 (space-free CSS escape termination) was a SEPARATE closure
+    # lane (wave-345 lane 2); on the merged tree its shapes now BLOCK
+    # coded via the second escape-run interpretation. Refusal assertion.
     shapes = {
         "css-nospace-run": "k=\\78\\6f\\78\\62-abc123def456",
         "css-nospace-single": "k=\\78oxb-abc123def456",
     }
     ok = True
     for label, shape in shapes.items():
-        miss = dlp.find_credential(shape) is None
-        ok = ok and miss
-        print("    %-18s -> %s" % (label, "MISS" if miss else "BLOCK"))
-    return _check("p5: F433 shapes still miss (separate lane)", ok)
+        held = dlp.find_credential(shape) == "dlp-slack-token"
+        ok = ok and held
+        print("    %-18s -> %s" % (label, "BLOCK" if held else "MISS!"))
+    return _check("p5: F433 shapes now block (lane 2 closed at merge)", ok)
 
 
 # ------------------------------------------------------------------- P6: ReDoS

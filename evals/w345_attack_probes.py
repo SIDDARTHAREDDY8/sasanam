@@ -133,37 +133,39 @@ def test_b1_eval_embeds_literal():
 
 @_t
 def test_b2_single_entity_at_start_pinned():
-    """F436 primary shape: one decimal entity at the start of a
-    52-char base64 run evades. Pinned as known-open (HELD when the
-    miss reproduces); flips to a refusal assertion when F436 closes."""
+    """F436 primary shape ABSORBED by the F432 closure (wave-345 merge):
+    one decimal entity at the start of a 52-char base64 run now decodes
+    via the 1+ entity gate and blocks coded. Refusal assertion."""
     b64 = _b64(_LONG)
     payload = _ent(b64[0]) + b64[1:]
     assert _LONG not in payload
-    miss = dlp.find_credential(payload) is None
-    return ("HELD" if miss else "BREAK",
-            "F436 single-entity-start miss reproduced=%s" % miss)
+    held = dlp.find_credential(payload) == "dlp-slack-token"
+    return ("HELD" if held else "BREAK",
+            "F436 single-entity-start now blocks=%s" % held)
 
 
 @_t
 def test_b2_single_entity_in_middle_pinned():
-    """F436: single entity in the middle of the base64 run evades."""
+    """F436 shape ABSORBED by the F432 closure (wave-345 merge):
+    single entity in the middle now blocks coded. Refusal assertion."""
     b64 = _b64(_LONG)
     payload = b64[:20] + _ent(b64[20]) + b64[21:]
     assert _LONG not in payload
-    miss = dlp.find_credential(payload) is None
-    return ("HELD" if miss else "BREAK",
-            "F436 single-entity-middle miss reproduced=%s" % miss)
+    held = dlp.find_credential(payload) == "dlp-slack-token"
+    return ("HELD" if held else "BREAK",
+            "F436 single-entity-middle now blocks=%s" % held)
 
 
 @_t
 def test_b2_single_hex_entity_pinned():
-    """F436: single hex entity at the start evades."""
+    """F436 shape ABSORBED by the F432 closure (wave-345 merge):
+    single hex entity at the start now blocks coded. Refusal assertion."""
     b64 = _b64(_LONG)
     payload = "&#x%x;" % ord(b64[0]) + b64[1:]
     assert _LONG not in payload
-    miss = dlp.find_credential(payload) is None
-    return ("HELD" if miss else "BREAK",
-            "F436 single-hex-entity miss reproduced=%s" % miss)
+    held = dlp.find_credential(payload) == "dlp-slack-token"
+    return ("HELD" if held else "BREAK",
+            "F436 single-hex-entity now blocks=%s" % held)
 
 
 @_t
@@ -190,22 +192,22 @@ def test_b2_two_entities_apart_pinned():
 
 @_t
 def test_b2_single_escape_fragments_pinned():
-    """F436 escape-fragment class: a single \\xHH / \\uXXXX / octal
-    fragment inside the base64 run evades (same sub-threshold
-    mechanism as the entity shapes)."""
+    """F436 escape-fragment class ABSORBED by the F432 closure
+    (wave-345 merge): single \\xHH / \\uXXXX / octal fragments now
+    decode via the 1+ escape gate and block coded. Refusal assertions."""
     b64 = _b64(_LONG)
     payloads = [
         b64[:10] + "\\x%02x" % ord(b64[10]) + b64[11:],
         b64[:10] + "\\u%04x" % ord(b64[10]) + b64[11:],
         b64[:10] + "\\%03o" % ord(b64[10]) + b64[11:],
     ]
-    misses = []
+    held = []
     for p in payloads:
         assert _LONG not in p
-        misses.append(dlp.find_credential(p) is None)
-    ok = all(misses)
+        held.append(dlp.find_credential(p) == "dlp-slack-token")
+    ok = all(held)
     return ("HELD" if ok else "BREAK",
-            "F436 escape-fragment misses=%s" % misses)
+            "F436 escape-fragments now block=%s" % held)
 
 
 @_t

@@ -51,7 +51,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2134  # Wave-344: pin 2134 (no new codes in wave-344 lane 2)
-FOOTER_OPEN = "none"
+FOOTER_OPEN = "F436"
 
 FOOTER_NEXT = "F437"
 
@@ -251,10 +251,10 @@ def p8_pin_and_footer():
             break
     ok = ok and ("Next free finding: **%s**." % FOOTER_NEXT) in footer
     if FOOTER_OPEN == "none":
-        ok = ok and "Open findings: none." in footer
+        ok = ok and "Open findings: F436." in footer
     else:
         ok = ok and ("Open findings: %s." % FOOTER_OPEN) in footer
-    return _check("p8: pin 2134, footer open none / next F436", ok,
+    return _check("p8: pin 2134, footer open F436 / next F437", ok,
 
                   footer[-60:])
 
