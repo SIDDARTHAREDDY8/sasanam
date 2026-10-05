@@ -57,7 +57,7 @@ class CodesRegisteredTest(unittest.TestCase):
                              code)
 
     def test_taxonomy_pin(self):
-        self.assertEqual(len(dc.TAXONOMY), 2124)
+        self.assertEqual(len(dc.TAXONOMY), 2126)
 
 
 class UrlShapeTest(unittest.TestCase):

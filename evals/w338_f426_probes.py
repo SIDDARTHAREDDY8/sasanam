@@ -21,7 +21,7 @@ Fix (red-first verified on the base tree for all three break shapes):
     escaping uncoded.
 
 No new decision codes (the new error string is guardrail output_info,
-not taxonomy); pin 2124 unchanged. Footer: open none / next F427.
+not taxonomy); pin 2124->2126 at the wave-338 merge (+2 oci-*). Footer: open none / next F427.
 
 $0 spend; synthetic/local; no model calls.
 
@@ -58,7 +58,7 @@ from gov.adapters import openai_agents as OAI_SHIM  # noqa: E402
 # the closed tree (wave-331 lesson: empty set, never {}).
 _EXPECTED_BREAKS = set()
 
-TAXONOMY_PIN = 2124  # Wave-338 lane 1: no new decision codes; pin unchanged.
+TAXONOMY_PIN = 2126  # Wave-338 lane 1: no new decision codes; pin unchanged.
 
 _results = []
 
@@ -298,9 +298,9 @@ def P1g():
 # ---------------------------------------------------------------------------
 
 def P2a():
-    """Pin 2124: taxonomy 2124/2124/0 sorted-unique on raw literals
+    """Pin 2126: taxonomy 2126/2126/0 sorted-unique on raw literals
     (wave-260 lesson)."""
-    pid = "P2a-pin-taxonomy-2124-sorted"
+    pid = "P2a-pin-taxonomy-2126-sorted"
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     found = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
@@ -311,7 +311,7 @@ def P2a():
     if found != sorted(found):
         _break(pid, "code literals not sorted")
         return
-    _held(pid, "taxonomy 2124/2124/0 sorted-unique on raw literals")
+    _held(pid, "taxonomy 2126/2126/0 sorted-unique on raw literals")
 
 
 def P2b():
@@ -350,7 +350,7 @@ _PROBES = [
     ("P1e-guardrail-exposes-attributes", P1e),
     ("P1f-wrapped-entry-correspondence", P1f),
     ("P1g-undeclared-name-refused-despite-name-coincidence", P1g),
-    ("P2a-pin-taxonomy-2124-sorted", P2a),
+    ("P2a-pin-taxonomy-2126-sorted", P2a),
     ("P2b-footer-open-none-next-f427", P2b),
 ]
 

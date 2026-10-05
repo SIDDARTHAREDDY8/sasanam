@@ -2,7 +2,7 @@
 """Decision-code coverage table (wave-338 lane 5, R14).
 
 Bernstein #5569 ("no row claims coverage without a test"), ADAPT: the
-decision-code registry (gov/decision_codes.py, 2124 codes) is generated
+decision-code registry (gov/decision_codes.py, 2126 codes) is generated
 into a coverage table, and NO row may claim coverage without at least
 one test/eval probe asserting that code.
 
@@ -13,7 +13,7 @@ quoted (``'code'`` or ``"code"``) in at least one ``.py`` file under
 about production reachability (that is R16's dead-controls gate).
 
 Exit codes (CI-checkable):
-  0 -- table generated; all 2124 codes have >= 1 asserting probe.
+  0 -- table generated; all 2126 codes have >= 1 asserting probe.
   1 -- table generated; GAPS EXIST (listed at the end of stdout and in
        the outputs). The table is still written -- the gaps are the
        deliverable, for the closure lanes to work down.
@@ -39,7 +39,7 @@ import re
 import sys
 import time
 
-COVERAGE_PIN = 2124  # Wave-338 lane 5: registry size at 6cdf5fdd.
+COVERAGE_PIN = 2126  # Wave-338 lane 5: registry size at 6cdf5fdd.
 
 # A quoted token that could be a decision code: lowercase alnum runs
 # with dashes/dots/underscores, both quote styles.

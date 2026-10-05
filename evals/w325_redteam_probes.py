@@ -36,9 +36,9 @@ import w324_offver_probes as _wo  # noqa: E402
 import w324_vsa_probes as _wv  # noqa: E402
 import w322_redteam_probes as _w322  # noqa: E402
 
-TAXONOMY_PIN = 2124 # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
+TAXONOMY_PIN = 2126 # Wave-327 merge: pin 2035 -> 2044 (+9 policy-channel-*); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
 FOOTER_OPEN = "F424, F425"  # F409-F423 CLOSED; F424, F425 open (wave-336 merge).
-FOOTER_NEXT = "F426"  # Next free finding number.
+FOOTER_NEXT = "F427"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -924,37 +924,37 @@ def _p5e():
 # P6: taxonomy pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6a-pin-taxonomy-2124-sorted")
+@probe("P6a-pin-taxonomy-2126-sorted")
 def _p6a():
     from gov import decision_codes
     codes = list(decision_codes.TAXONOMY)
-    if TAXONOMY_PIN != 2124:
-        return _break("P6a-pin-taxonomy-2124-sorted",
+    if TAXONOMY_PIN != 2126:
+        return _break("P6a-pin-taxonomy-2126-sorted",
                       "TAXONOMY_PIN is %r, want 2021" % (TAXONOMY_PIN,))
-    if len(codes) != 2124 or codes != sorted(codes):
-        return _break("P6a-pin-taxonomy-2124-sorted",
+    if len(codes) != 2126 or codes != sorted(codes):
+        return _break("P6a-pin-taxonomy-2126-sorted",
                       "taxonomy size/order drift: n=%d" % (len(codes),))
-    return _held("P6a-pin-taxonomy-2124-sorted", "2124/2124/0 sorted")
+    return _held("P6a-pin-taxonomy-2126-sorted", "2126/2126/0 sorted")
 
 
-@probe("P6b-footer-open-f426-next-f427")
+@probe("P6b-footer-open-none-next-f427")
 def _p6b():
     text = open(os.path.join(REPO, "evals/FINDINGS.md")).read()
     import re
     # The file carries one footer line per wave; the LAST one is current.
-    # Footer form: "Next free finding: **F426**. **Open findings: none.**"
+    # Footer form: "Next free finding: **F427**. **Open findings: none.**"
     opens = re.findall(r"\*\*Open findings:\s*([^*]+?)\.\*\*", text)
     nexts = re.findall(r"Next free finding:\s*\*\*([^*]+?)\*\*", text)
     open_line = opens[-1].strip() if opens else ""
     next_free = nexts[-1].strip() if nexts else ""
     if open_line != FOOTER_OPEN:
-        return _break("P6b-footer-open-f426-next-f427",
+        return _break("P6b-footer-open-none-next-f427",
                       "open findings %r, want %r" % (open_line, FOOTER_OPEN))
     if next_free != FOOTER_NEXT:
-        return _break("P6b-footer-open-f426-next-f427",
+        return _break("P6b-footer-open-none-next-f427",
                       "next free %r, want %r" % (next_free, FOOTER_NEXT))
-    return _held("P6b-footer-open-f426-next-f427",
-                 "footer open none / next F426")
+    return _held("P6b-footer-open-none-next-f427",
+                 "footer open none / next F427")
 
 
 # ---------------------------------------------------------------------------

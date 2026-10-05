@@ -2,7 +2,7 @@
 """Wave-338 lane 4 battery: OCI referrer transport (gov/oci_referrer.py).
 
 Base: 6cdf5fdd (wave-337 merge). Pin: 2126 (+2 oci-*: oci-layer-media-type-
-mismatch + oci-tag-refused). Footer unchanged: open F426 / next F427
+mismatch + oci-tag-refused). Footer unchanged: open none / next F427
 (no findings filed here).
 
 Builds w337 research prospectus R17 (OCI referrer transport for keyed
@@ -26,7 +26,7 @@ P7  Harbor caveat (documented, tested): replica without replicated
 P8  Predicate-type annotation: extracted from the sealed VSA statement;
     explicit override honored.
 P9  Pin/taxonomy honesty (2126/2126/0 sorted-unique on raw literals;
-    both new codes registered) + footer state (open F426 / next F427).
+    both new codes registered) + footer state (open none / next F427).
 P10 Green check (depth-1): tests/test_oci_referrer.py as a child.
 
 gov/ changes in this lane: gov/oci_referrer.py (new) +
@@ -391,11 +391,11 @@ def _p9():
         assert code in DC.TAXONOMY, code
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
     assert "Next free finding: **F427**" in text, "footer next free"
-    assert "Open findings: F426." in text, "footer open findings"
+    assert "Open findings: none." in text, "footer open findings"
     assert FOOTER_OPEN == ("F426",) and FOOTER_NEXT == "F427"
     _held("P9-pin-taxonomy",
           "2126/2126/0 sorted-unique; 2 oci-* codes registered; "
-          "footer open F426 / next F427")
+          "footer open none / next F427")
 
 
 def _run_child_output(args, timeout):

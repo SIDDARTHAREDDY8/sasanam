@@ -17,7 +17,7 @@ P2  RFC 8707 presentation: A-minted token at B, resourceless token,
     matching-resource control, aud-list control.
 P3  RFC 8707 token response: substituted resource, missing resource.
 P4  refusal vocabulary: every new code literal is centrally registered
-    (wave-329 lesson); pin 2124/2124/0 sorted unique on raw literals.
+    (wave-329 lesson); pin 2126/2126/0 sorted unique on raw literals.
 P5  footer state: open none / next F417.
 P6  depth-1 green check: adjacent MCP OAuth batteries with
     GOV_SKIP_GREEN=1.
@@ -41,8 +41,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2124 # Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
-FOOTER_OPEN = "F426"  # F417/F423/F424/F425 CLOSED; F426 OPEN (wave-337 red team).
+TAXONOMY_PIN = 2126 # Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*); Wave-334 lane 2: pin 2077 -> 2088 (+11 mcp-server-auth-*); Wave-334 merge: pin 2088 -> 2100 (+23: 11 mcp-server-auth-* + 6 mcp-oauth-prm-* + 6 incident-gpai9-*). Wave-335 merge: pin 2100 -> 2106 (+6: 1 identity-refresh-* + 2 evidence-pq-* + 3 tool-rate-*).; Wave-337 lane 3: pin 2106 -> 2121 (+15 mcp-oauth-cimd-*); Wave-337 merge: pin 2121 -> 2124 (+3 tool-budget-*)
+FOOTER_OPEN = "none"  # All findings CLOSED; F426 closed wave-338 lane 1.
 FOOTER_NEXT = "F427"  # Next free finding number.
 
 _results = []
@@ -356,43 +356,43 @@ def _p4a():
             "4 new codes registered and in module CODES")
 
 
-@probe("P4b-pin-taxonomy-2124-sorted")
+@probe("P4b-pin-taxonomy-2126-sorted")
 def _p4b():
-    if TAXONOMY_PIN != 2124:
-        return ("P4b-pin-taxonomy-2124-sorted", "BREAK",
-                "TAXONOMY_PIN is %r, want 2124" % (TAXONOMY_PIN,))
+    if TAXONOMY_PIN != 2126:
+        return ("P4b-pin-taxonomy-2126-sorted", "BREAK",
+                "TAXONOMY_PIN is %r, want 2126" % (TAXONOMY_PIN,))
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
-    if len(lits) != 2124 or len(set(lits)) != 2124 \
+    if len(lits) != 2126 or len(set(lits)) != 2126 \
             or lits != sorted(lits):
-        return ("P4b-pin-taxonomy-2124-sorted", "BREAK",
-                "want 2124/2124/0 sorted, got %d/%d/sorted=%s"
+        return ("P4b-pin-taxonomy-2126-sorted", "BREAK",
+                "want 2126/2126/0 sorted, got %d/%d/sorted=%s"
                 % (len(lits), len(set(lits)), lits == sorted(lits)))
-    return ("P4b-pin-taxonomy-2124-sorted", "HELD",
-            "2124/2124/0 sorted unique on raw source literals")
+    return ("P4b-pin-taxonomy-2126-sorted", "HELD",
+            "2126/2126/0 sorted unique on raw source literals")
 
 
 # ---------------------------------------------------------------------------
 # P5: footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P5-footer-open-f426-next-f427")
+@probe("P5-footer-open-none-next-f427")
 def _p5():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:
-        return ("P5-footer-open-f426-next-f427", "BREAK",
+        return ("P5-footer-open-none-next-f427", "BREAK",
                 "footer line not found")
     next_free, open_now = ms[-1]
     if next_free != FOOTER_NEXT or open_now != FOOTER_OPEN:
-        return ("P5-footer-open-f426-next-f427", "BREAK",
+        return ("P5-footer-open-none-next-f427", "BREAK",
                 "footer open %s / next %s, want open %s / next %s"
                 % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
-    return ("P5-footer-open-f426-next-f427", "HELD",
-            "footer open F426 / next F427")
+    return ("P5-footer-open-none-next-f427", "HELD",
+            "footer open none / next F427")
 
 
 # ---------------------------------------------------------------------------

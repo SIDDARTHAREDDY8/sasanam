@@ -29,11 +29,14 @@ What this gate checks over ``gov/``:
    ``expiry: YYYY-MM-DD`` (a future date) -- Bernstein #5505: an orphan
    needs an issue or an expiry. Missing reason, stale module/code,
    newly-reachable entry, expired entry, or unknown finding all fail.
-5. **Shrink-only (Bernstein #4645).** With ``--base <commit>`` the gate
-   diffs the allowlist against the base tree: an entry removed without a
-   ``Removed`` log line (module/code + wave + reason) fails. New active
-   entries are only ever admitted through the finding-or-expiry ritual,
-   never silently.
+5. **Shrink-only (Bernstein #4645).** With ``--base-allowlist <file>``
+   the gate diffs the allowlist against the supplied base allowlist text:
+   an entry removed without a ``Removed`` log line (module/code + wave +
+   reason) fails. New active entries are only ever admitted through the
+   finding-or-expiry ritual, never silently. The caller supplies the base
+   text (e.g. checked out by the merge coordinator's own tooling) -- this
+   gate never spawns a git subprocess itself (wave-36 supply-chain rule:
+   no in-repo git call sites).
 
 Exit codes: 0 = gate passes; 1 = gate refuses (dead surface found);
 2 = usage / gate-internal error (never a pass).
@@ -735,14 +738,14 @@ def main(argv=None):
         arg = argv[i]
         if arg == "--root" and i + 1 < len(argv):
             root, i = argv[i + 1], i + 2
-        elif arg == "--base" and i + 1 < len(argv):
+        elif arg == "--base-allowlist" and i + 1 < len(argv):
             base, i = argv[i + 1], i + 2
         elif arg == "--findings" and i + 1 < len(argv):
             findings_path, i = argv[i + 1], i + 2
         elif arg in ("-h", "--help"):
             out = sys.stdout
             out.write(__doc__ + "\nusage: no_dead_controls.py [--root DIR] "
-                      "[--base COMMIT] [--findings PATH]\n")
+                      "[--base-allowlist FILE] [--findings PATH]\n")
             return 0
         else:
             args.append(arg)
@@ -761,14 +764,17 @@ def main(argv=None):
         sys.stderr.write("gate internal error: %r\n" % exc)
         return 2
     if base is not None:
-        import subprocess
+        # The base allowlist arrives as a caller-supplied file: this gate
+        # never shells out to git (wave-36 supply-chain rule -- no in-repo
+        # git call sites; the caller fetches the base text with their own
+        # tooling, e.g. the merge coordinator's git archive).
         try:
-            base_text = subprocess.run(
-                ["git", "show", "%s:%s" % (base, ALLOWLIST_RELPATH)],
-                cwd=root, capture_output=True, text=True, check=True,
-            ).stdout
-        except subprocess.CalledProcessError:
-            base_text = ""
+            with open(base, encoding="utf-8") as handle:
+                base_text = handle.read()
+        except OSError as exc:
+            sys.stderr.write("cannot read --base-allowlist %s: %s\n"
+                             % (base, exc))
+            return 2
         shrink_violations, added = check_shrink_against_base(root, base_text)
         if shrink_violations:
             result.passed = False

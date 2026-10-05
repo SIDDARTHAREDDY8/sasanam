@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Wave-338 lane 3: dead-controls CI gate (Bernstein R16 STEAL) regression.
 
-Base: `6cdf5fdd` (wave-337 merge). Pin 2124. Footer open F426 / next F427.
+Base: `6cdf5fdd` (wave-337 merge). Pin 2126. Footer open none / next F427.
 
 What this battery pins:
 
 P1 (real tree): the gate passes on the shipped tree -- 0 orphans, 0 dead
   codes, entry-point set exactly {"gov.approve"}.
-P2 (pin): TAXONOMY_PIN == 2124 and the registry holds 2124 codes.
-P3 (footer): open F426 / next F427.
+P2 (pin): TAXONOMY_PIN == 2126 and the registry holds 2126 codes.
+P3 (footer): open none / next F427.
 P4 (synthetic, red-capable): an orphan gov module fails the gate and is
   named; a module imported only by an orphan is also orphan (fixpoint).
 P5 (synthetic, red-capable): a registered code raised nowhere fails the
@@ -54,7 +54,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import no_dead_controls as gate  # noqa: E402
 
-TAXONOMY_PIN = 2124  # Wave-337 merge: pin 2124 (2106 + 15 mcp-oauth-cimd-* + 3 tool-budget-*). No new decision codes this lane.
+TAXONOMY_PIN = 2126  # Wave-337 merge: pin 2124 (2106 + 15 mcp-oauth-cimd-* + 3 tool-budget-*). No new decision codes this lane.
 
 _EXPECTED_BREAKS = set()  # never {} (wave-331 lesson); breaks documented above
 
@@ -154,26 +154,26 @@ def p1_gate_green_real_tree():
     if problems:
         return "BREAK", "P1", "; ".join(problems)
     return "HELD", "P1", ("gate PASS on real tree: %d modules, %d reached, "
-                          "entry point gov.approve, 2123/2124 codes live, "
+                          "entry point gov.approve, 2123/2126 codes live, "
                           "honesty-mutant-inconclusive allowlisted w/ expiry"
                           % (result.module_count, result.reached_count))
 
 
 def p2_pin():
-    """TAXONOMY_PIN == 2124 and the registry holds 2124 codes."""
+    """TAXONOMY_PIN == 2126 and the registry holds 2126 codes."""
     try:
         codes = gate.registered_codes(REPO_ROOT)
     except Exception:
         return "ERROR", "P2", traceback.format_exc(limit=3)
-    if TAXONOMY_PIN != 2124:
-        return "BREAK", "P2", "TAXONOMY_PIN = %r, want 2124" % TAXONOMY_PIN
-    if len(codes) != 2124:
-        return "BREAK", "P2", "registry has %d codes, want 2124" % len(codes)
-    return "HELD", "P2", "pin 2124; registry 2124 codes"
+    if TAXONOMY_PIN != 2126:
+        return "BREAK", "P2", "TAXONOMY_PIN = %r, want 2126" % TAXONOMY_PIN
+    if len(codes) != 2126:
+        return "BREAK", "P2", "registry has %d codes, want 2126" % len(codes)
+    return "HELD", "P2", "pin 2126; registry 2126 codes"
 
 
 def p3_footer():
-    """Footer: open F426 / next F427 (raw literals, wave-331 lesson)."""
+    """Footer: open none / next F427 (raw literals, wave-331 lesson)."""
     try:
         text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md"),
                     encoding="utf-8").read()
@@ -183,9 +183,9 @@ def p3_footer():
     last = lines[-1] if lines else ""
     if "Next free finding: **F427**" not in last:
         return "BREAK", "P3", "footer next-free is not F427"
-    if not re.search(r"\*\*Open findings: F426\.\*\*", last):
-        return "BREAK", "P3", "footer open findings is not F426"
-    return "HELD", "P3", "footer open F426 / next F427"
+    if not re.search(r"\*\*Open findings: none\.\*\*", last):
+        return "BREAK", "P3", "footer open findings is not none"
+    return "HELD", "P3", "footer open none / next F427"
 
 
 def p4_orphan_module_fails():

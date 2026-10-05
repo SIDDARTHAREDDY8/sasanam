@@ -26,29 +26,35 @@ of `finding: FNNN` (present in `evals/FINDINGS.md`) or `expiry:
 YYYY-MM-DD` (future). Newly-reachable entries, stale entries, expired
 entries, and missing reasons all fail. **The allowlist can only
 shrink:** removing an entry without a `Removed` log line (name + wave +
-reason) fails the `--base` check.
+reason) fails the shrink-only check.
 
 ## How the merge coordinator runs it
 
 Add a row to the merge report's gate table:
 
-| Dead-controls | PASS (`evals/no_dead_controls.py --base <base-commit>`, exit 0) |
+| Dead-controls | PASS (`evals/no_dead_controls.py --base-allowlist <file>`, exit 0) |
 
 Commands (fresh `/var/tmp/gNNN-*` TMPDIR per the standing rules):
 
 ```
 mkdir -p /var/tmp/g338-deadctrl-gate
 TMPDIR=/var/tmp/g338-deadctrl-gate ~/workspace/.gov-venv/bin/python \
-    evals/no_dead_controls.py --base <base-commit>
+    # coordinator's own shell (outside the gate tool):
+    git show <base-commit>:evals/dead_controls_allowlist.md > /var/tmp/gNNN-base-allowlist.md
+    TMPDIR=/var/tmp/gNNN-deadctrl-gate ~/workspace/.gov-venv/bin/python \
+        evals/no_dead_controls.py --base-allowlist /var/tmp/gNNN-base-allowlist.md
 TMPDIR=/var/tmp/g338-deadctrl-batt ~/workspace/.gov-venv/bin/python \
     evals/w338_deadctrl_probes.py
 ```
 
 - Exit 0 = PASS. Exit 1 = REFUSE (dead surface; the report names it).
   Exit 2 = gate-internal error (never a pass; investigate, do not ship).
-- `--base` enables the shrink-only check against the base commit's
-  allowlist. Omit it only when git history is unavailable; the remaining
-  rules still run.
+- `--base-allowlist FILE` enables the shrink-only check against the
+  base allowlist text. The coordinator fetches the base text with their own
+  tooling (outside this gate); the gate itself never spawns a git
+  subprocess (wave-36 supply-chain rule -- no in-repo git call sites).
+  Omit the flag only when no base text is available; the remaining rules
+  still run.
 - The gate is stdlib-only, $0 spend, ~40s on the full tree. It does not
   execute repo code (AST only).
 
@@ -64,9 +70,9 @@ TMPDIR=/var/tmp/g338-deadctrl-batt ~/workspace/.gov-venv/bin/python \
 
 ## Current honest state (wave-338)
 
-- 504 importable gov modules; 503 reached; 1 verified entry point
+- 505 importable gov modules; 504 reached; 1 verified entry point
   (`gov.approve` — the documented `python -m gov.approve` CLI shim).
-- 2124 registered codes; 2123 live; 1 dead and allowlisted:
+- 2126 registered codes; 2125 live; 1 dead and allowlisted:
   `honesty-mutant-inconclusive` (reason + expiry 2026-11-15 recorded in
   the allowlist; the tool's `classify()` returns the bare
   `"INCONCLUSIVE"` vocabulary string and never emits the taxonomy code).

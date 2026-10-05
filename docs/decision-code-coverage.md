@@ -1,10 +1,10 @@
 # Decision-code coverage table (generated)
 
-Generated: 2026-10-05T08:29:56Z UTC · registry pin: 2124 · base: wave-338 lane 5
+Generated: 2026-10-05T09:00:29Z UTC · registry pin: 2126 · base: wave-338 lane 5
 
 Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code counts as covered when its literal string appears quoted in at least one ``.py`` file under ``tests/`` or ``evals/``. Production ``emit()`` call sites do not count.
 
-**Covered: 1883 / 2124** · **Gaps: 241**
+**Covered: 1885 / 2126** · **Gaps: 241**
 
 | code | domain | severity | covered | asserted in |
 | ---- | ------ | -------- | ------- | ----------- |
@@ -909,7 +909,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `honesty-baseline-tampered` | honesty | high | yes | evals/w240_forcing_honesty_probes.py, tests/test_forcing_honesty.py |
 | `honesty-baseline-unforced` | honesty | high | yes | evals/w240_forcing_honesty_probes.py, tests/test_forcing_honesty.py |
 | `honesty-condition-silent` | honesty | medium | yes | evals/w240_forcing_honesty_probes.py, tests/test_forcing_honesty.py |
-| `honesty-mutant-inconclusive` | honesty | low | yes | evals/w240_forcing_honesty_probes.py, tests/test_forcing_honesty.py |
+| `honesty-mutant-inconclusive` | honesty | low | yes | evals/w240_forcing_honesty_probes.py, evals/w338_deadctrl_probes.py, tests/test_forcing_honesty.py |
 | `honesty-mutant-invalid` | honesty | low | yes | evals/w240_forcing_honesty_probes.py, tests/test_forcing_honesty.py |
 | `honesty-tautology-suspect` | honesty | low | yes | evals/w240_forcing_honesty_probes.py, tests/test_forcing_honesty.py |
 | `hop_token_refs` | delegation | medium | **NO** |  |
@@ -1201,11 +1201,13 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `obligation-malformed` | obligation | medium | yes | tests/test_wave241_probe_classes.py |
 | `obligation-unfulfilled` | obligation | high | yes | evals/w241_probe_classes_probes.py, tests/test_wave241_probe_classes.py |
 | `oci-artifact-type-mismatch` | oci | medium | yes | evals/w321_oci_probes.py, evals/w322_redteam_probes.py, tests/test_oci_distribution.py |
-| `oci-blob-digest-mismatch` | oci | critical | yes | evals/w321_oci_probes.py, evals/w322_redteam_probes.py, tests/test_oci_distribution.py |
+| `oci-blob-digest-mismatch` | oci | critical | yes | evals/w321_oci_probes.py, evals/w322_redteam_probes.py, evals/w338_oci_probes.py (+2) |
+| `oci-layer-media-type-mismatch` | oci | medium | yes | evals/w338_oci_probes.py, tests/test_oci_referrer.py |
 | `oci-manifest-malformed` | oci | medium | yes | evals/w322_redteam_probes.py, tests/test_oci_distribution.py |
-| `oci-referrers-malformed` | oci | low | yes | evals/w322_redteam_probes.py, evals/w323_redteam_probes.py, evals/w324_redteam_probes.py (+1) |
-| `oci-referrers-unavailable` | oci | medium | yes | evals/w321_oci_probes.py, evals/w324_redteam_probes.py, tests/test_oci_distribution.py |
-| `oci-subject-mismatch` | oci | high | yes | evals/w321_oci_probes.py, evals/w322_redteam_probes.py, tests/test_oci_distribution.py |
+| `oci-referrers-malformed` | oci | low | yes | evals/w322_redteam_probes.py, evals/w323_redteam_probes.py, evals/w324_redteam_probes.py (+2) |
+| `oci-referrers-unavailable` | oci | medium | yes | evals/w321_oci_probes.py, evals/w324_redteam_probes.py, evals/w338_oci_probes.py (+2) |
+| `oci-subject-mismatch` | oci | high | yes | evals/w321_oci_probes.py, evals/w322_redteam_probes.py, evals/w338_oci_probes.py (+2) |
+| `oci-tag-refused` | oci | medium | yes | evals/w338_oci_probes.py, tests/test_oci_referrer.py |
 | `offline-verify-anchor-invalid` | witness | high | yes | evals/w324_offver_probes.py, evals/w325_redteam_probes.py |
 | `offline-verify-anchor-key-mismatch` | witness | high | yes | evals/w324_offver_probes.py, evals/w325_redteam_probes.py |
 | `offline-verify-anchor-unsupported` | witness | medium | **NO** |  |
@@ -1892,7 +1894,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `token-scope-unparseable` | token-scope | medium | yes | evals/w244_token_scope_probes.py, tests/test_token_scope_enforcement.py |
 | `token-ttl-exceeded` | token_hygiene | high | yes | evals/w234_tokenhygiene_probes.py, evals/w242_ir8587_conformance_probes.py, tests/test_token_hygiene.py |
 | `tool-budget-config-invalid` | velocity | medium | yes | evals/w337_ratelimit2_probes.py |
-| `tool-budget-exhausted` | velocity | medium | yes | evals/w337_ratelimit2_probes.py, tests/test_tool_budget.py |
+| `tool-budget-exhausted` | velocity | medium | yes | evals/w337_ratelimit2_probes.py, evals/w338_attack_probes.py, tests/test_tool_budget.py |
 | `tool-budget-unavailable` | velocity | high | yes | evals/w337_ratelimit2_probes.py |
 | `tool-crashed` | capability | medium | **NO** |  |
 | `tool-definition-malformed` | mcp-surface | medium | yes | tests/test_wave243_effect_agreement.py |

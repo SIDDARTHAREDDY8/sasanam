@@ -1,7 +1,7 @@
 {
- "generated": "2026-10-05T08:29:56Z",
- "pin": 2124,
- "covered": 1883,
+ "generated": "2026-10-05T09:00:29Z",
+ "pin": 2126,
+ "covered": 1885,
  "gaps": [
   "absence-refused",
   "admission-at-risk-accepted",
@@ -9329,6 +9329,7 @@
    "covered": true,
    "files": [
     "evals/w240_forcing_honesty_probes.py",
+    "evals/w338_deadctrl_probes.py",
     "tests/test_forcing_honesty.py"
    ]
   },
@@ -12201,7 +12202,19 @@
    "files": [
     "evals/w321_oci_probes.py",
     "evals/w322_redteam_probes.py",
-    "tests/test_oci_distribution.py"
+    "evals/w338_oci_probes.py",
+    "tests/test_oci_distribution.py",
+    "tests/test_oci_referrer.py"
+   ]
+  },
+  {
+   "code": "oci-layer-media-type-mismatch",
+   "domain": "oci",
+   "severity": "medium",
+   "covered": true,
+   "files": [
+    "evals/w338_oci_probes.py",
+    "tests/test_oci_referrer.py"
    ]
   },
   {
@@ -12223,7 +12236,8 @@
     "evals/w322_redteam_probes.py",
     "evals/w323_redteam_probes.py",
     "evals/w324_redteam_probes.py",
-    "tests/test_oci_distribution.py"
+    "tests/test_oci_distribution.py",
+    "tests/test_oci_referrer.py"
    ]
   },
   {
@@ -12234,7 +12248,9 @@
    "files": [
     "evals/w321_oci_probes.py",
     "evals/w324_redteam_probes.py",
-    "tests/test_oci_distribution.py"
+    "evals/w338_oci_probes.py",
+    "tests/test_oci_distribution.py",
+    "tests/test_oci_referrer.py"
    ]
   },
   {
@@ -12245,7 +12261,19 @@
    "files": [
     "evals/w321_oci_probes.py",
     "evals/w322_redteam_probes.py",
-    "tests/test_oci_distribution.py"
+    "evals/w338_oci_probes.py",
+    "tests/test_oci_distribution.py",
+    "tests/test_oci_referrer.py"
+   ]
+  },
+  {
+   "code": "oci-tag-refused",
+   "domain": "oci",
+   "severity": "medium",
+   "covered": true,
+   "files": [
+    "evals/w338_oci_probes.py",
+    "tests/test_oci_referrer.py"
    ]
   },
   {
@@ -19228,6 +19256,7 @@
    "covered": true,
    "files": [
     "evals/w337_ratelimit2_probes.py",
+    "evals/w338_attack_probes.py",
     "tests/test_tool_budget.py"
    ]
   },
