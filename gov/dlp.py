@@ -39,8 +39,9 @@ Function() (arbitrary code) always fails closed. The text-escape decoders
 out-of-range sequences decode to nothing, never to a guess. The
 JS-expression decoder (F430) is a strict bounded recursive-descent
 parser for quoted '+' concatenation, template literals (no ${...}),
-String.fromCharCode, and .concat()/.repeat() -- never eval; undecodable
-runs are ignored and bare literals are not rewritten.
+String.fromCharCode, .concat()/.repeat(), and (F434) array-literal
++ .join(sep) -- never eval; undecodable runs are ignored and bare
+literals are not rewritten.
 
 FORM VARIANTS (F8). Every candidate string (the original text and each
 decoded variant) is also checked whitespace-stripped and reversed: those
@@ -1161,7 +1162,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`]|String\.fromCharCode|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|\(")
 _JS_EXPR_MAX_PARTS = 64        # bound on '+' operands per expression
 _JS_EXPR_MAX_CODEPOINTS = 512  # bound on fromCharCode argument count
 _JS_EXPR_MAX_DEPTH = 8         # bound on parenthesization depth
@@ -1277,6 +1278,56 @@ def _js_parse_fromcharcode(text, i):
         raise _JSExprFail("bad fromCharCode args")
 
 
+class _JSArr:
+    """Internal: a parsed JS array-literal value (elements are str).
+
+    F434: array values only survive when immediately consumed by .join();
+    a bare (unjoined) array is not obfuscation-shaped and decodes to
+    nothing -- _try_js_expr_decode returns None for _JSArr values.
+    """
+
+    __slots__ = ("elements",)
+
+    def __init__(self, elements):
+        self.elements = elements
+
+
+def _js_parse_array(text, i, depth, state):
+    """Parse '[' element (, element)* ']' at text[i] (F434).
+
+    Elements are additive string expressions; nested array literals fail
+    closed. Returns (_JSArr, next_index). Element count is charged to the
+    expression part budget; the joined output is charged to
+    _MAX_DECODE_BYTES in _js_apply_method.
+    """
+    if state.get("in_array"):
+        raise _JSExprFail("nested array")
+    state["in_array"] = True
+    try:
+        i += 1
+        elements = []
+        i = _js_skip_ws(text, i)
+        if i < len(text) and text[i] == "]":
+            return _JSArr(elements), i + 1
+        while True:
+            elem, i = _js_parse_additive(text, i, depth, state)
+            if isinstance(elem, _JSArr):
+                raise _JSExprFail("nested array")
+            elements.append(elem)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            i = _js_skip_ws(text, i)
+            if i < len(text) and text[i] == ",":
+                i = _js_skip_ws(text, i + 1)
+                continue
+            if i < len(text) and text[i] == "]":
+                return _JSArr(elements), i + 1
+            raise _JSExprFail("bad array")
+    finally:
+        state["in_array"] = False
+
+
 def _js_parse_additive(text, i, depth, state):
     """Parse expr ('+' expr)* at text[i]; returns (value, end_index)."""
     val, i = _js_parse_primary(text, i, depth, state)
@@ -1285,6 +1336,8 @@ def _js_parse_additive(text, i, depth, state):
         if j >= len(text) or text[j] != "+":
             return val, i
         rhs, i = _js_parse_primary(text, j + 1, depth, state)
+        if isinstance(val, _JSArr) or isinstance(rhs, _JSArr):
+            raise _JSExprFail("array in additive")  # F434: no JS '+' on arrays
         state["parts"] += 1
         if state["parts"] > _JS_EXPR_MAX_PARTS:
             raise _JSExprFail("too many parts")
@@ -1295,8 +1348,35 @@ def _js_parse_additive(text, i, depth, state):
 
 
 def _js_apply_method(text, j, name, value, depth, state):
-    """Apply .concat(...) / .repeat(...) with text[j] == '('."""
+    """Apply .concat(...) / .repeat(...) / .join(...) with text[j] == '('.
+
+    .join requires an array-literal value (F434); .concat/.repeat require
+    a string value. Anything else fails closed -- never evals.
+    """
     i = j + 1
+    if name == "join":
+        # F434: ['a','b'].join(sep) -- the separator defaults to ",".
+        if not isinstance(value, _JSArr):
+            raise _JSExprFail("join on non-array")
+        i = _js_skip_ws(text, i)
+        if i < len(text) and text[i] == ")":
+            sep = ","
+            i += 1
+        else:
+            sep, i = _js_parse_additive(text, i, depth, state)
+            if isinstance(sep, _JSArr):
+                raise _JSExprFail("bad join separator")
+            i = _js_skip_ws(text, i)
+            if i >= len(text) or text[i] != ")":
+                raise _JSExprFail("bad join")
+            i += 1
+        result = sep.join(value.elements)
+        if len(result) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("join too long")
+        state["ops"] += 1
+        return result, i
+    if isinstance(value, _JSArr):
+        raise _JSExprFail("method on unjoined array")
     if name == "repeat":
         i = _js_skip_ws(text, i)
         count, i = _js_parse_number(text, i)
@@ -1335,12 +1415,12 @@ def _js_apply_method(text, j, name, value, depth, state):
 
 
 def _js_parse_postfix(text, i, value, depth, state):
-    """Consume chained .concat(...) / .repeat(...) calls on *value*."""
+    """Consume chained .concat(...) / .repeat(...) / .join(...) on *value*."""
     while True:
         j = _js_skip_ws(text, i)
         if j >= len(text) or text[j] != ".":
             return value, i
-        for name in ("concat", "repeat"):
+        for name in ("concat", "repeat", "join"):
             if text.startswith(name, j + 1):
                 k = _js_skip_ws(text, j + 1 + len(name))
                 if k < len(text) and text[k] == "(":
@@ -1352,7 +1432,7 @@ def _js_parse_postfix(text, i, value, depth, state):
 
 
 def _js_parse_primary(text, i, depth, state):
-    """Parse one primary (literal / fromCharCode / parens / number)."""
+    """Parse one primary (literal / fromCharCode / parens / number / array)."""
     i = _js_skip_ws(text, i)
     if i >= len(text):
         raise _JSExprFail("empty")
@@ -1372,6 +1452,10 @@ def _js_parse_primary(text, i, depth, state):
         if i >= len(text) or text[i] != ")":
             raise _JSExprFail("unbalanced paren")
         return _js_parse_postfix(text, i + 1, val, depth, state)
+    if c == "[":
+        val, i = _js_parse_array(text, i, depth, state)
+        state["ops"] += 1  # an array literal is obfuscation-shaped
+        return _js_parse_postfix(text, i, val, depth, state)
     if c in _ASCII_DIGITS:
         num, i = _js_parse_number(text, i)
         return str(num), i
@@ -1383,11 +1467,12 @@ def _try_js_expr_decode(text, start):
 
     Returns (decoded, end_index), or None when the run at *start* is not
     a decodable expression. Handles quoted-string '+' concatenation,
-    template literals (no ${...}), String.fromCharCode(...), and
-    .concat(...) / .repeat(...) postfix calls. Bounded by part, depth,
-    codepoint, repeat, and output budgets; never evals; undecodable
-    runs are ignored. A bare string literal with no operator or call is
-    not rewritten (not obfuscation-shaped).
+    template literals (no ${...}), String.fromCharCode(...),
+    .concat(...) / .repeat(...) postfix calls, and (F434) array-literal
+    + .join(sep) expressions. Bounded by part, depth, codepoint, repeat,
+    and output budgets; never evals; undecodable runs are ignored. A bare
+    string literal (or an unjoined array literal) with no operator or call
+    is not rewritten (not obfuscation-shaped).
     """
     if len(text) - start > _JS_EXPR_MAX_RUN:
         return None
@@ -1400,6 +1485,8 @@ def _try_js_expr_decode(text, start):
         return None
     if state["ops"] == 0:
         return None
+    if isinstance(val, _JSArr):
+        return None  # F434: bare unjoined array is not obfuscation-shaped
     decoded = _ascii_printable_or_none(val)
     if decoded is None or decoded == text[start:end]:
         return None
@@ -1453,9 +1540,10 @@ def _decode_layer(text):
         decoded = _try_jsfuck_decode(m.group(0))
         if decoded is not None:
             _add(text[:m.start()] + decoded + text[m.end():])
-    # JS string-expression runs (F430): strict static decode of quoted
-    # '+' concatenation, template literals, String.fromCharCode, and
-    # .concat/.repeat postfix calls; undecodable runs are ignored.
+    # JS string-expression runs (F430/F434): strict static decode of
+    # quoted '+' concatenation, template literals, String.fromCharCode,
+    # .concat/.repeat postfix calls, and array-literal .join(sep)
+    # (F434); undecodable runs are ignored.
     for m in list(_JS_EXPR_START.finditer(text))[:_MAX_CANDIDATES]:
         r = _try_js_expr_decode(text, m.start())
         if r is not None:
