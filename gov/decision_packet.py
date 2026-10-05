@@ -174,6 +174,10 @@ PRODUCER_VERSIONS = {
     # section is produced by gov/deny_receipts.py at producer_version
     # "1".
     "gov/deny_receipts.py": "1",
+    # Wave-343 lane 4 (ownership inference): the owner_attribution
+    # section is produced by gov/ownership_inference.py at
+    # producer_version "1".
+    "gov/ownership_inference.py": "1",
     # Wave-229 (policy-revision-pinned replay): the policy_revision
     # section is produced by gov/policy_revisions.py at
     # producer_version "1".
@@ -650,7 +654,7 @@ def build_decision_packet(*, decision, boundary_declared,
                           policy_bundle_digest=None, identity_token=None,
                           rule_labels=None, decision_code=None,
                           policy_rev_id=None, policy_digest=None,
-                          deny_receipt=None):
+                          deny_receipt=None, owner_attribution=None):
     """Build the UNSIGNED decision-packet body (dict, no ``signature``).
 
     ``decision`` is "allow" | "deny" | "queue" (the executor maps
@@ -724,6 +728,25 @@ def build_decision_packet(*, decision, boundary_declared,
     packet: no ``deny_receipt_evidence`` section is added and the
     body is byte-identical to a build without the kwarg. The receipt
     is evidence of the decision, never authority.
+
+    ``owner_attribution`` (wave-343 lane 4) is the OPTIONAL
+    ownership-attribution dict produced by
+    ``gov/ownership_inference.infer_owner`` / ``attribute_owner``
+    (Rig steal #3: every agent identity auto-traced to its human
+    owner -- "block the agent, not the employee"). The value is
+    shape-checked AND digest-recomputed at construction
+    (``check_attribution_value`` -- compare-don't-trust, a
+    caller-supplied dict is never trusted); a malformed or
+    digest-mismatched attribution raises :class:`PacketError`. The
+    section is signature-covered like every other section, so a
+    swapped owner breaks the packet signature, and the verifier
+    re-validates shape + digest after the signature. ``None`` (the
+    default) builds a legacy packet: no ``owner_attribution`` section
+    is added and the body is byte-identical to a build without the
+    kwarg. An attribution with ``owner: None`` carries the coded
+    unresolved state (``ownership-inference-unresolved`` /
+    ``-ambiguous``) -- the undecided state is explicit, never
+    omitted.
     """
     if decision not in DECISIONS:
         raise PacketError(
@@ -914,6 +937,26 @@ def build_decision_packet(*, decision, boundary_declared,
                 "deny_receipt refused by gov/deny_receipts: %s" % e)
         body["deny_receipt_evidence"] = _wrap(
             ev, "gov/deny_receipts.py")
+    if owner_attribution is not None:
+        # Wave-343 lane 4 (ownership inference): the optional
+        # owner-attribution evidence section. Shape-checked AND
+        # digest-recomputed via the inference module -- a
+        # caller-supplied dict is never trusted, and a digest
+        # mismatch refuses at construction (PacketError), not at
+        # verify time. Signature-covered like every other section;
+        # a swapped owner breaks the packet signature, and the
+        # verifier re-validates shape + digest after the signature.
+        # A copy is stored so the caller's dict is never aliased.
+        try:
+            from . import ownership_inference as _oi
+        except ImportError:  # standalone/offline: ownership_inference
+            import ownership_inference as _oi  # beside this file
+        ok, reason = _oi.check_attribution_value(owner_attribution)
+        if not ok:
+            raise PacketError(
+                "owner_attribution invalid: %s" % reason)
+        body["owner_attribution"] = _wrap(dict(owner_attribution),
+                                         "gov/ownership_inference.py")
     return body
 
 
@@ -1114,6 +1157,35 @@ def _verify(packet, entries, token_claims, trust_root, relied_claims):
                 PRODUCER_VERSIONS["gov/decision_codes.py"]:
             return False, "decision_code section producer_version " \
                 "must be %r" % (PRODUCER_VERSIONS["gov/decision_codes.py"],)
+    owner_section = packet.get("owner_attribution")
+    if owner_section is not None:
+        # Wave-343 lane 4 (ownership inference): optional evidence
+        # section. When present it must be well-formed,
+        # producer-attributed, and its value must pass the inference
+        # module's shape + digest check -- a tampered owner fails the
+        # signature check below, and a well-signed section with a
+        # recomputed-digest mismatch is refused at this seam (defense
+        # in depth for unsigned consumers).
+        if not isinstance(owner_section, dict):
+            return False, "owner_attribution section is not a dict"
+        if "value" not in owner_section:
+            return False, "owner_attribution section has no value"
+        if owner_section.get("producer") != "gov/ownership_inference.py":
+            return False, "owner_attribution section producer must be " \
+                "'gov/ownership_inference.py'"
+        if owner_section.get("producer_version") != \
+                PRODUCER_VERSIONS["gov/ownership_inference.py"]:
+            return False, "owner_attribution section producer_version " \
+                "must be %r" % (
+                    PRODUCER_VERSIONS["gov/ownership_inference.py"],)
+        try:
+            from . import ownership_inference as _oiv
+        except ImportError:  # standalone/offline
+            import ownership_inference as _oiv
+        ok, reason = _oiv.check_attribution_value(
+            owner_section.get("value"))
+        if not ok:
+            return False, "owner_attribution value invalid: %s" % reason
     rev_section = packet.get("policy_revision")
     if rev_section is not None:
         # Wave-229 (policy-revision-pinned replay): optional

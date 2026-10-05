@@ -98,13 +98,19 @@ class Catalog(object):
     """An immutable snapshot of declared catalog entries.
 
     Built only via ``load_catalog`` (which refuses fail-closed) and
-    ``attach_scorecard`` (which returns a new Catalog). All readers
-    return deep copies; caller mutation can never corrupt state.
+    ``attach_scorecard`` / ``attach_owner_attribution`` (which return
+    new Catalogs). All readers return deep copies; caller mutation
+    can never corrupt state.
     """
 
-    def __init__(self, entries, scorecards=None):
+    def __init__(self, entries, scorecards=None, owner_attributions=None):
         self._entries = entries          # name -> normalized entry
         self._scorecards = scorecards or {}  # name -> card list
+        # name -> OwnershipAttribution dict (gov/ownership_inference):
+        # the EVIDENCE-BACKED inferred owner, distinct from the entry's
+        # DECLARED owner field. An auditor compares the two via
+        # declared_vs_inferred_owner().
+        self._owner_attributions = owner_attributions or {}
 
     def names(self):
         return sorted(self._entries)
@@ -163,7 +169,93 @@ def attach_scorecard(catalog, name, cards):
                 % type(cards).__name__)
     new_scorecards = copy.deepcopy(catalog._scorecards)
     new_scorecards[name] = copy.deepcopy(cards)
-    return Catalog(copy.deepcopy(catalog._entries), new_scorecards)
+    return Catalog(copy.deepcopy(catalog._entries), new_scorecards,
+                   copy.deepcopy(catalog._owner_attributions))
+
+
+def attach_owner_attribution(catalog, name, attribution):
+    """Attach an evidence-backed owner attribution to an agent entry.
+
+    ``attribution`` is an OwnershipAttribution dict produced by
+    ``gov/ownership_inference.infer_owner`` /
+    ``attribute_owner``; it is re-validated at the seam here
+    (``check_attribution_value`` -- compare-don't-trust, a
+    caller-supplied dict is never trusted) and must name an owner
+    for an *agent*-kind entry. An attribution for a non-agent entry
+    refuses ``inventory-catalog-entry-malformed`` -- ownership
+    inference is an agent-identity primitive.
+
+    Returns a NEW Catalog (immutable-snapshot pattern). The entry's
+    DECLARED ``owner`` field is untouched: declared and inferred
+    owners are compared via ``declared_vs_inferred_owner`` so an
+    auditor always sees both.
+    """
+    from . import ownership_inference as _oi
+    _require_catalog(catalog)
+    if name not in catalog._entries:
+        _refuse(UNKNOWN_ENTRY, "no catalog entry named %r" % (name,))
+    if catalog._entries[name]["kind"] != "agent":
+        _refuse(ENTRY_MALFORMED,
+                "owner attributions attach only to agent entries; "
+                "%r is a %s" % (name,
+                                catalog._entries[name]["kind"]))
+    ok, reason = _oi.check_attribution_value(attribution)
+    if not ok:
+        _refuse(ENTRY_MALFORMED,
+                "owner attribution failed validation: %s" % reason)
+    new_attributions = copy.deepcopy(catalog._owner_attributions)
+    new_attributions[name] = copy.deepcopy(attribution)
+    return Catalog(copy.deepcopy(catalog._entries),
+                   copy.deepcopy(catalog._scorecards),
+                   new_attributions)
+
+
+def owner_attribution_of(catalog, name):
+    """Return a copy of the attached owner attribution, or None when
+    no attribution has been attached to the entry."""
+    _require_catalog(catalog)
+    if name not in catalog._entries:
+        _refuse(UNKNOWN_ENTRY, "no catalog entry named %r" % (name,))
+    return copy.deepcopy(catalog._owner_attributions.get(name))
+
+
+def declared_vs_inferred_owner(catalog, name):
+    """Compare the entry's DECLARED owner with its INFERRED owner.
+
+    Returns ``{"declared": ..., "inferred": ..., "attribution": ...,
+    "verdict": ...}`` where verdict is one of:
+
+    * ``"no-attribution"`` -- no owner attribution has been attached
+      (the comparison cannot be made; explicit, never silent);
+    * ``"declared-matches-inferred"``;
+    * ``"declared-differs-inferred"`` -- the declared owner disagrees
+      with the evidence-backed inference (principal-spoofing signal);
+    * ``"owner-unresolved"`` -- the attribution itself is an explicit
+      coded unresolved (see the attribution's ``code``).
+
+    The attribution's own ``declared_consistency`` field carries the
+    same comparison as computed at inference time; this function
+    re-derives it against the CURRENT declared owner so a catalog
+    edit after inference is still caught.
+    """
+    _require_catalog(catalog)
+    if name not in catalog._entries:
+        _refuse(UNKNOWN_ENTRY, "no catalog entry named %r" % (name,))
+    entry = catalog._entries[name]
+    attribution = catalog._owner_attributions.get(name)
+    if attribution is None:
+        return {"declared": entry["owner"], "inferred": None,
+                "attribution": None, "verdict": "no-attribution"}
+    inferred = attribution.get("owner")
+    if inferred is None:
+        verdict = "owner-unresolved"
+    elif inferred == entry["owner"]:
+        verdict = "declared-matches-inferred"
+    else:
+        verdict = "declared-differs-inferred"
+    return {"declared": entry["owner"], "inferred": inferred,
+            "attribution": copy.deepcopy(attribution),
+            "verdict": verdict}
 
 
 def report(catalog, name):

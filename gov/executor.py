@@ -1172,7 +1172,25 @@ class ToolExecutor:
                  # VerifiedTokenClaims from this verifier (wave-327
                  # lane 1, F411) -- a plain dict is refused coded
                  # identity-token-tampered.
-                 token_verifier=None):
+                 token_verifier=None,
+                 # Ownership inference (wave-343 lane 4, Rig steal #3):
+                 # the deployment's owner directory -- ground truth
+                 # mapping identifiers (emails/subjects/groups) to
+                 # owning human principals. Appended LAST so no
+                 # existing positional caller can misalign. Opt-in:
+                 # None (default) = pre-wave-343 behavior, zero change
+                 # (decision packets carry no owner_attribution
+                 # section). When set it is validated fail-fast via
+                 # gov/ownership_inference.load_owner_directory (a
+                 # malformed directory is a deployment configuration
+                 # error), and _emit_decision_packet attaches the
+                 # deployment's inferred owner (or the explicit coded
+                 # unresolved state) to every emitted decision packet
+                 # -- a blocked agent's decision record names its
+                 # inferred owner. The inference is pure and never
+                 # raises (attribute_owner), so it cannot break the
+                 # verdict path.
+                 owner_directory=None):
         # Wave-319 (workload identity): fail fast on a half-configured
         # attested-identity wiring -- a document with no verifier (or no
         # attested selectors) would otherwise queue unverifiable claims.
@@ -1201,6 +1219,16 @@ class ToolExecutor:
                 "token_verifier must be a "
                 "gov.federated_identity.TokenVerifier")
         self._token_verifier = token_verifier
+        # Wave-343 lane 4 (ownership inference): fail fast on a
+        # malformed owner directory -- the directory is the
+        # deployment's ground truth for owner inference, and a
+        # misconfigured one must explode at construction, never
+        # silently weaken per-decision attributions.
+        self._owner_directory = None
+        if owner_directory is not None:
+            from . import ownership_inference as _oi
+            self._owner_directory = _oi.load_owner_directory(
+                owner_directory)
         if agent_svid is not None:
             from . import workload_identity as _wi
             approvals.set_attested_identity_verifier(
@@ -9934,6 +9962,22 @@ class ToolExecutor:
                 approval_id=approval_id,
                 approval_record_digest=_approval_record_digest,
                 **_ladder_kwargs)
+            # Wave-343 lane 4 (ownership inference): when the
+            # deployment configured an owner directory, the decision
+            # packet names the inferred owner of the acting agent (or
+            # the explicit coded unresolved state). attribute_owner
+            # never raises, so the attribution can never break the
+            # verdict path; the declared principal is self-asserted,
+            # so the attribution resolves it against the directory
+            # (directory-principal-known tier -- honest about being
+            # the weakest tier) and records the declared-vs-inferred
+            # consistency for the auditor.
+            _owner_attribution = None
+            if self._owner_directory is not None:
+                from . import ownership_inference as _oi
+                _owner_attribution = _oi.attribute_owner(
+                    {"declared_principal": identity.principal},
+                    self._owner_directory)
             _body = _dp.build_decision_packet(
                 decision=decision,
                 boundary_declared=_boundary_declared,
@@ -9967,7 +10011,8 @@ class ToolExecutor:
                 decision_seq=decision_seq,
                 policy_reason=policy_decision.reason,
                 bill_of_materials=_bom,
-                policy_bundle_digest=_policy_hash)
+                policy_bundle_digest=_policy_hash,
+                owner_attribution=_owner_attribution)
             _packet = _dp.sign_packet(_body, self._packet_key["seed"])
             _entry = self.log.append({
                 "event": "decision_packet",
