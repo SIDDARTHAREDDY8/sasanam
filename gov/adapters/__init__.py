@@ -10,6 +10,10 @@ lives in :mod:`gov.adapters.core`; the framework shims are:
 * :mod:`gov.adapters.ag2_hooks`      -- AG2 1.x tool-execution middleware
 * :mod:`gov.adapters.mcp_adapter`     -- MCP ``ClientSession`` wrapper
 * :mod:`gov.adapters.openai_loop`     -- OpenAI-style function-call loop
+* :mod:`gov.adapters.openai_agents`   -- OpenAI Agents SDK native
+  ``tool_input_guardrails`` shim (+ honest-boundary coverage audit)
+* :mod:`gov.adapters.langgraph_hitl`  -- LangGraph ``interrupt()`` ->
+  ``ApprovalQueue`` recipe
 
 See ``gov/adapters/README.md`` for exact public signatures, the residual
 limitations that cannot be closed in-process, and the 5-line quickstart.
