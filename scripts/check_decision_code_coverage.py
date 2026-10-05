@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Decision-code coverage table (wave-343 lane 2 (coverage round 5)).
+"""Decision-code coverage table (wave-344 lane 3 (coverage round 6)).
 
 Bernstein #5569 ("no row claims coverage without a test"), ADAPT: the
-decision-code registry (gov/decision_codes.py, 2131 codes) is generated
+decision-code registry (gov/decision_codes.py, 2134 codes) is generated
 into a coverage table, and NO row may claim coverage without at least
 one test/eval probe asserting that code.
 
@@ -110,9 +110,11 @@ def main(argv):
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     md = io.StringIO()
     md.write("# Decision-code coverage table (generated)\n\n")
-    md.write("Generated: %s UTC · registry pin: %d · base: wave-342 merge "
-             "(-4 family-fallback codes removed, +4 label-* codes, +61 behaviorally "
-             "probed, F428 closed / F429 open)\n\n" % (stamp, COVERAGE_PIN))
+    md.write("Generated: %s UTC · registry pin: %d · base: wave-343 merge "
+             "(+3 ownership-* codes, 2129/2134 behaviorally probed; "
+             "5 fault-injection residuals: tool-crashed, tool-timed-out, "
+             "preexec_child_died, post-rotation, offline-verify-internal)\n\n"
+             % (stamp, COVERAGE_PIN))
     md.write("Rule (Bernstein #5569, ADAPT): no row claims coverage "
              "without a test. A code counts as covered when its literal "
              "string appears quoted in at least one ``.py`` file under "

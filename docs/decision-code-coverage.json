@@ -1,28 +1,13 @@
 {
- "generated": "2026-10-05T18:14:42Z",
+ "generated": "2026-10-05T19:23:28Z",
  "pin": 2134,
- "covered": 2114,
+ "covered": 2129,
  "gaps": [
-  "attest_absence",
-  "battery-lang-bad-metadata",
-  "canonical_link_body",
-  "clear_cross_run_lineage",
-  "compute_candidate",
-  "evaltask-bad-scoring-refs",
-  "evaltask-not-json",
-  "hop_token_refs",
-  "identity_key_of",
-  "input_closure_digest",
-  "make_link_record",
   "offline-verify-internal",
   "post-rotation",
   "preexec_child_died",
-  "propose_release",
-  "recover_torn_tail",
-  "spawn_failed",
   "tool-crashed",
-  "tool-timed-out",
-  "tool_ratings"
+  "tool-timed-out"
  ],
  "codes": [
   {
@@ -1603,8 +1588,10 @@
    "code": "attest_absence",
    "domain": "absence",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w344_covgap6_probes.py"
+   ]
   },
   {
    "code": "attestation-class-inflation",
@@ -2327,8 +2314,10 @@
    "code": "battery-lang-bad-metadata",
    "domain": "battery",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w344_covgap6_probes.py"
+   ]
   },
   {
    "code": "battery-lang-bad-module",
@@ -3011,8 +3000,10 @@
    "code": "canonical_link_body",
    "domain": "quorum",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w344_covgap6_probes.py"
+   ]
   },
   {
    "code": "canonicalization-failure",
@@ -3962,8 +3953,10 @@
    "code": "clear_cross_run_lineage",
    "domain": "lineage",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w344_covgap6_probes.py"
+   ]
   },
   {
    "code": "close-chain-digest-mismatch",
@@ -4211,8 +4204,10 @@
    "code": "compute_candidate",
    "domain": "release",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w344_covgap6_probes.py"
+   ]
   },
   {
    "code": "config-authority-claim-refused",
@@ -7134,8 +7129,10 @@
    "code": "evaltask-bad-scoring-refs",
    "domain": "evidence",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w344_covgap6_probes.py"
+   ]
   },
   {
    "code": "evaltask-bad-target",
@@ -7214,8 +7211,10 @@
    "code": "evaltask-not-json",
    "domain": "evidence",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w344_covgap6_probes.py"
+   ]
   },
   {
    "code": "evaltask-scoring-not-callable",
@@ -7260,7 +7259,8 @@
    "severity": "medium",
    "covered": true,
    "files": [
-    "evals/w343_covgap5_probes.py"
+    "evals/w343_covgap5_probes.py",
+    "evals/w344_covgap6_probes.py"
    ]
   },
   {
@@ -9326,8 +9326,10 @@
    "code": "hop_token_refs",
    "domain": "delegation",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w344_covgap6_probes.py"
+   ]
   },
   {
    "code": "hostid-hostname-digest-not-identity",
@@ -9857,8 +9859,10 @@
    "code": "identity_key_of",
    "domain": "detection",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w344_covgap6_probes.py"
+   ]
   },
   {
    "code": "ifc-audit-required",
@@ -10305,8 +10309,10 @@
    "code": "input_closure_digest",
    "domain": "provenance",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w344_covgap6_probes.py"
+   ]
   },
   {
    "code": "inspection-failed",
@@ -11101,8 +11107,10 @@
    "code": "make_link_record",
    "domain": "quorum",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w344_covgap6_probes.py"
+   ]
   },
   {
    "code": "malformed-card",
@@ -14467,8 +14475,10 @@
    "code": "propose_release",
    "domain": "release",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w344_covgap6_probes.py"
+   ]
   },
   {
    "code": "provenance-artifact-mismatch",
@@ -16006,8 +16016,10 @@
    "code": "recover_torn_tail",
    "domain": "journal",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w344_covgap6_probes.py"
+   ]
   },
   {
    "code": "reference-not-digest",
@@ -16049,6 +16061,7 @@
    "covered": true,
    "files": [
     "evals/release_approval_break_battery.py",
+    "evals/w344_covgap6_probes.py",
     "tests/test_durable_release.py",
     "tests/test_release_approval.py"
    ]
@@ -18473,8 +18486,10 @@
    "code": "spawn_failed",
    "domain": "platform",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w344_covgap6_probes.py"
+   ]
   },
   {
    "code": "spiffe-audience-mismatch",
@@ -19657,8 +19672,10 @@
    "code": "tool_ratings",
    "domain": "tool",
    "severity": "medium",
-   "covered": false,
-   "files": []
+   "covered": true,
+   "files": [
+    "evals/w344_covgap6_probes.py"
+   ]
   },
   {
    "code": "toolcall-audit-would-deny",
@@ -20502,6 +20519,7 @@
     "evals/w40_probes.py",
     "evals/w42_probes.py",
     "tests/test_f111_credential_manifest.py",
+    "tests/test_w35_rt5_f111_ratchet.py",
     "tests/test_w40_rt9_closures.py"
    ]
   },
