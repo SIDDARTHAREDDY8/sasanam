@@ -341,5 +341,37 @@ class ChannelTest(unittest.TestCase):
         self.assertIsNone(rep["code"])
 
 
+    def test_unicode_digit_version_fragment_refused_coded(self):
+        # F415: U+00B2 passes str.isdigit() but int() rejects it. The
+        # fragment must refuse coded policy-channel-malformed -- a bare
+        # ValueError must never escape poll().
+        self._write(_doc(1, self.seed), 1)
+        self._write(_doc(2, self.seed), 2, name="agent-policy.v².json")
+        rep = pc.poll(self.cfg, self.state, now=1700000001)
+        self.assertEqual(rep["code"], "policy-channel-malformed")
+        self.assertFalse(rep["applied"])
+        self.assertEqual(pc.current_version(self.cfg, self.state), 0)
+
+    def test_arabic_indic_digit_fragment_refused_coded(self):
+        # F415 companion: Arabic-Indic digits (U+0661/U+0662) are also
+        # isdigit()-True/int()-rejecting; same coded refusal.
+        self._write(_doc(1, self.seed), 1)
+        self._write(_doc(2, self.seed), 2, name="agent-policy.v١٢.json")
+        rep = pc.poll(self.cfg, self.state, now=1700000001)
+        self.assertEqual(rep["code"], "policy-channel-malformed")
+        self.assertFalse(rep["applied"])
+
+    def test_non_digit_fragment_still_skipped(self):
+        # Boundary: fragments that fail isdigit() keep the documented
+        # skip behavior -- only isdigit()-passing non-ASCII fragments
+        # refuse coded.
+        self._write(_doc(1, self.seed), 1)
+        self._write(_doc(2, self.seed), 2, name="agent-policy.vX.json")
+        rep = pc.poll(self.cfg, self.state, now=1700000001)
+        self.assertTrue(rep["applied"])
+        self.assertIsNone(rep["code"])
+        self.assertEqual(pc.current_version(self.cfg, self.state), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

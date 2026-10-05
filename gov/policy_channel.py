@@ -159,6 +159,16 @@ def _feed_files(config):
         mid = name[len(config.policy_name) + 2:-len(".json")]
         if not mid.isdigit():
             continue
+        # F415: isdigit() admits Unicode digits (e.g. U+00B2 SUPERSCRIPT
+        # TWO) that int() rejects, so the gate above is not total. The
+        # version fragment must be ASCII digits; anything else refuses
+        # coded policy-channel-malformed instead of escaping poll() as a
+        # bare ValueError (the F412-class coded-refusal discipline).
+        # isdigit() is False on the empty string, so mid is non-empty and
+        # int(mid) below cannot raise after this check.
+        if not all(c in "0123456789" for c in mid):
+            _fail("policy-channel-malformed",
+                  "version fragment is not ASCII digits: %r" % (mid,))
         found.append((int(mid), name))
     found.sort(key=lambda pair: pair[0])
     return found

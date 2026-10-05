@@ -46,7 +46,7 @@ sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2058  # Wave-327 merge pin 2056; wave-328 lane 3 repoints to 2044 (+8 custody-shamir-*); Wave-328 merge: pin 2044 -> 2056 (+12: 1 supplychain-standing-journal-corrupt + 3 residual-hardening (supplychain-scan-already-registered + advisory-version-tie + advisory-input-unpinned) + 8 custody-shamir-*); Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*)
 
-FOOTER_OPEN = "F415, F416"  # F414 CLOSED wave-330 lane 1; F415/F416 OPEN wave-330 lane 3.
+FOOTER_OPEN = "F416"  # F414/F415 CLOSED wave-330 lane 1 / wave-331 lane 1; F416 OPEN wave-330 lane 3.
 FOOTER_NEXT = "F417"
 
 _results = []
@@ -430,10 +430,10 @@ def _p11():
     for line in text.splitlines():
         if "Next free finding" in line:
             m = line
-    if m is None or "F415" not in m or "F416" not in m or "F417" not in m:
-        _break("P11-footer-open-F415-F416-next-F417", "footer line wrong: %r" % (m,))
+    if m is None or "**Open findings: F416.**" not in m or "Next free finding: **F417**" not in m:
+        _break("P11-footer-open-F416-next-F417", "footer line wrong: %r" % (m,))
     else:
-        _held("P11-footer-open-F415-F416-next-F417", "footer open F415, F416 / next F417")
+        _held("P11-footer-open-F416-next-F417", "footer open F416 / next F417")
 
 
 # ---------------------------------------------------------------------------
