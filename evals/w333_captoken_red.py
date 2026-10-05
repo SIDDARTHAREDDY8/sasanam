@@ -33,7 +33,7 @@ Probe map:
   P1d-tool-set-drift-replay: token minted when the mission allowed
       {send_email} verifies after the tool set widened to
       {send_email, delete_file}.
-  pin-taxonomy / footer-state: standard pins (2077; open F417 / next F419).
+  pin-taxonomy / footer-state: standard pins (2083; open F417 / next F419).
 
 Deterministic across 2 runs; $0 spend; synthetic/local. Stdlib only
 apart from gov/approval_tokens.py (real product code, no stubs).
@@ -63,7 +63,7 @@ for _p in (REPO, os.path.join(REPO, "tests"), os.path.join(REPO, "evals")):
 
 from gov import approval_tokens as AT  # noqa: E402
 
-TAXONOMY_PIN = 2077  # Wave-332 merge pin 2062 + 7 capability-token-*; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*)
+TAXONOMY_PIN = 2083  # Wave-332 merge pin 2062 + 7 capability-token-*; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*) # Wave-334 lane 6: pin 2077 -> 2083 (+6 incident-gpai9-*).
 # (agent/mission/tools/policy-stale/malformed/tampered/expired), wave-333
 # lane 3. The 4 red probes still BREAK (documented prospectus gap); the
 # old approval_tokens seam is untouched by this lane.

@@ -63,7 +63,7 @@ from gov import evidence_intoto as _intoto  # noqa: E402
 from gov import dsse_envelope as _dsse  # noqa: E402
 from gov.signing import Ed25519Signer, Ed25519Verifier  # noqa: E402
 
-TAXONOMY_PIN = 2077  # Wave-328 merge: pin 2044 -> 2056 (+12). This lane adds no taxonomy codes.; Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*)
+TAXONOMY_PIN = 2083  # Wave-328 merge: pin 2044 -> 2056 (+12). This lane adds no taxonomy codes.; Wave-329 merge: pin 2056 -> 2058 (+2 evidence-bundle-*) Wave-332 lane 2: pin 2058 -> 2062 (+4 mcp-oauth-iss-*/mcp-oauth-resource-*).; Wave-333 lane 3: pin 2062 -> 2069 (+7 capability-token-*); Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*) # Wave-334 lane 6: pin 2077 -> 2083 (+6 incident-gpai9-*).
 
 FOOTER_OPEN = "F417"  # F417 OPEN (wave-333 merge).
 FOOTER_NEXT = "F419"  # Next free finding number (F417 OPEN, F418 closed at wave-333 merge).
@@ -450,10 +450,10 @@ def _w6():
 # P: pin + footer regression probes
 # ---------------------------------------------------------------------------
 
-@probe("P1-pin-taxonomy-2077")
+@probe("P1-pin-taxonomy-2083")
 def _p1():
-    pid = "P1-pin-taxonomy-2077"
-    if TAXONOMY_PIN != 2077:
+    pid = "P1-pin-taxonomy-2083"
+    if TAXONOMY_PIN != 2083:
         return _break(pid, "battery pin drifted: %r" % TAXONOMY_PIN)
     lits = []
     with open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -462,11 +462,11 @@ def _p1():
             m = re.search(r'"code"\s*:\s*\'([^\']+)\'', line)
             if m:
                 lits.append(m.group(1))
-    if len(lits) != 2077 or len(set(lits)) != 2077 \
+    if len(lits) != 2083 or len(set(lits)) != 2083 \
             or lits != sorted(lits):
-        return _break(pid, "taxonomy not 2077/2077/0 sorted "
+        return _break(pid, "taxonomy not 2083/2083/0 sorted "
                            "(%d/%d)" % (len(lits), len(set(lits))))
-    return _held(pid, "taxonomy 2077/2077/0 sorted")
+    return _held(pid, "taxonomy 2083/2083/0 sorted")
 
 
 @probe("P2-footer")

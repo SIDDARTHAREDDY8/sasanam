@@ -9191,6 +9191,69 @@ TAXONOMY = {
         "evidence_kinds_required": ['screen-verdict'],
         "reverify_steps": ['recompute'],
     },
+    'incident-gpai9-final-overdue': {
+        "domain": 'incident',
+        "code": 'incident-gpai9-final-overdue',
+        "human": 'GPAI Code ch.9 Measure 9.3: final report not submitted '
+                 'within 60 days after the serious incident was resolved; '
+                 'flagged, never silently absorbed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['incident'],
+        "reverify_steps": ['check-timeliness'],
+    },
+    'incident-gpai9-incomplete': {
+        "domain": 'incident',
+        "code": 'incident-gpai9-incomplete',
+        "human": 'GPAI Code ch.9 Measure 9.2: incident report refused -- a '
+                 'numbered checklist point is neither present nor explicitly '
+                 'marked unavailable with a recorded reason; report not '
+                 'emitted fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['incident'],
+        "reverify_steps": ['validate-input-shape'],
+    },
+    'incident-gpai9-initial-overdue': {
+        "domain": 'incident',
+        "code": 'incident-gpai9-initial-overdue',
+        "human": 'GPAI Code ch.9 Measure 9.3: initial report (points 1-7) '
+                 'not submitted within the band deadline (2/5/10/15 days '
+                 'from suspicion-inclusive awareness); flagged, never '
+                 'silently absorbed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['incident'],
+        "reverify_steps": ['check-timeliness'],
+    },
+    'incident-gpai9-intermediate-overdue': {
+        "domain": 'incident',
+        "code": 'incident-gpai9-intermediate-overdue',
+        "human": 'GPAI Code ch.9 Measure 9.3: intermediate report not '
+                 'submitted within the 4-week cadence while the serious '
+                 'incident is unresolved; flagged, never silently absorbed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['incident'],
+        "reverify_steps": ['check-timeliness'],
+    },
+    'incident-gpai9-malformed': {
+        "domain": 'incident',
+        "code": 'incident-gpai9-malformed',
+        "human": 'GPAI Code ch.9 artifact: malformed input (bad incident '
+                 'shape, unknown class/stage/awareness basis, non-UTC '
+                 'timestamp); refused fail-closed, never coerced',
+        "severity": 'medium',
+        "evidence_kinds_required": ['incident'],
+        "reverify_steps": ['validate-input-shape'],
+    },
+    'incident-gpai9-retention-violation': {
+        "domain": 'incident',
+        "code": 'incident-gpai9-retention-violation',
+        "human": 'GPAI Code ch.9 Measure 9.4: disposal of incident '
+                 'documentation before the 5-year floor (later of '
+                 'documentation/incident date) refused fail-closed; '
+                 'records are never silently dropped',
+        "severity": 'medium',
+        "evidence_kinds_required": ['incident'],
+        "reverify_steps": ['check-retention-floor'],
+    },
     'incident-illegal-transition': {
         "domain": 'incident',
         "code": 'incident-illegal-transition',

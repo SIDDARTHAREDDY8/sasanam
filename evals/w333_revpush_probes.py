@@ -57,7 +57,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2077  # Wave-332 merge: pin 2062. Wave-333 lane 4: pin 2062 -> 2070 (+8 revocation-push-*).; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*)
+TAXONOMY_PIN = 2083  # Wave-332 merge: pin 2062. Wave-333 lane 4: pin 2062 -> 2070 (+8 revocation-push-*).; Wave-333 merge: pin 2069 -> 2077 (+8 revocation-push-*) # Wave-334 lane 6: pin 2077 -> 2083 (+6 incident-gpai9-*).
 FOOTER_OPEN = "F417"  # F417 OPEN (redteam bare-port); F418 (revpush) CLOSED at wave-333 merge.
 FOOTER_NEXT = "F419"  # Next free finding number.
 
@@ -412,9 +412,9 @@ def _p9():
 # P10 -- pin + footer.
 # ---------------------------------------------------------------------------
 
-@probe("P10-pin-2077-footer-f419")
+@probe("P10-pin-2083-footer-f419")
 def _p10():
-    pid = "P10-pin-2077-footer-f419"
+    pid = "P10-pin-2083-footer-f419"
     import re as _re
     src = open(os.path.join(REPO, "gov", "decision_codes.py")).read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
@@ -450,7 +450,7 @@ def _p10():
         return _break(pid, "footer open %s / next %s, want open %s / next %s"
                       % (open_now.strip(), next_free, FOOTER_OPEN,
                          FOOTER_NEXT))
-    return _held(pid, "taxonomy 2077/2077/0 sorted-unique; 8 codes "
+    return _held(pid, "taxonomy 2083/2083/0 sorted-unique; 8 codes "
                       "registered; F418 CLOSED; footer open F417 / next F419")
 
 
