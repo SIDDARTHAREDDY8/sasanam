@@ -287,9 +287,14 @@ class TestMakeToolInputGuardrail(unittest.TestCase):
 
 class TestAuditAgentCoverage(unittest.TestCase):
     def _clean_agent(self, shim, ctx):
+        # F426 strict close-when: a correctly attached guardrail DECLARES
+        # its SDK tool (expect_sdk_tool_name); the audit refuses any
+        # FunctionTool whose guardrail declares none or a mismatched name.
         binding = _coder_binding(ctx)
-        g1 = shim.make_tool_input_guardrail(binding, "write_file")
-        g2 = shim.make_tool_input_guardrail(binding, "read_file")
+        g1 = shim.make_tool_input_guardrail(binding, "write_file",
+                                            expect_sdk_tool_name="write_file")
+        g2 = shim.make_tool_input_guardrail(binding, "read_file",
+                                            expect_sdk_tool_name="read_file")
         tools = [
             _FakeFunctionTool("write_file", guardrails=[g1]),
             _FakeFunctionTool("read_file", guardrails=[g2]),
@@ -363,6 +368,83 @@ class TestAuditAgentCoverage(unittest.TestCase):
         with self.assertRaises(shim.UncoveredSurfaceError) as cm:
             shim.audit_agent_coverage(agent)
         self.assertIn("write_file", str(cm.exception))
+
+    # -- F426: guardrail<->tool correspondence --------------------------
+
+    def test_issued_guardrail_exposes_correspondence_attributes(self):
+        # The audit can only verify the correspondence because the
+        # issued guardrail exposes framework_tool and
+        # expect_sdk_tool_name as attributes (not mere closure vars).
+        shim = _import_shim()
+        ctx = make_run()
+        binding = _coder_binding(ctx)
+        g = shim.make_tool_input_guardrail(binding, "write_file",
+                                           expect_sdk_tool_name="write_file")
+        self.assertEqual(g.framework_tool, "write_file")
+        self.assertEqual(g.expect_sdk_tool_name, "write_file")
+        g2 = shim.make_tool_input_guardrail(binding, "read_file")
+        self.assertEqual(g2.framework_tool, "read_file")
+        self.assertIsNone(g2.expect_sdk_tool_name)
+
+    def test_misattached_guardrail_without_declared_name_is_flagged(self):
+        # F426 primary shape: read_file guardrail on the delete_file
+        # tool, declaring no name -- the audit must refuse, not certify.
+        shim = _import_shim()
+        ctx = make_run()
+        binding = _coder_binding(ctx)
+        g = shim.make_tool_input_guardrail(binding, "read_file")
+        agent = _FakeAgent("miswired",
+                           [_FakeFunctionTool("delete_file",
+                                              guardrails=[g])])
+        with self.assertRaises(shim.UncoveredSurfaceError) as cm:
+            shim.audit_agent_coverage(agent)
+        self.assertIn("delete_file", str(cm.exception))
+        self.assertIn("expect_sdk_tool_name", str(cm.exception))
+
+    def test_misattached_guardrail_with_mismatched_name_is_flagged(self):
+        # F426 variant: the declared name is consulted, not ignored -- a
+        # guardrail declaring "read_file" on the delete_file tool is
+        # refused.
+        shim = _import_shim()
+        ctx = make_run()
+        binding = _coder_binding(ctx)
+        g = shim.make_tool_input_guardrail(binding, "read_file",
+                                           expect_sdk_tool_name="read_file")
+        agent = _FakeAgent("miswired",
+                           [_FakeFunctionTool("delete_file",
+                                              guardrails=[g])])
+        with self.assertRaises(shim.UncoveredSurfaceError) as cm:
+            shim.audit_agent_coverage(agent)
+        self.assertIn("read_file", str(cm.exception))
+        self.assertIn("delete_file", str(cm.exception))
+
+    def test_undeclared_name_refused_despite_name_coincidence(self):
+        # A guardrail declaring no name is refused even when its
+        # framework_tool name coincides with the SDK tool's name.
+        shim = _import_shim()
+        ctx = make_run()
+        binding = _coder_binding(ctx)
+        g = shim.make_tool_input_guardrail(binding, "write_file")
+        agent = _FakeAgent("coincidence",
+                           [_FakeFunctionTool("write_file",
+                                              guardrails=[g])])
+        with self.assertRaises(shim.UncoveredSurfaceError):
+            shim.audit_agent_coverage(agent)
+
+    def test_arg_shape_mismatch_refuses_coded_not_bare_keyerror(self):
+        # F426 second shape: a bare KeyError from mediation must refuse
+        # coded guardrail_argument_shape_mismatch via the tripwire,
+        # never escape the guardrail uncoded.
+        shim = _import_shim()
+        ctx = make_run()
+        binding = _coder_binding(ctx)
+        g = shim.make_tool_input_guardrail(binding, "write_file")
+        out = g(_guardrail_data("write_file",
+                               {"to": "x@synthetic.local",
+                                "subject": "s", "body": "b"}))
+        self.assertEqual(out.behavior["type"], "raise_exception")
+        self.assertEqual((out.output_info or {}).get("error"),
+                         "guardrail_argument_shape_mismatch")
 
 
 class TestHonestBoundary(unittest.TestCase):
