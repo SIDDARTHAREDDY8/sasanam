@@ -269,36 +269,64 @@ def _p1f():
                   % (tier, bridge, coded))
 
 
-@probe("P1g-prospectus-mcp-oauth-gap1-confirmed-absent")
+@probe("P1g-mcp-oauth-gap1-closed-9207")
 def _p1g():
     """Prospectus gap #1 (RFC 9207 `iss` validation on the MCP client
-    response leg) is genuinely absent: no iss/9207 handling in
-    mcp_oauth_binding.py. The ADAPT verdict stands -- no overclaim."""
-    src = open(os.path.join(REPO, "gov", "mcp_oauth_binding.py"),
-               encoding="utf-8").read()
-    if re.search(r"9207|['\"]iss['\"]", src):
-        return _break("P1g-prospectus-mcp-oauth-gap1-confirmed-absent",
-                      "iss/9207 handling PRESENT -- prospectus wrong")
-    return _held("P1g-prospectus-mcp-oauth-gap1-confirmed-absent",
-                 "RFC 9207 iss response validation absent; ADAPT stands")
+    response leg) is CLOSED by wave-332 lane 2: `validate_authorization_response`
+    refuses a missing `iss` coded `mcp-oauth-iss-missing` and a rogue/
+    substituted `iss` coded `mcp-oauth-iss-mismatched`. (Rewritten from the
+    wave-331 'gap confirmed absent' probe per the wave-306 rule: a closure
+    probe must assert the coded refusal on the closed tree.)"""
+    from gov import mcp_oauth_binding as mob
+    key = b"w332-merge-probe-key-0123456789abcdef"
+    sealed = mob.seal_as_binding("https://as.example", "client-1", key)
+    for pid_suffix, response, want in (
+            ("missing", {"code": "authcode-1", "state": "s1"},
+             "mcp-oauth-iss-missing"),
+            ("mismatched", {"code": "authcode-1", "state": "s1",
+                            "iss": "https://rogue.example"},
+             "mcp-oauth-iss-mismatched")):
+        pid = "P1g-mcp-oauth-gap1-closed-9207-%s" % pid_suffix
+        try:
+            mob.validate_authorization_response(sealed, response, key)
+        except Exception as exc:  # noqa: BLE001
+            if getattr(exc, "code", None) == want:
+                continue
+            return _break(pid, "wrong refusal: %r, want %s"
+                          % (getattr(exc, "code", exc), want))
+        return _break(pid, "response accepted uncoded, want %s" % want)
+    return _held("P1g-mcp-oauth-gap1-closed-9207",
+                 "RFC 9207 iss response validation refuses coded "
+                 "(missing/mismatched); gap #1 CLOSED")
 
 
-@probe("P1h-prospectus-mcp-oauth-gap2-confirmed-absent")
+@probe("P1h-mcp-oauth-gap2-closed-8707")
 def _p1h():
-    """Prospectus gap #2 (RFC 8707 `resource` parameter on MCP OAuth
-    requests) is genuinely absent from mcp_oauth_binding.py and
-    mcp_invocation_authz.py. The ADAPT verdict stands -- no overclaim."""
-    found = []
-    for mod in ("mcp_oauth_binding.py", "mcp_invocation_authz.py"):
-        src = open(os.path.join(REPO, "gov", mod),
-                   encoding="utf-8").read()
-        if re.search(r"8707|['\"]resource['\"]", src):
-            found.append(mod)
-    if found:
-        return _break("P1h-prospectus-mcp-oauth-gap2-confirmed-absent",
-                      "resource/8707 handling PRESENT in %r" % (found,))
-    return _held("P1h-prospectus-mcp-oauth-gap2-confirmed-absent",
-                 "RFC 8707 resource parameter absent; ADAPT stands")
+    """Prospectus gap #2 (RFC 8707 `resource` parameter on MCP OAuth)
+    is CLOSED by wave-332 lane 2: `check_token_resource` refuses a
+    resourceless token coded `mcp-oauth-resource-missing` and an
+    A-minted-at-B token coded `mcp-oauth-resource-misbound`.
+    (Rewritten from the wave-331 'gap confirmed absent' probe per the
+    wave-306 rule.)"""
+    from gov import mcp_oauth_binding as mob
+    server_a = "https://mcp-a.example"
+    server_b = "https://mcp-b.example"
+    for pid_suffix, claims, server, want in (
+            ("missing", {}, server_a, "mcp-oauth-resource-missing"),
+            ("misbound", {"resource": server_a}, server_b,
+             "mcp-oauth-resource-misbound")):
+        pid = "P1h-mcp-oauth-gap2-closed-8707-%s" % pid_suffix
+        try:
+            mob.check_token_resource(server, claims)
+        except Exception as exc:  # noqa: BLE001
+            if getattr(exc, "code", None) == want:
+                continue
+            return _break(pid, "wrong refusal: %r, want %s"
+                          % (getattr(exc, "code", exc), want))
+        return _break(pid, "token accepted uncoded, want %s" % want)
+    return _held("P1h-mcp-oauth-gap2-closed-8707",
+                 "RFC 8707 resource binding refuses coded "
+                 "(missing/misbound); gap #2 CLOSED")
 
 
 @probe("P1i-prospectus-pq-slot-confirmed-absent")
