@@ -1448,11 +1448,9 @@ def find_credential(text):
     """Return the id of the first blocking credential rule matching *text*,
     or None. Also fires the entropy tripwire for unknown key formats.
 
-<<<<<<< HEAD
     Encoding-aware (F2/F8/F428/F429/F430/F431): before giving up, decodes likely encodings
     (base64/base64url, base32, hex, URL-encoding, JSFuck, JS string
     expressions, backslash
->>>>>>> e1159278
     escapes, numeric HTML entities, UTF-16 null-interleave, confusable
     normalization incl. the Cyrillic-homoglyph map, bidi-override
     normalization -- bounded, 2 layers) and
