@@ -287,6 +287,19 @@ def _unseal_binding(sealed_binding, key):
     return binding, digest
 
 
+def bound_issuer(sealed_binding, key):
+    """Return the canonical issuer string of a sealed binding.
+
+    Public accessor for cross-module checks (e.g. RFC 9728 PRM
+    verification in ``gov.mcp_prm``): unseals the binding with the
+    same coded refusals as the other entry points and returns the
+    canonical bound issuer. Added wave-334; no behavior change to
+    existing functions.
+    """
+    binding, _digest = _unseal_binding(sealed_binding, key)
+    return binding["issuer"]
+
+
 def _allowed_origins(binding):
     """Origins a token endpoint may live on: issuer origin plus any
     deployment-declared alternates."""

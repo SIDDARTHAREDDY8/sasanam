@@ -216,13 +216,13 @@ def p_no_inherit():
 def p_foreign():
     eat, pub, tok, ev, ex = _good_token()
     parts, payload = _payload_parts(tok)
-    payload["x_future_claim_2077"] = {"weird": [1, 2, 3]}
+    payload["x_future_claim_2083"] = {"weird": [1, 2, 3]}
     payload["submods"]["tpm"]["x_vendor_note"] = "tomorrow's claim"
     seed, _pub, signer = _keys()
     retok = eat._sign_claims(payload, signer)
     verified = eat.verify_eat(retok, **_verifier_cfg(pub))
     claims = verified["claims"] if isinstance(verified, dict) else verified
-    assert claims["x_future_claim_2077"]["weird"] == [1, 2, 3]
+    assert claims["x_future_claim_2083"]["weird"] == [1, 2, 3]
     return "unknown claims ignored per RFC 6.3"
 
 
