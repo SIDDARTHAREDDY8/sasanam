@@ -409,6 +409,25 @@ _CYRILLIC_HOMOGLYPHS = {
     "\u0425": "X",  # CYRILLIC CAPITAL LETTER HA
 }
 _CYRILLIC_FOLD = {ord(k): v for k, v in _CYRILLIC_HOMOGLYPHS.items()}
+# F435: Greek + Cherokee homoglyphs that do NOT NFKC-fold to ASCII
+# (U+03BF omicron stays U+03BF under NFKC, same for the others).
+# Bounded static map of verified visual homoglyphs, applied after
+# NFKC in the confusable normalizer alongside the Cyrillic map.
+# The four verified misses (small alpha/omicron/rho, Cherokee O)
+# anchor the class; the capital siblings and the Cherokee small
+# letter are the same visual-homoglyph class (Unicode confusables).
+# Every entry is pinned by evals/w345_f435close_probes.py.
+_GREEK_CHEROKEE_HOMOGLYPHS = {
+    "\u03b1": "a",  # GREEK SMALL LETTER ALPHA (F435 verified miss)
+    "\u03bf": "o",  # GREEK SMALL LETTER OMICRON (F435 verified miss)
+    "\u03c1": "p",  # GREEK SMALL LETTER RHO (F435 verified miss)
+    "\u13a3": "o",  # CHEROKEE LETTER O (F435 verified miss)
+    "\u0391": "A",  # GREEK CAPITAL LETTER ALPHA (same visual class)
+    "\u039f": "O",  # GREEK CAPITAL LETTER OMICRON (same visual class)
+    "\u03a1": "P",  # GREEK CAPITAL LETTER RHO (same visual class)
+    "\uab73": "o",  # CHEROKEE SMALL LETTER O (same letter as U+13A3)
+}
+_GREEK_CHEROKEE_FOLD = {ord(k): v for k, v in _GREEK_CHEROKEE_HOMOGLYPHS.items()}
 _WS_RUN = re.compile(r"\s+")
 _MAX_DECODE_BYTES = 4096  # bound on any single decoded blob
 _MAX_JSFUCK_BYTES = 100000  # bound on a JSFuck run (artifact: 34635)
@@ -1003,19 +1022,24 @@ def _try_utf16_null_decode(run):
 
 
 def _normalize_confusables(text):
-    """Whole-string confusable normalization variant (F429, F431).
+    """Whole-string confusable normalization variant (F429, F431, F435).
 
     NFKC folds fullwidth and compatibility confusables to ASCII;
     zero-width joiners are stripped; then the bounded static
-    Cyrillic-homoglyph map (F431) folds lookalikes NFKC does not
-    cover (U+043E and kin). Returns the normalized string, or None
-    when it is unchanged. This is a VARIANT for the decode layer --
-    the original text is still scanned as-is.
+    Cyrillic-homoglyph map (F431) and the bounded static
+    Greek/Cherokee-homoglyph map (F435) fold lookalikes NFKC does
+    not cover (U+043E and kin, U+03BF and kin). Returns the
+    normalized string, or None when it is unchanged. This is a
+    VARIANT for the decode layer -- the original text is still
+    scanned as-is.
     """
     norm = unicodedata.normalize("NFKC", text)
     if _ZERO_WIDTH_RUN.search(norm):
         norm = _ZERO_WIDTH_RUN.sub("", norm)
     folded = norm.translate(_CYRILLIC_FOLD)
+    if folded != norm:
+        norm = folded
+    folded = norm.translate(_GREEK_CHEROKEE_FOLD)
     if folded != norm:
         norm = folded
     return norm if norm != text else None
