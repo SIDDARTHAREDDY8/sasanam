@@ -210,12 +210,15 @@ def test_z0_redfirst_scripts_print_break():
 @_t
 def test_z1_findings_filed_open_with_final_footer():
     """F443 is filed OPEN with the final footer. Pins the filing so the
-    miss cannot go undocumented."""
+    miss cannot go undocumented.
+
+    Wave-348 lane 2 maintenance: footer repointed to the round-16
+    footer (F444/F445 filed OPEN, next F446)."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F443 filed 2026-10-05, wave-347 lane 7" in text
           and "LOW, OPEN: JS higher-order" in text
-          and "Next free finding: **F444**" in text
-          and "Open findings: F443."
+          and "Next free finding: **F446**" in text
+          and "Open findings: F443, F444, F445."
           in text)
     return ("HELD" if ok else "BREAK", "F443 filed open=%s" % ok)
 
