@@ -63,7 +63,7 @@ Probes:
   P3  decoder pins: node byte-fidelity differential (subprocess); no
       new regexes (re.compile count + anchor pattern string); F430
       bounds honored.
-  P4  pin + footer (F478 CLOSED locally; open F479 / next F480).
+  P4  pin + footer (F478, F479 CLOSED; open F480 / next F481).
 """
 
 import os
@@ -85,8 +85,8 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-357 lane 1: F478 closed; no new decision codes
-FOOTER_OPEN = "F479"  # Wave-357 lane 1: F478 CLOSED locally (merge finalizes tree-wide)
-FOOTER_NEXT = "F480"
+FOOTER_OPEN = "F480, F481"  # Wave-357 lane 1: F478 CLOSED locally (merge finalizes tree-wide)  # Wave-357 merge: F478, F479 CLOSED (next F481)
+FOOTER_NEXT = "F482"
 
 # Constructed via concatenation: the write path redacts credential literals.
 _A = "xox" + "b-0123456789"

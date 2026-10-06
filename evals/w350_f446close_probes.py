@@ -109,8 +109,8 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2135  # Wave-350: F446 closed, no new decision codes; pin unchanged 2135
-FOOTER_OPEN = "F478, F479"  # Wave-352 merge (3/5): F454-F457 CLOSED; F458-F460 OPEN (next F461)  # Wave-352 merge (2/5): F456+F457 CLOSED; F458-F460 still OPEN (next F461)  # Wave-352 lane 1: F454+F455 CLOSED locally (merge finalizes tree-wide)  # Wave-351 lane 3: F453 CLOSED (ws-b64 outer composes via fixpoint seed)  # Wave-350: F446 CLOSED locally (merge finalizes tree-wide); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 lane 2: F463 CLOSED, F469 filed OPEN (next F470)  # Wave-353 lane 2 renumber: F469->F472 (attack lane committed F469-F471 first, e79af076); footer next F473  # Wave-353 lane 4: F467+F468 CLOSED locally (merge finalizes tree-wide)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480)
-FOOTER_NEXT = "F480"  # Wave-350: next free finding after F446's closure  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 lane 2: F463 CLOSED, F469 filed OPEN (next F470)  # Wave-353 lane 2 renumber: F469->F472 (attack lane committed F469-F471 first, e79af076); footer next F473  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: next F480
+FOOTER_OPEN = "F480, F481"  # Wave-352 merge (3/5): F454-F457 CLOSED; F458-F460 OPEN (next F461)  # Wave-352 merge (2/5): F456+F457 CLOSED; F458-F460 still OPEN (next F461)  # Wave-352 lane 1: F454+F455 CLOSED locally (merge finalizes tree-wide)  # Wave-351 lane 3: F453 CLOSED (ws-b64 outer composes via fixpoint seed)  # Wave-350: F446 CLOSED locally (merge finalizes tree-wide); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 lane 2: F463 CLOSED, F469 filed OPEN (next F470)  # Wave-353 lane 2 renumber: F469->F472 (attack lane committed F469-F471 first, e79af076); footer next F473  # Wave-353 lane 4: F467+F468 CLOSED locally (merge finalizes tree-wide)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480)  # Wave-357 merge: F478, F479 CLOSED (next F481)
+FOOTER_NEXT = "F482"  # Wave-350: next free finding after F446's closure  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 lane 2: F463 CLOSED, F469 filed OPEN (next F470)  # Wave-353 lane 2 renumber: F469->F472 (attack lane committed F469-F471 first, e79af076); footer next F473  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: next F480  # Wave-357 merge: F478, F479 CLOSED (next F481)
 
 
 from gov import dlp  # noqa: E402
@@ -257,17 +257,17 @@ def p3_pin_empty_gate():
 
 
 def p3_pin_constructor_of_residual():
-    # HONEST RESIDUAL (out of F446 scope): the constructor property-
-    # lookup path is a distinct scan shape from the Array.of
-    # identifier anchor; documented, not decoded.
-    return (dlp._try_js_expr_decode("[].constructor.of('aa','bb').join('')", 0)
-            is None)
+    # F476 CLOSED (wave-357 merge, lane 1): the constructor property-
+    # lookup path is desugared to the F446 fragment list (string-literal-
+    # only args) -- the shape now decodes and refuses coded.
+    return _blocked("[].constructor.of('" + _A + "','" + _B + "').join('')")  # Wave-357 merge: F476 CLOSED
 
 
 def p3_pin_bracket_of_residual():
-    # Same residual class as [].constructor.of: bracket property access.
-    return (dlp._try_js_expr_decode("Array['of']('aa','bb').join('')", 0)
-            is None)
+    # F476 CLOSED (wave-357 merge, lane 1): bracket property access on
+    # the constructor (Array['of']) takes the same desugar path -- the
+    # shape now decodes and refuses coded.
+    return _blocked("Array['of']('" + _A + "','" + _B + "').join('')")  # Wave-357 merge: F476 CLOSED
 
 
 def p3_pin_ws_before_dot_closed():

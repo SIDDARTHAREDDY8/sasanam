@@ -299,8 +299,8 @@ def p_footer_state():
     m_open = re.findall(r"Open findings: ([^.]*)\.", text)
     # Wave-341 merge footer: F428 OPEN (filed wave-341 lane C, LOW);
     # next free F429. (Stale wave-338-era F427 assertion repaired.)
-    ok = (m_next and m_next[-1] == "F475"
-          and m_open and m_open[-1].strip() == "F476, F477")
+    ok = (m_next and m_next[-1] == "F482"
+          and m_open and m_open[-1].strip() == "F480, F481")
     _record("footer-state", "HELD" if ok else "BREAK",
             "open F436 / next F437" if ok else "footer drift")
 

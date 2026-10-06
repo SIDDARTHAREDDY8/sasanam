@@ -110,8 +110,8 @@ def test_b0_footer_state():
     lane 3: F480 constructor-dispatch/bracket-access filed)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F481**" in text
-          and "**Open findings: F478, F479, F480.**" in text)
+    ok = ("Next free finding: **F482**" in text
+          and "**Open findings: F480, F481.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -162,24 +162,24 @@ def test_b1_f475_numstr_closed():
     return ("HELD" if not hit else "BREAK", "hit=%s" % hit)
 
 
-# ------------------------------------------------- F478 open pin (sample)
+# ------------------------------------------------- F478 closed pin (sample)
 
 @_t
-def test_b2_f478_call_dispatch_open():
-    """F478 pinned OPEN (wave-356 attack): .call dispatch on prototype
-    methods still misses."""
+def test_b2_f478_call_dispatch_closed():
+    """F478 pinned CLOSED (wave-357 merge, lane 1): .call dispatch on
+    prototype methods now refuses coded."""
     hit = _blocked("Array.prototype.concat.call([], '" + _A + "','" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)  # Wave-357 merge: F478 CLOSED
 
 
-# ------------------------------------------------- F479 open pin (sample)
+# ------------------------------------------------- F479 closed pin (sample)
 
 @_t
-def test_b2_f479_join_coercion_open():
-    """F479 pinned OPEN (wave-356 attack): join() coercion of null
-    elements still misses."""
+def test_b2_f479_join_coercion_closed():
+    """F479 pinned CLOSED (wave-357 merge, lane 2): join() coercion of null
+    elements now refuses coded."""
     hit = _blocked("['" + _A + "',null,'" + _B + "'].join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)  # Wave-357 merge: F479 CLOSED
 
 
 # ------------------------------------------------- F480 open pins

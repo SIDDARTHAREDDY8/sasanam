@@ -66,7 +66,7 @@ Probes:
       (subprocess); no new regexes (re.compile count); _JSNumStr
       provenance pin; F441 ordering untouched.
   P4  discrimination: FP corpus identical; innocent mixed arrays quiet.
-  P5  pin + footer (2135; F479 CLOSED locally, open F478 / next F480).
+  P5  pin + footer (2135; F478, F479 CLOSED; open F480 / next F481).
 """
 
 import os
@@ -89,8 +89,8 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-357: F479 closed; no new decision codes
-FOOTER_OPEN = "F478"  # Wave-357 lane 2: F479 CLOSED locally (merge finalizes tree-wide)
-FOOTER_NEXT = "F480"  # Wave-357 lane 2: next free unchanged
+FOOTER_OPEN = "F480, F481"  # Wave-357 lane 2: F479 CLOSED locally (merge finalizes tree-wide)  # Wave-357 merge: F478, F479 CLOSED (next F481)
+FOOTER_NEXT = "F482"  # Wave-357 lane 2: next free unchanged  # Wave-357 merge: F478, F479 CLOSED (next F481)
 
 # Constructed via concatenation: the write path redacts credential literals.
 _A = "xox" + "b-0123456789"

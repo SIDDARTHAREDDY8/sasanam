@@ -444,8 +444,8 @@ def P10b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F480**" in text  # Wave-356 merge: footer repoint
-          and m_open and m_open[-1].strip() == "F476, F477")
+    ok = ("Next free finding: **F482**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
+          and m_open and m_open[-1].strip() == "F480, F481")
     (_held if ok else _break)(
         pid, "footer: open none / next F430" if ok
         else "footer mismatch vs open none / next F430")

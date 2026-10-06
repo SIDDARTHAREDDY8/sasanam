@@ -105,8 +105,8 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-352: F458/F459/F460 closed, no new decision codes
-FOOTER_OPEN = "F478, F479"  # Wave-352 lane 4: F458-F460 CLOSED (merge finalizes tree-wide)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 lane 1: F461+F462 CLOSED (merge finalizes tree-wide)  # Wave-353 lane 4: F467+F468 CLOSED locally (merge finalizes tree-wide)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480)
-FOOTER_NEXT = "F480"  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: next F480
+FOOTER_OPEN = "F480, F481"  # Wave-352 lane 4: F458-F460 CLOSED (merge finalizes tree-wide)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 lane 1: F461+F462 CLOSED (merge finalizes tree-wide)  # Wave-353 lane 4: F467+F468 CLOSED locally (merge finalizes tree-wide)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480)  # Wave-357 merge: F478, F479 CLOSED (next F481)
+FOOTER_NEXT = "F482"  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: next F480  # Wave-357 merge: F478, F479 CLOSED (next F481)
 
 
 # Constructed via concatenation: the write path redacts credential literals.
@@ -301,12 +301,13 @@ def p3_pin_filter_spec_tuples():
 
 
 def p3_pin_map_string_end():
-    # Bare String consumes exactly the 6-char token.
-    if dlp._js_parse_map_callback("String", 0) != 6:
+    # Bare String consumes exactly the 6-char token. Wave-357 lane 2
+    # (F479): _js_parse_map_callback now returns (end, stringifies).
+    if dlp._js_parse_map_callback("String", 0)[0] != 6:
         return False
-    if dlp._js_parse_map_callback("  String  ", 0) != 8:
+    if dlp._js_parse_map_callback("  String  ", 0)[0] != 8:
         return False
-    return True
+    return True  # Wave-357 merge: tuple-contract maintenance
 
 
 def p3_pin_f441_ordering_intact():
