@@ -27,10 +27,11 @@ Audit outcome (2026-10-05, all verified on the merged tree):
     sub-layer (the _ENTITY_RUN regex never matches named entities, and
     numeric-wrapped runs fragment so the inner entity never
     materializes within the 2-layer budget). 4 shapes, expected BREAKs.
-  * F441 (LOW, OPEN, filed wave-346 lane 6, renumbered F438->F441 at merge): double-backslash escapes --
-    ``\\\\uXXXX`` / ``\\\\xXX`` -- evade the escape sub-layer (no
-    ``\\\\`` -> ``\\`` production; the inner escape decodes inside-out).
-    4 shapes, expected BREAKs.
+  * F441 (LOW, filed wave-346 lane 6, renumbered F438->F441 at merge;
+    CLOSED 2026-10-05 wave-347 lane 5): double-backslash escapes --
+    ``\\\\uXXXX`` / ``\\\\xXX`` -- evaded the escape sub-layer (no
+    ``\\\\`` -> ``\\`` production; the inner escape decoded inside-out).
+    4 shapes, now absorbed controls asserting coded refusal.
   * Documented design boundaries (pinned HELD, NOT findings):
     - depth-3 stacks miss: the module docstring bounds decoding to
       2 layers explicitly ("bounded to 2 layers"); triple encoding is
@@ -41,8 +42,10 @@ Audit outcome (2026-10-05, all verified on the merged tree):
     ``&amp;`` prose, and innocent base64 stay quiet.
 
 Expected state on the OPEN tree (w311_redteam convention):
-  10 BREAK / 35 HELD / 0 ERROR, exit 1; every BREAK is a filed finding
-  (F440 x4, F441 x4) listed in _EXPECTED_BREAKS; F436's 2 residuals are CLOSED (wave-346 lane 1) and assert coded refusal. Any
+  3 BREAK / 42 HELD / 0 ERROR, exit 1; every BREAK is a filed finding
+  (F440 x3) listed in _EXPECTED_BREAKS; F436's 2 residuals and F441's
+  4 shapes are CLOSED (wave-346 lane 1, wave-347 lane 5) and assert
+  coded refusal. Any
   unexpected BREAK, or any expected BREAK that stops breaking (a
   finding closed without flipping its probes -- the wave-306 lesson),
   fails the battery.
@@ -72,7 +75,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2134  # Wave-346: pin 2134 (no new codes in lane 6)
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # wave-346 merge final
+FOOTER_OPEN = "F437, F438, F439, F440, F442"  # wave-347 lane 5 (F441 closed)
 FOOTER_NEXT = "F443"
 
 from gov import dlp  # noqa: E402
@@ -438,19 +441,21 @@ _PROBES = [
      _mk(lambda: _b64("".join("&amp;#x%x;" % ord(c) for c in _CRED)),
          _rt_f437_b64, "f440-b64-stacked")),
 
-    # --- F441 (OPEN, renumbered): double-backslash, expected BREAKs ---
+    # --- F441 (CLOSED 2026-10-05, wave-347 lane 5): double-backslash,
+    # absorbed controls -- the escaped-backslash production now blocks
+    # all 4 shapes. A STILL-MISS here is a regression (BREAK).
     ("f441-bslash-u",
-     _mk(lambda: "".join("\\\\u%04x" % ord(c) for c in _CRED),
+     _mk_absorbed(lambda: "".join("\\\\u%04x" % ord(c) for c in _CRED),
          _rt_f438_double_unescape, "f441-bslash-u")),
     ("f441-bslash-x",
-     _mk(lambda: "".join("\\\\x%02x" % ord(c) for c in _CRED),
+     _mk_absorbed(lambda: "".join("\\\\x%02x" % ord(c) for c in _CRED),
          _rt_f438_double_unescape, "f441-bslash-x")),
     ("f441-bslash-mixed",
-     _mk(lambda: "".join("\\\\u%04x" % ord(c) for c in _CRED[:19])
+     _mk_absorbed(lambda: "".join("\\\\u%04x" % ord(c) for c in _CRED[:19])
                  + "".join("\\\\x%02x" % ord(c) for c in _CRED[19:]),
          _rt_f438_double_unescape, "f441-bslash-mixed")),
     ("f441-url-stacked",
-     _mk(lambda: _url("".join("\\\\u%04x" % ord(c)
+     _mk_absorbed(lambda: _url("".join("\\\\u%04x" % ord(c)
                               for c in _CRED[:12]))
                  + "".join("\\\\u%04x" % ord(c) for c in _CRED[12:]),
          _rt_f438_url, "f441-url-stacked")),
@@ -549,11 +554,10 @@ _EXPECTED_BREAKS = {
     # whole-text entity pass) -- now blocks; removed at the wave-346 merge.
     "f440-amp-no-semicolon",
     "f440-b64-stacked",
-    # F441 (LOW, OPEN, renumbered F438->F441): double-backslash escapes
-    "f441-bslash-u",
-    "f441-bslash-x",
-    "f441-bslash-mixed",
-    "f441-url-stacked",
+    # F441 (LOW, CLOSED 2026-10-05 wave-347 lane 5): double-backslash
+    # escapes -- absorbed by the escaped-backslash production; the
+    # f441 probes above are absorbed controls (removed from the
+    # expected-BREAK set at closure, wave-306 lesson).
 }
 
 

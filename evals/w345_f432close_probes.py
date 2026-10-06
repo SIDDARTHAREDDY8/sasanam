@@ -52,7 +52,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2134  # Wave-345: pin 2134 (no new codes in wave-345 lane 1)
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # wave-346 merge final
+FOOTER_OPEN = "F437, F438, F439, F440, F442"  # wave-346 merge final; F441 CLOSED 2026-10-05 wave-347 lane 5
 FOOTER_NEXT = "F443"
 
 from gov import dlp  # noqa: E402

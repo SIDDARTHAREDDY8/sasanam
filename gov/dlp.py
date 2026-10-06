@@ -1212,6 +1212,40 @@ def _try_escape_decode_all(text):
     return variants
 
 
+def _try_bslash_unescape_all(text):
+    """Escaped-backslash productions (F441): collapse doubled
+    backslashes, then decode the exposed escapes.
+
+    Models the first pass of a real double-``unicode_escape`` parser
+    stack: ``\\\\uXXXX`` resolves to ``\\uXXXX`` (escaped-backslash
+    collapse), which the second pass decodes to the char. Returns up
+    to three variants: the pure collapse (the existing escape-run
+    layer supplies the second pass -- composes in 2 layers), plus the
+    collapse decoded under each whole-text escape interpretation
+    (keeps URL-stacked double-backslash shapes inside the 2-layer
+    decode budget: URL layer first, this production second).
+
+    Strictly reduces the backslash count on every application, so a
+    re-application reaches a fixpoint (pinned -- no decode loop).
+    Returns [] when no doubled backslash occurs, the pair count
+    exceeds _MAX_WHOLETEXT_ITEMS, or the collapse is not ASCII text
+    (fail closed). Bounded, static, never executes.
+    """
+    if "\\\\" not in text:
+        return []
+    if text.count("\\\\") > _MAX_WHOLETEXT_ITEMS:
+        return []
+    collapsed = _ascii_printable_or_none(text.replace("\\\\", "\\"))
+    if collapsed is None:
+        return []
+    variants = []
+    if collapsed != text:
+        variants.append(collapsed)
+    for v in _try_escape_decode_all(collapsed):
+        variants.append(v)
+    return variants
+
+
 def _try_utf16_null_decode(run):
     """Decode one UTF-16 null-interleaved run (F429) by stripping NULs."""
     return _ascii_printable_or_none(run.replace("\x00", ""))
@@ -1672,6 +1706,22 @@ def _decode_layer(text):
         if r is not None:
             decoded, end = r
             _add(text[:m.start()] + decoded + text[end:])
+    # Escaped-backslash productions (F441): collapse doubled
+    # backslashes and decode the exposed escapes -- models the first
+    # pass of a real double-unicode_escape parser stack. This whole-
+    # text production MUST precede the per-run escape layers below:
+    # on double-backslash text the per-run layers decode inside-out
+    # (matching the inner escape from the second backslash), leaving
+    # stray backslashes -- the F441 miss mechanism -- and their junk
+    # variants would otherwise starve the _MAX_CANDIDATES budget.
+    # The pure collapse composes with the escape-run layer in 2
+    # layers; the collapse+decode variants keep URL-stacked
+    # double-backslash shapes inside the budget. Strictly reduces
+    # backslashes -- fixpoint, no loop.
+    for decoded in _try_bslash_unescape_all(text):
+        _add(decoded)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
     # Backslash-escape runs (F429): strict static \uXXXX / \xXX /
     # octal / CSS-escape decode; undecodable runs are ignored.
     for m in list(_ESC_RUN.finditer(text))[:_MAX_CANDIDATES]:
