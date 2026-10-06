@@ -307,12 +307,16 @@ def p3_pin_anchor_char_class_only():
     line = src[i:src.find("\n", i)]
     j = line.find("Object(")
     assert j > 0, "Object anchor alternative missing"
-    alt = line[j:j + 80]
+    alt = line[j:j + 110]
     # F480 (wave-358 lane 1): the Object alternative gained the
     # bracket-string member form; still character-class-only (the
     # F468 precedent) -- no nested quantifiers.
+    # F488 (wave-359 lane 3): the Object dot-member alternative gains
+    # getPrototypeOf (constructor callee via the prototype chain) --
+    # a new member-name alternative, pinned exactly here; the rest of
+    # the alternative is unchanged (still no nested quantifiers).
     return alt.startswith(
-        "Object([ \\t\\n\\r]*\\.[ \\t\\n\\r]*assign|"
+        "Object([ \\t\\n\\r]*\\.[ \\t\\n\\r]*(assign|getPrototypeOf)|"
         "[ \\t\\n\\r]*\\[[ \\t\\n\\r]*['\\\"])")
 
 

@@ -114,7 +114,12 @@ def test_b0_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F489**" in text
-          and "**Open findings: F486, F487, F488.**" in text)
+    """Control: footer shows no open findings, next F489 (wave-359 lanes 1-3:
+    F482-F488 all CLOSED locally; merge finalizes tree-wide)."""
+    path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
+    text = open(path).read()
+    ok = ("Next free finding: **F489**" in text
+          and "**Open findings: none.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -238,23 +243,23 @@ def test_b3_f485_deep_nest_closed():
 
 @_t
 def test_b3_f486_factory_dispatch_open():
-    """F486 pinned OPEN: Array.of.call still misses."""
+    """F486 CLOSED (wave-359 lane 3): Array.of.call now blocks."""
     hit = _blocked("Array.of.call([], '" + _A + "','" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
 def test_b3_f487_arraylike_open():
-    """F487 pinned OPEN: array-like receiver still misses."""
+    """F487 CLOSED (wave-359 lane 3): array-like receiver now blocks."""
     hit = _blocked("Array.prototype.join.call({length:2, 0:'" + _A + "', 1:'" + _B + "'}, '')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
 def test_b3_f488_ctor_spelling_open():
-    """F488 pinned OPEN: ([].constructor)(...) still misses."""
+    """F488 CLOSED (wave-359 lane 3): ([].constructor)(...) now blocks."""
     hit = _blocked("([].constructor)('" + _A + "','" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 # ------------------------------------------------- green check (depth-1)
