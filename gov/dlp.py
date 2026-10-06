@@ -38,7 +38,8 @@ Function() (arbitrary code) always fails closed. The text-escape decoders
 (F429) are likewise strict static transforms -- malformed, surrogate, or
 out-of-range sequences decode to nothing, never to a guess. The
 JS-expression decoder (F430) is a strict bounded recursive-descent
-parser for quoted '+' concatenation, template literals (no ${...}),
+parser for quoted '+' concatenation, template literals (F457:
+${...} interpolation over string-literal payloads only),
 String.fromCharCode, .concat()/.repeat(), (F434) array-literal
 + .join(sep), (F437) .reduce(...) array-assembly plus identity .map(...)
 / constant-true .filter(...) passthroughs, and (F443) Array(N).fill(x)
@@ -2086,6 +2087,9 @@ _JS_EXPR_MAX_REPEAT = 64       # bound on .repeat(n)
 _JS_EXPR_MAX_FILL = 64         # bound on Array(N) element count (F443)
 _JS_EXPR_MAX_LITERAL = 4096    # bound on one string literal
 _JS_EXPR_MAX_RUN = 100000      # bound on expression run length
+_JS_SIMPLE_ESCAPES = {          # single-char backslash escapes (F457: shared
+    "n": "\n", "t": "\t", "r": "\r", "b": "\b",   # by _js_parse_string and
+    "f": "\f", "v": "\v", "0": "\0"}              # _js_parse_template)
 _ASCII_DIGITS = frozenset("0123456789")
 _JS_IDENT_START = frozenset(
     "_$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -2101,12 +2105,15 @@ def _js_skip_ws(text, i):
 
 
 def _js_parse_string(text, i):
-    """Parse a '...', "...", or `...` literal at text[i].
+    """Parse a '...' or "..." literal at text[i].
 
-    Returns (value, next_index). Template literals containing ${...}
-    fail closed (undecodable). Never evals.
+    Returns (value, next_index). Backtick template literals are
+    handled by _js_parse_template (F457); they fail closed here.
+    Never evals.
     """
     quote = text[i]
+    if quote == "`":
+        raise _JSExprFail("template handled separately")
     i += 1
     n = len(text)
     out = []
@@ -2116,8 +2123,6 @@ def _js_parse_string(text, i):
         c = text[i]
         if c == quote:
             return "".join(out), i + 1
-        if quote == "`" and c == "$" and i + 1 < n and text[i + 1] == "{":
-            raise _JSExprFail("interpolation")
         if c == "\\":
             if i + 1 >= n:
                 raise _JSExprFail("bad escape")
@@ -2129,8 +2134,7 @@ def _js_parse_string(text, i):
                 ch, i = r
                 out.append(ch)
                 continue
-            out.append({"n": "\n", "t": "\t", "r": "\r", "b": "\b",
-                        "f": "\f", "v": "\v", "0": "\0"}.get(e, e))
+            out.append(_JS_SIMPLE_ESCAPES.get(e, e))
             i += 2
             continue
         if ord(c) < 0x20 and c not in "\t\n\r":
@@ -2139,6 +2143,106 @@ def _js_parse_string(text, i):
         i += 1
         if len(out) > _JS_EXPR_MAX_LITERAL:
             raise _JSExprFail("literal too long")
+
+
+def _js_parse_template_interp(text, i, depth, state):
+    """Parse the inside of ${ ... } at text[i] (F457): one string literal.
+
+    Returns (value, next_index) positioned after the closing '}'.
+    Only a single string literal is modeled -- '...', "...", or a
+    literal-only nested template (recursion is depth-bounded). A bare
+    ${}, a variable, a call, or an additive/nested-expression payload
+    fails closed (never evals). Whitespace around the payload is
+    tolerated exactly as the engine allows.
+    """
+    i = _js_skip_ws(text, i)
+    n = len(text)
+    if i >= n:
+        raise _JSExprFail("unterminated interpolation")
+    c = text[i]
+    if c in "'\"":
+        val, i = _js_parse_string(text, i)
+    elif c == "`":
+        val, i = _js_parse_template(text, i, depth, state)
+    else:
+        raise _JSExprFail("non-literal interpolation")
+    i = _js_skip_ws(text, i)
+    if i >= n or text[i] != "}":
+        raise _JSExprFail("unterminated interpolation")
+    return val, i + 1
+
+
+def _js_parse_template(text, i, depth, state):
+    """Parse a `...` template literal at text[i] (F457).
+
+    ${...} interpolation is modeled ONLY when every interpolation is
+    a string literal (see _js_parse_template_interp): the parts then
+    concatenate exactly as the engine does, since String(literal) is
+    the literal itself. Any non-literal interpolation fails closed.
+    An escaped \\${ stays the literal characters "${" (the escape
+    path consumes the backslash before any ${ check, exactly as the
+    engine tokenizes). Nested templates are literal-only or fail
+    closed; tagged templates decode the template part as if untagged
+    (a documented over-approximation in the fail-closed direction --
+    the raw text is always checked first, so this can only add
+    blocks). Each interpolation is charged to the part
+    budget and marks the expression obfuscation-shaped; the assembled
+    output is charged to _MAX_DECODE_BYTES. Depth, literal, and part
+    bounds apply; no new regexes; never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("template too deep")
+    if text[i] != "`":
+        raise _JSExprFail("not a template")
+    i += 1  # consume the opening backtick
+    n = len(text)
+    out = []
+    total = 0
+    while True:
+        if i >= n:
+            raise _JSExprFail("unterminated template")
+        c = text[i]
+        if c == "`":
+            return "".join(out), i + 1
+        if c == "$" and i + 1 < n and text[i + 1] == "{":
+            val, i = _js_parse_template_interp(text, i + 2, depth + 1,
+                                               state)
+            out.append(val)
+            total += len(val)
+            if total > _MAX_DECODE_BYTES:
+                raise _JSExprFail("template too long")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1  # an interpolation is obfuscation-shaped
+            continue
+        if c == "\\":
+            if i + 1 >= n:
+                raise _JSExprFail("bad escape")
+            e = text[i + 1]
+            if e in "xuU":
+                r = _decode_one_escape(text, i)
+                if r is None:
+                    raise _JSExprFail("bad escape")
+                ch, i = r
+                out.append(ch)
+                total += len(ch)
+            else:
+                out.append(_JS_SIMPLE_ESCAPES.get(e, e))
+                i += 2
+                total += 1
+            if total > _MAX_DECODE_BYTES:
+                raise _JSExprFail("template too long")
+            continue
+        if ord(c) < 0x20 and c not in "\t\n\r":
+            raise _JSExprFail("control char")
+        out.append(c)
+        total += 1
+        i += 1
+        if total > _JS_EXPR_MAX_LITERAL:
+            raise _JSExprFail("literal too long")
+        if total > _MAX_DECODE_BYTES:
+            raise _JSExprFail("template too long")
 
 
 def _js_parse_number(text, i):
@@ -2327,7 +2431,10 @@ def _js_parse_array_of(text, i, state):
     while True:
         if k >= n or text[k] not in "'\"`":
             raise _JSExprFail("Array.of arg not a string literal")
-        frag, k = _js_parse_string(text, k)
+        if text[k] == "`":
+            frag, k = _js_parse_template(text, k, 0, state)
+        else:
+            frag, k = _js_parse_string(text, k)
         elements.append(frag)
         state["parts"] += 1
         if state["parts"] > _JS_EXPR_MAX_PARTS:
@@ -2852,8 +2959,11 @@ def _js_parse_primary(text, i, depth, state):
     if i >= len(text):
         raise _JSExprFail("empty")
     c = text[i]
-    if c in "'\"`":
+    if c in "'\"":
         val, i = _js_parse_string(text, i)
+        return _js_parse_postfix(text, i, val, depth, state)
+    if c == "`":
+        val, i = _js_parse_template(text, i, depth, state)
         return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("String.fromCharCode", i):
         val, i = _js_parse_fromcharcode(text, i)
@@ -2889,7 +2999,8 @@ def _try_js_expr_decode(text, start):
 
     Returns (decoded, end_index), or None when the run at *start* is not
     a decodable expression. Handles quoted-string '+' concatenation,
-    template literals (no ${...}), String.fromCharCode(...),
+    template literals (F457: literal-only ${...} interpolation),
+    String.fromCharCode(...),
     .concat(...) / .repeat(...) postfix calls, array-literal .join(sep)
     (F434), (F437) .reduce(...) / .reduceRight(...) array-assembly
     plus identity .map(...) / constant-true .filter(...) passthroughs,
@@ -3093,8 +3204,9 @@ def _decode_layer(text):
         _add(decoded)
         if len(variants) >= _MAX_CANDIDATES:
             return variants
-    # JS string-expression runs (F430/F434/F437): strict static decode of
-    # quoted '+' concatenation, template literals, String.fromCharCode,
+    # JS string-expression runs (F430/F434/F437/F457): strict static decode of
+    # quoted '+' concatenation, template literals (literal-only ${...}),
+    # String.fromCharCode,
     # .concat/.repeat postfix calls, array-literal .join(sep) (F434),
     # and .reduce/.reduceRight assembly + identity .map / constant-true
     # .filter passthroughs (F437); undecodable runs are ignored.

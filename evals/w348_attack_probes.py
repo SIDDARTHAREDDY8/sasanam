@@ -119,7 +119,7 @@ def test_b0_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F461**" in text
-          and "Open findings: F454, F455, F457, F458, F459, F460." in text)
+          and "Open findings: F454, F455, F458, F459, F460." in text
     return ("HELD" if ok else "BREAK", "footer-ok=%s" % ok)
 
 

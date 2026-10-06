@@ -96,7 +96,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2135  # Wave-350: F449+F450 closed, no new decision codes; pin unchanged
-FOOTER_OPEN = "F454, F455, F457, F458, F459, F460"  # Wave-352 lane 2: F456 CLOSED (merge finalizes tree-wide); wave-351: F451+F453 CLOSED (lanes 1+3); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461)
+FOOTER_OPEN = "F454, F455, F458, F459, F460"  # Wave-352 merge (2/5): F456+F457 CLOSED; F458-F460 still OPEN (next F461)
 FOOTER_NEXT = "F461"
 
 

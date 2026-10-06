@@ -141,7 +141,7 @@ def test_b0_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F461**" in text
-          and "**Open findings: F454, F455, F457, F458, F459, F460.**" in text)
+          and "**Open findings: F454, F455, F458, F459, F460.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -174,6 +174,15 @@ def test_b1_f453_wsb64_outer_closed():
     outer = base64.b64encode(inner.encode()).decode()
     hit = _blocked(outer[:10] + " " + outer[10:])
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+@_t
+def test_b1_f457_tmpl_interp_closed():
+    """F457 pinned CLOSED (wave-352 lane 3): template-literal ${}
+    interpolation over string-literal payloads now decodes."""
+    hit = _blocked("`%s${'%s'}`" % (_A, _B))
+    hit2 = _blocked("`${'%s'}${'%s'}`" % (_A, _B))
+    return (("HELD" if (hit and hit2) else "BREAK"),
+            "hit=%s hit2=%s" % (hit, hit2))
 
 
 # ------------------------------------------------- F454-F460 open pins
@@ -213,11 +222,6 @@ def test_b2_f456_b64_junk_frag_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
-@_t
-def test_b2_f457_tmpl_interp_open():
-    """F457 pinned open: template-literal ${} interpolation misses."""
-    miss = not _blocked("`%s${'%s'}`" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 
 @_t
