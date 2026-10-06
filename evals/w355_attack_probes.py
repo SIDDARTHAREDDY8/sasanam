@@ -113,12 +113,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F479 open, next F480 (wave-357 lane 1:
-    F478 CLOSED locally; merge finalizes tree-wide)."""
+    """Control: footer shows F480 open, next F481 (wave-357 merge:
+    F478, F479 CLOSED; merge finalized tree-wide)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F480**" in text  # Wave-356 merge: footer repoint
-          and "**Open findings: F479.**" in text)  # Wave-357 lane 1: F478 CLOSED locally
+    ok = ("Next free finding: **F481**" in text  # Wave-357 merge: F480 filed
+          and "**Open findings: F480.**" in text)  # Wave-357 merge: F478, F479 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
