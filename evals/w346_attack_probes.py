@@ -266,9 +266,13 @@ def test_z1_findings_filed_open_with_final_footer():
           and "CLOSED 2026-10-05 wave-347 lane 6" in text
           and "(F443 filed 2026-10-05, wave-347 lane 7" in text
           and "CLOSED 2026-10-06 wave-348 lane 1" in text
-          and "Next free finding: **F444**" in text
-          and "Open findings: none." in text)
-    return ("HELD" if ok else "BREAK", "F437-F443 closed, footer none=%s" % ok)
+          and "(F444 filed 2026-10-06, wave-348 lane 2" in text
+          and "LOW, OPEN: junk JS-expression prefixes" in text
+          and "(F445 filed 2026-10-06, wave-348 lane 2" in text
+          and "LOW, OPEN: the base64 minimum-length gate" in text
+          and "Next free finding: **F446**" in text
+          and "Open findings: F444, F445." in text)
+    return ("HELD" if ok else "BREAK", "F437-F445 filed+pinned=%s" % ok)
 
 
 @_t

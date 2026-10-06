@@ -43,8 +43,10 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
-FOOTER_OPEN = ("F443",)  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444)
-FOOTER_NEXT = "F444"  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444)
+FOOTER_OPEN = ("F444", "F445")  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446)
+
+FOOTER_NEXT = "F446"  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446)
+
 
 _results = []
 _PROBES = []
@@ -689,10 +691,10 @@ def _p7a():
 def _p7b():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    assert "Open findings: F443." in text, "footer open findings"
-    assert "Next free finding: **F444**" in text, "footer next free"
+    assert "Open findings: F444, F445." in text, "footer open findings"
+    assert "Next free finding: **F446**" in text, "footer next free"
     assert "F424" in text and "F425" in text and "F426" in text
-    _held("P7b-footer", "footer open F443 / next F444 (F424-F426 filed)")
+    _held("P7b-footer", "footer open F444, F445 / next F446 (F424-F426 filed)")
 
 
 # ---------------------------------------------------------------------------

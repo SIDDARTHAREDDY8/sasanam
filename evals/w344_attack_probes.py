@@ -243,9 +243,13 @@ def test_b3_f432_f433_filings_pinned():
           and "CLOSED 2026-10-05 wave-347 lane 6" in text
           and "(F443 filed 2026-10-05, wave-347 lane 7" in text
           and "CLOSED 2026-10-06 wave-348 lane 1" in text
-          and "Next free finding: **F444**" in text
-          and "Open findings: none." in text)
-    return ("HELD" if ok else "BREAK", "F432-F443 filed+pinned=%s" % ok)
+          and "(F444 filed 2026-10-06, wave-348 lane 2" in text
+          and "LOW, OPEN: junk JS-expression prefixes" in text
+          and "(F445 filed 2026-10-06, wave-348 lane 2" in text
+          and "LOW, OPEN: the base64 minimum-length gate" in text
+          and "Next free finding: **F446**" in text
+          and "Open findings: F444, F445." in text)
+    return ("HELD" if ok else "BREAK", "F432-F445 filed+pinned=%s" % ok)
 
 
 

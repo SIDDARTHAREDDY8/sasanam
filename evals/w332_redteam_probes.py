@@ -50,8 +50,10 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
-FOOTER_OPEN = "F443"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).; F442 CLOSED 2026-10-05 wave-347 lane 6; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444)
-FOOTER_NEXT = "F444"  # Next free finding number.; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444)
+FOOTER_OPEN = "F444, F445"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).; F442 CLOSED 2026-10-05 wave-347 lane 6; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446)
+
+FOOTER_NEXT = "F446"  # Next free finding number.; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446)
+
 
 _results = []
 _PROBES = []
@@ -887,6 +889,15 @@ _GRANDFATHERED_UNREGISTERED = frozenset({
     "pack-guard-error", "pack-member-digest-mismatch", "pack-member-extra",
     "pack-member-omitted", "pack-stale", "policy-not-yet-valid",
 })
+# Base-class `code` attributes intentionally absent from the taxonomy
+# (wave-342 lane 6 decision): every raise site uses an overriding
+# subclass code, so these literals are never emitted. The probe's
+# `code=` regex over-matches class attributes; exclude them here so
+# only genuinely-emitted literals are checked.
+_BASE_CLASS_CODES_NEVER_EMITTED = frozenset({
+    "evidence-refused", "key-identity-refused",
+    "single-use-refused", "spiffe-refused",
+})
 # Grandfathered pin staleness (wave-331 merge inventory, left
 # untouched): dead-code TAXONOMY_PIN values in two ancient files, and
 # the VERIFIER_TAXONOMY_PIN domain (a different taxonomy, value 33).
@@ -946,7 +957,8 @@ def _p4b():
             used.update(re.findall(pat, src))
     codey = {u for u in used if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)+",
                                             u)}
-    missing = sorted(codey - registered - _GRANDFATHERED_UNREGISTERED)
+    missing = sorted(codey - registered - _GRANDFATHERED_UNREGISTERED
+                      - _BASE_CLASS_CODES_NEVER_EMITTED)
     if missing:
         return _break("P4b-codes-centrally-registered",
                       "NEW unregistered code literals: %r" % (missing[:8],))

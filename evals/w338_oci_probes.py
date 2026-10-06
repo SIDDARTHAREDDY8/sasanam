@@ -52,8 +52,10 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
-FOOTER_OPEN = ("F443",)  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444)
-FOOTER_NEXT = "F444"  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444)
+FOOTER_OPEN = ("F444", "F445")  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446)
+
+FOOTER_NEXT = "F446"  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446)
+
 
 _EXPECTED_BREAKS = set()
 
@@ -392,9 +394,9 @@ def _p9():
                  "oci-bundle-not-verifiable", "oci-registry-onboarding-refused"):
         assert code in DC.TAXONOMY, code
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
-    assert "Next free finding: **F444**" in text, "footer next free"
-    assert "Open findings: F443." in text, "footer open findings"
-    assert FOOTER_OPEN == ("F437", "F438", "F439", "F440", "F441") and FOOTER_NEXT == "F442"
+    assert "Next free finding: **F446**" in text, "footer next free"
+    assert "Open findings: F444, F445." in text, "footer open findings"
+    assert FOOTER_OPEN == ("F444", "F445") and FOOTER_NEXT == "F446"
     _held("P9-pin-taxonomy",
           "2135/2135/0 sorted-unique; 4 oci-* codes registered "
           "(+oci-bundle-not-verifiable +oci-registry-onboarding-refused); "
