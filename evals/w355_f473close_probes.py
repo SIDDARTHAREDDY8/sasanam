@@ -218,7 +218,7 @@ def p7_pin_and_footer():
     # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480).
     # Wave-357 lane 2: F479 CLOSED locally (merge finalizes tree-wide).
     # Wave-358 lane 2: F481 CLOSED locally (merge finalizes tree-wide).
-    ok = ok and nxt == "F489" and open_s == "F482, F483, F484, F485, F486, F487, F488"
+    ok = ok and nxt == "F489" and open_s == "F496, F497, F498, F499, F500, F501, F502"
     return (ok, "nxt=%s open=%s" % (nxt, open_s))
 
 

@@ -6061,7 +6061,6 @@ def _js_parse_nullish_pick(text, i, val, depth, state):
     (left_ref, next_index). Never evals.
     """
     n = len(text)
-    del depth
     if isinstance(val, _JSMethodRef):
         left, j = val, i
     elif isinstance(val, _JSArr) or type(val) is str:
@@ -6077,7 +6076,7 @@ def _js_parse_nullish_pick(text, i, val, depth, state):
         raise _JSExprFail("nullish pick without ??")
     j = _js_skip_ws(text, j + 2)
     try:
-        _rmethod, j = _js_parse_dispatch_target_ref(text, j)
+        _rmethod, j = _js_parse_dispatch_target_ref(text, j, depth, state)
     except _JSExprFail:
         raise _JSExprFail("nullish pick target not a method ref")
     state["ops"] += 1  # the ?? pick is obfuscation-shaped

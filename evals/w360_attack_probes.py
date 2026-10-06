@@ -114,13 +114,11 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F496-F501 open, next F502 (this round:
-    F496-F501 filed OPEN)."""
+    """Control: footer shows F496-F502 open, next F503 (wave-360 merge)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F502**" in text
-          and "**Open findings: F489, F490, F491, F492, F493, F494, F495, "
-              "F496, F497, F498, F499, F500, F501.**" in text)
+    ok = ("Next free finding: **F503**" in text
+          and "**Open findings: F496, F497, F498, F499, F500, F501, F502.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -172,24 +170,24 @@ def test_b2_f489_proxy_open():
 
 
 @_t
-def test_b2_f490_optchain_open():
-    """F490 pinned OPEN: ?.call dispatch still misses."""
+def test_b2_f490_optchain_closed():
+    """F490 CLOSED (wave-360 merge, lane 1)."""
     hit = _blocked("Array.prototype.concat?.call([], '" + _A + "','" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
-def test_b2_f491_reflect_get_open():
-    """F491 pinned OPEN: Reflect.get indirection still misses."""
+def test_b2_f491_reflect_get_closed():
+    """F491 CLOSED (wave-360 merge, lane 2)."""
     hit = _blocked("Reflect.get(Array.prototype,'concat').call([], '" + _A + "','" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
-def test_b2_f495_freevar_open():
-    """F495 pinned OPEN: destructured concat.call still misses."""
+def test_b2_f495_freevar_closed():
+    """F495 CLOSED (wave-360 merge, lane 3)."""
     hit = _blocked("const {concat} = Array.prototype; concat.call([], '" + _A + "','" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 # ------------------------------- open pins, this round (must miss)

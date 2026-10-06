@@ -1374,10 +1374,10 @@ def P5c():
     with open(_FINDINGS_MD, "rb") as f:
         lines = f.read().decode("utf-8").splitlines()
     last = lines[-1] if lines else ""
-    if "Open findings: F482, F483, F484, F485, F486, F487, F488." not in last:
+    if "Open findings: F496, F497, F498, F499, F500, F501, F502." not in last:
         _break(pid, "last line lacks 'Open findings: F443.': %r" % (last[:120],))
         return
-    if "Next free finding: **F496**" not in last:
+    if "Next free finding: **F503**" not in last:
         _break(pid, "last line lacks next-F436: %r" % (last[:120],))
         return
     if not any(l.startswith("## F423 ") for l in lines):

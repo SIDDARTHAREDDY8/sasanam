@@ -119,8 +119,8 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-360 lane 3: F494, F495 closed; no new decision codes
-FOOTER_OPEN = "F489, F490, F491, F492, F493"  # Wave-360 lane 3: F494, F495 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN
-FOOTER_NEXT = "F496"  # Wave-359 merge: next F496
+FOOTER_OPEN = "F496, F497, F498, F499, F500, F501, F502"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-360 lane 3: F494, F495 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN
+FOOTER_NEXT = "F503"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-359 merge: next F496
 
 # Constructed via concatenation: the write path redacts credential literals.
 _A = "xox" + "b-0123456789"
@@ -443,7 +443,9 @@ def p3_no_new_regexes():
     # recursive descent; the F495 rewrite is a manual tokenizer.
     # Pin the exact anchor pattern string (unchanged by this lane;
     # repr() literal -- equality with the live value is the pin).
-    assert dlp._JS_EXPR_START.pattern == '[\'\\"`\\[]|String\\.fromCharCode|String[ \\t\\n\\r]*(\\(|\\[[ \\t\\n\\r]*[\'\\"])|Array(\\(|[ \\t\\n\\r]*(\\.[ \\t\\n\\r]*(of|apply|call)|\\[[ \\t\\n\\r]*[\'\\"]))|Array[ \\t\\n\\r]*\\.[ \\t\\n\\r]*prototype|String[ \\t\\n\\r]*\\.[ \\t\\n\\r]*prototype|Function[ \\t\\n\\r]*\\.[ \\t\\n\\r]*prototype|Reflect([ \\t\\n\\r]*\\.[ \\t\\n\\r]*(construct|apply)|[ \\t\\n\\r]*\\[[ \\t\\n\\r]*[\'\\"])|Object([ \\t\\n\\r]*\\.[ \\t\\n\\r]*(assign|getPrototypeOf)|[ \\t\\n\\r]*\\[[ \\t\\n\\r]*[\'\\"])|\\('
+    # Wave-360 merge: union of lane-1 (optional-chaining), lane-2
+    # (Reflect.get / getOwnPropertyDescriptor / String.raw) widenings.
+    assert dlp._JS_EXPR_START.pattern == '[\'\\"`\\[]|String\\.fromCharCode|String[ \\t\\n\\r]*(\\(|\\.[ \\t\\n\\r]*raw([ \\t\\n\\r]*\\(|[ \\t\\n\\r]*\\.[ \\t\\n\\r]*call[ \\t\\n\\r]*\\()|\\[[ \\t\\n\\r]*[\'\\"])|Array(\\(|[ \\t\\n\\r]*(\\.[ \\t\\n\\r]*(of|apply|call)|\\[[ \\t\\n\\r]*[\'\\"]))|Array[ \\t\\n\\r]*\\.[ \\t\\n\\r]*prototype|String[ \\t\\n\\r]*\\.[ \\t\\n\\r]*prototype|Function[ \\t\\n\\r]*\\.[ \\t\\n\\r]*prototype|Reflect([ \\t\\n\\r]*(\\?\\.|\\.)[ \\t\\n\\r]*(construct|apply|get)|[ \\t\\n\\r]*\\[[ \\t\\n\\r]*[\'\\"])|Object([ \\t\\n\\r]*\\.[ \\t\\n\\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor)|[ \\t\\n\\r]*\\[[ \\t\\n\\r]*[\'\\"])|\\('
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     assert len(re.findall(r"re\.compile\(", src)) == 28
     return ("HELD", "no new regexes; anchor pinned")

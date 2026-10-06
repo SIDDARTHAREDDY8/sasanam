@@ -78,7 +78,7 @@ Probes:
   P3  decoder pins: node byte-fidelity differential (subprocess); no
       new regexes (re.compile count + anchor pattern string); F430
       bounds honored; F441 ordering untouched.
-  P4  pin + footer (F480 CLOSED locally; open F481 / next F482).
+  P4  pin + footer (F480 CLOSED locally; open F481 / next F503).
 """
 
 import os
@@ -100,8 +100,8 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-358 lane 1: F480 closed; no new decision codes
-FOOTER_OPEN = "F491, F492, F493, F494, F495"  # Wave-360 lane 1: F489, F490 CLOSED locally (merge finalizes tree-wide)  # Wave-359 lane 3: F486, F487, F488 CLOSED locally (merge finalizes tree-wide)  # Wave-359 lane 2: F484, F485 CLOSED locally (merge finalizes tree-wide)  # Wave-359 lane 1: F482, F483 CLOSED locally (merge finalizes tree-wide)  # Wave-358 lane 1: F480 CLOSED locally (merge finalizes tree-wide)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN
-FOOTER_NEXT = "F496"  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: next F496
+FOOTER_OPEN = "F496, F497, F498, F499, F500, F501, F502"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-360 lane 1: F489, F490 CLOSED locally (merge finalizes tree-wide)  # Wave-359 lane 3: F486, F487, F488 CLOSED locally (merge finalizes tree-wide)  # Wave-359 lane 2: F484, F485 CLOSED locally (merge finalizes tree-wide)  # Wave-359 lane 1: F482, F483 CLOSED locally (merge finalizes tree-wide)  # Wave-358 lane 1: F480 CLOSED locally (merge finalizes tree-wide)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN
+FOOTER_NEXT = "F503"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: next F496
 
 # Constructed via concatenation: the write path redacts credential literals.
 _A = "xox" + "b-0123456789"

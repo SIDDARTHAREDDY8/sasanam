@@ -125,11 +125,11 @@ class BaseStateTest(unittest.TestCase):
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
         # Wave-348 merge: F443 CLOSED; open F444, F445; next F446.
-        ok = (m_open and m_open[-1].strip().lower() == "f482, f483, f484, f485, f486, f487, f488"
-              and m_next and m_next[-1] == "F489")
+        ok = (m_open and m_open[-1].strip().lower() == "f496, f497, f498, f499, f500, f501, f502"
+              and m_next and m_next[-1] == "F503")
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F444, F445 / next free F446") == "HELD")
+            "want open F496, F497, F498, F499, F500, F501, F502 / next free F503") == "HELD")
 
     def test_pin(self):
         lits = _literals()

@@ -465,8 +465,8 @@ def _p8():
 def _p9():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     src = open(path, encoding="utf-8").read()
-    assert "Next free finding: **F496**" in src, "next-free footer"  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
-    assert "**Open findings: F489, F490, F491, F492, F493, F494, F495.**" in src, "open footer"  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
+    assert "Next free finding: **F503**" in src, "next-free footer"  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
+    assert "**Open findings: F496, F497, F498, F499, F500, F501, F502.**" in src, "open footer"  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
     _held("P9-footer-open-f433-f434-f435-next-f436",
           "footer: open none / next F419")
 

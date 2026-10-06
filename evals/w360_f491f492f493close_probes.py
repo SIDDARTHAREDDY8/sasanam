@@ -121,7 +121,7 @@ Probes:
       new regexes (re.compile count + anchor alternatives);
       F430 budgets; F441 ordering.
   P4  pin + footer (F491/F492/F493 CLOSED locally; open F489, F490,
-      F494, F495 / next F496).
+      F494, F495 / next F503).
 """
 
 import os
@@ -143,8 +143,8 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-360 lane 2: F491/F492/F493 closed; no new decision codes
-FOOTER_OPEN = "F489, F490, F494, F495"  # Wave-360 lane 2: F491/F492/F493 CLOSED locally (merge finalizes tree-wide)
-FOOTER_NEXT = "F496"
+FOOTER_OPEN = "F496, F497, F498, F499, F500, F501, F502"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-360 lane 2: F491/F492/F493 CLOSED locally (merge finalizes tree-wide)
+FOOTER_NEXT = "F503"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)
 
 _A = "xoxb-0123"
 _B = "456789abcdef"
@@ -346,15 +346,23 @@ def p2_f493_boundaries():
 
 
 def p2_open_findings_intact():
-    # F489/F490/F494/F495 stay OPEN: their shapes still miss.
-    shapes = [
-        "Array.prototype.concat?.call([], '%s','%s').join('')" % (_A, _B),  # F490
-        "[...new Set(['%s','%s'])].join('')" % (_A, _B),  # F494
+    # Wave-360 merge: F490 (lane 1) and F494 (lane 3) are now CLOSED --
+    # their shapes must block. F496/F499 stay OPEN: their shapes miss.
+    closed_shapes = [
+        "Array.prototype.concat?.call([], '%s','%s').join('')" % (_A, _B),  # F490 CLOSED
+        "[...new Set(['%s','%s'])].join('')" % (_A, _B),  # F494 CLOSED
     ]
-    bad = [s for s in shapes if _blocked(s)]
+    bad = [s for s in closed_shapes if not _blocked(s)]
+    if bad:
+        return ("BREAK", "closed finding missed: %s" % bad)
+    open_shapes = [
+        "Array.prototype[Reflect.ownKeys(Array.prototype).filter(k=>k==='concat')[0]].call([], '%s','%s').join('')" % (_A, _B),  # F496 OPEN
+        "[...'%s', ...'%s'].join('')" % (_A, _B),  # F499 OPEN
+    ]
+    bad = [s for s in open_shapes if _blocked(s)]
     if bad:
         return ("BREAK", "open finding decoded: %s" % bad)
-    return ("HELD", "open findings F490/F494 intact (F489/F495 shapes TBD by filer)")
+    return ("HELD", "F490/F494 closed; open findings F496/F499 intact")
 
 
 def p2_neighbors_intact():
@@ -451,9 +459,9 @@ def p4_pin_and_footer():
     assert TAXONOMY_PIN == 2135
     assert len(TAXONOMY) == 2135
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    assert "Next free finding: **F496**" in text
-    assert "**Open findings: F489, F490, F494, F495.**" in text
-    return ("HELD", "pin=2135 footer open F489,F490,F494,F495 next F496 (wave-360 lane 2)")
+    assert "Next free finding: **F503**" in text
+    assert "**Open findings: F496, F497, F498, F499, F500, F501, F502.**" in text
+    return ("HELD", "pin=2135 footer open F496-F502 next F503 (wave-360 merge)")
 
 
 PROBES = [
