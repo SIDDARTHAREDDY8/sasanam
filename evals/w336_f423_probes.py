@@ -55,7 +55,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
-FOOTER_NEXT = "F469"  # Next free finding number (wave-337 merge: F426 filed by red team).; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)
+FOOTER_NEXT = "F473"  # Next free finding number (wave-337 merge: F426 filed by red team).; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)
+
 
 
 _results = []
@@ -316,7 +317,7 @@ def p3():
     if "Next free finding: **%s**." % FOOTER_NEXT not in text:
         _break(pid, "footer next-free mismatch")
         return
-    if "**Open findings: F461, F462, F463, F464, F465, F466, F467, F468.**" not in text:
+    if "**Open findings: F469, F470, F471, F472F462, F463, F464, F465, F466, F467, F468.**" not in text:
         _break(pid, "footer open-findings mismatch (want open F426)")
         return
     if "## F423 " not in text:

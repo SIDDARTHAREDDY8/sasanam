@@ -869,8 +869,8 @@ def _p6b():
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               encoding="utf-8") as f:
         text = f.read()
-    if "Next free finding: **F469**" in text \
-            and "**Open findings: F461, F462, F463, F464, F465, F466, F467, F468.**" in text:
+    if "Next free finding: **F473**" in text \
+            and "**Open findings: F469, F470, F471, F472F462, F463, F464, F465, F466, F467, F468.**" in text:
         _held("P6-footer-state", "open F436 / next F437")
     else:
         _break("P6-footer-state", "footer mismatch")

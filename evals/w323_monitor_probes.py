@@ -654,7 +654,7 @@ def _p18():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     # Wave-336 lane 1: repaired stale F412/F413-era assertion.
-    assert "Next free finding: **F469**. **Open findings: F461, F462, F463, F464, F465, F466, F467, F468.**" in text, \
+    assert "Next free finding: **F473**. **Open findings: F469, F470, F471, F472F462, F463, F464, F465, F466, F467, F468.**" in text, \
         "footer mismatch"
     _held("P18-footer-state", "open F444, F445 / next F446")
 

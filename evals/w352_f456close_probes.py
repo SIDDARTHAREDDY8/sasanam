@@ -99,7 +99,8 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 TAXONOMY_PIN = 2135  # Wave-352: F456 closed, no new decision codes; pin unchanged
 FOOTER_OPEN = "F469, F470, F471, F472"  # Wave-352: F456 CLOSED (merge finalizes tree-wide)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 lane 1: F461+F462 CLOSED (merge finalizes tree-wide)  # Wave-353 lane 4: F467+F468 CLOSED locally (merge finalizes tree-wide)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)
-FOOTER_NEXT = "F469"  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)
+FOOTER_NEXT = "F473"  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)
+
 
 
 from gov import dlp  # noqa: E402

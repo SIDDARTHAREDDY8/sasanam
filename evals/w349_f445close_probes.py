@@ -68,8 +68,10 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2135  # Wave-349: F445 closed, no new decision codes; pin unchanged 2135
-FOOTER_OPEN = "F461, F462, F463, F464, F465, F466, F467, F468"  # Wave-352 merge (3/5): F454-F457 CLOSED; F458-F460 OPEN (next F461)  # Wave-351 lane 3: F453 CLOSED (ws-b64 outer composes via fixpoint seed)  # Wave-350: F449+F450 CLOSED locally (merge finalizes tree-wide); F446-F448 OPEN (next F451); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461)  # wave-352 lane 3: F457 CLOSED locally (merge finalizes tree-wide)  # Wave-350: F449+F450 CLOSED locally (merge finalizes tree-wide); F446-F448 OPEN (next F451); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461); wave-352 lane 1: F454+F455 CLOSED locally  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)
-FOOTER_NEXT = "F469"  # Wave-350: next free finding after F449+F450's closure  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)
+FOOTER_OPEN = "F469, F470, F471, F472"  # Wave-352 merge (3/5): F454-F457 CLOSED; F458-F460 OPEN (next F461)  # Wave-351 lane 3: F453 CLOSED (ws-b64 outer composes via fixpoint seed)  # Wave-350: F449+F450 CLOSED locally (merge finalizes tree-wide); F446-F448 OPEN (next F451); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461)  # wave-352 lane 3: F457 CLOSED locally (merge finalizes tree-wide)  # Wave-350: F449+F450 CLOSED locally (merge finalizes tree-wide); F446-F448 OPEN (next F451); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461); wave-352 lane 1: F454+F455 CLOSED locally  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)
+
+FOOTER_NEXT = "F473"  # Wave-350: next free finding after F449+F450's closure  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)
+
 
 
 from gov import dlp  # noqa: E402

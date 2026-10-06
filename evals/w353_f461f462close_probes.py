@@ -94,8 +94,10 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-353: F461+F462 closed, no new decision codes
-FOOTER_OPEN = "F463, F464, F465, F466, F467, F468"  # Wave-353 lane 1: F461+F462 CLOSED (merge finalizes tree-wide)
-FOOTER_NEXT = "F469"  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)
+FOOTER_OPEN = "F469, F470, F471, F472"  # Wave-353 lane 1: F461+F462 CLOSED (merge finalizes tree-wide)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)
+
+FOOTER_NEXT = "F473"  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)
+
 
 # Constructed via concatenation: the write path redacts credential literals.
 _A = "xoxb-" + "0123"
