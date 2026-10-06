@@ -10,6 +10,8 @@ filed.
 New findings filed (all LOW, OPEN, red-first verified):
 - F469: Reflect.apply(Array.prototype.concat,[],...) array assembly --
   distinct Reflect method from F468's Reflect.construct close-when.
+  CLOSED 2026-10-06 wave-354 lane 1 (desugared to
+  thisArg.concat(...argsArray), engine-exact).
 - F470: method-call-result .filter predicates (x.match(/[a-z]/)
   truthiness, x.charCodeAt(0)>47 comparison) -- bypass F447's syntactic
   truthiness-preserving model; not in F447's documented residuals.
@@ -18,7 +20,10 @@ New findings filed (all LOW, OPEN, red-first verified):
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F461-F468 (wave-352, still open), F469-F471 (this round).
+F461-F468 (wave-352; F461-F468 CLOSED wave-353, their pins flipped to
+closed assertions), F470-F471 (this round, still open), F472 (wave-353
+lane 2, still open). F469 CLOSED wave-354 lane 1 (pin flipped to the
+closed assertion).
 
 Round-21 scope notes (validated, NOT new findings -- each rides with the
 cited close-when):
@@ -123,12 +128,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F469-F472 open, next F473 (wave-353 merge:
-    F461-F468 closed; F469-F471 attack-lane filings; F472 repeat-tagged)."""
+    """Control: footer shows F470-F472 open, next F473 (wave-354 lane 1:
+    F469 closed; F470-F471 attack-lane filings; F472 repeat-tagged)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F473**" in text
-          and "**Open findings: F469, F470, F471, F472.**" in text)
+          and "**Open findings: F470, F471, F472.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -198,12 +203,13 @@ def test_b1_f468_reflect_construct_closed():
 # ------------------------------------------------- F469-F471 open pins
 
 @_t
-def test_b2_f469_reflect_apply_open():
-    """F469 pinned open: Reflect.apply(Array.prototype.concat,...)
-    misses -- distinct Reflect method from F468's construct."""
-    miss = not _blocked("Reflect.apply(Array.prototype.concat,[],[['"
-                        + _A + "'],['" + _B + "']]).join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b2_f469_reflect_apply_closed():
+    """F469 pinned CLOSED (wave-354 lane 1): Reflect.apply(
+    Array.prototype.concat,...) now blocks -- desugared to
+    thisArg.concat(...argsArray)."""
+    hit = _blocked("Reflect.apply(Array.prototype.concat,[],[['"
+                   + _A + "'],['" + _B + "']]).join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t

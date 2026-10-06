@@ -90,7 +90,7 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-353: F463 closed, F472 filed; no new decision codes
-FOOTER_OPEN = "F469, F470, F471, F472"  # Wave-353 lane 2: F463 CLOSED locally (merge finalizes tree-wide); F472 repeat-tagged filed OPEN (renumbered F469->F472); F469-F471 are wave-353 attack-lane filings (commit e79af076)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)
+FOOTER_OPEN = "F470, F471, F472"  # Wave-353 lane 2: F463 CLOSED locally (merge finalizes tree-wide); F472 repeat-tagged filed OPEN (renumbered F469->F472); F469-F471 are wave-353 attack-lane filings (commit e79af076)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 lane 1: F469 CLOSED locally (merge finalizes tree-wide)
 
 FOOTER_NEXT = "F473"  # Wave-353 lane 2: F463 CLOSED, F472 filed OPEN; attack lane filed F469-F471 (next F473)
 
@@ -259,13 +259,15 @@ def p3_pin_no_new_regexes():
     # lives inside _js_parse_postfix. The anchor pattern is pinned here
     # as the exact pattern string. Wave-353 lane 4 (F468) legitimately
     # added the Reflect-construct alternative (ws-tolerant, character
-    # class only); the F463 closure itself added no regex.
+    # class only); wave-354 lane 1 (F469) legitimately widened it to
+    # (construct|apply) for the Reflect.apply concat shape; the F463
+    # closure itself added no regex.
     assert dlp._JS_EXPR_START.pattern == (
         r"['\"`\[]|String\.fromCharCode|Array(\(|"
         r"[ \t\n\r]*\.[ \t\n\r]*of)|Reflect[ \t\n\r]*"
-        r"\.[ \t\n\r]*construct|\(")
+        r"\.[ \t\n\r]*(construct|apply)|\(")
     for s in ["'", '"', "`", "[", "String.fromCharCode",
-              "Array(", "Array.of", "Reflect.construct", "("]:
+              "Array(", "Array.of", "Reflect.construct", "Reflect.apply", "("]:
         assert dlp._JS_EXPR_START.search(s) is not None, s
     return True
 

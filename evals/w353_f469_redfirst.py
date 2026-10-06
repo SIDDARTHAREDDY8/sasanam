@@ -11,8 +11,8 @@ genuinely distinct from F468. The plain credential blocks coded.
 
 Prints BREAK when the payload MISSES (open tree), HELD when blocked.
 Controls: plain credential blocks coded; junk variant quiet; the
-neighboring Reflect.construct shape still misses (F468, open); Array.from
-blocks (wave-351 dead proposal, still blocked).
+neighboring Reflect.construct shape now blocks (F468, CLOSED wave-353);
+Array.from blocks (wave-351 dead proposal, still blocked).
 """
 import os
 import sys
@@ -38,8 +38,8 @@ CONTROLS = [
     ("junk-quiet",
      "Reflect.apply(Array.prototype.concat,[],[['ab'],['cd']]).join('')",
      False),
-    ("neighbor-f468-still-misses",
-     "Reflect.construct(Array,['%s','%s']).join('')" % (A1, A2), False),
+    ("neighbor-f468-now-blocks",
+     "Reflect.construct(Array,['%s','%s']).join('')" % (A1, A2), True),
     ("array-from-blocks",
      "Array.from(['%s','%s']).join('')" % (A1, A2), True),
 ]
