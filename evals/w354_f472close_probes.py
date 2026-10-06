@@ -90,9 +90,9 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-354: F472 closed; no new decision codes
-FOOTER_OPEN = "F469, F470, F471"  # Wave-354 lane 4: F472 CLOSED (merge finalizes tree-wide); F469-F471 are wave-353 attack-lane filings (commit e79af076)
+FOOTER_OPEN = "F473, F474"  # Wave-354 lane 4: F472 CLOSED (merge finalizes tree-wide); F469-F471 are wave-353 attack-lane filings (commit e79af076)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)
 
-FOOTER_NEXT = "F473"  # Wave-354 lane 4: F472 closed; next free F473
+FOOTER_NEXT = "F475"  # Wave-354 lane 4: F472 closed; next free F473  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)
 
 # Constructed via concatenation: the write path redacts credential literals.
 _CRED = "xox" + "b-abc123" + "def" + "456"

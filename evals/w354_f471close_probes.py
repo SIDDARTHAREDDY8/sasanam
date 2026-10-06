@@ -99,8 +99,8 @@ sys.path.insert(0, REPO_ROOT)
 import gov.dlp as dlp  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-354: F471 closed; no new decision codes
-FOOTER_OPEN = "F469, F470, F472"  # Wave-354 lane 3: F471 CLOSED locally (merge finalizes tree-wide); F469/F470/F472 stay OPEN
-FOOTER_NEXT = "F473"  # Wave-354 lane 3: F471 CLOSED (next F473)
+FOOTER_OPEN = "F473, F474"  # Wave-354 lane 3: F471 CLOSED locally (merge finalizes tree-wide); F469/F470/F472 stay OPEN  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)
+FOOTER_NEXT = "F475"  # Wave-354 lane 3: F471 CLOSED (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)
 
 # Fragments built by concatenation: the write path redacts credential literals.
 _A = "xoxb-" + "0123"

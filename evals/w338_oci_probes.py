@@ -54,7 +54,7 @@ sys.path.insert(0, REPO)
 TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 FOOTER_OPEN = ("F461", "F462", "F463", "F464", "F465", "F466", "F467", "F468")  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)
 
-FOOTER_NEXT = "F473"  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)
+FOOTER_NEXT = "F475"  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)
 
 
 
@@ -395,8 +395,8 @@ def _p9():
                  "oci-bundle-not-verifiable", "oci-registry-onboarding-refused"):
         assert code in DC.TAXONOMY, code
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
-    assert "Next free finding: **F473**" in text, "footer next free"
-    assert "Open findings: F469, F470, F471, F472." in text, "footer open findings"
+    assert "Next free finding: **F475**" in text, "footer next free"
+    assert "Open findings: F473, F474." in text, "footer open findings"
     assert FOOTER_OPEN == ("F461", "F462", "F463", "F464", "F465", "F466", "F467", "F468") and FOOTER_NEXT == "F469"  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)
     _held("P9-pin-taxonomy",
           "2135/2135/0 sorted-unique; 4 oci-* codes registered "
