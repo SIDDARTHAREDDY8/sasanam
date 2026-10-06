@@ -99,7 +99,7 @@ def test_p1_footer_state():
     with open(path) as f:
         last = "".join(f.readlines()[-3:])
     ok = ("Next free finding: **F443**" in last
-          and "Open findings: F437, F438, F439, F440, F441, F442." in last)
+          and "Open findings: F437, F438, F439, F441, F442." in last)
     return ("HELD" if ok else "BREAK",
             "footer must read open F436 / next F437")
 

@@ -49,7 +49,7 @@ Probes:
       complete fast with no exceptions.
   P7  layering: no-semicolon hex entity + base64 composes; entity
       decode feeds the JS-expression layer within the 2-layer budget.
-  P8  pin + footer: taxonomy pin 2134, footer open F437-F442 / next F443.
+  P8  pin + footer: taxonomy pin 2134, footer open F437, F438, F439, F441, F442 / next F443.
 
 Usage:
   ~/workspace/.gov-venv/bin/python evals/w346_f436close_probes.py
@@ -72,7 +72,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2134  # Wave-346: pin 2134 (no new codes in wave-346 lane 1)
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # wave-346 merge final
+FOOTER_OPEN = "F437, F438, F439, F441, F442"  # wave-347 lane 4: F440 closed
 FOOTER_NEXT = "F443"
 
 from gov import dlp  # noqa: E402
@@ -315,7 +315,7 @@ def p8_pin_and_footer():
     footer = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ok and ("Next free finding: **%s**" % FOOTER_NEXT) in footer
     ok = ok and ("Open findings: %s." % FOOTER_OPEN) in footer
-    return _check("p8: pin 2134, footer open F437-F442 / next F443",
+    return _check("p8: pin 2134, footer open F437, F438, F439, F441, F442 / next F443",
                   ok, footer[-60:])
 
 

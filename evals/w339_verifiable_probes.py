@@ -601,7 +601,7 @@ def _p9():
     assert "oci-bundle-not-verifiable" in DC.TAXONOMY
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
     assert "Next free finding: **F443**" in text, "footer next free"
-    assert "Open findings: F437, F438, F439, F440, F441, F442." in text, "footer open findings"
+    assert "Open findings: F437, F438, F439, F441, F442." in text, "footer open findings"
     assert FOOTER_OPEN == ("F437", "F438", "F439", "F440", "F441", "F442") and FOOTER_NEXT == "F443"
     _held("P9-pin-taxonomy",
           "2134/2134/0 sorted-unique; oci-bundle-not-verifiable "

@@ -50,7 +50,7 @@ from gov.signing import Ed25519Signer  # noqa: E402
 
 TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # F409-F427 CLOSED; F428 OPEN (wave-341 lane C).
+FOOTER_OPEN = "F437, F438, F439, F441, F442"  # F409-F427 CLOSED; F428 OPEN (wave-341 lane C).
 FOOTER_NEXT = "F443"  # F417 CLOSED 2026-10-05 (wave-334 lane 1); no open findings.
 
 _results = []

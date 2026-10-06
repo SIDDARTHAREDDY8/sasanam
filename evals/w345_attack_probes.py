@@ -285,11 +285,12 @@ def test_b3_garbage_padded_base64_correctly_ignored():
 
 @_t
 def test_z0_f436_closed_with_final_footer():
-    """F436 is CLOSED by the wave-346 F436 lane and F437-F442 are filed
-    OPEN (wave-346 merge renumber: attack .reduce/entity+NUL/triple-b64
-    keep F437/F438/F439; dlpaudit double-entity/double-backslash become
-    F440/F441; cigated policy_delta_gate becomes F442). Footer is open
-    F437, F438, F439, F440, F441, F442 / next F443."""
+    """F436 is CLOSED by the wave-346 F436 lane; F437-F439, F441, F442
+    are filed OPEN and F440 is CLOSED by wave-347 lane 4 (wave-346 merge
+    renumber: attack .reduce/entity+NUL/triple-b64 keep F437/F438/F439;
+    dlpaudit double-entity/double-backslash become F440/F441; cigated
+    policy_delta_gate becomes F442). Footer is open
+    F437, F438, F439, F441, F442 / next F443."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("F436 filed 2026-10-05, wave-345 lane 5" in text
           and "CLOSED 2026-10-05 wave-346" in text
@@ -297,12 +298,13 @@ def test_z0_f436_closed_with_final_footer():
           and "(F438 filed 2026-10-05, wave-346 lane 2" in text
           and "(F439 filed 2026-10-05, wave-346 lane 2" in text
           and "(F440 filed 2026-10-05, wave-346 lane 6" in text
+          and "LOW, CLOSED 2026-10-06 wave-347 lane 4" in text
           and "(F441 filed 2026-10-05, wave-346 lane 6" in text
           and "(F442 filed 2026-10-05, wave-346 lane 3" in text
           and "LOW, OPEN:" in text
           and "Next free finding: **F443**" in text
-          and "Open findings: F437, F438, F439, F440, F441, F442." in text)
-    return ("HELD" if ok else "BREAK", "F436 closed, F437-F442 filed open=%s" % ok)
+          and "Open findings: F437, F438, F439, F441, F442." in text)
+    return ("HELD" if ok else "BREAK", "F436/F440 closed, rest filed open=%s" % ok)
 
 
 @_t

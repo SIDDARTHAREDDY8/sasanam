@@ -22,11 +22,16 @@ findings -- the probe asserts the roundtrip first.
 Audit outcome (2026-10-05, all verified on the merged tree):
   * 25 composition pairs: all BLOCK coded dlp-slack-token (layers compose).
   * F436 (OPEN): 2 narrowed residuals still MISS (expected BREAKs).
-  * F440 (LOW, OPEN, filed wave-346 lane 6, renumbered F437->F440 at merge): double-HTML-entity encoding --
-    ``&amp;#xHH;`` / ``&#38;#xHH;`` / ``&amp#xHH;`` -- evades the entity
-    sub-layer (the _ENTITY_RUN regex never matches named entities, and
-    numeric-wrapped runs fragment so the inner entity never
-    materializes within the 2-layer budget). 4 shapes, expected BREAKs.
+  * F440 (LOW, CLOSED 2026-10-06 wave-347 lane 4; filed wave-346 lane 6,
+    renumbered F437->F440 at merge): double-HTML-entity encoding --
+    ``&amp;#xHH;`` / ``&#38;#xHH;`` / ``&amp#xHH;`` -- evaded the entity
+    sub-layer (the _ENTITY_RUN regex never matched named entities, and
+    numeric-wrapped runs fragmented so the inner entity never
+    materialized within the 2-layer budget). Closed by the whole-text
+    bounded named+numeric double-decode layer (F440); the amp-numeric
+    shape had already been absorbed by the F436 closure (wave-346 merge
+    scope note). 3 residuals + 1 absorbed control, all assert coded
+    refusal.
   * F441 (LOW, OPEN, filed wave-346 lane 6, renumbered F438->F441 at merge): double-backslash escapes --
     ``\\\\uXXXX`` / ``\\\\xXX`` -- evade the escape sub-layer (no
     ``\\\\`` -> ``\\`` production; the inner escape decodes inside-out).
@@ -40,9 +45,9 @@ Audit outcome (2026-10-05, all verified on the merged tree):
   * Discrimination: honest double-encoded text, Windows paths,
     ``&amp;`` prose, and innocent base64 stay quiet.
 
-Expected state on the OPEN tree (w311_redteam convention):
-  10 BREAK / 35 HELD / 0 ERROR, exit 1; every BREAK is a filed finding
-  (F440 x4, F441 x4) listed in _EXPECTED_BREAKS; F436's 2 residuals are CLOSED (wave-346 lane 1) and assert coded refusal. Any
+Expected state on the CLOSED tree (w311_redteam convention):
+  4 BREAK / 41 HELD / 0 ERROR, exit 1; every BREAK is a filed finding
+  (F441 x4) listed in _EXPECTED_BREAKS; F436's 2 residuals are CLOSED (wave-346 lane 1), F440's 3 residuals + 1 absorbed control are CLOSED (wave-347 lane 4) and assert coded refusal. Any
   unexpected BREAK, or any expected BREAK that stops breaking (a
   finding closed without flipping its probes -- the wave-306 lesson),
   fails the battery.
@@ -72,7 +77,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2134  # Wave-346: pin 2134 (no new codes in lane 6)
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # wave-346 merge final
+FOOTER_OPEN = "F437, F438, F439, F441, F442"  # wave-347 lane 4: F440 closed
 FOOTER_NEXT = "F443"
 
 from gov import dlp  # noqa: E402
@@ -421,7 +426,8 @@ _PROBES = [
                   + "&#%d;" % ord(b[25]) + b[26:])(_b64(_CRED)),
          _rt_f436b, "f436-residual-two-apart")),
 
-    # --- F440 (OPEN, renumbered): double-entity, expected BREAKs ---
+    # --- F440 (CLOSED 2026-10-06 wave-347 lane 4): double-entity residuals
+    # now assert coded refusal ---
     ("f440-amp-named",
      _mk(lambda: "".join("&amp;#x%x;" % ord(c) for c in _CRED),
          _rt_f437_double_unescape, "f440-amp-named")),
@@ -543,12 +549,9 @@ _PROBES += [
 
 # ------------------------------------------------- expected BREAKs + runner
 _EXPECTED_BREAKS = {
-    # F440 (LOW, OPEN, renumbered F437->F440): double-entity encoding
-    "f440-amp-named",
-    # "f440-amp-numeric" absorbed by the F436 closure (wave-346 lane 1
-    # whole-text entity pass) -- now blocks; removed at the wave-346 merge.
-    "f440-amp-no-semicolon",
-    "f440-b64-stacked",
+    # F440 CLOSED 2026-10-06 wave-347 lane 4 (double-entity): the three
+    # residuals now assert coded refusal above; the absorbed amp-numeric
+    # shape stays a control probe.
     # F441 (LOW, OPEN, renumbered F438->F441): double-backslash escapes
     "f441-bslash-u",
     "f441-bslash-x",

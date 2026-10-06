@@ -58,7 +58,7 @@ TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback bas
 
 
 FOOTER_NEXT = "F443"
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"
+FOOTER_OPEN = "F437, F438, F439, F441, F442"
 
 _results = []
 PROBES = []

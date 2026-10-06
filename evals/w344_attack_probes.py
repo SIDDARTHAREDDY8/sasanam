@@ -228,7 +228,7 @@ def test_b3_f432_f433_filings_pinned():
           and "(F436 filed 2026-10-05, wave-345 lane 5" in text
           and "LOW, CLOSED 2026-10-05 wave-346 lane 1" in text
           and "Next free finding: **F443**" in text
-          and "Open findings: F437, F438, F439, F440, F441, F442." in text)
+          and "Open findings: F437, F438, F439, F441, F442." in text)
     return ("HELD" if ok else "BREAK", "F432-F436 filed+closed=%s" % ok)
 
 
