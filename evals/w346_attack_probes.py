@@ -12,8 +12,10 @@ Shapes (B1/B2/B3 = the three wave-346 attack targets):
   B1: JS-evaluable constructions beyond the F430/F434 decoded set.
      - atob('b64-of-short-cred'): the inner base64 run is 20 chars,
        under the deliberate 24-char precision guard (F2/F8-era) -- the
-       miss is held-by-design, not a defeat; a 52-char inner run
-       blocks via the base64 layer. HELD.
+       miss was held-by-design, not a defeat; a 52-char inner run
+       blocks via the base64 layer. HELD. [CLOSED 2026-10-06 wave-349
+       lane 1 as F445: short runs are now strict-decoded with the
+       credential-shape gate, so the 20-char inner run blocks too.]
      - ['frag1','frag2'].reduce((a,b)=>a+b): evaluated to the
        credential in a real JS engine (node-verified) while the
        bounded static JS decoder handled only join/repeat/concat --
@@ -116,17 +118,19 @@ def test_b0b_raw_base64_of_long_credential_blocked():
 
 @_t
 def test_b1_atob_short_inner_run_held_by_design():
-    """B1-#1: atob('b64-of-16-char-cred') misses only because the inner
-    base64 run is 20 chars -- under the deliberate F2/F8-era 24-char
-    precision guard (real tokens are far longer). A 52-char inner run
-    blocks via the base64 layer. Held-by-design, not a defeat."""
+    """F445 is CLOSED 2026-10-06 wave-349 lane 1: atob('b64-of-16-char-
+    cred') now blocks coded dlp-slack-token -- the 20-char inner run
+    is strict-decoded with the credential-shape gate (was filed OPEN
+    and pinned as a held-by-design miss under the old 24-char
+    precision guard; flipped to a refusal assertion on closure). A
+    52-char inner run still blocks via the base64 layer."""
     inner_short = _b64(_CRED)          # 20 chars
     inner_long = _b64(_LONG)           # 52 chars
-    miss_short = dlp.find_credential("atob('" + inner_short + "')") is None
+    block_short = dlp.find_credential("atob('" + inner_short + "')") == "dlp-slack-token"
     block_long = dlp.find_credential("atob('" + inner_long + "')") == "dlp-slack-token"
-    ok = miss_short and block_long
+    ok = block_short and block_long
     return ("HELD" if ok else "BREAK",
-            "short-miss=%s long-block=%s" % (miss_short, block_long))
+            "short-block=%s long-block=%s" % (block_short, block_long))
 
 
 @_t
@@ -269,9 +273,9 @@ def test_z1_findings_filed_open_with_final_footer():
           and "(F444 filed 2026-10-06, wave-348 lane 2" in text
           and "LOW, OPEN: junk JS-expression prefixes" in text
           and "(F445 filed 2026-10-06, wave-348 lane 2" in text
-          and "LOW, OPEN: the base64 minimum-length gate" in text
+          and "CLOSED 2026-10-06 wave-349 lane 1" in text
           and "Next free finding: **F446**" in text
-          and "Open findings: F444, F445." in text)
+          and "Open findings: F444." in text)
     return ("HELD" if ok else "BREAK", "F437-F445 filed+pinned=%s" % ok)
 
 

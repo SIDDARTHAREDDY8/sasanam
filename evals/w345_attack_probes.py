@@ -247,14 +247,16 @@ def test_b2_hex_with_nulls_still_blocked():
 
 @_t
 def test_b2_short_base64_precision_guard_pinned():
-    """Precision boundary: raw base64 of the 16-char test credential
-    (24 chars incl. padding) misses because _B64_RUN requires 24+
-    chars -- a deliberate F2/F8-era precision guard; not a defeated
-    control. Pinned held-by-design."""
+    """F445 is CLOSED 2026-10-06 wave-349 lane 1: raw base64 of the
+    16-char test credential (24 chars incl. padding, under the old
+    24-char minimum) now blocks coded dlp-slack-token -- short runs
+    are strict-decoded with the credential-shape gate (was filed OPEN
+    and pinned as a held-by-design miss; flipped to a refusal
+    assertion on closure)."""
     b64 = _b64(_CRED)
-    miss = dlp.find_credential(b64) is None
-    return ("HELD" if miss else "BREAK",
-            "short-b64 precision miss reproduced=%s" % miss)
+    hit = dlp.find_credential(b64) == "dlp-slack-token"
+    return ("HELD" if hit else "BREAK",
+            "short-b64 blocks=%s (F445 closed)" % hit)
 
 
 # ---------------------------------------------------------------- B3: dead structural proposals
@@ -271,14 +273,32 @@ def test_b3_url_encoded_segments_still_blocked():
 
 @_t
 def test_b3_garbage_padded_base64_correctly_ignored():
-    """B3-#1 dead proposal: base64 + appended garbage misses, but no
-    real parser recovers the credential from the garbage-padded blob
-    (discontinuous padding is rejected) -- correct non-detection of
-    a non-attack, not a break."""
+    """B3-#1, corrected 2026-10-06 wave-349 lane 1 (F445 closure): base64
+    + appended garbage now BLOCKS -- the decoder extracts the maximal
+    clean run (the 23-char unpadded prefix, a genuine base64 encoding
+    of the credential) and the credential-shape gate fires. This is
+    consistent with the long path, which already blocks
+    b64(long-cred)=garbage via the same prefix extraction; the
+    whole-blob strict decode still rejects discontinuous padding.
+    Making the short path differ would create an evasion
+    (b64(cred)=x). Was pinned as a held-by-design miss under the old
+    24-char floor; flipped to a block assertion on closure."""
     payload = _b64(_CRED) + "zzQqWwEeRr"
-    miss = dlp.find_credential(payload) is None
-    return ("HELD" if miss else "BREAK",
-            "garbage-padded b64 ignored=%s" % miss)
+    hit = dlp.find_credential(payload) == "dlp-slack-token"
+    return ("HELD" if hit else "BREAK",
+            "garbage-padded b64 prefix blocks=%s" % hit)
+
+
+@_t
+def test_b3_garbage_interleaved_base64_ignored():
+    """B3-#1b discrimination (preserved intent): garbage INTERLEAVED
+    inside the run corrupts the encoding itself -- no clean prefix
+    run survives, strict decode fails, and the blob stays quiet."""
+    b64 = _b64(_CRED)
+    payload = b64[:3] + "zz" + b64[3:]
+    quiet = dlp.find_credential(payload) is None
+    return ("HELD" if quiet else "BREAK",
+            "garbage-interleaved b64 ignored=%s" % quiet)
 
 
 # ---------------------------------------------------------------- filing + pins
@@ -314,9 +334,9 @@ def test_z0_f436_closed_with_final_footer():
           and "(F444 filed 2026-10-06, wave-348 lane 2" in text
           and "LOW, OPEN: junk JS-expression prefixes" in text
           and "(F445 filed 2026-10-06, wave-348 lane 2" in text
-          and "LOW, OPEN: the base64 minimum-length gate" in text
+          and "CLOSED 2026-10-06 wave-349 lane 1" in text
           and "Next free finding: **F446**" in text
-          and "Open findings: F444, F445." in text)
+          and "Open findings: F444." in text)
     return ("HELD" if ok else "BREAK", "F436-F445 filed+pinned=%s" % ok)
 
 

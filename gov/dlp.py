@@ -345,6 +345,25 @@ def _shannon_entropy(text):
 _B64_RUN = re.compile(r"[A-Za-z0-9+/\-_]{24,}={0,2}")
 _HEX_RUN = re.compile(r"(?:[0-9a-fA-F]{2}){16,}")
 _B32_RUN = re.compile(r"[A-Z2-7]{24,}={0,6}")
+# F445: short base64/base64url and base32 runs (8-23 payload chars). The
+# 24-char floor above is an FP guard against word-like runs; short runs
+# are attempted ONLY when the strict decode round-trips AND the decoded
+# text is credential-shaped (the guard made precise -- see
+# _b64_short_variants / _b32_short_variants). The negative
+# lookbehind/lookahead keep these from matching interior slices of
+# longer runs (already handled by the long path); padding '=' is not a
+# boundary char, so a padded short run still matches.
+_B64_SHORT_RUN = re.compile(
+    r"(?<![A-Za-z0-9+/\-_])[A-Za-z0-9+/\-_]{8,23}={0,2}"
+    r"(?![A-Za-z0-9+/\-_])")
+_B32_SHORT_RUN = re.compile(
+    r"(?<![A-Z2-7])[A-Z2-7]{8,23}={0,6}(?![A-Z2-7])")
+# F445: floor on short-run decode attempts. 8 payload chars decode to 6
+# bytes (b64) / 5 bytes (b32); no credential rule can match that little
+# (the shortest rule needs 15 chars: xox[baprs]- plus 10), so the floor
+# only gates attempts, never blocking decisions -- same discipline as
+# the F428 JSFuck threshold.
+_B64_SHORT_FLOOR = 8
 # F428: JSFuck is a JS-execution encoding over the alphabet []()!+- (unary
 # minus included). A run of 64+ alphabet chars is essentially never
 # innocent text; genuine single-char JSFuck is shorter but a single
@@ -473,15 +492,21 @@ def _printable_ascii(data, min_ratio=0.9):
     return good / len(data) >= min_ratio
 
 
-def _try_b64_decode(run):
+def _try_b64_decode(run, min_payload=24):
     """Strict base64/base64url decode with round-trip validation.
 
     Returns the decoded ASCII string, or None when the run is not really
     base64 (wrong alphabet after normalization, bad padding, no round-trip,
     or decodes to binary rather than text).
+
+    min_payload is the floor on payload chars (default 24: the F2/F8-era
+    FP guard against word-like runs). The F445 short path passes 8 --
+    the remaining guards (strict decode, exact round-trip,
+    mostly-printable ASCII) are unchanged; the credential-shape gate in
+    _b64_short_variants decides which short decodes become variants.
     """
     norm = run.replace("-", "+").replace("_", "/").rstrip("=")
-    if len(norm) < 24:
+    if len(norm) < min_payload:
         return None
     norm += "=" * (-len(norm) % 4)
     try:
@@ -525,13 +550,73 @@ def _b64_fixpoint_variants(text):
         prev = run
         for _ in range(_MAX_B64_ROUNDS):
             decoded = _try_b64_decode(prev)
-            if decoded is None or decoded == prev:
+            if decoded is None:
+                # F445: the innermost run of a short-credential stack can
+                # be under 24 payload chars -- attempt the
+                # credential-shape-gated short decode rather than
+                # failing closed on the floor. The gate is identical to
+                # the pipeline short path: only a credential-shaped
+                # decode becomes a variant. (On a 24+ run this retry is
+                # a no-op -- the floor is the only difference.)
+                gated = _try_b64_decode(prev,
+                                        min_payload=_B64_SHORT_FLOOR)
+                if (gated is None
+                        or _match_credential_forms(gated) is None):
+                    break
+                decoded = gated
+            if decoded == prev:
                 break
             variant = text[:m.start()] + decoded + text[m.end():]
             if variant not in seen:
                 seen.add(variant)
                 yield variant
             prev = decoded
+
+
+def _b64_short_variants(text):
+    """F445: short base64/base64url runs (8-23 payload chars) attempted
+    only when the decoded candidate is credential-shaped.
+
+    For each short run: strict-decode with the lowered floor
+    (_B64_SHORT_FLOOR); a run that fails strict decode, round-trip, or
+    the printable-ASCII gate is ignored. A run that DOES decode is a
+    genuine encoding -- but it becomes a variant ONLY when the decoded
+    text matches a credential rule. That credential-shape gate is the
+    24-char floor's FP guard made precise: innocent short decodes
+    (junk text, word fragments, UUIDs) never enter the variant
+    pipeline, so they cannot block and cannot starve the
+    _MAX_CANDIDATES budget either. One decode layer only -- stacked
+    short runs compose via the 2-layer pipeline (an outer long run
+    decodes in layer 1, the inner short run in layer 2). Bounded,
+    static, never executes.
+    """
+    for m in list(_B64_SHORT_RUN.finditer(text))[:_MAX_CANDIDATES]:
+        run = m.group(0)
+        decoded = _try_b64_decode(run, min_payload=_B64_SHORT_FLOOR)
+        if decoded is None:
+            continue
+        if _match_credential_forms(decoded) is None:
+            continue
+        variant = text[:m.start()] + decoded + text[m.end():]
+        if variant != text:
+            yield variant
+
+
+def _b32_short_variants(text):
+    """F445: short base32 runs (8-23 payload chars), same contract as
+    _b64_short_variants -- strict decode plus the credential-shape gate
+    before a variant is emitted. Same mechanism class as the base64
+    gate, closed together."""
+    for m in list(_B32_SHORT_RUN.finditer(text))[:_MAX_CANDIDATES]:
+        run = m.group(0)
+        decoded = _try_b32_decode(run, min_payload=_B64_SHORT_FLOOR)
+        if decoded is None:
+            continue
+        if _match_credential_forms(decoded) is None:
+            continue
+        variant = text[:m.start()] + decoded + text[m.end():]
+        if variant != text:
+            yield variant
 
 
 def _try_hex_decode(run):
@@ -550,16 +635,20 @@ def _try_hex_decode(run):
         return None
 
 
-def _try_b32_decode(run):
+def _try_b32_decode(run, min_payload=24):
     """Strict base32 decode with round-trip validation (F8).
 
     Same contract as the base64 path: the run must be a genuine base32
     encoding (strict alphabet, valid padding, exact round-trip) that
     decodes to mostly-printable ASCII. Without the round-trip check,
     arbitrary uppercase/digit runs would "decode" to garbage bytes.
+
+    min_payload is the floor on payload chars (default 24); the F445
+    short path passes 8, with the credential-shape gate in
+    _b32_short_variants deciding which short decodes become variants.
     """
     norm = run.rstrip("=")
-    if len(norm) < 24:
+    if len(norm) < min_payload:
         return None
     try:
         raw = base64.b32decode(norm + "=" * (-len(norm) % 8),
@@ -2246,11 +2335,23 @@ def _decode_layer(text):
         decoded = _try_b64_decode(m.group(0))
         if decoded is not None:
             _add(text[:m.start()] + decoded + text[m.end():])
+    # Short base64/base64url runs (F445): strict-decode with the
+    # credential-shape gate -- undecodable or innocent runs are
+    # ignored, so this cannot starve the candidate budget.
+    for variant in _b64_short_variants(text):
+        _add(variant)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
     # Base32 runs embedded anywhere in the text (F8).
     for m in list(_B32_RUN.finditer(text))[:_MAX_CANDIDATES]:
         decoded = _try_b32_decode(m.group(0))
         if decoded is not None:
             _add(text[:m.start()] + decoded + text[m.end():])
+    # Short base32 runs (F445): same credential-shape-gated contract.
+    for variant in _b32_short_variants(text):
+        _add(variant)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
     # JSFuck runs embedded anywhere in the text (F428): strict static
     # decode, never executed; undecodable runs are ignored.
     for m in list(_JSFUCK_RUN.finditer(text))[:_MAX_CANDIDATES]:
@@ -2424,7 +2525,8 @@ def find_credential(text):
     escapes, numeric HTML entities, double HTML-entity encoding (F440),
     UTF-16 null-interleave, confusable
     normalization incl. the Cyrillic-homoglyph map, bidi-override
-    normalization -- bounded, 2 layers), plus a bounded base64
+    normalization -- bounded, 2 layers), short base64/base32 runs when
+    the strict decode is credential-shaped (F445), plus a bounded base64
     decode-until-fixpoint pass (F439: max 3 rounds; depth-4+ base64
     stacks are a documented non-goal), and
     re-runs the credential rules on each decoded variant, in

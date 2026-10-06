@@ -44,10 +44,12 @@ production, F442 policy-delta mode gate):
        GENUINE: filed as F444 (LOW, OPEN).
      - base64 of a short (<18-char) credential: the 24-char
        minimum-length gate means the run is never attempted.
-       GENUINE: filed as F445 (LOW, OPEN).
+       GENUINE: filed as F445 (LOW, OPEN). CLOSED 2026-10-06 wave-349
+       lane 1 (credential-shape-gated short-run decode).
 
   F444, F445: filed OPEN this round; footer now
-  open F443, F444, F445 / next F446.
+  open F443, F444, F445 / next F446. [F445 CLOSED 2026-10-06 wave-349
+  lane 1; footer now open F444 / next F446.]
   F437-F442: CLOSED (wave-347 merge).
 
 Usage:
@@ -110,11 +112,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F444/F445 open, next F446 (F443 CLOSED at merge)."""
+    """Control: footer shows F444 open (F445 CLOSED wave-349 lane 1),
+    next F446."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F446**" in text
-          and "Open findings: F444, F445." in text)
+          and "Open findings: F444." in text)
     return ("HELD" if ok else "BREAK", "footer-ok=%s" % ok)
 
 
@@ -150,10 +153,13 @@ def test_f444_real_first_blocks():
 
 @_t
 def test_f445_b64_short_credential_miss():
-    """F445 (OPEN): base64 of a 16-char credential is never attempted."""
+    """F445 is CLOSED 2026-10-06 wave-349 lane 1: base64 of a 16-char
+    credential is now attempted (credential-shape-gated short decode)
+    and blocks coded dlp-slack-token (was filed OPEN and pinned as a
+    miss; flipped to a refusal assertion on closure)."""
     b64 = base64.b64encode(_CRED.encode()).decode()
-    miss = not _blocked(b64)
-    return ("HELD" if miss else "BREAK", "miss=%s b64len=%d" % (miss, len(b64)))
+    hit = _blocked(b64)
+    return ("HELD" if hit else "BREAK", "hit=%s b64len=%d" % (hit, len(b64)))
 
 
 @_t
