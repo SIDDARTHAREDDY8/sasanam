@@ -102,7 +102,7 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-356: F476 closed; no new decision codes
-FOOTER_OPEN = "F482, F483, F484, F485, F486, F487, F488"  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 lane 1: F480 CLOSED locally (merge finalizes tree-wide)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN
+FOOTER_OPEN = "F482, F483, F486, F487, F488"  # Wave-359 lane 2: F484, F485 CLOSED locally (merge finalizes tree-wide)  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 lane 1: F480 CLOSED locally (merge finalizes tree-wide)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN
 FOOTER_NEXT = "F489"  # Wave-357 merge: F480 filed OPEN; next free F481  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN
 FOOTER_NEXT = "F489"  # Wave-356 lane 1: F476 CLOSED; next free F478  # Wave-356 merge: next F480  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN
 
@@ -211,9 +211,10 @@ def p2_control_additive_arg_none():
     return _decoded("[].constructor.of('a'+'b').join('')") != "ab"
 
 
-def p2_control_nested_arg_none():
-    # Same pre-existing inner-decode class as base F446 ('Array.ofa').
-    return _decoded("[].constructor.of(['a']).join('')") != "a"
+def p2_control_nested_arg_decodes():
+    # Wave-359 (F484): nested array-literal args now decode
+    # node-exactly -- [].constructor.of(['a']) is [['a']], joined 'a'.
+    return _decoded("[].constructor.of(['a']).join('')") == "a"
 
 
 def p2_control_ofx_none():
@@ -335,12 +336,18 @@ def p3_pin_anchor_f476_alternative():
 
 def p3_pin_array_of_delegates():
     # _js_parse_array_of still routes through _js_parse_of_args with
-    # identical behavior on the F446 arg classes.
+    # identical behavior on the F446 arg classes; wave-359 (F484)
+    # additionally models nested array-literal args node-exactly.
     state = {"ops": 0, "parts": 0}
     arr, _ = dlp._js_parse_array_of("Array.of('a','b')", 0, state)
     if list(arr.elements) != ["a", "b"]:
         return False
-    for bad in ("Array.of(1)", "Array.of('a'+'b')", "Array.of(['a'])",
+    arr2, _ = dlp._js_parse_array_of("Array.of(['a'])", 0,
+                                    {"ops": 0, "parts": 0})
+    if len(arr2.elements) != 1 or \
+            list(arr2.elements[0].elements) != ["a"]:
+        return False
+    for bad in ("Array.of(1)", "Array.of('a'+'b')",
                 "Array.ofx('a')"):
         try:
             dlp._js_parse_array_of(bad, 0, {"ops": 0, "parts": 0})
@@ -512,7 +519,7 @@ _PROBES = [
     ("p1-closure-postfix-chain", p1_closure_postfix_chain),
     ("p2-control-numeric-arg-none", p2_control_numeric_arg_none),
     ("p2-control-additive-arg-none", p2_control_additive_arg_none),
-    ("p2-control-nested-arg-none", p2_control_nested_arg_none),
+    ("p2-control-nested-arg-decodes", p2_control_nested_arg_decodes),
     ("p2-control-ofx-none", p2_control_ofx_none),
     ("p2-control-bracket-ofx-none", p2_control_bracket_ofx_none),
     ("p2-control-nonliteral-key-none", p2_control_nonliteral_key_none),
