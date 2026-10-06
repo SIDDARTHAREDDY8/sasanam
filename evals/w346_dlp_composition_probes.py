@@ -32,9 +32,9 @@ Audit outcome (2026-10-05, all verified on the merged tree):
     ``\\\\`` -> ``\\`` production; the inner escape decodes inside-out).
     4 shapes, expected BREAKs.
   * Documented design boundaries (pinned HELD, NOT findings):
-    - depth-3 stacks miss: the module docstring bounds decoding to
-      2 layers explicitly ("bounded to 2 layers"); triple encoding is
-      the stated boundary, same family as the documented ASCII gate.
+    - depth-4+ base64 stacks miss: the base64 decode-until-fixpoint
+      is bounded at 3 rounds (F439, wave-347 lane 3); depth-4+ is the
+      stated boundary, same family as the documented ASCII gate.
     - F429's ASCII-printable escape gate rejects escape runs decoding
       to non-ASCII (documented strictness, wave-344 lane 2 P7).
   * Discrimination: honest double-encoded text, Windows paths,
@@ -72,7 +72,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2134  # Wave-346: pin 2134 (no new codes in lane 6)
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # wave-346 merge final
+FOOTER_OPEN = "F437, F438, F440, F441, F442"  # wave-347 lane 3: F439 closed
 FOOTER_NEXT = "F443"
 
 from gov import dlp  # noqa: E402
@@ -461,8 +461,9 @@ def p_bound_depth3_b64():
     payload = _b64(_b64(_b64(_CRED)))
     assert base64.b64decode(
         base64.b64decode(base64.b64decode(payload))).decode() == _CRED
-    # the 2-layer design bound: triple encoding is the stated boundary
-    return dlp.find_credential(payload) is None
+    # F439 CLOSED (wave-347 lane 3): the bounded base64
+    # decode-until-fixpoint (max 3 rounds) blocks triple stacks coded.
+    return dlp.find_credential(payload) == "dlp-slack-token"
 
 
 def p_bound_depth3_url_b64_url():

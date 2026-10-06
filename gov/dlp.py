@@ -457,6 +457,10 @@ _MAX_CANDIDATES = 8       # bound on decode attempts per layer
 # is a DoS guard, not an attempt budget: 64 stacked fragments still
 # compose in 2 layers; beyond 64 the per-run path still tries.
 _MAX_WHOLETEXT_ITEMS = 64
+# F439: bound on base64 decode rounds in the decode-until-fixpoint pass.
+# A credential wrapped in up to 3 base64 layers blocks; depth-4+ stays a
+# documented non-goal (bounded decode budget, not a finding).
+_MAX_B64_ROUNDS = 3
 
 
 def _printable_ascii(data, min_ratio=0.9):
@@ -497,6 +501,34 @@ def _try_b64_decode(run):
         return raw.decode("ascii")
     except UnicodeDecodeError:
         return None
+
+
+def _b64_fixpoint_variants(text):
+    """Bounded base64 decode-until-fixpoint variants (F439).
+
+    For each base64/base64url run in *text*, decode repeatedly (at most
+    _MAX_B64_ROUNDS rounds) and yield one variant per round with the run
+    replaced by that round's decoded output. Decoding stops early (fail
+    closed) when a round is not strict base64 (bad padding, no
+    round-trip, binary output) or makes no progress, so this always
+    terminates: valid decodes strictly shrink the run. These variants are
+    checked directly by the strict scan and are NOT fed back into the
+    layer pipeline, so the total base64 decode depth across the scan
+    stays <= _MAX_B64_ROUNDS.
+    """
+    seen = set()
+    for m in list(_B64_RUN.finditer(text))[:_MAX_CANDIDATES]:
+        run = m.group(0)
+        prev = run
+        for _ in range(_MAX_B64_ROUNDS):
+            decoded = _try_b64_decode(prev)
+            if decoded is None or decoded == prev:
+                break
+            variant = text[:m.start()] + decoded + text[m.end():]
+            if variant not in seen:
+                seen.add(variant)
+                yield variant
+            prev = decoded
 
 
 def _try_hex_decode(run):
@@ -1773,6 +1805,13 @@ def _find_credential_strict(text):
         rule = _match_credential_forms(variant)
         if rule:
             return rule
+    # F439: bounded base64 decode-until-fixpoint (max _MAX_B64_ROUNDS
+    # rounds). Checked directly, not fed back into the layer pipeline,
+    # so depth-4+ base64 stacks stay a documented non-goal.
+    for variant in _b64_fixpoint_variants(text):
+        rule = _match_credential_forms(variant)
+        if rule:
+            return rule
     return None
 
 
@@ -1787,7 +1826,9 @@ def find_credential(text):
     expressions, backslash
     escapes, numeric HTML entities, UTF-16 null-interleave, confusable
     normalization incl. the Cyrillic-homoglyph map, bidi-override
-    normalization -- bounded, 2 layers) and
+    normalization -- bounded, 2 layers), plus a bounded base64
+    decode-until-fixpoint pass (F439: max 3 rounds; depth-4+ base64
+    stacks are a documented non-goal), and
     re-runs the credential rules on each decoded variant, in
     whitespace-stripped and reversed form as well. The entropy tripwire
     runs on the original text only (documented boundary, see module
