@@ -872,7 +872,7 @@ def P6b():
         _break(pid, "last line lacks 'Open findings: F443.': %r"
                % (last[:160],))
         return
-    if "Next free finding: **F478**" not in last:
+    if "Next free finding: **F480**" not in last:
         _break(pid, "last line lacks next-F436: %r" % (last[:160],))
         return
     for fnum in ("F424", "F425", "F426"):

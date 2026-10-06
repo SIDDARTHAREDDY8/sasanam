@@ -167,7 +167,7 @@ def test_a10_f429_filing_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F429 filed 2026-10-05, wave-342 lane 5" in text
           and "LOW, CLOSED 2026-10-05 wave-343 lane 1" in text
-          and "Next free finding: **F478**" in text
+          and "Next free finding: **F480**" in text  # Wave-356 merge: footer repoint
           and "Open findings: F473, F474." in text)
     return ("HELD" if ok else "BREAK", "F429 filed closed=%s" % ok)
 

@@ -1377,7 +1377,7 @@ def P5c():
     if "Open findings: F473, F474." not in last:
         _break(pid, "last line lacks 'Open findings: F443.': %r" % (last[:120],))
         return
-    if "Next free finding: **F478**" not in last:
+    if "Next free finding: **F480**" not in last:
         _break(pid, "last line lacks next-F436: %r" % (last[:120],))
         return
     if not any(l.startswith("## F423 ") for l in lines):

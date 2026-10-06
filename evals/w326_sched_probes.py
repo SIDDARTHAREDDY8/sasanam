@@ -500,8 +500,8 @@ def _p15():
 def _p16():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     src = open(path, encoding="utf-8").read()
-    assert "Next free finding: **F478**" in src, "next-free footer"
-    assert "**Open findings: F476, F477.**" in src, "open footer"
+    assert "Next free finding: **F480**" in src, "next-free footer"  # Wave-356 merge: footer repoint
+    assert "**Open findings: F478, F479.**" in src, "open footer"  # Wave-356 merge: footer repoint
     _held("P16-footer-open-f433-f434-f435-next-f436",
           "footer: open none / next F419")
 

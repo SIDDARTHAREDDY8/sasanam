@@ -399,7 +399,7 @@ def P6c():
               encoding="utf-8") as fh:
         text = fh.read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F478**" in text
+    ok = ("Next free finding: **F480**" in text  # Wave-356 merge: footer repoint
           and m_open and m_open[-1].strip() == "F476, F477")
     if ok:
         _held(pid, "footer: open F473, F474 / next F475")

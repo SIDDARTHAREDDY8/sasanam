@@ -118,12 +118,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F476-F479 open, next F480 (wave-356 lane 3:
+    """Control: footer shows F478, F479 open, next F480 (wave-356 merge:
     F478 .call-dispatch + F479 join-coercion filed)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F480**" in text
-          and "**Open findings: F476, F477, F478, F479.**" in text)
+          and "**Open findings: F478, F479.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -170,16 +170,16 @@ def test_b1_f473_misdecode_fixed():
 
 @_t
 def test_b2_f476_constructor_of_open():
-    """F476 pinned OPEN: [].constructor.of miss reproduces."""
+    """F476 CLOSED (wave-356 merge): [].constructor.of now blocked."""
     hit = _blocked("[].constructor.of('" + _A + "','" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "miss-reproduces=%s" % (not hit))
+    return ("HELD" if hit else "BREAK", "blocked=%s" % hit)  # Wave-356 merge: F476 CLOSED
 
 
 @_t
 def test_b2_f477_string_coercion_open():
-    """F477 pinned OPEN: numeric concat-arg coercion miss reproduces."""
+    """F477 CLOSED (wave-356 merge): numeric concat-arg coercion now blocked."""
     hit = _blocked("['" + _A + "'].concat(123456789,'" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "miss-reproduces=%s" % (not hit))
+    return ("HELD" if hit else "BREAK", "blocked=%s" % hit)  # Wave-356 merge: F477 CLOSED
 
 
 @_t

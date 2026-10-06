@@ -79,8 +79,8 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-355: F474 closed; no new decision codes
-FOOTER_OPEN = "none"  # Wave-355 lane 2: F474 CLOSED (merge finalizes tree-wide); F473 is the wave-354 attack-lane filing (commit e6db7a26)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 lane 1: F476 CLOSED  # Wave-356 lane 2: F477 CLOSED  # Wave-356 merge: F476, F477 CLOSED
-FOOTER_NEXT = "F478"  # Wave-355 lane 2: F474 closed; next free F475  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: unchanged
+FOOTER_OPEN = "F478, F479"  # Wave-355 lane 2: F474 CLOSED (merge finalizes tree-wide); F473 is the wave-354 attack-lane filing (commit e6db7a26)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 lane 1: F476 CLOSED  # Wave-356 lane 2: F477 CLOSED  # Wave-356 merge: F476, F477 CLOSED
+FOOTER_NEXT = "F480"  # Wave-355 lane 2: F474 closed; next free F475  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: unchanged
 
 # Constructed via concatenation: the write path redacts credential literals.
 _CRED = "xox" + "b-abc123" + "def" + "456"
@@ -375,7 +375,8 @@ def p7_pin_and_footer():
     ok = ok and len(set(TAXONOMY)) == TAXONOMY_PIN
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md"),
               encoding="utf-8") as f:
-        footer = f.read().splitlines()[-1]
+        # Footer is the LAST "Next free finding:" line (entries may follow it).
+        footer = [l for l in f.read().splitlines() if "Next free finding:" in l][-1]
     ok = ok and ("Open findings: %s." % FOOTER_OPEN) in footer
     ok = ok and ("Next free finding: **%s**" % FOOTER_NEXT) in footer
     ok = ok and "**Status: CLOSED 2026-10-06 wave-355 lane 2.**" in open(

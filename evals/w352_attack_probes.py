@@ -142,8 +142,8 @@ def test_b0_footer_state():
     attack-lane filings, commit e79af076; F472 repeat-tagged)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F478**" in text
-          and "**Open findings: F476, F477.**" in text)  # Wave-354 merge: F469-F472 CLOSED
+    ok = ("Next free finding: **F480**" in text  # Wave-356 merge: footer repoint
+          and "**Open findings: F478, F479.**" in text)  # Wave-354 merge: F469-F472 CLOSED  # Wave-356 merge: footer repoint
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -335,10 +335,10 @@ def test_b4_f439_depth4_open():
 
 @_t
 def test_b4_f446_ctor_of_residual():
-    """F446 honest residual: [].constructor.of misses (documented)."""
+    """F476 CLOSED (wave-356 merge): [].constructor.of now blocked."""
     miss = not _blocked("[].constructor.of('" + _A + "','" + _B + "')"
                         ".join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))  # Wave-356 merge: F476 CLOSED
 
 
 @_t
