@@ -159,33 +159,32 @@ def test_b1_f472_repeat_tagged_closed():
 # ------------------------------------------------- F473/F474 open pins
 
 @_t
-def test_b2_f473_litarr_concat_open():
-    """F473 pinned open: ['a'].concat(['b']).join('') misses --
-    array-receiver paren .concat fails closed."""
-    miss = not _blocked("['" + _A + "'].concat(['" + _B + "']).join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b2_f473_litarr_concat_closed():
+    """F473 CLOSED (wave-355 lane 1, merged): ['a'].concat(['b']).join('')
+    now blocks via _js_apply_array_concat."""
+    hit = _blocked("['" + _A + "'].concat(['" + _B + "']).join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b2_f473_fill_concat_open():
-    """F473 pinned open: Array(1).fill('a').concat('b').join('') misses
-    -- array-receiver concat on a fill-produced array."""
-    miss = not _blocked("Array(1).fill('" + _A + "').concat('" + _B + "')"
-                        ".join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b2_f473_fill_concat_closed():
+    """F473 CLOSED (wave-355 lane 1, merged): Array(1).fill('a').concat('b')
+    now blocks via _js_apply_array_concat on the fill-produced array."""
+    hit = _blocked("Array(1).fill('" + _A + "').concat('" + _B + "')"
+                   ".join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b2_f474_concat_typeerror_open():
-    """F474 pinned open: ('a').concat(['b']).join('') RAISES TypeError --
-    the paren-concat branch has no argument type guard, so the
-    exception escapes find_credential instead of failing closed."""
+def test_b2_f474_concat_typeerror_closed():
+    """F474 CLOSED (wave-355 lane 2, merged): ('a').concat(['b']) no longer
+    raises -- the isinstance guard fails closed instead of escaping TypeError."""
     try:
         dlp.find_credential("('" + _A + "').concat(['" + _B + "']).join('')")
         raised = False
     except TypeError:
         raised = True
-    return ("HELD" if raised else "BREAK", "raised=%s" % raised)
+    return ("HELD" if not raised else "BREAK", "raised=%s" % raised)
 
 
 # ------------------------------------------------- F477 open pins (new)

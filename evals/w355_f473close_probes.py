@@ -206,9 +206,8 @@ def p7_pin_and_footer():
     if not matches:
         return (False, "footer not found")
     nxt, open_s = matches[-1][0], matches[-1][1].strip()
-    # This lane: F473 CLOSED; F474 open. F475 belongs to lane 3
-    # (filter over-decode, committed c82279bc); F476/F477 to attack lane.
-    ok = ok and nxt == "F475" and open_s == "F474"
+    # This lane: F473 CLOSED. Merged: F473-F475 CLOSED; F476, F477 OPEN.
+    ok = ok and nxt == "F478" and open_s == "F476, F477"
     return (ok, "nxt=%s open=%s" % (nxt, open_s))
 
 

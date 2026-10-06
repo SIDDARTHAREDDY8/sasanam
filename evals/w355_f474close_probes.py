@@ -361,10 +361,10 @@ def p6_noreg_f472_repeat_tagged():
 
 
 def p6_noreg_f473_attack_lane_documented():
-    # F473 (array-receiver paren .concat) is a wave-354 attack-lane
-    # filing, still OPEN in this lane's tree: pinned as an expected
-    # miss, not silently regressed.
-    return not _blocked("['" + _A + "'].concat(['" + _B + "']).join('')")
+    # F473 (array-receiver paren .concat) was a wave-354 attack-lane
+    # filing; CLOSED by wave-355 lane 1 (_js_apply_array_concat) and
+    # merged. Pinned as blocked, not silently regressed.
+    return _blocked("['" + _A + "'].concat(['" + _B + "']).join('')")
 
 
 # ---------------------------------------------------------------- P7: pin + footer
