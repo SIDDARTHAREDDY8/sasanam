@@ -3169,12 +3169,65 @@ def _js_parse_null_cmp_rhs(text, i, op, p):
     return k
 
 
-def _js_parse_truthy_body(text, i, p):
-    """Parse an F447/F467 .filter body; returns (spec, next).
+def _js_parse_single_range_class(text, i):
+    """Parse /[a-z]/ (single-range class, no flags) at text[i] (F470).
 
-    p is the single declared parameter. spec is "truthy" (drop exactly
-    the falsy elements -- equivalent to .filter(Boolean) over parsed
-    strings) or "all" (constant-true: keep every element -- F467).
+    Returns (lo, hi, next_index) with lo/hi as code points. Only the
+    exact shapes /[a-z]/, /[A-Z]/, /[0-9]/ are accepted -- hand-scanned,
+    no new regexes. Escapes, negations ([^...]), multi-range classes,
+    bare chars, and any flags (g/i/m/...) fail closed (documented
+    scope: rejected, never mis-decoded). Never evals.
+    """
+    n = len(text)
+    if i >= n or text[i] != "/":
+        raise _JSExprFail("match needs a regex literal")
+    j = i + 1
+    # Need exactly "[x-y]/": 6 chars at j..j+5.
+    if j + 5 >= n:
+        raise _JSExprFail("bad character class")
+    if text[j] != "[" or text[j + 2] != "-" or text[j + 4] != "]" \
+            or text[j + 5] != "/":
+        raise _JSExprFail("bad character class")
+    lo_c, hi_c = text[j + 1], text[j + 3]
+    if (lo_c, hi_c) not in (("a", "z"), ("A", "Z"), ("0", "9")):
+        raise _JSExprFail("unsupported character class")
+    k = j + 6
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("regex flags unsupported")
+    return ord(lo_c), ord(hi_c), k
+
+
+def _js_char_code_at(el, idx):
+    """UTF-16 code unit of el at idx, or None for the NaN cases (F470).
+
+    Node-exact: ''.charCodeAt(i), el.charCodeAt(negative), and
+    el.charCodeAt(i >= el.length) are all NaN, and every relational
+    comparison against NaN is false, so those elements are always
+    dropped. Astral characters expose UTF-16 surrogates (node: the
+    grinning-face emoji U+1F600 has charCodeAt(0) == 55357), hence the
+    utf-16-le decode rather than ord(). Never evals.
+    """
+    units = el.encode("utf-16-le")
+    if 2 * idx >= len(units):
+        return None
+    return units[2 * idx] | (units[2 * idx + 1] << 8)
+
+
+def _js_parse_truthy_body(text, i, p):
+    """Parse an F447/F467/F470 .filter body; returns (spec, next).
+
+    p is the single declared parameter. spec is a tuple whose first
+    element is the kind:
+      ("truthy",)          -- drop exactly the falsy elements
+                              (equivalent to .filter(Boolean) over
+                              parsed strings)
+      ("all",)             -- constant-true: keep every element (F467)
+      ("match", lo, hi)    -- keep elements containing a char in the
+                              class range (F470)
+      ("ccmp", idx, op, k) -- keep elements whose UTF-16 code unit at
+                              idx satisfies OP k; OP in <,<=,>,>=;
+                              empty/short strings are NaN (dropped)
+                              (F470)
 
     Recognized truthiness forms (F447):
       p!==''    -- strict neq against the empty-string literal
@@ -3186,14 +3239,24 @@ def _js_parse_truthy_body(text, i, p):
     (abstract equality also matches undefined; parsed elements are
     string literals, never null/undefined, so all three are
     provably true for every element -- node-verified).
+    Recognized method-call-result forms (F470):
+      p.match(/[a-z]/)            -- also /[A-Z]/, /[0-9]/ only;
+                                    truthy iff some char is in the class
+      p.charCodeAt(IDX) OP K      -- OP in <,<=,>,>=; IDX a literal
+                                    non-negative int; K a literal int
+                                    (optional leading '-')
 
     Parsed array elements are always string literals, whose only falsy
     value is "", so every truthiness form above drops exactly the
     falsy elements. Anything else fails closed: !== against a
     non-empty literal, p!=undefined, p!==0, p!=='a', p==null /
-    p===null, length!=0 or length>=1, other member access, single
-    negation (!p drops the truthy elements, not a bypass), block-body
-    arrows. Never evals.
+    p===null, length!=0 or length>=1, single negation (!p drops the
+    truthy elements, not a bypass), block-body arrows, other member
+    access, match with flags/escapes/negations/multi-range classes/
+    string args, .test/.includes/.search, charCodeAt with no/extra/
+    negative/fractional index args or non-relational ops, template
+    calls. A param named `undefined` fails the F470 method-call forms
+    closed (F467 shadow guard, conservative). Never evals.
     """
     n = len(text)
     i = _js_skip_ws(text, i)
@@ -3201,7 +3264,7 @@ def _js_parse_truthy_body(text, i, p):
         q, j = _js_parse_ident(text, _js_skip_ws(text, i + 2))
         if q != p:
             raise _JSExprFail("not a truthiness test")
-        return "truthy", j
+        return ("truthy",), j
     q, j = _js_parse_ident(text, i)
     if q != p:
         raise _JSExprFail("not a truthiness test")
@@ -3214,24 +3277,74 @@ def _js_parse_truthy_body(text, i, p):
                 # Strict neq against the empty-string literal only.
                 if k + 1 >= n or text[k + 1] != text[k]:
                     raise _JSExprFail("not a truthiness test")
-                return "truthy", k + 2
+                return ("truthy",), k + 2
         # F467: constant-true null comparison (shadow guard inside).
-        return "all", _js_parse_null_cmp_rhs(text, j + len(op), op, p)
+        return ("all",), _js_parse_null_cmp_rhs(text, j + len(op), op, p)
     if j < n and text[j] == ".":
         m, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
-        if m != "length":
+        if m == "length":
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != ">":
+                raise _JSExprFail("not a truthiness test")
+            j = _js_skip_ws(text, j + 1)
+            if j >= n or text[j] != "0":
+                raise _JSExprFail("not a truthiness test")
+            if j + 1 < n and text[j + 1] in "0123456789":
+                raise _JSExprFail("not a truthiness test")  # >01 is >1
+            return ("truthy",), j + 1
+        if m not in ("match", "charCodeAt"):
             raise _JSExprFail("not a truthiness test")
+        # F470: method-call-result predicates. The F467 shadow guard
+        # applies: a param named `undefined` fails these forms closed
+        # (conservative; node would resolve the param fine, but the
+        # keyword-adjacent reading stays ambiguous).
+        if p == "undefined":
+            raise _JSExprFail("shadowed undefined param")
         j = _js_skip_ws(text, j)
-        if j >= n or text[j] != ">":
-            raise _JSExprFail("not a truthiness test")
+        if j >= n or text[j] != "(":
+            raise _JSExprFail("bad method-call predicate")
+        if m == "match":
+            # p.match(/[a-z]/) -- truthy iff some char is in the class;
+            # node: match() returns null (falsy) on no match, else a
+            # truthy array. Flags change nothing but fail closed here
+            # (documented scope).
+            lo, hi, j = _js_parse_single_range_class(
+                text, _js_skip_ws(text, j + 1))
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != ")":
+                raise _JSExprFail("bad match predicate")
+            return ("match", lo, hi), j + 1
+        # p.charCodeAt(IDX) OP K -- IDX a literal non-negative int;
+        # K a literal int (optional '-'); OP one of <,<=,>,>=.
         j = _js_skip_ws(text, j + 1)
-        if j >= n or text[j] != "0":
-            raise _JSExprFail("not a truthiness test")
-        if j + 1 < n and text[j + 1] in "0123456789":
-            raise _JSExprFail("not a truthiness test")  # >01 is >1
-        return "truthy", j + 1
+        idx, j = _js_parse_number(text, j)
+        j = _js_skip_ws(text, j)
+        if j < n and (text[j] in _ASCII_DIGITS or text[j] == "."):
+            raise _JSExprFail("bad charCodeAt index")
+        if j >= n or text[j] != ")":
+            raise _JSExprFail("charCodeAt needs (idx)")
+        j = _js_skip_ws(text, j + 1)
+        op = None
+        for cand in ("<=", ">=", "<", ">"):
+            if text.startswith(cand, j):
+                op = cand
+                j += len(cand)
+                break
+        if op is None:
+            raise _JSExprFail("charCodeAt needs a comparison")
+        j = _js_skip_ws(text, j)
+        neg = False
+        if j < n and text[j] == "-":
+            neg = True
+            j = _js_skip_ws(text, j + 1)
+        k, j = _js_parse_number(text, j)
+        if neg:
+            k = -k
+        if j < n and (text[j] in _ASCII_DIGITS or text[j] == "."):
+            raise _JSExprFail("bad comparison bound")
+        return ("ccmp", idx, op, k), j
     # Bare identity: truthiness over parsed strings.
-    return "truthy", j
+    return ("truthy",), j
 
 
 def _js_index_cmp(idx, op, k):
@@ -3269,6 +3382,14 @@ def _js_parse_filter_callback(text, i):
     comparisons: parsed elements are string literals, never
     null/undefined, so all three are provably true for every
     element) |
+    s=>s.match(/[a-z]/) | function(s){return s.match(/[A-Z]/);}
+    (F470 -- method-call-result truthiness: keep elements containing
+    the class; only /[a-z]/, /[A-Z]/, /[0-9]/, no flags) |
+    s=>s.charCodeAt(0)>47 |
+    function(s){return s.charCodeAt(1)<=122;} (F470 --
+    method-call-result comparison: keep elements whose UTF-16 code
+    unit at the literal index satisfies <,<=,>,>= against a literal
+    int; empty/short strings are NaN, always dropped) |
     (x,i)=>i<2 | (x,i)=>i<=2 | (x,i)=>i>0 | (x,i)=>i>=1 |
     (x,i)=>i!==2 (F459 -- positional predicates: the SECOND param is
     the index, compared against a numeric literal).
@@ -3276,7 +3397,10 @@ def _js_parse_filter_callback(text, i):
     Returns (spec, next_index) where spec is ("all",) for constant-true
     (keep every element), ("truthy",) for the bare Boolean predicate
     and the F447 truthiness forms (drop exactly the falsy elements --
-    for parsed string elements, the empty string), or
+    for parsed string elements, the empty string),
+    ("match", lo, hi) for F470 (keep elements containing a char in the
+    class range), ("ccmp", idx, op, k) for F470 (keep elements whose
+    UTF-16 code unit at idx satisfies OP k), or
     ("index", op, k) for F459 (keep elements whose index satisfies
     idx OP k, evaluated against the known array length at apply time).
     JS Boolean(x) coerces to boolean; every F447 form is provably
@@ -3289,7 +3413,11 @@ def _js_parse_filter_callback(text, i):
     arithmetic, body references to the element param, three-param
     arrows, function-form positional bodies, bare (x,i)=>i
     (index-truthiness is NOT element-truthiness: it drops index 0,
-    not ""), param shadowing. Never evals.
+    not ""), param shadowing, match with flags/escapes/negations/
+    multi-range classes/string args, .test/.includes/.search,
+    charCodeAt with no/extra/negative/fractional index or
+    non-relational ops, template calls, `undefined`-named params on
+    the F470 method-call forms. Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, i)
@@ -3324,31 +3452,21 @@ def _js_parse_filter_callback(text, i):
                 i += 1
             i = _js_expect(text, i, "}")
             return ("all",), i
-        # F447: function(s){return s;} -- the bare param is a truthiness
-        # test over parsed strings (only falsy value is ""). Free
-        # variables (no declared param) fail closed.
-        # F467: function(s){return s!==null;} (also s!==undefined /
-        # s!=null) -- constant-true null comparison, the identity.
+        # F447/F467/F470 bodies share one grammar with the arrow form:
+        # the bare param, !!p, p!=='' , p.length>0, the null comparisons,
+        # p.match(class), and p.charCodeAt(idx) OP k. Unifying the
+        # function form also admits return !!p / return p.length>0 /
+        # return p!=='' here -- all node-exact truthiness forms the
+        # arrow grammar already models. Free variables (no declared
+        # param) fail closed.
         if param is None:
             raise _JSExprFail("filter predicate needs a param")
-        q, i = _js_parse_ident(text, i)
-        if q != param:
-            raise _JSExprFail("not a truthiness predicate")
+        spec, i = _js_parse_truthy_body(text, i, param)
         i = _js_skip_ws(text, i)
-        op = _js_scan_neq_op(text, i)
-        if op is not None:
-            # F467: return s!==null / s!==undefined / s!=null (keyword-
-            # RHS shadowing guard lives in _js_parse_null_cmp_rhs).
-            i = _js_parse_null_cmp_rhs(text, i + len(op), op, param)
-            i = _js_skip_ws(text, i)
-            if i < n and text[i] == ";":
-                i += 1
-            i = _js_expect(text, i, "}")
-            return ("all",), i
         if i < n and text[i] == ";":
             i += 1
         i = _js_expect(text, i, "}")
-        return ("truthy",), i
+        return spec, i
     # Arrow form: zero, one-parenthesized, or one-bare params; the
     # F459 positional form takes exactly two parenthesized params.
     j = _js_skip_ws(text, i)
@@ -3398,12 +3516,14 @@ def _js_parse_filter_callback(text, i):
         return ("index", op, k), m
     # F447: truthiness predicates -- require exactly one declared param
     # (an unbound body identifier would be a ReferenceError in node).
-    # F467: constant-true null comparisons return spec "all" (keep every
-    # element, including "") rather than "truthy".
+    # F467: constant-true null comparisons return spec ("all",) (keep
+    # every element, including "") rather than ("truthy",).
+    # F470: method-call-result predicates return ("match", lo, hi) or
+    # ("ccmp", idx, op, k) tuples.
     if param is None:
         raise _JSExprFail("filter predicate needs a param")
     spec, m = _js_parse_truthy_body(text, i, param)
-    return (spec,), m
+    return spec, m
 
 
 def _js_add_concat_part(parts, part, state):
@@ -3575,8 +3695,11 @@ def _js_apply_method(text, j, name, value, depth, state):
         # every element; (F443) .filter(Boolean) drops every falsy
         # element -- for parsed string elements, exactly the empty
         # string; (F459) positional (x,i)=>i<2 keeps elements whose
-        # index satisfies the comparison. Any other predicate fails
-        # closed.
+        # index satisfies the comparison; (F470) method-call-result
+        # predicates: x.match(/[a-z]/) keeps elements containing the
+        # class, x.charCodeAt(IDX) OP K keeps elements whose UTF-16
+        # code unit at IDX satisfies the comparison (empty/short
+        # strings are NaN, dropped). Any other predicate fails closed.
         if not isinstance(value, _JSArr):
             raise _JSExprFail("filter on non-array")
         spec, i = _js_parse_filter_callback(text, _js_skip_ws(text, i))
@@ -3590,6 +3713,18 @@ def _js_apply_method(text, j, name, value, depth, state):
             _, op, k = spec
             elements = [e for idx, e in enumerate(elements)
                         if _js_index_cmp(idx, op, k)]
+        elif spec[0] == "match":
+            _, lo, hi = spec
+            elements = [e for e in elements
+                        if any(lo <= ord(c) <= hi for c in e)]
+        elif spec[0] == "ccmp":
+            _, idx, op, k = spec
+            kept = []
+            for e in elements:
+                cc = _js_char_code_at(e, idx)
+                if cc is not None and _js_index_cmp(cc, op, k):
+                    kept.append(e)
+            elements = kept
         state["ops"] += 1
         return _JSArr(elements), i + 1
     if name == "fill":

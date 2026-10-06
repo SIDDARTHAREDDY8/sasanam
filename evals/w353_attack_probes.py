@@ -15,6 +15,7 @@ New findings filed (all LOW, OPEN, red-first verified):
 - F470: method-call-result .filter predicates (x.match(/[a-z]/)
   truthiness, x.charCodeAt(0)>47 comparison) -- bypass F447's syntactic
   truthiness-preserving model; not in F447's documented residuals.
+  CLOSED 2026-10-06 wave-354 lane 2 (modeled node-exact in gov/dlp.py).
 - F471: array-copy factories -- Object.assign([], [...]) and the
   spread-copy [...['frag1','frag2']] (same mechanism, one finding).
 
@@ -133,7 +134,7 @@ def test_b0_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F473**" in text
-          and "**Open findings: F470, F471, F472.**" in text)
+          and "**Open findings: F471, F472.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -213,21 +214,21 @@ def test_b2_f469_reflect_apply_closed():
 
 
 @_t
-def test_b2_f470_match_predicate_open():
-    """F470 pinned open: .filter(x=>x.match(/[a-z]/)) misses --
-    method-call truthiness bypasses F447's syntactic model."""
-    miss = not _blocked("['" + _A + "','" + _B + "','']"
-                        ".filter(x=>x.match(/[a-z]/)).join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b2_f470_match_predicate_closed():
+    """F470 CLOSED (wave-354 lane 2): .filter(x=>x.match(/[a-z]/)) now
+    blocks -- method-call truthiness is modeled."""
+    hit = _blocked("['" + _A + "','" + _B + "','']"
+                   ".filter(x=>x.match(/[a-z]/)).join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b2_f470_charcode_predicate_open():
-    """F470 pinned open: .filter(x=>x.charCodeAt(0)>47) misses --
-    method-call-result comparison, constant-true over fragments."""
-    miss = not _blocked("['" + _A + "','" + _B + "']"
-                        ".filter(x=>x.charCodeAt(0)>47).join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b2_f470_charcode_predicate_closed():
+    """F470 CLOSED (wave-354 lane 2): .filter(x=>x.charCodeAt(0)>47)
+    now blocks -- method-call-result comparison is modeled."""
+    hit = _blocked("['" + _A + "','" + _B + "']"
+                   ".filter(x=>x.charCodeAt(0)>47).join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t

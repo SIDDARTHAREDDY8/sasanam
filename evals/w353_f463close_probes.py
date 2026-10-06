@@ -63,8 +63,8 @@ Probes:
       pinned open as documented entries (their red-first batteries live
       in the attack-lane tree).
   P7  pin + footer: taxonomy pin 2135 (no new decision codes),
-      footer open F461, F462, F464-F468, F469, F470, F471, F472 /
-      next F473, F463 CLOSED entry present.
+      footer open F461, F462, F464-F468, F469, F471, F472 /
+      next F473, F463 CLOSED entry present. (Wave-354: F470 CLOSED.)
   PZ  green check: adjacent DLP batteries green (depth-1).
 
 Usage:
@@ -90,7 +90,7 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-353: F463 closed, F472 filed; no new decision codes
-FOOTER_OPEN = "F470, F471, F472"  # Wave-353 lane 2: F463 CLOSED locally (merge finalizes tree-wide); F472 repeat-tagged filed OPEN (renumbered F469->F472); F469-F471 are wave-353 attack-lane filings (commit e79af076)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 lane 1: F469 CLOSED locally (merge finalizes tree-wide)
+FOOTER_OPEN = "F471, F472"  # Wave-353 lane 2: F463 CLOSED locally (merge finalizes tree-wide); F472 repeat-tagged filed OPEN (renumbered F469->F472); F469-F471 are wave-353 attack-lane filings (commit e79af076)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 lane 1: F469 CLOSED locally (merge finalizes tree-wide)  # Wave-354: F470 CLOSED
 
 FOOTER_NEXT = "F473"  # Wave-353 lane 2: F463 CLOSED, F472 filed OPEN; attack lane filed F469-F471 (next F473)
 
