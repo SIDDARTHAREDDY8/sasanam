@@ -39,8 +39,18 @@ FINDINGS.md closure note):
   shape); fails closed.
 - `Array.of()` -- modeled (empty array); no variant emitted (empty
   decode gate).
-- `Array.of('a')` / `Array.of( 'a' , 'b' )` / `Array .of('a','b')`
-  -- modeled, ws-tolerant.
+- `Array.of('a')` / `Array.of( 'a' , 'b' )` -- modeled, ws-tolerant
+  (whitespace around the name and parens).
+- `Array .of('a','b')` (whitespace before the dot) -- MODELED by F455
+  (wave-352 lane 1): the `_JS_EXPR_START` anchor now tolerates the
+  `[ \t\n\r]` class around the dot, exactly the class the parser
+  skips, so the shape reaches `_js_parse_array_of` and blocks coded.
+  The F446 "out of scope" disposition is superseded; the pin below
+  asserts the closure.
+- `new Array .of('a','b')` -- conservative block via the scan (node
+  THROWS TypeError, not a real engine shape): consistent with the
+  pre-existing contiguous `new Array.of` scan behavior, which also
+  blocks though node throws. Documented, not changed by F455.
 - `Array.of(Array.of('a','b'))` -- fail closed (non-string arg).
 - `[].constructor.of('a','b')` / `Array['of']('a','b')` -- HONEST
   RESIDUAL, out of F446 scope (property-lookup factory path, a
@@ -49,9 +59,11 @@ FINDINGS.md closure note):
 - `Array.of(2)` -- fail closed per brief (documented scope
   boundary); pinned quiet by p2-control-numeric-scope.
 - `Array.of('a'+'b')` -- fail closed (string-literal args only).
-- `Array .of('a','b')` (ws between identifier and dot) -- out of
-  scope: not scan-anchored (mirrors the F443 `Array (` gap); stays
-  quiet, pinned by p3-pin-ws-before-dot-out-of-scope.
+- `Array .of('a','b')` (whitespace between the identifier and the dot)
+  -- SUPERSEDED by F455 (wave-352 lane 1): now scan-anchored and
+  decoded; pinned CLOSED by p3-pin-ws-before-dot-closed. The old
+  "mirrors the F443 `Array (` gap" disposition no longer applies to
+  this shape; the `Array (` gap itself remains out of scope.
 
 $0 SPEND BY CONSTRUCTION: canned payloads only, no model calls. Do NOT
 add ModelDriver/SpendLedger usage here.
@@ -75,7 +87,7 @@ Probes:
       F438 entity+NUL, F439 triple-b64, F440 double-entity, F441
       bslash, F443 fill/filter, F444 junk-prefix, F445 short b64).
   P7  pin + footer: taxonomy pin 2135 (no new decision codes),
-      footer open F447-F450 / next F451, F446 CLOSED entry present.
+      footer open F456-F460 / next F461, F446 CLOSED entry present.
   PZ  green check: adjacent DLP batteries green (depth-1).
 
 Usage:
@@ -97,7 +109,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2135  # Wave-350: F446 closed, no new decision codes; pin unchanged 2135
-FOOTER_OPEN = "F454, F455, F456, F457, F458, F459, F460"  # Wave-351 lane 3: F453 CLOSED (ws-b64 outer composes via fixpoint seed)  # Wave-350: F446 CLOSED locally (merge finalizes tree-wide); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461)
+FOOTER_OPEN = "F456, F457, F458, F459, F460"  # Wave-352 lane 1: F454+F455 CLOSED locally (merge finalizes tree-wide)  # Wave-351 lane 3: F453 CLOSED (ws-b64 outer composes via fixpoint seed)  # Wave-350: F446 CLOSED locally (merge finalizes tree-wide); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461)
 FOOTER_NEXT = "F461"  # Wave-350: next free finding after F446's closure
 
 
@@ -258,14 +270,21 @@ def p3_pin_bracket_of_residual():
             is None)
 
 
-def p3_pin_ws_before_dot_out_of_scope():
-    # `Array .of(...)` (whitespace between the identifier and the dot)
-    # is not scan-anchored -- the `_JS_EXPR_START` alternative is the
-    # contiguous `Array.of`, mirroring the F443 `Array(` anchor (which
-    # likewise does not anchor `Array (2)`). The parser itself is
-    # ws-tolerant once anchored; the unanchored ws form stays quiet
-    # (out of scope, consistent with the F443 precedent).
-    return not _blocked("Array .of('" + _A + "','" + _B + "').join('')")
+def p3_pin_ws_before_dot_closed():
+    # F455 (wave-352 lane 1): `Array .of(...)` (whitespace between the
+    # identifier and the dot) is now scan-anchored -- the
+    # `_JS_EXPR_START` alternative tolerates the [ \t\n\r] class
+    # around the dot, exactly the class the parser skips -- so the
+    # shape reaches _js_parse_array_of and blocks coded. The old
+    # out-of-scope pin is superseded (the F443 `Array (` gap remains
+    # out of scope and is pinned separately).
+    return _blocked("Array .of('" + _A + "','" + _B + "').join('')")
+
+
+def p3_pin_ws_after_dot_closed():
+    # Same F455 anchor: whitespace between the dot and `of` is also
+    # engine-valid and parser-tolerated, so it is anchored too.
+    return _blocked("Array. of('" + _A + "','" + _B + "').join('')")
 
 
 # ---------------------------------------------------------------- P4: discrimination
@@ -405,7 +424,8 @@ _PROBES = [
     ("p3-pin-empty-gate", p3_pin_empty_gate),
     ("p3-pin-constructor-of-residual", p3_pin_constructor_of_residual),
     ("p3-pin-bracket-of-residual", p3_pin_bracket_of_residual),
-    ("p3-pin-ws-before-dot-out-of-scope", p3_pin_ws_before_dot_out_of_scope),
+    ("p3-pin-ws-before-dot-closed", p3_pin_ws_before_dot_closed),
+    ("p3-pin-ws-after-dot-closed", p3_pin_ws_after_dot_closed),
     ("p4-discr-prose-quiet", p4_discr_prose_quiet),
     ("p4-discr-arrayfoo-quiet", p4_discr_arrayfoo_quiet),
     ("p4-discr-junk-args-quiet", p4_discr_junk_args_quiet),

@@ -35,6 +35,12 @@ literal BREAK verdict means the pin failed or a NEW break appeared):
 F451 (hex whitespace), F452 (attempt-budget starvation), F453 (ws-b64
 outer-layer stack), F454-F460 (this round).
 
+Wave-352 lane 1 addendum: F454 (multi-arg Array constructor) and F455
+(ws-dot Array.of anchor) are CLOSED locally -- their probes were flipped
+to closure assertions (test_b2_f454_multiarg_array_closed,
+test_b2_f455_ws_dot_closed) and the footer pin moved to F456-F460 open /
+next F461. F456-F460 remain open pins.
+
 Scope notes added (documented, not new numbers):
 - F451 x F450: short-credential hex WITH whitespace misses too -- rides
   with F451's close-when ("whitespace-tolerant hex runs are attempted
@@ -136,12 +142,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F454-F460 open, next F461 (wave-351 merge:
-    F451/F452/F453 closed)."""
+    """Control: footer shows F456-F460 open, next F461 (wave-352 lane 1:
+    F454/F455 closed locally)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F461**" in text
-          and "**Open findings: F454, F455, F456, F457, F458, F459, F460.**" in text)
+          and "**Open findings: F456, F457, F458, F459, F460.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -176,22 +182,24 @@ def test_b1_f453_wsb64_outer_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
-# ------------------------------------------------- F454-F460 open pins
+# --------------------------------- F454-F460 pins (F454/F455 CLOSED wave-352)
 
 @_t
-def test_b2_f454_multiarg_array_open():
-    """F454 pinned open: multi-arg Array constructor misses."""
-    miss = not _blocked("Array('" + _A + "','" + _B + "').join('')")
-    miss2 = not _blocked("new Array('" + _A + "','" + _B + "').join('')")
-    ok = miss and miss2
-    return ("HELD" if ok else "BREAK", "miss=%s/%s" % (miss, miss2))
+def test_b2_f454_multiarg_array_closed():
+    """F454 pinned CLOSED (wave-352 lane 1): multi-arg Array constructor
+    blocks -- Array('frag','frag') / new Array('frag','frag') decode."""
+    hit = _blocked("Array('" + _A + "','" + _B + "').join('')")
+    hit2 = _blocked("new Array('" + _A + "','" + _B + "').join('')")
+    ok = hit and hit2
+    return ("HELD" if ok else "BREAK", "hit=%s/%s" % (hit, hit2))
 
 
 @_t
-def test_b2_f455_ws_dot_open():
-    """F455 pinned open: whitespace before the dot in Array .of misses."""
-    miss = not _blocked("Array .of('" + _A + "','" + _B + "').join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b2_f455_ws_dot_closed():
+    """F455 pinned CLOSED (wave-352 lane 1): whitespace before the dot in
+    Array .of now reaches the parser and blocks."""
+    hit = _blocked("Array .of('" + _A + "','" + _B + "').join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 def _frag(s, junk, every=12):

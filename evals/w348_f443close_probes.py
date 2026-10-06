@@ -73,7 +73,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2135  # Wave-348: F443 closed, no new decision codes; pin unchanged 2135
-FOOTER_OPEN = "F454, F455, F456, F457, F458, F459, F460"  # wave-350 lane 3: F449+F450 CLOSED;  Wave-348: F443 CLOSED locally (merge finalizes tree-wide); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 lane 1: F444 CLOSED (open F445); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461)
+FOOTER_OPEN = "F456, F457, F458, F459, F460"  # wave-350 lane 3: F449+F450 CLOSED;  Wave-348: F443 CLOSED locally (merge finalizes tree-wide); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 lane 1: F444 CLOSED (open F445); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461); wave-352 lane 1: F454+F455 CLOSED locally
 
 FOOTER_NEXT = "F461"  # Wave-348: next free finding unchanged; wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451)
 
@@ -150,9 +150,12 @@ def p3_pin_fill_bound():
 
 
 def p3_pin_constructor_args():
-    # String arg: JS Array("2") is ONE element "2", which this bound
-    # does not model -- fail closed. Multi-arg: fail closed.
-    ok = _decode_shape('Array("2").fill("x").join("")') is None
+    # F454 (wave-352 lane 1) supersedes the old "string arg not
+    # modeled" pin: JS Array("2") is ONE element "2", now decoded as
+    # the 1-element list (node-verified). Multi-arg numeric: still
+    # fail closed.
+    ok = _decode_shape('Array("2").fill("x").join("")') == "x"
+    ok = ok and _decode_shape('Array("a","b").join("")') == "ab"
     ok = ok and _decode_shape('Array(2,3).fill("x").join("")') is None
     ok = ok and _decode_shape('Array().fill("x").join("")') is None
     ok = ok and _decode_shape('Array(0).fill("x").join("")') is None

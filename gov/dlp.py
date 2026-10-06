@@ -1937,7 +1937,13 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|Array(\(|\.of)|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|Array(\(|[ \t\n\r]*\.[ \t\n\r]*of)|\(")
+# F455: the Array.of factory anchor tolerates whitespace around the dot
+# ([ \t\n\r]*, exactly the _js_skip_ws class the parser skips), so
+# `Array .of(...)` / `Array\t.of(...)` / `Array\n.of(...)` /
+# `Array . of(...)` reach _js_parse_array_of -- the anchor/parser
+# contradiction is closed. The ws class is a character class, not a
+# nested quantifier: matching stays linear (no ReDoS surface).
 _JS_EXPR_MAX_PARTS = 64        # bound on '+' operands per expression
 _JS_EXPR_MAX_CODEPOINTS = 512  # bound on fromCharCode argument count
 _JS_EXPR_MAX_DEPTH = 8         # bound on parenthesization depth
@@ -2203,20 +2209,26 @@ def _js_parse_array_of(text, i, state):
 
 
 def _js_parse_array_constructor(text, i, state):
-    """Parse 'Array()' / 'Array(N)' / 'Array.of(...)' at text[i].
+    """Parse 'Array()' / 'Array(N)' / 'Array(a, b, ...)' / 'Array.of(...)'.
 
     The '.of' factory form dispatches to _js_parse_array_of (F446);
-    the plain form is the F443 single-integer constructor. Returns
-    (_JSArr, next_index). N is a decimal or 0x integer literal
-    0.._JS_EXPR_MAX_FILL; the zero-arg form is an empty array.
-    Elements start as the empty string: real Array(N) is sparse, but
-    holes join exactly as "" does, so modeling them as "" is
-    byte-identical through .join/.fill/.filter(Boolean). A string or
-    multi-arg call (JS: single string arg means ONE element '2', which
-    this bound does not model) fails closed, as do nested calls inside
-    array literals. The result only survives when consumed by .join();
-    a bare Array(N) decodes to nothing (not obfuscation-shaped).
-    Never evals.
+    the plain form is the F443 single-integer constructor plus the
+    F454 multi-argument constructor. Returns (_JSArr, next_index).
+
+    N is a decimal or 0x integer literal 0.._JS_EXPR_MAX_FILL; the
+    zero-arg form is an empty array. Elements start as the empty
+    string: real Array(N) is sparse, but holes join exactly as ""
+    does, so modeling them as "" is byte-identical through
+    .join/.fill/.filter(Boolean). The multi-argument form
+    Array('frag', ...) requires every argument to be a string
+    literal (node evaluates the call to the fragment list, exactly
+    as modeled); a single string arg is the 1-element list
+    (node: ['a']). Numeric, mixed, nested, or additive args fail
+    closed (documented scope boundary: rejected, never
+    mis-decoded), as do nested calls inside array literals. The
+    result only survives when consumed by .join(); a bare
+    Array(...)/Array.of(...) decodes to nothing (not
+    obfuscation-shaped). Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, i + len("Array"))
@@ -2228,14 +2240,34 @@ def _js_parse_array_constructor(text, i, state):
         raise _JSExprFail("Array without paren")
     j = _js_skip_ws(text, j + 1)
     if j < n and text[j] == ")":
-        count = 0
-        j += 1
-    else:
-        count, j = _js_parse_number(text, j)
-        j = _js_skip_ws(text, j)
-        if j >= n or text[j] != ")":
+        return _JSArr([]), j + 1
+    if j < n and text[j] in "'\"`":
+        # F454: multi-argument constructor -- parse the string-literal
+        # argument list exactly like _js_parse_array_of's (same
+        # budgets, same fail-closed arg classes).
+        elements = []
+        while True:
+            if j >= n or text[j] not in "'\"`":
+                raise _JSExprFail("Array arg not a string literal")
+            frag, j = _js_parse_string(text, j)
+            elements.append(frag)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            j = _js_skip_ws(text, j)
+            if j >= n:
+                raise _JSExprFail("unterminated Array")
+            if text[j] == ",":
+                j = _js_skip_ws(text, j + 1)
+                continue
+            if text[j] == ")":
+                return _JSArr(elements), j + 1
             raise _JSExprFail("bad Array args")
-        j += 1
+    count, j = _js_parse_number(text, j)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("bad Array args")
+    j += 1
     if count > _JS_EXPR_MAX_FILL:
         raise _JSExprFail("Array too big")
     state["parts"] += count
@@ -2731,7 +2763,9 @@ def _js_parse_primary(text, i, depth, state):
         state["ops"] += 1  # an array literal is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("Array", i):
-        # F443: Array(N) constructor; F446: Array.of(...) factory.
+        # F443: Array(N) constructor; F446: Array.of(...) factory;
+        # F454: Array('a','b',...) multi-arg constructor (incl. ws-
+        # tolerant .of anchor, F455).
         # startswith alone admits Arrayfoo, which the constructor
         # parse then fails closed (no paren / no .of).
         val, i = _js_parse_array_constructor(text, i, state)
@@ -2753,9 +2787,14 @@ def _try_js_expr_decode(text, start):
     (F434), (F437) .reduce(...) / .reduceRight(...) array-assembly
     plus identity .map(...) / constant-true .filter(...) passthroughs,
     and (F443) Array(N).fill(x) construction plus .filter(Boolean)
-    truthiness filtering, and (F446) the Array.of('frag', ...) fragment-
+    truthiness filtering, (F446) the Array.of('frag', ...) fragment-
     list factory (string-literal args only; numeric/nested/additive args
-    fail closed). Bounded by part, depth, codepoint, repeat, and output budgets; never
+    fail closed), (F454) the multi-argument Array('frag', ...) /
+    new Array('frag', ...) constructor (string-literal args only; the
+    single string arg is the 1-element list, exactly as the engine
+    evaluates), and (F455) the ws-tolerant Array.of anchor
+    (whitespace around the dot, the [ \t\n\r] class the parser
+    skips). Bounded by part, depth, codepoint, repeat, and output budgets; never
     evals; undecodable runs are ignored. A bare string literal (or an
     unjoined array literal) with no operator or call is not rewritten
     (not obfuscation-shaped).
