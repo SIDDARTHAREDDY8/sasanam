@@ -32,10 +32,13 @@ Audit outcome (2026-10-05, all verified on the merged tree):
     shape had already been absorbed by the F436 closure (wave-346 merge
     scope note). 3 residuals + 1 absorbed control, all assert coded
     refusal.
-  * F441 (LOW, OPEN, filed wave-346 lane 6, renumbered F438->F441 at merge): double-backslash escapes --
-    ``\\\\uXXXX`` / ``\\\\xXX`` -- evade the escape sub-layer (no
-    ``\\\\`` -> ``\\`` production; the inner escape decodes inside-out).
-    4 shapes, expected BREAKs.
+  * F441 (LOW, CLOSED 2026-10-05 wave-347 lane 5; filed wave-346 lane 6,
+    renumbered F438->F441 at merge): double-backslash escapes --
+    ``\\\\uXXXX`` / ``\\\\xXX`` -- evaded the escape sub-layer (no
+    ``\\\\`` -> ``\\`` production; the inner escape decoded inside-out).
+    Closed by the escaped-backslash whole-text production (F441), wired
+    FIRST in _decode_layer before the per-run escape layers. 4 shapes,
+    all assert coded refusal.
   * Documented design boundaries (pinned HELD, NOT findings):
     - depth-3 stacks miss: the module docstring bounds decoding to
       2 layers explicitly ("bounded to 2 layers"); triple encoding is
@@ -46,9 +49,8 @@ Audit outcome (2026-10-05, all verified on the merged tree):
     ``&amp;`` prose, and innocent base64 stay quiet.
 
 Expected state on the CLOSED tree (w311_redteam convention):
-  4 BREAK / 41 HELD / 0 ERROR, exit 1; every BREAK is a filed finding
-  (F441 x4) listed in _EXPECTED_BREAKS; F436's 2 residuals are CLOSED (wave-346 lane 1), F440's 3 residuals + 1 absorbed control are CLOSED (wave-347 lane 4) and assert coded refusal. Any
-  unexpected BREAK, or any expected BREAK that stops breaking (a
+  0 BREAK / 45 HELD / 0 ERROR, exit 0; F436's 2 residuals are CLOSED (wave-346 lane 1), F440's 3 residuals + 1 absorbed control are CLOSED (wave-347 lane 4), F441's 4 shapes are CLOSED (wave-347 lane 5) and all assert coded refusal. Any
+  unexpected BREAK (a
   finding closed without flipping its probes -- the wave-306 lesson),
   fails the battery.
 
@@ -444,19 +446,20 @@ _PROBES = [
      _mk(lambda: _b64("".join("&amp;#x%x;" % ord(c) for c in _CRED)),
          _rt_f437_b64, "f440-b64-stacked")),
 
-    # --- F441 (OPEN, renumbered): double-backslash, expected BREAKs ---
+    # --- F441 (CLOSED 2026-10-05 wave-347 lane 5): double-backslash
+    # shapes now assert coded refusal ---
     ("f441-bslash-u",
-     _mk(lambda: "".join("\\\\u%04x" % ord(c) for c in _CRED),
+     _mk_absorbed(lambda: "".join("\\\\u%04x" % ord(c) for c in _CRED),
          _rt_f438_double_unescape, "f441-bslash-u")),
     ("f441-bslash-x",
-     _mk(lambda: "".join("\\\\x%02x" % ord(c) for c in _CRED),
+     _mk_absorbed(lambda: "".join("\\\\x%02x" % ord(c) for c in _CRED),
          _rt_f438_double_unescape, "f441-bslash-x")),
     ("f441-bslash-mixed",
-     _mk(lambda: "".join("\\\\u%04x" % ord(c) for c in _CRED[:19])
+     _mk_absorbed(lambda: "".join("\\\\u%04x" % ord(c) for c in _CRED[:19])
                  + "".join("\\\\x%02x" % ord(c) for c in _CRED[19:]),
          _rt_f438_double_unescape, "f441-bslash-mixed")),
     ("f441-url-stacked",
-     _mk(lambda: _url("".join("\\\\u%04x" % ord(c)
+     _mk_absorbed(lambda: _url("".join("\\\\u%04x" % ord(c)
                               for c in _CRED[:12]))
                  + "".join("\\\\u%04x" % ord(c) for c in _CRED[12:]),
          _rt_f438_url, "f441-url-stacked")),
@@ -548,16 +551,8 @@ _PROBES += [
 
 
 # ------------------------------------------------- expected BREAKs + runner
-_EXPECTED_BREAKS = {
-    # F440 CLOSED 2026-10-06 wave-347 lane 4 (double-entity): the three
-    # residuals now assert coded refusal above; the absorbed amp-numeric
-    # shape stays a control probe.
-    # F441 (LOW, OPEN, renumbered F438->F441): double-backslash escapes
-    "f441-bslash-u",
-    "f441-bslash-x",
-    "f441-bslash-mixed",
-    "f441-url-stacked",
-}
+_EXPECTED_BREAKS = set()  # F440's residuals + absorbed control CLOSED (wave-347 lane 4);
+# F441's 4 shapes CLOSED (wave-347 lane 5) -- all assert coded refusal.
 
 
 def _safe(pid, fn):

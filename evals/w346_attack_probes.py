@@ -252,13 +252,17 @@ def test_z1_findings_filed_open_with_final_footer():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = (all("(F43%d filed 2026-10-05, wave-346 lane 2" % i in text
               for i in (7, 8))
+          and "LOW, CLOSED 2026-10-05 wave-347 lane 2" in text
           and "(F439 filed 2026-10-05, wave-346 lane 2" in text
           and "CLOSED 2026-10-05 wave-347 lane 3" in text
           and "(F437 filed 2026-10-05, wave-346 lane 2" in text
           and "CLOSED 2026-10-05 wave-347 lane 1" in text
           and "(F440 filed 2026-10-05, wave-346 lane 6" in text
+          and "LOW, CLOSED 2026-10-06 wave-347 lane 4" in text
           and "(F441 filed 2026-10-05, wave-346 lane 6" in text
+          and "LOW, CLOSED 2026-10-05 wave-347 lane 5" in text
           and "(F442 filed 2026-10-05, wave-346 lane 3" in text
+          and "CLOSED 2026-10-05 wave-347 lane 6" in text
           and "(F443 filed 2026-10-05, wave-347 lane 7" in text
           and text.count("LOW, OPEN:") >= 1
           and "Next free finding: **F444**" in text
