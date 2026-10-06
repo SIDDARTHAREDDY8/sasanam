@@ -118,12 +118,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F478, F479 open, next F480 (wave-356 merge:
-    F478 .call-dispatch + F479 join-coercion filed)."""
+    """Control: footer shows F478 open, next F480 (wave-357 lane 2:
+    F479 join-coercion CLOSED locally; merge finalizes tree-wide)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F480**" in text
-          and "**Open findings: F478, F479.**" in text)
+          and "**Open findings: F478.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -213,17 +213,19 @@ def test_b2_f478_call_filter_open():
 
 
 @_t
-def test_b2_f479_join_null_open():
-    """F479 pinned OPEN: join() null-element coercion miss reproduces."""
+def test_b2_f479_join_null_still_closed():
+    """F479 CLOSED (wave-357 lane 2): join() null-element coercion now
+    blocks -- the decoder models null -> "" engine-exactly."""
     hit = _blocked("['" + _A + "','" + _B + "',null].join('')")
-    return ("HELD" if not hit else "BREAK", "miss-reproduces=%s" % (not hit))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b2_f479_join_nested_open():
-    """F479 pinned OPEN: join() nested-array coercion miss reproduces."""
+def test_b2_f479_join_nested_still_closed():
+    """F479 CLOSED (wave-357 lane 2): join() nested-array coercion now
+    blocks -- the decoder models single-level nesting engine-exactly."""
     hit = _blocked("['" + _A + "',['" + _B + "']].join('')")
-    return ("HELD" if not hit else "BREAK", "miss-reproduces=%s" % (not hit))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- scope notes
@@ -237,10 +239,11 @@ def test_b3_f469_reflect_apply_still_closed():
 
 
 @_t
-def test_b3_join_undefined_scope_quiet():
-    """Scope: join() undefined-element miss reproduces (F479 family)."""
+def test_b3_join_undefined_still_closed():
+    """F479 CLOSED (wave-357 lane 2): join() undefined-element coercion
+    now blocks -- the decoder models undefined -> "" engine-exactly."""
     hit = _blocked("['" + _A + "','" + _B + "',undefined].join('')")
-    return ("HELD" if not hit else "BREAK", "miss-reproduces=%s" % (not hit))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t

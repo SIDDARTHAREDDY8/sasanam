@@ -2449,17 +2449,16 @@ def _js_parse_fcc_number(text, i):
 def _js_stringify_coercible(arg, label):
     """Engine-exact String() coercion of a parsed primary (F477).
 
-    Arrays coerce via comma-join (F464 toString); numbers via their
-    node-exact decimal repr (_JSNumStr carries it, and is a str
-    subclass so the str branch covers it); plain strings are
-    identity. Anything else -- nested non-string array elements,
-    null/undefined/objects -- fails closed. Never evals.
+    Arrays coerce via comma-join (F464 toString); F479: array elements
+    coerce engine-exactly (null/undefined -> "", booleans ->
+    "true"/"false", nested single-level arrays -> their toString).
+    Numbers via their node-exact decimal repr (_JSNumStr carries it,
+    and is a str subclass so the str branch covers it); plain strings
+    are identity. Anything else -- objects -- fails closed. Never
+    evals.
     """
     if isinstance(arg, _JSArr):
-        for e in arg.elements:
-            if not isinstance(e, str):
-                raise _JSExprFail(label + ": nested array")
-        return ",".join(arg.elements)
+        return ",".join(_js_join_element(e) for e in arg.elements)
     if isinstance(arg, str):
         return str(arg)
     raise _JSExprFail(label + ": not coercible")
@@ -2555,13 +2554,15 @@ def _js_parse_fromcharcode(text, i):
 
 
 class _JSArr:
-    """Internal: a parsed JS array-literal value (elements are str).
+    """Internal: a parsed JS array-literal value.
 
     F434: array values only survive when immediately consumed by .join();
     a bare (unjoined) array is not obfuscation-shaped and decodes to
     nothing -- _try_js_expr_decode returns None for _JSArr values.
-    Elements parsed from JS number literals are _JSNumStr (F475), so
-    mixed-type arrays are detectable at predicate-apply time.
+    Elements are str, _JSNumStr (F475 numeric provenance), _JSNil
+    (null/undefined, F479), _JSBool (booleans, F479), or nested _JSArr
+    (single-level array literals, F479). Mixed-type arrays are
+    detectable at predicate-apply time via _js_has_nonstr_element.
     """
 
     __slots__ = ("elements",)
@@ -2581,6 +2582,87 @@ class _JSNumStr(str):
     everywhere (join, len, ord, comparisons) except where a consumer
     explicitly checks for it to fail closed on mixed-type arrays.
     """
+
+
+class _JSNil:
+    """Internal: a parsed null/undefined array element (F479).
+
+    Not a str subclass: the engine coerces null/undefined to "" inside
+    join()/toString() (via _js_join_element), but member access on them
+    throws -- so the type-dependent filter predicates fail closed on
+    arrays holding _JSNil, and the truthiness predicate drops it.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self):
+        return "_JSNil()"
+
+
+class _JSBool:
+    """Internal: a parsed boolean array element (F479).
+
+    Not a str subclass: the engine coerces booleans to "true"/"false"
+    inside join()/toString() (via _js_join_element), but (true).length
+    is undefined and (true).match throws -- so the type-dependent
+    filter predicates fail closed on arrays holding _JSBool, and the
+    truthiness predicate keeps "true" / drops "false".
+    """
+
+    __slots__ = ("value",)
+
+    def __init__(self, value):
+        self.value = value  # "true" or "false"
+
+    def __repr__(self):
+        return "_JSBool(%r)" % (self.value,)
+
+
+def _js_join_element(e):
+    """Engine-exact String() coercion of one array element for join (F479).
+
+    null/undefined -> "" (dropped, engine-exact); booleans ->
+    "true"/"false" (node-verified); nested single-level arrays -> their
+    comma-joined toString (engine-exact; deeper nesting fails closed at
+    parse, so the recursion here is at most one level); strings and
+    _JSNumStr -> as-is (the F475 numeric repr rules compose unchanged).
+    Never raises on parsed elements. No new regexes; never evals.
+    """
+    if isinstance(e, _JSNil):
+        return ""
+    if isinstance(e, _JSBool):
+        return e.value
+    if isinstance(e, _JSArr):
+        return ",".join(_js_join_element(x) for x in e.elements)
+    return str(e)
+
+
+def _js_truthy_keep(e):
+    """Engine-exact Boolean() keep-test for one parsed element (F479).
+
+    null/undefined are falsy (dropped); booleans keep their value;
+    nested arrays are always truthy (kept); strings and _JSNumStr use
+    the F443 empty-string test (the _JSNumStr numeric-falsy edge is
+    pre-existing F443 behavior, unchanged here).
+    """
+    if isinstance(e, _JSNil):
+        return False
+    if isinstance(e, _JSBool):
+        return e.value == "true"
+    return e != ""
+
+
+def _js_has_nonstr_element(elements):
+    """True when any element is not a plain engine string (F475/F479).
+
+    _JSNumStr (numeric provenance), _JSNil (null/undefined), _JSBool,
+    and nested _JSArr elements all fail the type-dependent filter
+    predicates closed (node: member access throws, or evaluates to
+    undefined which the comparison treats as false). Plain str is the
+    only decidable class. Supersedes the bare isinstance(_JSNumStr)
+    checks -- behavior-identical on the pre-F479 type universe.
+    """
+    return any(type(e) is not str for e in elements)
 
 
 def _js_parse_spread_copy(text, i, depth, state):
@@ -2629,10 +2711,14 @@ def _js_parse_spread_copy(text, i, depth, state):
 def _js_parse_array(text, i, depth, state):
     """Parse '[' element (, element)* ']' at text[i] (F434).
 
-    Elements are additive string expressions; nested array literals fail
-    closed. Returns (_JSArr, next_index). Element count is charged to the
-    expression part budget; the joined output is charged to
-    _MAX_DECODE_BYTES in _js_apply_method.
+    Elements are additive string expressions; null/undefined/boolean
+    keywords parse as _JSNil/_JSBool markers and single-level nested
+    array literals parse as _JSArr elements (F479 -- both coerce
+    engine-exactly at the join/toString apply sites). Deeper nesting,
+    factories, and spread inside arrays fail closed. Returns (_JSArr,
+    next_index). Element count is charged to the expression part
+    budget; the joined output is charged to _MAX_DECODE_BYTES in
+    _js_apply_method.
     """
     j = _js_skip_ws(text, i + 1)
     if text.startswith("...", j):
@@ -2650,9 +2736,8 @@ def _js_parse_array(text, i, depth, state):
         if i < len(text) and text[i] == "]":
             return _JSArr(elements), i + 1
         while True:
-            elem, i = _js_parse_additive(text, i, depth, state)
-            if isinstance(elem, _JSArr):
-                raise _JSExprFail("nested array")
+            elem, i = _js_parse_array_element(text, i, depth, state,
+                                             _allow_nested=True)
             elements.append(elem)
             state["parts"] += 1
             if state["parts"] > _JS_EXPR_MAX_PARTS:
@@ -2666,6 +2751,69 @@ def _js_parse_array(text, i, depth, state):
             raise _JSExprFail("bad array")
     finally:
         state["in_array"] = False
+
+
+def _js_parse_array_element(text, i, depth, state, _allow_nested):
+    """Parse one array-literal element at text[i] (F479).
+
+    Extends the additive-string grammar with the null/undefined/true/
+    false keywords (ident-boundary checked; parsed as _JSNil/_JSBool
+    markers -- they are NOT added to _js_parse_primary, so every other
+    primary position still fails closed on them) and with single-level
+    nested array literals (_allow_nested=False inside a nested array,
+    so doubly-nested literals fail closed). Additive chains over the
+    keywords (null+'x') fail closed -- honest, unmodeled. Factories and
+    further array literals inside reach _js_parse_additive, where the
+    outer array's in_array guard fails them closed. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    for kw in ("null", "undefined", "true", "false"):
+        if text.startswith(kw, j):
+            k = j + len(kw)
+            if k < n and text[k] in _JS_IDENT_CONT:
+                break
+            if kw in ("null", "undefined"):
+                return _JSNil(), k
+            return _JSBool("true" if kw == "true" else "false"), k
+    if j < n and text[j] == "[":
+        if not _allow_nested:
+            raise _JSExprFail("doubly nested array")
+        return _js_parse_nested_array(text, j, depth, state)
+    elem, i = _js_parse_additive(text, i, depth, state)
+    if isinstance(elem, _JSArr):
+        raise _JSExprFail("nested array")
+    return elem, i
+
+
+def _js_parse_nested_array(text, i, depth, state):
+    """Parse a single-level nested array literal element (F479).
+
+    text[i] == '['. Elements use _js_parse_array_element with nesting
+    disallowed, so '[[' shapes and factories inside fail closed (the
+    factories additionally trip the outer array's in_array guard).
+    Element count is charged to the part budget. Returns (_JSArr,
+    next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i + 1)
+    elements = []
+    if j < n and text[j] == "]":
+        return _JSArr(elements), j + 1
+    while True:
+        elem, j = _js_parse_array_element(text, j, depth, state,
+                                         _allow_nested=False)
+        elements.append(elem)
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            continue
+        if j < n and text[j] == "]":
+            return _JSArr(elements), j + 1
+        raise _JSExprFail("bad nested array")
 
 
 def _js_parse_additive(text, i, depth, state, _forbid_template=False):
@@ -3581,22 +3729,26 @@ def _js_parse_truthy_body(text, i, p):
     element is the kind:
       ("truthy",)          -- drop exactly the falsy elements
                               (equivalent to .filter(Boolean) over
-                              parsed strings)
+                              parsed strings; F479: _JSNil dropped,
+                              _JSBool keeps its value, nested arrays
+                              kept -- engine-exact)
       ("plen",)            -- x.length>0 (F447 form, F475): drop exactly
                               the empty strings -- but ONLY over
-                              all-string arrays; a _JSNumStr element
-                              makes the predicate undecidable (node:
-                              (1).length is undefined, undefined>0 is
-                              false), so the apply site fails closed
-      ("all",)             -- constant-true: keep every element (F467)
+                              all-string arrays; a non-plain-str element
+                              makes the predicate undecidable, so the
+                              apply site fails closed (F475/F479)
+      ("all",)             -- constant-true: keep every element
+      ("all-null",)        -- x!==null / x!==undefined / x!=null (F467):
+                              keep every element except _JSNil (F479;
+                              node drops null/undefined)
       ("match", lo, hi)    -- keep elements containing a char in the
-                              class range (F470); F475-fail-closed on
-                              mixed-type arrays (engine throws)
+                              class range (F470); F475/F479-fail-closed
+                              on mixed-type arrays (engine throws)
       ("ccmp", idx, op, k) -- keep elements whose UTF-16 code unit at
                               idx satisfies OP k; OP in <,<=,>,>=;
                               empty/short strings are NaN (dropped)
-                              (F470); F475-fail-closed on mixed-type
-                              arrays (engine throws)
+                              (F470); F475/F479-fail-closed on
+                              mixed-type arrays (engine throws)
 
     Recognized truthiness forms (F447):
       p!==''    -- strict neq against the empty-string literal
@@ -3653,7 +3805,11 @@ def _js_parse_truthy_body(text, i, p):
                     raise _JSExprFail("not a truthiness test")
                 return ("truthy",), k + 2
         # F467: constant-true null comparison (shadow guard inside).
-        return ("all",), _js_parse_null_cmp_rhs(text, j + len(op), op, p)
+        # F479: returns ("all-null",) rather than ("all",) -- over
+        # all-string arrays it keeps every element, but _JSNil elements
+        # are dropped (node: null!==null is false), unlike the ()=>true
+        # ("all",) form which keeps them.
+        return ("all-null",), _js_parse_null_cmp_rhs(text, j + len(op), op, p)
     if j < n and text[j] == ".":
         m, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
         if m == "length":
@@ -3771,7 +3927,9 @@ def _js_parse_filter_callback(text, i):
     the index, compared against a numeric literal).
 
     Returns (spec, next_index) where spec is ("all",) for constant-true
-    (keep every element), ("truthy",) for the bare Boolean predicate
+    (keep every element), ("all-null",) for the F467 null-comparison
+    forms (keep every element except _JSNil -- node drops null/
+    undefined under x!==null), ("truthy",) for the bare Boolean predicate
     and the F447 truthiness forms (drop exactly the falsy elements --
     for parsed string elements, the empty string), ("plen",) for the
     F447 x.length>0 form (same as truthy over all-string arrays, but
@@ -3894,8 +4052,8 @@ def _js_parse_filter_callback(text, i):
         return ("index", op, k), m
     # F447: truthiness predicates -- require exactly one declared param
     # (an unbound body identifier would be a ReferenceError in node).
-    # F467: constant-true null comparisons return spec ("all",) (keep
-    # every element, including "") rather than ("truthy",).
+    # F467: constant-true null comparisons return spec ("all-null",)
+    # (keep every element except _JSNil, F479) rather than ("truthy",).
     # F470: method-call-result predicates return ("match", lo, hi) or
     # ("ccmp", idx, op, k) tuples.
     if param is None:
@@ -4058,6 +4216,9 @@ def _js_apply_method(text, j, name, value, depth, state):
     i = j + 1
     if name == "join":
         # F434: ['a','b'].join(sep) -- the separator defaults to ",".
+        # F479: elements coerce engine-exactly (null/undefined -> "",
+        # booleans -> "true"/"false", nested single-level arrays -> their
+        # comma-joined toString, _JSNumStr via its decimal repr).
         if not isinstance(value, _JSArr):
             raise _JSExprFail("join on non-array")
         i = _js_skip_ws(text, i)
@@ -4072,7 +4233,7 @@ def _js_apply_method(text, j, name, value, depth, state):
             if i >= len(text) or text[i] != ")":
                 raise _JSExprFail("bad join")
             i += 1
-        result = sep.join(value.elements)
+        result = sep.join(_js_join_element(e) for e in value.elements)
         if len(result) > _MAX_DECODE_BYTES:
             raise _JSExprFail("join too long")
         state["ops"] += 1
@@ -4085,6 +4246,12 @@ def _js_apply_method(text, j, name, value, depth, state):
         # (x,y)=>y+x assembles in reverse -- exactly as the engine does.
         if not isinstance(value, _JSArr):
             raise _JSExprFail("reduce on non-array")
+        if any(not isinstance(e, str) for e in value.elements):
+            # F479: the fold assembles with JS '+'; null/undefined/
+            # boolean/nested-array elements do not string-concat in the
+            # engine the way the str model would -- fail closed rather
+            # than mis-decode (or raise uncoded).
+            raise _JSExprFail("reduce over non-string element")
         i = _js_skip_ws(text, i)
         p0, p1, idA, idB, i = _js_parse_reduce_callback(text, i)
         i = _js_skip_ws(text, i)
@@ -4135,7 +4302,11 @@ def _js_apply_method(text, j, name, value, depth, state):
             # F460/F475: bare String genuinely stringifies in the
             # engine (String(1) === '1'), so numeric provenance is
             # cleared -- downstream type-dependent predicates see real
-            # strings, exactly as the engine does.
+            # strings, exactly as the engine does. F479: String(null)
+            # is 'null' (not ''), so null/undefined/boolean/nested
+            # elements fail closed here rather than mis-decode.
+            if any(not isinstance(e, str) for e in elements):
+                raise _JSExprFail("map(String) over non-string element")
             elements = [str(e) if isinstance(e, _JSNumStr) else e
                         for e in elements]
         return _JSArr(elements), i + 1
@@ -4162,14 +4333,26 @@ def _js_apply_method(text, j, name, value, depth, state):
             raise _JSExprFail("bad filter")
         elements = list(value.elements)
         if spec[0] == "truthy":
-            elements = [e for e in elements if e != ""]
+            # F479: engine-exact Boolean() per element -- _JSNil is
+            # falsy (dropped), _JSBool keeps its value, nested arrays
+            # are truthy (kept).
+            elements = [e for e in elements if _js_truthy_keep(e)]
+        elif spec[0] == "all-null":
+            # F467/F479: x!==null / x!==undefined / x!=null keeps every
+            # element except _JSNil (node drops null/undefined under the
+            # comparison). The ()=>true ("all",) form has no branch and
+            # keeps everything, exactly as the engine does.
+            elements = [e for e in elements
+                        if not isinstance(e, _JSNil)]
         elif spec[0] == "plen":
             # F475: x.length>0 is only decidable over all-string
             # arrays. A numeric element has no .length in the engine
             # ((1).length is undefined, undefined>0 is false), and the
             # string-coerced model cannot reproduce that -- fail
-            # closed, never decode.
-            if any(isinstance(e, _JSNumStr) for e in elements):
+            # closed, never decode. F479: _JSNil/_JSBool/nested arrays
+            # fail closed here too (member access throws or is
+            # undefined in the engine).
+            if _js_has_nonstr_element(elements):
                 raise _JSExprFail("mixed-type array under length filter")
             elements = [e for e in elements if e != ""]
         elif spec[0] == "index":
@@ -4179,7 +4362,8 @@ def _js_apply_method(text, j, name, value, depth, state):
         elif spec[0] == "match":
             # F475: (1).match throws in the engine; the string model
             # would silently drop the element instead. Fail closed.
-            if any(isinstance(e, _JSNumStr) for e in elements):
+            # F479: _JSNil/_JSBool/nested arrays fail closed here too.
+            if _js_has_nonstr_element(elements):
                 raise _JSExprFail("mixed-type array under match filter")
             _, lo, hi = spec
             elements = [e for e in elements
@@ -4187,7 +4371,8 @@ def _js_apply_method(text, j, name, value, depth, state):
         elif spec[0] == "ccmp":
             # F475: (1).charCodeAt throws in the engine; the string
             # model would evaluate it as if on "1". Fail closed.
-            if any(isinstance(e, _JSNumStr) for e in elements):
+            # F479: _JSNil/_JSBool/nested arrays fail closed here too.
+            if _js_has_nonstr_element(elements):
                 raise _JSExprFail("mixed-type array under charCodeAt filter")
             _, idx, op, k = spec
             kept = []
@@ -4237,14 +4422,15 @@ def _js_apply_method(text, j, name, value, depth, state):
     if name == "toString":
         # F464: ['a','b'].toString() -- engine-exact comma join of the
         # string elements, feeding the string pipeline (the filed
-        # shape continues with .replace(/,/g,'')). Any args fail
-        # closed (the filed shapes use none).
+        # shape continues with .replace(/,/g,'')). F479: elements coerce
+        # engine-exactly (null/undefined -> "", nested arrays -> their
+        # toString). Any args fail closed (the filed shapes use none).
         if not isinstance(value, _JSArr):
             raise _JSExprFail("toString on non-array")
         i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != ")":
             raise _JSExprFail("toString args unsupported")
-        result = ",".join(value.elements)
+        result = ",".join(_js_join_element(e) for e in value.elements)
         if len(result) > _MAX_DECODE_BYTES:
             raise _JSExprFail("toString too long")
         state["ops"] += 1
@@ -4542,7 +4728,7 @@ def _js_apply_tag_method(text, j, name, value, depth, state):
         # the array to the empty separator and assembles the credential.
         if not isinstance(value, _JSArr):
             raise _JSExprFail("join on non-array")
-        result = cooked.join(value.elements)
+        result = cooked.join(_js_join_element(e) for e in value.elements)
         if len(result) > _MAX_DECODE_BYTES:
             raise _JSExprFail("join too long")
         state["ops"] += 1
