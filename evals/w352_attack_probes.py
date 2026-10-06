@@ -12,7 +12,8 @@ and filed as F461-F468 (all LOW, OPEN, red-first verified):
 - F462: ''.concat(...['a','b']) -- spread-args concat; concat model takes
         only literal args.
 - F463: ['a','b'].join`` `` -- join invoked as a tagged template; the
-        template-strings array [''] becomes the separator.
+        template-strings array [''] becomes the separator. (CLOSED wave-353
+        lane 2; repeat-as-tagged-template rides as new finding F472.)
 - F464: ['a','b'].toString().replace(/,/g,'') -- string-rewrite primitive;
         distinct from F460 (.map(String)).
 - F465: '89abcdef'.padStart(21,'xoxb-012345678') -- padding primitive
@@ -33,7 +34,9 @@ No new findings: the genuine misses are scope notes on F454/F464/F467
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F454-F460 (wave-351, still open), F461-F468 (this round).
+F454-F460 (wave-351, still open), F461-F468 (this round; F463 closed
+wave-353 lane 2, F472 repeat-tagged filed open; F469-F471 are wave-353
+attack-lane filings).
 
 Scope confirmed (still as documented):
 - F451 / F452 / F453 pinned CLOSED (wave-351 merge).
@@ -132,12 +135,14 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F461-F468 open, next F469 (wave-352 merge:
-    F454-F460 closed, F461-F468 filed)."""
+    """Control: footer shows F461, F462, F464-F472 open, next F473
+    (wave-353 lane 2: F463 CLOSED, F472 repeat-tagged filed;
+    F469-F471 are wave-353 attack-lane filings, commit e79af076)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F469**" in text
-          and "**Open findings: F461, F462, F463, F464, F465, F466, F467, F468.**" in text)
+    ok = ("Next free finding: **F473**" in text
+          and "**Open findings: F461, F462, F464, F465, F466, F467, F468, "
+             "F469, F470, F471, F472.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -218,9 +223,21 @@ def test_b2_f462_spread_concat_open():
 
 
 @_t
-def test_b2_f463_tagged_template_join_open():
-    """F463 pinned open: join as a tagged template misses."""
-    miss = not _blocked("['" + _A + "','" + _B + "'].join" + _BT + _BT)
+def test_b2_f463_tagged_template_join_closed():
+    """F463 pinned CLOSED (wave-353 lane 2): join as a tagged template
+    blocks -- the tag-call site is modeled for .join/.concat/.fill."""
+    hit = _blocked("['" + _A + "','" + _B + "'].join" + _BT + _BT)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_b2_f472_tagged_template_repeat_open():
+    """F472 pinned open (wave-353 lane 2; renumbered F469->F472 -- the
+    wave-353 attack lane committed F469-F471 first, commit e79af076):
+    repeat as a tagged template misses -- the F463 closure models the
+    tag-call site for .join/.concat/.fill only; repeat's ToNumber count
+    conversion is a distinct unmodeled shape."""
+    miss = not _blocked("'" + _A + "'.repeat" + _BT + "2" + _BT)
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 

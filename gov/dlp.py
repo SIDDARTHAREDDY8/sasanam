@@ -2251,6 +2251,63 @@ def _js_parse_template(text, i, depth, state):
             raise _JSExprFail("template too long")
 
 
+def _js_parse_tag_template(text, i, state):
+    """Parse a literal-only `...` tag template at text[i] (F463).
+
+    Unlike _js_parse_template (F457), ANY ${ interpolation fails closed:
+    a tagged call hands the engine a TemplateStringsArray, and an
+    interpolated tag would make the modeled separator diverge from the
+    engine's (String(strings) joins the cooked strings with ",").
+    Only literal-only templates are modeled, so the array is exactly
+    [cooked] and String([cooked]) is cooked. An escaped \\${ stays the
+    literal characters "${" -- the escape path consumes the backslash
+    first, exactly as the engine tokenizes (same as _js_parse_template).
+    Returns (cooked, next_index). Escape handling, literal, and byte
+    bounds match _js_parse_template; no new regexes; never evals.
+    """
+    if text[i] != "`":
+        raise _JSExprFail("not a template")
+    i += 1  # consume the opening backtick
+    n = len(text)
+    out = []
+    total = 0
+    while True:
+        if i >= n:
+            raise _JSExprFail("unterminated template")
+        c = text[i]
+        if c == "`":
+            return "".join(out), i + 1
+        if c == "$" and i + 1 < n and text[i + 1] == "{":
+            raise _JSExprFail("tag interpolation unsupported")
+        if c == "\\":
+            if i + 1 >= n:
+                raise _JSExprFail("bad escape")
+            e = text[i + 1]
+            if e in "xuU":
+                r = _decode_one_escape(text, i)
+                if r is None:
+                    raise _JSExprFail("bad escape")
+                ch, i = r
+                out.append(ch)
+                total += len(ch)
+            else:
+                out.append(_JS_SIMPLE_ESCAPES.get(e, e))
+                i += 2
+                total += 1
+            if total > _MAX_DECODE_BYTES:
+                raise _JSExprFail("template too long")
+            continue
+        if ord(c) < 0x20 and c not in "\t\n\r":
+            raise _JSExprFail("control char")
+        out.append(c)
+        total += 1
+        i += 1
+        if total > _JS_EXPR_MAX_LITERAL:
+            raise _JSExprFail("literal too long")
+        if total > _MAX_DECODE_BYTES:
+            raise _JSExprFail("template too long")
+
+
 def _js_parse_number(text, i):
     """Parse a decimal or 0x integer literal at text[i] (ASCII only)."""
     n = len(text)
@@ -3136,6 +3193,58 @@ def _js_apply_method(text, j, name, value, depth, state):
         raise _JSExprFail("bad concat")
 
 
+def _js_apply_tag_method(text, j, name, value, depth, state):
+    """Apply .join`...` / .concat`...` / .fill`...` with text[j] == '`' (F463).
+
+    A tagged call passes the TemplateStringsArray as the method's first
+    (only) argument. For a literal-only template the array is exactly
+    [cooked] -- _js_parse_tag_template fails closed on any
+    interpolation -- and every modeled method stringifies it, with
+    String([cooked]) being exactly cooked, so:
+      .join`T`   == .join(cooked)    -- cooked is the separator
+      .concat`T` == .concat(cooked)  -- single string arg is appended
+      .fill`T`   == .fill(cooked)    -- single string arg fills
+    Receiver rules match the paren forms exactly: join/fill require a
+    _JSArr (F434/F443), concat fails closed on _JSArr (the decoder never
+    surfaces arrays). A tag call takes exactly one template argument, so
+    fill's start/end args cannot be expressed. The tag call is
+    obfuscation-shaped (ops += 1); the cooked string is bounded by
+    _MAX_DECODE_BYTES. No new regexes; never evals.
+    """
+    cooked, i = _js_parse_tag_template(text, j, state)
+    if name == "join":
+        # ['a','b'].join`` -- the tag receives ['']; join stringifies
+        # the array to the empty separator and assembles the credential.
+        if not isinstance(value, _JSArr):
+            raise _JSExprFail("join on non-array")
+        result = cooked.join(value.elements)
+        if len(result) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("join too long")
+        state["ops"] += 1
+        return result, i
+    if name == "concat":
+        # 'a'.concat`b` -- the tag receives ['b']; concat appends
+        # String(['b']) == 'b', exactly the additive form.
+        if isinstance(value, _JSArr):
+            raise _JSExprFail("method on unjoined array")
+        result = value + cooked
+        if len(result) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("concat too long")
+        state["ops"] += 1
+        return result, i
+    if name == "fill":
+        # ['a','b'].fill`x` -- the tag receives ['x']; every element
+        # becomes String(['x']) == 'x'.
+        if not isinstance(value, _JSArr):
+            raise _JSExprFail("fill on non-array")
+        elements = [cooked] * len(value.elements)
+        if len("".join(elements)) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("fill too long")
+        state["ops"] += 1
+        return _JSArr(elements), i
+    raise _JSExprFail("tag call unsupported")
+
+
 def _js_parse_postfix(text, i, value, depth, state):
     """Consume chained .concat(...) / .repeat(...) / .join(...) /
     .reduce(...) / .reduceRight(...) / .map(...) / .filter(...) /
@@ -3151,6 +3260,15 @@ def _js_parse_postfix(text, i, value, depth, state):
                 if k < len(text) and text[k] == "(":
                     value, i = _js_apply_method(text, k, name, value,
                                                 depth, state)
+                    break
+                if (k < len(text) and text[k] == "`"
+                        and name in ("join", "concat", "fill")):
+                    # F463: tagged-template call site -- .join`...` /
+                    # .concat`...` / .fill`...`; whitespace between the
+                    # method name and the template is allowed, exactly
+                    # as the engine tokenizes.
+                    value, i = _js_apply_tag_method(text, k, name, value,
+                                                    depth, state)
                     break
         else:
             return value, i
