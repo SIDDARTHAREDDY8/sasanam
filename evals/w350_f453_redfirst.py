@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Red-first for F451: whitespace-tolerant base64 as the OUTER layer of
+"""Red-first for F453: whitespace-tolerant base64 as the OUTER layer of
 a stack does not compose.
 
 gov/dlp.py `_b64_ws_variants` (F449) only emits variants for
