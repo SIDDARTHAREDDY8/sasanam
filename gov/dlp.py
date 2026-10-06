@@ -2082,7 +2082,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|Array(\(|[ \t\n\r]*\.[ \t\n\r]*of)|Reflect[ \t\n\r]*\.[ \t\n\r]*(construct|apply)|Object[ \t\n\r]*\.[ \t\n\r]*assign|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*\(|Array(\(|[ \t\n\r]*\.[ \t\n\r]*of)|Reflect[ \t\n\r]*\.[ \t\n\r]*(construct|apply)|Object[ \t\n\r]*\.[ \t\n\r]*assign|\(")
 # F455: the Array.of factory anchor tolerates whitespace around the dot
 # ([ \t\n\r]*, exactly the _js_skip_ws class the parser skips), so
 # `Array .of(...)` / `Array\t.of(...)` / `Array\n.of(...)` /
@@ -2094,7 +2094,8 @@ _JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|Array(\(|[ \t\n\r]*\
 # `Reflect . apply(...)` reach _js_parse_reflect_apply_concat. F471: the
 # same ws-tolerant anchor class covers Object.assign, so
 # `Object .assign(...)` / `Object . assign(...)` reach
-# _js_parse_object_assign. The ws
+# _js_parse_object_assign. F477: the String() constructor call reaches
+# _js_parse_string_ctor, so `String (...)` reaches the parser too. The ws
 # class is a character class, not a nested quantifier: matching stays
 # linear (no ReDoS surface).
 _JS_EXPR_MAX_PARTS = 64        # bound on '+' operands per expression
@@ -2104,6 +2105,9 @@ _JS_EXPR_MAX_REPEAT = 64       # bound on .repeat(n)
 _JS_EXPR_MAX_FILL = 64         # bound on Array(N) element count (F443)
 _JS_EXPR_MAX_LITERAL = 4096    # bound on one string literal
 _JS_EXPR_MAX_RUN = 100000      # bound on expression run length
+_JS_EXPR_MAX_INT_DIGITS = 20  # bound on decimal int-literal digits
+                              # (int() digit-limit safety; F477 needs
+                              # at most 16 for the 2**53 bound)
 _JS_SIMPLE_ESCAPES = {          # single-char backslash escapes (F457: shared
     "n": "\n", "t": "\t", "r": "\r", "b": "\b",   # by _js_parse_string and
     "f": "\f", "v": "\v", "0": "\0"}              # _js_parse_template)
@@ -2438,6 +2442,86 @@ def _js_parse_fcc_number(text, i):
     return val, k
 
 
+def _js_stringify_coercible(arg, label):
+    """Engine-exact String() coercion of a parsed primary (F477).
+
+    Arrays coerce via comma-join (F464 toString); numbers via their
+    node-exact decimal repr (_JSNumStr carries it, and is a str
+    subclass so the str branch covers it); plain strings are
+    identity. Anything else -- nested non-string array elements,
+    null/undefined/objects -- fails closed. Never evals.
+    """
+    if isinstance(arg, _JSArr):
+        for e in arg.elements:
+            if not isinstance(e, str):
+                raise _JSExprFail(label + ": nested array")
+        return ",".join(arg.elements)
+    if isinstance(arg, str):
+        return str(arg)
+    raise _JSExprFail(label + ": not coercible")
+
+
+def _js_parse_string_ctor(text, i, depth, state):
+    """Parse 'String(x)' at text[i] (F477); returns (value, idx).
+
+    Engine-exact String() coercion for the modeled argument classes:
+      String(['a','b']) === ['a','b'].toString() === 'a,b' (F464 --
+        array args coerce via comma-join; nested non-string elements
+        fail closed)
+      String(123) === '123' (numbers via their node-exact decimal
+        repr; _JSNumStr already carries it)
+      String('s') === 's'; String() === ''
+    Anything else -- null/undefined/object args (String() is
+    'null'/'undefined'/'[object Object]', not modeled), 2+ args
+    (extra args are ignored by the engine, not modeled), nested
+    arrays, template-literal args (F457 over-approximation would
+    apply) -- fails closed. Never evals.
+    """
+    j = _js_skip_ws(text, i + len("String"))
+    if j >= len(text) or text[j] != "(":
+        raise _JSExprFail("not String()")
+    j = _js_skip_ws(text, j + 1)
+    if j < len(text) and text[j] == ")":
+        state["ops"] += 1
+        return "", j + 1  # String() === ""
+    arg, j = _js_parse_additive(text, j, depth, state,
+                                _forbid_template=True)
+    coerced = _js_stringify_coercible(arg, "String()")
+    j = _js_skip_ws(text, j)
+    if j >= len(text) or text[j] != ")":
+        raise _JSExprFail("bad String()")
+    if len(coerced) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("String() too long")
+    state["ops"] += 1
+    return coerced, j + 1
+
+
+def _js_parse_coerced_string_arg(text, i, depth, state, label):
+    """Parse a string literal or a String()-coercible array/number (F477).
+
+    The engine coerces non-string padStart/padEnd pad args and
+    replace() replacements via String(): arrays via comma-join
+    (F464 toString), numbers via their decimal repr. Try a string
+    literal first -- but only when text[i] is a real quote char:
+    _js_parse_string treats text[i] as the delimiter
+    unconditionally, so a leading digit would mis-decode
+    ('a'.padStart(5,121) -> '2222a'; node '1211a'). Failing the
+    literal, parse a primary and coerce a parsed string array (all
+    elements must be strings; nested arrays fail closed) or a number
+    (_JSNumStr carries the node-exact repr). Template-literal args
+    fail closed (F457 over-approximation would apply); anything else
+    fails closed. Never evals.
+    """
+    if i < len(text) and text[i] in "'\"":
+        try:
+            return _js_parse_string(text, i)
+        except _JSExprFail:
+            pass
+    arg, i = _js_parse_primary(text, i, depth, state,
+                                _forbid_template=True)
+    return _js_stringify_coercible(arg, label), i
+
+
 def _js_parse_fromcharcode(text, i):
     """Parse String.fromCharCode(n, ...) at text[i]; returns (value, idx)."""
     i += len("String.fromCharCode")
@@ -2580,14 +2664,19 @@ def _js_parse_array(text, i, depth, state):
         state["in_array"] = False
 
 
-def _js_parse_additive(text, i, depth, state):
-    """Parse expr ('+' expr)* at text[i]; returns (value, end_index)."""
-    val, i = _js_parse_primary(text, i, depth, state)
+def _js_parse_additive(text, i, depth, state, _forbid_template=False):
+    """Parse expr ('+' expr)* at text[i]; returns (value, end_index).
+
+    _forbid_template (F477): template literals anywhere in the chain
+    fail closed instead of decoding.
+    """
+    val, i = _js_parse_primary(text, i, depth, state, _forbid_template)
     while True:
         j = _js_skip_ws(text, i)
         if j >= len(text) or text[j] != "+":
             return val, i
-        rhs, i = _js_parse_primary(text, j + 1, depth, state)
+        rhs, i = _js_parse_primary(text, j + 1, depth, state,
+                                   _forbid_template)
         if isinstance(val, _JSArr) or isinstance(rhs, _JSArr):
             raise _JSExprFail("array in additive")  # F434: no JS '+' on arrays
         state["parts"] += 1
@@ -4119,7 +4208,8 @@ def _js_apply_method(text, j, name, value, depth, state):
         i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != ",":
             raise _JSExprFail("bad replace")
-        rep, i = _js_parse_string(text, _js_skip_ws(text, i + 1))
+        rep, i = _js_parse_coerced_string_arg(
+            text, _js_skip_ws(text, i + 1), depth, state, "replace replacement")
         i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != ")":
             raise _JSExprFail("bad replace")
@@ -4143,7 +4233,8 @@ def _js_apply_method(text, j, name, value, depth, state):
         i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != ",":
             raise _JSExprFail("bad pad args")
-        pad, i = _js_parse_string(text, _js_skip_ws(text, i + 1))
+        pad, i = _js_parse_coerced_string_arg(
+            text, _js_skip_ws(text, i + 1), depth, state, "pad string")
         i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != ")":
             raise _JSExprFail("bad pad args")
@@ -4404,9 +4495,15 @@ def _js_parse_postfix(text, i, value, depth, state):
             return value, i
 
 
-def _js_parse_primary(text, i, depth, state):
+def _js_parse_primary(text, i, depth, state, _forbid_template=False):
     """Parse one primary (literal / fromCharCode / parens / number / array /
-    Array constructor / Reflect.construct)."""
+    Array constructor / Reflect.construct).
+
+    _forbid_template (F477): a template literal in primary position
+    (or inside a parenthesized sub-expression) fails closed instead
+    of decoding -- the F477 coercion positions do not model
+    template-literal args.
+    """
     i = _js_skip_ws(text, i)
     if i >= len(text):
         raise _JSExprFail("empty")
@@ -4415,16 +4512,29 @@ def _js_parse_primary(text, i, depth, state):
         val, i = _js_parse_string(text, i)
         return _js_parse_postfix(text, i, val, depth, state)
     if c == "`":
+        if _forbid_template:
+            raise _JSExprFail("template literal arg")
         val, i = _js_parse_template(text, i, depth, state)
         return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("String.fromCharCode", i):
         val, i = _js_parse_fromcharcode(text, i)
         state["ops"] += 1  # the call itself is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
+    if text.startswith("String", i):
+        # F477: String(x) constructor -- engine-exact String()
+        # coercion for the modeled argument classes (parsed string
+        # arrays via their F464 toString; numbers via their decimal
+        # repr). String.fromCharCode is checked above, so this only
+        # fires for the constructor call; the '(' requirement is the
+        # ident boundary (Stringx fails closed).
+        val, i = _js_parse_string_ctor(text, i, depth, state)
+        state["ops"] += 1  # the call itself is obfuscation-shaped
+        return _js_parse_postfix(text, i, val, depth, state)
     if c == "(":
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
-        val, i = _js_parse_additive(text, i + 1, depth + 1, state)
+        val, i = _js_parse_additive(text, i + 1, depth + 1, state,
+                                    _forbid_template)
         i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != ")":
             raise _JSExprFail("unbalanced paren")
@@ -4461,10 +4571,34 @@ def _js_parse_primary(text, i, depth, state):
         state["ops"] += 1  # the assign call is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
     if c in _ASCII_DIGITS:
-        num, i = _js_parse_number(text, i)
-        # F475: mark numeric provenance -- the engine sees a number,
-        # not a string, and member access on it diverges.
-        return _JSNumStr(str(num)), i
+        n = len(text)
+        if text.startswith(("0x", "0X"), i):
+            # Hex keeps the codepoint/count bound -- no coercion path.
+            num, i = _js_parse_number(text, i)
+            return _JSNumStr(str(num)), i
+        j = i
+        while j < n and text[j] in _ASCII_DIGITS:
+            j += 1
+        if j - i > _JS_EXPR_MAX_INT_DIGITS:  # int() digit-limit safety:
+            # fail closed, not loud
+            raise _JSExprFail("number too big")
+        val = int(text[i:j])
+        if val <= 0x10FFFF:
+            return _JSNumStr(str(val)), j
+        # F477: too big for the count/codepoint bound, but a valid
+        # String()-coercible integer literal -- the engine stringifies
+        # it in concat/pad/replace/additive positions. Node-exactness
+        # requires the literal to survive float64 parsing unchanged:
+        # only integers with |n| <= 2**53 are exactly representable
+        # (e.g. 99999999999999999999 parses as 1e20, so
+        # String(99999999999999999999) === '100000000000000000000',
+        # not the digit string -- node-verified). Larger literals
+        # fail closed. _JSNumStr provenance is preserved so F475's
+        # type-dependent predicate guards still fail closed on these
+        # elements.
+        if val > 2 ** 53:
+            raise _JSExprFail("number too big")
+        return _JSNumStr(str(val)), j
     raise _JSExprFail("not a primary")
 
 

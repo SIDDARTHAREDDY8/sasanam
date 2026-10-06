@@ -207,7 +207,8 @@ def p7_pin_and_footer():
         return (False, "footer not found")
     nxt, open_s = matches[-1][0], matches[-1][1].strip()
     # This lane: F473 CLOSED. Merged: F473-F475 CLOSED; F476, F477 OPEN.
-    ok = ok and nxt == "F478" and open_s == "F476, F477"
+    # Wave-356 lane 2: F477 CLOSED; open F476 (next F478).
+    ok = ok and nxt == "F478" and open_s == "F476"
     return (ok, "nxt=%s open=%s" % (nxt, open_s))
 
 

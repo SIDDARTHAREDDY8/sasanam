@@ -110,12 +110,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F476, F477 open, next F478 (wave-355 merge:
-    F473-F475 CLOSED; F477 String-coercion (renumbered) + F476 constructor-of filed)."""
+    """Control: footer shows F476 open, next F478 (wave-356 lane 2:
+    F477 String-coercion CLOSED)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F478**" in text
-          and "**Open findings: F476, F477.**" in text)  # Wave-355 merge: F477 renumbered from attack F475
+          and "**Open findings: F476.**" in text)  # Wave-356 lane 2: F477 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -187,46 +187,46 @@ def test_b2_f474_concat_typeerror_closed():
     return ("HELD" if not raised else "BREAK", "raised=%s" % raised)
 
 
-# ------------------------------------------------- F477 open pins (new)
+# ------------------------------------------------- F477 closed pins
 
 @_t
-def test_b2_f475_concat_numeric_open():
-    """F477 pinned open: ['x'].concat(123456789,'y').join('') misses --
+def test_b2_f477_concat_numeric_closed():
+    """F477 pinned CLOSED (wave-356 lane 2): ['x'].concat(123456789,'y') now blocks --
     numeric concat args are stringified by the engine (String()
     coercion), but the decoder accepts only string/spread args."""
-    miss = not _blocked("['" + "xoxb-" + "0" + "'].concat(123456789,'"
-                        + "abcdef" + "').join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    hit = _blocked("['" + "xoxb-" + "0" + "'].concat(123456789,'"
+                   + "abcdef" + "').join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b2_f475_padstart_array_open():
-    """F477 pinned open: 'x'.padStart(21,['z']) misses -- array padString
+def test_b2_f477_padstart_array_closed():
+    """F477 pinned CLOSED (wave-356 lane 2): 'x'.padStart(21,['z']) now blocks -- array padString
     is coerced via String(['z'])='z', but the decoder accepts only
     literal pad strings (F465)."""
-    miss = not _blocked("'" + "123456789abcdef" + "'.padStart(21,['"
-                        + "xoxb-" + "0" + "'])")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    hit = _blocked("'" + "123456789abcdef" + "'.padStart(21,['"
+                   + "xoxb-" + "0" + "'])")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b2_f475_replace_array_open():
-    """F477 pinned open: 'a,b'.replace(/,/g,['']) misses -- array
+def test_b2_f477_replace_array_closed():
+    """F477 pinned CLOSED (wave-356 lane 2): 'a,b'.replace(/,/g,['']) now blocks -- array
     replacement is coerced via String([''])='', but the decoder
     accepts only literal-string replacements (F464)."""
-    miss = not _blocked("'" + "xoxb-" + "0" + "," + "123456789abcdef"
-                        + "'.replace(/,/g,[''])")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    hit = _blocked("'" + "xoxb-" + "0" + "," + "123456789abcdef"
+                   + "'.replace(/,/g,[''])")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b2_f475_string_ctor_open():
-    """F477 pinned open: String(['a','b']).replace(/,/g,'') misses --
+def test_b2_f477_string_ctor_closed():
+    """F477 pinned CLOSED (wave-356 lane 2): String(['a','b']) now blocks --
     the String() constructor call is unmodeled (F464 covers only
     .toString())."""
-    miss = not _blocked("String(['" + "xoxb-" + "01234" + "','"
-                        + "56789abcdef" + "']).replace(/,/g,'')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    hit = _blocked("String(['" + "xoxb-" + "01234" + "','"
+                   + "56789abcdef" + "']).replace(/,/g,'')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- round-23 scope notes
@@ -291,7 +291,11 @@ def _green_check():
     filed F477 and moved the footer to next F476, so exactly that one
     probe is expected to BREAK here. The merge coordinator's tree-wide
     footer sweep repoints it. Any OTHER break is a real regression and
-    fails this check."""
+    fails this check.
+
+    Wave-356 lane 2 note: w354's test_b0_footer_state was repointed
+    (open F476, next F478) in this tree, so it HELDs here; the
+    tolerance below still passes (breaks subset of allowed)."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return "skipped (GOV_SKIP_GREEN=1)"
     venv_python = os.path.join(os.path.expanduser("~"), "workspace",
