@@ -26,8 +26,9 @@ covers it, so it rides with F449.
 
 Known-open pins (each probe returns HELD when the miss reproduces;
 a literal BREAK verdict means the pin failed or a NEW break appeared):
-F451 (hex whitespace), F452 (attempt-budget starvation),
-F453 (ws-b64 outer-layer stack). Composition probes
+F452 (attempt-budget starvation),
+F453 (ws-b64 outer-layer stack). F451 (hex whitespace) was flipped to a
+closure assertion 2026-10-06 wave-351 lane 1. Composition probes
 pin the closed shapes still blocking.
 
 Dead proposals validated locally and NOT filed: template-literal
@@ -105,31 +106,33 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F451, F452, F453 open, next F454 (wave-350
-    merge reconciliation)."""
+    """Control: footer shows F452, F453 open, next F454 (wave-351 lane 1:
+    F451 closed)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F454**" in text
-          and "**Open findings: F451, F452, F453.**" in text)
+          and "**Open findings: F452, F453.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
 # ---------------------------------------------------------------- F451 pins
 
 @_t
-def test_b1_f451_hex_spaced_open():
-    """F451 pinned open: hex of a long credential with a space misses."""
+def test_b1_f451_hex_spaced_closed():
+    """F451 CLOSED 2026-10-06 wave-351 lane 1: hex of a long credential
+    with a space now blocks (whitespace-tolerant hex run)."""
     hx = _CRED2.encode().hex()
-    miss = not _blocked(hx[:20] + " " + hx[20:])
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    hit = _blocked(hx[:20] + " " + hx[20:])
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b1_f451_hex_newlined_open():
-    """F451 pinned open: hex with a newline misses too."""
+def test_b1_f451_hex_newlined_closed():
+    """F451 CLOSED 2026-10-06 wave-351 lane 1: hex with a newline now
+    blocks too."""
     hx = _CRED2.encode().hex()
-    miss = not _blocked(hx[:20] + "\n" + hx[20:])
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    hit = _blocked(hx[:20] + "\n" + hx[20:])
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
@@ -261,8 +264,9 @@ def test_b5_f437_reduce_blocks():
 # ---------------------------------------------------------------- green check
 
 _EXPECTED_BREAKS = set()  # this battery asserts HELD everywhere: the
-# F451-F453 misses are pinned as known-open (each probe returns HELD when
-# the miss reproduces); a literal BREAK verdict means the pin failed or a
+# F452-F453 misses are pinned as known-open (each probe returns HELD when
+# the miss reproduces); F451 was flipped to a closure assertion
+# (wave-351 lane 1). A literal BREAK verdict means the pin failed or a
 # NEW unexpected break appeared.
 
 

@@ -604,6 +604,23 @@ _HEX_SHORT_MAX_PAIRS = 15
 # Bound on the scan's total span (DoS guard); the stripped payload is
 # additionally capped by _try_b64_decode's _MAX_DECODE_BYTES check.
 _B64_WS_MAX_SPAN = 4 * _MAX_DECODE_BYTES
+# F451: hex with embedded whitespace. These 6 ASCII whitespace chars
+# are EXACTLY what bytes.fromhex ignores -- str.isspace() is broader
+# (\x1c-\x1f, \x85, \xa0, \u2003, \u2028, \u2029 are REJECTED by
+# fromhex, verified empirically), so treating them as gaps would emit
+# variants a real parser rejects (a fidelity false positive). Gaps are
+# therefore this set only, not str.isspace().
+_HEX_WS = frozenset(" \t\n\r\x0b\x0c")
+# F451: alpha floor for a whitespace-tolerant hex span, in hex chars.
+# The F450 short-hex floor (20 chars = 10 byte-pairs): single words
+# that could be credential-shaped are already owned by the _HEX_RUN
+# (32+) / _iter_hex_short_runs (20-30 even) paths, so only >= 2-word
+# sub-runs are new; a span under 20 alphabet chars cannot emit under
+# the credential-shape gate (decoded text needs >= 15 chars).
+_HEX_WS_ALPHA_FLOOR = 20
+# Bound on the scan's total span (DoS guard); the stripped payload is
+# additionally capped by _try_hex_decode's _MAX_DECODE_BYTES check.
+_HEX_WS_MAX_SPAN = 4 * _MAX_DECODE_BYTES
 
 
 def _iter_hex_short_runs(text):
@@ -644,29 +661,81 @@ def _iter_b64_ws_spans(text):
     never be part of a valid decode -- splitting there lets the
     strict decoder plus the exact round-trip check decide, and the
     decoder's ``% 4`` normalization re-adds stripped trailing padding
-    itself. Maximal spans keep the walk linear (the scan jumps past
-    each span). No regexes. Static, never executes."""
+    itself. Shared walker: _iter_ws_spans (F451 refactor -- compose,
+    don't fork). No regexes. Static, never executes."""
+    return _iter_ws_spans(text, _B64_ALPHABET, str.isspace,
+                           _B64_WS_MAX_SPAN, _B64_SHORT_FLOOR, False)
+
+
+def _iter_hex_ws_spans(text):
+    """Yield (start, end, words) for maximal hex spans with whitespace.
+
+    A span is a maximal run of hex-alphabet words joined by gaps of
+    _HEX_WS chars only (exactly the chars bytes.fromhex ignores --
+    fidelity probe: str.isspace() is broader and would false-positive),
+    containing at least one gap and at least _HEX_WS_ALPHA_FLOOR
+    alphabet chars. Words are maximal hex-alphabet runs of any length
+    >= 1. Non-gap, non-hex interior chars break the span (fail closed),
+    exactly like the contiguous-run gate.
+
+    Byte-boundary parity (fidelity-critical): bytes.fromhex skips
+    whitespace only at byte boundaries -- whitespace between the two
+    nibbles of a byte is REJECTED (verified: fromhex('a bcd') raises
+    at the gap, fromhex('ab cd') decodes). A gap therefore continues
+    the span only when the hex-digit count so far is even; an
+    odd-parity gap breaks the span (fail closed), exactly like ground
+    truth. Consequence: every interior word of a yielded span has
+    even length, so every sub-word-run's internal gaps are also at
+    even sub-run-relative parity -- stripping any enumerated sub-run
+    is ground-truth identical to fromhex on the spaced sub-run; odd
+    stripped lengths raise ValueError in ground truth and decode to
+    None in the scanner (fail closed).
+
+    Shared walker: _iter_ws_spans (F451 refactor -- compose, don't
+    fork). No regexes. Static, never executes."""
+    return _iter_ws_spans(text, _HEX_ALPHABET, _HEX_WS.__contains__,
+                           _HEX_WS_MAX_SPAN, _HEX_WS_ALPHA_FLOOR, True)
+
+
+def _iter_ws_spans(text, alphabet, is_gap, max_span, alpha_floor,
+                   parity_sensitive):
+    """Shared whitespace-tolerant span walker (F449 base64, F451 hex) --
+    compose, don't fork.
+
+    Yields (start, end, words) for maximal spans of *alphabet* words
+    joined by gaps (chars where ``is_gap`` holds), containing at least
+    one gap and at least *alpha_floor* alphabet chars, with total span
+    at most *max_span*. Words are maximal alphabet runs of any length
+    >= 1. Non-gap, non-alphabet interior chars break the span (fail
+    closed). When *parity_sensitive*, a gap continues the span only at
+    even digit parity (bytes.fromhex skips whitespace only at byte
+    boundaries); otherwise any gap continues it. Maximal spans keep
+    the walk linear (the scan jumps past each span). No regexes.
+    Static, never executes."""
     n = len(text)
     i = 0
     while i < n:
-        if text[i] in _B64_ALPHABET:
+        if text[i] in alphabet:
             words = []
             pos = i
+            digits = 0  # alphabet chars in the span so far
             while True:
                 j = pos
-                while j < n and text[j] in _B64_ALPHABET:
+                while j < n and text[j] in alphabet:
                     j += 1
                 words.append((pos, j))
+                digits += j - pos
                 g = j
-                while g < n and text[g].isspace():
+                while g < n and is_gap(text[g]):
                     g += 1
-                if g == j or g >= n or text[g] not in _B64_ALPHABET:
+                if (g == j or g >= n or text[g] not in alphabet
+                        or (parity_sensitive and digits % 2)):
                     end = j
                     break
                 pos = g
-            if len(words) > 1 and end - i <= _B64_WS_MAX_SPAN:
+            if len(words) > 1 and end - i <= max_span:
                 alpha = sum(e - s for s, e in words)
-                if alpha >= _B64_SHORT_FLOOR:
+                if alpha >= alpha_floor:
                     yield (i, end, words)
             i = end
         else:
@@ -808,6 +877,54 @@ def _b64_ws_variants(text):
     yield from _gated_encoded_variants(
         text, _matches(),
         lambda blob: _try_b64_decode(blob, min_payload=_B64_SHORT_FLOOR))
+
+
+def _hex_ws_variants(text):
+    """F451: hex runs with embedded whitespace, attempted only when
+    the whitespace-stripped candidate strict-decodes to
+    credential-shaped text.
+
+    bytes.fromhex ignores whitespace, so the hex of a (long,
+    over-the-F450-length-gate) credential with spaces/newlines
+    inserted decodes exactly in a real parser while _HEX_RUN (16
+    contiguous byte-pairs) matches nothing -- a contiguity miss,
+    distinct from F450's length gate and F449's base64 code path
+    (_HEX_RUN + _try_hex_decode vs _B64_RUN + _try_b64_decode; a
+    base64-only F449 fix would not cover it). Gaps continue a span
+    only at byte boundaries (even hex-digit parity); a gap at odd
+    parity breaks the span, exactly like bytes.fromhex (verified:
+    fromhex('a bcd') raises, fromhex('ab cd') decodes) -- the scanner
+    never emits a variant a real parser would reject. Each maximal
+    whitespace-tolerant span (_iter_hex_ws_spans) is searched over
+    its sub-word-runs, longest first: the whitespace-stripped sub-run
+    goes through the existing strict-decode path (_try_hex_decode:
+    bytes.fromhex + printable-ASCII); only a credential-shaped decode
+    becomes a variant, so the FP discipline is identical to the long
+    path (only credential-shaped decodes enter the pipeline).
+    Single-word sub-runs are skipped (the contiguous _HEX_RUN /
+    _iter_hex_short_runs paths own every single word that could pass
+    the shape gate). Odd stripped lengths fail closed (ValueError in
+    both ground truth and the scanner). Non-_HEX_WS interior junk
+    breaks the span (fail closed). The sub-run enumeration is routed
+    through _gated_encoded_variants, so decode attempts obey the same
+    per-call _MAX_CANDIDATES budget as every other encoded-run path.
+    Linear scan, no new regexes; bounded span; static, never executes.
+
+    Honest residual (documented, not a finding): at most
+    _MAX_CANDIDATES sub-runs are attempted per layer, longest first,
+    so a small fragmented payload buried in a very word-rich span can
+    miss -- the same bounded-budget class as F444's documented
+    ~130-junk residual and F449's ws-b64 residual.
+    """
+    def _matches():
+        for start, end, words in _iter_hex_ws_spans(text):
+            n_words = len(words)
+            for length in range(n_words, 1, -1):  # longest first
+                for i in range(n_words - length + 1):
+                    blob = "".join(text[s:e]
+                                   for s, e in words[i:i + length])
+                    yield (start, end, blob)
+    yield from _gated_encoded_variants(text, _matches(), _try_hex_decode)
 
 
 def _try_hex_decode(run):
@@ -2720,6 +2837,12 @@ def _decode_layer(text):
     # gate -- undecodable or innocent runs are ignored, so this cannot
     # starve the candidate budget.
     for variant in _hex_short_variants(text):
+        _add(variant)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # Hex runs with embedded whitespace (F451): whitespace-tolerant
+    # scan; only credential-shaped strict decodes become variants.
+    for variant in _hex_ws_variants(text):
         _add(variant)
         if len(variants) >= _MAX_CANDIDATES:
             return variants
