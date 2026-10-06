@@ -128,12 +128,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F474 open, next F475 (wave-355 lane 1:
-    F473 CLOSED)."""
+    """Control: footer shows no open findings, next F475 (wave-355 lanes 1+2:
+    F473 and F474 CLOSED)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F475**" in text
-          and "**Open findings: F474.**" in text)  # Wave-355 lane 1: F473 CLOSED
+          and "**Open findings: none.**" in text)  # Wave-355 lanes 1+2: F473, F474 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -247,16 +247,19 @@ def test_b2_f473_fill_concat_closed():
 
 
 @_t
-def test_b2_f474_concat_typeerror_open():
-    """F474 pinned open: ('a').concat(['b']).join('') RAISES TypeError --
-    the paren-concat branch has no argument type guard, so the
-    exception escapes find_credential instead of failing closed."""
+def test_b2_f474_concat_typeerror_closed():
+    """F474 CLOSED 2026-10-06 wave-355 lane 2: ('a').concat(['b']).join('')
+    no longer raises -- the paren-concat branch type-guards its args and
+    fails closed (the engine's implicit Array-to-String coercion is not
+    modeled; fail closed is the honest direction)."""
     try:
-        dlp.find_credential("('" + _A + "').concat(['" + _B + "']).join('')")
+        hit = _blocked("('" + _A + "').concat(['" + _B + "']).join('')")
         raised = False
     except TypeError:
-        raised = True
-    return ("HELD" if raised else "BREAK", "raised=%s" % raised)
+        hit, raised = False, True
+    ok = (not raised) and (not hit)
+    return ("HELD" if ok else "BREAK",
+            "raised=%s blocked=%s" % (raised, hit))
 
 
 # ------------------------------------------------- round-22 scope notes
@@ -291,9 +294,10 @@ def test_b3_f472_tagcall_scope_dead():
 
 
 _EXPECTED_BREAKS = set()  # this battery asserts HELD everywhere: the
-# F469-F474 misses are pinned as known-open (each probe returns HELD when
-# the miss reproduces); a literal BREAK verdict means the pin failed or a
-# NEW unexpected break appeared.
+# F469-F473 misses are pinned as known-open (each probe returns HELD when
+# the miss reproduces); F474's pin is now a closed-assertion (HELD = no
+# raise + fail-closed, wave-355 lane 2); a literal BREAK verdict means
+# the pin failed or a NEW unexpected break appeared.
 
 
 def _green_check():

@@ -4114,6 +4114,13 @@ def _js_apply_method(text, j, name, value, depth, state):
             i = _js_skip_ws(text, i)
         else:
             arg, i = _js_parse_additive(text, i, depth, state)
+            if not isinstance(arg, str):
+                # F474: a non-spread _JSArr arg (e.g. ('a').concat(['b']))
+                # reached "".join(parts) and raised TypeError, escaping
+                # the public seam. The engine coerces via Array toString,
+                # which the static decoder cannot model -- fail closed
+                # (the spread path has the same guard by construction).
+                raise _JSExprFail("concat of non-string argument")
             _js_add_concat_part(parts, arg, state)
             i = _js_skip_ws(text, i)
         if i < len(text) and text[i] == ",":

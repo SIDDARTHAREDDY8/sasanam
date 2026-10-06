@@ -73,10 +73,11 @@ Probes:
   P5  ReDoS: hostile near-miss inputs complete fast, no exceptions.
   P6  no-regression: adjacent closures still block (F468 reflect,
       F466 slice, F434 array join, F462 spread concat, F463 tagged
-      join); F469/F470/F472 pinned OPEN (their red-firsts still
-      BREAK).
+      join); F469/F470/F472 pinned CLOSED (their red-firsts now
+      HELD -- F469 pin flipped wave-355 lane 2, wave-305/306 class).
   P7  pin + footer: taxonomy pin 2135 (no new decision codes),
-      footer open F469, F470, F472 / next F473, F471 CLOSED entry.
+      footer open F473 / next F475 (wave-355 lane 2: F474 CLOSED
+      repoint; F471 CLOSED entry).
   PZ  green check: adjacent DLP batteries green (depth-1).
 
 Usage:
@@ -99,7 +100,7 @@ sys.path.insert(0, REPO_ROOT)
 import gov.dlp as dlp  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-354: F471 closed; no new decision codes
-FOOTER_OPEN = "F474"  # Wave-354 lane 3: F471 CLOSED locally (merge finalizes tree-wide); F469/F470/F472 stay OPEN  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)
+FOOTER_OPEN = "none"  # Wave-355 lanes 1+2: F473, F474 CLOSED; open none / next F475 (merge intermediate)
 FOOTER_NEXT = "F475"  # Wave-354 lane 3: F471 CLOSED (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)
 
 # Fragments built by concatenation: the write path redacts credential literals.
@@ -418,6 +419,9 @@ def _redfirst_held(path):
 
 def p6_noreg_f469_reflect_apply_closed():
     # Wave-354 merge: F469 CLOSED by wave-354 lane 1 -- the red-first now HELDs.
+    # Wave-354 merge: F469 CLOSED by wave-354 lane 1 -- the red-first now
+    # HELDs (this probe was a stale open pin the wave-354 merge missed;
+    # flipped wave-355 lane 2, wave-305/306 class).
     return _redfirst_held("w353_f469_redfirst.py")
 
 
