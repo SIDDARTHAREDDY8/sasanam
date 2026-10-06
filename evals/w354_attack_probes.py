@@ -128,12 +128,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F469-F474 open, next F475 (wave-354 attack:
-    F473 array-receiver concat + F474 concat TypeError filed)."""
+    """Control: footer shows F474 open, next F475 (wave-355 lane 1:
+    F473 CLOSED)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F475**" in text
-          and "**Open findings: F473, F474.**" in text)  # Wave-354 merge: F469-F472 CLOSED
+          and "**Open findings: F474.**" in text)  # Wave-355 lane 1: F473 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -221,29 +221,29 @@ def test_b2_f472_repeat_tagged_closed():
 # ------------------------------------------------- F473/F474 open pins
 
 @_t
-def test_b2_f473_litarr_concat_open():
-    """F473 pinned open: ['a'].concat(['b']).join('') misses --
-    array-receiver paren .concat fails closed."""
-    miss = not _blocked("['" + _A + "'].concat(['" + _B + "']).join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b2_f473_litarr_concat_closed():
+    """F473 CLOSED 2026-10-06 wave-355 lane 1: ['a'].concat(['b']).join('')
+    blocks -- array-receiver paren .concat modeled."""
+    hit = _blocked("['" + _A + "'].concat(['" + _B + "']).join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b2_f473_empty_concat_spread_open():
-    """F473 pinned open: [].concat(...['a'],...['b']).join('') misses --
-    array-receiver concat with spread args."""
-    miss = not _blocked("[].concat(...['" + _A + "'],...['" + _B + "'])"
-                        ".join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b2_f473_empty_concat_spread_closed():
+    """F473 CLOSED 2026-10-06 wave-355 lane 1: [].concat(...['a'],...['b'])
+    .join('') blocks -- array-receiver concat with spread args."""
+    hit = _blocked("[].concat(...['" + _A + "'],...['" + _B + "'])"
+                   ".join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b2_f473_fill_concat_open():
-    """F473 pinned open: Array(1).fill('a').concat('b').join('') misses
-    -- array-receiver concat on a fill-produced array."""
-    miss = not _blocked("Array(1).fill('" + _A + "').concat('" + _B + "')"
-                        ".join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b2_f473_fill_concat_closed():
+    """F473 CLOSED 2026-10-06 wave-355 lane 1: Array(1).fill('a').concat
+    ('b').join('') blocks -- array-receiver concat on fill array."""
+    hit = _blocked("Array(1).fill('" + _A + "').concat('" + _B + "')"
+                   ".join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t

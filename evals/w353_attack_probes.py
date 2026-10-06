@@ -129,13 +129,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F473, F474 open, next F475 (wave-354 merge: F469-F472
-    CLOSED; F472 repeat-tagged, renumbered F469->F472; F473/F474
-    attack-lane filings; wave-354 lane 3: F471 CLOSED)."""
+    """Control: footer shows F474 open, next F475 (wave-355 lane 1:
+    F473 CLOSED)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F475**" in text
-          and "**Open findings: F473, F474.**" in text)  # Wave-354 merge: F469-F472 CLOSED
+          and "**Open findings: F474.**" in text)  # Wave-355 lane 1: F473 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -264,13 +263,13 @@ def test_b3_f461_revred_scope_closed():
 
 
 @_t
-def test_b3_f462_multispread_scope_open():
-    """F462 scope (round 21, model C2): [].concat(...Array(1).fill('a'),
-    ...Array(1).fill('b')) -- multi-spread-args concat with fill arrays;
-    same spread-concat mechanism; rides with F462's close-when."""
-    miss = not _blocked("[].concat(...Array(1).fill('" + _A + "'),"
-                        "...Array(1).fill('" + _B + "')).join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b3_f462_multispread_scope_closed():
+    """F462 scope (round 21, model C2) CLOSED by F473 2026-10-06 wave-355
+    lane 1: [].concat(...Array(1).fill('a'),...Array(1).fill('b')).join('')
+    blocks -- array-receiver concat with spread args (F473 mechanism)."""
+    hit = _blocked("[].concat(...Array(1).fill('" + _A + "'),"
+                   "...Array(1).fill('" + _B + "')).join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t

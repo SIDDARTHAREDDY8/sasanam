@@ -42,9 +42,10 @@ parser for quoted '+' concatenation, template literals (F457:
 ${...} interpolation over string-literal payloads only),
 String.fromCharCode, .concat()/.repeat(), (F434) array-literal
 + .join(sep), (F437) .reduce(...) array-assembly plus identity .map(...)
-/ constant-true .filter(...) passthroughs, and (F443) Array(N).fill(x)
-construction plus .filter(Boolean) truthiness filtering -- never eval;
-undecodable runs are ignored and bare
+/ constant-true .filter(...) passthroughs, (F473) array-receiver
+.concat(...) returning a fresh array for the chain, and (F443)
+Array(N).fill(x) construction plus .filter(Boolean) truthiness
+filtering -- never eval; undecodable runs are ignored and bare
 literals are not rewritten.
 
 FORM VARIANTS (F8). Every candidate string (the original text and each
@@ -3650,6 +3651,67 @@ def _js_add_concat_part(parts, part, state):
         raise _JSExprFail("too many parts")
 
 
+def _js_apply_array_concat(text, i, value, depth, state):
+    """Array-receiver paren .concat(...) (F473) -- engine-exact
+    Array.prototype.concat on a parsed string array, returning a fresh
+    _JSArr so the chain can continue into .join/.map/.filter/etc.
+
+    String args are appended as-is; array args are appended element-wise
+    exactly one level deep; ...spread args expand in engine order,
+    reusing the F462 spread machinery (spread target parses as a primary;
+    non-array spreads and non-string spread elements fail closed). Each
+    appended element charges the F430 parts budget via
+    _js_add_concat_part, exactly like the string-receiver form.
+
+    Fail closed: nested-array args beyond one level (the decoder's domain
+    is flat string arrays; ['a'].concat([['b']]) would hold a nested
+    array element, which node keeps as a nested object), args that are
+    neither str nor _JSArr, and _JSArr args carrying non-string elements.
+    An explicit type check on every arg keeps this branch free of the
+    F474-class uncaught TypeError on the string-receiver path. No new
+    regexes; never evals.
+    """
+    elems = list(value.elements)
+    i = _js_skip_ws(text, i)
+    if i < len(text) and text[i] == ")":
+        state["ops"] += 1
+        return _JSArr(elems), i + 1
+    while True:
+        i = _js_skip_ws(text, i)
+        if text.startswith("...", i):
+            # F462 spread machinery: spread target parses as a primary
+            # (array literal / factory / constructor, postfix chains
+            # allowed); each string element becomes one concat arg in
+            # engine-exact order.
+            arr, i = _js_parse_primary(text, i + 3, depth, state)
+            if not isinstance(arr, _JSArr):
+                raise _JSExprFail("spread of non-array")
+            for e in arr.elements:
+                if not isinstance(e, str):
+                    raise _JSExprFail("spread of non-string element")
+                _js_add_concat_part(elems, e, state)
+            i = _js_skip_ws(text, i)
+        else:
+            arg, i = _js_parse_additive(text, i, depth, state)
+            if isinstance(arg, _JSArr):
+                for e in arg.elements:
+                    if not isinstance(e, str):
+                        raise _JSExprFail("concat arg nested array")
+                    _js_add_concat_part(elems, e, state)
+            elif isinstance(arg, str):
+                _js_add_concat_part(elems, arg, state)
+            else:
+                raise _JSExprFail("bad concat arg")
+            i = _js_skip_ws(text, i)
+        if i < len(text) and text[i] == ",":
+            i = _js_skip_ws(text, i + 1)
+            continue
+        if i < len(text) and text[i] == ")":
+            state["ops"] += 1
+            return _JSArr(elems), i + 1
+        raise _JSExprFail("bad concat")
+
+
 def _js_slice_bound(k, n):
     """Clamp a literal integer to a valid array-slice bound (F466).
 
@@ -3727,8 +3789,10 @@ def _js_apply_method(text, j, name, value, depth, state):
 
     .join/.reduce/.reduceRight/.map/.filter/.fill/.reverse require an
     array-literal or Array(N) value (F434/F437/F443/F461);
-    .concat/.repeat require a string value (F462: .concat accepts
-    ...spread-of-array args). Anything else fails closed -- never evals.
+    .repeat requires a string value; .concat accepts a string value
+    (F462: ...spread-of-array args) or an array value (F473:
+    array-receiver concat, returning a fresh _JSArr for the chain).
+    Anything else fails closed -- never evals.
     """
     i = j + 1
     if name == "join":
@@ -3952,6 +4016,12 @@ def _js_apply_method(text, j, name, value, depth, state):
             raise _JSExprFail("splice args unsupported")
         state["ops"] += 1
         return _JSArr(value.elements[0:2]), i + 1
+    if name == "concat" and isinstance(value, _JSArr):
+        # F473: array-receiver .concat -- engine-exact Array.prototype
+        # .concat on a parsed string array, returning a fresh _JSArr so
+        # the chain can continue into .join/.map/.filter/etc. Must be
+        # checked BEFORE the "method on unjoined array" guard below.
+        return _js_apply_array_concat(text, i, value, depth, state)
     if isinstance(value, _JSArr):
         raise _JSExprFail("method on unjoined array")
     if name == "repeat":
@@ -4158,8 +4228,9 @@ def _js_apply_tag_method(text, j, name, value, depth, state):
       .fill`T`   == .fill(cooked)    -- single string arg fills
       .repeat`N` == .repeat(ToNumber(cooked)) -- _js_tag_repeat_count
     Receiver rules match the paren forms exactly: join/fill require a
-    _JSArr (F434/F443), concat fails closed on _JSArr (the decoder never
-    surfaces arrays), repeat fails closed on _JSArr (engine TypeError).
+    _JSArr (F434/F443), concat accepts a string value (F462) or an
+    array value (F473: array-receiver tag concat == .concat(cooked)),
+    repeat fails closed on _JSArr (engine TypeError).
     A tag call takes exactly one template argument, so fill's start/end
     args cannot be expressed. The tag call is obfuscation-shaped
     (ops += 1); the cooked string is bounded by _MAX_DECODE_BYTES.
@@ -4180,7 +4251,13 @@ def _js_apply_tag_method(text, j, name, value, depth, state):
         # 'a'.concat`b` -- the tag receives ['b']; concat appends
         # String(['b']) == 'b', exactly the additive form.
         if isinstance(value, _JSArr):
-            raise _JSExprFail("method on unjoined array")
+            # F473: array-receiver tag concat == .concat(cooked) --
+            # single string arg appended to the array, engine-exact;
+            # returns a fresh _JSArr for the chain.
+            elems = list(value.elements)
+            _js_add_concat_part(elems, cooked, state)
+            state["ops"] += 1
+            return _JSArr(elems), i
         result = value + cooked
         if len(result) > _MAX_DECODE_BYTES:
             raise _JSExprFail("concat too long")

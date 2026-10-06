@@ -99,7 +99,7 @@ sys.path.insert(0, REPO_ROOT)
 import gov.dlp as dlp  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-354: F471 closed; no new decision codes
-FOOTER_OPEN = "F473, F474"  # Wave-354 lane 3: F471 CLOSED locally (merge finalizes tree-wide); F469/F470/F472 stay OPEN  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)
+FOOTER_OPEN = "F474"  # Wave-354 lane 3: F471 CLOSED locally (merge finalizes tree-wide); F469/F470/F472 stay OPEN  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)
 FOOTER_NEXT = "F475"  # Wave-354 lane 3: F471 CLOSED (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)
 
 # Fragments built by concatenation: the write path redacts credential literals.
@@ -416,8 +416,9 @@ def _redfirst_held(path):
     return r.returncode == 0 and "HELD" in r.stdout and "0 BREAK" in r.stdout
 
 
-def p6_noreg_f469_reflect_apply_open():
-    return _redfirst_breaks("w353_f469_redfirst.py")
+def p6_noreg_f469_reflect_apply_closed():
+    # Wave-354 merge: F469 CLOSED by wave-354 lane 1 -- the red-first now HELDs.
+    return _redfirst_held("w353_f469_redfirst.py")
 
 
 def p6_noreg_f470_filter_pred_closed():
@@ -485,7 +486,7 @@ _PROBES = [
     ("p6-noreg-f434-array-join", p6_noreg_f434_array_join),
     ("p6-noreg-f462-spread-concat", p6_noreg_f462_spread_concat),
     ("p6-noreg-f463-tagged-join", p6_noreg_f463_tagged_join),
-    ("p6-noreg-f469-reflect-apply-open", p6_noreg_f469_reflect_apply_open),
+    ("p6-noreg-f469-reflect-apply-closed", p6_noreg_f469_reflect_apply_closed),
     ("p6-noreg-f470-filter-pred-closed", p6_noreg_f470_filter_pred_closed),
     ("p6-noreg-f472-repeat-tag-closed", p6_noreg_f472_repeat_tag_closed),
     ("p7-pin-and-footer", p7_pin_and_footer),

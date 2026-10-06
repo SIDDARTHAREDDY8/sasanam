@@ -92,7 +92,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2135  # Wave-354: F469 closed, no new decision codes; pin unchanged 2135
-FOOTER_OPEN = "F473, F474"  # Wave-354 lane 1: F469 CLOSED locally (merge finalizes tree-wide)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)
+FOOTER_OPEN = "F474"  # Wave-354 lane 1: F469 CLOSED locally (merge finalizes tree-wide)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)
 FOOTER_NEXT = "F475"  # Wave-354: next free finding after F469 closure  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)
 
 
