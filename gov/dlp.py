@@ -1199,6 +1199,35 @@ def _try_entity_decode_all(text):
     return _ascii_printable_or_none("".join(out))
 
 
+def _try_entity_nul_decode_all(text):
+    """Whole-text entity+NUL composition decode (F438): strip NUL
+    bytes, then decode every numeric HTML entity in one pass.
+
+    The F438 shape (`&#xHH;\\x00&#xHH;\\x00...`) defeats each
+    existing layer on its own: per-run decoding decodes each
+    entity+NUL pair as its own single variant (spreading the
+    8-candidate budget), and the F436 whole-text entity pass alone
+    leaves the NUL bytes in place, so the ASCII-printable gate
+    rejects the result -- the fully-decoded + NUL-stripped form is
+    unreachable within the depth-2 composition budget. Stripping
+    NULs first is the honest decode order (a real chain is
+    html.unescape then a control-strip), and it costs one decode
+    layer, leaving the depth-2 design bound intact: after stripping,
+    the entities still decode under the same bounded
+    _MAX_WHOLETEXT_ITEMS budget. Malformed references stay literal
+    (faithful to html.unescape, which only decodes valid
+    references); out-of-range / surrogate / non-ASCII decodes fail
+    closed to None (no variant).
+
+    Returns the decoded text, or None when the text holds no NULs,
+    no entities, or any matched entity decode fails. Static; never
+    executes.
+    """
+    if "&#" not in text or "\x00" not in text:
+        return None
+    return _try_entity_decode_all(text.replace("\x00", ""))
+
+
 def _try_escape_decode_all(text):
     """Whole-text backslash-escape decode (F436): decode every escape
     run under one interpretation in a single pass, returning one
@@ -1730,6 +1759,14 @@ def _decode_layer(text):
     # single entities poisoning a base64 run -- compose with the
     # base64 layer inside the 2-layer budget.
     decoded = _try_entity_decode_all(text)
+    if decoded is not None:
+        _add(decoded)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # Whole-text entity+NUL composition (F438): strip NUL bytes, then
+    # decode every entity at once, so entity+NUL-interleave stacks
+    # compose inside the 2-layer budget.
+    decoded = _try_entity_nul_decode_all(text)
     if decoded is not None:
         _add(decoded)
         if len(variants) >= _MAX_CANDIDATES:
