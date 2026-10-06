@@ -289,9 +289,10 @@ def test_z0_f436_closed_with_final_footer():
     (wave-346 merge renumber: attack .reduce/entity+NUL/triple-b64
     keep F437/F438/F439; dlpaudit double-entity/double-backslash become
     F440/F441; cigated policy_delta_gate becomes F442). F439 is CLOSED
-    by wave-347 lane 3, F442 is CLOSED by wave-347 lane 6, F437/F438/
-    F440/F441 are CLOSED by wave-347 lanes 1/2/4/5, and F443 is filed
-    OPEN by wave-347 lane 7. Footer is open F443 / next F444."""
+    by wave-347 lane 3, F438 is CLOSED by wave-347 lane 2, F440 is CLOSED
+    by wave-347 lane 4, F442 is CLOSED by wave-347 lane 6, and F443 is
+    filed OPEN by wave-347 lane 7 (F437 and F441 close in later merges).
+    Footer is open F443 / next F444."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("F436 filed 2026-10-05, wave-345 lane 5" in text
           and "CLOSED 2026-10-05 wave-346" in text
@@ -300,9 +301,9 @@ def test_z0_f436_closed_with_final_footer():
           and "(F437 filed 2026-10-05, wave-346 lane 2" in text
           and "(F438 filed 2026-10-05, wave-346 lane 2" in text
           and "(F440 filed 2026-10-05, wave-346 lane 6" in text
+          and "LOW, CLOSED 2026-10-06 wave-347 lane 4" in text
           and "(F441 filed 2026-10-05, wave-346 lane 6" in text
           and "(F442 filed 2026-10-05, wave-346 lane 3" in text
-          and "LOW, OPEN:" in text
           and "LOW, OPEN:" in text
           and "Next free finding: **F444**" in text
           and "Open findings: F443." in text)

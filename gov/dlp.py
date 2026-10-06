@@ -961,6 +961,136 @@ _OCT_DIGITS = frozenset("01234567")
 # order in _ENTITY_RUN, so &#65; still decodes identically.
 _ENTITY_ONE = re.compile(r"&#([xX][0-9a-fA-F]{1,6}|[0-9]{1,7});?")
 
+# F440: bounded named-entity table for the double-decode layer. Only the
+# five named entities that can compose into entity runs (amp/lt/gt/quot/
+# apos) are decoded -- the full HTML named-entity table is deliberately
+# NOT swallowed (e.g. ``&Lt;`` -> U+226A stays out). Case variants mirror
+# html.unescape exactly: amp/AMP, lt/LT, gt/GT, quot/QUOT decode (both
+# semicolon and legacy no-semicolon forms); apos is lowercase-only and
+# semicolon-only (it is not an HTML5 legacy no-semicolon name).
+_NAMED_ENTITIES = (
+    ("quot", '"'),
+    ("QUOT", '"'),
+    ("apos", "'"),
+    ("amp", "&"),
+    ("AMP", "&"),
+    ("lt", "<"),
+    ("LT", "<"),
+    ("gt", ">"),
+    ("GT", ">"),
+)
+_NAMED_ENTITY_MAP = {name: ch for name, ch in _NAMED_ENTITIES}
+
+# html.unescape legacy no-semicolon forms exist only for these 8 names;
+# apos is not a legacy name ("&apos" without ';' stays literal).
+_LEGACY_NOSEMI = frozenset(("amp", "AMP", "lt", "LT",
+                            "gt", "GT", "quot", "QUOT"))
+
+
+def _decode_entity_refs_once(text):
+    """One left-to-right entity-decode pass (F440 helper).
+
+    Decodes numeric entities per _ENTITY_ONE and the bounded named
+    table (exact html.unescape case variants, longest-prefix legacy
+    rule: ``&amp;``/``&amp`` -> ``&``, ``&AMP;`` -> ``&``,
+    ``&amplify`` -> ``&lify``; ``&Lt;`` is NOT in the table and stays
+    literal; ``&apos`` without ``;`` stays literal since apos is not an
+    HTML5 legacy no-semicolon name). Returns (decoded_text, match_count),
+    or None when a matched entity is undecodable (out-of-range /
+    surrogate code point) or the match budget is exceeded -- fail closed,
+    no variant. Unmatched text (including stray '&') passes through
+    literally. Static; never executes.
+    """
+    out = []
+    i = 0
+    n = len(text)
+    count = 0
+    while i < n:
+        c = text[i]
+        if c != "&":
+            out.append(c)
+            i += 1
+            continue
+        # Numeric first, mirroring the real parser's alternation order.
+        m = _ENTITY_ONE.match(text, i)
+        if m is not None:
+            body = m.group(1)
+            cp = int(body[1:], 16) if body[0] in "xX" else int(body, 10)
+            ch = _safe_chr(cp)
+            if ch is None:
+                return None
+            out.append(ch)
+            i = m.end()
+            count += 1
+        else:
+            # Bounded named entity: scan the letter run (names are at
+            # most 4 letters), longest table-name prefix wins; a
+            # trailing ';' is consumed when present.
+            j = i + 1
+            while j < n and j - i - 1 < 4 and text[j].isalpha() and text[j].isascii():
+                j += 1
+            word = text[i + 1:j]
+            name = None
+            for cand_len in range(min(4, len(word)), 1, -1):
+                if word[:cand_len] in _NAMED_ENTITY_MAP:
+                    name = word[:cand_len]
+                    break
+            if name is None:
+                out.append(c)
+                i += 1
+                continue
+            # html.unescape legacy no-semicolon forms exist only for the
+            # 8 legacy names (amp/AMP/lt/LT/gt/GT/quot/QUOT); apos is NOT
+            # a legacy name, so "&apos" (no ';') stays literal.
+            has_semi = i + 1 + len(name) < n and text[i + 1 + len(name)] == ";"
+            if not has_semi and name not in _LEGACY_NOSEMI:
+                out.append(c)
+                i += 1
+                continue
+            out.append(_NAMED_ENTITY_MAP[name])
+            i = i + 1 + len(name)
+            if has_semi:
+                i += 1
+            count += 1
+        if count > _MAX_WHOLETEXT_ITEMS:
+            return None
+    return "".join(out), count
+
+
+def _try_double_entity_decode(text):
+    """Whole-text bounded named+numeric entity double-decode (F440).
+
+    Closes double-HTML-entity encoding: wrapping every credential char's
+    numeric entity in a SECOND entity -- ``&amp;#xHH;`` (named),
+    ``&amp#xHH;`` (no-semicolon named) -- evades the entity sub-layer:
+    _ENTITY_RUN never matches named entities and the inner ``&#xHH;``
+    never materializes within the 2-layer decode budget, while
+    html.unescape applied twice (a real parser stack) recovers the
+    credential.
+
+    Mirrors html.unescape applied twice, restricted to the bounded
+    named table (amp/AMP, lt/LT, gt/GT, quot/QUOT, apos -- exact
+    html.unescape case variants, longest-prefix legacy rule) plus
+    numeric entities per _ENTITY_ONE. One variant, so
+    entity+base64 stacks (``b64-stacked``) also close inside the 2-layer
+    budget. Static; never executes; bounded by _MAX_WHOLETEXT_ITEMS
+    matches per pass; undecodable code points fail closed (no variant).
+    Returns the decoded text, or None.
+    """
+    if "&" not in text:
+        return None
+    first = _decode_entity_refs_once(text)
+    if first is None:
+        return None
+    decoded1, _ = first
+    if decoded1 == text:
+        return None
+    second = _decode_entity_refs_once(decoded1)
+    if second is None:
+        return None
+    decoded2, _ = second
+    return _ascii_printable_or_none(decoded2)
+
 
 def _safe_chr(cp):
     """chr(cp), or None for out-of-range / surrogate code points.
@@ -1771,6 +1901,16 @@ def _decode_layer(text):
         _add(decoded)
         if len(variants) >= _MAX_CANDIDATES:
             return variants
+    # Whole-text bounded named+numeric double entity decode (F440): one
+    # variant mirroring html.unescape x2 over the bounded named table
+    # (amp/lt/gt/quot/apos) plus numeric entities, so double-encoded
+    # entities (named-wrapped, no-semicolon named-wrapped) and their
+    # base64 stacks close inside the 2-layer budget.
+    decoded = _try_double_entity_decode(text)
+    if decoded is not None:
+        _add(decoded)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
     # Whole-text backslash-escape decode (F436): one variant per
     # escape-run interpretation, so spaced single escape fragments
     # poisoning a base64 run compose with the base64 layer inside the
@@ -1861,7 +2001,8 @@ def find_credential(text):
     Encoding-aware (F2/F8/F428/F429/F430/F431): before giving up, decodes likely encodings
     (base64/base64url, base32, hex, URL-encoding, JSFuck, JS string
     expressions, backslash
-    escapes, numeric HTML entities, UTF-16 null-interleave, confusable
+    escapes, numeric HTML entities, double HTML-entity encoding (F440),
+    UTF-16 null-interleave, confusable
     normalization incl. the Cyrillic-homoglyph map, bidi-override
     normalization -- bounded, 2 layers), plus a bounded base64
     decode-until-fixpoint pass (F439: max 3 rounds; depth-4+ base64
