@@ -136,41 +136,44 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F451-F460 open, next F461 (wave-351 lane 4)."""
+    """Control: footer shows F454-F460 open, next F461 (wave-351 merge:
+    F451/F452/F453 closed)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F461**" in text
-          and "**Open findings: F451, F452, F453, F454, F455, F456, F457, "
-              "F458, F459, F460.**" in text)
+          and "**Open findings: F454, F455, F456, F457, F458, F459, F460.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
 # ------------------------------------------------- F451-F453 still-open pins
 
 @_t
-def test_b1_f451_hex_spaced_open():
-    """F451 pinned open: hex of a long credential with a space misses."""
+def test_b1_f451_hex_spaced_closed():
+    """F451 pinned CLOSED (wave-351 merge): hex of a long credential with
+    a space now blocks via the whitespace-tolerant hex spans."""
     hx = _CRED2.encode().hex()
-    miss = not _blocked(hx[:20] + " " + hx[20:])
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    hit = _blocked(hx[:20] + " " + hx[20:])
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b1_f452_failclosed_junk32_open():
-    """F452 pinned open: 32 fail-closed junk statements starve the scan."""
+def test_b1_f452_failclosed_junk32_closed():
+    """F452 pinned CLOSED (wave-351 merge): 32 fail-closed junk statements
+    no longer consume the scan budget; the real expression blocks."""
     junk = "".join("'%s';" % ("j%d" % i) for i in range(32))
     real = "['" + _A + "','" + _B + "'].reduce((a,b)=>a+b)"
-    miss = not _blocked(junk + real)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    hit = _blocked(junk + real)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b1_f453_wsb64_outer_open():
-    """F453 pinned open: ws-b64 outer layer of a stack misses."""
+def test_b1_f453_wsb64_outer_closed():
+    """F453 pinned CLOSED (wave-351 merge): ws-b64 outer layer of a stack
+    now composes via the base64 fixpoint seed."""
     inner = base64.b64encode(_CRED.encode()).decode()
     outer = base64.b64encode(inner.encode()).decode()
-    miss = not _blocked(outer[:10] + " " + outer[10:])
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    hit = _blocked(outer[:10] + " " + outer[10:])
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F454-F460 open pins
@@ -242,23 +245,25 @@ def test_b2_f460_map_string_open():
 # ------------------------------------------------- composition / scope pins
 
 @_t
-def test_b3_f451_short_hex_ws_open():
-    """F451 x F450 scope: short-cred hex WITH whitespace misses too --
-    rides with F451's close-when."""
+def test_b3_f451_short_hex_ws_closed():
+    """F451 x F450 scope (wave-351 merge): short-cred hex WITH whitespace
+    is absorbed by the F451 closure -- the ws-hex spans attempt it within
+    the close-when's bounded scope."""
     hx = _CRED.encode().hex()  # 18 chars -> 36 hex
-    miss = not _blocked(hx[:12] + " " + hx[12:24] + "\n" + hx[24:])
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    hit = _blocked(hx[:12] + " " + hx[12:24] + "\n" + hx[24:])
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b3_f452_mixed_junk_open():
-    """F452 x mixed junk scope: 40 fail-closed + 40 decodable junk ahead
-    of a real reduce miss -- same attempt-consumption mechanism as F452."""
+def test_b3_f452_mixed_junk_closed():
+    """F452 x mixed junk scope (wave-351 merge): 40 fail-closed + 40
+    decodable junk ahead of a real reduce -- the F452 closure counts only
+    decode-producing attempts, so the real expression is still reached."""
     junk_fc = "".join("'%s';" % ("j%d" % i) for i in range(40))
     junk_dec = "".join("'a%d'+'b%d';" % (i, i) for i in range(40))
     real = "['" + _A + "','" + _B + "'].reduce((a,b)=>a+b)"
-    miss = not _blocked(junk_fc + junk_dec + ";" + real)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    hit = _blocked(junk_fc + junk_dec + ";" + real)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t

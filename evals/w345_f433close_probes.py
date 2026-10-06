@@ -65,9 +65,9 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2135  # Wave-345: pin 2135 (no new codes in wave-345 lane 2); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
-FOOTER_OPEN = "F451, F452, F453"  # F436 CLOSED 2026-10-05 wave-346 lane 1; F442 CLOSED 2026-10-05 wave-347 lane 6; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454)
+FOOTER_OPEN = "F454, F455, F456, F457, F458, F459, F460"  # F436 CLOSED 2026-10-05 wave-346 lane 1; F442 CLOSED 2026-10-05 wave-347 lane 6; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461)
 
-FOOTER_NEXT = "F454"  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451)
+FOOTER_NEXT = "F461"  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451)
 
 
 from gov import dlp  # noqa: E402
@@ -253,8 +253,8 @@ def p7_pin_and_footer():
     codes = sorted(TAXONOMY)
     ok_pin = len(codes) == TAXONOMY_PIN == 2135
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok_footer = ("Next free finding: **F454**" in text
-                 and "Open findings: F451, F452, F453." in text
+    ok_footer = ("Next free finding: **F461**" in text
+                 and "Open findings: F454, F455, F456, F457, F458, F459, F460." in text
                  and "(F433 filed 2026-10-05, wave-344 lane 4" in text
                  and "LOW, CLOSED 2026-10-05 wave-345 lane 2" in text)
     print("    pin=%d footer-open=%s footer-next=%s"

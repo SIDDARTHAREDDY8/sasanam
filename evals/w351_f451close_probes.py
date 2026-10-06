@@ -83,8 +83,8 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2135  # Wave-351: F451 closed, no new decision codes; pin unchanged
-FOOTER_OPEN = "F452, F453"  # Wave-351: F451 CLOSED; F452/F453 still OPEN (next F454)
-FOOTER_NEXT = "F454"
+FOOTER_OPEN = "F454, F455, F456, F457, F458, F459, F460"  # Wave-351: F451 CLOSED; F452/F453 still OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461)
+FOOTER_NEXT = "F461"
 
 
 from gov import dlp  # noqa: E402
@@ -493,23 +493,24 @@ def p6_noreg_hex_stacks_compose():
     return _blocked("k=" + outer_b64)
 
 
-def p6_pin_f452_attempt_budget_open():
-    # F452 pinned open: fail-closed JS matches consume the whole-text
-    # scan's attempt budget.
+def p6_pin_f452_attempt_budget_closed():
+    # F452 pinned CLOSED (wave-351 merge): fail-closed JS matches no
+    # longer consume the whole-text scan's attempt budget.
     junk = "".join("'%s';" % ("j%d" % i) for i in range(32))
     real = "['" + _CRED[:10] + "','" + _CRED[10:] + "'].reduce((a,b)=>a+b)"
-    return not _blocked(junk + real)
+    return _blocked(junk + real)
 
 
-def p6_pin_f453_ws_outer_stack_open():
-    # F453 pinned open: ws-b64 as the OUTER layer of a stack misses.
+def p6_pin_f453_ws_outer_stack_closed():
+    # F453 pinned CLOSED (wave-351 merge): ws-b64 as the OUTER layer of
+    # a stack now composes via the base64 fixpoint seed.
     import base64
     inner = base64.b64encode(_LONG.encode()).decode()
     outer = base64.b64encode(inner.encode()).decode()
     outer_ws = outer[:20] + " " + outer[20:32] + "\n" + outer[32:]
     assert base64.b64decode(outer_ws) == inner.encode()
     assert base64.b64decode(inner) == _LONG.encode()
-    return not _blocked(outer_ws)
+    return _blocked(outer_ws)
 
 
 def p6_note_ws_hex_outer_stack_f453_class():
@@ -581,8 +582,8 @@ _PROBES = [
     ("p6-noreg-f441-bslash", p6_noreg_f441_bslash),
     ("p6-noreg-f443-fill-filter", p6_noreg_f443_fill_filter),
     ("p6-noreg-hex-stacks-compose", p6_noreg_hex_stacks_compose),
-    ("p6-pin-f452-attempt-budget-open", p6_pin_f452_attempt_budget_open),
-    ("p6-pin-f453-ws-outer-stack-open", p6_pin_f453_ws_outer_stack_open),
+    ("p6-pin-f452-attempt-budget-closed", p6_pin_f452_attempt_budget_closed),
+    ("p6-pin-f453-ws-outer-stack-closed", p6_pin_f453_ws_outer_stack_closed),
     ("p6-note-ws-hex-outer-stack-f453-class",
      p6_note_ws_hex_outer_stack_f453_class),
     ("p7-pin-and-footer", p7_pin_and_footer),

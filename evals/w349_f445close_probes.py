@@ -68,8 +68,8 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2135  # Wave-349: F445 closed, no new decision codes; pin unchanged 2135
-FOOTER_OPEN = "F451, F452"  # Wave-351 lane 3: F453 CLOSED (ws-b64 outer composes via fixpoint seed)  # Wave-350: F449+F450 CLOSED locally (merge finalizes tree-wide); F446-F448 OPEN (next F451); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454)
-FOOTER_NEXT = "F454"  # Wave-350: next free finding after F449+F450's closure
+FOOTER_OPEN = "F454, F455, F456, F457, F458, F459, F460"  # Wave-351 lane 3: F453 CLOSED (ws-b64 outer composes via fixpoint seed)  # Wave-350: F449+F450 CLOSED locally (merge finalizes tree-wide); F446-F448 OPEN (next F451); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461)
+FOOTER_NEXT = "F461"  # Wave-350: next free finding after F449+F450's closure
 
 
 from gov import dlp  # noqa: E402

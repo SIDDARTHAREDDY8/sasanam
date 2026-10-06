@@ -465,8 +465,8 @@ def _p8():
 def _p9():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     src = open(path, encoding="utf-8").read()
-    assert "Next free finding: **F454**" in src, "next-free footer"
-    assert "**Open findings: F446, F447, F448, F449, F450.**" in src, "open footer"
+    assert "Next free finding: **F461**" in src, "next-free footer"
+    assert "**Open findings: F454, F455, F456, F457, F458, F459, F460.**" in src, "open footer"
     _held("P9-footer-open-f433-f434-f435-next-f436",
           "footer: open none / next F419")
 
