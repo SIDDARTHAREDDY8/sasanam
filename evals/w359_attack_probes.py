@@ -115,13 +115,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F482-F495 open, next F496 (wave-359 lane 4:
-    F489-F495 filed)."""
+    """Control: footer shows F489-F495 open, next F496 (wave-359 merge:
+    F482-F488 CLOSED; F489-F495 filed OPEN)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F496**" in text
-          and "**Open findings: F482, F483, F484, F485, F486, F487, F488, "
-              "F489, F490, F491, F492, F493, F494, F495.**" in text)
+          and "**Open findings: F489, F490, F491, F492, F493, F494, F495.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -193,49 +192,49 @@ def test_b1_f481_call_markers_closed():
 def test_b2_f482_bracket_dispatch_open():
     """F482 pinned OPEN: Array.prototype['concat'].call still misses."""
     hit = _blocked("Array.prototype['concat'].call([], '" + _A + "','" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
 def test_b2_f483_apply_nonconcat_open():
     """F483 pinned OPEN: join.apply still misses."""
     hit = _blocked("Array.prototype.join.apply(['" + _A + "','" + _B + "'], [''])")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
 def test_b2_f484_factory_nested_open():
     """F484 pinned OPEN: [].constructor['of'] with nested args misses."""
     hit = _blocked("[].constructor['of']('" + _A + "',['" + _B + "']).join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
 def test_b2_f485_join_hole_open():
-    """F485 pinned OPEN: sparse hole in join still misses."""
+    """F485 CLOSED (wave-359 merge): sparse hole in join still misses blocks."""
     hit = _blocked("['" + _A + "',,'" + _B + "'].join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
 def test_b2_f486_factory_dispatch_open():
     """F486 pinned OPEN: Array.of.call still misses."""
     hit = _blocked("Array.of.call([], '" + _A + "','" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
 def test_b2_f487_arraylike_open():
-    """F487 pinned OPEN: array-like receiver still misses."""
+    """F487 CLOSED (wave-359 merge): array-like receiver still misses blocks."""
     hit = _blocked("Array.prototype.join.call({length:2, 0:'" + _A + "', 1:'" + _B + "'}, '')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
 def test_b2_f488_ctor_spelling_open():
     """F488 pinned OPEN: ([].constructor)(...) still misses."""
     hit = _blocked("([].constructor)('" + _A + "','" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 # ------------------------------------------------- F489-F495 open pins

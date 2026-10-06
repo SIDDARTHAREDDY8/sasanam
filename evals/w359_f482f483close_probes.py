@@ -74,8 +74,8 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-359 lane 1: F482, F483 closed; no new decision codes
-FOOTER_OPEN = "F484, F485, F486, F487, F488"  # Wave-359 lane 1: F482, F483 CLOSED locally (merge finalizes tree-wide)
-FOOTER_NEXT = "F489"  # Wave-359 lane 1: F482, F483 CLOSED locally (merge finalizes tree-wide)
+FOOTER_OPEN = "F489, F490, F491, F492, F493, F494, F495"  # Wave-359 lane 1: F482, F483 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN
+FOOTER_NEXT = "F496"  # Wave-359 lane 1: F482, F483 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: next F496
 
 # Constructed via concatenation: the write path redacts credential literals.
 A1 = "xoxb-" + "0123"
@@ -246,14 +246,15 @@ def p2_f480_f481_intact():
 
 
 def p2_f486_intact():
-    # F486 is a SEPARATE open finding: static-factory dispatch must
-    # NOT be swallowed by the F482/F483 closes.
+    # F486 is now CLOSED (wave-359 lane 3): static-factory dispatch
+    # shapes must block. (Lane-1 version asserted they stayed open;
+    # updated at the wave-359 merge.)
     shapes = [
         "Array.of.call([], '%s','%s').join('')" % (A1, A2),
         "[].constructor.of.call([].constructor, '%s','%s').join('')" % (A1, A2),
     ]
-    loud = [s for s in shapes if _blocked(s)]
-    return ("HELD" if not loud else "BREAK", "swallowed=%d" % len(loud))
+    quiet = [s for s in shapes if not _blocked(s)]
+    return ("HELD" if not quiet else "BREAK", "missed=%d" % len(quiet))
 
 
 def p2_neighbors_intact():
@@ -325,7 +326,7 @@ def p3_no_new_regexes():
         r")|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Function[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Reflect([ \t\n\r]*\.[ \t\n\r]*(construct|apply)|[ \t\n\r]*\[[ \t\n\r]*['\"])"
-        r"|Object([ \t\n\r]*\.[ \t\n\r]*assign|[ \t\n\r]*\[[ \t\n\r]*['\"])"
+        r"|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf)|[ \t\n\r]*\[[ \t\n\r]*['\"])"
         r"|\("
     )
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()

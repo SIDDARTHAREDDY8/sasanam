@@ -786,7 +786,7 @@ def P5c():
               encoding="utf-8") as fh:
         text = fh.read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F489**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
+    ok = ("Next free finding: **F496**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
           and m_open and m_open[-1].strip() == "F482, F483, F484, F485, F486, F487, F488")
     if ok:
         _held(pid, "footer: open F451, F452, F453 / next F454")

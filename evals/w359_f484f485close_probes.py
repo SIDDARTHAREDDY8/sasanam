@@ -85,8 +85,8 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-359 lane 2: F484+F485 closed; no new decision codes
-FOOTER_OPEN = "F482, F483, F486, F487, F488"  # Wave-359 lane 2: F484, F485 CLOSED locally (merge finalizes tree-wide)
-FOOTER_NEXT = "F489"  # Wave-359 lane 2: F484, F485 CLOSED locally (merge finalizes tree-wide)
+FOOTER_OPEN = "F489, F490, F491, F492, F493, F494, F495"  # Wave-359 lane 2: F484, F485 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN
+FOOTER_NEXT = "F496"  # Wave-359 lane 2: F484, F485 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: next F496
 
 # Constructed via concatenation: the write path redacts credential literals.
 # Short fragments (like the attack batteries): a long xoxb- hex run would
@@ -262,8 +262,9 @@ def p2_f480_intact():
 
 
 def p2_open_neighbors_still_open():
-    # F482/F483/F486/F487/F488 are separate concerns -- spot shapes
-    # must still MISS (this lane must not conflate them).
+    # F482/F483/F486/F487/F488 are now CLOSED (wave-359 lanes 1+3) --
+    # spot shapes must now BLOCK. (Lane-2 version asserted they stayed
+    # open; updated at the wave-359 merge.)
     shapes = [
         "Array.prototype['concat'].call([], '%s','%s').join('')" % (_A, _B),
         "Array.prototype.join.apply(['%s','%s'], [''])" % (_A, _B),
@@ -271,8 +272,8 @@ def p2_open_neighbors_still_open():
         "Array.prototype.join.call({length:2, 0:'%s', 1:'%s'}, '')" % (_A, _B),
         "([].constructor)('%s','%s').join('')" % (_A, _B),
     ]
-    bad = [s for s in shapes if _blocked(s)]
-    return ("HELD" if not bad else "BREAK", "accidentally closed=%d" % len(bad))
+    quiet = [s for s in shapes if not _blocked(s)]
+    return ("HELD" if not quiet else "BREAK", "missed=%d" % len(quiet))
 
 
 def p2_f476_f479_neighbors_intact():
@@ -343,8 +344,9 @@ def p3_no_new_regexes():
         r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|\[[ \t\n\r]*['\"])"
         r"|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"])"
         r")|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|"
+        r"Function[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Reflect([ \t\n\r]*\.[ \t\n\r]*(construct|apply)|[ \t\n\r]*\[[ \t\n\r]*['\"])"
-        r"|Object([ \t\n\r]*\.[ \t\n\r]*assign|[ \t\n\r]*\[[ \t\n\r]*['\"])"
+        r"|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf)|[ \t\n\r]*\[[ \t\n\r]*['\"])"
         r"|\("
     )
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()

@@ -34,8 +34,8 @@ SHAPES = [
 ]
 
 CONTROLS = [
-    ("f487-plain-still-open",
-     "Array.prototype.join.call({length:2,0:'%s',1:'%s'}, '')" % (A1, A2), False),
+    ("f487-plain-now-closed",
+     "Array.prototype.join.call({length:2,0:'%s',1:'%s'}, '')" % (A1, A2), True),  # F487 CLOSED wave-359 merge
     ("array-receiver-held",
      "Array.prototype.join.call(['%s','%s'], '')" % (A1, A2), True),
     ("junk-quiet",

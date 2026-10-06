@@ -132,8 +132,8 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-359 lane 3: F486/F487/F488 closed; no new decision codes
-FOOTER_OPEN = "F482, F483, F484, F485"  # Wave-359 lane 3: F486/F487/F488 CLOSED locally (merge finalizes tree-wide)
-FOOTER_NEXT = "F489"
+FOOTER_OPEN = "F489, F490, F491, F492, F493, F494, F495"  # Wave-359 lane 3: F486/F487/F488 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN
+FOOTER_NEXT = "F496"  # Wave-359 merge: next F496
 
 # Constructed via concatenation: the write path redacts credential literals.
 # Neither fragment matches the credential pattern alone (xoxb- + 10+ chars):
@@ -304,16 +304,18 @@ def p2_ctor_callee_bounds():
 
 
 def p2_open_findings_intact():
-    # F482-F485 are OPEN -- their shapes must still miss.
+    # F482-F485 are now CLOSED (wave-359 lanes 1+2) -- their shapes
+    # must now block. (Lane-3 version asserted they stayed open;
+    # updated at the wave-359 merge.)
     cases = [
         # F484: nested-array factory arg
         "[].constructor.of('" + _A + "',['" + _B + "']).join('')",
         # F482: bracket member under call dispatch
-        "Array.prototype['concat'].call([],['" + _A + "']).join('')",
+        "Array.prototype['concat'].call([],['" + _A + "','" + _B + "']).join('')",
     ]
-    bad = [c for c in cases if _verdict(c, False)[0] == "BREAK"]
-    return ("HELD" if not bad else "BREAK",
-            "%d/%d OPEN-finding shapes still miss" % (len(cases) - len(bad), len(cases)))
+    quiet = [c for c in cases if _verdict(c, True)[0] == "BREAK"]
+    return ("HELD" if not quiet else "BREAK",
+            "%d/%d closed shapes block" % (len(cases) - len(quiet), len(cases)))
 
 
 def p2_neighbors_intact():
@@ -374,6 +376,7 @@ def p3_no_new_regexes():
         r"apply|call)|\[[ \t\n\r]*['\"]))|"
         r"Array[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"String[ \t\n\r]*\.[ \t\n\r]*prototype|"
+        r"Function[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Reflect([ \t\n\r]*\.[ \t\n\r]*(construct|apply)|"
         r"[ \t\n\r]*\[[ \t\n\r]*['\"])|"
         r"Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf)|"
@@ -412,11 +415,9 @@ def p4_pin_and_footer():
     assert TAXONOMY_PIN == 2135
     assert len(TAXONOMY) == 2135
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    last = text.splitlines()[-1]
-    assert "Next free finding: **F489**" in last, last[:120]
-    assert "Open findings: F482, F483, F484, F485" in last, last[:160]
-    assert "F486" not in last.split("Open findings:")[1].split("**")[0] or True
-    return ("HELD", "pin=2135 footer open F482-F485 next F489 (lane-local)")
+    assert "Next free finding: **F496**" in text
+    assert "**Open findings: F489, F490, F491, F492, F493, F494, F495.**" in text
+    return ("HELD", "pin=2135 footer open F489-F495 next F496 (wave-359 merge)")
 
 
 PROBES = [

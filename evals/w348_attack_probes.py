@@ -118,7 +118,7 @@ def test_b0_footer_state():
     wave-351 lane 3 -- ws-b64 outer layer composes via fixpoint)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F489**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
+    ok = ("Next free finding: **F496**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
 and "Open findings: F482, F483, F484, F485, F486, F487, F488." in text)
     return ("HELD" if ok else "BREAK", "footer-ok=%s" % ok)
 
