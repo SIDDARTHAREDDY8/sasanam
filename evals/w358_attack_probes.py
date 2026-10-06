@@ -109,13 +109,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F482-F488 open, next F489 (wave-358 merge:
-    F480, F481 CLOSED; wave-358 lane 3:
-    F482-F488 filed)."""
+    """Control: footer shows F484-F488 open, next F489 (wave-359 lane 1:
+    F482, F483 CLOSED locally; merge finalizes tree-wide)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F489**" in text
-          and "**Open findings: F482, F483, F484, F485, F486, F487, F488.**" in text)
+          and "**Open findings: F484, F485, F486, F487, F488.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -193,24 +192,24 @@ def test_b2_f481_call_markers_closed():
 # ------------------------------------------------- F482-F488 open pins
 
 @_t
-def test_b3_f482_bracket_dispatch_open():
-    """F482 pinned OPEN: Array.prototype['concat'].call still misses."""
+def test_b3_f482_bracket_dispatch_closed():
+    """F482 CLOSED (wave-359 lane 1): Array.prototype['concat'].call blocks coded."""
     hit = _blocked("Array.prototype['concat'].call([], '" + _A + "','" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
-def test_b3_f483_apply_nonconcat_open():
-    """F483 pinned OPEN: join.apply still misses."""
+def test_b3_f483_apply_nonconcat_closed():
+    """F483 CLOSED (wave-359 lane 1): join.apply blocks coded."""
     hit = _blocked("Array.prototype.join.apply(['" + _A + "','" + _B + "'], [''])")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
-def test_b3_f483_bind_chain_open():
-    """F483 pinned OPEN: double dispatch still misses."""
+def test_b3_f483_bind_chain_closed():
+    """F483 CLOSED (wave-359 lane 1): double dispatch blocks coded."""
     hit = _blocked("Function.prototype.call.call(Array.prototype.concat, [], '" + _A + "','" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t

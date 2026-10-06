@@ -79,7 +79,7 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-358 lane 2: F481 closed; no new decision codes
-FOOTER_OPEN = "F482, F483, F484, F485, F486, F487, F488"  # Wave-358 lane 2: F481 CLOSED locally (merge finalizes tree-wide)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN
+FOOTER_OPEN = "F484, F485, F486, F487, F488"  # Wave-359 lane 1: F482, F483 CLOSED locally (merge finalizes tree-wide)  # Wave-358 lane 2: F481 CLOSED locally (merge finalizes tree-wide)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN
 FOOTER_NEXT = "F489"  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN
 
 # Constructed via concatenation: the write path redacts credential literals.
@@ -296,6 +296,7 @@ def p3_no_new_regexes():
         r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|\[[ \t\n\r]*['\"])"
         r"|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"])"
         r")|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|"
+        r"Function[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Reflect([ \t\n\r]*\.[ \t\n\r]*(construct|apply)|[ \t\n\r]*\[[ \t\n\r]*['\"])"
         r"|Object([ \t\n\r]*\.[ \t\n\r]*assign|[ \t\n\r]*\[[ \t\n\r]*['\"])"
         r"|\("
