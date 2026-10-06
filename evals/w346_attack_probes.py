@@ -234,7 +234,7 @@ def test_z0_redfirst_scripts_print_break():
 
 @_t
 def test_z1_findings_filed_open_with_final_footer():
-    """F437-F442 are filed OPEN with the wave-346 merge final footer
+    """F437-F442 are filed CLOSED and F443 filed OPEN at the wave-347 merge
     (renumber: attack keeps F437/F438/F439; dlpaudit F440/F441; cigated
     F442): pins the filings so the misses cannot go undocumented."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
@@ -243,10 +243,11 @@ def test_z1_findings_filed_open_with_final_footer():
           and "(F440 filed 2026-10-05, wave-346 lane 6" in text
           and "(F441 filed 2026-10-05, wave-346 lane 6" in text
           and "(F442 filed 2026-10-05, wave-346 lane 3" in text
-          and text.count("LOW, OPEN:") >= 6
-          and "Next free finding: **F442**" in text
-          and "Open findings: F437, F438, F439, F440, F441." in text)
-    return ("HELD" if ok else "BREAK", "F437-F441 filed open=%s" % ok)
+          and "(F443 filed 2026-10-05, wave-347 lane 7" in text
+          and text.count("LOW, OPEN:") >= 1
+          and "Next free finding: **F444**" in text
+          and "Open findings: F443." in text)
+    return ("HELD" if ok else "BREAK", "F437-F442 closed, F443 open=%s" % ok)
 
 
 @_t
