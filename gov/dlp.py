@@ -573,6 +573,140 @@ def _b64_fixpoint_variants(text):
             prev = decoded
 
 
+# F449/F450: manual (regex-free) scanners for the whitespace-tolerant
+# base64 and short-hex run shapes. The brief for these closures forbids
+# new regexes (ReDoS surface), so both scans are linear manual walks --
+# each character is visited O(1) times -- over module-level alphabet
+# sets. Ground truth for both is the stdlib decoder (base64.b64decode
+# ignores whitespace; bytes.fromhex rejects odd lengths).
+_B64_ALPHABET = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/-_")
+_HEX_ALPHABET = frozenset("0123456789abcdefABCDEF")
+# F450: short hex runs are 10-15 byte-pairs (20-30 hex chars). The
+# 16-pair _HEX_RUN floor is the FP guard; the credential-shape gate in
+# _gated_encoded_variants is the guard made precise (the shortest
+# credential rule needs 15 chars, so only 15-pair runs can pass it --
+# the floor gates attempts, never blocking decisions, same discipline
+# as the F445 short base64 floor).
+_HEX_SHORT_MIN_PAIRS = 10
+_HEX_SHORT_MAX_PAIRS = 15
+# F449: a whitespace-tolerant run is a maximal span of base64-alphabet
+# chars and whitespace containing >= 1 whitespace gap and >=
+# _B64_SHORT_FLOOR alphabet chars. Maximal-span (not chunk-floor)
+# semantics: base64.b64decode ignores whitespace wherever it falls, so
+# an 8-char chunk floor would leave a fragmentation residual -- any
+# random whitespace insertion has a good chance of leaving a <8-char
+# fragment (fuzzer-verified). Non-whitespace interior junk breaks the
+# span (fail closed), exactly like the contiguous-run gate; the
+# whitespace-stripped candidate still has to pass strict decode
+# (exact round-trip) plus the credential-shape gate, so the FP
+# discipline is identical to the long path.
+# Bound on the scan's total span (DoS guard); the stripped payload is
+# additionally capped by _try_b64_decode's _MAX_DECODE_BYTES check.
+_B64_WS_MAX_SPAN = 4 * _MAX_DECODE_BYTES
+
+
+def _iter_hex_short_runs(text):
+    """Yield (start, end) spans of maximal hex runs with an even length
+    in [_HEX_SHORT_MIN_PAIRS*2, _HEX_SHORT_MAX_PAIRS*2].
+
+    Maximal-run semantics give the boundary guards for free: a span
+    inside a longer hex run is never yielded (the long path owns 32+
+    runs), and odd-length runs yield nothing at all -- bytes.fromhex
+    rejects odd lengths too, so ground truth is identical (fail closed).
+    Linear, no regexes."""
+    n = len(text)
+    i = 0
+    lo = 2 * _HEX_SHORT_MIN_PAIRS
+    hi = 2 * _HEX_SHORT_MAX_PAIRS
+    while i < n:
+        if text[i] in _HEX_ALPHABET:
+            j = i + 1
+            while j < n and text[j] in _HEX_ALPHABET:
+                j += 1
+            length = j - i
+            if lo <= length <= hi and length % 2 == 0:
+                yield (i, j)
+            i = j
+        else:
+            i += 1
+
+
+def _iter_b64_ws_spans(text):
+    """Yield (start, end, words) for maximal base64 spans with whitespace.
+
+    A span is a maximal run of base64-alphabet words joined by
+    whitespace-only gaps, containing at least one gap and at least
+    _B64_SHORT_FLOOR alphabet chars. Words are maximal alphabet runs
+    of any length >= 1. ``=`` is a span/word SEPARATOR, not a word
+    character: in strict base64 ``=`` occurs only as trailing padding,
+    so an interior/fused ``=`` (``id=<b64>``, padding mid-string) can
+    never be part of a valid decode -- splitting there lets the
+    strict decoder plus the exact round-trip check decide, and the
+    decoder's ``% 4`` normalization re-adds stripped trailing padding
+    itself. Maximal spans keep the walk linear (the scan jumps past
+    each span). No regexes. Static, never executes."""
+    n = len(text)
+    i = 0
+    while i < n:
+        if text[i] in _B64_ALPHABET:
+            words = []
+            pos = i
+            while True:
+                j = pos
+                while j < n and text[j] in _B64_ALPHABET:
+                    j += 1
+                words.append((pos, j))
+                g = j
+                while g < n and text[g].isspace():
+                    g += 1
+                if g == j or g >= n or text[g] not in _B64_ALPHABET:
+                    end = j
+                    break
+                pos = g
+            if len(words) > 1 and end - i <= _B64_WS_MAX_SPAN:
+                alpha = sum(e - s for s, e in words)
+                if alpha >= _B64_SHORT_FLOOR:
+                    yield (i, end, words)
+            i = end
+        else:
+            i += 1
+
+
+def _gated_encoded_variants(text, matches, decode):
+    """Shared strict-decode + credential-shape gate (F445 base64/base32
+    short runs, F449 whitespace-tolerant base64 sub-runs, F450 short
+    hex) -- compose, don't fork.
+
+    *matches* is an iterable of (start, end, blob) with blob the exact
+    string the strict decoder sees; *decode* is the strict decoder
+    (_try_b64_decode / _try_b32_decode / _try_hex_decode). The
+    per-shape floors live in the match producers (min_payload for
+    base64/base32, the pair band in _iter_hex_short_runs, the alpha
+    floor in _iter_b64_ws_spans). A blob that fails strict decode is
+    ignored; a blob that DOES decode becomes a variant ONLY when the
+    decoded text is credential-shaped (_match_credential_forms) -- the
+    old length floors' FP guard made precise. Innocent decodes never
+    enter the variant pipeline, so they cannot block and cannot starve
+    the _MAX_CANDIDATES budget. At most _MAX_CANDIDATES matches are
+    attempted per call (decode attempts, not just emissions, count --
+    same as the F445 originals). Bounded, static, never executes.
+    """
+    attempted = 0
+    for start, end, blob in matches:
+        if attempted >= _MAX_CANDIDATES:
+            break
+        attempted += 1
+        decoded = decode(blob)
+        if decoded is None:
+            continue
+        if _match_credential_forms(decoded) is None:
+            continue
+        variant = text[:start] + decoded + text[end:]
+        if variant != text:
+            yield variant
+
+
 def _b64_short_variants(text):
     """F445: short base64/base64url runs (8-23 payload chars) attempted
     only when the decoded candidate is credential-shaped.
@@ -590,16 +724,11 @@ def _b64_short_variants(text):
     decodes in layer 1, the inner short run in layer 2). Bounded,
     static, never executes.
     """
-    for m in list(_B64_SHORT_RUN.finditer(text))[:_MAX_CANDIDATES]:
-        run = m.group(0)
-        decoded = _try_b64_decode(run, min_payload=_B64_SHORT_FLOOR)
-        if decoded is None:
-            continue
-        if _match_credential_forms(decoded) is None:
-            continue
-        variant = text[:m.start()] + decoded + text[m.end():]
-        if variant != text:
-            yield variant
+    matches = ((m.start(), m.end(), m.group(0))
+               for m in _B64_SHORT_RUN.finditer(text))
+    yield from _gated_encoded_variants(
+        text, matches,
+        lambda blob: _try_b64_decode(blob, min_payload=_B64_SHORT_FLOOR))
 
 
 def _b32_short_variants(text):
@@ -607,16 +736,78 @@ def _b32_short_variants(text):
     _b64_short_variants -- strict decode plus the credential-shape gate
     before a variant is emitted. Same mechanism class as the base64
     gate, closed together."""
-    for m in list(_B32_SHORT_RUN.finditer(text))[:_MAX_CANDIDATES]:
-        run = m.group(0)
-        decoded = _try_b32_decode(run, min_payload=_B64_SHORT_FLOOR)
-        if decoded is None:
-            continue
-        if _match_credential_forms(decoded) is None:
-            continue
-        variant = text[:m.start()] + decoded + text[m.end():]
-        if variant != text:
-            yield variant
+    matches = ((m.start(), m.end(), m.group(0))
+               for m in _B32_SHORT_RUN.finditer(text))
+    yield from _gated_encoded_variants(
+        text, matches,
+        lambda blob: _try_b32_decode(blob, min_payload=_B64_SHORT_FLOOR))
+
+
+def _hex_short_variants(text):
+    """F450: short hex runs (10-15 byte-pairs) attempted only when the
+    decoded candidate is credential-shaped.
+
+    Same mechanism class as F445 (a minimum-length FP guard on an
+    encoded run) but the hex code path (_HEX_RUN + _try_hex_decode),
+    which a base64-only fix would not cover -- hence filed distinctly.
+    Strict decode is bytes.fromhex with the printable-ASCII gate; the
+    credential-shape gate is the 16-pair floor's FP guard made precise
+    (composed via _gated_encoded_variants, not forked). One decode
+    layer; stacks compose via the 2-layer pipeline. Bounded, static,
+    never executes.
+
+    Honest residual (documented, not a finding): hex of sub-15-char
+    text cannot be blocked -- the shortest credential rule needs 15
+    chars (xox[baprs]- + 10), so such text is not credential-shaped
+    under any deterministic form. That is the F2 unknown-format
+    residual class, not a bypass of a known format.
+    """
+    matches = ((s, e, text[s:e]) for s, e in _iter_hex_short_runs(text))
+    yield from _gated_encoded_variants(text, matches, _try_hex_decode)
+
+
+def _b64_ws_variants(text):
+    """F449: base64/base64url runs with embedded whitespace, attempted
+    only when the whitespace-stripped candidate strict-decodes to
+    credential-shaped text.
+
+    base64.b64decode ignores whitespace, so a credential's base64 with
+    spaces/newlines inserted decodes exactly in a real parser while
+    _B64_RUN (24 contiguous alphabet chars) matches nothing -- a
+    contiguity miss, distinct from F445's length gate (this payload is
+    over the length gate and still misses). Each maximal
+    whitespace-tolerant span (_iter_b64_ws_spans) is searched over its
+    sub-word-runs, longest first: the whitespace-stripped sub-run goes
+    through the existing strict-decode path (_try_b64_decode: strict
+    alphabet, exact round-trip, printable-ASCII); only a
+    credential-shaped decode becomes a variant, so the FP discipline
+    is identical to the long path (only credential-shaped decodes
+    enter the pipeline). Single-word sub-runs are skipped (the
+    contiguous _B64_RUN/_B64_SHORT_RUN paths own them). Padding
+    mid-string fails strict decode (fail closed); non-whitespace
+    interior junk breaks the span (fail closed). The sub-run
+    enumeration is routed through _gated_encoded_variants, so decode
+    attempts obey the same per-call _MAX_CANDIDATES budget as every
+    other encoded-run path. Linear scan, no new regexes; bounded
+    span; static, never executes.
+
+    Honest residual (documented, not a finding): at most
+    _MAX_CANDIDATES sub-runs are attempted per layer, longest first,
+    so a small fragmented payload buried in a very word-rich span can
+    miss -- the same bounded-budget class as F444's documented
+    ~130-junk residual.
+    """
+    def _matches():
+        for start, end, words in _iter_b64_ws_spans(text):
+            n_words = len(words)
+            for length in range(n_words, 1, -1):  # longest first
+                for i in range(n_words - length + 1):
+                    blob = "".join(text[s:e]
+                                   for s, e in words[i:i + length])
+                    yield (start, end, blob)
+    yield from _gated_encoded_variants(
+        text, _matches(),
+        lambda blob: _try_b64_decode(blob, min_payload=_B64_SHORT_FLOOR))
 
 
 def _try_hex_decode(run):
@@ -2380,6 +2571,13 @@ def _decode_layer(text):
         decoded = _try_hex_decode(m.group(0))
         if decoded is not None:
             _add(text[:m.start()] + decoded + text[m.end():])
+    # Short hex runs (F450): strict decode with the credential-shape
+    # gate -- undecodable or innocent runs are ignored, so this cannot
+    # starve the candidate budget.
+    for variant in _hex_short_variants(text):
+        _add(variant)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
     # Base64 / base64url runs embedded anywhere in the text.
     for m in list(_B64_RUN.finditer(text))[:_MAX_CANDIDATES]:
         decoded = _try_b64_decode(m.group(0))
@@ -2389,6 +2587,13 @@ def _decode_layer(text):
     # credential-shape gate -- undecodable or innocent runs are
     # ignored, so this cannot starve the candidate budget.
     for variant in _b64_short_variants(text):
+        _add(variant)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # Base64/base64url runs with embedded whitespace (F449):
+    # whitespace-tolerant scan; only credential-shaped strict decodes
+    # become variants.
+    for variant in _b64_ws_variants(text):
         _add(variant)
         if len(variants) >= _MAX_CANDIDATES:
             return variants

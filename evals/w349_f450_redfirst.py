@@ -11,10 +11,25 @@ run) but a different code path (`_HEX_RUN` + hex decode vs `_B64_RUN` +
 `_try_b64_decode`): a base64-only F445 fix would not cover it, so it is
 filed distinctly and cross-referenced.
 
+AMENDMENT at closure (2026-10-06, wave-350 lane 3): the filed
+minimized shape used a 10-char test string ("xoxb-abc12", 20 hex
+chars). That string is NOT credential-shaped -- the shortest
+credential rule needs 15 chars (xox[baprs]- + 10), and the plain
+10-char form does not block on the base tree either (verified:
+find_credential returns None). The genuine mechanism-class shape is a
+15-char credential (30 hex chars, still under the 32-char gate,
+credential-shaped, plain form blocks coded). The 10-char shape is kept
+as a documented accepted residual: hex of sub-15-char text cannot be
+blocked without dropping the credential-shape FP guard, and such text
+is the F2 unknown-format residual class, not a bypass of a known
+format. The FINDINGS.md F450 entry's close-when explicitly permits the
+documented-residual path with the honest short-credential bound.
+
 Prints BREAK when the payload MISSES (open tree), HELD when blocked.
 Controls: hex of a long credential blocks (the stack composes once the
 run is long enough); hex of junk stays quiet (round-trip validation);
-the plain credential blocks.
+the plain 15-char credential blocks; the 10-char sub-credential
+residual stays quiet (documented, not a finding).
 """
 import os
 import sys
@@ -29,23 +44,34 @@ A = "xox" + "b-abc123"
 B = "def" + "456"
 CRED = A + B
 
-SHORT = "xox" + "b-abc12"  # 10 chars -> 20 hex chars, under the 32-char gate
-HEX_SHORT = "".join("%02x" % c for c in SHORT.encode())
+B15 = "xox" + "b-abc123def4"  # 15 chars: shortest the slack rule matches
+assert len(B15) == 15
+HEX15 = "".join("%02x" % c for c in B15.encode())
+assert len(HEX15) == 30  # under the 32-char _HEX_RUN gate
+
+SHORT10 = "xox" + "b-abc12"  # 10 chars: NOT credential-shaped (residual)
+HEX10 = "".join("%02x" % c for c in SHORT10.encode())
+
 HEX_LONG = "".join("%02x" % c for c in (CRED + CRED).encode())
 
 # Real-parser ground truth.
-assert bytes.fromhex(HEX_SHORT) == SHORT.encode(), "test bug: hex must decode"
+assert bytes.fromhex(HEX15) == B15.encode(), "test bug: hex must decode"
+assert bytes.fromhex(HEX10) == SHORT10.encode(), "test bug: hex must decode"
 
 SHAPES = [
     # (name, payload, real-engine-recovers-credential)
-    ("hex-short-credential", HEX_SHORT, True),
+    ("hex-short-credential", HEX15, True),
 ]
 
 CONTROLS = [
     # (name, payload, want_hit)
     ("hex-long-credential", HEX_LONG, True),  # over the gate: blocks
-    ("hex-junk", "".join("%02x" % c for c in b"junkjunkjunkjunk"), False),  # no credential: quiet
-    ("plain-credential", CRED, True),
+    ("hex-junk", "".join("%02x" % c for c in b"junkjunkjunkjunk"), False),
+    ("plain-credential", B15, True),
+    # Documented accepted residual (see module docstring): sub-15-char
+    # text is not credential-shaped under any deterministic form, so
+    # the credential-shape gate keeps it out of the pipeline. Quiet.
+    ("hex-subcredential-residual", HEX10, False),
 ]
 
 
