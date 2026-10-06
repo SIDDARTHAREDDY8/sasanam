@@ -24,8 +24,10 @@ Shapes (B1/B2/B3 = the three wave-346 attack targets):
   B2: multi-layer stacks (decode composes at most 2 layers deep).
      - Triple base64 wrap: two decodes leave a 52-char base64 run no
        rule matches; a real 3x-decode chain recovers the credential.
-       GENUINE: filed as F439 (LOW, OPEN). Miss pinned as known-open.
-       Double wrap still blocks (control).
+       GENUINE: filed as F439 (LOW, OPEN). CLOSED 2026-10-05 wave-347
+       lane 3 (bounded base64 decode-until-fixpoint, max 3 rounds);
+       depth-4+ is a documented non-goal. Double wrap still blocks
+       (control).
      - Bidi-override + hex run: layers compose, blocks. HELD.
      - HTML entities interleaved with NUL bytes: each entity decodes
        in its own single-entity variant (per-run decode spreads the
@@ -40,8 +42,9 @@ Shapes (B1/B2/B3 = the three wave-346 attack targets):
      - bidi override inside the credential: the bidi layer strips
        the override and the credential blocks. HELD.
 
-  F437/F438/F439: filed OPEN this round; footer now
-  open F436, F437, F438, F439 / next F440. F432-F435: CLOSED.
+  F437/F438: filed OPEN this round; F439 filed OPEN this round, CLOSED
+  2026-10-05 wave-347 lane 3; footer now open
+  F437, F438, F440, F441, F442 / next F443. F432-F436: CLOSED.
 
 Usage:
   ~/workspace/.gov-venv/bin/python evals/w346_attack_probes.py
@@ -150,15 +153,15 @@ def test_b1_split_reverse_join_embeds_literal():
 # ---------------------------------------------------------------- B2: stacked layers
 
 @_t
-def test_b2_triple_base64_pinned_open():
-    """F439: triple base64 wrap exceeds the depth-2 composition budget --
-    two decodes leave a 52-char base64 run no rule matches, while a
-    real 3x-decode chain recovers the credential. Known-open miss."""
+def test_b2_triple_base64_closed():
+    """F439 CLOSED (wave-347 lane 3): the bounded base64
+    decode-until-fixpoint (max 3 rounds) blocks triple-base64 stacks
+    coded dlp-slack-token; depth-4+ stays a documented non-goal."""
     b3 = _b64(_b64(_b64(_LONG)))
     assert _LONG not in b3
-    miss = dlp.find_credential(b3) is None
-    return ("HELD" if miss else "BREAK",
-            "F439 triple-b64 miss reproduced=%s" % miss)
+    hit = dlp.find_credential(b3) == "dlp-slack-token"
+    return ("HELD" if hit else "BREAK",
+            "F439 triple-b64 now blocks=%s" % hit)
 
 
 @_t
@@ -216,20 +219,22 @@ def test_b3_bidi_inside_credential_blocks():
 
 @_t
 def test_z0_redfirst_scripts_print_break():
-    """The three F437/F438/F439 red-first scripts print BREAK on this
-    open tree."""
+    """The F437/F438 red-first scripts print BREAK on this tree (still
+    open); the F439 red-first script prints HELD (closed wave-347)."""
     import io
     from contextlib import redirect_stdout
     ok = True
-    for mod in ("w346_f437_redfirst", "w346_f438_redfirst", "w346_f439_redfirst"):
+    for mod, want in (("w346_f437_redfirst", "BREAK"),
+                      ("w346_f438_redfirst", "BREAK"),
+                      ("w346_f439_redfirst", "HELD")):
         path = os.path.join(REPO_ROOT, "evals", mod + ".py")
         buf = io.StringIO()
         g = {"__name__": "__main__", "__file__": path}
         with redirect_stdout(buf):
             exec(compile(open(path).read(), path, "exec"), g)
         tail = buf.getvalue().strip().splitlines()[-1]
-        ok = ok and (tail == "BREAK")
-    return ("HELD" if ok else "BREAK", "red-first BREAKs=%s" % ok)
+        ok = ok and (tail == want)
+    return ("HELD" if ok else "BREAK", "red-first verdicts=%s" % ok)
 
 
 @_t
@@ -239,7 +244,9 @@ def test_z1_findings_filed_open_with_final_footer():
     F442): pins the filings so the misses cannot go undocumented."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = (all("(F43%d filed 2026-10-05, wave-346 lane 2" % i in text
-              for i in (7, 8, 9))
+              for i in (7, 8))
+          and "(F439 filed 2026-10-05, wave-346 lane 2" in text
+          and "CLOSED 2026-10-05 wave-347 lane 3" in text
           and "(F440 filed 2026-10-05, wave-346 lane 6" in text
           and "(F441 filed 2026-10-05, wave-346 lane 6" in text
           and "(F442 filed 2026-10-05, wave-346 lane 3" in text
@@ -274,9 +281,10 @@ def test_z3_no_paid_api_refs():
 # ---------------------------------------------------------------- green check
 
 _EXPECTED_BREAKS = set()  # this battery asserts HELD everywhere:
-# the F437/F438/F439 misses are pinned as known-open (probe returns HELD
-# when the miss reproduces); a literal BREAK verdict would mean the pin
-# failed or a NEW unexpected break appeared.
+# the F437/F438 misses are pinned as known-open (probe returns HELD
+# when the miss reproduces); the F439 miss probe was flipped to the
+# closure assertion (wave-347 lane 3). A literal BREAK verdict would
+# mean a pin failed or a NEW unexpected break appeared.
 
 
 def _green_check():

@@ -71,9 +71,9 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2135  # Wave-346: pin 2135 (no new codes in wave-346 lane 1); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
-FOOTER_OPEN = "F437, F438, F439, F440, F441"  # wave-346 merge final; F442 CLOSED 2026-10-05 wave-347 lane 6
-FOOTER_NEXT = "F442"
+TAXONOMY_PIN = 2135  # Wave-346: pin 2134 (no new codes in wave-346 merge); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+FOOTER_OPEN = "F443"  # wave-347 merge final: F437-F442 CLOSED, F443 OPEN
+FOOTER_NEXT = "F444"
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
