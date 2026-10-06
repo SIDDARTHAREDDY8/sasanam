@@ -2210,6 +2210,56 @@ def _try_js_expr_decode(text, start):
     return decoded, end
 
 
+def _try_js_expr_decode_all(text):
+    """Whole-text JS string-expression scan (F444).
+
+    Decodes every strictly-decodable JS expression in *text* in one
+    left-to-right pass, producing a single variant: at each
+    ``_JS_EXPR_START`` match at/after the current position, attempt
+    :func:`_try_js_expr_decode`; on success splice the decoded value
+    in and continue past the decoded span, otherwise copy the span
+    verbatim (fail closed). Matches inside an already-decoded span
+    are skipped.
+
+    This closes the F444 budget-starvation class: ``_decode_layer``
+    enumerates per-match JS-expression decodes positionally
+    (``[:_MAX_CANDIDATES]``) over a 2-layer budget, so attacker junk
+    expressions ahead of the real one consume the enumeration window
+    and the layers. One whole-text variant decodes junk and real
+    expression alike in a single layer, so no positional window can
+    starve the real expression out.
+
+    Bounded: at most ``_MAX_WHOLETEXT_ITEMS`` decode attempts per
+    scan (each attempt is ops-bounded inside
+    :func:`_try_js_expr_decode`); beyond the bound the remainder is
+    copied verbatim and the per-match path still tries. No new
+    regexes (reuses ``_JS_EXPR_START``). Static, never executes.
+    Returns None when nothing decoded.
+    """
+    out = []
+    pos = 0
+    attempts = 0
+    for m in _JS_EXPR_START.finditer(text):
+        s = m.start()
+        if s < pos:
+            continue  # inside an already-decoded span
+        if attempts >= _MAX_WHOLETEXT_ITEMS:
+            break
+        attempts += 1
+        r = _try_js_expr_decode(text, s)
+        if r is None:
+            continue  # fail closed: copy verbatim below
+        decoded, end = r
+        if end <= s:
+            continue  # defensive: never retreat
+        out.append(text[pos:s])
+        out.append(decoded)
+        pos = end
+    out.append(text[pos:])
+    whole = "".join(out)
+    return whole if whole != text else None
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -2257,6 +2307,18 @@ def _decode_layer(text):
         decoded = _try_jsfuck_decode(m.group(0))
         if decoded is not None:
             _add(text[:m.start()] + decoded + text[m.end():])
+    # Whole-text JS-expression scan (F444): one variant decoding every
+    # strictly-decodable JS expression left-to-right, so junk
+    # quoted-concat prefixes cannot starve the real expression out of
+    # the positional per-match enumeration window (8) x 2-layer
+    # budget. Additive: the per-match loop below is unchanged. The
+    # variant composes with the other layers inside the 2-layer
+    # budget exactly like the whole-text entity/escape productions.
+    decoded = _try_js_expr_decode_all(text)
+    if decoded is not None:
+        _add(decoded)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
     # JS string-expression runs (F430/F434/F437): strict static decode of
     # quoted '+' concatenation, template literals, String.fromCharCode,
     # .concat/.repeat postfix calls, array-literal .join(sep) (F434),
@@ -2420,7 +2482,8 @@ def find_credential(text):
 
     Encoding-aware (F2/F8/F428/F429/F430/F431): before giving up, decodes likely encodings
     (base64/base64url, base32, hex, URL-encoding, JSFuck, JS string
-    expressions, backslash
+    expressions (F444: whole-text scan defeats junk-prefix budget
+    starvation), backslash
     escapes, numeric HTML entities, double HTML-entity encoding (F440),
     UTF-16 null-interleave, confusable
     normalization incl. the Cyrillic-homoglyph map, bidi-override

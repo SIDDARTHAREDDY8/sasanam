@@ -110,24 +110,26 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F444/F445 open, next F446 (F443 CLOSED at merge)."""
+    """Control: footer shows F445 open, next F446 (F444 CLOSED wave-349 lane 1)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F446**" in text
-          and "Open findings: F444, F445." in text)
+          and "Open findings: F445." in text)
     return ("HELD" if ok else "BREAK", "footer-ok=%s" % ok)
 
 
 # ------------------------------------------------- F444: budget starvation
 
 @_t
-def test_f444_junk3_then_reduce_miss():
-    """F444 (OPEN): 3 junk JS-expressions starve the real reduce."""
+def test_f444_junk3_then_reduce_blocked():
+    """F444 (CLOSED 2026-10-06 wave-349 lane 1): junk-prefixed reduce now
+    blocks -- the whole-text JS-expression scan decodes junk and real
+    expression in one variant."""
     real = "['" + _A + "','" + _B + "'].reduce((a,b)=>a+b)"
     payload = "'j0'+'k0';'j1'+'k1';'j2'+'k2';" + real
-    miss = not _blocked(payload)
-    # pinned as known-open: HELD when the miss reproduces
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    hit = _blocked(payload)
+    # pinned as closed: HELD when the payload blocks coded dlp-slack-token
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
