@@ -5,8 +5,8 @@ Real-model attack (gpt-4o-mini, 6 calls, ~$0.000689) against the
 wave-348-merged F443 closure surface (Array(N)/.fill/.filter(Boolean)
 bounded shapes) plus F444/F445 closure-resilience probing.
 
-Filed this round (all LOW; F446 CLOSED 2026-10-06 wave-350 lane 1,
-F447-F450 OPEN, red-first verified):
+Filed this round (all LOW, red-first verified; all five CLOSED at the
+wave-350 merge):
 - F446: Array.of(...) factory bypasses the static JS-expression decoder
         (decoder models only the single-integer Array(N) form).
         **Status: CLOSED 2026-10-06 wave-350 lane 1** -- Array.of
@@ -22,10 +22,14 @@ F447-F450 OPEN, red-first verified):
         block-body identity decodes within the same budgets.
 - F449: base64 with embedded whitespace evades the contiguous-run
         gate (base64.b64decode ignores whitespace; distinct from the
-        F445 length gate).
+        F445 length gate). CLOSED 2026-10-06 wave-350 lane 3
+        (whitespace-tolerant base64 scan, credential-shape-gated).
 - F450: hex minimum-length gate (32 chars) lets hex of short
         credentials evade (bytes.fromhex recovers; same mechanism
-        class as F445, different code path).
+        class as F445, different code path). CLOSED 2026-10-06
+        wave-350 lane 3 (short-hex scan, credential-shape-gated;
+        the filed 10-char shape is a documented accepted residual --
+        below the 15-char rule floor).
 
 Known-open pins (each probe returns HELD when the miss reproduces;
 a literal BREAK verdict means the pin failed or a NEW break appeared):
@@ -106,12 +110,11 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F446/F449/F450 open, next F451 (wave-350
-    lane 2: F447+F448 CLOSED)."""
+    """Control: footer shows F446-F448,F451 open, next F452 (F449/F450 closed)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F451**" in text
-          and "**Open findings: F446, F449, F450.**" in text)
+    ok = ("Next free finding: **F452**" in text
+          and "**Open findings: F446, F447, F448, F451.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -176,14 +179,15 @@ def test_b3_f448_map_concise_blocks():
 # ---------------------------------------------------------------- F449 pins
 
 @_t
-def test_b4_f449_b64_whitespace_open():
-    """F449 pinned open: whitespace-split base64 of a long credential misses."""
+def test_b4_f449_b64_whitespace_closed():
+    """F449 CLOSED 2026-10-06 wave-350 lane 3: whitespace-split base64
+    of a long credential now blocks coded dlp-slack-token."""
     longc = _CRED + _CRED
     b64 = base64.b64encode(longc.encode()).decode()
     spaced = b64[:16] + " " + b64[16:32] + "\n" + b64[32:]
     assert base64.b64decode(spaced) == longc.encode()
-    miss = not _blocked(spaced)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    hit = _blocked(spaced)
+    return ("HELD" if hit else "BREAK", "blocked=%s" % hit)
 
 
 @_t
@@ -197,13 +201,24 @@ def test_b4_f449_b64_contiguous_blocks():
 # ---------------------------------------------------------------- F450 pins
 
 @_t
-def test_b5_f450_hex_short_open():
-    """F450 pinned open: hex of a short credential misses."""
-    short = "xox" + "b-abc12"
-    hx = "".join("%02x" % c for c in short.encode())
-    assert bytes.fromhex(hx) == short.encode()
-    miss = not _blocked(hx)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b5_f450_hex_short_closed():
+    """F450 CLOSED 2026-10-06 wave-350 lane 3: hex of a short (15-char,
+    credential-shaped) credential now blocks coded dlp-slack-token.
+    The 10-char sub-credential shape stays quiet by design (documented
+    accepted residual: below the 15-char rule floor, F2
+    unknown-format class)."""
+    short15 = "xox" + "b-abc123def4"  # 15 chars: shortest the rule matches
+    assert len(short15) == 15
+    hx = "".join("%02x" % c for c in short15.encode())
+    assert len(hx) == 30  # under the 32-char _HEX_RUN gate
+    assert bytes.fromhex(hx) == short15.encode()
+    hit = _blocked(hx)
+    sub10 = "xox" + "b-abc12"  # 10 chars: not credential-shaped
+    hx10 = "".join("%02x" % c for c in sub10.encode())
+    residual_quiet = not _blocked(hx10)
+    ok = hit and residual_quiet
+    return ("HELD" if ok else "BREAK",
+            "blocked15=%s residual10_quiet=%s" % (hit, residual_quiet))
 
 
 @_t
@@ -271,9 +286,9 @@ def test_b7_reversed_credential_blocks():
 # ---------------------------------------------------------------- green check
 
 _EXPECTED_BREAKS = set()  # this battery asserts HELD everywhere: the
-# F446/F449/F450 misses are pinned as known-open (each probe returns HELD
-# when the miss reproduces); F447/F448 probes were flipped to closure
-# assertions 2026-10-06 wave-350 lane 2. A literal BREAK verdict means a
+# F446-F450 misses are pinned CLOSED (each probe returns HELD when the
+# coded refusal reproduces; probes flipped to closure assertions
+# 2026-10-06 wave-350 lanes 1/2/3). A literal BREAK verdict means a
 # pin failed or a NEW unexpected break appeared.
 
 
