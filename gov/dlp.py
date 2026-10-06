@@ -571,6 +571,17 @@ def _b64_fixpoint_variants(text):
     for start, end, words in _iter_b64_ws_spans(text):
         seeds.append((start, end,
                       "".join(text[s:e] for s, e in words)))
+    # F456: junk-tolerant spans seed the fixpoint too, as their
+    # junk-stripped whole-span candidate -- a junk-fragmented (or
+    # mixed whitespace+junk fragmented) outer layer over an inner
+    # stack composes exactly like the F453 ws-outer case: round 1
+    # strips junk via the seed, rounds 2+ strip whitespace from
+    # decoded intermediates. Pure-whitespace spans are skipped by
+    # _iter_b64_junk_spans (F449 owns them), so no seed duplicates
+    # and the _MAX_CANDIDATES budget is unperturbed.
+    for start, end, words in _iter_b64_junk_spans(text):
+        seeds.append((start, end,
+                      "".join(text[s:e] for s, e in words)))
     for start, end, run in seeds[:_MAX_CANDIDATES]:
         prev = run
         for _ in range(_MAX_B64_ROUNDS):
@@ -648,6 +659,51 @@ _HEX_WS_ALPHA_FLOOR = 20
 # Bound on the scan's total span (DoS guard); the stripped payload is
 # additionally capped by _try_hex_decode's _MAX_DECODE_BYTES check.
 _HEX_WS_MAX_SPAN = 4 * _MAX_DECODE_BYTES
+# F456: the exact ASCII whitespace subset of junk gaps. base64.b64decode
+# (validate=False) discards whitespace, but on str input it RAISES on
+# non-ASCII (verified: ValueError on '\u00e9'/ZWSP), so only ASCII
+# whitespace is a junk gap here -- fail closed on the rest. Kept as a
+# named set so _iter_b64_junk_spans can tell F449-owned pure-whitespace
+# spans apart from spans with real (non-whitespace) junk.
+_B64_JUNK_WS = frozenset(" \t\n\r\x0b\x0c")
+# F456: the strict stdlib base64 alphabet (no base64url '-'/'_'). The
+# junk walker uses this, not _B64_ALPHABET, so that inserted '-'/'_'
+# are junk gaps: base64.b64decode(validate=False) discards them
+# (verified at every position), while a genuine base64url parser
+# treats them as data. Both interpretations are attempted -- the
+# contiguous _B64_RUN path (which keeps '-'/'_' as word chars and
+# normalizes to '+/') still catches genuine base64url, and the junk
+# path catches '-'/'_'-fragmented stdlib base64. A stripped blob only
+# becomes a variant on strict decode + the credential-shape gate, so
+# the duality cannot false-positive: the wrong interpretation just
+# fails the gate.
+_B64_STRICT_ALPHABET = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+
+
+def _is_b64_junk_gap(ch):
+    """F456: junk-gap predicate for base64 spans.
+
+    True for exactly the characters base64.b64decode(validate=False)
+    discards on str input (verified empirically): ASCII whitespace and
+    every other ASCII char outside the strict base64 alphabet --
+    including '-'/'_' (verified discarded at every position; genuine
+    base64url is still owned by the contiguous _B64_RUN path, which
+    normalizes them -- see _B64_STRICT_ALPHABET) -- except '='.
+    '=' is a span BREAKER, not a gap: a single interior '=' is
+    discarded at some positions but TRUNCATES the decode at others
+    (verified: '=' at pos%4==3 and '==' mid-string truncate, and
+    'SGVsbG8=!V29ybGQ=' decodes to b'Hello' only), so stripping it
+    would emit variants a real parser does not produce. Non-ASCII
+    chars break too (b64decode(str) raises on non-ASCII -- fail
+    closed). No parity sensitivity: junk discard is
+    position-independent (verified: '!' inserted at every one of 28
+    positions decodes identically), unlike the F451 hex
+    byte-boundary parity. Static, never executes.
+    """
+    return (ch in _B64_JUNK_WS
+            or (ord(ch) < 128 and ch not in _B64_STRICT_ALPHABET
+                and ch != "="))
 
 
 def _iter_hex_short_runs(text):
@@ -692,6 +748,33 @@ def _iter_b64_ws_spans(text):
     don't fork). No regexes. Static, never executes."""
     return _iter_ws_spans(text, _B64_ALPHABET, str.isspace,
                            _B64_WS_MAX_SPAN, _B64_SHORT_FLOOR, False)
+
+
+def _iter_b64_junk_spans(text):
+    """Yield (start, end, words) for maximal base64 spans with junk gaps.
+
+    A span is a maximal run of strict-alphabet base64 words
+    (_B64_STRICT_ALPHABET -- '-'/'_' are gaps here, not word chars;
+    genuine base64url stays owned by the contiguous _B64_RUN path)
+    joined by junk gaps (chars base64.b64decode(validate=False)
+    discards on str input -- see _is_b64_junk_gap), containing at
+    least one NON-whitespace junk gap and at least _B64_SHORT_FLOOR
+    alphabet chars. Words are maximal alphabet runs of any length >=
+    1. Pure-whitespace spans are SKIPPED: they are owned by the F449
+    path (_iter_b64_ws_spans / _b64_ws_variants), so yielding them
+    here would duplicate fixpoint seeds and perturb the shared
+    _MAX_CANDIDATES budget. '=' breaks spans (verified truncation
+    semantics -- stripping it would emit variants a real parser does
+    not produce); non-ASCII breaks spans (fail closed). Shared
+    walker: _iter_ws_spans (compose, don't fork). No regexes.
+    Static, never executes."""
+    for start, end, words in _iter_ws_spans(
+            text, _B64_STRICT_ALPHABET, _is_b64_junk_gap,
+            _B64_WS_MAX_SPAN, _B64_SHORT_FLOOR, False):
+        if any(ch not in _B64_JUNK_WS
+               for (_, we), (ns, _) in zip(words, words[1:])
+               for ch in text[we:ns]):
+            yield (start, end, words)
 
 
 def _iter_hex_ws_spans(text):
@@ -895,6 +978,64 @@ def _b64_ws_variants(text):
     """
     def _matches():
         for start, end, words in _iter_b64_ws_spans(text):
+            n_words = len(words)
+            for length in range(n_words, 1, -1):  # longest first
+                for i in range(n_words - length + 1):
+                    blob = "".join(text[s:e]
+                                   for s, e in words[i:i + length])
+                    yield (start, end, blob)
+    yield from _gated_encoded_variants(
+        text, _matches(),
+        lambda blob: _try_b64_decode(blob, min_payload=_B64_SHORT_FLOOR))
+
+
+def _b64_junk_variants(text):
+    """F456: base64/base64url runs with embedded non-whitespace junk,
+    attempted only when the junk-stripped candidate strict-decodes to
+    credential-shaped text.
+
+    base64.b64decode(validate=False) discards EVERY ASCII character
+    outside the base64 alphabet before decoding -- not just whitespace
+    -- so the base64 of a credential with '\\x00' / '!' / '.'
+    inserted decodes exactly in a real parser (verified:
+    b64decode(junked)==credential at every insertion position) while
+    _B64_RUN (24 contiguous alphabet chars) matches nothing and the
+    F449 _iter_b64_ws_spans requires whitespace-only gaps, so any
+    non-whitespace junk breaks the span. Distinct from F449
+    (whitespace-only spans): different character class, different gap
+    predicate -- same filing precedent as F451-vs-F449. Each maximal
+    junk-tolerant span (_iter_b64_junk_spans) is searched over its
+    sub-word-runs, longest first: the junk-stripped sub-run goes
+    through the existing strict-decode path (_try_b64_decode: strict
+    alphabet, exact round-trip, printable-ASCII); only a
+    credential-shaped decode becomes a variant, so the FP discipline
+    is identical to the long path (only credential-shaped decodes
+    enter the pipeline). Single-word sub-runs are skipped (the
+    contiguous _B64_RUN/_B64_SHORT_RUN paths own them). '=' breaks
+    spans (verified: stripping it would emit variants a real parser
+    does not produce -- interior '=' truncates at pos%4==3 and '=='
+    mid-string truncates); non-ASCII breaks spans (fail closed --
+    b64decode(str) raises). '-'/'_' are junk gaps here (stdlib
+    discards them; verified): a genuine base64url payload fragmented
+    at '-'/'_' strips to a wrong decode that fails the
+    credential-shape gate, while the contiguous _B64_RUN path
+    (unchanged) still catches the true base64url decode -- both
+    interpretations are attempted, neither false-positives. The
+    sub-run enumeration is routed through
+    _gated_encoded_variants, so decode attempts obey the same
+    per-call _MAX_CANDIDATES budget as every other encoded-run path.
+    Linear scan, no new regexes; bounded span; static, never executes.
+
+    Honest residual (documented, not a finding): junk spans whose
+    gaps include '=' (padding mid-string) do not assemble -- the '='
+    breaker is ground-truth exact for 'SGVsbG8=!V29ybGQ=' (real
+    parser truncates to the first chunk), but a single interior '='
+    at a quantum boundary IS discarded by the real parser while the
+    scanner breaks there (fail closed). Same bounded-budget class as
+    F449's documented residual.
+    """
+    def _matches():
+        for start, end, words in _iter_b64_junk_spans(text):
             n_words = len(words)
             for length in range(n_words, 1, -1):  # longest first
                 for i in range(n_words - length + 1):
@@ -2914,6 +3055,13 @@ def _decode_layer(text):
     # whitespace-tolerant scan; only credential-shaped strict decodes
     # become variants.
     for variant in _b64_ws_variants(text):
+        _add(variant)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # Base64/base64url runs with embedded non-whitespace junk (F456):
+    # junk-tolerant scan; only credential-shaped strict decodes
+    # become variants. Additive: the F449 path above is unchanged.
+    for variant in _b64_junk_variants(text):
         _add(variant)
         if len(variants) >= _MAX_CANDIDATES:
             return variants

@@ -96,7 +96,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2135  # Wave-350: F449+F450 closed, no new decision codes; pin unchanged
-FOOTER_OPEN = "F454, F455, F456, F457, F458, F459, F460"  # Wave-351: F451+F453 CLOSED (lanes 1+3); F452 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461)
+FOOTER_OPEN = "F454, F455, F457, F458, F459, F460"  # Wave-352 lane 2: F456 CLOSED (merge finalizes tree-wide); wave-351: F451+F453 CLOSED (lanes 1+3); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461)
 FOOTER_NEXT = "F461"
 
 
@@ -230,10 +230,13 @@ def p2_control_ws_b64_padding_midstring_quiet():
     return not _blocked("zz " + b64[:16] + "==" + b64[16:] + " zz")
 
 
-def p2_control_ws_b64_nonws_junk_quiet():
-    # Non-whitespace interior junk breaks the span (fail closed).
+def p2_control_ws_b64_nonws_junk_now_blocks():
+    # F456 (wave-352 lane 2): non-whitespace interior junk no longer
+    # breaks the span into quietness -- the junk-tolerant scan bridges
+    # it. The F449 ws walker still breaks at non-ws junk (fail
+    # closed); the F456 junk walker covers this class.
     b64 = _b64(_CRED.encode())
-    return not _blocked("zz " + b64[:16] + "!!" + b64[16:] + " zz")
+    return _blocked("zz " + b64[:16] + "!!" + b64[16:] + " zz")
 
 
 # ---------------------------------------------------------------- P3: decoder pins
@@ -511,8 +514,8 @@ _PROBES = [
     ("p2-control-spaced-words-quiet", p2_control_spaced_words_quiet),
     ("p2-control-ws-b64-padding-midstring-quiet",
      p2_control_ws_b64_padding_midstring_quiet),
-    ("p2-control-ws-b64-nonws-junk-quiet",
-     p2_control_ws_b64_nonws_junk_quiet),
+    ("p2-control-ws-b64-nonws-junk-now-blocks",
+     p2_control_ws_b64_nonws_junk_now_blocks),
     ("p3-pin-ws-span-maximal-eq-separator",
      p3_pin_ws_span_maximal_eq_separator),
     ("p3-pin-ws-span-alpha-floor", p3_pin_ws_span_alpha_floor),
