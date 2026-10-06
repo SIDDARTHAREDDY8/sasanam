@@ -32,9 +32,10 @@ Fail-closed direction (node-verified): an interpolated tag such as
 strings=["",""], String(["",""])==","), which the modeled class cannot
 express -- the decoder yields no variant. This is a miss only for
 shapes that do not recover the credential; `.repeat` as a tagged
-template DOES recover it (ToNumber(String(['2']))==2) and is filed as
+template DID recover it (ToNumber(String(['2']))==2) and was filed as
 the new finding F472 (renumbered F469->F472: the wave-353 attack lane
-committed F469-F471 first, commit e79af076; pinned OPEN here).
+committed F469-F471 first, commit e79af076); F472 is CLOSED 2026-10-06
+wave-354 lane 4 (bounded ToNumber tag count, _js_tag_repeat_count).
 
 $0 SPEND BY CONSTRUCTION: canned payloads only, no model calls. Do NOT
 add ModelDriver/SpendLedger usage here.
@@ -59,12 +60,12 @@ Probes:
   P6  no-regression: adjacent closures still block (F457 template
       interp, F434 array join, F443 Array fill paren, F446 Array.of,
       F444 junk-prefix, F447 truthy filter, F448 identity map);
-      F472 repeat-as-tagged pinned OPEN; F469-F471 attack-lane filings
+      F472 repeat-as-tagged CLOSED (wave-354 lane 4); F469-F471 attack-lane filings
       pinned open as documented entries (their red-first batteries live
       in the attack-lane tree).
   P7  pin + footer: taxonomy pin 2135 (no new decision codes),
-      footer open F461, F462, F464-F468, F469, F471, F472 /
-      next F473, F463 CLOSED entry present. (Wave-354: F470 CLOSED.)
+      footer open none /
+      next F473, F463 CLOSED entry present. (Wave-354: F469-F472 CLOSED.)
   PZ  green check: adjacent DLP batteries green (depth-1).
 
 Usage:
@@ -90,7 +91,7 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-353: F463 closed, F472 filed; no new decision codes
-FOOTER_OPEN = "F472"  # Wave-353 lane 2: F463 CLOSED locally (merge finalizes tree-wide); F472 repeat-tagged filed OPEN (renumbered F469->F472); F469-F471 are wave-353 attack-lane filings (commit e79af076)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 lane 1: F469 CLOSED locally (merge finalizes tree-wide)  # Wave-354: F470 CLOSED  # Wave-354 lane 3: F471 CLOSED
+FOOTER_OPEN = "none"  # Wave-353 lane 2: F463 CLOSED locally (merge finalizes tree-wide); F472 repeat-tagged filed OPEN (renumbered F469->F472); F469-F471 are wave-353 attack-lane filings (commit e79af076)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 lane 1: F469 CLOSED locally (merge finalizes tree-wide)  # Wave-354: F470 CLOSED  # Wave-354 lane 3: F471 CLOSED  # Wave-354 lane 4: F472 CLOSED
 
 FOOTER_NEXT = "F473"  # Wave-353 lane 2: F463 CLOSED, F472 filed OPEN; attack lane filed F469-F471 (next F473)
 
@@ -98,7 +99,7 @@ FOOTER_NEXT = "F473"  # Wave-353 lane 2: F463 CLOSED, F472 filed OPEN; attack la
 _CRED = "xox" + "b-abc123" + "def" + "456"
 _A = "xox" + "b-abc123"
 _B = "def" + "456"
-_FRAG = "xoxb-" + "0123"  # F472 open pin: 'xoxb-0123'.repeat`2`
+_FRAG = "xoxb-" + "0123"  # F472 closed pin: 'xoxb-0123'.repeat`2` blocks
 _BT = chr(96)  # backtick
 
 
@@ -224,7 +225,7 @@ def _decode_cases():
         ("['a','b'].join" + _BT + "${'c'}" + _BT, None, "a,b"),
         ("['a','b'].join" + _BT, None, None),  # unterminated: THROWS
         ("['a','b'].map" + _BT + "x" + _BT, None, None),
-        ("'x'.repeat" + _BT + "2" + _BT, None, "xx"),  # F472: open
+        ("'x'.repeat" + _BT + "2" + _BT, "xx", "xx"),  # F472: CLOSED wave-354 lane 4
     ]
 
 
@@ -378,11 +379,11 @@ def p6_noreg_f448_identity_map():
     return _blocked("['" + _A + "','" + _B + "'].map(x=>x).join('')")
 
 
-def p6_noreg_f472_repeat_tag_open():
-    # F472 pinned OPEN (renumbered F469->F472): repeat's ToNumber count
-    # conversion is a distinct unmodeled tag-call shape; the F463 closure
-    # must not overreach.
-    return not _blocked("'" + _FRAG + "'.repeat" + _BT + "2" + _BT)
+def p6_noreg_f472_repeat_tag_closed():
+    # F472 CLOSED 2026-10-06 wave-354 lane 4: repeat's ToNumber count
+    # conversion is now modeled by _js_tag_repeat_count; the tagged
+    # repeat shape blocks.
+    return _blocked("'" + _FRAG + "'.repeat" + _BT + "2" + _BT)
 
 
 def p6_noreg_f469f470f471_attack_lane_documented():
@@ -449,7 +450,7 @@ _PROBES = [
     ("p6-noreg-f444-junk-prefix", p6_noreg_f444_junk_prefix),
     ("p6-noreg-f447-truthy-filter", p6_noreg_f447_truthy_filter),
     ("p6-noreg-f448-identity-map", p6_noreg_f448_identity_map),
-    ("p6-noreg-f472-repeat-tag-open", p6_noreg_f472_repeat_tag_open),
+    ("p6-noreg-f472-repeat-tag-closed", p6_noreg_f472_repeat_tag_closed),
     ("p6-noreg-f469f470f471-attack-lane-documented",
      p6_noreg_f469f470f471_attack_lane_documented),
     ("p7-pin-and-footer", p7_pin_and_footer),

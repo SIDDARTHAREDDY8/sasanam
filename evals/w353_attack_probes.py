@@ -129,13 +129,13 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F472 open, next F473 (wave-354: F469-F471
+    """Control: footer shows none open, next F473 (wave-354: F469-F471
     CLOSED; F472 repeat-tagged, renumbered F469->F472; F473/F474
     attack-lane filings; wave-354 lane 3: F471 CLOSED)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F473**" in text
-          and "**Open findings: F472.**" in text)
+          and "**Open findings: F472.**" in text)  # Wave-354 lane 4: F472 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -353,10 +353,10 @@ def _green_check():
     GOV_SKIP_GREEN=1 in the child env (no combinatorial nesting).
 
     Wave-305-class note: w352_attack_probes.py's test_b0_footer_state
-    pins the pre-filing footer (next F469); this lane moved the footer to
-    next F472, so exactly that one probe is expected to BREAK here. The
-    merge coordinator's tree-wide footer sweep repoints it. Any OTHER
-    break is a real regression and fails this check."""
+    pinned the pre-filing footer (next F469); wave-354 lane 4 repointed
+    it in-tree to the current footer, so no stale-footer break is
+    expected here. Any break is a real regression and fails this
+    check."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return "skipped (GOV_SKIP_GREEN=1)"
     venv_python = os.path.join(os.path.expanduser("~"), "workspace",
