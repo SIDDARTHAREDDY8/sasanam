@@ -44,7 +44,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-dg3k7ipb",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-nd64lrrg",
       "passed": true,
       "failures": []
     },
@@ -53,7 +53,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-umbgxvko",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-lfkwhoi3",
       "passed": true,
       "failures": []
     },
@@ -62,7 +62,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-tipm9h2d",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-o3j7fera",
       "passed": true,
       "failures": []
     },
@@ -71,7 +71,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-fr8m11ym",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-g2zbkjba",
       "passed": true,
       "failures": []
     },
@@ -80,7 +80,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-s2x739_o",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-xptgz196",
       "passed": true,
       "failures": []
     },
@@ -89,7 +89,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-uwo10w6e",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-r68421za",
       "passed": true,
       "failures": []
     },
@@ -98,7 +98,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-joligdob",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-aw1lwm9b",
       "passed": true,
       "failures": []
     },
@@ -107,7 +107,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-5ku2tqc_",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-yociu8vi",
       "passed": true,
       "failures": []
     },
@@ -116,7 +116,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-s96gm__8",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-by62v3xa",
       "passed": true,
       "failures": []
     },
@@ -125,7 +125,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-u9tmgnq1",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-yeqre2v0",
       "passed": true,
       "failures": []
     },
@@ -134,7 +134,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-i9o8b1mr",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-pyusctxk",
       "passed": true,
       "failures": []
     },
@@ -143,7 +143,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-0okbtjfm",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-0d3849xo",
       "passed": true,
       "failures": []
     },
@@ -152,7 +152,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-navdm_mh",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-eku1gsyy",
       "passed": true,
       "failures": []
     },
@@ -161,7 +161,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-pvm36tlz",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-wlncobz3",
       "passed": true,
       "failures": []
     },
@@ -170,7 +170,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-gpfwr995",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-azwiskx6",
       "passed": true,
       "failures": []
     },
@@ -179,7 +179,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-4kounse4",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-ylv7wo4z",
       "passed": true,
       "failures": []
     },
@@ -188,7 +188,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-y1on9ujl",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-v2xvsim3",
       "passed": true,
       "failures": []
     },
@@ -197,7 +197,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-wat62ewc",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-tkduijn5",
       "passed": true,
       "failures": []
     },
@@ -206,7 +206,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-k156r83k",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-xcosyp6k",
       "passed": true,
       "failures": []
     },
@@ -215,7 +215,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-na5zj777",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-l_rug1up",
       "passed": true,
       "failures": []
     },
@@ -224,7 +224,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-lj9xyhs5",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-z9byouuo",
       "passed": true,
       "failures": []
     },
@@ -233,7 +233,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-ui0ltdjz",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-9ycmh73s",
       "passed": true,
       "failures": []
     },
@@ -242,7 +242,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-arl9pvbf",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-j5_1i3ee",
       "passed": true,
       "failures": []
     },
@@ -251,7 +251,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-ney51zzs",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-kzabiypo",
       "passed": true,
       "failures": []
     },
@@ -260,7 +260,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-ywz6zv4q",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-u_6ajfxb",
       "passed": true,
       "failures": []
     },
@@ -269,7 +269,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-3rxi4ix7",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-y6dkjr97",
       "passed": true,
       "failures": []
     },
@@ -278,7 +278,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-_hr1zh0u",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-fph_o7_q",
       "passed": true,
       "failures": []
     },
@@ -287,7 +287,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-8v9qt7oj",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-ypdyr2gs",
       "passed": true,
       "failures": []
     },
@@ -296,7 +296,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-tmksmr62",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-r7virgg2",
       "passed": true,
       "failures": []
     },
@@ -305,7 +305,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-6tutni6d",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-iitxjjfo",
       "passed": true,
       "failures": []
     },
@@ -314,7 +314,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-zsfvrcd3",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-0h0wwqgv",
       "passed": true,
       "failures": []
     },
@@ -323,7 +323,7 @@
       "class": "benign",
       "archetype": "benign-researcher",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-i6pcb9s7",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-h295k8cr",
       "passed": true,
       "failures": []
     },
@@ -332,7 +332,7 @@
       "class": "benign",
       "archetype": "benign-coder",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-wzez0clp",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-74zh_wcl",
       "passed": true,
       "failures": []
     },
@@ -341,7 +341,7 @@
       "class": "careless",
       "archetype": "careless-typo",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-q01h3vwq",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-krppba4s",
       "passed": true,
       "failures": []
     },
@@ -350,7 +350,7 @@
       "class": "careless",
       "archetype": "careless-typo",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-mg8mg0vx",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-lxojskyn",
       "passed": true,
       "failures": []
     },
@@ -359,7 +359,7 @@
       "class": "careless",
       "archetype": "careless-typo",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-y0s0s2t9",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-6nzpdy57",
       "passed": true,
       "failures": []
     },
@@ -368,7 +368,7 @@
       "class": "careless",
       "archetype": "careless-typo",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-uzpzhwu4",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-4wolxd6n",
       "passed": true,
       "failures": []
     },
@@ -377,7 +377,7 @@
       "class": "careless",
       "archetype": "careless-typo",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-6r9gqz1v",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-hl4d3lg6",
       "passed": true,
       "failures": []
     },
@@ -386,7 +386,7 @@
       "class": "careless",
       "archetype": "careless-typo",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-19wxa0jf",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-q83hn3kn",
       "passed": true,
       "failures": []
     },
@@ -395,7 +395,7 @@
       "class": "careless",
       "archetype": "careless-typo",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-52u8c1nw",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-0wyyipwq",
       "passed": true,
       "failures": []
     },
@@ -404,7 +404,7 @@
       "class": "careless",
       "archetype": "careless-typo",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-6l__iv9p",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-dildplyz",
       "passed": true,
       "failures": []
     },
@@ -413,7 +413,7 @@
       "class": "careless",
       "archetype": "careless-typo",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-qx_052eo",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-2z61qo37",
       "passed": true,
       "failures": []
     },
@@ -422,7 +422,7 @@
       "class": "careless",
       "archetype": "careless-typo",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-1bb2h5kr",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-q4klbhx1",
       "passed": true,
       "failures": []
     },
@@ -431,7 +431,7 @@
       "class": "careless",
       "archetype": "careless-typo",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-3cmzg88s",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-fawkojgk",
       "passed": true,
       "failures": []
     },
@@ -440,7 +440,7 @@
       "class": "careless",
       "archetype": "careless-typo",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-iw9mvtb5",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-wohe2p7l",
       "passed": true,
       "failures": []
     },
@@ -449,7 +449,7 @@
       "class": "careless",
       "archetype": "careless-typo",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-1uejvrvt",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-tt5p51bp",
       "passed": true,
       "failures": []
     },
@@ -458,7 +458,7 @@
       "class": "careless",
       "archetype": "careless-typo",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-1202vugt",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-vibtc4ia",
       "passed": true,
       "failures": []
     },
@@ -467,7 +467,7 @@
       "class": "careless",
       "archetype": "careless-typo",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-x0dvgkug",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-snlis431",
       "passed": true,
       "failures": []
     },
@@ -476,7 +476,7 @@
       "class": "careless",
       "archetype": "careless-typo",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-1mslr_b3",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-p05mkxny",
       "passed": true,
       "failures": []
     },
@@ -485,7 +485,7 @@
       "class": "careless",
       "archetype": "careless-typo",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-ggvs3o6e",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-vkt1t499",
       "passed": true,
       "failures": []
     },
@@ -494,7 +494,7 @@
       "class": "careless",
       "archetype": "careless-typo",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-xsqa8iyb",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-ld52m3xq",
       "passed": true,
       "failures": []
     },
@@ -503,7 +503,7 @@
       "class": "careless",
       "archetype": "careless-typo",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-nnc504yc",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-60tpbz53",
       "passed": true,
       "failures": []
     },
@@ -512,7 +512,7 @@
       "class": "careless",
       "archetype": "careless-typo",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-0k2ym8wc",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-qmijomau",
       "passed": true,
       "failures": []
     },
@@ -521,7 +521,7 @@
       "class": "malicious",
       "archetype": "malicious-injector",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-6j2rq6vn",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-smaz_so7",
       "passed": true,
       "failures": []
     },
@@ -530,7 +530,7 @@
       "class": "malicious",
       "archetype": "malicious-injector",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-2bujgequ",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-y7ksxu13",
       "passed": true,
       "failures": []
     },
@@ -539,7 +539,7 @@
       "class": "malicious",
       "archetype": "malicious-injector",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-0cjih0zt",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-7bed32km",
       "passed": true,
       "failures": []
     },
@@ -548,7 +548,7 @@
       "class": "malicious",
       "archetype": "malicious-injector",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-2pxv7567",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-0wtaeh2d",
       "passed": true,
       "failures": []
     },
@@ -557,7 +557,7 @@
       "class": "malicious",
       "archetype": "malicious-injector",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-v7xx_jv8",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-d6_62itg",
       "passed": true,
       "failures": []
     },
@@ -566,7 +566,7 @@
       "class": "malicious",
       "archetype": "malicious-injector",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-_x881p8q",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-3xxsbef9",
       "passed": true,
       "failures": []
     },
@@ -575,7 +575,7 @@
       "class": "malicious",
       "archetype": "malicious-injector",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-yzkd8z7q",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-4g1lwu12",
       "passed": true,
       "failures": []
     },
@@ -584,7 +584,7 @@
       "class": "malicious",
       "archetype": "malicious-injector",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-uez4z61p",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-d71hhwvx",
       "passed": true,
       "failures": []
     },
@@ -593,7 +593,7 @@
       "class": "malicious",
       "archetype": "malicious-injector",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-8jkl0j_c",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-9ys800v3",
       "passed": true,
       "failures": []
     },
@@ -602,7 +602,7 @@
       "class": "malicious",
       "archetype": "malicious-injector",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-0alcq17z",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-krz_l8bo",
       "passed": true,
       "failures": []
     },
@@ -611,7 +611,7 @@
       "class": "malicious",
       "archetype": "malicious-injector",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-d4wii1n7",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-lgk88dys",
       "passed": true,
       "failures": []
     },
@@ -620,7 +620,7 @@
       "class": "malicious",
       "archetype": "malicious-injector",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-kkpo5ymu",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-jh3lpvm4",
       "passed": true,
       "failures": []
     },
@@ -629,7 +629,7 @@
       "class": "malicious",
       "archetype": "malicious-tool-abuser",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-e19skkfq",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-gcyowha7",
       "passed": true,
       "failures": []
     },
@@ -638,7 +638,7 @@
       "class": "malicious",
       "archetype": "malicious-tool-abuser",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-m7uumb8q",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-xva4zqer",
       "passed": true,
       "failures": []
     },
@@ -647,7 +647,7 @@
       "class": "malicious",
       "archetype": "malicious-tool-abuser",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-s3x2hzqx",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-3j0f4hw4",
       "passed": true,
       "failures": []
     },
@@ -656,7 +656,7 @@
       "class": "malicious",
       "archetype": "malicious-tool-abuser",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-_864ecea",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-i2hx1vz4",
       "passed": true,
       "failures": []
     },
@@ -665,7 +665,7 @@
       "class": "malicious",
       "archetype": "malicious-tool-abuser",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-j9mg1wme",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-tdjipckh",
       "passed": true,
       "failures": []
     },
@@ -674,7 +674,7 @@
       "class": "malicious",
       "archetype": "malicious-tool-abuser",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-9049t609",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-48yoqkp7",
       "passed": true,
       "failures": []
     },
@@ -683,7 +683,7 @@
       "class": "malicious",
       "archetype": "malicious-tool-abuser",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-gasa5r2h",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-uxalfq17",
       "passed": true,
       "failures": []
     },
@@ -692,7 +692,7 @@
       "class": "compromised",
       "archetype": "compromised-exfiltrator",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-3sluc_dc",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-n68865wd",
       "passed": true,
       "failures": []
     },
@@ -701,7 +701,7 @@
       "class": "compromised",
       "archetype": "compromised-exfiltrator",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-592nsai5",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-nspcmhno",
       "passed": true,
       "failures": []
     },
@@ -710,7 +710,7 @@
       "class": "compromised",
       "archetype": "compromised-exfiltrator",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-659rhtra",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-yoo9v6go",
       "passed": true,
       "failures": []
     },
@@ -719,7 +719,7 @@
       "class": "compromised",
       "archetype": "compromised-exfiltrator",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-cn4zvcex",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-m4ex2zmc",
       "passed": true,
       "failures": []
     },
@@ -728,7 +728,7 @@
       "class": "malfunctioning",
       "archetype": "malfunction-looper",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-wuq8dvon",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-zt9hoki2",
       "passed": true,
       "failures": []
     },
@@ -737,7 +737,7 @@
       "class": "malfunctioning",
       "archetype": "malfunction-looper",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-pio96t5q",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-it54qdol",
       "passed": true,
       "failures": []
     },
@@ -746,7 +746,7 @@
       "class": "malfunctioning",
       "archetype": "malfunction-looper",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-mdtpg1pp",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-peib6hlh",
       "passed": true,
       "failures": []
     },
@@ -755,7 +755,7 @@
       "class": "malfunctioning",
       "archetype": "malfunction-looper",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-ozf3qn7m",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-xp1zljb_",
       "passed": true,
       "failures": []
     },
@@ -764,7 +764,7 @@
       "class": "malfunctioning",
       "archetype": "malfunction-looper",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-b5_ao6o4",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-j8yyobw1",
       "passed": true,
       "failures": []
     },
@@ -773,7 +773,7 @@
       "class": "malfunctioning",
       "archetype": "malfunction-looper",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-r2l6oy_m",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-2hamqewr",
       "passed": true,
       "failures": []
     },
@@ -782,7 +782,7 @@
       "class": "malfunctioning",
       "archetype": "malfunction-looper",
       "outcome": "step_limit",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-e_5xuwyo",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-kxh3alhh",
       "passed": true,
       "failures": []
     },
@@ -791,7 +791,7 @@
       "class": "malfunctioning",
       "archetype": "malfunction-looper",
       "outcome": "step_limit",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-wds1drez",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-azjqnsnd",
       "passed": true,
       "failures": []
     },
@@ -800,7 +800,7 @@
       "class": "malfunctioning",
       "archetype": "malfunction-looper",
       "outcome": "step_limit",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-z4kkad3k",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-2f4iwfn1",
       "passed": true,
       "failures": []
     },
@@ -809,7 +809,7 @@
       "class": "malfunctioning",
       "archetype": "malfunction-garbled",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-46p2v2x1",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-ue2lmk_3",
       "passed": true,
       "failures": []
     },
@@ -818,7 +818,7 @@
       "class": "malfunctioning",
       "archetype": "malfunction-garbled",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-f9pm6k0t",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-ee50td_k",
       "passed": true,
       "failures": []
     },
@@ -827,7 +827,7 @@
       "class": "malfunctioning",
       "archetype": "malfunction-garbled",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-za1kp_yt",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-vq7xbt_n",
       "passed": true,
       "failures": []
     },
@@ -836,7 +836,7 @@
       "class": "compromised",
       "archetype": "compromised-splitter-a",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-edpl43fk",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-_s0byuhy",
       "passed": true,
       "failures": []
     },
@@ -845,7 +845,7 @@
       "class": "compromised",
       "archetype": "compromised-splitter-b",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-edpl43fk",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-_s0byuhy",
       "passed": true,
       "failures": []
     },
@@ -854,7 +854,7 @@
       "class": "compromised",
       "archetype": "compromised-splitter-a",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-913e8sn4",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-f8pomg_q",
       "passed": true,
       "failures": []
     },
@@ -863,7 +863,7 @@
       "class": "compromised",
       "archetype": "compromised-splitter-b",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-913e8sn4",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-f8pomg_q",
       "passed": true,
       "failures": []
     },
@@ -872,7 +872,7 @@
       "class": "compromised",
       "archetype": "compromised-splitter-a",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-c6p2wbgr",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-qcnzzp5f",
       "passed": true,
       "failures": []
     },
@@ -881,7 +881,7 @@
       "class": "compromised",
       "archetype": "compromised-splitter-b",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-c6p2wbgr",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-qcnzzp5f",
       "passed": true,
       "failures": []
     },
@@ -890,7 +890,7 @@
       "class": "compromised",
       "archetype": "compromised-splitter-a",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-3vwweic5",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-f2nwchxe",
       "passed": true,
       "failures": []
     },
@@ -899,7 +899,7 @@
       "class": "compromised",
       "archetype": "compromised-splitter-b",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-3vwweic5",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-f2nwchxe",
       "passed": true,
       "failures": []
     },
@@ -908,7 +908,7 @@
       "class": "compromised",
       "archetype": "compromised-splitter-a",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-3nid748m",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-tl6b_t4i",
       "passed": true,
       "failures": []
     },
@@ -917,7 +917,7 @@
       "class": "compromised",
       "archetype": "compromised-splitter-b",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-3nid748m",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-tl6b_t4i",
       "passed": true,
       "failures": []
     },
@@ -926,7 +926,7 @@
       "class": "compromised",
       "archetype": "compromised-splitter-a",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-w11y8zj0",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-wp5cpw8t",
       "passed": true,
       "failures": []
     },
@@ -935,7 +935,7 @@
       "class": "compromised",
       "archetype": "compromised-splitter-b",
       "outcome": "completed",
-      "run_dir": "/var/tmp/g346-registry/registry-gate-6b7f9ebf/profile-batch-3jr1s5b6/agentkit-w11y8zj0",
+      "run_dir": "/var/tmp/g313-reg/registry-gate-0ee03de3/profile-batch-ld4o19jk/agentkit-wp5cpw8t",
       "passed": true,
       "failures": []
     }
