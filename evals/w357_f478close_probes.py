@@ -85,7 +85,7 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-357 lane 1: F478 closed; no new decision codes
-FOOTER_OPEN = "F480, F481"  # Wave-357 lane 1: F478 CLOSED locally (merge finalizes tree-wide)  # Wave-357 merge: F478, F479 CLOSED (next F481)
+FOOTER_OPEN = "F481"  # Wave-357 lane 1: F478 CLOSED locally (merge finalizes tree-wide)  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 lane 1: F480 CLOSED locally (merge finalizes tree-wide)
 FOOTER_NEXT = "F482"
 
 # Constructed via concatenation: the write path redacts credential literals.
@@ -299,11 +299,16 @@ def p3_no_new_regexes():
     # The F478 anchor widening uses the ws character class only --
     # the same F468 precedent. Pin the exact pattern string.
     assert dlp._JS_EXPR_START.pattern == (
-        r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*\(|Array(\(|"
-        r"[ \t\n\r]*(\.[ \t\n\r]*of|\[[ \t\n\r]*['\"]))|"
+        r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|\[[ \t\n\r]*['\"])|"
+        r"Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"]))|"
         r"Array[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"String[ \t\n\r]*\.[ \t\n\r]*prototype|"
-        r"Reflect[ \t\n\r]*\.[ \t\n\r]*(construct|apply)|Object[ \t\n\r]*\.[ \t\n\r]*assign|\(")
+        r"Reflect([ \t\n\r]*\.[ \t\n\r]*(construct|apply)|[ \t\n\r]*\[[ \t\n\r]*['\"])|"
+        r"Object([ \t\n\r]*\.[ \t\n\r]*assign|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
+    # F480 (wave-358 lane 1): anchor widened for the constructor-function
+    # dispatch (Array.apply/call) and the bracket-string member forms
+    # (Array[/String[/Object[/Reflect[) -- character classes only;
+    # re.compile count unchanged.
     for s in ["Array.prototype.concat", "String.prototype.concat",
               "Array . prototype . concat"]:
         assert dlp._JS_EXPR_START.search(s) is not None, s

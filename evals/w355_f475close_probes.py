@@ -322,11 +322,16 @@ def p3_pin_no_new_regexes():
     # Wave-357 lane 1: F478 added the X.prototype dispatch-target
     # alternatives (character class only, no new re.compile).
     assert dlp._JS_EXPR_START.pattern == (
-        r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*\(|Array(\(|"
-        r"[ \t\n\r]*(\.[ \t\n\r]*of|\[[ \t\n\r]*['\"]))|"
+        r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|\[[ \t\n\r]*['\"])|"
+        r"Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"]))|"
         r"Array[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"String[ \t\n\r]*\.[ \t\n\r]*prototype|"
-        r"Reflect[ \t\n\r]*\.[ \t\n\r]*(construct|apply)|Object[ \t\n\r]*\.[ \t\n\r]*assign|\(")
+        r"Reflect([ \t\n\r]*\.[ \t\n\r]*(construct|apply)|[ \t\n\r]*\[[ \t\n\r]*['\"])|"
+        r"Object([ \t\n\r]*\.[ \t\n\r]*assign|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
+    # F480 (wave-358 lane 1): anchor widened for the constructor-function
+    # dispatch (Array.apply/call) and the bracket-string member forms
+    # (Array[/String[/Object[/Reflect[) -- character classes only;
+    # re.compile count unchanged.
     for s in ["'", '"', "`", "[", "String.fromCharCode",
               "Array(", "Array.of", "Array.prototype.concat",
               "String.prototype.concat", "String(",

@@ -2082,7 +2082,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*\(|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*of|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect[ \t\n\r]*\.[ \t\n\r]*(construct|apply)|Object[ \t\n\r]*\.[ \t\n\r]*assign|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*\.[ \t\n\r]*(construct|apply)|[ \t\n\r]*\[[ \t\n\r]*['\"])|Object([ \t\n\r]*\.[ \t\n\r]*assign|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
 # F455: the Array.of factory anchor tolerates whitespace around the dot
 # ([ \t\n\r]*, exactly the _js_skip_ws class the parser skips), so
 # `Array .of(...)` / `Array\t.of(...)` / `Array\n.of(...)` /
@@ -2099,9 +2099,14 @@ _JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*\(|A
 # same ws-tolerant anchor class covers Object.assign, so
 # `Object .assign(...)` / `Object . assign(...)` reach
 # _js_parse_object_assign. F477: the String() constructor call reaches
-# _js_parse_string_ctor, so `String (...)` reaches the parser too. The ws
-# class is a character class, not a nested quantifier: matching stays
-# linear (no ReDoS surface).
+# _js_parse_string_ctor, so `String (...)` reaches the parser too. F480:
+# the anchor class also covers the constructor-function dispatch
+# (`Array .apply(` / `Array .call(`) and the bracket-string member forms
+# (`Array['apply']`, `String['fromCharCode']`, `Object['assign']`,
+# `Reflect['apply']`), so they reach the parsers below. `[].constructor`
+# shapes start with `[`, already in the anchor's character class. The
+# added groups are alternations of character-class-bounded literals:
+# matching stays linear (no ReDoS surface).
 _JS_EXPR_MAX_PARTS = 64        # bound on '+' operands per expression
 _JS_EXPR_MAX_CODEPOINTS = 512  # bound on fromCharCode argument count
 _JS_EXPR_MAX_DEPTH = 8         # bound on parenthesization depth
@@ -2527,8 +2532,18 @@ def _js_parse_coerced_string_arg(text, i, depth, state, label):
 
 def _js_parse_fromcharcode(text, i):
     """Parse String.fromCharCode(n, ...) at text[i]; returns (value, idx)."""
-    i += len("String.fromCharCode")
-    i = _js_skip_ws(text, i)
+    return _js_parse_fromcharcode_args(text, i + len("String.fromCharCode"))
+
+
+def _js_parse_fromcharcode_args(text, j):
+    """Parse the '(n, ...)' argument list of a String.fromCharCode-shaped
+    call (F458 / F480); returns (value, idx).
+
+    Shared by the dot form (`String.fromCharCode(...)`) and the
+    bracket-string member form (`String['fromCharCode'](...)`, F480 --
+    node-identical). The F458 integer-literal grammar is unchanged.
+    """
+    i = _js_skip_ws(text, j)
     if i >= len(text) or text[i] != "(":
         raise _JSExprFail("fromCharCode without paren")
     i += 1
@@ -2930,41 +2945,49 @@ def _js_parse_array_of(text, i, state):
     return _js_parse_of_args(text, k, state)
 
 
-def _js_parse_bracket_of(text, j, state):
-    """Parse `['of'](...)` / `["of"](...)` at text[j] == '[' (F476),
-    then the argument list via _js_parse_of_args. Shared by the
-    `[].constructor['of']` and `Array['of']` shapes."""
+def _js_parse_bracket_member(text, j):
+    """Parse `['<name>']` / `["<name>"]` (ws-tolerant) at text[j] == '['
+    (F476 / F480); returns (name, idx_after_rbracket).
+
+    The member name must be a non-empty ASCII identifier; anything else
+    (non-literal keys, empty strings, names with whitespace) fails
+    closed. Shared by the F476 factory member (`['of']`) and the F480
+    dispatch/member members (`['apply']`, `['call']`, `['fromCharCode']`,
+    `['assign']`). Never evals.
+    """
     n = len(text)
     j = _js_skip_ws(text, j + 1)
     if j >= n or text[j] not in "'\"":
         raise _JSExprFail("member not a string literal")
     q = text[j]
-    if not text.startswith("of", j + 1):
-        raise _JSExprFail("member not of")
-    j += 3
-    if j >= n or text[j] != q:
+    k = j + 1
+    while k < n and text[k] in _JS_IDENT_CONT:
+        k += 1
+    name = text[j + 1:k]
+    if not name:
+        raise _JSExprFail("empty member name")
+    if k >= n or text[k] != q:
         raise _JSExprFail("unterminated member string")
-    j = _js_skip_ws(text, j + 1)
+    j = _js_skip_ws(text, k + 1)
     if j >= n or text[j] != "]":
         raise _JSExprFail("unterminated member bracket")
-    j = _js_skip_ws(text, j + 1)
-    # The member name is already verified to be exactly 'of' --
-    # go straight to the argument list.
-    return _js_parse_of_args(text, j, state)
+    return name, _js_skip_ws(text, j + 1)
 
 
 def _js_parse_ctor_factory(text, i, state):
-    """Parse '[].constructor.of(...)' / '[].constructor['of'](...)' /
-    'Array['of'](...)' / 'Array["of"](...)' at text[i] (F476).
+    """Parse '[].constructor.<member>(...)' / '[].constructor[<member>](...)'
+    at text[i] (F476 / F480).
 
     Desugars the constructor-property factory path to the fragment list:
-    `[].constructor` is engine-identical to `Array`, and `Array['of']` is
-    engine-identical to `Array.of` (node v24.20.0 verified). The argument
+    `[].constructor` is engine-identical to `Array`, and `['of']` is
+    engine-identical to `.of` (node v24.20.0 verified). The argument
     list reuses the F446 string-literal-only grammar (_js_parse_of_args):
     numeric, nested, or additive args fail closed (same scope boundary as
     _js_parse_array_of -- `[].constructor.of(1)` node-evaluates to `[1]`
-    but is refused, consistent with F446's Array.of(1) refusal). Only
-    the `of` member is modeled: `[].constructor.from('a','b')` throws
+    but is refused, consistent with F446's Array.of(1) refusal). The
+    F480 dispatch members (`apply`/`call`, dot or bracket-string) route
+    to the constructor-dispatch parser. Only the `of`/`apply`/`call`
+    members are modeled: `[].constructor.from('a','b')` throws
     TypeError in the engine (from's second arg must be a function), so
     `from` with string args fails closed -- it is never mis-decoded as
     `of`; `[].constructor.from(['a','b'])` needs no factory model: the
@@ -2972,55 +2995,305 @@ def _js_parse_ctor_factory(text, i, state):
     array-literal + `.join` path (the `from(` wrapper is copied verbatim
     around it, node agrees on the joined text), so find_credential flags
     it without any constructor-property modeling (documented, not
-    filed). The `of`/`constructor` names are
-    ident-boundary-checked (`[].constructor.ofx`, `Array['ofx']` fail
-    closed); computed member access with non-literal keys (`Array[x]`)
-    and `Array.prototype.constructor` chains fail closed; only the exact
-    `[]` receiver is modeled (`.constructor` on any other receiver --
-    including non-empty array literals, which are engine-valid -- fails
-    closed as a documented residual); whitespace is tolerated between
-    every token of the factory call itself, exactly as the engine
-    allows (the following method chain follows the decoder's existing
-    postfix whitespace rules -- no space before the '.', as with every
-    other modeled method). Never evals.
+    filed). The `of`/`apply`/`call`/`constructor` names are
+    ident-boundary-checked (`[].constructor.ofx`, `[].constructor['ofx']`
+    fail closed); computed member access with non-literal keys
+    (`[].constructor[x]`) and `Array.prototype.constructor` chains fail
+    closed; only the exact `[]` receiver is modeled (`.constructor` on
+    any other receiver -- including non-empty array literals, which are
+    engine-valid -- fails closed as a documented residual); whitespace
+    is tolerated between every token of the factory call itself, exactly
+    as the engine allows (the following method chain follows the
+    decoder's existing postfix whitespace rules -- no space before the
+    '.', as with every other modeled method). The `Array[<member>]`
+    receiver form is handled by _js_parse_array_bracket_dispatch.
+    Never evals.
     """
     n = len(text)
     if state.get("in_array"):
         raise _JSExprFail("Array inside array literal")
-    if text[i] == "[":
-        # [].constructor.of(...) -- exact empty-array receiver.
-        j = _js_skip_ws(text, i + 1)
-        if j >= n or text[j] != "]":
-            raise _JSExprFail("not an empty-array receiver")
-        j = _js_skip_ws(text, j + 1)
-        if j >= n or text[j] != ".":
-            raise _JSExprFail("no dot after []")
-        j = _js_skip_ws(text, j + 1)
-        if not text.startswith("constructor", j):
-            raise _JSExprFail("not constructor")
-        j += len("constructor")
-        if j < n and text[j] in _JS_IDENT_CONT:
-            raise _JSExprFail("constructorx is not constructor")
-        j = _js_skip_ws(text, j)
-        if j < n and text[j] == "[":
-            # [].constructor['of'](...) -- bracket-string member on the
-            # constructor property (composition of the two modeled forms).
-            return _js_parse_bracket_of(text, j, state)
-        if j >= n or text[j] != ".":
-            raise _JSExprFail("no dot after constructor")
-        j = _js_skip_ws(text, j + 1)
-    else:
-        # Array['of'](...) / Array["of"](...) -- bracket-string member.
-        j = _js_skip_ws(text, i + len("Array"))
-        if j >= n or text[j] != "[":
-            raise _JSExprFail("Array without bracket")
-        return _js_parse_bracket_of(text, j, state)
-    if not text.startswith("of", j):
-        raise _JSExprFail("not of")
-    j += 2
+    # [].constructor.<member> -- exact empty-array receiver.
+    j = _js_skip_ws(text, i + 1)
+    if j >= n or text[j] != "]":
+        raise _JSExprFail("not an empty-array receiver")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("no dot after []")
+    j = _js_skip_ws(text, j + 1)
+    if not text.startswith("constructor", j):
+        raise _JSExprFail("not constructor")
+    j += len("constructor")
     if j < n and text[j] in _JS_IDENT_CONT:
-        raise _JSExprFail("ofx is not of")
-    return _js_parse_of_args(text, j, state)
+        raise _JSExprFail("constructorx is not constructor")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        # [].constructor['of'] / [].constructor['apply'] -- bracket-string
+        # member on the constructor property.
+        name, j = _js_parse_bracket_member(text, j)
+    elif j < n and text[j] == ".":
+        j = _js_skip_ws(text, j + 1)
+        name, j = _js_parse_ident(text, j)
+    else:
+        raise _JSExprFail("no member after constructor")
+    if name == "of":
+        return _js_parse_of_args(text, j, state)
+    if name in ("apply", "call"):
+        # F480: [].constructor['apply']([].constructor, [...]) --
+        # constructor-function dispatch through the constructor property.
+        return _js_parse_ctor_apply(text, i, state)
+    raise _JSExprFail("constructor member not modeled")
+
+
+def _js_parse_array_bracket_dispatch(text, i, state):
+    """Parse 'Array[<member>](...)' at text[i] (F476 / F480).
+
+    Dispatches on the bracket-string member name: 'of' reuses the F446
+    factory grammar (F476); 'apply'/'call' route to the F480
+    constructor-dispatch parser. Anything else fails closed. Never
+    evals.
+    """
+    n = len(text)
+    if state.get("in_array"):
+        raise _JSExprFail("Array inside array literal")
+    j = _js_skip_ws(text, i + len("Array"))
+    if j < n and text[j] in _JS_IDENT_CONT:
+        raise _JSExprFail("Arrayx is not Array")
+    name, j = _js_parse_bracket_member(text, j)
+    if name == "of":
+        return _js_parse_of_args(text, j, state)
+    if name in ("apply", "call"):
+        return _js_parse_ctor_apply(text, i, state)
+    raise _JSExprFail("Array bracket member not modeled")
+
+
+def _js_parse_string_literal_list(text, j, state, closer):
+    """Parse `lit (, lit)* <closer>` -- a string-literal-only argument
+    list (F454 / F446 / F480 grammar); returns (elements, idx_after_closer).
+
+    Every element must be a string literal -- numeric, nested, marker,
+    additive, or template args fail closed (documented scope boundary:
+    rejected, never mis-decoded -- the same fail-closed classes as the
+    F454 multi-arg Array constructor and the F446 Array.of factory, so
+    any desugar reusing this grammar is faithful to its direct form --
+    no F481-class composition gap). Zero elements (empty list) is the
+    empty list. Element count is charged to the part budget. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    elements = []
+    if j < n and text[j] == closer:
+        return elements, j + 1
+    while True:
+        if j >= n or text[j] not in "'\"`":
+            raise _JSExprFail("arg not a string literal")
+        frag, j = _js_parse_string(text, j)  # backtick raises: fail closed
+        elements.append(frag)
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("unterminated args")
+        if text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            continue
+        if text[j] == closer:
+            return elements, j + 1
+        raise _JSExprFail("bad args")
+
+
+def _js_parse_array_ctor_ref(text, j):
+    """Parse exactly 'Array' / '[].constructor' at text[j] (F480);
+    returns the end index.
+
+    Only the bare constructor reference is modeled: 'Arrayx',
+    '[1].constructor', 'Array.prototype.constructor', and any other
+    receiver fail closed (documented scope boundary). Never evals.
+    """
+    n = len(text)
+    if j < n and text[j] == "[" and _js_is_ctor_recv(text, j):
+        k = _js_skip_ws(text, j + 1)    # ']'
+        k = _js_skip_ws(text, k + 1)    # '.'
+        k = _js_skip_ws(text, k + 1)    # 'constructor'
+        return k + len("constructor")
+    if text.startswith("Array", j):
+        k = j + len("Array")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("Arrayx is not the Array constructor")
+        return k
+    raise _JSExprFail("not the Array constructor")
+
+
+def _js_parse_ctor_apply(text, i, state):
+    """Parse 'Array.apply(Array, [...])' / 'Array.call(Array, ...)' and the
+    bracket-string-member / '[].constructor' receiver variants at text[i]
+    (F480); returns (_JSArr, next_index).
+
+    Desugars the constructor-function dispatch: node-evaluated
+    (v24.20.0), the Array constructor called as a plain function with an
+    argument list is engine-identical to the multi-argument Array
+    constructor (F454):
+      Array.apply(Array, ['a','b']) === Array.call(Array, 'a','b')
+        === Array['apply'](Array, ['a','b'])
+        === [].constructor['apply']([].constructor, ['a','b'])
+        === Array('a', 'b')
+    so the argument list reuses the F454 string-literal-only grammar
+    (_js_parse_string_literal_list): numeric, nested, marker, or
+    additive args fail closed -- the SAME fail-closed classes as the
+    direct form, so the desugar is faithful (no F481-class gap).
+
+    Bounds (all fail closed -- documented scope boundary: rejected,
+    never mis-decoded):
+    - Receiver: exactly the Array constructor or [].constructor
+      (_js_parse_array_ctor_ref). Array.prototype.apply and
+      user-function receivers are F478 territory or unmodeled --
+      fail closed.
+    - Member: .apply / .call / ['apply'] / ['call'] (ws-tolerant,
+      ident-boundary-checked). Any other member fails closed.
+    - thisArg (the dispatch's first argument): exactly the Array
+      constructor / [].constructor. Node ignores thisArg for the Array
+      constructor, but anything else fails closed (conservative --
+      documented residual, never mis-decoded).
+    - apply takes a single argsArray '[' ... ']' of string literals;
+      call takes the arguments inline (zero args is the empty array,
+      engine-exact). A second apply argument, a missing comma, or
+      non-literal args fail closed.
+    Never evals.
+    """
+    n = len(text)
+    if state.get("in_array"):
+        raise _JSExprFail("Array inside array literal")
+    j = _js_parse_array_ctor_ref(text, i)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ".":
+        k = _js_skip_ws(text, j + 1)
+        name, k = _js_parse_ident(text, k)
+        j = k
+    elif j < n and text[j] == "[":
+        name, j = _js_parse_bracket_member(text, j)
+    else:
+        raise _JSExprFail("constructor dispatch without member")
+    if name not in ("apply", "call"):
+        raise _JSExprFail("constructor dispatch member not apply/call")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("constructor dispatch without paren")
+    j = _js_skip_ws(text, j + 1)
+    j = _js_parse_array_ctor_ref(text, j)  # thisArg: exactly Array
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("constructor dispatch without thisArg comma")
+    j = _js_skip_ws(text, j + 1)
+    if name == "apply":
+        if j >= n or text[j] != "[":
+            raise _JSExprFail("apply argsArray not an array")
+        elements, j = _js_parse_string_literal_list(text, j + 1, state,
+                                                     "]")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ")":
+            raise _JSExprFail("constructor dispatch with extra args")
+        return _JSArr(elements), j + 1
+    if j < n and text[j] == ")":
+        elements, j = [], j + 1  # Array.call(Array) === Array() === []
+    else:
+        elements, j = _js_parse_string_literal_list(text, j, state, ")")
+    return _JSArr(elements), j
+
+
+def _js_parse_reflect_apply_ctor(text, i, depth, state):
+    """Parse 'Reflect.apply(Array, Array, [...])' /
+    "Reflect['apply'](Array, Array, [...])" at text[i] (F480);
+    returns (_JSArr, next_index).
+
+    Desugar: Reflect.apply(Array, thisArg, argsList) calls the Array
+    constructor as a plain function with the argsList elements as its
+    arguments -- node-evaluated (v24.20.0):
+      Reflect.apply(Array, Array, [['a'],['b']]) === Array(['a'],['b'])
+      Reflect.apply(Array, Array, ['a','b'])     === Array('a','b')
+    The thisArg is ignored by the Array constructor in node; we
+    conservatively require exactly Array / [].constructor and fail
+    closed on anything else. Each argsList element is one constructor
+    argument: a string literal or a string-literal array literal (the
+    F468 element grammar via _js_parse_string_literal_array -- nested
+    _JSArr elements survive through the F479 join coercion,
+    engine-exact). Numeric, marker, additive, template, or
+    doubly-nested elements fail closed -- the same classes the
+    F454/F468 grammars fail closed on, so the desugar is faithful.
+    A fourth argument fails closed. Never evals.
+    """
+    n = len(text)
+    j = i + len("Reflect")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        raise _JSExprFail("Reflectx is not Reflect")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        # F480: Reflect['apply'](...) -- the bracket form is routed here
+        # by _js_parse_reflect_call, which already verified the member
+        # name; re-verify (defense-in-depth: the dispatch cannot
+        # mis-route).
+        _mname, j = _js_parse_bracket_member(text, j)
+        if _mname != "apply":
+            raise _JSExprFail("Reflect bracket member not apply")
+    else:
+        if j >= n or text[j] != ".":
+            raise _JSExprFail("Reflect without dot")
+        j = _js_skip_ws(text, j + 1)
+        if not text.startswith("apply", j):
+            raise _JSExprFail("Reflect without apply")
+        k = j + len("apply")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("applyx is not apply")
+        j = _js_skip_ws(text, k)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("Reflect.apply without paren")
+    j = _js_skip_ws(text, j + 1)
+    j = _js_parse_array_ctor_ref(text, j)  # target: exactly Array
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("Reflect.apply without thisArg")
+    j = _js_skip_ws(text, j + 1)
+    j = _js_parse_array_ctor_ref(text, j)  # thisArg: exactly Array
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("Reflect.apply without argsList")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("Reflect.apply argsList not an array")
+    j = _js_skip_ws(text, j + 1)
+    elements = []
+    if j < n and text[j] == "]":
+        j += 1
+    else:
+        while True:
+            if j < n and text[j] in "'\"":
+                frag, j = _js_parse_string(text, j)
+                elements.append(frag)
+            elif j < n and text[j] == "[":
+                sub, j = _js_parse_string_literal_array(text, j, state)
+                elements.append(sub)
+            else:
+                raise _JSExprFail("Reflect.apply arg not decodable")
+            # Parts are charged per argsList element on top of the parts
+            # the element sub-parsers already charged (intentional double
+            # charge: the budget trips sooner, i.e. fails closed sooner
+            # -- do not "dedupe"; F469 precedent).
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            j = _js_skip_ws(text, j)
+            if j >= n:
+                raise _JSExprFail("unterminated Reflect.apply args")
+            if text[j] == ",":
+                j = _js_skip_ws(text, j + 1)
+                continue
+            if text[j] == "]":
+                j += 1
+                break
+            raise _JSExprFail("bad Reflect.apply args")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("Reflect.apply with extra args")
+    return _JSArr(elements), j + 1
 
 
 def _js_is_ctor_recv(text, i):
@@ -3071,6 +3344,16 @@ def _js_parse_array_constructor(text, i, state):
     n = len(text)
     j = _js_skip_ws(text, i + len("Array"))
     if j < n and text[j] == ".":
+        # F480: Array.apply(Array, ...) / Array.call(Array, ...) route to
+        # the constructor-dispatch parser; 'of' keeps the F446 factory;
+        # anything else falls through to _js_parse_array_of, which fails
+        # closed ("Array not of").
+        _mk = _js_skip_ws(text, j + 1)
+        for _mname in ("apply", "call"):
+            _me = _mk + len(_mname)
+            if text.startswith(_mname, _mk) and \
+                    (_me >= n or text[_me] not in _JS_IDENT_CONT):
+                return _js_parse_ctor_apply(text, i, state)
         return _js_parse_array_of(text, i, state)
     if state.get("in_array"):
         raise _JSExprFail("Array inside array literal")
@@ -3082,25 +3365,11 @@ def _js_parse_array_constructor(text, i, state):
     if j < n and text[j] in "'\"`":
         # F454: multi-argument constructor -- parse the string-literal
         # argument list exactly like _js_parse_array_of's (same
-        # budgets, same fail-closed arg classes).
-        elements = []
-        while True:
-            if j >= n or text[j] not in "'\"`":
-                raise _JSExprFail("Array arg not a string literal")
-            frag, j = _js_parse_string(text, j)
-            elements.append(frag)
-            state["parts"] += 1
-            if state["parts"] > _JS_EXPR_MAX_PARTS:
-                raise _JSExprFail("too many parts")
-            j = _js_skip_ws(text, j)
-            if j >= n:
-                raise _JSExprFail("unterminated Array")
-            if text[j] == ",":
-                j = _js_skip_ws(text, j + 1)
-                continue
-            if text[j] == ")":
-                return _JSArr(elements), j + 1
-            raise _JSExprFail("bad Array args")
+        # budgets, same fail-closed arg classes). The shared helper
+        # keeps the F480 constructor-dispatch desugar faithful to this
+        # direct form.
+        elements, j = _js_parse_string_literal_list(text, j, state, ")")
+        return _JSArr(elements), j
     count, j = _js_parse_number(text, j)
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ")":
@@ -3387,14 +3656,60 @@ def _js_parse_reflect_call(text, i, depth, state):
     if j < n and text[j] in _JS_IDENT_CONT:
         raise _JSExprFail("Reflectx is not Reflect")
     j = _js_skip_ws(text, j)
-    if j >= n or text[j] != ".":
-        raise _JSExprFail("Reflect without dot")
-    j = _js_skip_ws(text, j + 1)
-    if text.startswith("construct", j):
-        return _js_parse_reflect_construct(text, i, depth, state)
-    if text.startswith("apply", j):
+    if j < n and text[j] == "[":
+        # F480: Reflect['apply'](...) -- bracket-string member access,
+        # node-identical to the dot form. Only 'apply' is modeled in
+        # bracket form; Reflect['construct'] fails closed (documented
+        # scope boundary -- rejected, never mis-decoded).
+        _mname, j = _js_parse_bracket_member(text, j)
+        if _mname != "apply":
+            raise _JSExprFail("Reflect bracket member not modeled")
+    else:
+        if j >= n or text[j] != ".":
+            raise _JSExprFail("Reflect without dot")
+        j = _js_skip_ws(text, j + 1)
+        if text.startswith("construct", j):
+            return _js_parse_reflect_construct(text, i, depth, state)
+        if not text.startswith("apply", j):
+            raise _JSExprFail("Reflect without construct/apply")
+        k = j + len("apply")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("applyx is not apply")
+        j = k
+    # Member is 'apply' (dot or bracket form): the TARGET selects the
+    # desugar. Peek past the target's head: Array.prototype... is the
+    # F469 concat-application path; the bare Array constructor is the
+    # F480 constructor-dispatch path. The callees re-parse from i
+    # (defense-in-depth); a mis-route here always fails closed inside
+    # the callee.
+    if _js_peek_reflect_apply_target(text, j) == "concat":
         return _js_parse_reflect_apply_concat(text, i, depth, state)
-    raise _JSExprFail("Reflect without construct/apply")
+    return _js_parse_reflect_apply_ctor(text, i, depth, state)
+
+
+def _js_peek_reflect_apply_target(text, j):
+    """Peek the Reflect.apply target at the '(' following the member name.
+
+    Returns "concat" when the target head is `Array.` (the F469
+    `Array.prototype.concat` path) and "ctor" when it is the bare `Array`
+    constructor (the F480 dispatch path). Routing peek only -- the
+    callees re-parse from the call start and fail closed on anything
+    unexpected. Raises _JSExprFail when the target is not Array-headed.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("Reflect.apply without paren")
+    j = _js_skip_ws(text, j + 1)
+    if not text.startswith("Array", j):
+        raise _JSExprFail("Reflect.apply non-Array target")
+    k = j + len("Array")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("Reflect.apply non-Array target")
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ".":
+        return "concat"
+    return "ctor"
 
 
 def _js_parse_object_assign(text, i, depth, state):
@@ -3436,6 +3751,18 @@ def _js_parse_object_assign(text, i, depth, state):
     k = j + len("assign")
     if k < n and text[k] in _JS_IDENT_CONT:
         raise _JSExprFail("assignx is not assign")
+    return _js_parse_object_assign_args(text, k, depth, state)
+
+
+def _js_parse_object_assign_args(text, k, depth, state):
+    """Parse the '([], <src>)' argument list of an Object.assign-shaped
+    array-copy factory (F471 / F480); returns (_JSArr, next_index).
+
+    Shared by the dot form (`Object.assign(...)`) and the bracket-string
+    member form (`Object['assign'](...)`, F480 -- node-identical). The
+    F471 target/source grammar is unchanged.
+    """
+    n = len(text)
     j = _js_skip_ws(text, k)
     if j >= n or text[j] != "(":
         raise _JSExprFail("Object.assign without paren")
@@ -5138,6 +5465,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             raise _JSExprFail("template literal arg")
         val, i = _js_parse_template(text, i, depth, state)
         return _js_parse_postfix(text, i, val, depth, state)
+    if text.startswith("String", i):
+        # F480: String['fromCharCode'](...) -- bracket-string member
+        # access, engine-identical to the dot form (node v24.20.0
+        # verified). Only 'fromCharCode' is modeled; any other bracket
+        # member fails closed. The ident-boundary check keeps Stringx
+        # failing closed.
+        _sj = _js_skip_ws(text, i + len("String"))
+        if _sj < len(text) and text[_sj] in _JS_IDENT_CONT:
+            raise _JSExprFail("Stringx is not String")
+        if _sj < len(text) and text[_sj] == "[":
+            _mname, _mj = _js_parse_bracket_member(text, _sj)
+            if _mname != "fromCharCode":
+                raise _JSExprFail("String bracket member not modeled")
+            val, i = _js_parse_fromcharcode_args(text, _mj)
+            state["ops"] += 1  # the call itself is obfuscation-shaped
+            return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("String.fromCharCode", i):
         val, i = _js_parse_fromcharcode(text, i)
         state["ops"] += 1  # the call itself is obfuscation-shaped
@@ -5178,11 +5521,14 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # F454: Array('a','b',...) multi-arg constructor (incl. ws-
         # tolerant .of anchor, F455). F476: Array['of'](...) /
         # Array["of"](...) bracket-member factory (ws-tolerant bracket).
-        # startswith alone admits Arrayfoo, which the constructor
-        # parse then fails closed (no paren / no .of / no bracket).
+        # F480: Array.apply(Array, ...) / Array.call(Array, ...) /
+        # Array['apply'](...) / Array['call'](...) constructor-function
+        # dispatch (ws-tolerant dot/bracket). startswith alone admits
+        # Arrayfoo, which the constructor parse then fails closed
+        # (no paren / no .of / no bracket).
         _k = _js_skip_ws(text, i + len("Array"))
         if _k < len(text) and text[_k] == "[":
-            val, i = _js_parse_ctor_factory(text, i, state)
+            val, i = _js_parse_array_bracket_dispatch(text, i, state)
             state["ops"] += 1  # the factory call is obfuscation-shaped
             return _js_parse_postfix(text, i, val, depth, state)
         val, i = _js_parse_array_constructor(text, i, state)
@@ -5199,6 +5545,20 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         state["ops"] += 1  # the Reflect call is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("Object", i):
+        # F480: Object['assign'](...) -- bracket-string member access,
+        # engine-identical to the dot form (node v24.20.0 verified).
+        # Only 'assign' is modeled; any other bracket member fails
+        # closed. The ident-boundary check keeps Objectx failing closed.
+        _sj = _js_skip_ws(text, i + len("Object"))
+        if _sj < len(text) and text[_sj] in _JS_IDENT_CONT:
+            raise _JSExprFail("Objectx is not Object")
+        if _sj < len(text) and text[_sj] == "[":
+            _mname, _mj = _js_parse_bracket_member(text, _sj)
+            if _mname != "assign":
+                raise _JSExprFail("Object bracket member not modeled")
+            val, i = _js_parse_object_assign_args(text, _mj, depth, state)
+            state["ops"] += 1  # the assign call is obfuscation-shaped
+            return _js_parse_postfix(text, i, val, depth, state)
         # F471: Object.assign([], <src>) array-copy factory --
         # desugars to the source's element list. startswith alone
         # admits Objectx, which the parser then fails closed

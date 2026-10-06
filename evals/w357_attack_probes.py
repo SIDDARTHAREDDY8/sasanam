@@ -106,12 +106,13 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F478, F479, F480 open, next F481 (wave-357
-    lane 3: F480 constructor-dispatch/bracket-access filed)."""
+    """Control: footer shows F481 open, next F482 (wave-358 lane 1:
+    F480 constructor-dispatch/bracket-access CLOSED locally; merge
+    finalizes tree-wide)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F482**" in text
-          and "**Open findings: F480, F481.**" in text)
+          and "**Open findings: F481.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -182,39 +183,40 @@ def test_b2_f479_join_coercion_closed():
     return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)  # Wave-357 merge: F479 CLOSED
 
 
-# ------------------------------------------------- F480 open pins
+# ------------------------------------------------- F480 closed pins
 
 @_t
 def test_b3_f480_apply_ctor_open():
-    """F480 pinned OPEN (wave-357 lane 3): Array.apply constructor
-    dispatch still misses."""
+    """F480 CLOSED (wave-358 lane 1): Array.apply constructor
+    dispatch now blocked."""
     hit = _blocked("Array.apply(Array, ['" + _A + "','" + _B + "']).join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "blocked=%s" % hit)  # Wave-358 lane 1: F480 CLOSED
 
 
 @_t
 def test_b3_f480_call_ctor_bracket_open():
-    """F480 pinned OPEN: Array['call'] constructor dispatch still
-    misses."""
+    """F480 CLOSED (wave-358 lane 1): Array['call'] constructor dispatch
+    now blocked."""
     hit = _blocked("Array['call'](Array, '" + _A + "','" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "blocked=%s" % hit)  # Wave-358 lane 1: F480 CLOSED
 
 
 @_t
 def test_b3_f480_fcc_bracket_open():
-    """F480 pinned OPEN: String['fromCharCode'] bracket access still
-    misses."""
+    """F480 CLOSED (wave-358 lane 1): String['fromCharCode'] bracket access
+    now blocked."""
     codes = [120, 111, 120, 98, 45, 48, 49, 50, 51, 52, 53, 54, 55, 56,
              57, 97, 98, 99, 100, 101, 102]
     hit = _blocked("String['fromCharCode'](%s)" % ",".join(str(c) for c in codes))
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "blocked=%s" % hit)  # Wave-358 lane 1: F480 CLOSED
 
 
 @_t
 def test_b3_f480_assign_bracket_open():
-    """F480 pinned OPEN: Object['assign'] bracket access still misses."""
+    """F480 CLOSED (wave-358 lane 1): Object['assign'] bracket access
+    now blocked."""
     hit = _blocked("Object['assign']([], ['" + _A + "','" + _B + "']).join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "blocked=%s" % hit)  # Wave-358 lane 1: F480 CLOSED
 
 
 # ------------------------------------------------- green check (depth-1)

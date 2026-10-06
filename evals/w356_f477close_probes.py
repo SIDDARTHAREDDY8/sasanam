@@ -79,7 +79,7 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-356: F477 closed; no new decision codes
-FOOTER_OPEN = "F480, F481"  # Wave-357 merge: F478, F479 CLOSED (next F481)
+FOOTER_OPEN = "F481"  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 lane 1: F480 CLOSED locally (merge finalizes tree-wide)
 FOOTER_NEXT = "F482"  # Wave-357 merge: F480 filed OPEN; next free F481
 FOOTER_NEXT = "F482"  # Wave-356 lane 2: F477 filed + CLOSED; next free F478  # Wave-356 merge: next F480  # Wave-357 merge: F478, F479 CLOSED (next F481)
 
@@ -286,7 +286,10 @@ def p3_no_new_regexes():
     import re as _re
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     n_compile = len(_re.findall(r"re\.compile\(", src))
-    anchor_ok = "String[ \\t\\n\\r]*\\(" in src
+    # F480 (wave-358 lane 1): the String( anchor widened to also cover
+    # the bracket-string member form (String['...']); pin the widened
+    # shape, still character-class-only.
+    anchor_ok = "String[ \\t\\n\\r]*(\\(|\\[[ \\t\\n\\r]*['\\\"])" in src
     ok = (n_compile == 28 and anchor_ok)
     return ("HELD" if ok else "BREAK",
             "re.compile=%d anchor=%s" % (n_compile, anchor_ok))

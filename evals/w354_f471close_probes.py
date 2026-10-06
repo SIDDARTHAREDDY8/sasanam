@@ -302,10 +302,18 @@ def p3_pin_no_new_regexes():
 
 def p3_pin_anchor_char_class_only():
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
-    i = src.find("Object[")
-    assert i > 0, "Object anchor alternative missing"
-    alt = src[i:i + 60]
-    return alt.startswith("Object[ \\t\\n\\r]*\\.[ \\t\\n\\r]*assign")
+    i = src.find("_JS_EXPR_START = re.compile(")
+    assert i > 0, "_JS_EXPR_START line missing"
+    line = src[i:src.find("\n", i)]
+    j = line.find("Object(")
+    assert j > 0, "Object anchor alternative missing"
+    alt = line[j:j + 80]
+    # F480 (wave-358 lane 1): the Object alternative gained the
+    # bracket-string member form; still character-class-only (the
+    # F468 precedent) -- no nested quantifiers.
+    return alt.startswith(
+        "Object([ \\t\\n\\r]*\\.[ \\t\\n\\r]*assign|"
+        "[ \\t\\n\\r]*\\[[ \\t\\n\\r]*['\\\"])")
 
 
 def p3_pin_f441_ordering_untouched():
