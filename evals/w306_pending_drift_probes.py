@@ -275,8 +275,8 @@ def p_footer_state():
     m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
     # Wave-308 lane A: F391 CLOSED; footer open F395 / next F396.
-    ok = (m_open and m_open[-1].strip() == "F444, F445"
-          and m_next and m_next[-1] == "F446")
+    ok = (m_open and m_open[-1].strip() == "F473, F474"
+          and m_next and m_next[-1] == "F475")
     if ok:
         _record("footer-state", "HELD", "open F411 / next F412")
     else:

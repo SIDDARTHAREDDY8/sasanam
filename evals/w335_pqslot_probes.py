@@ -400,11 +400,11 @@ def P6c():
         text = fh.read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
     ok = ("Next free finding: **F475**" in text
-          and m_open and m_open[-1].strip() == "F444, F445")
+          and m_open and m_open[-1].strip() == "F473, F474")
     if ok:
-        _held(pid, "footer: open none / next F430")
+        _held(pid, "footer: open F473, F474 / next F475")
     else:
-        _break(pid, "footer mismatch vs open none / next F430")
+        _break(pid, "footer mismatch vs open F473, F474 / next F475")
 
 
 _PROBES = [

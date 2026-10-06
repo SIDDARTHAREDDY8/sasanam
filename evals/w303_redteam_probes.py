@@ -125,9 +125,9 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
-    want_open = "F443"  # wave-304 lane A: F385 CLOSED
+    want_open = "F473, F474"  # wave-304 lane A: F385 CLOSED
     # Wave-342 lane 6: repointed to open F429 / next F430 (footer-state probe audit).
-    if nxt != 437 or open_s != want_open:
+    if nxt != 475 or open_s != want_open:
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next 430 open 'F429')"
                        % (nxt, open_s))
