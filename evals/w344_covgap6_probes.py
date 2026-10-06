@@ -128,7 +128,7 @@ def p0():
         return
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    want_open = "Open findings: %s." % ", ".join(FOOTER_OPEN)
+    want_open = "F489, F490, F491, F492, F493, F494, F495" % ", ".join(FOOTER_OPEN)
     want_next = "Next free finding: **%s**." % FOOTER_NEXT
     if want_open in text and want_next in text:
         _held("P0-footer", "pin %d/%d/0 sorted-unique; footer %s / next %s"

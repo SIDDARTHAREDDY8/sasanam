@@ -310,9 +310,9 @@ def p_footer_state():
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
     m_open = re.findall(r"Open findings: ([^.]*)", text)
     # Footer lines repeat through history; the LAST one is current.
-    # Wave-316 merge footer: F398/F399/F400 CLOSED; F401/F402/F403 OPEN; next F404.
-    ok = (m_next and m_next[-1] == "F489"
-          and m_open and m_open[-1].strip() == "F482, F483, F484, F485, F486, F487, F488")
+    # Wave-359 merge: F482-F488 CLOSED; F489-F495 OPEN; next F496.
+    ok = (m_next and m_next[-1] == "F496"
+          and m_open and m_open[-1].strip() == "F489, F490, F491, F492, F493, F494, F495")
     _record("footer-state", "HELD" if ok else "BREAK",
             "open F412 / next F413" if ok else "footer drift")
 

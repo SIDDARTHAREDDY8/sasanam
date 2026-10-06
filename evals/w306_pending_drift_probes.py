@@ -274,9 +274,9 @@ def p_footer_state():
         text = fh.read()
     m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-    # Wave-308 lane A: F391 CLOSED; footer open F395 / next F396.
-    ok = (m_open and m_open[-1].strip() == "F482, F483, F484, F485, F486, F487, F488"
-          and m_next and m_next[-1] == "F489")
+    # Wave-359 merge: F482-F488 CLOSED; F489-F495 OPEN; next F496.
+    ok = (m_open and m_open[-1].strip() == "F489, F490, F491, F492, F493, F494, F495"
+          and m_next and m_next[-1] == "F496")
     if ok:
         _record("footer-state", "HELD", "open F411 / next F412")
     else:
@@ -290,11 +290,11 @@ def p_green_checks():
     green_check.check_battery(
         _record, "green-w303-f387", "evals/w303_f387_probes.py",
         repo=REPO, expect_break_ids=())
-    # Wave-306 merge: F389 CLOSED -- w304 reports 0 BREAKs.
+    # Wave-359 merge: F482-F488 CLOSED; F489-F495 OPEN; next F496.
     green_check.check_battery(
         _record, "green-w304-redteam", "evals/w304_redteam_probes.py",
         repo=REPO, expect_break_ids=())
-    # Wave-306 merge: F389 CLOSED -- w305 reports 0 BREAKs.
+    # Wave-359 merge: F482-F488 CLOSED; F489-F495 OPEN; next F496.
     green_check.check_battery(
         _record, "green-w305-redteam", "evals/w305_redteam_probes.py",
         repo=REPO, expect_break_ids=())

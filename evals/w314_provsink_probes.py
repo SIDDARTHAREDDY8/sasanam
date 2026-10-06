@@ -385,10 +385,10 @@ def footer_state():
     # Footer lines repeat through history; the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
     ok = ("Next free finding: **F496**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
-          and m_open and m_open[-1].strip() == "F482, F483, F484, F485, F486, F487, F488")
+          and m_open and m_open[-1].strip() == "F489, F490, F491, F492, F493, F494, F495")
     _held("footer-state", ok,
           "footer: open F436 / next F437" if ok
-          else "footer mismatch vs open F429 / next F430")
+          else "footer mismatch vs open F489, F490, F491, F492, F493, F494, F495 / next F496")
 
 
 PROBES = [label_roundtrip, label_tamper_content, label_tamper_trust,
