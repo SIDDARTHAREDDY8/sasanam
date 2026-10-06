@@ -14,11 +14,14 @@ Shapes (B1/B2/B3 = the three wave-346 attack targets):
        under the deliberate 24-char precision guard (F2/F8-era) -- the
        miss is held-by-design, not a defeat; a 52-char inner run
        blocks via the base64 layer. HELD.
-     - ['frag1','frag2'].reduce((a,b)=>a+b): evaluates to the
-       credential in any real JS engine (node-verified) while the
-       bounded static JS decoder handles only join/repeat/concat --
-       .reduce is outside F430's and F434's verified shapes. GENUINE:
-       filed as F437 (LOW, OPEN). Miss pinned as known-open.
+     - ['frag1','frag2'].reduce((a,b)=>a+b): evaluated to the
+       credential in a real JS engine (node-verified) while the
+       bounded static JS decoder handled only join/repeat/concat --
+       .reduce was outside F430's and F434's verified shapes. GENUINE:
+       filed as F437 (LOW, OPEN). CLOSED 2026-10-05 wave-347 lane 1
+       (bounded static .reduce()/.reduceRight decoder); depth-4-style
+       higher-order assembly (.map/.filter/.fill) is the documented
+       residual, filed as F443.
      - ('CRED'.split('').reverse().join('')) embeds the raw
        credential literal: the regex already matches. Dead. HELD.
   B2: multi-layer stacks (decode composes at most 2 layers deep).
@@ -33,8 +36,9 @@ Shapes (B1/B2/B3 = the three wave-346 attack targets):
        in its own single-entity variant (per-run decode spreads the
        8-candidate budget), so the fully-decoded + NUL-stripped form
        is unreachable within depth-2; html.unescape + NUL-strip
-       recovers the credential. GENUINE: filed as F438 (LOW, OPEN).
-       Miss pinned as known-open.
+       recovered the credential. GENUINE: filed as F438 (LOW, OPEN).
+       CLOSED 2026-10-05 wave-347 lane 2 (whole-text entity+NUL
+       decode variant).
   B3: precision/normalization boundaries.
      - XOXB- uppercase prefix: misses, but an uppercase slack token
        is not a valid credential at any real endpoint -- correct
@@ -42,9 +46,11 @@ Shapes (B1/B2/B3 = the three wave-346 attack targets):
      - bidi override inside the credential: the bidi layer strips
        the override and the credential blocks. HELD.
 
-  F437/F438: filed OPEN this round; F439 filed OPEN this round, CLOSED
-  2026-10-05 wave-347 lane 3; footer now open
-  F437, F438, F440, F441, F442 / next F443. F432-F436: CLOSED.
+  F437/F438: filed OPEN this round, CLOSED 2026-10-05 wave-347 lanes
+  1/2; F439 filed OPEN this round, CLOSED 2026-10-05 wave-347 lane 3;
+  footer now open F443 / next F444 (F440/F441 CLOSED wave-347 lanes
+  4/5, F442 CLOSED wave-347 lane 6, F443 OPEN wave-347 lane 7).
+  F432-F436: CLOSED.
 
 Usage:
   ~/workspace/.gov-venv/bin/python evals/w346_attack_probes.py
@@ -123,15 +129,16 @@ def test_b1_atob_short_inner_run_held_by_design():
 
 
 @_t
-def test_b1_reduce_shape_pinned_open():
-    """F437: ['frag1','frag2'].reduce((a,b)=>a+b) evaluates to the
-    credential in a real JS engine but misses find_credential -- the
-    JS decoder handles only join/repeat/concat. Known-open miss."""
+def test_b1_reduce_shape_closed():
+    """F437 is CLOSED 2026-10-05 wave-347 lane 1: the
+    ['frag1','frag2'].reduce((a,b)=>a+b) shape now refuses coded
+    dlp-slack-token (was filed OPEN and pinned as a miss; flipped to a
+    refusal assertion on closure)."""
     payload = "['xoxb-" + "abc123','def456'].reduce((a,b)=>a+b)"
     assert _CRED not in payload
-    miss = dlp.find_credential(payload) is None
-    return ("HELD" if miss else "BREAK",
-            "F437 reduce miss reproduced=%s" % miss)
+    ok = dlp.find_credential(payload) == "dlp-slack-token"
+    return ("HELD" if ok else "BREAK",
+            "F437 reduce coded refusal=%s" % ok)
 
 
 @_t
@@ -182,18 +189,18 @@ def test_b2_bidi_plus_hex_composes():
 
 
 @_t
-def test_b2_entity_null_interleave_pinned_open():
-    """F438: entities interleaved with NUL bytes -- each decodes in its
-    own single-entity variant (budget spread), so the fully-decoded +
-    NUL-stripped form is unreachable within depth-2; html.unescape +
-    NUL-strip recovers the credential. Known-open miss."""
+def test_b2_entity_null_interleave_closed():
+    """F438: entities interleaved with NUL bytes -- CLOSED 2026-10-05
+    wave-347 lane 2. The decode layer now strips NULs and decodes
+    every entity in one whole-text variant, so the stacked form
+    blocks coded dlp-slack-token (roundtrip-verified)."""
     payload = "".join("&#x%02x;\x00" % b for b in _LONG.encode())
     assert _LONG not in payload
     recovered = html.unescape(payload).replace("\x00", "")
     assert recovered == _LONG  # real-parser roundtrip holds
-    miss = dlp.find_credential(payload) is None
-    return ("HELD" if miss else "BREAK",
-            "F438 entity+NUL miss reproduced=%s" % miss)
+    hit = dlp.find_credential(payload) == "dlp-slack-token"
+    return ("HELD" if hit else "BREAK",
+            "F438 entity+NUL now blocks coded=%s" % hit)
 
 
 # ---------------------------------------------------------------- B3: precision boundaries
@@ -219,13 +226,13 @@ def test_b3_bidi_inside_credential_blocks():
 
 @_t
 def test_z0_redfirst_scripts_print_break():
-    """The F437/F438 red-first scripts print BREAK on this tree (still
-    open); the F439 red-first script prints HELD (closed wave-347)."""
+    """The F437/F438/F439 red-first scripts print HELD on this tree
+    (closed wave-347 lanes 1/2/3)."""
     import io
     from contextlib import redirect_stdout
     ok = True
-    for mod, want in (("w346_f437_redfirst", "BREAK"),
-                      ("w346_f438_redfirst", "BREAK"),
+    for mod, want in (("w346_f437_redfirst", "HELD"),
+                      ("w346_f438_redfirst", "HELD"),
                       ("w346_f439_redfirst", "HELD")):
         path = os.path.join(REPO_ROOT, "evals", mod + ".py")
         buf = io.StringIO()
@@ -247,6 +254,8 @@ def test_z1_findings_filed_open_with_final_footer():
               for i in (7, 8))
           and "(F439 filed 2026-10-05, wave-346 lane 2" in text
           and "CLOSED 2026-10-05 wave-347 lane 3" in text
+          and "(F437 filed 2026-10-05, wave-346 lane 2" in text
+          and "CLOSED 2026-10-05 wave-347 lane 1" in text
           and "(F440 filed 2026-10-05, wave-346 lane 6" in text
           and "(F441 filed 2026-10-05, wave-346 lane 6" in text
           and "(F442 filed 2026-10-05, wave-346 lane 3" in text
@@ -281,9 +290,8 @@ def test_z3_no_paid_api_refs():
 # ---------------------------------------------------------------- green check
 
 _EXPECTED_BREAKS = set()  # this battery asserts HELD everywhere:
-# the F437/F438 misses are pinned as known-open (probe returns HELD
-# when the miss reproduces); the F439 miss probe was flipped to the
-# closure assertion (wave-347 lane 3). A literal BREAK verdict would
+# the F437/F438/F439 miss probes were flipped to closure assertions
+# (wave-347 lanes 1/2/3). A literal BREAK verdict would
 # mean a pin failed or a NEW unexpected break appeared.
 
 
