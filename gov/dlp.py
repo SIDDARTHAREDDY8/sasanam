@@ -2079,14 +2079,16 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|Array(\(|[ \t\n\r]*\.[ \t\n\r]*of)|Reflect[ \t\n\r]*\.[ \t\n\r]*construct|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|Array(\(|[ \t\n\r]*\.[ \t\n\r]*of)|Reflect[ \t\n\r]*\.[ \t\n\r]*(construct|apply)|\(")
 # F455: the Array.of factory anchor tolerates whitespace around the dot
 # ([ \t\n\r]*, exactly the _js_skip_ws class the parser skips), so
 # `Array .of(...)` / `Array\t.of(...)` / `Array\n.of(...)` /
 # `Array . of(...)` reach _js_parse_array_of -- the anchor/parser
 # contradiction is closed. F468: the same ws-tolerant anchor class
 # covers Reflect.construct, so `Reflect .construct(...)` /
-# `Reflect . construct(...)` reach _js_parse_reflect_construct. The ws
+# `Reflect . construct(...)` reach _js_parse_reflect_construct. F469:
+# the anchor class also covers Reflect.apply, so `Reflect .apply(...)` /
+# `Reflect . apply(...)` reach _js_parse_reflect_apply_concat. The ws
 # class is a character class, not a nested quantifier: matching stays
 # linear (no ReDoS surface).
 _JS_EXPR_MAX_PARTS = 64        # bound on '+' operands per expression
@@ -2739,8 +2741,8 @@ def _js_parse_reflect_construct(text, i, depth, state):
     decodes to nothing (not obfuscation-shaped, same as bare
     Array(...)). Whitespace is tolerated around the dot (F455-class,
     exactly the _js_skip_ws class), matching the _JS_EXPR_START
-    anchor. Reflect.apply is NOT in scope -- it is not parsed at all,
-    so it fails closed (documented only). Never evals.
+    anchor. Reflect.apply is parsed by _js_parse_reflect_apply_concat
+    (F469) -- this function handles construct only. Never evals.
     """
     n = len(text)
     j = i + len("Reflect")
@@ -2779,6 +2781,181 @@ def _js_parse_reflect_construct(text, i, depth, state):
         # identity -- fails closed.
         raise _JSExprFail("Reflect.construct with extra args")
     return arr, j + 1
+
+
+def _js_parse_reflect_apply_concat(text, i, depth, state):
+    """Parse 'Reflect.apply(Array.prototype.concat, <thisArg>, <argsArray>)'
+    at text[i] (F469).
+
+    Desugars the reflection-API method-application shape: node-evaluated,
+    Reflect.apply(fn, thisArg, argsArray) calls fn.apply(thisArg,
+    argsArray); with fn = Array.prototype.concat the result is
+    thisArg.concat(...argsArray) with engine-exact concat semantics --
+    each argsArray element becomes one concat argument: array arguments
+    are appended element-wise (one level only), string arguments are
+    appended as-is. The result only survives when consumed by .join()
+    etc. through _js_parse_postfix; a bare Reflect.apply(...) with no
+    call decodes to nothing (not obfuscation-shaped, same as bare
+    Array(...)).
+
+    Bounds (all fail closed -- documented scope boundary: rejected,
+    never mis-decoded):
+    - Target: exactly the bare chain Array.prototype.concat
+      (ws-tolerant dots, F455-class). Any other target (Math.max,
+      Array.prototype.push, user functions, member expressions like
+      [].concat, a bare `concat` ident) fails closed.
+    - thisArg: a string-literal array literal (via _js_parse_array) or
+      the F446/F454 Array constructor call forms (via
+      _js_parse_array_constructor); `new Array(...)` as thisArg fails
+      closed (conservative, consistent with F468). Non-array thisArg
+      fails closed; numeric elements decode through the pre-existing
+      _js_parse_array number-to-string element model (join-exact,
+      node-verified).
+    - argsArray: a '[' element-list; each element is a string literal,
+      a literal-only template literal, an array literal (via
+      _js_parse_array -- its elements are extended one level,
+      engine-exact for concat array args), or an Array constructor call
+      form (via _js_parse_array_constructor, _JSArr with all-str
+      elements). Bare numeric/additive args (`[42]`) and nested arrays
+      (`[[['a']]]`) fail closed; numerics, additives, and fromCharCode
+      nested inside array args decode through the pre-existing
+      _js_parse_array element model (join-exact, node-verified).
+    - A third argument fails closed. Whitespace is tolerated around
+      the dots (F455-class, exactly the _js_skip_ws class), matching
+      the _JS_EXPR_START anchor. No new regexes; never evals.
+    """
+    n = len(text)
+    j = i + len("Reflect")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        raise _JSExprFail("Reflectx is not Reflect")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("Reflect without dot")
+    j = _js_skip_ws(text, j + 1)
+    if not text.startswith("apply", j):
+        raise _JSExprFail("Reflect without apply")
+    k = j + len("apply")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("applyx is not apply")
+    j = _js_skip_ws(text, k)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("Reflect.apply without paren")
+    j = _js_skip_ws(text, j + 1)
+    # Target: exactly the bare chain Array.prototype.concat.
+    ident, j = _js_parse_ident(text, j)
+    if ident != "Array":
+        raise _JSExprFail("Reflect.apply non-Array target")
+    for name in ("prototype", "concat"):
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ".":
+            raise _JSExprFail("Reflect.apply target without dot")
+        j = _js_skip_ws(text, j + 1)
+        ident, j = _js_parse_ident(text, j)
+        if ident != name:
+            raise _JSExprFail("Reflect.apply non-concat target")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("Reflect.apply without thisArg")
+    j = _js_skip_ws(text, j + 1)
+    # thisArg: array literal or Array constructor call forms.
+    if j < n and text[j] == "[":
+        recv, j = _js_parse_array(text, j, depth, state)
+    elif text.startswith("Array", j):
+        recv, j = _js_parse_array_constructor(text, j, state)
+    else:
+        raise _JSExprFail("Reflect.apply thisArg not an array")
+    if not isinstance(recv, _JSArr):
+        raise _JSExprFail("Reflect.apply thisArg not an array")
+    if any(not isinstance(e, str) for e in recv.elements):
+        raise _JSExprFail("Reflect.apply thisArg non-string element")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("Reflect.apply without argsArray")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("Reflect.apply argsArray not an array")
+    j = _js_skip_ws(text, j + 1)
+    # Desugar: thisArg.concat(...argsArray) -- each argsArray element is
+    # one concat argument (array args extended one level, engine-exact).
+    elements = list(recv.elements)
+    if j < n and text[j] == "]":
+        j += 1
+    else:
+        while True:
+            if j < n and text[j] in "'\"":
+                frag, j = _js_parse_string(text, j)
+                elements.append(frag)
+            elif j < n and text[j] == "`":
+                frag, j = _js_parse_template(text, j, depth, state)
+                elements.append(frag)
+            elif j < n and text[j] == "[":
+                sub, j = _js_parse_array(text, j, depth, state)
+                if any(not isinstance(e, str) for e in sub.elements):
+                    raise _JSExprFail("Reflect.apply arg non-string element")
+                elements.extend(sub.elements)
+            elif text.startswith("Array", j):
+                sub, j = _js_parse_array_constructor(text, j, state)
+                if not isinstance(sub, _JSArr):
+                    raise _JSExprFail("Reflect.apply arg not an array")
+                if any(not isinstance(e, str) for e in sub.elements):
+                    raise _JSExprFail("Reflect.apply arg non-string element")
+                elements.extend(sub.elements)
+            else:
+                raise _JSExprFail("Reflect.apply arg not decodable")
+            # Parts are charged per argsArray element here on top of the
+            # parts the element sub-parsers already charged (intentional
+            # double charge: the budget trips sooner, i.e. fails closed
+            # sooner -- do not "dedupe").
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            j = _js_skip_ws(text, j)
+            if j >= n:
+                raise _JSExprFail("unterminated Reflect.apply args")
+            if text[j] == ",":
+                j = _js_skip_ws(text, j + 1)
+                continue
+            if text[j] == "]":
+                j += 1
+                break
+            raise _JSExprFail("bad Reflect.apply args")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        # A third argument changes the call arity -- fails closed.
+        raise _JSExprFail("Reflect.apply with extra args")
+    return _JSArr(elements), j + 1
+
+
+def _js_parse_reflect_call(text, i, depth, state):
+    """Dispatch Reflect.construct (F468) vs Reflect.apply (F469) at text[i].
+
+    Both share the F455-class ws-tolerant anchor; the method name after
+    the dot selects the parser. Anything else fails closed -- never
+    mis-decoded.
+
+    The prefix is re-parsed here even though both callees re-parse it
+    from i themselves (intentional defense-in-depth: the dispatch's
+    startswith-based method selection cannot mis-route).
+    """
+    n = len(text)
+    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+        # Engine-exact: `fooReflect.apply` is member access on
+        # `fooReflect` in node (ReferenceError for the bare global),
+        # never the global Reflect -- the _JS_EXPR_START anchor has no
+        # left boundary, so guard here. (Spec review, wave-354 lane 1.)
+        raise _JSExprFail("Reflect is a member suffix")
+    j = i + len("Reflect")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        raise _JSExprFail("Reflectx is not Reflect")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("Reflect without dot")
+    j = _js_skip_ws(text, j + 1)
+    if text.startswith("construct", j):
+        return _js_parse_reflect_construct(text, i, depth, state)
+    if text.startswith("apply", j):
+        return _js_parse_reflect_apply_concat(text, i, depth, state)
+    raise _JSExprFail("Reflect without construct/apply")
 
 
 def _js_parse_reduce_params(text, i):
@@ -3755,11 +3932,13 @@ def _js_parse_primary(text, i, depth, state):
         return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("Reflect", i):
         # F468: Reflect.construct(Array, <argsArray>) reflection-API
-        # factory -- desugars to the fragment list. startswith alone
+        # factory -- desugars to the fragment list. F469:
+        # Reflect.apply(Array.prototype.concat, <thisArg>, <argsArray>)
+        # -- desugars to thisArg.concat(...argsArray). startswith alone
         # admits Reflectx, which the parser then fails closed
         # (ident-boundary check).
-        val, i = _js_parse_reflect_construct(text, i, depth, state)
-        state["ops"] += 1  # the construct call is obfuscation-shaped
+        val, i = _js_parse_reflect_call(text, i, depth, state)
+        state["ops"] += 1  # the Reflect call is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
     if c in _ASCII_DIGITS:
         num, i = _js_parse_number(text, i)
@@ -3801,7 +3980,13 @@ def _try_js_expr_decode(text, start):
     the reflection-API factory desugared to the fragment list
     (argsArray: string-literal array literal, Array.of, or the
     F443/F454 Array constructor forms; any other target or arg class
-    fails closed)
+    fails closed), (F469) Reflect.apply(Array.prototype.concat,
+    <thisArg>, <argsArray>) -- the reflection-API method-application
+    shape desugared to thisArg.concat(...argsArray) (target exactly
+    Array.prototype.concat; thisArg/argsArray: string-literal array
+    literals or Array constructor call forms; array args extended one
+    level, engine-exact; any other target, arg class, or a third
+    argument fails closed)
 . Bounded by part, depth, codepoint, repeat, and output budgets; never
     evals; undecodable runs are ignored. A bare string literal (or an
     unjoined array literal) with no operator or call is not rewritten

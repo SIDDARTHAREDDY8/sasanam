@@ -44,8 +44,8 @@ FINDINGS.md closure notes):
   missing args / non-string args).
 - Reflectx.construct / Reflect.constructx -- fail closed
   (ident-boundary check; node throws TypeError).
-- Reflect.apply -- NOT in scope; not parsed at all, fails closed
-  (documented only).
+- Reflect.apply -- modeled only for the Array.prototype.concat target
+  (F469, wave-354); bare-Array or other targets fail closed.
 - A bare Reflect.construct(Array,['a','b']) with no chain decodes to
   nothing (not obfuscation-shaped, same as bare Array(...)).
 - Reflect.construct(Array,[]) -- the empty join fails closed, exactly
@@ -68,8 +68,8 @@ Probes:
       F454 multi-arg, F446 Array.of, F459 positional).
   P3  decoder pins: exact decode values; fail-closed neighbors yield
       no variant or stay quiet (out-of-scope comparisons, non-Array
-      targets, third arg, numeric args, Reflect.apply, bare
-      construct, ident-boundary pins).
+      targets, third arg, numeric args, bare-Array Reflect.apply target,
+      bare construct, ident-boundary pins).
   P4  discrimination: prose mentions quiet; Reflectx quiet;
       comparison on non-array quiet.
   P5  ReDoS: hostile near-miss inputs complete fast with no
@@ -100,7 +100,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2135  # Wave-353: F467+F468 closed, no new decision codes; pin unchanged 2135
-FOOTER_OPEN = "F469, F470, F471, F472"  # Wave-353 lane 4: F467+F468 CLOSED locally (merge finalizes tree-wide); wave-352 merge: F454-F460 CLOSED, F461-F468 filed OPEN (next F469)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)
+FOOTER_OPEN = "F470, F471, F472"  # Wave-353 lane 4: F467+F468 CLOSED locally (merge finalizes tree-wide); wave-352 merge: F454-F460 CLOSED, F461-F468 filed OPEN (next F469)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 lane 1: F469 CLOSED locally (merge finalizes tree-wide)
 
 FOOTER_NEXT = "F473"  # Wave-353: next free finding after F467/F468 closure  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)
 
@@ -306,7 +306,8 @@ def p3_pin_f468_target_fails():
 
 
 def p3_pin_f468_apply_quiet():
-    # Reflect.apply is out of scope: no variant, stays quiet.
+    # Reflect.apply with a bare-Array target is still out of scope: no
+    # variant, stays quiet (F469 models only Array.prototype.concat).
     r = dlp._try_js_expr_decode("Reflect.apply(Array,['f1','f2'])"
                                 ".join('')", 0)
     return r is None
