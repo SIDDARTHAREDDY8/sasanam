@@ -220,9 +220,12 @@ def p3_no_new_regexes():
         r"Array[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"String[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Reflect([ \t\n\r]*\.[ \t\n\r]*(construct|apply)|[ \t\n\r]*\[[ \t\n\r]*['\"])|"
-        r"Object([ \t\n\r]*\.[ \t\n\r]*assign|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
+        r"Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf)|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
     # F480 (wave-358 lane 1): anchor widened for the constructor-function
     # dispatch (Array.apply/call) and the bracket-string member forms
+    # F488 (wave-359 lane 3): Object alternative gains getPrototypeOf
+    # (constructor callee via prototype chain) -- a new member-name
+    # alternative, not character-class-only; pinned exactly.
     # (Array[/String[/Object[/Reflect[) -- character classes only;
     # re.compile count unchanged.
     for s in ["'", '"', "`", "[", "String.fromCharCode",
