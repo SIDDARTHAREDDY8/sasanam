@@ -24,7 +24,9 @@ New finding filed (LOW, OPEN, red-first verified):
   variants. F446's entry explicitly documents these as "out of F446
   scope, documented not filed" (distinct scan shape from the Array.of
   identifier anchor); this files that residual. [].constructor.from is
-  BLOCKED (not filed).
+  BLOCKED (not filed). [CLOSED 2026-10-06 wave-356 lane 1: gov/dlp.py
+  _js_parse_ctor_factory desugars the constructor-property factory to
+  the F446 path; probes flipped to closed assertions.]
 
 Validated but NOT filed:
 - F470-adjacent: .filter(x=>x.trim()!=='') / .filter(x=>x.includes('a'))
@@ -37,7 +39,8 @@ Validated but NOT filed:
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
 F473 (array-receiver concat miss), F474 (concat TypeError escape),
-F477 (String-coercion miss), F476 (constructor-of miss).
+F477 (String-coercion miss). F476 (constructor-of miss) CLOSED wave-356
+lane 1 -- pinned closed above.
 
 Confirmed fail-closed (pinned quiet): Reflect.apply(Array.prototype.join)
 non-concat target; nested Reflect.construct.
@@ -110,12 +113,13 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F476, F477 open, next F478 (wave-355 merge:
-    F473-F475 CLOSED; F477 String-coercion (renumbered) + F476 constructor-of filed)."""
+    """Control: footer shows F477 open, next F478 (wave-355 merge:
+    F473-F475 CLOSED; F477 String-coercion (renumbered) + F476 constructor-of filed;
+    wave-356 lane 1: F476 CLOSED)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F478**" in text
-          and "**Open findings: F476, F477.**" in text)  # Wave-355 merge: F477 renumbered from attack F475
+          and "**Open findings: F477.**" in text)  # Wave-355 merge: F477 renumbered from attack F475  # Wave-356 lane 1: F476 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -232,21 +236,21 @@ def test_b2_f475_string_ctor_open():
 # ------------------------------------------------- round-23 scope notes
 
 @_t
-def test_b2_f476_constructor_of_open():
-    """F476 pinned open: [].constructor.of('a','b').join('') misses --
-    the property-lookup factory path is unmodeled (F446 covers only the
-    Array.of identifier anchor; F446's entry explicitly excludes this
-    shape)."""
-    miss = not _blocked("[].constructor.of('" + _A + "','" + _B + "').join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b2_f476_constructor_of_closed():
+    """F476 pinned CLOSED (wave-356 lane 1): [].constructor.of('a','b').join('')
+    now blocks via the constructor-property factory desugar (was open on the
+    wave-355 tree; F446's entry explicitly excluded this shape)."""
+    hit = _blocked("[].constructor.of('" + _A + "','" + _B + "').join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b2_f476_array_bracket_of_open():
-    """F476 pinned open: Array['of']('a','b').join('') misses -- same
-    property-lookup factory mechanism as [].constructor.of."""
-    miss = not _blocked("Array['of']('" + _A + "','" + _B + "').join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b2_f476_array_bracket_of_closed():
+    """F476 pinned CLOSED (wave-356 lane 1): Array['of']('a','b').join('')
+    now blocks -- same property-lookup factory mechanism as
+    [].constructor.of."""
+    hit = _blocked("Array['of']('" + _A + "','" + _B + "').join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t

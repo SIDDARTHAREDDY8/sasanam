@@ -94,8 +94,8 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-355: F475 closed; no new decision codes
-FOOTER_OPEN = "F476, F477"  # Wave-355 lane 3: F475 filed + CLOSED (merge finalizes tree-wide)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)
-FOOTER_NEXT = "F478"  # Wave-355 lane 3: F475 filed + CLOSED; next free F476  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)
+FOOTER_OPEN = "F477"  # Wave-355 lane 3: F475 filed + CLOSED (merge finalizes tree-wide)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 lane 1: F476 CLOSED
+FOOTER_NEXT = "F478"  # Wave-355 lane 3: F475 filed + CLOSED; next free F476  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 lane 1: unchanged
 
 # Constructed via concatenation: the write path redacts credential literals.
 _CRED = "xox" + "b-abc123" + "def" + "456"
@@ -316,9 +316,11 @@ def p3_pin_map_stringifies_flag():
 def p3_pin_no_new_regexes():
     # The F475 closure added no anchor change -- character classes and
     # the _JSNumStr check are not regexes. re.compile count unchanged.
+    # Wave-356 lane 1: F476 widened the Array anchor with the ['of']
+    # bracket alternative (character-class only, no new re.compile).
     assert dlp._JS_EXPR_START.pattern == (
         r"['\"`\[]|String\.fromCharCode|Array(\(|"
-        r"[ \t\n\r]*\.[ \t\n\r]*of)|"
+        r"[ \t\n\r]*(\.[ \t\n\r]*of|\[[ \t\n\r]*['\"]))|"
         r"Reflect[ \t\n\r]*\.[ \t\n\r]*(construct|apply)|Object[ \t\n\r]*\.[ \t\n\r]*assign|\(")
     for s in ["'", '"', "`", "[", "String.fromCharCode",
               "Array(", "Array.of", "Reflect.construct", "Reflect.apply",

@@ -79,8 +79,8 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-355: F474 closed; no new decision codes
-FOOTER_OPEN = "F476, F477"  # Wave-355 lane 2: F474 CLOSED (merge finalizes tree-wide); F473 is the wave-354 attack-lane filing (commit e6db7a26)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)
-FOOTER_NEXT = "F478"  # Wave-355 lane 2: F474 closed; next free F475  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)
+FOOTER_OPEN = "F477"  # Wave-355 lane 2: F474 CLOSED (merge finalizes tree-wide); F473 is the wave-354 attack-lane filing (commit e6db7a26)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 lane 1: F476 CLOSED
+FOOTER_NEXT = "F478"  # Wave-355 lane 2: F474 closed; next free F475  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 lane 1: unchanged
 
 # Constructed via concatenation: the write path redacts credential literals.
 _CRED = "xox" + "b-abc123" + "def" + "456"
@@ -209,10 +209,11 @@ def p3_no_new_regexes():
     # string (same pin as the w354_f472close battery; legitimate
     # additions since F463: F469 widened Reflect to (construct|apply),
     # F471 added the Object.assign alternative -- both character-class
-    # only).
+    # only). Wave-356 lane 1: F476 added the Array['of'] bracket
+    # alternative (character-class only, no new re.compile).
     assert dlp._JS_EXPR_START.pattern == (
         r"['\"`\[]|String\.fromCharCode|Array(\(|"
-        r"[ \t\n\r]*\.[ \t\n\r]*of)|"
+        r"[ \t\n\r]*(\.[ \t\n\r]*of|\[[ \t\n\r]*['\"]))|"
         r"Reflect[ \t\n\r]*\.[ \t\n\r]*(construct|apply)|Object[ \t\n\r]*\.[ \t\n\r]*assign|\(")
     for s in ["'", '"', "`", "[", "String.fromCharCode",
               "Array(", "Array.of", "Reflect.construct", "Reflect.apply",
