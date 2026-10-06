@@ -332,12 +332,16 @@ def p3_pin_no_new_regexes():
         r"Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"]))|"
         r"Array[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"String[ \t\n\r]*\.[ \t\n\r]*prototype|"
+        r"Function[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Reflect([ \t\n\r]*\.[ \t\n\r]*(construct|apply)|[ \t\n\r]*\[[ \t\n\r]*['\"])|"
         r"Object([ \t\n\r]*\.[ \t\n\r]*assign|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
     # F480 (wave-358 lane 1): anchor widened for the constructor-function
     # dispatch (Array.apply/call) and the bracket-string member forms
     # (Array[/String[/Object[/Reflect[) -- character classes only;
     # re.compile count unchanged.
+    # F483 (wave-359 lane 1): Function.prototype added for the
+    # double-dispatch shapes -- character classes only;
+    # re.compile count unchanged (28).
     for s in ["'", '"', "`", "[", "String.fromCharCode",
               "Array(", "Array.of", "Array.prototype.concat",
               "String.prototype.concat", "String(",
