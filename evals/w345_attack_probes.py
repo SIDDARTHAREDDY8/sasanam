@@ -291,8 +291,9 @@ def test_z0_f436_closed_with_final_footer():
     F440/F441; cigated policy_delta_gate becomes F442). F437 is CLOSED
     by wave-347 lane 1, F438 by wave-347 lane 2, F439 by wave-347 lane 3,
     F440 by wave-347 lane 4, F441 by wave-347 lane 5, F442 by wave-347
-    lane 6, and F443 is filed OPEN by wave-347 lane 7.
-    Footer is open F443 / next F444."""
+    lane 6, and F443 is filed by wave-347 lane 7 and CLOSED by wave-348
+    lane 1.
+    Footer is open none / next F444."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("F436 filed 2026-10-05, wave-345 lane 5" in text
           and "CLOSED 2026-10-05 wave-346" in text
@@ -308,10 +309,11 @@ def test_z0_f436_closed_with_final_footer():
           and "LOW, CLOSED 2026-10-05 wave-347 lane 5" in text
           and "(F442 filed 2026-10-05, wave-346 lane 3" in text
           and "CLOSED 2026-10-05 wave-347 lane 6" in text
-          and "LOW, OPEN:" in text
+          and "(F443 filed 2026-10-05, wave-347 lane 7" in text
+          and "CLOSED 2026-10-06 wave-348 lane 1" in text
           and "Next free finding: **F444**" in text
-          and "Open findings: F443." in text)
-    return ("HELD" if ok else "BREAK", "F436-F442 closed, F443 open=%s" % ok)
+          and "Open findings: none." in text)
+    return ("HELD" if ok else "BREAK", "F436-F443 closed, footer none=%s" % ok)
 
 
 @_t

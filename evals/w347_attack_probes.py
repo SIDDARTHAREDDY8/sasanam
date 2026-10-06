@@ -13,13 +13,18 @@ Shapes (B1/B2/B3 = the three wave-347 attack targets):
      - Array(N).fill(frag).join(sep).concat(rest): evaluates to the
        credential in a real JS engine (node-verified) while the
        bounded static decoder handles only join/repeat/concat on
-       literals. GENUINE: filed as F443 (LOW, OPEN).
+       literals. GENUINE: filed as F443 (LOW); CLOSED 2026-10-06
+       wave-348 lane 1 (Array(N) constructor + .fill(x) + the
+       bare-Boolean .filter predicate, all node-differential verified).
      - ['a','b'].map(s=>s).join(''): same class. GENUINE: F443; ABSORBED
        at the wave-347 merge by the F437 closure (identity-.map
-       passthrough composes with .join) -- F443 stays OPEN on the
-       3 residuals.
-     - ['a','','b'].filter(Boolean).join(''): same class. GENUINE: F443.
-     - Array(1).fill('a').join('b'): same class. GENUINE: F443.
+       passthrough composes with .join).
+     - ['a','','b'].filter(Boolean).join(''): same class. GENUINE: F443;
+       CLOSED wave-348 lane 1.
+     - Array(1).fill('a').join('b'): MALFORMED as filed (node-verified:
+       a one-element array joins to the element alone -- no credential
+       present); the genuine degenerate form
+       Array(1).fill('a').join('').concat('b') is CLOSED wave-348 lane 1.
      - (function(){return 'a'+'b';})(): the inner quoted-'+' is
        already decoded. HELD.
      - 'a'.repeat(1)+'b': .repeat + '+' already decoded. HELD.
@@ -38,9 +43,9 @@ Shapes (B1/B2/B3 = the three wave-347 attack targets):
        non-goal of this layer (destination-wall + secret-hygiene owned).
        Pinned, not filed (no independent miss at this seam).
 
-  F443: filed OPEN this round; footer now
-  open F437, F438, F439, F440, F441, F442, F443 / next F444.
-  F432-F436: CLOSED.
+  F443: filed OPEN wave-347 lane 7, CLOSED 2026-10-06 wave-348 lane 1;
+  footer now open none / next F444.
+  F432-F442: CLOSED.
 
 Usage:
   ~/workspace/.gov-venv/bin/python evals/w347_attack_probes.py
@@ -99,20 +104,25 @@ def _f443_shapes():
         "filter-join": '["' + a + '","","' + b + '"].filter(Boolean).join("")',
         "fill-join-concat":
             'Array(2).fill("' + "xox" + "b-" + "abc" + '").join("123").concat("' + b + '")',
-        "fill-join": 'Array(1).fill("' + a + '").join("' + b + '")',
+        # Wave-348 correction: the filed Array(1).fill(a).join(b) is
+        # malformed (one-element join drops the separator -- node
+        # fidelity control in the red-first). The genuine degenerate
+        # form is the N=1 boundary of fill-join-concat.
+        "fill-join": 'Array(1).fill("' + a + '").join("").concat("' + b + '")',
     }
 
 
 @_t
-def test_b1_f443_shapes_pinned_open():
-    """F443 (LOW, OPEN): JS higher-order array/string assembly misses
-    find_credential (node-verified to evaluate to the credential).
-    3 residuals (filter/fill); map-join absorbed by the F437 closure
-    at the wave-347 merge (absorbed control below)."""
-    miss = all(dlp.find_credential(p) is None for p in _f443_shapes().values())
+def test_b1_f443_shapes_closed():
+    """F443 (LOW, CLOSED 2026-10-06 wave-348 lane 1): the higher-order
+    array/string assembly residuals now block coded dlp-slack-token.
+    (Wave-306 maintenance: this probe pinned the OPEN miss in wave-347;
+    it now asserts the coded refusal.)"""
+    blocked = all(dlp.find_credential(p) == "dlp-slack-token"
+                  for p in _f443_shapes().values())
     assert all(_CRED not in p for p in _f443_shapes().values())
-    return ("HELD" if miss else "BREAK",
-            "F443 residuals miss reproduced=%s" % miss)
+    return ("HELD" if blocked else "BREAK",
+            "F443 residuals block coded=%s" % blocked)
 
 
 @_t
@@ -120,8 +130,8 @@ def test_b1_f443_map_join_absorbed():
     """F443 scope note (wave-347 merge): the .map(s=>s).join('') shape is
     ABSORBED by the F437 closure -- the bounded static decoder's
     identity-.map passthrough (a verified F437 shape) composes with
-    .join(''), so it now blocks coded dlp-slack-token. F443 stays OPEN
-    on the 3 residuals."""
+    .join(''), so it now blocks coded dlp-slack-token. (Wave-348: the
+    remaining 3 residuals are CLOSED by wave-348 lane 1.)"""
     payload = '["' + _A + '","' + _B + '"].map(s=>s).join("")'
     assert _CRED not in payload
     hit = dlp.find_credential(payload) == "dlp-slack-token"
@@ -188,8 +198,10 @@ def test_b3_cross_call_split_is_f81_class():
 # ---------------------------------------------------------------- z: hygiene
 
 @_t
-def test_z0_redfirst_scripts_print_break():
-    """The F443 red-first script prints BREAK on this open tree."""
+def test_z0_redfirst_scripts_print_held():
+    """The F443 red-first script prints HELD (0 BREAK) on this closed
+    tree. (Wave-306 maintenance: pinned BREAK on the open tree in
+    wave-347; now asserts the closed-tree verdict.)"""
     import io
     from contextlib import redirect_stdout
     path = os.path.join(REPO_ROOT, "evals", "w347_f443_redfirst.py")
@@ -202,22 +214,24 @@ def test_z0_redfirst_scripts_print_break():
             pass  # red-first calls sys.exit(verdict); verdict read from stdout
     out = buf.getvalue()
     tail = out.strip().splitlines()[-1]
-    ok = (tail.startswith("tally: 3 BREAK")
+    ok = (tail.startswith("tally: 0 BREAK")
+          and "fill-join-degenerate(fidelity): OK(byte-identical)" in out
           and "map-join(absorbed): OK(blocks)" in out)
     return ("HELD" if ok else "BREAK", "red-first=%s" % tail)
 
 
 @_t
-def test_z1_findings_filed_open_with_final_footer():
-    """F443 is filed OPEN with the final footer. Pins the filing so the
-    miss cannot go undocumented."""
+def test_z1_findings_filed_closed_with_final_footer():
+    """F443 is filed (wave-347 lane 7) and CLOSED (wave-348 lane 1) with
+    the final footer. Pins the filing + closure so neither goes
+    undocumented. (Wave-306 maintenance: pinned OPEN in wave-347.)"""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F443 filed 2026-10-05, wave-347 lane 7" in text
-          and "LOW, OPEN: JS higher-order" in text
+          and "CLOSED 2026-10-06 wave-348 lane 1" in text
           and "Next free finding: **F444**" in text
-          and "Open findings: F443."
+          and "Open findings: none."
           in text)
-    return ("HELD" if ok else "BREAK", "F443 filed open=%s" % ok)
+    return ("HELD" if ok else "BREAK", "F443 filed+closed=%s" % ok)
 
 
 @_t
@@ -244,9 +258,10 @@ def test_z3_no_paid_api_refs():
 # ---------------------------------------------------------------- green check
 
 _EXPECTED_BREAKS = set()  # this battery asserts HELD everywhere: the
-# F443 miss is pinned as known-open (probe returns HELD when the miss
-# reproduces); a literal BREAK verdict means the pin failed or a NEW
-# unexpected break appeared.
+# F443 miss was pinned as known-open in wave-347 (probe returned HELD
+# when the miss reproduced); wave-348 lane 1 CLOSED F443, so the probe
+# now asserts the coded refusal. A literal BREAK verdict means the
+# closure regressed or a NEW unexpected break appeared.
 
 
 def _green_check():

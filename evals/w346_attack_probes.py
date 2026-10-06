@@ -48,8 +48,9 @@ Shapes (B1/B2/B3 = the three wave-346 attack targets):
 
   F437/F438: filed OPEN this round, CLOSED 2026-10-05 wave-347 lanes
   1/2; F439 filed OPEN this round, CLOSED 2026-10-05 wave-347 lane 3;
-  footer now open F443 / next F444 (F440/F441 CLOSED wave-347 lanes
-  4/5, F442 CLOSED wave-347 lane 6, F443 OPEN wave-347 lane 7).
+  footer now open none / next F444 (F440/F441 CLOSED wave-347 lanes
+  4/5, F442 CLOSED wave-347 lane 6, F443 filed OPEN wave-347 lane 7
+  and CLOSED 2026-10-06 wave-348 lane 1).
   F432-F436: CLOSED.
 
 Usage:
@@ -264,10 +265,10 @@ def test_z1_findings_filed_open_with_final_footer():
           and "(F442 filed 2026-10-05, wave-346 lane 3" in text
           and "CLOSED 2026-10-05 wave-347 lane 6" in text
           and "(F443 filed 2026-10-05, wave-347 lane 7" in text
-          and text.count("LOW, OPEN:") >= 1
+          and "CLOSED 2026-10-06 wave-348 lane 1" in text
           and "Next free finding: **F444**" in text
-          and "Open findings: F443." in text)
-    return ("HELD" if ok else "BREAK", "F437-F442 closed, F443 open=%s" % ok)
+          and "Open findings: none." in text)
+    return ("HELD" if ok else "BREAK", "F437-F443 closed, footer none=%s" % ok)
 
 
 @_t
