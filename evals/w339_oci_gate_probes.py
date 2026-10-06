@@ -227,7 +227,7 @@ def _p9():
     assert "oci-registry-onboarding-refused" in DC.TAXONOMY
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
     assert "Next free finding: **F473**" in text, "footer next free"
-    assert "Open findings: F469, F470, F471, F472F462, F463, F464, F465, F466, F467, F468." in text, "footer open findings"
+    assert "Open findings: F469, F470, F471, F472." in text, "footer open findings"
     assert FOOTER_OPEN == ("F461", "F462", "F463", "F464", "F465", "F466", "F467", "F468") and FOOTER_NEXT == "F469"  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)
     _held("P9-pin-taxonomy",
           "2135/2135/0 sorted-unique; oci-registry-onboarding-refused "

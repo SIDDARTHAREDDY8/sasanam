@@ -745,7 +745,7 @@ def _p20():
     # through many merges; assert the live footer (open none / next
     # F426; F424/F425 closed by wave-337 lane 1).
     assert "Next free finding: **F473**" in src, "next-free footer"
-    assert "**Open findings: F469, F470, F471, F472F462, F463, F464, F465, F466, F467, F468.**" in src, "open-none footer"
+    assert "**Open findings: F469, F470, F471, F472.**" in src, "open-none footer"
     _held("P20-footer-open-none-next-F426",
           "footer: open none / next F430 (F424/F425 closed wave-337 lane 1)")
 

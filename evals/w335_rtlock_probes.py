@@ -363,7 +363,7 @@ def _p7():
                 encoding="utf-8").read()
     assert "Next free finding: **%s**." % FOOTER_NEXT in text, \
         "footer next-free mismatch"
-    assert "**Open findings: F469, F470, F471, F472F462, F463, F464, F465, F466, F467, F468.**" % FOOTER_OPEN in text, \
+    assert "**Open findings: F469, F470, F471, F472.**" % FOOTER_OPEN in text, \
         "footer open-findings mismatch"
     assert "## F421" in text and "CLOSED 2026-10-05 wave-335 lane 3" in text, \
         "F421 closure not recorded"

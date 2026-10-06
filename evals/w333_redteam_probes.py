@@ -604,9 +604,9 @@ def _p6b():
     if "Next free finding: **F473**." not in text:
         return _break("P6b-footer-open-f433-f434-f435-next-f436",
                       "raw literal 'Next free finding: **F473**.' absent")
-    if "**Open findings: F469, F470, F471, F472F462, F463, F464, F465, F466, F467, F468.**" not in text:
+    if "**Open findings: F469, F470, F471, F472.**" not in text:
         return _break("P6b-footer-open-f433-f434-f435-next-f436",
-                      "raw literal '**Open findings: F469, F470, F471, F472F462, F463, F464, F465, F466, F467, F468.**' absent")
+                      "raw literal '**Open findings: F469, F470, F471, F472.**' absent")
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:

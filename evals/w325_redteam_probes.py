@@ -946,7 +946,7 @@ def _p6b():
     text = open(os.path.join(REPO, "evals/FINDINGS.md")).read()
     import re
     # The file carries one footer line per wave; the LAST one is current.
-    # Footer form: "Next free finding: **F446**. **Open findings: F469, F470, F471, F472F462, F463, F464, F465, F466, F467, F468.**"
+    # Footer form: "Next free finding: **F446**. **Open findings: F469, F470, F471, F472.**"
     opens = re.findall(r"\*\*Open findings:\s*([^*]+?)\.\*\*", text)
     nexts = re.findall(r"Next free finding:\s*\*\*([^*]+?)\*\*", text)
     open_line = opens[-1].strip() if opens else ""

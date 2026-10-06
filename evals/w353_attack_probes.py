@@ -123,75 +123,76 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F461-F471 open, next F472 (this round:
-    F469-F471 filed)."""
+    """Control: footer shows F469-F472 open, next F473 (wave-353 merge:
+    F461-F468 closed; F469-F471 attack-lane filings; F472 repeat-tagged)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F472**" in text
-          and "**Open findings: F469, F470, F471, F472F462, F463, F464, F465, F466, F467, "
-              "F468, F469, F470, F471.**" in text)
+    ok = ("Next free finding: **F473**" in text
+          and "**Open findings: F469, F470, F471, F472.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
-# ------------------------------------------------- F461-F468 open pins
+# ------------------------------------------------- F461-F468 closed pins
+# (wave-353 merge: the wave-353 closure lanes closed F461-F468; these
+# probes now assert the coded refusal instead of the open miss.)
 
 @_t
-def test_b1_f461_reverse_join_open():
-    """F461 pinned open: .reverse().join('') misses."""
-    miss = not _blocked("['" + _B + "','" + _A + "'].reverse().join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_b1_f462_spread_concat_open():
-    """F462 pinned open: spread-args concat misses."""
-    miss = not _blocked("\"" + "\".concat(...['" + _A + "','" + _B + "'])")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b1_f461_reverse_join_closed():
+    """F461 closed: .reverse().join('') now blocks."""
+    hit = _blocked("['" + _B + "','" + _A + "'].reverse().join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b1_f463_tagged_template_join_open():
-    """F463 pinned open: join as a tagged template misses."""
-    miss = not _blocked("['" + _A + "','" + _B + "'].join" + _BT + _BT)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b1_f462_spread_concat_closed():
+    """F462 closed: spread-args concat now blocks."""
+    hit = _blocked("\"" + "\".concat(...['" + _A + "','" + _B + "'])")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b1_f464_tostring_replace_open():
-    """F464 pinned open: .toString().replace(/,/g,'') misses."""
-    miss = not _blocked("['" + _A + "','" + _B + "'].toString()"
+def test_b1_f463_tagged_template_join_closed():
+    """F463 closed: join as a tagged template now blocks."""
+    hit = _blocked("['" + _A + "','" + _B + "'].join" + _BT + _BT)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_b1_f464_tostring_replace_closed():
+    """F464 closed: .toString().replace(/,/g,'') now blocks."""
+    hit = _blocked("['" + _A + "','" + _B + "'].toString()"
                         ".replace(/,/g,'')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b1_f465_padstart_open():
-    """F465 pinned open: .padStart assembly misses."""
-    miss = not _blocked("'" + _C2 + "'.padStart(21,'" + _C1 + "')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b1_f465_padstart_closed():
+    """F465 closed: .padStart assembly now blocks."""
+    hit = _blocked("'" + _C2 + "'.padStart(21,'" + _C1 + "')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b1_f466_slice_noop_open():
-    """F466 pinned open: .slice(0,2).join('') misses."""
-    miss = not _blocked("['" + _A + "','" + _B + "'].slice(0,2).join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b1_f466_slice_noop_closed():
+    """F466 closed: .slice(0,2).join('') now blocks."""
+    hit = _blocked("['" + _A + "','" + _B + "'].slice(0,2).join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b1_f467_filter_neq_null_open():
-    """F467 pinned open: .filter(x=>x!==null) misses."""
-    miss = not _blocked("['" + _A + "','" + _B + "',''].filter(x=>x!==null)"
+def test_b1_f467_filter_neq_null_closed():
+    """F467 closed: .filter(x=>x!==null) now blocks."""
+    hit = _blocked("['" + _A + "','" + _B + "',''].filter(x=>x!==null)"
                         ".join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b1_f468_reflect_construct_open():
-    """F468 pinned open: Reflect.construct(Array,[...]) misses."""
-    miss = not _blocked("Reflect.construct(Array,['" + _A + "','" + _B + "'])"
+def test_b1_f468_reflect_construct_closed():
+    """F468 closed: Reflect.construct(Array,[...]) now blocks."""
+    hit = _blocked("Reflect.construct(Array,['" + _A + "','" + _B + "'])"
                         ".join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F469-F471 open pins
@@ -242,13 +243,13 @@ def test_b2_f471_spread_copy_open():
 # ------------------------------------------------- round-21 scope notes
 
 @_t
-def test_b3_f461_revred_scope_open():
+def test_b3_f461_revred_scope_closed():
     """F461 scope (round 21, model C1): ['frag2','frag1'].reverse()
-    .reduce((x,y)=>x+y,'') -- reverse composes with the closed F437
-    reduce; same unmodeled-.reverse() mechanism; rides with F461."""
-    miss = not _blocked("['" + _B + "','" + _A + "']"
-                        ".reverse().reduce((x,y)=>x+y,'')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    .reduce((x,y)=>x+y,'') -- now blocked by the F461+F437 closures
+    composing; the scope note rode with F461's close-when."""
+    hit = _blocked("['" + _B + "','" + _A + "']"
+                    ".reverse().reduce((x,y)=>x+y,'')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
@@ -262,22 +263,24 @@ def test_b3_f462_multispread_scope_open():
 
 
 @_t
-def test_b3_f464_fcc_frag_scope_open():
-    """F464 scope (round 21, model C4): fromCharCode-decimal fragments
-    ride with F464's toString+replace string-rewrite mechanism."""
+def test_b3_f464_fcc_frag_scope_closed():
+    """F464 scope (round 21, model C4): fromCharCode-decimal fragments --
+    now blocked by the F464+F458 closures composing; the scope note
+    rode with F464's close-when."""
     fcc = ",".join(str(c) for c in _B.encode())
-    miss = not _blocked("['" + _A + "',String.fromCharCode(" + fcc + ")]"
-                        ".toString().replace(/,/g,'')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    hit = _blocked("['" + _A + "',String.fromCharCode(" + fcc + ")]"
+                    ".toString().replace(/,/g,'')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b3_f466_slice_undef_scope_open():
+def test_b3_f466_slice_undef_scope_closed():
     """F466/F467 scope (round 21, model C6): .slice(0,3)
-    .filter(x=>x!==undefined) -- composition of two open findings."""
-    miss = not _blocked("['" + _A + "','" + _B + "'].slice(0,3)"
-                        ".filter(x=>x!==undefined).join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    .filter(x=>x!==undefined) -- now blocked by the F466+F467 closures
+    composing; the scope note rode with their close-whens."""
+    hit = _blocked("['" + _A + "','" + _B + "'].slice(0,3)"
+                    ".filter(x=>x!==undefined).join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t

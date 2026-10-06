@@ -256,7 +256,7 @@ def p8_pin_and_footer():
             break
     ok = ok and ("Next free finding: **%s**." % FOOTER_NEXT) in footer
     if FOOTER_OPEN == "none":  # wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454)
-        ok = ok and "Open findings: F469, F470, F471, F472F462, F463, F464, F465, F466, F467, F468." in footer
+        ok = ok and "Open findings: F469, F470, F471, F472." in footer
     else:
         ok = ok and ("Open findings: %s." % FOOTER_OPEN) in footer
     return _check("p8: pin 2135, footer open F437-F441 / next F442", ok,

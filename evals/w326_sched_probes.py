@@ -501,7 +501,7 @@ def _p16():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     src = open(path, encoding="utf-8").read()
     assert "Next free finding: **F473**" in src, "next-free footer"
-    assert "**Open findings: F469, F470, F471, F472F462, F463, F464, F465, F466, F467, F468.**" in src, "open footer"
+    assert "**Open findings: F469, F470, F471, F472.**" in src, "open footer"
     _held("P16-footer-open-f433-f434-f435-next-f436",
           "footer: open none / next F419")
 

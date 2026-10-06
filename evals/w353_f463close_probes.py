@@ -256,14 +256,16 @@ def p3_pin_interp_tag_divergence():
 
 def p3_pin_no_new_regexes():
     # Functional pin: the tag-call site needed no anchor change -- it
-    # lives inside _js_parse_postfix. The anchor pattern is byte-identical
-    # to the base tree (verified by the lane via git diff: zero
-    # _JS_EXPR_START hunks), pinned here as the exact pattern string.
+    # lives inside _js_parse_postfix. The anchor pattern is pinned here
+    # as the exact pattern string. Wave-353 lane 4 (F468) legitimately
+    # added the Reflect-construct alternative (ws-tolerant, character
+    # class only); the F463 closure itself added no regex.
     assert dlp._JS_EXPR_START.pattern == (
         r"['\"`\[]|String\.fromCharCode|Array(\(|"
-        r"[ \t\n\r]*\.[ \t\n\r]*of)|\(")
+        r"[ \t\n\r]*\.[ \t\n\r]*of)|Reflect[ \t\n\r]*"
+        r"\.[ \t\n\r]*construct|\(")
     for s in ["'", '"', "`", "[", "String.fromCharCode",
-              "Array(", "Array.of", "("]:
+              "Array(", "Array.of", "Reflect.construct", "("]:
         assert dlp._JS_EXPR_START.search(s) is not None, s
     return True
 
@@ -379,20 +381,20 @@ def p6_noreg_f472_repeat_tag_open():
 
 
 def p6_noreg_f469f470f471_attack_lane_documented():
-    # F469/F470/F471 are wave-353 attack-lane filings (commit e79af076);
-    # their red-first batteries live in the attack-lane tree, not here.
+    # F469/F470/F471 are wave-353 attack-lane filings (round 21);
+    # their full entries and red-first batteries live in the merged tree.
     # This probe pins the documentation contract: the footer lists them
-    # open with the attack-lane filing note, and no behavioral claim is
+    # open with their filing notes, and no behavioral claim is
     # made about their shapes from this tree.
     footer_path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     with open(footer_path, encoding="utf-8") as f:
         footer = f.read()
-    ok = ("F469 filed 2026-10-06, wave-353 attack lane, commit e79af076"
+    ok = ("(F469 filed 2026-10-06, wave-353 lane 5 (continuous real-model attack"
           in footer)
-    ok = ok and ("F470 filed 2026-10-06, wave-353 attack lane, commit "
-                 "e79af076" in footer)
-    ok = ok and ("F471 filed 2026-10-06, wave-353 attack lane, commit "
-                 "e79af076" in footer)
+    ok = ok and ("(F470 filed 2026-10-06, wave-353 lane 5 (continuous real-model attack"
+                 in footer)
+    ok = ok and ("(F471 filed 2026-10-06, wave-353 lane 5 (continuous real-model attack"
+                 in footer)
     ok = ok and ("Open findings: %s." % FOOTER_OPEN) in footer
     return ok
 

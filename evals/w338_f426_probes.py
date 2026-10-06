@@ -331,7 +331,7 @@ def P2b():
     if "Next free finding: **F473**" not in last:
         _break(pid, "footer does not read next F429")
         return
-    if "Open findings: F469, F470, F471, F472F462, F463, F464, F465, F466, F467, F468." not in last:
+    if "Open findings: F469, F470, F471, F472." not in last:
         _break(pid, "footer does not read open F428: %r" % (last[:120],))
         return
     import re as _re

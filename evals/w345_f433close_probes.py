@@ -257,7 +257,7 @@ def p7_pin_and_footer():
     ok_pin = len(codes) == TAXONOMY_PIN == 2135
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok_footer = ("Next free finding: **F473**" in text
-                 and "Open findings: F469, F470, F471, F472F462, F463, F464, F465, F466, F467, F468." in text
+                 and "Open findings: F469, F470, F471, F472." in text
                  and "(F433 filed 2026-10-05, wave-344 lane 4" in text
                  and "LOW, CLOSED 2026-10-05 wave-345 lane 2" in text)
     print("    pin=%d footer-open=%s footer-next=%s"
