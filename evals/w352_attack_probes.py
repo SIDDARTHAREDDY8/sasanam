@@ -242,24 +242,24 @@ def test_b2_f472_tagged_template_repeat_open():
 
 @_t
 def test_b2_f464_tostring_replace_open():
-    """F464 pinned open: .toString().replace(/,/g,'') misses."""
-    miss = not _blocked("['" + _A + "','" + _B + "'].toString()"
-                        ".replace(/,/g,'')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F464 pinned CLOSED (wave-353 lane 3): .toString().replace(/,/g,'') blocks."""
+    hit = _blocked("['" + _A + "','" + _B + "'].toString()"
+                   ".replace(/,/g,'')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
 def test_b2_f465_padstart_open():
-    """F465 pinned open: .padStart assembly misses."""
-    miss = not _blocked("'" + _C2 + "'.padStart(21,'" + _C1 + "')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F465 pinned CLOSED (wave-353 lane 3): .padStart assembly blocks."""
+    hit = _blocked("'" + _C2 + "'.padStart(21,'" + _C1 + "')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
 def test_b2_f466_slice_noop_open():
-    """F466 pinned open: .slice(0,2).join('') misses."""
-    miss = not _blocked("['" + _A + "','" + _B + "'].slice(0,2).join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F466 pinned CLOSED (wave-353 lane 3): .slice(0,2).join('') blocks."""
+    hit = _blocked("['" + _A + "','" + _B + "'].slice(0,2).join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
@@ -406,12 +406,11 @@ def test_b5_f454_spread_new_open():
 
 @_t
 def test_b5_f464_flat_tostring_open():
-    """F464 scope (round 20, model C4): .flat()/.splice(0,2) are unmodeled
-    no-ops ahead of the F464 toString+replace -- same composition class as
-    F466."""
-    miss = not _blocked("['" + _A + "','" + _B + "'].flat().toString()"
-                        ".replace(/,/g,'')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F464 scope pinned CLOSED (wave-353 lane 3): .flat() ahead of the
+    F464 toString+replace blocks (same composition class as F466)."""
+    hit = _blocked("['" + _A + "','" + _B + "'].flat().toString()"
+                   ".replace(/,/g,'')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ---------------------------------------------------------------- green check

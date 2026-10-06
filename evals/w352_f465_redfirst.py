@@ -28,7 +28,13 @@ SHAPES = [
 
 CONTROLS = [
     # (name, payload, want_hit)
-    ("junk-quiet", "'89abcd'.padStart(21,'xoxb-012345678')", False),
+    # CLOSED-tree update (wave-353 lane 3): the old 'junk-quiet' shape
+    # '89abcd'.padStart(21,'xoxb-012345678') node-evaluates to
+    # 'xoxb-01234567889abcd', which matches the slack seam outright --
+    # once the padStart primitive is modeled it blocks, correctly.
+    # The junk-quiet slot moves to a pad string that matches nothing.
+    ("junk-quiet", "'89abcd'.padStart(21,'zz')", False),
+    ("pad-hits-seam", "'89abcd'.padStart(21,'xoxb-012345678')", True),
     ("neighbor-blocks", A1 + A2, True),
 ]
 

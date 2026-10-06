@@ -3037,10 +3037,80 @@ def _js_add_concat_part(parts, part, state):
         raise _JSExprFail("too many parts")
 
 
+def _js_slice_bound(k, n):
+    """Clamp a literal integer to a valid array-slice bound (F466).
+
+    Engine-exact (node-verified): negative bounds count back from the
+    length and clamp at 0; bounds past the length clamp at the length.
+    """
+    if k < 0:
+        k += n
+        if k < 0:
+            k = 0
+    elif k > n:
+        k = n
+    return k
+
+
+def _js_parse_slice_int(text, i):
+    """Parse a literal integer (optional leading '-') at text[i] (F466).
+
+    The sign is engine-required for negative slice bounds; anything
+    else (identifiers, unary plus) fails closed inside
+    _js_parse_number. A trailing fractional part (e.g. "1.5") is left
+    unconsumed here -- the caller fails it closed.
+    """
+    n = len(text)
+    neg = False
+    if i < n and text[i] == "-":
+        neg = True
+        i = _js_skip_ws(text, i + 1)
+    k, i = _js_parse_number(text, i)
+    return (-k if neg else k), i
+
+
+def _js_parse_comma_regex(text, i):
+    """Parse a literal /,/-regex with {g,i} flags at text[i] (F464).
+
+    Returns (flags, next_index). Only the exact body "," (no escapes,
+    no character classes) and flag characters g/i (each at most once,
+    any order) are accepted -- the filed .replace(/,/g,'') shape and
+    its /,/gi variant, both node-verified. Everything else fails
+    closed. Hand-parsed: no new regexes. The general regex engine is
+    NOT modeled.
+    """
+    n = len(text)
+    if i >= n or text[i] != "/":
+        raise _JSExprFail("replace needs regex literal")
+    j = i + 1
+    body = []
+    while j < n and text[j] != "/":
+        if text[j] == "\\":
+            raise _JSExprFail("regex escapes unsupported")
+        body.append(text[j])
+        j += 1
+        if len(body) > 1:
+            raise _JSExprFail("regex body too long")
+    if j >= n:
+        raise _JSExprFail("unterminated regex")
+    if body != [","]:
+        raise _JSExprFail("only comma regex modeled")
+    j += 1
+    flags = []
+    while j < n and text[j] in _JS_IDENT_CONT:
+        if text[j] not in "gi" or text[j] in flags:
+            raise _JSExprFail("regex flags unsupported")
+        flags.append(text[j])
+        j += 1
+    return "".join(flags), j
+
+
 def _js_apply_method(text, j, name, value, depth, state):
     """Apply .concat(...) / .repeat(...) / .join(...) / .reduce(...) /
     .reduceRight(...) / .map(...) / .filter(...) / .fill(...) /
-    .reverse(...) with text[j] == '('.
+    .reverse(...) / .toString() / .slice(...) / .flat() / .splice(0,2) /
+    .replace(...) / .padStart(...) / .padEnd(...) with text[j] == '('.
+
 
     .join/.reduce/.reduceRight/.map/.filter/.fill/.reverse require an
     array-literal or Array(N) value (F434/F437/F443/F461);
@@ -3181,6 +3251,79 @@ def _js_apply_method(text, j, name, value, depth, state):
         elements = list(value.elements)[::-1]
         state["ops"] += 1
         return _JSArr(elements), i
+    if name == "toString":
+        # F464: ['a','b'].toString() -- engine-exact comma join of the
+        # string elements, feeding the string pipeline (the filed
+        # shape continues with .replace(/,/g,'')). Any args fail
+        # closed (the filed shapes use none).
+        if not isinstance(value, _JSArr):
+            raise _JSExprFail("toString on non-array")
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("toString args unsupported")
+        result = ",".join(value.elements)
+        if len(result) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("toString too long")
+        state["ops"] += 1
+        return result, i + 1
+    if name == "slice":
+        # F466: ['a','b'].slice(0,2) -- bounded array slice with
+        # literal numeric bounds; negative indices and out-of-range
+        # bounds clamp exactly as the engine does (node-verified).
+        # Non-literal bounds fail closed.
+        if not isinstance(value, _JSArr):
+            raise _JSExprFail("slice on non-array")
+        i = _js_skip_ws(text, i)
+        n = len(value.elements)
+        if i < len(text) and text[i] == ")":
+            lo, hi, i = 0, n, i + 1
+        else:
+            start, i = _js_parse_slice_int(text, i)
+            i = _js_skip_ws(text, i)
+            if i < len(text) and text[i] == ",":
+                end, i = _js_parse_slice_int(text,
+                                             _js_skip_ws(text, i + 1))
+                i = _js_skip_ws(text, i)
+            else:
+                end = n
+            if i >= len(text) or text[i] != ")":
+                raise _JSExprFail("bad slice")
+            i += 1
+            lo, hi = _js_slice_bound(start, n), _js_slice_bound(end, n)
+        elements = value.elements[lo:hi] if hi > lo else []
+        state["ops"] += 1
+        return _JSArr(elements), i
+    if name == "flat":
+        # F466 scope note: ['a','b'].flat() -- the decoder's arrays
+        # hold only strings (never nested), so the no-arg form is the
+        # identity. Any args fail closed.
+        if not isinstance(value, _JSArr):
+            raise _JSExprFail("flat on non-array")
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("flat args unsupported")
+        state["ops"] += 1
+        return _JSArr(list(value.elements)), i + 1
+    if name == "splice":
+        # F466 scope note: ['a','b'].splice(0,2) -- returns the removed
+        # elements (node-verified), so the filed literal (0,2) pair
+        # yields elements[0:2]. Only the literal (0,2) form is
+        # modeled; every other arg shape fails closed.
+        if not isinstance(value, _JSArr):
+            raise _JSExprFail("splice on non-array")
+        i = _js_skip_ws(text, i)
+        a, i = _js_parse_number(text, i)
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ",":
+            raise _JSExprFail("bad splice")
+        b, i = _js_parse_number(text, _js_skip_ws(text, i + 1))
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("bad splice")
+        if (a, b) != (0, 2):
+            raise _JSExprFail("splice args unsupported")
+        state["ops"] += 1
+        return _JSArr(value.elements[0:2]), i + 1
     if isinstance(value, _JSArr):
         raise _JSExprFail("method on unjoined array")
     if name == "repeat":
@@ -3194,6 +3337,59 @@ def _js_apply_method(text, j, name, value, depth, state):
         result = value * count
         if len(result) > _MAX_DECODE_BYTES:
             raise _JSExprFail("repeat too long")
+        state["ops"] += 1
+        return result, i + 1
+    if name == "replace":
+        # F464: 'a,b'.replace(/,/g,'') -- ONLY the literal-comma
+        # regex with flags in {g,i} (the /,/gi variant is
+        # comma-identical, node-verified) and a literal-string
+        # replacement are modeled. Without "g" only the first comma
+        # is replaced, exactly as the engine does. The general regex
+        # engine is NOT modeled -- anything else fails closed.
+        i = _js_skip_ws(text, i)
+        flags, i = _js_parse_comma_regex(text, i)
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ",":
+            raise _JSExprFail("bad replace")
+        rep, i = _js_parse_string(text, _js_skip_ws(text, i + 1))
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("bad replace")
+        if "g" in flags:
+            result = value.replace(",", rep)
+        else:
+            result = value.replace(",", rep, 1)
+        if len(result) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("replace too long")
+        state["ops"] += 1
+        return result, i + 1
+    if name in ("padStart", "padEnd"):
+        # F465: '89abcdef'.padStart(21,'xoxb-012345678') -- bounded
+        # left/right padding with a literal numeric target length and
+        # a literal pad string, engine-exact (node-verified): the pad
+        # string repeats/truncates to fill; targets at/below the
+        # string length and the empty pad string are no-ops.
+        # Non-literal args fail closed.
+        i = _js_skip_ws(text, i)
+        target, i = _js_parse_number(text, i)
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ",":
+            raise _JSExprFail("bad pad args")
+        pad, i = _js_parse_string(text, _js_skip_ws(text, i + 1))
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("bad pad args")
+        if target > len(value) and pad:
+            fill_len = target - len(value)
+            if fill_len > _MAX_DECODE_BYTES:
+                raise _JSExprFail("pad too long")
+            filler = (pad * (fill_len // len(pad) + 1))[:fill_len]
+            result = ((filler + value) if name == "padStart"
+                      else (value + filler))
+        else:
+            result = value
+        if len(result) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("pad too long")
         state["ops"] += 1
         return result, i + 1
     parts = []
@@ -3289,13 +3485,17 @@ def _js_apply_tag_method(text, j, name, value, depth, state):
 def _js_parse_postfix(text, i, value, depth, state):
     """Consume chained .concat(...) / .repeat(...) / .join(...) /
     .reduce(...) / .reduceRight(...) / .map(...) / .filter(...) /
-    .fill(...) / .reverse() on *value*."""
+    .fill(...) / .reverse() / .toString() / .slice(...) / .flat() /
+    .splice(0,2) / .replace(...) / .padStart(...) / .padEnd(...) on *value*."""
+
     while True:
         j = _js_skip_ws(text, i)
         if j >= len(text) or text[j] != ".":
             return value, i
         for name in ("concat", "repeat", "join", "reduce", "reduceRight",
-                     "map", "filter", "fill", "reverse"):
+                     "map", "filter", "fill", "reverse", "toString", "slice",
+                     "flat", "splice", "replace", "padStart", "padEnd"):
+
             if text.startswith(name, j + 1):
                 k = _js_skip_ws(text, j + 1 + len(name))
                 if k < len(text) and text[k] == "(":
@@ -3376,9 +3576,18 @@ def _try_js_expr_decode(text, start):
     fail closed), (F454) the multi-argument Array('frag', ...) /
     new Array('frag', ...) constructor (string-literal args only; the
     single string arg is the 1-element list, exactly as the engine
-    evaluates), and (F455) the ws-tolerant Array.of anchor
+    evaluates), (F455) the ws-tolerant Array.of anchor
     (whitespace around the dot, the [ \t\n\r] class the parser
-    skips). Bounded by part, depth, codepoint, repeat, and output budgets; never
+    skips), (F464) .toString() on string arrays (engine-exact comma
+    join) plus .replace(/,/g,'') with the literal-comma regex and a
+    literal-string replacement (the /,/gi variant is comma-identical;
+    general regex replace is NOT modeled), (F465)
+    .padStart(targetLen,padString) / .padEnd(targetLen,padString) with
+    literal numeric length and literal pad string, and (F466)
+    .slice(start[,end]) on string arrays with literal numeric bounds
+    (negative indices and out-of-range clamps engine-exact) plus the
+    .flat() identity and the literal .splice(0,2) removed-elements
+    forms. Bounded by part, depth, codepoint, repeat, and output budgets; never
     evals; undecodable runs are ignored. A bare string literal (or an
     unjoined array literal) with no operator or call is not rewritten
     (not obfuscation-shaped).
