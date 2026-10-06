@@ -39,8 +39,11 @@ Function() (arbitrary code) always fails closed. The text-escape decoders
 out-of-range sequences decode to nothing, never to a guess. The
 JS-expression decoder (F430) is a strict bounded recursive-descent
 parser for quoted '+' concatenation, template literals (no ${...}),
-String.fromCharCode, .concat()/.repeat(), and (F434) array-literal
-+ .join(sep) -- never eval; undecodable runs are ignored and bare
+String.fromCharCode, .concat()/.repeat(), (F434) array-literal
++ .join(sep), (F437) .reduce(...) array-assembly plus identity .map(...)
+/ constant-true .filter(...) passthroughs, and (F443) Array(N).fill(x)
+construction plus .filter(Boolean) truthiness filtering -- never eval;
+undecodable runs are ignored and bare
 literals are not rewritten.
 
 FORM VARIANTS (F8). Every candidate string (the original text and each
@@ -1510,11 +1513,12 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|Array\(|\(")
 _JS_EXPR_MAX_PARTS = 64        # bound on '+' operands per expression
 _JS_EXPR_MAX_CODEPOINTS = 512  # bound on fromCharCode argument count
 _JS_EXPR_MAX_DEPTH = 8         # bound on parenthesization depth
 _JS_EXPR_MAX_REPEAT = 64       # bound on .repeat(n)
+_JS_EXPR_MAX_FILL = 64         # bound on Array(N) element count (F443)
 _JS_EXPR_MAX_LITERAL = 4096    # bound on one string literal
 _JS_EXPR_MAX_RUN = 100000      # bound on expression run length
 _ASCII_DIGITS = frozenset("0123456789")
@@ -1721,6 +1725,45 @@ def _js_expect(text, i, ch):
     return i + 1
 
 
+def _js_parse_array_constructor(text, i, state):
+    """Parse 'Array()' or 'Array(N)' at text[i] (F443).
+
+    Returns (_JSArr, next_index). N is a decimal or 0x integer
+    literal 0.._JS_EXPR_MAX_FILL; the zero-arg form is an empty array.
+    Elements start as the empty string: real Array(N) is sparse, but
+    holes join exactly as "" does, so modeling them as "" is
+    byte-identical through .join/.fill/.filter(Boolean). A string or
+    multi-arg call (JS: single string arg means ONE element '2', which
+    this bound does not model) fails closed, as do nested calls inside
+    array literals. The result only survives when consumed by .join();
+    a bare Array(N) decodes to nothing (not obfuscation-shaped).
+    Never evals.
+    """
+    n = len(text)
+    j = i + len("Array")
+    if state.get("in_array"):
+        raise _JSExprFail("Array inside array literal")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("Array without paren")
+    j = _js_skip_ws(text, j + 1)
+    if j < n and text[j] == ")":
+        count = 0
+        j += 1
+    else:
+        count, j = _js_parse_number(text, j)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ")":
+            raise _JSExprFail("bad Array args")
+        j += 1
+    if count > _JS_EXPR_MAX_FILL:
+        raise _JSExprFail("Array too big")
+    state["parts"] += count
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return _JSArr([""] * count), j
+
+
 def _js_parse_reduce_params(text, i):
     """Parse '(p0, p1)' at text[i]; returns (p0, p1, next_index)."""
     i = _js_expect(text, i, "(")
@@ -1851,13 +1894,27 @@ def _js_parse_map_callback(text, i):
 
 
 def _js_parse_filter_callback(text, i):
-    """Parse a constant-true .filter callback at text[i]; returns next.
+    """Parse a constant-true or Boolean .filter callback at text[i].
 
-    Recognized (F437 family): ()=>true | (s)=>true |
-    function(){return true;} | function(s){return true;}
-    Elements are kept unchanged. Anything else fails closed.
+    Recognized (F437/F443 family): ()=>true | (s)=>true |
+    function(){return true;} | function(s){return true;} |
+    Boolean (F443 -- bare identifier only, never Boolean(...) which is
+    a call, not a function reference).
+
+    Returns (drop_falsy, next_index): drop_falsy is True only for the
+    bare Boolean predicate. JS Boolean(x) coerces to boolean, so
+    .filter(Boolean) drops every falsy element; array elements here
+    are always parsed string literals, so exactly the empty string is
+    dropped. Anything else fails closed. Never evals.
     """
     n = len(text)
+    j = _js_skip_ws(text, i)
+    if text.startswith("Boolean", j):
+        k = j + len("Boolean")
+        if k >= n or text[k] not in _JS_IDENT_CONT:
+            if k < n and text[k] == "(":
+                raise _JSExprFail("Boolean() is not a predicate")
+            return True, k
     if text.startswith("function", i):
         i += len("function")
         if i < n and text[i] in _JS_IDENT_CONT:
@@ -1883,7 +1940,7 @@ def _js_parse_filter_callback(text, i):
         if i < n and text[i] == ";":
             i += 1
         i = _js_expect(text, i, "}")
-        return i
+        return False, i
     # Arrow form: zero or one params, body exactly `true`.
     j = _js_skip_ws(text, i)
     if j < n and text[j] == "(":
@@ -1899,16 +1956,16 @@ def _js_parse_filter_callback(text, i):
         raise _JSExprFail("filter callback not constant-true")
     if i + 4 < n and text[i + 4] in _JS_IDENT_CONT:
         raise _JSExprFail("filter callback not constant-true")
-    return i + 4
+    return False, i + 4
 
 
 def _js_apply_method(text, j, name, value, depth, state):
     """Apply .concat(...) / .repeat(...) / .join(...) / .reduce(...) /
-    .reduceRight(...) / .map(...) / .filter(...) with text[j] == '('.
+    .reduceRight(...) / .map(...) / .filter(...) / .fill(...) with text[j] == '('.
 
-    .join/.reduce/.reduceRight/.map/.filter require an array-literal
-    value (F434/F437); .concat/.repeat require a string value. Anything
-    else fails closed -- never evals.
+    .join/.reduce/.reduceRight/.map/.filter/.fill require an array-literal
+    or Array(N) value (F434/F437/F443); .concat/.repeat require a string
+    value. Anything else fails closed -- never evals.
     """
     i = j + 1
     if name == "join":
@@ -1988,15 +2045,41 @@ def _js_apply_method(text, j, name, value, depth, state):
         return _JSArr(list(value.elements)), i + 1
     if name == "filter":
         # F437 family: ['a','b'].filter(()=>true) -- constant-true keeps
-        # every element; any other predicate fails closed.
+        # every element; (F443) .filter(Boolean) drops every falsy
+        # element -- for parsed string elements, exactly the empty
+        # string. Any other predicate fails closed.
         if not isinstance(value, _JSArr):
             raise _JSExprFail("filter on non-array")
-        i = _js_parse_filter_callback(text, _js_skip_ws(text, i))
+        drop_falsy, i = _js_parse_filter_callback(text, _js_skip_ws(text, i))
         i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != ")":
             raise _JSExprFail("bad filter")
+        elements = list(value.elements)
+        if drop_falsy:
+            elements = [e for e in elements if e != ""]
         state["ops"] += 1
-        return _JSArr(list(value.elements)), i + 1
+        return _JSArr(elements), i + 1
+    if name == "fill":
+        # F443: Array(N).fill(x) -- every element becomes x. Only the
+        # single-arg form is modeled; start/end args fail closed
+        # (attacker shapes use none).
+        if not isinstance(value, _JSArr):
+            raise _JSExprFail("fill on non-array")
+        i = _js_skip_ws(text, i)
+        frag, i = _js_parse_additive(text, i, depth, state)
+        if isinstance(frag, _JSArr):
+            raise _JSExprFail("bad fill value")
+        i = _js_skip_ws(text, i)
+        if i < len(text) and text[i] == ",":
+            raise _JSExprFail("fill start/end unsupported")
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("bad fill")
+        i += 1
+        elements = [frag] * len(value.elements)
+        if len("".join(elements)) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("fill too long")
+        state["ops"] += 1
+        return _JSArr(elements), i
     if isinstance(value, _JSArr):
         raise _JSExprFail("method on unjoined array")
     if name == "repeat":
@@ -2038,13 +2121,14 @@ def _js_apply_method(text, j, name, value, depth, state):
 
 def _js_parse_postfix(text, i, value, depth, state):
     """Consume chained .concat(...) / .repeat(...) / .join(...) /
-    .reduce(...) / .reduceRight(...) / .map(...) / .filter(...) on *value*."""
+    .reduce(...) / .reduceRight(...) / .map(...) / .filter(...) /
+    .fill(...) on *value*."""
     while True:
         j = _js_skip_ws(text, i)
         if j >= len(text) or text[j] != ".":
             return value, i
         for name in ("concat", "repeat", "join", "reduce", "reduceRight",
-                     "map", "filter"):
+                     "map", "filter", "fill"):
             if text.startswith(name, j + 1):
                 k = _js_skip_ws(text, j + 1 + len(name))
                 if k < len(text) and text[k] == "(":
@@ -2080,6 +2164,12 @@ def _js_parse_primary(text, i, depth, state):
         val, i = _js_parse_array(text, i, depth, state)
         state["ops"] += 1  # an array literal is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
+    if text.startswith("Array", i):
+        # F443: Array(N) constructor. startswith alone admits Arrayfoo,
+        # which the constructor parse then fails closed (no paren).
+        val, i = _js_parse_array_constructor(text, i, state)
+        state["ops"] += 1  # an Array(N) construction is obfuscation-shaped
+        return _js_parse_postfix(text, i, val, depth, state)
     if c in _ASCII_DIGITS:
         num, i = _js_parse_number(text, i)
         return str(num), i
@@ -2093,9 +2183,10 @@ def _try_js_expr_decode(text, start):
     a decodable expression. Handles quoted-string '+' concatenation,
     template literals (no ${...}), String.fromCharCode(...),
     .concat(...) / .repeat(...) postfix calls, array-literal .join(sep)
-    (F434), and (F437) .reduce(...) / .reduceRight(...) array-assembly
-    plus identity .map(...) / constant-true .filter(...) passthroughs.
-    Bounded by part, depth, codepoint, repeat, and output budgets; never
+    (F434), (F437) .reduce(...) / .reduceRight(...) array-assembly
+    plus identity .map(...) / constant-true .filter(...) passthroughs,
+    and (F443) Array(N).fill(x) construction plus .filter(Boolean)
+    truthiness filtering. Bounded by part, depth, codepoint, repeat, and output budgets; never
     evals; undecodable runs are ignored. A bare string literal (or an
     unjoined array literal) with no operator or call is not rewritten
     (not obfuscation-shaped).
