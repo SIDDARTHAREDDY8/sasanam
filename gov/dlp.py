@@ -1721,7 +1721,14 @@ def _decode_one_escape(run, i):
 
 
 def _ascii_printable_or_none(decoded):
-    """Gate a decoded variant: ASCII, printable, length-bounded."""
+    """Gate a decoded variant: ASCII, printable, length-bounded.
+
+    F490: refuses non-str values (a _JSMethodRef that escapes
+    unconsumed is not a decodable variant -- fail closed, never crash
+    the scanner).
+    """
+    if not isinstance(decoded, str):
+        return None
     if not decoded or len(decoded) > _MAX_DECODE_BYTES:
         return None
     try:
@@ -2082,7 +2089,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*\.[ \t\n\r]*(construct|apply)|[ \t\n\r]*\[[ \t\n\r]*['\"])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf)|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply)|[ \t\n\r]*\[[ \t\n\r]*['\"])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf)|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
 # F455: the Array.of factory anchor tolerates whitespace around the dot
 # ([ \t\n\r]*, exactly the _js_skip_ws class the parser skips), so
 # `Array .of(...)` / `Array\t.of(...)` / `Array\n.of(...)` /
@@ -2755,6 +2762,35 @@ class _JSBool:
         return "_JSBool(%r)" % (self.value,)
 
 
+class _JSMethodRef:
+    """Internal: a bound-method reference (F490).
+
+    Created only for provably-non-null bases: `[]?.concat` /
+    `'s'?.concat` / `?['concat']` on a parsed _JSArr/plain-str value
+    (the method is validated against the (base-kind, method) table at
+    creation, so the reference is always the real built-in -- never
+    undefined), and the `[].constructor?.of` / `[].constructor.of`
+    factory reference. The base is discarded (the engine uses only
+    the function value when it is later invoked).
+
+    A bare reference is not a decodable value: it must be dispatched
+    via .call/.apply/.bind (or applied as the `of` factory); anything
+    else fails closed upstream -- _ascii_printable_or_none refuses
+    non-str values and _js_parse_additive raises on method-ref
+    operands, so a reference can never become a decoded variant or
+    crash the scanner. Never a str subclass (deliberately).
+    """
+
+    __slots__ = ("kind", "method")
+
+    def __init__(self, kind, method):
+        self.kind = kind  # 'array' | 'string' | 'factory'
+        self.method = method
+
+    def __repr__(self):
+        return "_JSMethodRef(%r, %r)" % (self.kind, self.method)
+
+
 def _js_join_element(e):
     """Engine-exact String() coercion of one array element for join (F479).
 
@@ -3001,6 +3037,10 @@ def _js_parse_additive(text, i, depth, state, _forbid_template=False):
             return val, i
         rhs, i = _js_parse_primary(text, j + 1, depth, state,
                                    _forbid_template)
+        if isinstance(val, _JSMethodRef) or isinstance(rhs, _JSMethodRef):
+            # F490: a method reference is not an additive operand --
+            # fail closed (never mis-decoded, never a TypeError).
+            raise _JSExprFail("method ref in additive")
         if isinstance(val, _JSArr) or isinstance(rhs, _JSArr):
             raise _JSExprFail("array in additive")  # F434: no JS '+' on arrays
         state["parts"] += 1
@@ -3261,6 +3301,14 @@ def _js_parse_ctor_factory(text, i, state):
         # [].constructor['of'] / [].constructor['apply'] -- bracket-string
         # member on the constructor property.
         name, j = _js_parse_bracket_member(text, j)
+    elif j < n and text[j] == "?":
+        # F490: [].constructor?.of -- `?.` adjacent (engine SyntaxError
+        # otherwise, node v24.20.0 verified); [].constructor is
+        # provably non-null so ?. ≡ .
+        if j + 1 >= n or text[j + 1] != ".":
+            raise _JSExprFail("no member after constructor")
+        j = _js_skip_ws(text, j + 2)
+        name, j = _js_parse_ident(text, j)
     elif j < n and text[j] == ".":
         j = _js_skip_ws(text, j + 1)
         name, j = _js_parse_ident(text, j)
@@ -3279,7 +3327,13 @@ def _js_parse_ctor_factory(text, i, state):
                     raise _JSExprFail("factory bind not modeled")
                 return _js_parse_of_dispatch(text, _paren, _dname, 0,
                                              state)
-        return _js_parse_of_args(text, j, state)
+        if _kd < n and text[_kd] == "(":
+            return _js_parse_of_args(text, j, state)
+        # F490: ([].constructor?.of) / ([].constructor.of) -- the
+        # factory as a reference; the following call applies it (see
+        # _js_parse_methodref_step). A bare unapplied reference fails
+        # closed upstream (a _JSMethodRef is never a decoded variant).
+        return _JSMethodRef("factory", "of"), j
     if name in ("apply", "call"):
         # F480: [].constructor['apply']([].constructor, [...]) --
         # constructor-function dispatch through the constructor property.
@@ -3568,6 +3622,13 @@ def _js_parse_reflect_apply_ctor(text, i, depth, state):
     if j < n and text[j] in _JS_IDENT_CONT:
         raise _JSExprFail("Reflectx is not Reflect")
     j = _js_skip_ws(text, j)
+    if j < n and text[j] == "?" and j + 1 < n and text[j + 1] == ".":
+        # F490: Reflect?.apply -- `?.` adjacent (engine SyntaxError
+        # otherwise, node v24.20.0 verified); Reflect is provably
+        # non-null so ?. ≡ . (The decoder has no binding forms, so a
+        # shadowed Reflect cannot arise in a parsed shape --
+        # documented.)
+        j += 1
     if j < n and text[j] == "[":
         # F480: Reflect['apply'](...) -- the bracket form is routed here
         # by _js_parse_reflect_call, which already verified the member
@@ -3594,7 +3655,14 @@ def _js_parse_reflect_apply_ctor(text, i, depth, state):
     if j >= n or text[j] != ",":
         raise _JSExprFail("Reflect.apply without thisArg")
     j = _js_skip_ws(text, j + 1)
-    j = _js_parse_array_ctor_ref(text, j)  # thisArg: exactly Array
+    # F490: thisArg may be null/undefined -- the target is provably
+    # Array, which ignores its thisArg, so null/undefined is
+    # engine-identical to Array here (node v24.20.0 verified).
+    _marker, _mk = _js_parse_marker_kw(text, j)
+    if _marker is not None and isinstance(_marker, _JSNil):
+        j = _mk
+    else:
+        j = _js_parse_array_ctor_ref(text, j)  # thisArg: exactly Array
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ",":
         raise _JSExprFail("Reflect.apply without argsList")
@@ -3998,6 +4066,11 @@ def _js_parse_reflect_call(text, i, depth, state):
     if j < n and text[j] in _JS_IDENT_CONT:
         raise _JSExprFail("Reflectx is not Reflect")
     j = _js_skip_ws(text, j)
+    if j < n and text[j] == "?" and j + 1 < n and text[j + 1] == ".":
+        # F490: Reflect?.apply -- `?.` adjacent (engine SyntaxError
+        # otherwise); Reflect is provably non-null so ?. ≡ . (The
+        # callees re-parse from i and normalize the same way.)
+        j += 1
     if j < n and text[j] == "[":
         # F480: Reflect['apply'](...) -- bracket-string member access,
         # node-identical to the dot form. Only 'apply' is modeled in
@@ -4329,7 +4402,7 @@ def _js_parse_value_list(text, i, depth, state, closer, cb_kind=None):
 
 def _js_peek_dispatch_call(text, k):
     """Peek `.(call|apply|bind)(` or `['call'|'apply'|'bind'](` at text[k]
-    (text[k] == '.' or '[').
+    (text[k] == '.', '[', or '?' for the F490 `?.` form).
 
     Returns (dname, paren_index) when the full dispatch call head is
     present, else None. Pure lookahead -- never raises. The
@@ -4338,9 +4411,17 @@ def _js_peek_dispatch_call(text, k):
     (`[].concat['call'](...)`, `Array.prototype.concat['apply'](...)`)
     is engine-identical to the dot form (node v24.20.0 verified); the
     name must be a string literal naming a dispatch member, anything
-    else falls through to None.
+    else falls through to None. F490: the `?.` form (`?.call(`) is
+    engine-identical to `.call(` -- the target is provably non-null at
+    every call site, so `?.` never short-circuits; the `?.` must be
+    adjacent (`? .` is a SyntaxError in the engine, node v24.20.0
+    verified).
     """
     n = len(text)
+    if text[k] == "?":
+        if k + 1 >= n or text[k + 1] != ".":
+            return None
+        k += 1
     if text[k] == "[":
         # F482: ['call'] / ['apply'] / ['bind'] bracket-string member.
         try:
@@ -4511,6 +4592,66 @@ def _js_parse_ignored_value(text, i, depth, state):
     return _js_parse_additive(text, _js_skip_ws(text, i), depth, state)
 
 
+def _js_parse_accessor_length(text, j):
+    """Parse `get length() { return N; }` at text[j] (F489).
+
+    The accessor-property length form the F487 grammar rejected:
+    `{0:'f1', 1:'f2', get length() { return 2; }}`. Only the exact
+    constant-return shape is modeled -- the engine calls the getter
+    and ToLength()s the result, so for `return N;` with N a decimal
+    integer literal the effective length is exactly N (node-verified,
+    v24.20.0). Any other getter body (non-constant, non-numeric,
+    side-effecting) fails closed via the None return -- the engine
+    evaluates arbitrary getter code, which the static decoder cannot.
+
+    Returns (N, next_index), or None on no-match (pure lookahead;
+    a `get` data property like `{get: 1}` is not a match). Whitespace
+    is tolerated between every token, exactly as the engine allows;
+    the `;` after the return value is optional. Never evals.
+    """
+    n = len(text)
+    k = j
+    if not text.startswith("get", k):
+        return None
+    k += 3
+    if k < n and text[k] in _JS_IDENT_CONT:
+        return None
+    k = _js_skip_ws(text, k)
+    if not text.startswith("length", k):
+        return None
+    k += 6
+    if k < n and text[k] in _JS_IDENT_CONT:
+        return None
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        return None
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != ")":
+        return None
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "{":
+        return None
+    k = _js_skip_ws(text, k + 1)
+    if not text.startswith("return", k):
+        return None
+    k += 6
+    if k < n and text[k] in _JS_IDENT_CONT:
+        return None
+    k = _js_skip_ws(text, k)
+    d0 = k
+    while k < n and text[k] in _ASCII_DIGITS:
+        k += 1
+    if k == d0:
+        return None
+    num = int(text[d0:k])
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ";":
+        k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "}":
+        return None
+    return num, k + 1
+
+
 def _js_parse_arraylike_recv(text, i, depth, state):
     """Parse `{length:N, 0:v0, 1:v1, ...}` array-like receiver at text[i]
     (text[i] == '{') (F487); returns (_JSArr, next_index).
@@ -4527,19 +4668,21 @@ def _js_parse_arraylike_recv(text, i, depth, state):
 
     The object literal is parsed to a _JSArr with engine-exact index
     semantics: `length` must be a decimal integer literal
-    0.._JS_EXPR_MAX_PARTS (a non-numeric length, getter, or proxy
-    fails closed -- documented scope boundary); every index in
-    [0, length) must be explicitly present (a HOLE -- missing index --
-    fails closed, because the engine's filter SKIPS holes while
-    visiting explicit undefined values, and the flat _JSArr cannot
-    distinguish them -- rejected, never mis-decoded); values are
+    0.._JS_EXPR_MAX_PARTS, or the F489 accessor form
+    `get length() { return N; }` (constant numeric return only -- any
+    other getter body fails closed); a non-numeric length, a second
+    length, or a proxy fails closed -- documented scope boundaries);
+    every index in [0, length) must be explicitly present (a HOLE --
+    missing index -- fails closed, because the engine's filter SKIPS
+    holes while visiting explicit undefined values, and the flat _JSArr
+    cannot distinguish them -- rejected, never mis-decoded); values are
     string literals or the F479 null/undefined/true/false markers
     (explicit null joins as '', exactly as the engine coerces);
     duplicate keys take the later value (engine-exact); string keys
     ('0', 'length') are accepted as their index/length (engine-exact);
-    any other property (extra non-index keys, methods, getters,
-    spread, nested objects) fails closed. Element count is charged
-    to the part budget. Never evals.
+    any other property (extra non-index keys, methods, non-length
+    getters, spread, nested objects) fails closed. Element count is
+    charged to the part budget. Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, i + 1)
@@ -4551,75 +4694,88 @@ def _js_parse_arraylike_recv(text, i, depth, state):
         j = _js_skip_ws(text, j)
         if j >= n:
             raise _JSExprFail("unterminated array-like")
-        # -- key: ident, integer, or string literal --
-        if text[j] in _JS_IDENT_START:
-            key, j = _js_parse_ident(text, j)
-            is_length = (key == "length")
-            try:
-                idx = int(key) if not is_length else -1
-            except ValueError:
-                raise _JSExprFail("bad array-like key")
-        elif text[j] in _ASCII_DIGITS:
-            k = j
-            while k < n and text[k] in _ASCII_DIGITS:
-                k += 1
-            key = text[j:k]
-            j = k
-            is_length = False
-            idx = int(key)
-        elif text[j] in "'\"":
-            key, j = _js_parse_string(text, j)
-            is_length = (key == "length")
-            if not is_length:
-                if not key or not all(c in "0123456789" for c in key):
-                    raise _JSExprFail("bad array-like string key")
+        # F489: accessor-property length -- `get length() { return N; }`.
+        # Tried before the plain ident key (a `get` data property is not
+        # a valid array-like key and still fails closed below).
+        _acc = (_js_parse_accessor_length(text, j)
+                if text[j] in _JS_IDENT_START else None)
+        if _acc is not None:
+            _num, j = _acc
+            if length is not None:
+                raise _JSExprFail("duplicate length")
+            if _num > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("array-like length too big")
+            length = _num
+        else:
+            # -- key: ident, integer, or string literal --
+            if text[j] in _JS_IDENT_START:
+                key, j = _js_parse_ident(text, j)
+                is_length = (key == "length")
+                try:
+                    idx = int(key) if not is_length else -1
+                except ValueError:
+                    raise _JSExprFail("bad array-like key")
+            elif text[j] in _ASCII_DIGITS:
+                k = j
+                while k < n and text[k] in _ASCII_DIGITS:
+                    k += 1
+                key = text[j:k]
+                j = k
+                is_length = False
                 idx = int(key)
+            elif text[j] in "'\"":
+                key, j = _js_parse_string(text, j)
+                is_length = (key == "length")
+                if not is_length:
+                    if not key or not all(c in "0123456789" for c in key):
+                        raise _JSExprFail("bad array-like string key")
+                    idx = int(key)
+                else:
+                    idx = -1
             else:
-                idx = -1
-        else:
-            raise _JSExprFail("bad array-like key")
-        j = _js_skip_ws(text, j)
-        if j >= n or text[j] != ":":
-            raise _JSExprFail("array-like without colon")
-        j = _js_skip_ws(text, j + 1)
-        # -- value --
-        if is_length:
-            # length: decimal integer literal only (ToLength would
-            # coerce strings, but a non-numeric length fails closed --
-            # documented scope boundary).
-            if j >= n or text[j] not in _ASCII_DIGITS:
-                raise _JSExprFail("array-like length not numeric")
-            k = j
-            while k < n and text[k] in _ASCII_DIGITS:
-                k += 1
-            if k - j > 6:  # bound: length fits the part budget many
-                           # times over; huge lengths fail closed
-                raise _JSExprFail("array-like length too big")
-            length = int(text[j:k])
-            if length > _JS_EXPR_MAX_PARTS:
-                raise _JSExprFail("array-like length too big")
-            j = k
-        else:
-            if idx < 0:
-                raise _JSExprFail("bad array-like index")
-            # value: F479 marker keyword or string literal (additive
-            # chains like 'a'+'b' fail closed -- honest, unmodeled)
-            marker, mk = _js_parse_marker_kw(text, j)
-            if marker is not None:
-                val, j = marker, mk
-            elif j < n and text[j] in "'\"":
-                # backtick templates fail closed here (the F479
-                # array-element grammar allows them, but the
-                # array-like receiver is a narrower shape --
-                # documented).
-                val, j = _js_parse_string(text, j)
+                raise _JSExprFail("bad array-like key")
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != ":":
+                raise _JSExprFail("array-like without colon")
+            j = _js_skip_ws(text, j + 1)
+            # -- value --
+            if is_length:
+                # length: decimal integer literal only (ToLength would
+                # coerce strings, but a non-numeric length fails closed --
+                # documented scope boundary).
+                if j >= n or text[j] not in _ASCII_DIGITS:
+                    raise _JSExprFail("array-like length not numeric")
+                k = j
+                while k < n and text[k] in _ASCII_DIGITS:
+                    k += 1
+                if k - j > 6:  # bound: length fits the part budget many
+                               # times over; huge lengths fail closed
+                    raise _JSExprFail("array-like length too big")
+                length = int(text[j:k])
+                if length > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("array-like length too big")
+                j = k
             else:
-                raise _JSExprFail("array-like value not decodable")
-            # duplicate keys: later wins (engine-exact)
-            values[idx] = val
-            state["parts"] += 1
-            if state["parts"] > _JS_EXPR_MAX_PARTS:
-                raise _JSExprFail("too many parts")
+                if idx < 0:
+                    raise _JSExprFail("bad array-like index")
+                # value: F479 marker keyword or string literal (additive
+                # chains like 'a'+'b' fail closed -- honest, unmodeled)
+                marker, mk = _js_parse_marker_kw(text, j)
+                if marker is not None:
+                    val, j = marker, mk
+                elif j < n and text[j] in "'\"":
+                    # backtick templates fail closed here (the F479
+                    # array-element grammar allows them, but the
+                    # array-like receiver is a narrower shape --
+                    # documented).
+                    val, j = _js_parse_string(text, j)
+                else:
+                    raise _JSExprFail("array-like value not decodable")
+                # duplicate keys: later wins (engine-exact)
+                values[idx] = val
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
         j = _js_skip_ws(text, j)
         if j >= n:
             raise _JSExprFail("unterminated array-like")
@@ -4652,6 +4808,188 @@ def _js_parse_arraylike_recv(text, i, depth, state):
     return _JSArr(elements), j
 
 
+def _js_peek_proxy_head(text, i):
+    """Peek `new Proxy(` at text[i] (F489); True/False, never raises."""
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if not text.startswith("new", j):
+        return False
+    k = j + 3
+    if k < n and text[k] in _JS_IDENT_CONT:
+        return False
+    k = _js_skip_ws(text, k)
+    if not text.startswith("Proxy", k):
+        return False
+    k += 5
+    if k < n and text[k] in _JS_IDENT_CONT:
+        return False
+    k = _js_skip_ws(text, k)
+    return k < n and text[k] == "("
+
+
+def _js_parse_proxy_recv(text, i, depth, state):
+    """Parse `new Proxy(TARGET, {})` at text[i] (F489).
+
+    Only the empty-handler form is modeled: with `{}` every trap
+    forwards to the target, so the engine reads exactly the target's
+    data properties -- the receiver is engine-identical to the target
+    object literal, parsed by _js_parse_arraylike_recv (node-verified,
+    v24.20.0). Any non-empty handler (including the filed get-trap
+    shape) fails closed: the engine evaluates arbitrary trap code,
+    which the static decoder cannot model -- documented scope
+    boundary, rejected never mis-decoded. TARGET must be an object
+    literal (the F487/F489 grammar); anything else fails closed.
+    Returns (_JSArr, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    # `new` (ident boundary checked by the peek; re-checked here).
+    if not text.startswith("new", j) or (
+            j + 3 < n and text[j + 3] in _JS_IDENT_CONT):
+        raise _JSExprFail("not new Proxy")
+    j = _js_skip_ws(text, j + 3)
+    if not text.startswith("Proxy", j) or (
+            j + 5 < n and text[j + 5] in _JS_IDENT_CONT):
+        raise _JSExprFail("not new Proxy")
+    j = _js_skip_ws(text, j + 5)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "{":
+        raise _JSExprFail("proxy target not an object literal")
+    recv, j = _js_parse_arraylike_recv(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ",")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "{":
+        raise _JSExprFail("proxy handler not empty")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "}":
+        # A non-empty handler means traps -- unmodelable. Fail closed.
+        raise _JSExprFail("proxy handler not empty")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("proxy without close paren")
+    state["ops"] += 1  # the proxy wrapper is obfuscation-shaped
+    return recv, j + 1
+
+
+def _js_peek_arguments_iife_head(text, i):
+    """Peek `(function` at text[i] (F489); True/False, never raises."""
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return False
+    k = _js_skip_ws(text, j + 1)
+    if not text.startswith("function", k):
+        return False
+    k += 8
+    return not (k < n and text[k] in _JS_IDENT_CONT)
+
+
+def _js_parse_arguments_iife_recv(text, i, depth, state):
+    """Parse `(function(){return arguments})(args...)` at text[i] (F489).
+
+    The IIFE returns the callee's `arguments` exotic object; the engine
+    exposes it as an array-like with length == the argument count and
+    indices 0..length-1 bound to the passed values (node-verified,
+    v24.20.0). Only the exact shape is modeled: zero parameters, a
+    single `return arguments` statement (optional trailing `;`);
+    arguments are string literals or F479 marker keywords
+    (null/undefined/true/false) -- numeric/additive args fail closed,
+    same scope boundary as the factory grammars. The receiver is the
+    _JSArr of the passed values, engine-exact for join/slice/filter.
+    Returns (_JSArr, next_index). Never evals.
+    """
+    n = len(text)
+
+    def _need_ident(tok, j):
+        if not text.startswith(tok, j) or (
+                j + len(tok) < n and text[j + len(tok)] in _JS_IDENT_CONT):
+            raise _JSExprFail("bad arguments iife")
+        return j + len(tok)
+
+    j = _js_skip_ws(text, i)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    j = _need_ident("function", j)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "{")
+    j = _js_skip_ws(text, j)
+    j = _need_ident("return", j)
+    j = _js_skip_ws(text, j)
+    j = _need_ident("arguments", j)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ";":
+        j = _js_skip_ws(text, j + 1)
+    j = _js_expect(text, j, "}")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    args = []
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ")":
+        j += 1
+    else:
+        while True:
+            j = _js_skip_ws(text, j)
+            marker, mk = _js_parse_marker_kw(text, j)
+            if marker is not None:
+                args.append(marker)
+                j = mk
+            elif j < n and text[j] in "'\"":
+                s, j = _js_parse_string(text, j)
+                args.append(s)
+            else:
+                raise _JSExprFail("arguments arg not decodable")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            j = _js_skip_ws(text, j)
+            if j >= n:
+                raise _JSExprFail("unterminated arguments call")
+            if text[j] == ",":
+                j = _js_skip_ws(text, j + 1)
+                continue
+            if text[j] == ")":
+                j += 1
+                break
+            raise _JSExprFail("bad arguments call")
+    state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+    return _JSArr(args), j
+
+
+def _js_parse_dispatch_receiver(text, i, depth, state):
+    """Parse the receiver of a .call/.apply/.bind dispatch (F478/F487/F489).
+
+    Receiver classes, tried in order (node-verified, v24.20.0):
+    - `{length:N, ...}` object literal (F487, extended F489 for the
+      `get length() { return N; }` accessor form);
+    - `new Proxy({...}, {})` with an empty handler (F489; the target
+      literal is parsed by the F487/F489 grammar -- any trap fails
+      closed);
+    - `(function(){return arguments})(args...)` (F489; the arguments
+      exotic object as a _JSArr of the passed values);
+    - otherwise the additive grammar (arrays, strings).
+    The head peeks commit the parse: a malformed exotic receiver fails
+    closed here (the additive grammar cannot parse these heads anyway).
+    Returns (value, next_index). Never evals.
+    """
+    n = len(text)
+    _ri = _js_skip_ws(text, i)
+    if _ri < n and text[_ri] == "{":
+        return _js_parse_arraylike_recv(text, _ri, depth, state)
+    if _js_peek_proxy_head(text, _ri):
+        return _js_parse_proxy_recv(text, _ri, depth, state)
+    if _js_peek_arguments_iife_head(text, _ri):
+        return _js_parse_arguments_iife_recv(text, _ri, depth, state)
+    return _js_parse_additive(text, _ri, depth, state)
+
+
 def _js_apply_fn_dispatch(text, i, method, dname, depth, state):
     """Apply an F478/F483 dispatch with text[i] just after the dispatch `(`.
 
@@ -4676,15 +5014,7 @@ def _js_apply_fn_dispatch(text, i, method, dname, depth, state):
     """
     n = len(text)
     state["ops"] += 1  # the dispatch call itself is obfuscation-shaped
-    _ri = _js_skip_ws(text, i)
-    if _ri < n and text[_ri] == "{":
-        # F487: array-like object-literal receiver -- {length:N, ...}
-        # parsed to a _JSArr with engine-exact index semantics. The
-        # '{' head commits the parse: a malformed object literal fails
-        # closed here (the additive grammar cannot parse '{' anyway).
-        recv, i = _js_parse_arraylike_recv(text, _ri, depth, state)
-    else:
-        recv, i = _js_parse_additive(text, _ri, depth, state)
+    recv, i = _js_parse_dispatch_receiver(text, i, depth, state)
     i = _js_skip_ws(text, i)
     # F483: the callback grammar for the value lists is fixed by the
     # dispatched method (never guessed) -- see _js_parse_dispatch_value.
@@ -4817,7 +5147,9 @@ def _js_parse_prototype_dispatch(text, i, depth, state):
         # shape. Fail closed, never mis-decoded.
         raise _JSExprFail("dispatch target not a real method")
     k = _js_skip_ws(text, k)
-    if k >= n or text[k] not in (".", "["):
+    # F490: `?.call` / `?.apply` -- the `?.` is normalized in
+    # _js_peek_dispatch_call (adjacent only, target provably non-null).
+    if k >= n or text[k] not in (".", "[", "?"):
         return None
     peek = _js_peek_dispatch_call(text, k)
     if peek is None:
@@ -4989,6 +5321,190 @@ def _js_parse_function_dispatch(text, i, depth, state):
     return _js_parse_postfix(text, j + 1, val, depth, state)
 
 
+def _js_parse_opt_member_ref(text, j, value):
+    """Parse `?.METHOD` / `?['METHOD']` at text[j] == '?' (F490).
+
+    *value* is a _JSArr or exact-str (provably non-null, so `?.` is
+    engine-identical to `.`); the method is validated against the
+    (base-kind, method) table, so the reference is always the real
+    built-in -- never undefined (a _JSNumStr base is refused: e.g.
+    `(1)?.concat` is undefined in the engine). Returns
+    (_JSMethodRef, next_index), or None on no-match (pure lookahead).
+    The `?.` must be adjacent -- `? .` is a SyntaxError in the engine
+    (node v24.20.0 verified). Never evals.
+    """
+    n = len(text)
+    if j + 1 >= n or text[j + 1] != ".":
+        return None
+    if isinstance(value, _JSArr):
+        table, kind = _F478_ARRAY_METHODS, "array"
+    elif type(value) is str:
+        table, kind = _F478_STRING_METHODS, "string"
+    else:
+        return None
+    k = _js_skip_ws(text, j + 2)
+    if k < n and text[k] == "[":
+        try:
+            method, k = _js_parse_bracket_member(text, k)
+        except _JSExprFail:
+            return None
+    elif k < n and text[k] in _JS_IDENT_START:
+        m = k + 1
+        while m < n and text[m] in _JS_IDENT_CONT:
+            m += 1
+        method, k = text[k:m], m
+    else:
+        return None
+    if method not in _F478_DISPATCH_METHODS or method not in table:
+        return None
+    return _JSMethodRef(kind, method), k
+
+
+def _js_parse_trailing_member_ref(text, i, value):
+    """Parse `.METHOD` / `['METHOD']` / `?.METHOD` at text[i] on an
+    already-parsed *value* (F490, for the `??` LEFT operand).
+
+    The additive grammar leaves a non-called member access unparsed;
+    this resolves it to a _JSMethodRef when the (base-kind, method)
+    pairing is engine-valid (same validation as
+    _js_parse_opt_member_ref). Returns (_JSMethodRef, next_index), or
+    None on no-match (pure lookahead). Never evals.
+    """
+    n = len(text)
+    if i >= n:
+        return None
+    j = i
+    if text[j] == "?":
+        # `?.` adjacent (engine SyntaxError otherwise).
+        if j + 1 >= n or text[j + 1] != ".":
+            return None
+        j += 1
+    if isinstance(value, _JSArr):
+        table, kind = _F478_ARRAY_METHODS, "array"
+    elif type(value) is str:
+        table, kind = _F478_STRING_METHODS, "string"
+    else:
+        return None
+    if j < n and text[j] == "[":
+        try:
+            method, j = _js_parse_bracket_member(text, j)
+        except _JSExprFail:
+            return None
+    elif j < n and text[j] == ".":
+        k = _js_skip_ws(text, j + 1)
+        if k >= n or text[k] not in _JS_IDENT_START:
+            return None
+        m = k + 1
+        while m < n and text[m] in _JS_IDENT_CONT:
+            m += 1
+        method, j = text[k:m], m
+    else:
+        return None
+    if method not in _F478_DISPATCH_METHODS or method not in table:
+        return None
+    return _JSMethodRef(kind, method), j
+
+
+def _js_peek_nullish_pick(text, i, val):
+    """Peek `(LEFT ?? RIGHT)` with additive having stopped at text[i]
+    (F490); True/False, never raises.
+
+    *val* is the already-parsed LEFT prefix: either a _JSMethodRef
+    (text[i] is at the `??`), or a value with a trailing `.METHOD` /
+    `['METHOD']` / `?.METHOD` the additive grammar left unparsed
+    (text[i] is at that member). True only when a `??` (not `?.`, not a
+    ternary `?`) follows the method reference.
+    """
+    n = len(text)
+    if isinstance(val, _JSMethodRef):
+        j = i
+    elif isinstance(val, _JSArr) or type(val) is str:
+        ref = _js_parse_trailing_member_ref(text, i, val)
+        if ref is None:
+            return False
+        _left, j = ref
+    else:
+        return False
+    j = _js_skip_ws(text, j)
+    return (j + 1 < n and text[j] == "?" and text[j + 1] == "?"
+            and (j + 2 >= n or (text[j + 2] not in _JS_IDENT_CONT
+                               and text[j + 2] != "?")))
+
+
+def _js_parse_nullish_pick(text, i, val, depth, state):
+    """Parse `?? RIGHT` at text[i] (text[i:i+2] == '??') with LEFT already
+    parsed as *val* (F490).
+
+    LEFT must be a method reference -- either already a _JSMethodRef,
+    or a value with a trailing `.METHOD` / `['METHOD']` / `?.METHOD`
+    the additive grammar left unparsed (text[i] is at that member; the
+    `??` must follow it). A method reference is provably non-null, so
+    `??` picks LEFT engine-exactly (node-verified, v24.20.0). RIGHT
+    must parse as a dispatch-target reference
+    (Array.prototype.M / String.prototype.M, dot or bracket-string per
+    F482); it is parsed and discarded -- the engine short-circuits, so
+    its value is never needed. Anything else fails closed. Returns
+    (left_ref, next_index). Never evals.
+    """
+    n = len(text)
+    del depth
+    if isinstance(val, _JSMethodRef):
+        left, j = val, i
+    elif isinstance(val, _JSArr) or type(val) is str:
+        ref = _js_parse_trailing_member_ref(text, i, val)
+        if ref is None:
+            raise _JSExprFail("nullish pick without method target")
+        left, j = ref
+    else:
+        raise _JSExprFail("nullish pick without method target")
+    # j is now at the `??` (peek-verified by the caller).
+    j = _js_skip_ws(text, j)
+    if not (j + 1 < n and text[j] == "?" and text[j + 1] == "?"):
+        raise _JSExprFail("nullish pick without ??")
+    j = _js_skip_ws(text, j + 2)
+    try:
+        _rmethod, j = _js_parse_dispatch_target_ref(text, j)
+    except _JSExprFail:
+        raise _JSExprFail("nullish pick target not a method ref")
+    state["ops"] += 1  # the ?? pick is obfuscation-shaped
+    return left, j
+
+
+def _js_parse_methodref_step(text, j, ref, depth, state):
+    """One postfix step on a _JSMethodRef at text[j] (F490).
+
+    - `?.call/apply/bind` / `.call/apply/bind` / `['call'/...]`:
+      desugar through _js_apply_fn_dispatch -- the reference's base is
+      discarded and the dispatch supplies the receiver, exactly as the
+      engine invokes the referenced function (the reference is
+      provably the real built-in, so `?.` never short-circuits).
+    - `(args)` when ref.kind == 'factory': apply the `[].constructor`
+      `of` factory reference (F490 shape 8).
+    Returns (value, next_index), or None when text[j] is not such a
+    step (the caller returns the bare reference; upstream fails closed
+    via the _JSMethodRef guards). Never evals.
+    """
+    n = len(text)
+    k = j
+    if text[k] == "?":
+        # `?.` adjacent (engine SyntaxError otherwise).
+        if k + 1 >= n or text[k + 1] != ".":
+            return None
+        k += 1
+    if text[k] == "(" and ref.kind == "factory":
+        state["ops"] += 1  # the factory application is obfuscation-shaped
+        return _js_parse_of_args(text, k, state)
+    if text[k] not in (".", "["):
+        return None
+    peek = _js_peek_dispatch_call(text, k)
+    if peek is None:
+        return None
+    dname, paren = peek
+    state["ops"] += 1  # the dispatch is obfuscation-shaped
+    return _js_apply_fn_dispatch(text, paren + 1, ref.method, dname,
+                                 depth, state)
+
+
 def _js_parse_postfix_dispatch(text, j, value, depth, state):
     """Parse `.METHOD.call/apply/bind(...)` at text[j] (text[j] == '.')
     or `['METHOD'].call/apply/bind(...)` (text[j] == '[', F482).
@@ -5025,7 +5541,9 @@ def _js_parse_postfix_dispatch(text, j, value, depth, state):
     if method not in _F478_DISPATCH_METHODS:
         return None
     m = _js_skip_ws(text, m)
-    if m >= n or text[m] not in (".", "["):
+    # F490: `?.call` / `?.apply` -- the `?.` is normalized in
+    # _js_peek_dispatch_call (adjacent only, target provably non-null).
+    if m >= n or text[m] not in (".", "[", "?"):
         return None
     peek = _js_peek_dispatch_call(text, m)
     if peek is None:
@@ -6433,8 +6951,32 @@ def _js_parse_postfix(text, i, value, depth, state):
 
     while True:
         j = _js_skip_ws(text, i)
-        if j >= len(text) or text[j] not in (".", "["):
+        if j >= len(text):
             return value, i
+        # F490: a step on a method reference -- dispatch it
+        # (./?./bracket call/apply/bind) or apply the factory `(args)`.
+        # None returns the bare reference; upstream fails closed via
+        # the _JSMethodRef guards (never a decoded variant).
+        if isinstance(value, _JSMethodRef):
+            if text[j] not in (".", "[", "?", "("):
+                return value, i
+            step = _js_parse_methodref_step(text, j, value, depth, state)
+            if step is None:
+                return value, i
+            value, i = step
+            continue
+        if text[j] not in (".", "[", "?"):
+            return value, i
+        # F490: ?.METHOD / ?['METHOD'] on a value -- the method
+        # reference form. None leaves the `?` unconsumed (upstream
+        # fails closed, as before).
+        if text[j] == "?":
+            ref = _js_parse_opt_member_ref(text, j, value)
+            if ref is None:
+                return value, i
+            state["ops"] += 1  # the ?. member access is obfuscation-shaped
+            value, i = ref
+            continue
         # F478: .METHOD.call/apply/bind(...) -- indirect invocation
         # through Function.prototype on EXPR's already-parsed method.
         # F482: ['METHOD'].call/apply/bind(...) -- the bracket-string
@@ -6590,6 +7132,17 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         val, i = _js_parse_additive(text, i + 1, depth + 1, state,
                                     _forbid_template)
         i = _js_skip_ws(text, i)
+        # F490: (LEFT ?? RIGHT) -- the nullish pick. The additive
+        # grammar leaves LEFT's trailing member unparsed (or LEFT is
+        # already a method reference); _js_peek_nullish_pick verifies
+        # the `??` (not `?.`, not a ternary `?`) follows the method
+        # reference. The pick requires a method-reference LEFT
+        # (provably non-null, so ?? takes LEFT engine-exactly) and a
+        # dispatch-target RIGHT (parsed, then discarded -- the engine
+        # short-circuits). Anything else fails closed.
+        if _js_peek_nullish_pick(text, i, val):
+            val, i = _js_parse_nullish_pick(text, i, val, depth, state)
+            i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != ")":
             raise _JSExprFail("unbalanced paren")
         return _js_parse_postfix(text, i + 1, val, depth, state)

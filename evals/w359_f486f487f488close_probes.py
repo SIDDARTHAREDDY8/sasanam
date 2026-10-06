@@ -277,8 +277,10 @@ def p2_arraylike_bounds():
         "Array.prototype.join.call({length:2, 0:'" + _A + "', 1:'" + _B + "', 5:'x'}, '')",
         # no length
         "Array.prototype.join.call({0:'" + _A + "', 1:'" + _B + "'}, '')",
-        # getter (unparseable as literal)
-        "Array.prototype.join.call({get length(){return 2}, 0:'" + _A + "', 1:'" + _B + "'}, '')",
+        # non-constant getter (unmodelable -- the engine evaluates
+        # arbitrary getter code; F489 models only `get length()
+        # { return N; }` with a constant numeric N)
+        "Array.prototype.join.call({get length(){return n}, 0:'" + _A + "', 1:'" + _B + "'}, '')",
     ]
     bad = [c for c in cases if _verdict(c, False)[0] == "BREAK"]
     return ("HELD" if not bad else "BREAK",
@@ -370,6 +372,9 @@ def p3_no_new_regexes():
     # F488: the Object anchor alternative gains getPrototypeOf (a new
     # member-name alternative, pinned exactly) -- re.compile count
     # unchanged.
+    # F490: the Reflect anchor alternative gains (\?\.|\.) for the
+    # Reflect?.apply shape (adjacent ?. only) -- re.compile count
+    # unchanged (28).
     assert dlp._JS_EXPR_START.pattern == (
         r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|"
         r"\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|"
@@ -377,7 +382,7 @@ def p3_no_new_regexes():
         r"Array[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"String[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Function[ \t\n\r]*\.[ \t\n\r]*prototype|"
-        r"Reflect([ \t\n\r]*\.[ \t\n\r]*(construct|apply)|"
+        r"Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply)|"
         r"[ \t\n\r]*\[[ \t\n\r]*['\"])|"
         r"Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf)|"
         r"[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
@@ -416,8 +421,8 @@ def p4_pin_and_footer():
     assert len(TAXONOMY) == 2135
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     assert "Next free finding: **F496**" in text
-    assert "**Open findings: F489, F490, F491, F492, F493, F494, F495.**" in text
-    return ("HELD", "pin=2135 footer open F489-F495 next F496 (wave-359 merge)")
+    assert "**Open findings: F491, F492, F493, F494, F495.**" in text
+    return ("HELD", "pin=2135 footer open F491-F495 next F496 (wave-360 lane 1: F489/F490 closed)")
 
 
 PROBES = [

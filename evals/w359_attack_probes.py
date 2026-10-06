@@ -115,12 +115,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F489-F495 open, next F496 (wave-359 merge:
-    F482-F488 CLOSED; F489-F495 filed OPEN)."""
+    """Control: footer shows F491-F495 open, next F496 (wave-360 lane 1:
+    F489/F490 CLOSED; F491-F495 still OPEN)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F496**" in text
-          and "**Open findings: F489, F490, F491, F492, F493, F494, F495.**" in text)
+          and "**Open findings: F491, F492, F493, F494, F495.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -241,23 +241,23 @@ def test_b2_f488_ctor_spelling_open():
 
 @_t
 def test_b3_f489_proxy_receiver_open():
-    """F489 pinned OPEN: Proxy-wrapped array-like receiver still misses."""
+    """F489 CLOSED wave-360 lane 1: Proxy-wrapped array-like receiver now blocks."""
     hit = _blocked("Array.prototype.join.call(new Proxy({length:2,0:'" + _A + "',1:'" + _B + "'}, {}), '')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % bool(hit))
 
 
 @_t
 def test_b3_f489_arguments_receiver_open():
-    """F489 pinned OPEN: arguments-IIFE receiver still misses."""
+    """F489 CLOSED wave-360 lane 1: arguments-IIFE receiver now blocks."""
     hit = _blocked("Array.prototype.join.call((function(){return arguments})('" + _A + "','" + _B + "'), '')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % bool(hit))
 
 
 @_t
 def test_b3_f490_optchain_open():
-    """F490 pinned OPEN: concat?.call still misses."""
+    """F490 CLOSED wave-360 lane 1: concat?.call now blocks."""
     hit = _blocked("Array.prototype.concat?.call([], '" + _A + "','" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % bool(hit))
 
 
 @_t

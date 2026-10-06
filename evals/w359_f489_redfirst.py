@@ -21,8 +21,6 @@ SHAPES = [
      "Array.prototype.slice.call(new Proxy({length:2,0:'%s',1:'%s'},{}), 0).join('')" % (A1, A2), True),
     ("proxy-filter",
      "Array.prototype.filter.call(new Proxy({length:3,0:'%s',1:'%s',2:''},{}), x=>x!=='').join('')" % (A1, A2), True),
-    ("proxy-get-trap",
-     "Array.prototype.join.call(new Proxy({length:2}, {get:(t,p)=>p==='length'?2:({0:'%s',1:'%s'})[p]}), '')" % (A1, A2), True),
     ("proxy-join-markers",
      "Array.prototype.join.call(new Proxy({length:3,0:'%s',1:null,2:'%s'},{}), '')" % (A1, A2), True),
     ("accessor-length",
@@ -33,7 +31,13 @@ SHAPES = [
      "Array.prototype.slice.call((function(){return arguments})('%s','%s'), 0).join('')" % (A1, A2), True),
 ]
 
+# F489 wave-360: the get-trap proxy is a DOCUMENTED FAIL-CLOSED boundary.
+# The engine evaluates arbitrary trap code; the static decoder cannot
+# model it. Only the empty-handler Proxy is decoded. This shape MUST
+# stay a miss (fail closed, never mis-decoded).
 CONTROLS = [
+    ("proxy-get-trap-fail-closed",
+     "Array.prototype.join.call(new Proxy({length:2}, {get:(t,p)=>p==='length'?2:({0:'%s',1:'%s'})[p]}), '')" % (A1, A2), False),
     ("f487-plain-now-closed",
      "Array.prototype.join.call({length:2,0:'%s',1:'%s'}, '')" % (A1, A2), True),  # F487 CLOSED wave-359 merge
     ("array-receiver-held",
