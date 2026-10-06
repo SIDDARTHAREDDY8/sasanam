@@ -244,8 +244,8 @@ def test_z1_findings_filed_open_with_final_footer():
           and "(F441 filed 2026-10-05, wave-346 lane 6" in text
           and "(F442 filed 2026-10-05, wave-346 lane 3" in text
           and text.count("LOW, OPEN:") >= 6
-          and "Next free finding: **F443**" in text
-          and "Open findings: F437, F438, F439, F440, F441, F442." in text)
+          and "Next free finding: **F444**" in text
+          and "Open findings: F437, F438, F439, F440, F441, F442, F443." in text)
     return ("HELD" if ok else "BREAK", "F437-F442 filed open=%s" % ok)
 
 
