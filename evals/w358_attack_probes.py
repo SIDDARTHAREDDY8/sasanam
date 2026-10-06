@@ -109,13 +109,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F482-F488 open, next F489 (wave-358 merge:
-    F480, F481 CLOSED; wave-358 lane 3:
-    F482-F488 filed)."""
+    """Control: footer shows F482, F483, F486-F488 open, next F489
+    (wave-359 lane 2: F484, F485 CLOSED locally; merge finalizes)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F489**" in text
-          and "**Open findings: F482, F483, F484, F485, F486, F487, F488.**" in text)
+          and "**Open findings: F482, F483, F486, F487, F488.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -214,24 +213,27 @@ def test_b3_f483_bind_chain_open():
 
 
 @_t
-def test_b3_f484_factory_nested_open():
-    """F484 pinned OPEN: [].constructor['of'] with nested args misses."""
+def test_b3_f484_factory_nested_closed():
+    """F484 CLOSED (wave-359 lane 2): [].constructor['of'] with nested
+    args now decodes node-exactly and blocks."""
     hit = _blocked("[].constructor['of']('" + _A + "',['" + _B + "']).join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
-def test_b3_f485_join_hole_open():
-    """F485 pinned OPEN: sparse hole in join still misses."""
+def test_b3_f485_join_hole_closed():
+    """F485 CLOSED (wave-359 lane 2): sparse hole in join now decodes
+    node-exactly and blocks."""
     hit = _blocked("['" + _A + "',,'" + _B + "'].join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
-def test_b3_f485_deep_nest_open():
-    """F485 pinned OPEN: depth-2 nesting still misses."""
+def test_b3_f485_deep_nest_closed():
+    """F485 CLOSED (wave-359 lane 2): depth-2 nesting now decodes
+    node-exactly and blocks."""
     hit = _blocked("['" + _A + "',[['" + _B + "']]].join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t

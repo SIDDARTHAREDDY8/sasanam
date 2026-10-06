@@ -2110,6 +2110,7 @@ _JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|
 _JS_EXPR_MAX_PARTS = 64        # bound on '+' operands per expression
 _JS_EXPR_MAX_CODEPOINTS = 512  # bound on fromCharCode argument count
 _JS_EXPR_MAX_DEPTH = 8         # bound on parenthesization depth
+_JS_ARRAY_NEST_MAX = 8         # bound on array-literal nesting depth (F485)
 _JS_EXPR_MAX_REPEAT = 64       # bound on .repeat(n)
 _JS_EXPR_MAX_FILL = 64         # bound on Array(N) element count (F443)
 _JS_EXPR_MAX_LITERAL = 4096    # bound on one string literal
@@ -2684,10 +2685,9 @@ def _js_parse_spread_copy(text, i, depth, state):
     """Parse '[...X]' spread-copy factory at text[i] (F471).
 
     Desugars the array-copy factory: node-evaluated, [...X] is
-    element-identical to X for parsed string arrays (holes join as ""
-    exactly like the decoder's other hole models, and the parser's
-    source classes can never be sparse -- holes fail closed at parse).
-    The source composes through the existing parsers
+    element-identical to X for parsed string arrays (F485: sparse holes
+    in the source parse as _JSNil and join as "", exactly like the
+    decoder's other hole models). The source composes through the
     (_js_parse_primary): array literals, Array.of / Array(...)
     factories, Reflect.construct, Object.assign copies, and postfix
     chains on them. Returns a fresh _JSArr over the source's element
@@ -2727,12 +2727,17 @@ def _js_parse_array(text, i, depth, state):
     """Parse '[' element (, element)* ']' at text[i] (F434).
 
     Elements are additive string expressions; null/undefined/boolean
-    keywords parse as _JSNil/_JSBool markers and single-level nested
-    array literals parse as _JSArr elements (F479 -- both coerce
-    engine-exactly at the join/toString apply sites). Deeper nesting,
-    factories, and spread inside arrays fail closed. Returns (_JSArr,
-    next_index). Element count is charged to the expression part
-    budget; the joined output is charged to _MAX_DECODE_BYTES in
+    keywords parse as _JSNil/_JSBool markers and nested array literals
+    parse as _JSArr elements (F479/F485 -- nested to _JS_ARRAY_NEST_MAX
+    levels deep; all coerce engine-exactly at the join/toString apply
+    sites). Sparse holes (F485) parse as _JSNil markers: the engine
+    elides them and join()/toString() coerce them to "", exactly like
+    null/undefined, and filter/map skip-or-fail-closed on them exactly
+    like the other markers (fail-safe). A trailing comma closes the
+    array without adding a hole (node-verified: ['a','b',].length is
+    2). Factories and spread inside arrays fail closed. Returns
+    (_JSArr, next_index). Element count is charged to the expression
+    part budget; the joined output is charged to _MAX_DECODE_BYTES in
     _js_apply_method.
     """
     j = _js_skip_ws(text, i + 1)
@@ -2747,39 +2752,56 @@ def _js_parse_array(text, i, depth, state):
     try:
         i += 1
         elements = []
-        i = _js_skip_ws(text, i)
-        if i < len(text) and text[i] == "]":
-            return _JSArr(elements), i + 1
+        n = len(text)
         while True:
+            i = _js_skip_ws(text, i)
+            if i >= n:
+                raise _JSExprFail("unterminated array")
+            if text[i] == "]":
+                # Empty array, or a trailing comma: ['a','b',] is the
+                # 2-element array in the engine (F485).
+                return _JSArr(elements), i + 1
+            if text[i] == ",":
+                # F485: sparse hole -- the engine elides it; modeled
+                # as _JSNil so join/toString coerce it to "" and the
+                # callback sites treat it exactly like null/undefined.
+                elements.append(_JSNil())
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                i = _js_skip_ws(text, i + 1)
+                continue
             elem, i = _js_parse_array_element(text, i, depth, state,
-                                             _allow_nested=True)
+                                             _nest=0)
             elements.append(elem)
             state["parts"] += 1
             if state["parts"] > _JS_EXPR_MAX_PARTS:
                 raise _JSExprFail("too many parts")
             i = _js_skip_ws(text, i)
-            if i < len(text) and text[i] == ",":
+            if i < n and text[i] == ",":
                 i = _js_skip_ws(text, i + 1)
                 continue
-            if i < len(text) and text[i] == "]":
+            if i < n and text[i] == "]":
                 return _JSArr(elements), i + 1
             raise _JSExprFail("bad array")
     finally:
         state["in_array"] = False
 
 
-def _js_parse_array_element(text, i, depth, state, _allow_nested):
-    """Parse one array-literal element at text[i] (F479).
+def _js_parse_array_element(text, i, depth, state, _nest):
+    """Parse one array-literal element at text[i] (F479/F485).
 
     Extends the additive-string grammar with the null/undefined/true/
     false keywords (ident-boundary checked; parsed as _JSNil/_JSBool
     markers -- they are NOT added to _js_parse_primary, so every other
-    primary position still fails closed on them) and with single-level
-    nested array literals (_allow_nested=False inside a nested array,
-    so doubly-nested literals fail closed). Additive chains over the
-    keywords (null+'x') fail closed -- honest, unmodeled. Factories and
-    further array literals inside reach _js_parse_additive, where the
-    outer array's in_array guard fails them closed. Never evals.
+    primary position still fails closed on them) and with nested array
+    literals (F485: parsed by _js_parse_nested_array, depth-bounded by
+    _JS_ARRAY_NEST_MAX via _nest -- the top-level array calls with
+    _nest=0, so nesting deeper than the bound fails closed, never
+    mis-decoded). Additive chains over the keywords (null+'x') fail
+    closed -- honest, unmodeled. Factories and further array literals
+    inside reach _js_parse_additive, where the outer array's in_array
+    guard fails them closed. Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, i)
@@ -2792,32 +2814,46 @@ def _js_parse_array_element(text, i, depth, state, _allow_nested):
                 return _JSNil(), k
             return _JSBool("true" if kw == "true" else "false"), k
     if j < n and text[j] == "[":
-        if not _allow_nested:
-            raise _JSExprFail("doubly nested array")
-        return _js_parse_nested_array(text, j, depth, state)
+        if _nest >= _JS_ARRAY_NEST_MAX:
+            raise _JSExprFail("array nesting too deep")
+        return _js_parse_nested_array(text, j, depth, state, _nest=_nest + 1)
     elem, i = _js_parse_additive(text, i, depth, state)
     if isinstance(elem, _JSArr):
         raise _JSExprFail("nested array")
     return elem, i
 
 
-def _js_parse_nested_array(text, i, depth, state):
-    """Parse a single-level nested array literal element (F479).
+def _js_parse_nested_array(text, i, depth, state, _nest=1):
+    """Parse a nested array literal element (F479/F485).
 
-    text[i] == '['. Elements use _js_parse_array_element with nesting
-    disallowed, so '[[' shapes and factories inside fail closed (the
-    factories additionally trip the outer array's in_array guard).
-    Element count is charged to the part budget. Returns (_JSArr,
-    next_index). Never evals.
+    text[i] == '['. Elements use _js_parse_array_element at the current
+    nesting level, so arrays nest to _JS_ARRAY_NEST_MAX levels deep
+    (node-verified: [['f2']], [[['f2']]] etc. stringify recursively;
+    deeper nesting fails closed -- an honest, documented boundary).
+    Holes and trailing commas are honored exactly like the top-level
+    array grammar (F485). Factories inside fail closed via the outer
+    array's in_array guard. Element count is charged to the part
+    budget. Returns (_JSArr, next_index). Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, i + 1)
     elements = []
-    if j < n and text[j] == "]":
-        return _JSArr(elements), j + 1
     while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("unterminated nested array")
+        if text[j] == "]":
+            return _JSArr(elements), j + 1
+        if text[j] == ",":
+            # F485: sparse hole, same model as the top-level array.
+            elements.append(_JSNil())
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            j = _js_skip_ws(text, j + 1)
+            continue
         elem, j = _js_parse_array_element(text, j, depth, state,
-                                         _allow_nested=False)
+                                         _nest=_nest)
         elements.append(elem)
         state["parts"] += 1
         if state["parts"] > _JS_EXPR_MAX_PARTS:
@@ -2879,13 +2915,23 @@ def _js_expect(text, i, ch):
 
 def _js_parse_of_args(text, k, state):
     """Parse the '(arg, ...)' argument list of an Array.of-shaped factory
-    (F446 / F476).
+    (F446 / F476 / F484).
 
-    Every argument must be a string literal -- numeric args (of(2) is the
-    1-element array [2] in JS), nested-array args, and additive ('a'+'b')
-    args fail closed (documented scope boundary: they are rejected, never
-    mis-decoded). Zero args is the empty array. Element count is charged
-    to the part budget. Never evals.
+    Arguments are string literals (template literals included, as the
+    engine evaluates them before the call), nested array literals
+    (F484: node-verified, e.g. Array.of('f1',['f2']) is the 2-element
+    array ['f1',['f2']]; the join/toString apply sites coerce nested
+    _JSArr elements engine-exactly via _js_join_element, reusing the
+    F479/F485 nested-array grammar depth-bounded by _JS_ARRAY_NEST_MAX),
+    or a single '...'-spread of an array literal (F484: node-verified,
+    Array.of(...['f1','f2']) === Array.of('f1','f2'); the spread source
+    must be an array literal -- anything else fails closed, same as the
+    F471 spread-copy boundary). Numeric args (of(2) is the 1-element
+    array [2] in JS) and additive ('a'+'b') args still fail closed
+    (documented scope boundary: rejected, never mis-decoded). Factories
+    inside nested args fail closed via the in_array guard, exactly like
+    array literals. Zero args is the empty array. Element count is
+    charged to the part budget. Never evals.
     """
     n = len(text)
     k = _js_skip_ws(text, k)
@@ -2896,16 +2942,43 @@ def _js_parse_of_args(text, k, state):
     if k < n and text[k] == ")":
         return _JSArr(elements), k + 1
     while True:
-        if k >= n or text[k] not in "'\"`":
-            raise _JSExprFail("of-factory arg not a string literal")
-        if text[k] == "`":
-            frag, k = _js_parse_template(text, k, 0, state)
+        if k >= n:
+            raise _JSExprFail("unterminated of-factory")
+        if text[k] == "[":
+            # F484: nested array-literal arg. Guarded by in_array so
+            # factories inside fail closed exactly like array
+            # literals; the nested grammar itself is the F479/F485
+            # one (holes, trailing commas, bounded depth).
+            was_in_array = state.get("in_array")
+            state["in_array"] = True
+            try:
+                arr, k = _js_parse_nested_array(text, k, 0, state,
+                                               _nest=1)
+            finally:
+                state["in_array"] = was_in_array
+            elements.append(arr)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        elif text.startswith("...", k):
+            # F484: '...'-spread of an array literal. The source must
+            # be an array literal; _js_parse_array charges the parts.
+            k2 = _js_skip_ws(text, k + 3)
+            if k2 >= n or text[k2] != "[":
+                raise _JSExprFail("of-factory spread of non-array")
+            arr, k = _js_parse_array(text, k2, 0, state)
+            elements.extend(arr.elements)
+        elif text[k] in "'\"`":
+            if text[k] == "`":
+                frag, k = _js_parse_template(text, k, 0, state)
+            else:
+                frag, k = _js_parse_string(text, k)
+            elements.append(frag)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
         else:
-            frag, k = _js_parse_string(text, k)
-        elements.append(frag)
-        state["parts"] += 1
-        if state["parts"] > _JS_EXPR_MAX_PARTS:
-            raise _JSExprFail("too many parts")
+            raise _JSExprFail("of-factory arg not a string literal")
         k = _js_skip_ws(text, k)
         if k >= n:
             raise _JSExprFail("unterminated of-factory")
@@ -2921,8 +2994,9 @@ def _js_parse_array_of(text, i, state):
     """Parse 'Array.of(arg, ...)' at text[i] (F446).
 
     Returns (_JSArr, next_index). The argument list reuses the
-    _js_parse_of_args grammar (string-literal-only args; numeric,
-    nested, or additive args fail closed). The 'of' name is
+    _js_parse_of_args grammar (string literals, nested array literals,
+    and '...'-spreads of array literals; numeric or additive args fail
+    closed). The 'of' name is
     ident-boundary-checked (Array.off / Array.ofx fail closed);
     whitespace is tolerated around the dot, the name, and the parens,
     exactly as the engine allows. Nested calls inside array literals
@@ -2981,10 +3055,12 @@ def _js_parse_ctor_factory(text, i, state):
     Desugars the constructor-property factory path to the fragment list:
     `[].constructor` is engine-identical to `Array`, and `['of']` is
     engine-identical to `.of` (node v24.20.0 verified). The argument
-    list reuses the F446 string-literal-only grammar (_js_parse_of_args):
-    numeric, nested, or additive args fail closed (same scope boundary as
-    _js_parse_array_of -- `[].constructor.of(1)` node-evaluates to `[1]`
-    but is refused, consistent with F446's Array.of(1) refusal). The
+    list reuses the F446/F484 factory grammar (_js_parse_of_args):
+    string literals, nested array literals, and '...'-spreads of array
+    literals decode node-exactly; numeric or additive args still fail
+    closed (same scope boundary as _js_parse_array_of --
+    `[].constructor.of(1)` node-evaluates to `[1]` but is refused,
+    consistent with F446's Array.of(1) refusal). The
     F480 dispatch members (`apply`/`call`, dot or bracket-string) route
     to the constructor-dispatch parser. Only the `of`/`apply`/`call`
     members are modeled: `[].constructor.from('a','b')` throws
@@ -4712,10 +4788,10 @@ def _js_parse_filter_callback(text, i):
 def _js_concat_carriable(e):
     """True when a concat array-arg element may be carried (F481).
 
-    F479 marker elements (_JSNil/_JSBool/single-level nested _JSArr;
-    _JSNumStr passes as a str subclass) are carried through concat
-    exactly one level, engine-exactly: the engine keeps them as
-    elements and the join/toString apply sites coerce them
+    F479/F485 marker elements (_JSNil/_JSBool/nested _JSArr bounded by
+    _JS_ARRAY_NEST_MAX; _JSNumStr passes as a str subclass) are carried
+    through concat exactly one level, engine-exactly: the engine keeps
+    them as elements and the join/toString apply sites coerce them
     (null/undefined -> "", booleans -> "true"/"false", nested arrays
     -> comma-joined toString, via _js_join_element). Used by the F473
     text path (_js_apply_array_concat) and the F478 value path
@@ -4745,11 +4821,10 @@ def _js_apply_array_concat(text, i, value, depth, state):
     appended element charges the F430 parts budget via
     _js_add_concat_part, exactly like the string-receiver form.
 
-    Fail closed: args that are neither str nor _JSArr, doubly-nested
-    array args (unparseable -- the array parser fails them closed),
-    and _JSArr args carrying elements outside the _js_concat_carriable
-    classes. F481: F479 marker elements (_JSNil/_JSBool/single-level
-    nested _JSArr) are carried through concat exactly one level --
+    Fail closed: args that are neither str nor _JSArr, and _JSArr args
+    carrying elements outside the _js_concat_carriable classes. F481:
+    F479/F485 marker elements (_JSNil/_JSBool/nested _JSArr, bounded by
+    _JS_ARRAY_NEST_MAX) are carried through concat exactly one level --
     node keeps them as elements and the join/toString apply sites
     coerce them engine-exactly; anything else is rejected, never
     mis-decoded.
@@ -4895,9 +4970,10 @@ def _js_apply_method_at(text, i, name, value, depth, state):
     """
     if name == "join":
         # F434: ['a','b'].join(sep) -- the separator defaults to ",".
-        # F479: elements coerce engine-exactly (null/undefined -> "",
-        # booleans -> "true"/"false", nested single-level arrays -> their
-        # comma-joined toString, _JSNumStr via its decimal repr).
+        # F479/F485: elements coerce engine-exactly (null/undefined -> "",
+        # booleans -> "true"/"false", nested arrays (to _JS_ARRAY_NEST_MAX
+        # levels) -> their comma-joined toString, _JSNumStr via its
+        # decimal repr).
         if not isinstance(value, _JSArr):
             raise _JSExprFail("join on non-array")
         i = _js_skip_ws(text, i)

@@ -79,7 +79,7 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-358 lane 2: F481 closed; no new decision codes
-FOOTER_OPEN = "F482, F483, F484, F485, F486, F487, F488"  # Wave-358 lane 2: F481 CLOSED locally (merge finalizes tree-wide)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN
+FOOTER_OPEN = "F482, F483, F486, F487, F488"  # Wave-359 lane 2: F484, F485 CLOSED locally (merge finalizes tree-wide)  # Wave-358 lane 2: F481 CLOSED locally (merge finalizes tree-wide)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN
 FOOTER_NEXT = "F489"  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN
 
 # Constructed via concatenation: the write path redacts credential literals.
@@ -183,8 +183,6 @@ def p2_still_closed():
     # make the assertion vacuous.
     F1, F2 = "frag1", "frag2"
     closed = [
-        # doubly-nested array args: unparseable, fail closed
-        ("doubly-nested", "[].concat.call([],[[['%s']]]).join('')" % F1),
         # spread-of-markers: pre-existing direct-form gap, identical
         # in dispatch (fidelity holds) -- documented residual
         ("spread-markers", "[].concat(...[['%s',null]]).join('')" % F1),
@@ -194,6 +192,11 @@ def p2_still_closed():
         # parse it -- the direct form fails closed identically
         ("call-bare-null", "[].concat.call([],null,'%s','%s')" % (F1, F2)),
     ]
+    # Wave-359 (F484/F485): doubly-nested array args now decode
+    # node-exactly (bounded by _JS_ARRAY_NEST_MAX) -- assert the value
+    # rather than fail-closed.
+    if _decoded("[].concat.call([],[[['%s']]]).join('')" % F1) != F1:
+        return ("BREAK", "loud=doubly-nested-misdecode")
     junk = [
         # junk with markers decodes to junk (intended F481 behavior)
         # but must never flag
