@@ -47,7 +47,7 @@ production, F442 policy-delta mode gate):
        GENUINE: filed as F445 (LOW, OPEN).
 
   F444, F445: filed OPEN this round; footer now
-  open F443, F444, F445 / next F446.
+  open F444, F445, F446, F447, F448, F449, F450 / next F451.
   F437-F442: CLOSED (wave-347 merge).
 
 Usage:
@@ -110,11 +110,11 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F444/F445 open, next F446 (F443 CLOSED at merge)."""
+    """Control: footer shows F444-F450 open, next F451 (F443 CLOSED at merge)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F446**" in text
-          and "Open findings: F444, F445." in text)
+    ok = ("Next free finding: **F451**" in text
+          and "Open findings: F444, F445, F446, F447, F448, F449, F450." in text)
     return ("HELD" if ok else "BREAK", "footer-ok=%s" % ok)
 
 
