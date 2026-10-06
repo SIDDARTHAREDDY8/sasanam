@@ -68,7 +68,7 @@ distinguishes honest from hostile input.
       canonical_link_body, make_link_record, clear_cross_run_lineage,
       recover_torn_tail, tool_ratings, attest_absence
   F16 capability grants (1): unknown-manifest-category
-  P0  pin/taxonomy honesty (2134/2134/0 sorted-unique, footer state).
+  P0  pin/taxonomy honesty (2135/2135/0 sorted-unique, footer state).
   PZ  green check (depth-1): adjacent suites as children with
       GOV_SKIP_GREEN=1.
 
@@ -108,10 +108,10 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "tests"))
 
-TAXONOMY_PIN = 2134  # Wave-342 merge (564d5a16). Footer: open F429 / next F430.; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 merge (564d5a16). Footer: open F429 / next F430.; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"
-FOOTER_NEXT = "F443"
+FOOTER_OPEN = "F437, F438, F439, F440, F441"
+FOOTER_NEXT = "F442"
 
 _results = []
 
@@ -174,7 +174,7 @@ def p0():
     elif codes != sorted(set(codes)):
         _break("P0a", "taxonomy not sorted-unique")
     else:
-        _held("P0a", "taxonomy 2134/2134/0 sorted-unique literals")
+        _held("P0a", "taxonomy 2135/2135/0 sorted-unique literals")
     footer = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                   encoding="utf-8").read()
     want = "Next free finding: **%s**. **Open findings: %s.**" % (

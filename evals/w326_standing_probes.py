@@ -28,7 +28,7 @@ from gov import ed25519 as ed  # noqa: E402
 from gov import knowledge_ingest as ki  # noqa: E402
 from gov import standing_verdicts as sv  # noqa: E402
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 _results = []
 
 
@@ -390,7 +390,7 @@ def _p9():
         _cleanup(root)
 
 
-@probe("P10-pin-taxonomy-2134-sorted")
+@probe("P10-pin-taxonomy-2135-sorted")
 def _p10():
     import re
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -400,7 +400,7 @@ def _p10():
         "want %d/%d/0, got %d/%d" % (TAXONOMY_PIN, TAXONOMY_PIN,
                                     len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
-    _held("P10-pin-taxonomy-2134-sorted",
+    _held("P10-pin-taxonomy-2135-sorted",
           "%d/%d/0 sorted" % (TAXONOMY_PIN, TAXONOMY_PIN))
 
 

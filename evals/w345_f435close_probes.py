@@ -15,7 +15,7 @@ gov/dlp.py gains _GREEK_CHEROKEE_HOMOGLYPHS (8 entries, bounded
 static, applied after NFKC alongside the Cyrillic map): the four
 verified misses anchor the class; the Greek capital siblings and
 the Cherokee small letter are the same visual-homoglyph class
-(Unicode confusables). No new decision codes; pin unchanged 2134.
+(Unicode confusables). No new decision codes; pin unchanged 2135.
 
 $0 SPEND BY CONSTRUCTION: canned payloads only, no model calls. Do NOT
 add ModelDriver/SpendLedger usage here.
@@ -43,7 +43,7 @@ Probes:
   P7  layering: bidi-wrapped homoglyph credential blocks (bidi
       strips, then the map folds); the unicode-escaped homoglyph
       run is ignored without crashing.
-  P8  pin + footer: taxonomy pin 2134, footer open F432, F433, F434
+  P8  pin + footer: taxonomy pin 2135, footer open F432, F433, F434
       / next F436.
 
 Usage:
@@ -63,9 +63,9 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2134  # Wave-345: pin 2134 (no new codes in wave-345 lane 4)
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"
-FOOTER_NEXT = "F443"
+TAXONOMY_PIN = 2135  # Wave-345: pin 2135 (no new codes in wave-345 lane 4); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+FOOTER_OPEN = "F437, F438, F439, F440, F441"
+FOOTER_NEXT = "F442"
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -235,7 +235,7 @@ def p8_pin_and_footer():
         ok = ok and "Open findings: none." in footer
     else:
         ok = ok and ("Open findings: %s." % FOOTER_OPEN) in footer
-    return _check("p8: pin 2134, footer open F437-F442 / next F443", ok,
+    return _check("p8: pin 2135, footer open F437-F441 / next F442", ok,
                   footer[-60:])
 
 

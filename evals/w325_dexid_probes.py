@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 from keyfixture import provision_test_key  # noqa: E402  (test key material)
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 _results = []
 
 
@@ -411,7 +411,7 @@ def _p16():
           "valid token verifies with the bound claims")
 
 
-@probe("P17-pin-taxonomy-2134-sorted")
+@probe("P17-pin-taxonomy-2135-sorted")
 def _p17():
     import re
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -421,7 +421,7 @@ def _p17():
         "want %d/%d/0, got %d/%d" % (TAXONOMY_PIN, TAXONOMY_PIN,
                                      len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
-    _held("P17-pin-taxonomy-2134-sorted",
+    _held("P17-pin-taxonomy-2135-sorted",
           "%d/%d/0 sorted" % (TAXONOMY_PIN, TAXONOMY_PIN))
 
 

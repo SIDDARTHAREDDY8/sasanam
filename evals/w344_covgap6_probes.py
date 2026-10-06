@@ -3,7 +3,7 @@
 
 Round 5 (wave-343 lane 2) moved the coverage table from 2111/2131 to
 2111/2131 with pin 2131, and the wave-343 merge reconciled it to
-2114/2134 (20 gaps: 5 fault-injection + 15 not-yet-covered). This
+2114/2135 (20 gaps: 5 fault-injection + 15 not-yet-covered). This
 battery asserts the 15 coverable residuals with real behavioral probes
 (the hostile/malformed input is driven through the public seam and the
 coded refusal is asserted), never tautologies. Each family carries a
@@ -22,11 +22,11 @@ hostile input.
   J  provenance verifier (1): input_closure_digest
   K  quorum policy (2): canonical_link_body, make_link_record
   L  egress launcher (1): spawn_failed
-  P0 pin/taxonomy honesty (2134/2134/0 sorted-unique, footer state).
+  P0 pin/taxonomy honesty (2135/2135/0 sorted-unique, footer state).
   PZ green check (depth-1): adjacent suites as children with
      GOV_SKIP_GREEN=1.
 
-Base: 1a800558 (wave-343 merge). Pin 2134, footer open F436 / next F437.
+Base: 1a800558 (wave-343 merge). Pin 2135, footer open F436 / next F437.
 
 No gov/ changes in this lane. Findings: none filed (all
 probes HELD on the base; a genuine BREAK would be filed as F432+).
@@ -58,9 +58,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO not in sys.path:
     sys.path.insert(0, REPO)
 
-PIN = 2134
-FOOTER_OPEN = ("F437", "F438", "F439", "F440", "F441", "F442")
-FOOTER_NEXT = "F443"
+PIN = 2135  #Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+FOOTER_OPEN = ("F437", "F438", "F439", "F440", "F441")
+FOOTER_NEXT = "F442"
 
 _results = []
 _EXPECTED_BREAKS = set()  # empty set, never {} (dict) -- wave-331 lesson

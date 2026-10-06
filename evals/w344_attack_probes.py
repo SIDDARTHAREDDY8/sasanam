@@ -64,7 +64,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2134  # Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -227,8 +227,8 @@ def test_b3_f432_f433_filings_pinned():
           and "(F435 filed 2026-10-05, wave-344 merge" in text
           and "(F436 filed 2026-10-05, wave-345 lane 5" in text
           and "LOW, CLOSED 2026-10-05 wave-346 lane 1" in text
-          and "Next free finding: **F443**" in text
-          and "Open findings: F437, F438, F439, F440, F441, F442." in text)
+          and "Next free finding: **F442**" in text
+          and "Open findings: F437, F438, F439, F440, F441." in text)
     return ("HELD" if ok else "BREAK", "F432-F436 filed+closed=%s" % ok)
 
 
@@ -236,10 +236,10 @@ def test_b3_f432_f433_filings_pinned():
 # ---------------------------------------------------------------- pins
 
 @_t
-def test_pin_taxonomy_2134():
-    """Taxonomy pin: 2134 codes, sorted, raw-literal unique."""
+def test_pin_taxonomy_2135():
+    """Taxonomy pin: 2135 codes, sorted, raw-literal unique."""
     codes = sorted(TAXONOMY)
-    ok = (len(codes) == TAXONOMY_PIN == 2134
+    ok = (len(codes) == TAXONOMY_PIN == 2135
           and codes == sorted(set(codes))
           and all(c == c.strip() for c in codes))
     return ("HELD" if ok else "BREAK",

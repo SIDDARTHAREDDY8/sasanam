@@ -19,7 +19,7 @@ P7  Unknown registry kind => refused; matrix_override can record a
     private registry but can never flip a matrix OUT to IN.
 P8  Same-repository pinning: cross-repository / replica reads refuse
     coded; the #23210 shape (Harbor replica) refuses.
-P9  Pin/taxonomy honesty (2134/2134/0 sorted-unique on raw literals; the
+P9  Pin/taxonomy honesty (2135/2135/0 sorted-unique on raw literals; the
     new code registered) + footer state (open none / next F430).
 P10 Green check (depth-1): tests/test_oci_registry_gate.py as a child.
 
@@ -42,9 +42,9 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = ("F437", "F438", "F439", "F440", "F441", "F442")
-FOOTER_NEXT = "F443"
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+FOOTER_OPEN = ("F437", "F438", "F439", "F440", "F441")
+FOOTER_NEXT = "F442"
 
 _EXPECTED_BREAKS = set()
 
@@ -223,11 +223,11 @@ def _p9():
     assert literals == sorted(literals), "taxonomy not sorted"
     assert "oci-registry-onboarding-refused" in DC.TAXONOMY
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
-    assert "Next free finding: **F443**" in text, "footer next free"
-    assert "Open findings: F437, F438, F439, F440, F441, F442." in text, "footer open findings"
-    assert FOOTER_OPEN == ("F437", "F438", "F439", "F440", "F441", "F442") and FOOTER_NEXT == "F443"
+    assert "Next free finding: **F442**" in text, "footer next free"
+    assert "Open findings: F437, F438, F439, F440, F441." in text, "footer open findings"
+    assert FOOTER_OPEN == ("F437", "F438", "F439", "F440", "F441") and FOOTER_NEXT == "F442"
     _held("P9-pin-taxonomy",
-          "2134/2134/0 sorted-unique; oci-registry-onboarding-refused "
+          "2135/2135/0 sorted-unique; oci-registry-onboarding-refused "
           "registered; footer open none / next F430")
 
 

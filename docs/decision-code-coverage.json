@@ -1,7 +1,7 @@
 {
- "generated": "2026-10-05T19:53:20Z",
- "pin": 2134,
- "covered": 2129,
+ "generated": "2026-10-06T01:11:59Z",
+ "pin": 2135,
+ "covered": 2130,
  "gaps": [
   "offline-verify-internal",
   "post-rotation",
@@ -11023,7 +11023,8 @@
    "files": [
     "evals/w342_r40_arb_redfirst.py",
     "evals/w342_r40_label_probes.py",
-    "evals/w343_recovery_probes.py"
+    "evals/w343_recovery_probes.py",
+    "evals/w346_recoveryux_probes.py"
    ]
   },
   {
@@ -11033,7 +11034,8 @@
    "covered": true,
    "files": [
     "evals/w342_r40_label_probes.py",
-    "evals/w343_recovery_probes.py"
+    "evals/w343_recovery_probes.py",
+    "evals/w346_recoveryux_probes.py"
    ]
   },
   {
@@ -12697,7 +12699,9 @@
    "severity": "medium",
    "covered": true,
    "files": [
-    "evals/w343_ownership_probes.py"
+    "evals/w343_ownership_probes.py",
+    "evals/w345_ownthread_probes.py",
+    "evals/w346_identity_surface_probes.py"
    ]
   },
   {
@@ -12706,7 +12710,9 @@
    "severity": "medium",
    "covered": true,
    "files": [
-    "evals/w343_ownership_probes.py"
+    "evals/w343_ownership_probes.py",
+    "evals/w345_ownthread_probes.py",
+    "evals/w346_identity_surface_probes.py"
    ]
   },
   {
@@ -12715,7 +12721,9 @@
    "severity": "low",
    "covered": true,
    "files": [
-    "evals/w343_ownership_probes.py"
+    "evals/w343_ownership_probes.py",
+    "evals/w345_ownthread_probes.py",
+    "evals/w346_identity_surface_probes.py"
    ]
   },
   {
@@ -13905,6 +13913,8 @@
    "files": [
     "evals/w246_policy_delta_probes.py",
     "evals/w247_redteam_probes.py",
+    "evals/w346_cigated_probes.py",
+    "evals/w347_f442close_probes.py",
     "tests/test_policy_delta_gate.py"
    ]
   },
@@ -13956,6 +13966,7 @@
    "files": [
     "evals/w246_policy_delta_probes.py",
     "evals/w247_redteam_probes.py",
+    "evals/w346_cigated_probes.py",
     "tests/test_policy_delta_gate.py"
    ]
   },
@@ -13981,8 +13992,18 @@
     "evals/w267_poldelta_probes.py",
     "evals/w269_poldelta_skip_probes.py",
     "evals/w270_redteam_probes.py",
+    "evals/w347_f442close_probes.py",
     "tests/test_policy_delta.py",
     "tests/test_policy_delta_gate.py"
+   ]
+  },
+  {
+   "code": "policy-delta-mode-weakened",
+   "domain": "policy-delta",
+   "severity": "high",
+   "covered": true,
+   "files": [
+    "evals/w347_f442close_probes.py"
    ]
   },
   {

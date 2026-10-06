@@ -19,7 +19,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 
 _results = []
@@ -565,7 +565,7 @@ def _p5b():
 # P6: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-2134-sorted")
+@probe("P6-pin-taxonomy-2135-sorted")
 
 
 def _p6a():
@@ -573,10 +573,10 @@ def _p6a():
     n = len(DC.TAXONOMY)
     codes = sorted(DC.TAXONOMY.keys())
     if n == TAXONOMY_PIN and list(DC.TAXONOMY.keys()) == codes:
-        _held("P6-pin-taxonomy-2134-sorted", "2134/2134/0 sorted")
+        _held("P6-pin-taxonomy-2135-sorted", "2135/2135/0 sorted")
     else:
-        _break("P6-pin-taxonomy-2134-sorted",
-               "want 2134/2121/00 sorted, got %d (sorted=%s)"
+        _break("P6-pin-taxonomy-2135-sorted",
+               "want 2135/2121/00 sorted, got %d (sorted=%s)"
 
 
                % (n, list(DC.TAXONOMY.keys()) == codes))
@@ -586,8 +586,8 @@ def _p6a():
 def _p6b():
     src = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
     # Wave-336 lane 1: repaired stale F412/F413-era assertions.
-    if ("Next free finding: **F443**" in src
-            and "Open findings: F437, F438, F439, F440, F441, F442." in src):
+    if ("Next free finding: **F442**" in src
+            and "Open findings: F437, F438, F439, F440, F441." in src):
         _held("P6-footer-state", "open none / next F430")
     else:
         _break("P6-footer-state", "footer mismatch")

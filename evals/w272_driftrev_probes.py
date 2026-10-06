@@ -142,7 +142,7 @@ else:
 
 # Merge pin: 1443 = 1411 (wave-271 merge) + 32 (8 prodauth + 7 drift/revbind + 9 ingest + 8 oidc).
 # Counted on QUOTED source literals ("code": '...').
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 
 _RESULTS = []

@@ -90,7 +90,7 @@ from gov import workflow_routing as wr  # noqa: E402
 from gov import workflow_idempotency as idem  # noqa: E402
 from gov import workflow_composed as wc  # noqa: E402
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 
 _SA = hashlib.sha256(b"w313pp-battery").digest()
@@ -647,7 +647,7 @@ def footer_state():
     # This lane files no findings. Footer lines repeat through history;
     # the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F443**" in text
+    ok = ("Next free finding: **F442**" in text
           and m_open and m_open[-1].strip() == "F436")
     if ok:
         _record("footer-state", "HELD", "footer: open F436 / next F437")

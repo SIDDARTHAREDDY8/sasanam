@@ -29,7 +29,7 @@ Probes:
       nothing (never raise); the 64-part boundary decodes.
   P4  end-to-end: scan_value and scan_tool_args block the join form.
   P5  ReDoS pins: hostile near-miss inputs are fast and exception-free.
-  P6  pin + footer: taxonomy pin 2134, footer open F432, F433, F435 /
+  P6  pin + footer: taxonomy pin 2135, footer open F432, F433, F435 /
       next F436, F434 closed entry present.
 
 Usage:
@@ -51,9 +51,9 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2134  # Wave-343 merge pin; no new codes in wave-345 lane 3
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"
-FOOTER_NEXT = "F443"
+TAXONOMY_PIN = 2135  # Wave-343 merge pin; no new codes in wave-345 lane 3; Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+FOOTER_OPEN = "F437, F438, F439, F440, F441"
+FOOTER_NEXT = "F442"
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -228,7 +228,7 @@ def p5_redos_pins():
 # ---------------------------------------------------------- P6: pin + footer
 def p6_pin_and_footer():
     ok = True
-    ok = _check("P6a pin-taxonomy-2134",
+    ok = _check("P6a pin-taxonomy-2135",
                 len(TAXONOMY) == TAXONOMY_PIN
                 and len(set(TAXONOMY)) == TAXONOMY_PIN,
                 "%d/%d" % (len(TAXONOMY), len(set(TAXONOMY)))) and ok

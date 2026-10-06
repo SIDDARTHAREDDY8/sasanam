@@ -97,7 +97,7 @@ from gov import capability_token as CT  # noqa: E402
 from gov import revocation_push as RP  # noqa: E402
 from gov import mcp_oauth_binding as mob  # noqa: E402
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 _NOW = 1798765432
 _AGENT = "agent-A"
 _MISSION = "mission-X"
@@ -740,10 +740,10 @@ def P4a():
 
 
 def P5a():
-    """Pin honesty: taxonomy is 2134/2134/0, sorted and unique on raw
+    """Pin honesty: taxonomy is 2135/2135/0, sorted and unique on raw
     source literals (wave-260 lesson: assert on literals, not the
     deduped dict)."""
-    pid = "P5a-pin-taxonomy-2134-sorted"
+    pid = "P5a-pin-taxonomy-2135-sorted"
     with open(os.path.join(REPO, "gov", "decision_codes.py"),
               encoding="utf-8") as fh:
         src = fh.read()
@@ -758,7 +758,7 @@ def P5a():
     if sorted(codes) != codes:
         _break(pid, "literals not sorted")
         return
-    _held(pid, "taxonomy 2134/2134/0 sorted unique on raw literals")
+    _held(pid, "taxonomy 2135/2135/0 sorted unique on raw literals")
 
 
 def P5b():
@@ -786,7 +786,7 @@ def P5c():
               encoding="utf-8") as fh:
         text = fh.read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F443**" in text
+    ok = ("Next free finding: **F442**" in text
           and m_open and m_open[-1].strip() == "F436")
     if ok:
         _held(pid, "footer: open none / next F430")
@@ -815,7 +815,7 @@ _PROBES = [
     ("P2k-reregistration-refused", P2k),
     ("P3a-f417-closed-coded", P3a),
     ("P4a-f418-closure-holds", P4a),
-    ("P5a-pin-taxonomy-2134-sorted", P5a),
+    ("P5a-pin-taxonomy-2135-sorted", P5a),
     ("P5b-new-codes-registered", P5b),
     ("P5c-footer-open-f433-f434-f435-next-f436", P5c),
 ]

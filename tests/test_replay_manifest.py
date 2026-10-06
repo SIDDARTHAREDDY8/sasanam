@@ -13,7 +13,7 @@ tests pin contracts the battery exercises end to end:
   - negative-evidence links carry tool_dispatched False
   - terminology: "replay manifest", never "replay" unqualified
 
-TAXONOMY_PIN = 2134  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*).
+TAXONOMY_PIN = 2135  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*).; Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 """
 
 import json
@@ -22,7 +22,7 @@ import unittest
 from gov import decision_codes
 from gov import replay_manifest as rm
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*).
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*).; Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 
 NOW = 1790960000

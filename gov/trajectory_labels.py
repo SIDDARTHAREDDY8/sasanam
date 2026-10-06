@@ -56,7 +56,7 @@ from gov.dlp import find_credential
 
 # ------------------------------------------------------------------ codes
 # Machine decision-code literals (registered in gov/decision_codes.py;
-# pin 2131 -> 2135, wave-342 lane 3). Passed as code= kwargs so the
+# pin 2131 -> 2134, wave-342 lane 3). Passed as code= kwargs so the
 # vocabulary inventory (idiom 2) maps them.
 
 LABEL_EGRESS_REFUSED = "label-egress-refused"

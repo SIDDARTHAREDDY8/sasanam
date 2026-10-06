@@ -32,7 +32,7 @@ Probes:
       packets (no kwarg) stay byte-identical.
   P7  executor: owner_directory kwarg validates fail-fast; the
       default (None) keeps legacy behavior.
-  P8  pin 2134 (base 2131 + 3 ownership codes), footer open F429 /
+  P8  pin 2135 (base 2131 + 3 ownership codes), footer open F429 /
       next F430, codes centrally registered with real emission sites.
   P9  determinism: repeated inference is byte-identical; digests
       recompute.
@@ -55,9 +55,9 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2134  # Wave-343 lane 4: base 2131 + 3 ownership codes
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"
-FOOTER_NEXT = "F443"
+TAXONOMY_PIN = 2135  # Wave-343 lane 4: base 2131 + 3 ownership codes; Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+FOOTER_OPEN = "F437, F438, F439, F440, F441"
+FOOTER_NEXT = "F442"
 
 from gov import ownership_inference as oi  # noqa: E402
 from gov import inventory_catalog as ic  # noqa: E402

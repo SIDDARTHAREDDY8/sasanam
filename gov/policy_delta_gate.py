@@ -21,6 +21,11 @@ change with a risk class, severity, and before/after evidence:
   -> ``policy-delta-forbid-narrowed`` (high, refuse);
 * a rule's effect moved up the deny < require_approval < allow ladder
   -> ``policy-delta-effect-weakened`` (high, refuse);
+* a rule's ladder ``mode`` moved DOWN the observe < warn < deny ladder
+  (the rule lost enforcement authority; wave-347 F442)
+  -> ``policy-delta-mode-weakened`` (high when the enforced verdict
+     flips to allow -- deny rung lost; medium when only operator
+     warnings are lost -- warn -> observe);
 * a new allow rule no deny rule covers (tool-overlap heuristic; forbid
   priority is what guards allows, so an unguarded allow is a hole)
   -> ``policy-delta-allow-unforbidden`` (medium, flagged, verdict pass);
@@ -58,6 +63,7 @@ import hashlib
 import json
 
 from .policy_change import canonical_policy_bytes, PolicyChangeError
+from .mode_ledger import LADDER_MODES
 
 # ---------------------------------------------------------------------------
 # Decision codes (also registered in gov/decision_codes.py TAXONOMY)
@@ -68,6 +74,7 @@ WIDENING = "policy-delta-widening"
 FORBID_REMOVED = "policy-delta-forbid-removed"
 FORBID_NARROWED = "policy-delta-forbid-narrowed"
 EFFECT_WEAKENED = "policy-delta-effect-weakened"
+MODE_WEAKENED = "policy-delta-mode-weakened"
 ALLOW_UNFORBIDDEN = "policy-delta-allow-unforbidden"
 FORBID_MODIFIED = "policy-delta-forbid-modified"
 ALLOW_MODIFIED = "policy-delta-allow-modified"
@@ -76,6 +83,14 @@ ROLE_ADDED = "policy-delta-role-added"
 SECTION_CHANGED = "policy-delta-section-changed"
 
 _PERMISSIVENESS = {"deny": 0, "require_approval": 1, "allow": 2}
+
+# Ladder authority: observe < warn < deny. A rule moved down this ladder
+# carries less authority -- deny/warn rungs no longer block (warn-mode
+# hits are demoted to allow; observe-mode hits carry no authority at
+# all). Only deny/require_approval rules lose ENFORCEMENT moving down;
+# allow rules still enforce allow either way (observe-mode allow rules
+# fall through, which is tighter, never weaker).
+_MODE_AUTHORITY = {"observe": 0, "warn": 1, "deny": 2}
 
 _SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2}
 
@@ -134,6 +149,11 @@ def _rules(which, policy):
             raise PolicyDeltaError(
                 MALFORMED, "%s rule %r has unknown effect %r"
                 % (which, rid, effect))
+        mode = rule.get("mode", "deny")
+        if mode not in LADDER_MODES:
+            raise PolicyDeltaError(
+                MALFORMED, "%s rule %r has unknown mode %r"
+                % (which, rid, mode))
         match = rule.get("match", {})
         if match is None:
             match = {}
@@ -149,6 +169,11 @@ def _as_str_set(value):
     if isinstance(value, list):
         return set(str(v) for v in value)
     return None
+
+
+def _rule_mode(rule):
+    """The ladder mode of a rule ("deny" when absent -- the resting state)."""
+    return rule.get("mode", "deny")
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +277,34 @@ def _analyze_rules(old_rules, new_rules):
     for rid in sorted(old_ids & new_ids):
         old_r, new_r = old_rules[rid], new_rules[rid]
         old_e, new_e = old_r["effect"], new_r["effect"]
+        old_mo, new_mo = _rule_mode(old_r), _rule_mode(new_r)
+        if _MODE_AUTHORITY[new_mo] < _MODE_AUTHORITY[old_mo]:
+            # The rule moved DOWN the observe < warn < deny ladder: it
+            # lost ladder authority. Only rules that ENFORCED before the
+            # delta (deny/require_approval) lose enforcement this way --
+            # allow rules still enforce allow either way. F442. The mode
+            # axis is independent of the effect axis: a rule whose effect
+            # also moved up the ladder still lost its ladder authority,
+            # so both findings fire.
+            if old_e in ("deny", "require_approval"):
+                if old_mo == "deny":
+                    findings.append(_finding(
+                        MODE_WEAKENED, "high", "policies", rid,
+                        "rule mode moved %s -> %s (down the observe < "
+                        "warn < deny ladder); the rule no longer "
+                        "enforces its %s effect" % (old_mo, new_mo,
+                                                    old_e),
+                        before=old_mo, after=new_mo))
+                else:
+                    # warn -> observe: the enforced verdict was already
+                    # allow, but the operator warnings the rule produced
+                    # are lost.
+                    findings.append(_finding(
+                        MODE_WEAKENED, "medium", "policies", rid,
+                        "rule mode moved %s -> %s (down the observe < "
+                        "warn < deny ladder); the operator warnings the "
+                        "rule produced are lost" % (old_mo, new_mo),
+                        before=old_mo, after=new_mo))
         if _PERMISSIVENESS[new_e] > _PERMISSIVENESS[old_e]:
             findings.append(_finding(
                 EFFECT_WEAKENED, "high", "policies", rid,

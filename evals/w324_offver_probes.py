@@ -23,7 +23,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 _results = []
 
 
@@ -853,7 +853,7 @@ def _p5f():
 # P6: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-2134-sorted")
+@probe("P6-pin-taxonomy-2135-sorted")
 def _p6():
     from gov import decision_codes as DC
     n = len(DC.TAXONOMY)
@@ -861,7 +861,7 @@ def _p6():
     keys = list(DC.TAXONOMY.keys())
     assert keys == sorted(keys), "taxonomy not sorted"
     assert len(set(keys)) == n, "taxonomy not unique"
-    _held("P6-pin-taxonomy-2134-sorted", "%d/%d/0 sorted" % (n, n))
+    _held("P6-pin-taxonomy-2135-sorted", "%d/%d/0 sorted" % (n, n))
 
 
 @probe("P6-footer-state")
@@ -869,7 +869,7 @@ def _p6b():
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               encoding="utf-8") as f:
         text = f.read()
-    if "Next free finding: **F443**" in text \
+    if "Next free finding: **F442**" in text \
             and "**Open findings: F436.**" in text:
         _held("P6-footer-state", "open F436 / next F437")
     else:

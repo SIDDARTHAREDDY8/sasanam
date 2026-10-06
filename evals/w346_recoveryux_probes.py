@@ -37,7 +37,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2134  # Wave-346: no new decision codes (sessions are journal fields, not codes)
+TAXONOMY_PIN = 2135  # Wave-346: no new decision codes (sessions are journal fields, not codes); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 from gov import recovery_guide as rg  # noqa: E402
 from gov import trajectory_labels as tl  # noqa: E402
@@ -90,7 +90,7 @@ def test_p0_pin_taxonomy():
                   ("RecoverySession", "RecoveryStepSpec", "open_session",
                    "guidance_after_failure")))
     return ("HELD" if ok else "BREAK",
-            "pin 2134, no new codes; session surface exported: %d codes"
+            "pin 2135, no new codes; session surface exported: %d codes"
             % len(TAXONOMY))
 
 
@@ -98,8 +98,8 @@ def test_p1_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     with open(path) as f:
         last = "".join(f.readlines()[-3:])
-    ok = ("Next free finding: **F443**" in last
-          and "Open findings: F437, F438, F439, F440, F441, F442." in last)
+    ok = ("Next free finding: **F442**" in last
+          and "Open findings: F437, F438, F439, F440, F441." in last)
     return ("HELD" if ok else "BREAK",
             "footer must read open F436 / next F437")
 

@@ -63,7 +63,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2134  # Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -244,14 +244,14 @@ def test_z1_findings_filed_open_with_final_footer():
           and "(F441 filed 2026-10-05, wave-346 lane 6" in text
           and "(F442 filed 2026-10-05, wave-346 lane 3" in text
           and text.count("LOW, OPEN:") >= 6
-          and "Next free finding: **F443**" in text
-          and "Open findings: F437, F438, F439, F440, F441, F442." in text)
-    return ("HELD" if ok else "BREAK", "F437-F442 filed open=%s" % ok)
+          and "Next free finding: **F442**" in text
+          and "Open findings: F437, F438, F439, F440, F441." in text)
+    return ("HELD" if ok else "BREAK", "F437-F441 filed open=%s" % ok)
 
 
 @_t
 def test_z2_taxonomy_pin():
-    """Taxonomy pin unchanged at 2134 (no new decision codes)."""
+    """Taxonomy pin unchanged at 2135 (no new decision codes)."""
     ok = (len(TAXONOMY) == TAXONOMY_PIN
           and sorted(TAXONOMY) == list(TAXONOMY))
     return ("HELD" if ok else "BREAK",

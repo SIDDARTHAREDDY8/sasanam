@@ -46,7 +46,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 
 _results = []
@@ -95,7 +95,7 @@ def p_taxonomy_pin():
             and dr.RV_LIST_FULL == "delegation-revocation-list-full"):
         return _record("pin-taxonomy", "BREAK",
                        "module code constants drift from taxonomy")
-    _record("pin-taxonomy", "HELD", "2134/2134/0 sorted")
+    _record("pin-taxonomy", "HELD", "2135/2135/0 sorted")
 
 
 

@@ -31,7 +31,7 @@ Probes:
       (linear scan, no ReDoS surface).
   P7  layering: bidi-wrapped unicode-escaped and homoglyph-bearing
       escaped credentials block via the 2-layer decode budget.
-  P8  pin + footer: taxonomy pin 2134, footer open F436 / next F437 (wave-345 lane 4: F435 closed).
+  P8  pin + footer: taxonomy pin 2135, footer open F436 / next F437 (wave-345 lane 4: F435 closed).
 
 Usage:
   ~/workspace/.gov-venv/bin/python evals/w344_f431close_probes.py
@@ -50,10 +50,10 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2134  # Wave-344: pin 2134 (no new codes in wave-344 lane 2)
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # F436 CLOSED 2026-10-05 wave-346 lane 1
+TAXONOMY_PIN = 2135  # Wave-344: pin 2135 (no new codes in wave-344 lane 2); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+FOOTER_OPEN = "F437, F438, F439, F440, F441"  # F436 CLOSED 2026-10-05 wave-346 lane 1; F442 CLOSED 2026-10-05 wave-347 lane 6
 
-FOOTER_NEXT = "F443"
+FOOTER_NEXT = "F442"
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -254,7 +254,7 @@ def p8_pin_and_footer():
         ok = ok and "Open findings: none." in footer
     else:
         ok = ok and ("Open findings: %s." % FOOTER_OPEN) in footer
-    return _check("p8: pin 2134, footer open F437-F442 / next F443", ok,
+    return _check("p8: pin 2135, footer open F437-F441 / next F442", ok,
 
                   footer[-60:])
 

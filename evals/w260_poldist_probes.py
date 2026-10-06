@@ -58,7 +58,7 @@ except ImportError:
 # Wave-260 lane-1 base pin. The lane adds 5 poldist-* codes:
 # 1080 -> 1085. If the count moves otherwise, the delta must be
 # explained by a landed taxonomy change -- never repoint blindly.
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 
 _PROBES = []

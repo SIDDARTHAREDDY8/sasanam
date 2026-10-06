@@ -59,9 +59,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # F423/F424/F425 CLOSED; F426 closed wave-338 lane 1. F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
-FOOTER_NEXT = "F443"  # Next free finding number.
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+FOOTER_OPEN = "F437, F438, F439, F440, F441"  # F423/F424/F425 CLOSED; F426 closed wave-338 lane 1. F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).; F442 CLOSED 2026-10-05 wave-347 lane 6
+FOOTER_NEXT = "F442"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -420,9 +420,9 @@ def _p7():
 # P8 -- pin + footer.
 # ---------------------------------------------------------------------------
 
-@probe("P8-pin-2134-footer-f430-f431")
+@probe("P8-pin-2135-footer-f430-f431")
 def _p8():
-    pid = "P8-pin-2134-footer-f430-f431"
+    pid = "P8-pin-2135-footer-f430-f431"
     with open(os.path.join(REPO, "gov", "decision_codes.py"),
               encoding="utf-8") as fh:
         src = fh.read()
@@ -452,7 +452,7 @@ def _p8():
                       % (open_now, next_free, FOOTER_OPEN, FOOTER_NEXT))
     if "## F419" not in foot or "Status: CLOSED" not in foot.split("## F419")[1][:2500]:
         return _break(pid, "F419 entry not CLOSED")
-    return _held(pid, "taxonomy 2134/2134/0 sorted unique; 11 codes "
+    return _held(pid, "taxonomy 2135/2135/0 sorted unique; 11 codes "
                       "registered; footer open F421 / next F422; F419 CLOSED")
 
 

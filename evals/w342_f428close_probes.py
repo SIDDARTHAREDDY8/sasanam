@@ -40,10 +40,10 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2134  # Wave-341 merge: pin 2131 (no new codes in wave-342 lane 1); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # F436 CLOSED 2026-10-05 wave-346 lane 1
+TAXONOMY_PIN = 2135  # Wave-341 merge: pin 2131 (no new codes in wave-342 lane 1); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+FOOTER_OPEN = "F437, F438, F439, F440, F441"  # F436 CLOSED 2026-10-05 wave-346 lane 1; F442 CLOSED 2026-10-05 wave-347 lane 6
 
-FOOTER_NEXT = "F443"
+FOOTER_NEXT = "F442"
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -183,7 +183,7 @@ def p5_f429_still_open():
 
 def p6_pin_and_footer():
     ok = True
-    ok = _check("P6a pin-taxonomy-2134",
+    ok = _check("P6a pin-taxonomy-2135",
                 len(TAXONOMY) == TAXONOMY_PIN
                 and len(set(TAXONOMY)) == TAXONOMY_PIN,
                 "%d/%d" % (len(TAXONOMY), len(set(TAXONOMY)))) and ok

@@ -35,7 +35,7 @@ Probes:
   P10 legacy: no kwarg -> no section, byte-identical.
   P11 ambiguous claims -> coded ownership-inference-ambiguous on
       the packet.
-  P12 pin 2134, footer open F436 / next F437,
+  P12 pin 2135, footer open F436 / next F437,
       codes registered.
   P13 depth-1 green check over w343_ownership_probes.py.
 
@@ -60,9 +60,9 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2134  # Wave-345 lane 6: no new codes; pin unchanged
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"
-FOOTER_NEXT = "F443"
+TAXONOMY_PIN = 2135  # Wave-345 lane 6: no new codes; pin unchanged; Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+FOOTER_OPEN = "F437, F438, F439, F440, F441"
+FOOTER_NEXT = "F442"
 
 from gov import ownership_inference as oi  # noqa: E402
 from gov import decision_packet as dp  # noqa: E402

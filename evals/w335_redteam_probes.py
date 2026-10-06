@@ -151,7 +151,7 @@ from gov import mcp_oauth_binding as MOB  # noqa: E402
 from gov import revocation_push as RP  # noqa: E402
 from gov import decision_codes as DC  # noqa: E402
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 _NOW = 1798765432
 _ISS = "https://as.example.com"
 _RES = "https://mcp.example.com/tools"
@@ -1323,15 +1323,15 @@ _FINDINGS_MD = os.path.join(REPO, "evals", "FINDINGS.md")
 def P5a():
     """Pin honesty: TAXONOMY_PIN is 2121 and the registry's sorted
     unique key order holds on raw source literals."""
-    pid = "P5a-pin-taxonomy-2134-sorted"
-    if TAXONOMY_PIN != 2134:
-        _break(pid, "TAXONOMY_PIN %r != 2134" % (TAXONOMY_PIN,))
+    pid = "P5a-pin-taxonomy-2135-sorted"
+    if TAXONOMY_PIN != 2135:
+        _break(pid, "TAXONOMY_PIN %r != 2135" % (TAXONOMY_PIN,))
         return
     # The canonical pin constant lives in gov/guac_graph.py (wave-302
     # lesson); the battery-local literal must agree with it.
     from gov import guac_graph as GG  # noqa: E402
-    if GG.TAXONOMY_PIN != 2134:
-        _break(pid, "guac_graph.TAXONOMY_PIN %r != 2134" % (GG.TAXONOMY_PIN,))
+    if GG.TAXONOMY_PIN != 2135:
+        _break(pid, "guac_graph.TAXONOMY_PIN %r != 2135" % (GG.TAXONOMY_PIN,))
         return
     codes = sorted(DC.TAXONOMY.keys())
     if list(DC.TAXONOMY.keys()) != codes:
@@ -1374,10 +1374,10 @@ def P5c():
     with open(_FINDINGS_MD, "rb") as f:
         lines = f.read().decode("utf-8").splitlines()
     last = lines[-1] if lines else ""
-    if "Open findings: F437, F438, F439, F440, F441, F442." not in last:
+    if "Open findings: F437, F438, F439, F440, F441." not in last:
         _break(pid, "last line lacks 'Open findings: F436.': %r" % (last[:120],))
         return
-    if "Next free finding: **F443**" not in last:
+    if "Next free finding: **F442**" not in last:
         _break(pid, "last line lacks next-F436: %r" % (last[:120],))
         return
     if not any(l.startswith("## F423 ") for l in lines):
@@ -1457,7 +1457,7 @@ _PROBES = [
     ("P4b-f419-closed", P4b),
     ("P4c-f420-closed", P4c),
     ("P4d-f418-closed", P4d),
-    ("P5a-pin-taxonomy-2134-sorted", P5a),
+    ("P5a-pin-taxonomy-2135-sorted", P5a),
     ("P5b-23-codes-registered", P5b),
     ("P5c-footer-open-f433-f434-f435-next-f436", P5c),
     ("P6a-f415-unicode-digit", P6a),

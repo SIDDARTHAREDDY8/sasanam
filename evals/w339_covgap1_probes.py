@@ -15,7 +15,7 @@ tautologies:
           gov/corroborated_consumption.py.
   S1-S9   scan_verdict_* (9): emission/verification refusals in
           gov/scan_verdicts.py.
-  P0      pin/taxonomy honesty (2134/2134/0 sorted-unique, footer state).
+  P0      pin/taxonomy honesty (2135/2135/0 sorted-unique, footer state).
   PZ      green check (depth-1): adjacent suites as children with
           GOV_SKIP_GREEN=1.
 
@@ -39,7 +39,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "tests"))
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 _results = []
 
@@ -396,16 +396,16 @@ def run_pin_footer_probes():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
-    if len(lits) == TAXONOMY_PIN == 2134 and len(set(lits)) == 2134 \
+    if len(lits) == TAXONOMY_PIN == 2135 and len(set(lits)) == 2135 \
             and lits == sorted(lits):
-        _held("P0a", "taxonomy 2134/2134/0 sorted-unique literals")
+        _held("P0a", "taxonomy 2135/2135/0 sorted-unique literals")
     else:
         _break("P0a", "literals %d, unique %d, sorted=%s"
                % (len(lits), len(set(lits)), lits == sorted(lits)))
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    if "Open findings: F437, F438, F439, F440, F441, F442." in text \
-            and "Next free finding: **F443**" in text:
+    if "Open findings: F437, F438, F439, F440, F441." in text \
+            and "Next free finding: **F442**" in text:
         _held("P0b", "footer open F436 / next F437")
     else:
         _break("P0b", "footer text mismatch")

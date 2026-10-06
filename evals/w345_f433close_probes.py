@@ -42,7 +42,7 @@ Probes:
   P5  no-regression: the F429 escape transforms (octal, CSS-with-space,
       unicode, hex) and the F430 concat shape still block.
   P6  ReDoS: hostile near-miss inputs complete in bounded time.
-  P7  pin + footer: taxonomy pin 2134; footer open F432, F434, F435 /
+  P7  pin + footer: taxonomy pin 2135; footer open F432, F434, F435 /
       next F436; F433 entry marked CLOSED.
   PZ  green check: adjacent batteries + red-first, depth-1,
       GOV_SKIP_GREEN=1 honored.
@@ -64,9 +64,9 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2134  # Wave-345: pin 2134 (no new codes in wave-345 lane 2)
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # F436 CLOSED 2026-10-05 wave-346 lane 1
-FOOTER_NEXT = "F443"
+TAXONOMY_PIN = 2135  # Wave-345: pin 2135 (no new codes in wave-345 lane 2); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+FOOTER_OPEN = "F437, F438, F439, F440, F441"  # F436 CLOSED 2026-10-05 wave-346 lane 1; F442 CLOSED 2026-10-05 wave-347 lane 6
+FOOTER_NEXT = "F442"
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -249,15 +249,15 @@ def p6_redos_bounded():
 # ------------------------------------------------------------------ P7
 def p7_pin_and_footer():
     codes = sorted(TAXONOMY)
-    ok_pin = len(codes) == TAXONOMY_PIN == 2134
+    ok_pin = len(codes) == TAXONOMY_PIN == 2135
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok_footer = ("Next free finding: **F443**" in text
-                 and "Open findings: F437, F438, F439, F440, F441, F442." in text
+    ok_footer = ("Next free finding: **F442**" in text
+                 and "Open findings: F437, F438, F439, F440, F441." in text
                  and "(F433 filed 2026-10-05, wave-344 lane 4" in text
                  and "LOW, CLOSED 2026-10-05 wave-345 lane 2" in text)
     print("    pin=%d footer-open=%s footer-next=%s"
           % (len(codes), FOOTER_OPEN, FOOTER_NEXT))
-    return _check("p7: pin 2134 + closed footer", ok_pin and ok_footer)
+    return _check("p7: pin 2135 + closed footer", ok_pin and ok_footer)
 
 
 # ------------------------------------------------------------------ PZ

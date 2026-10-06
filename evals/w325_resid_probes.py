@@ -40,7 +40,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 
 _results = []
@@ -716,7 +716,7 @@ def _p18():
 # Pin + footer state probes.
 # ---------------------------------------------------------------------------
 
-@probe("P19-pin-taxonomy-2134-sorted")
+@probe("P19-pin-taxonomy-2135-sorted")
 def _p19():
     from gov import decision_codes as DC
     import re
@@ -725,7 +725,7 @@ def _p19():
     codes = re.findall(r'"code":\s*["\']([^"\']+)["\']', src)
     # Uniqueness on raw source literals (the wave-260 lesson: the
     # deduped dict cannot see duplicate literals).
-    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2134, (#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
+    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2135, (#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
         len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
     for code in ("witness-alert-queue-overflow",
@@ -734,7 +734,7 @@ def _p19():
         entry = DC.TAXONOMY[code]
         assert entry["domain"] == "witness", entry
         assert entry["severity"] == "medium", entry
-    _held("P19-pin-taxonomy-2134-sorted", "2134/2134/0 sorted; new codes ok")
+    _held("P19-pin-taxonomy-2135-sorted", "2135/2135/0 sorted; new codes ok")
 
 
 @probe("P20-footer-open-none-next-F426")
@@ -744,7 +744,7 @@ def _p20():
     # Wave-337 lane 1: probe repaired -- the F417-era assertion rotted
     # through many merges; assert the live footer (open none / next
     # F426; F424/F425 closed by wave-337 lane 1).
-    assert "Next free finding: **F443**" in src, "next-free footer"
+    assert "Next free finding: **F442**" in src, "next-free footer"
     assert "**Open findings: F436.**" in src, "open-none footer"
     _held("P20-footer-open-none-next-F426",
           "footer: open none / next F430 (F424/F425 closed wave-337 lane 1)")

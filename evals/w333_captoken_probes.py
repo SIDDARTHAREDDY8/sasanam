@@ -67,7 +67,7 @@ for _p in (REPO, os.path.join(REPO, "tests"), os.path.join(REPO, "evals")):
 
 from gov import capability_token as CT  # noqa: E402
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 # (agent/mission/tools/policy-stale/malformed/tampered/expired).
 
 _NOW = 1798765432
@@ -357,7 +357,7 @@ def footer_state():
     # Wave-341 merge footer: F428 OPEN (filed wave-341 lane C, LOW); next F429.
     # Footer lines repeat through history; the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F443**" in text
+    ok = ("Next free finding: **F442**" in text
           and m_open and m_open[-1].strip() == "F436")
     if ok:
         _record("footer-state", "HELD", "footer: open F436 / next F437")

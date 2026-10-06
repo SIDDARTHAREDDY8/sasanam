@@ -52,7 +52,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 3: pin 2131 -> 2135 (+4 label-* codes); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 lane 3: pin 2131 -> 2134 (+4 label-* codes); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 from gov.trajectory_labels import (  # noqa: E402
     BLOCKED, LABEL_ANNOTATION_UNREGISTERED, LABEL_EGRESS_REFUSED,
@@ -364,11 +364,11 @@ def test_e2_refusal_record_deterministic():
 
 
 # ------------------------------------------------------- pin/footer probes
-def test_pin_taxonomy_2134():
+def test_pin_taxonomy_2135():
     codes = sorted(TAXONOMY)
     label_codes = {"label-egress-refused", "label-remedy-empty-unliftable",
                    "label-annotation-unregistered", "label-trust-floor-refused"}
-    ok = (len(codes) == TAXONOMY_PIN == 2134
+    ok = (len(codes) == TAXONOMY_PIN == 2135
           and len(set(codes)) == len(codes)
           and label_codes <= set(codes))
     return ("HELD" if ok else "BREAK",
@@ -381,8 +381,8 @@ def test_footer_state():
     with open(path, encoding="utf-8") as f:
         lines = f.read().splitlines()
     last = lines[-1] if lines else ""
-    ok = ("Next free finding: **F443**" in last
-          and "Open findings: F437, F438, F439, F440, F441, F442." in last)
+    ok = ("Next free finding: **F442**" in last
+          and "Open findings: F437, F438, F439, F440, F441." in last)
     return ("HELD" if ok else "BREAK",
             "footer: %r" % last[:80])
 
@@ -404,7 +404,7 @@ TESTS = [test_m1_combine_never_ascends,
          test_r4_plan_digest_binds_vocab,
          test_e1_trajectory_digest_recomputable,
          test_e2_refusal_record_deterministic,
-         test_pin_taxonomy_2134,
+         test_pin_taxonomy_2135,
          test_footer_state]
 
 # Exactly one expected BREAK: A0 demonstrates the annotation-arbitrage

@@ -49,7 +49,7 @@ Probes:
       complete fast with no exceptions.
   P7  layering: no-semicolon hex entity + base64 composes; entity
       decode feeds the JS-expression layer within the 2-layer budget.
-  P8  pin + footer: taxonomy pin 2134, footer open F437-F442 / next F443.
+  P8  pin + footer: taxonomy pin 2135, footer open F437-F441 / next F442.
 
 Usage:
   ~/workspace/.gov-venv/bin/python evals/w346_f436close_probes.py
@@ -71,9 +71,9 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2134  # Wave-346: pin 2134 (no new codes in wave-346 lane 1)
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # wave-346 merge final
-FOOTER_NEXT = "F443"
+TAXONOMY_PIN = 2135  # Wave-346: pin 2135 (no new codes in wave-346 lane 1); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+FOOTER_OPEN = "F437, F438, F439, F440, F441"  # wave-346 merge final; F442 CLOSED 2026-10-05 wave-347 lane 6
+FOOTER_NEXT = "F442"
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -309,13 +309,13 @@ def p7_decode_layer_composition():
 # -------------------------------------------------------------- P8: pin/footer
 def p8_pin_and_footer():
     codes = sorted(TAXONOMY)
-    ok = (len(codes) == TAXONOMY_PIN == 2134
+    ok = (len(codes) == TAXONOMY_PIN == 2135
           and codes == sorted(set(codes))
           and all(c == c.strip() for c in codes))
     footer = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ok and ("Next free finding: **%s**" % FOOTER_NEXT) in footer
     ok = ok and ("Open findings: %s." % FOOTER_OPEN) in footer
-    return _check("p8: pin 2134, footer open F437-F442 / next F443",
+    return _check("p8: pin 2135, footer open F437-F441 / next F442",
                   ok, footer[-60:])
 
 

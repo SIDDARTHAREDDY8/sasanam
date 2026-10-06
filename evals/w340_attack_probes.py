@@ -40,7 +40,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 from gov.adapters import openai_agents as oai  # noqa: E402
 from gov.adapters.core import GovernedBinding  # noqa: E402
@@ -415,7 +415,7 @@ def test_h4_revoked_hint_passes_by_design():
 
 def test_pin_taxonomy_2127():
     codes = sorted(TAXONOMY)
-    ok = (len(codes) == TAXONOMY_PIN == 2134
+    ok = (len(codes) == TAXONOMY_PIN == 2135
           and len(set(codes)) == len(codes))
     return ("HELD" if ok else "BREAK",
             "taxonomy %d/%d sorted-unique" % (len(codes), TAXONOMY_PIN))

@@ -12841,6 +12841,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['policy', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'policy-delta-mode-weakened': {
+        "domain": 'policy-delta',
+        "code": 'policy-delta-mode-weakened',
+        "human": 'policy delta moves a rule down the observe < warn < deny '
+                 'ladder; the rule loses enforcement authority (high when '
+                 'the enforced verdict flips to allow, medium when only '
+                 'operator warnings are lost); refused/flagged fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
     'policy-delta-role-added': {
         "domain": 'policy-delta',
         "code": 'policy-delta-role-added',

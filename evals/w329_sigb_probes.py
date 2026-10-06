@@ -63,9 +63,9 @@ from gov import evidence_intoto as _intoto  # noqa: E402
 from gov import dsse_envelope as _dsse  # noqa: E402
 from gov.signing import Ed25519Signer, Ed25519Verifier  # noqa: E402
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
-FOOTER_NEXT = "F443"  # Next free finding number.
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+FOOTER_OPEN = "F437, F438, F439, F440, F441"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).; F442 CLOSED 2026-10-05 wave-347 lane 6
+FOOTER_NEXT = "F442"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -449,10 +449,10 @@ def _w6():
 # P: pin + footer regression probes
 # ---------------------------------------------------------------------------
 
-@probe("P1-pin-taxonomy-2134")
+@probe("P1-pin-taxonomy-2135")
 def _p1():
-    pid = "P1-pin-taxonomy-2134"
-    if TAXONOMY_PIN != 2134:
+    pid = "P1-pin-taxonomy-2135"
+    if TAXONOMY_PIN != 2135:
         return _break(pid, "battery pin drifted: %r" % TAXONOMY_PIN)
     lits = []
     with open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -461,11 +461,11 @@ def _p1():
             m = re.search(r'"code"\s*:\s*\'([^\']+)\'', line)
             if m:
                 lits.append(m.group(1))
-    if len(lits) != 2134 or len(set(lits)) != 2134 \
+    if len(lits) != 2135 or len(set(lits)) != 2135 \
             or lits != sorted(lits):
-        return _break(pid, "taxonomy not 2134/2134/0 sorted "
+        return _break(pid, "taxonomy not 2135/2135/0 sorted "
                            "(%d/%d)" % (len(lits), len(set(lits))))
-    return _held(pid, "taxonomy 2134/2134/0 sorted")
+    return _held(pid, "taxonomy 2135/2135/0 sorted")
 
 
 @probe("P2-footer")

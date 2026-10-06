@@ -119,7 +119,7 @@ from gov import decision_codes as DC  # noqa: E402
 from gov.policy import PolicyEngine  # noqa: E402
 from tests.harness import make_run  # noqa: E402
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 _NEW_CODES = (
     "identity-refresh-lock-unavailable",
@@ -868,11 +868,11 @@ def P6b():
               "rb") as f:
         lines = f.read().decode("utf-8").splitlines()
     last = lines[-1] if lines else ""
-    if "Open findings: F437, F438, F439, F440, F441, F442." not in last:
+    if "Open findings: F437, F438, F439, F440, F441." not in last:
         _break(pid, "last line lacks 'Open findings: F436.': %r"
                % (last[:160],))
         return
-    if "Next free finding: **F443**" not in last:
+    if "Next free finding: **F442**" not in last:
         _break(pid, "last line lacks next-F436: %r" % (last[:160],))
         return
     for fnum in ("F424", "F425", "F426"):

@@ -28,7 +28,7 @@ battery selection); scripts/policy_ci_gate.py does the running half
   P10 RED (second mechanism): removing a forbid rule outright also
       fails the gate (delta: policy-delta-forbid-removed).
   P8  observe-lifecycle + pin-registry impact units.
-  P9  pin 2134, footer open F437-F442 / next F443 (no new decision
+  P9  pin 2135, footer open F437-F441 / next F442 (no new decision
       codes -- F437 is filed, not closed).
 
 $0 spend. No network. Scratch files live under /var/tmp only.
@@ -55,9 +55,9 @@ from gov import policy_gate as _pg  # noqa: E402
 from gov.policy_gate import PolicyGateError  # noqa: E402
 
 VENV_PYTHON = os.path.expanduser("~/workspace/.gov-venv/bin/python")
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # wave-346 merge final
-FOOTER_NEXT = "F443"
-TAXONOMY_PIN = 2134
+FOOTER_OPEN = "F437, F438, F439, F440, F441"  # wave-346 merge final; F442 CLOSED 2026-10-05 wave-347 lane 6
+FOOTER_NEXT = "F442"
+TAXONOMY_PIN = 2135  #Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 
 def _load_gate_script():
@@ -284,7 +284,7 @@ def p9_pin_and_footer():
     footer = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ok and ("Next free finding: **%s**" % FOOTER_NEXT) in footer
     ok = ok and ("Open findings: %s." % FOOTER_OPEN) in footer
-    return _check("p9: pin 2134, footer open F437-F442 / next F443", ok,
+    return _check("p9: pin 2135, footer open F437-F441 / next F442", ok,
                   footer[-60:])
 
 

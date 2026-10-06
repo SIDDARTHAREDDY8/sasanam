@@ -68,7 +68,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2134  # Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -286,10 +286,11 @@ def test_b3_garbage_padded_base64_correctly_ignored():
 @_t
 def test_z0_f436_closed_with_final_footer():
     """F436 is CLOSED by the wave-346 F436 lane and F437-F442 are filed
-    OPEN (wave-346 merge renumber: attack .reduce/entity+NUL/triple-b64
+    (wave-346 merge renumber: attack .reduce/entity+NUL/triple-b64
     keep F437/F438/F439; dlpaudit double-entity/double-backslash become
-    F440/F441; cigated policy_delta_gate becomes F442). Footer is open
-    F437, F438, F439, F440, F441, F442 / next F443."""
+    F440/F441; cigated policy_delta_gate becomes F442). F442 is CLOSED
+    by wave-347 lane 6. Footer is open
+    F437, F438, F439, F440, F441 / next F442."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("F436 filed 2026-10-05, wave-345 lane 5" in text
           and "CLOSED 2026-10-05 wave-346" in text
@@ -300,14 +301,14 @@ def test_z0_f436_closed_with_final_footer():
           and "(F441 filed 2026-10-05, wave-346 lane 6" in text
           and "(F442 filed 2026-10-05, wave-346 lane 3" in text
           and "LOW, OPEN:" in text
-          and "Next free finding: **F443**" in text
-          and "Open findings: F437, F438, F439, F440, F441, F442." in text)
-    return ("HELD" if ok else "BREAK", "F436 closed, F437-F442 filed open=%s" % ok)
+          and "Next free finding: **F442**" in text
+          and "Open findings: F437, F438, F439, F440, F441." in text)
+    return ("HELD" if ok else "BREAK", "F436 closed, F437-F441 filed open=%s" % ok)
 
 
 @_t
 def test_z1_taxonomy_pin():
-    """Taxonomy pin unchanged at 2134 (no new decision codes)."""
+    """Taxonomy pin unchanged at 2135 (no new decision codes)."""
     ok = (len(TAXONOMY) == TAXONOMY_PIN
           and sorted(TAXONOMY) == list(TAXONOMY))
     return ("HELD" if ok else "BREAK",

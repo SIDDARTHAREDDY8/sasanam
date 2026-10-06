@@ -21,7 +21,7 @@ P3 (6): F405 -- the F404 closure's negation-cue vocabulary missed
 P4 (2): w318 green-check depth-1 discipline -- the three w318 batteries'
     green checks honor GOV_SKIP_GREEN; their spawned children do too.
 P5 (3): regressions -- footer open none / next F409; pin taxonomy
-    2134/2134/0 sorted; F404 still closed (out-of-vocabulary
+    2135/2135/0 sorted; F404 still closed (out-of-vocabulary
 
 
     prohibitions refuse).
@@ -96,10 +96,10 @@ def _error(pid, note):
     return (pid, "ERROR", probe_lines.first_line(note)[:160])
 
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"
-FOOTER_NEXT = "F443"
+FOOTER_OPEN = "F437, F438, F439, F440, F441"
+FOOTER_NEXT = "F442"
 
 NOW = datetime(2026, 10, 4, 4, 0, 0, tzinfo=timezone.utc)
 

@@ -14,7 +14,7 @@ P3 (2): contract probes -- verify_keyed_bundle returns False (not
     raises) on a forged bundle (assert `is False`); the empty-hint
     spike shape ({"publicKey": {}}) is accepted, as cosign proved.
 P4 (2): regressions -- footer open none / next F409; pin taxonomy
-    2134/2134/0 sorted on source literals (this lane registers no
+    2135/2135/0 sorted on source literals (this lane registers no
 
 
     taxonomy codes).
@@ -48,10 +48,10 @@ from gov import sigstore_bundle as SB  # noqa: E402
 from gov import evidence_intoto as _intoto  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # F409-F427 CLOSED; F428 OPEN (wave-341 lane C).
-FOOTER_NEXT = "F443"  # F417 CLOSED 2026-10-05 (wave-334 lane 1); no open findings.
+FOOTER_OPEN = "F437, F438, F439, F440, F441"  # F409-F427 CLOSED; F428 OPEN (wave-341 lane C).; F442 CLOSED 2026-10-05 wave-347 lane 6
+FOOTER_NEXT = "F442"  # F417 CLOSED 2026-10-05 (wave-334 lane 1); no open findings.
 
 _results = []
 _PROBES = []
@@ -396,7 +396,7 @@ def _p3b():
 # P4: regressions
 # ---------------------------------------------------------------------------
 
-@probe("P4-pin-taxonomy-2134-sorted")
+@probe("P4-pin-taxonomy-2135-sorted")
 
 
 def _p4a():
@@ -404,11 +404,11 @@ def _p4a():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2134#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
+    ok = (len(lits) == TAXONOMY_PIN == 2135#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        return _held("P4-pin-taxonomy-2134-sorted", "2134/2134/0 sorted")
-    return _break("P4-pin-taxonomy-2134-sorted",
+        return _held("P4-pin-taxonomy-2135-sorted", "2135/2135/0 sorted")
+    return _break("P4-pin-taxonomy-2135-sorted",
 
 
                   "got %d literals" % (len(lits),))

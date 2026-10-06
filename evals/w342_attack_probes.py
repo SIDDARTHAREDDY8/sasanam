@@ -61,7 +61,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2134  # Wave-341 merge: pin 2131 (no new codes); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-341 merge: pin 2131 (no new codes); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -167,8 +167,8 @@ def test_a10_f429_filing_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F429 filed 2026-10-05, wave-342 lane 5" in text
           and "LOW, CLOSED 2026-10-05 wave-343 lane 1" in text
-          and "Next free finding: **F443**" in text
-          and "Open findings: F437, F438, F439, F440, F441, F442." in text)
+          and "Next free finding: **F442**" in text
+          and "Open findings: F437, F438, F439, F440, F441." in text)
     return ("HELD" if ok else "BREAK", "F429 filed closed=%s" % ok)
 
 
@@ -179,7 +179,7 @@ def test_a11_f428_still_open_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F428 filed 2026-10-05, wave-341 lane C" in text
           and "LOW, CLOSED 2026-10-05 wave-342 lane 1" in text
-          and "Open findings: F437, F438, F439, F440, F441, F442." in text)
+          and "Open findings: F437, F438, F439, F440, F441." in text)
     return ("HELD" if ok else "BREAK", "F428 closed=%s" % ok)
 
 
@@ -269,10 +269,10 @@ def test_c2_within_call_join_still_holds():
 # ---------------------------------------------------------------- pins
 
 @_t
-def test_pin_taxonomy_2134():
-    """Taxonomy pin: 2134 codes, sorted, raw-literal unique."""
+def test_pin_taxonomy_2135():
+    """Taxonomy pin: 2135 codes, sorted, raw-literal unique."""
     codes = sorted(TAXONOMY)
-    ok = (len(codes) == TAXONOMY_PIN == 2134
+    ok = (len(codes) == TAXONOMY_PIN == 2135
           and codes == sorted(set(codes))
           and all(c == c.strip() for c in codes))
     return ("HELD" if ok else "BREAK",

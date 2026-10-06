@@ -48,7 +48,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 from gov import evidence_admission as ap  # noqa: E402
 from gov import governed_exceptions as ge  # noqa: E402
@@ -236,16 +236,16 @@ def test_a7_family_fallback_premise():
 
 
 def test_pin_taxonomy_2127():
-    if TAXONOMY_PIN != 2134:
+    if TAXONOMY_PIN != 2135:
         return "BREAK", "battery pin drifted: %r" % (TAXONOMY_PIN,)
-    if len(TAXONOMY) != 2134:
-        return "BREAK", "registry holds %d codes, want 2134" % len(TAXONOMY)
+    if len(TAXONOMY) != 2135:
+        return "BREAK", "registry holds %d codes, want 2135" % len(TAXONOMY)
     keys = list(TAXONOMY)
     if keys != sorted(keys):
         return "BREAK", "taxonomy not sorted"
     if len(set(keys)) != len(keys):
         return "BREAK", "duplicate code literals"
-    return "HELD", "2134/2134/0 sorted, raw-literal unique"
+    return "HELD", "2135/2135/0 sorted, raw-literal unique"
 
 
 def test_footer_state():
@@ -253,8 +253,8 @@ def test_footer_state():
     with open(path, encoding="utf-8") as fh:
         lines = fh.read().splitlines()
     last = lines[-1] if lines else ""
-    ok = ("Next free finding: **F443**" in last
-          and "Open findings: F437, F438, F439, F440, F441, F442." in last)
+    ok = ("Next free finding: **F442**" in last
+          and "Open findings: F437, F438, F439, F440, F441." in last)
     return ("HELD" if ok else "BREAK",
             "footer last line: %r" % (last[:120],))
 

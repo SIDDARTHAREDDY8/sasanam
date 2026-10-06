@@ -30,7 +30,7 @@ from gov import evidence_intoto as _intoto
 from gov import decision_codes as DC
 from gov.signing import Ed25519Signer
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 _SEED = bytes(range(32))
 _SIGNER = Ed25519Signer(_SEED)

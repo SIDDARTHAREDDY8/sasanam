@@ -38,9 +38,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
-FOOTER_NEXT = "F443"  # Next free finding number.
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+FOOTER_OPEN = "F437, F438, F439, F440, F441"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).; F442 CLOSED 2026-10-05 wave-347 lane 6
+FOOTER_NEXT = "F442"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -789,20 +789,20 @@ def _p4c():
 # P5: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P5a-pin-taxonomy-2134-sorted")
+@probe("P5a-pin-taxonomy-2135-sorted")
 def _p5a():
     """Taxonomy pin 2100: raw source literals sorted and unique."""
     src = open(os.path.join(REPO, "gov", "decision_codes.py")).read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
     if len(lits) != TAXONOMY_PIN:
-        return _break("P5a-pin-taxonomy-2134-sorted",
+        return _break("P5a-pin-taxonomy-2135-sorted",
                       "want %d, got %d" % (TAXONOMY_PIN, len(lits)))
     if len(set(lits)) != len(lits):
-        return _break("P5a-pin-taxonomy-2134-sorted", "duplicate literals")
+        return _break("P5a-pin-taxonomy-2135-sorted", "duplicate literals")
     if lits != sorted(lits):
-        return _break("P5a-pin-taxonomy-2134-sorted", "not sorted")
-    return _held("P5a-pin-taxonomy-2134-sorted",
-                 "2134/2134/0 sorted unique on raw source literals")
+        return _break("P5a-pin-taxonomy-2135-sorted", "not sorted")
+    return _held("P5a-pin-taxonomy-2135-sorted",
+                 "2135/2135/0 sorted unique on raw source literals")
 
 
 @probe("P5b-footer-open-f433-f434-f435-next-f436")

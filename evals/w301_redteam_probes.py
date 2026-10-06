@@ -65,7 +65,7 @@ from gov import memory_composed as mc
 from gov import memory_reconcile as mr
 from gov import memory_store as ms
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 
 _results = []
@@ -137,7 +137,7 @@ class BaseStateTest(unittest.TestCase):
               and lits == sorted(lits))
         self.assertTrue(_expect_held(
             "taxonomy-pin",
-            ok and TAXONOMY_PIN == 2134,#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
+            ok and TAXONOMY_PIN == 2135,#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 
             "%d literals / %d unique / sorted=%s"
@@ -811,7 +811,7 @@ class RepinTest(unittest.TestCase):
         lits = _literals()
         self.assertTrue(_expect_held(
             "repin-pin-1851",
-            len(lits) == 2134 and len(set(lits)) == 2134
+            len(lits) == 2135 and len(set(lits)) == 2135
 
 
             and lits == sorted(lits),

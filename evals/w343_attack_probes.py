@@ -65,7 +65,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2134  # Wave-342 merge: pin 2131 (no new codes); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
+TAXONOMY_PIN = 2135  # Wave-342 merge: pin 2131 (no new codes); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -163,7 +163,7 @@ def test_a8_f430_filing_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     entry = ("(F430 filed 2026-10-05, wave-343 lane 3" in text
              and "LOW, CLOSED 2026-10-05 wave-344 lane 1" in text
-              and "Open findings: F437, F438, F439, F440, F441, F442." in text)
+              and "Open findings: F437, F438, F439, F440, F441." in text)
 
     refusal = (dlp.find_credential('token="xoxb-abc123" + "def456"')
                == "dlp-slack-token")
@@ -180,7 +180,7 @@ def test_a9_f429_still_open_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F429 filed 2026-10-05, wave-342 lane 5" in text
           and "LOW, CLOSED 2026-10-05 wave-343 lane 1" in text
-          and "Open findings: F437, F438, F439, F440, F441, F442." in text)
+          and "Open findings: F437, F438, F439, F440, F441." in text)
 
     return ("HELD" if ok else "BREAK", "F429 closed=%s" % ok)
 
@@ -195,7 +195,7 @@ def test_a11_f434_filing_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     entry = ("(F434 filed 2026-10-05, wave-344 merge" in text
              and "LOW, CLOSED 2026-10-05 wave-345 lane 3" in text
-             and "Open findings: F437, F438, F439, F440, F441, F442." in text)
+             and "Open findings: F437, F438, F439, F440, F441." in text)
     payload = "[" + ", ".join("'%s'" % ch for ch in _CRED) + "].join('')"
     refusal = dlp.find_credential(payload) == "dlp-slack-token"
     ok = entry and refusal
@@ -281,10 +281,10 @@ def test_c3_sentinel_visible_in_nested_args():
 # ---------------------------------------------------------------- pins
 
 @_t
-def test_pin_taxonomy_2134():
-    """Taxonomy pin: 2134 codes, sorted, raw-literal unique."""
+def test_pin_taxonomy_2135():
+    """Taxonomy pin: 2135 codes, sorted, raw-literal unique."""
     codes = sorted(TAXONOMY)
-    ok = (len(codes) == TAXONOMY_PIN == 2134
+    ok = (len(codes) == TAXONOMY_PIN == 2135
           and codes == sorted(set(codes))
           and all(c == c.strip() for c in codes))
     return ("HELD" if ok else "BREAK",

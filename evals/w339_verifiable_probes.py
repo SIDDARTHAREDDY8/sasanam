@@ -31,7 +31,7 @@ R23 (Bernstein ADAPT menu):
   orders; ``verify_referrer_binding`` selects identically under referrer
   entry permutations.
 
-P9: taxonomy pin 2134/2134/0 sorted-unique on raw literals (the new
+P9: taxonomy pin 2135/2135/0 sorted-unique on raw literals (the new
 ``oci-bundle-not-verifiable`` code), footer open none / next F430.
 
 Standalone: fresh TMPDIR per run, green checks enabled, depth-1 (the
@@ -54,9 +54,9 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = ("F437", "F438", "F439", "F440", "F441", "F442")
-FOOTER_NEXT = "F443"
+TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+FOOTER_OPEN = ("F437", "F438", "F439", "F440", "F441")
+FOOTER_NEXT = "F442"
 
 _EXPECTED_BREAKS = set()
 
@@ -600,11 +600,11 @@ def _p9():
     assert literals == sorted(literals), "taxonomy not sorted"
     assert "oci-bundle-not-verifiable" in DC.TAXONOMY
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
-    assert "Next free finding: **F443**" in text, "footer next free"
-    assert "Open findings: F437, F438, F439, F440, F441, F442." in text, "footer open findings"
-    assert FOOTER_OPEN == ("F437", "F438", "F439", "F440", "F441", "F442") and FOOTER_NEXT == "F443"
+    assert "Next free finding: **F442**" in text, "footer next free"
+    assert "Open findings: F437, F438, F439, F440, F441." in text, "footer open findings"
+    assert FOOTER_OPEN == ("F437", "F438", "F439", "F440", "F441") and FOOTER_NEXT == "F442"
     _held("P9-pin-taxonomy",
-          "2134/2134/0 sorted-unique; oci-bundle-not-verifiable "
+          "2135/2135/0 sorted-unique; oci-bundle-not-verifiable "
           "registered; footer open none / next F430")
 
 
