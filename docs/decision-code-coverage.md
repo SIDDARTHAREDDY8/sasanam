@@ -1,6 +1,6 @@
 # Decision-code coverage table (generated)
 
-Generated: 2026-10-06T02:09:37Z UTC · registry pin: 2135 · base: wave-343 merge (+3 ownership-* codes, 2129/2135 behaviorally probed; 5 fault-injection residuals: tool-crashed, tool-timed-out, preexec_child_died, post-rotation, offline-verify-internal)
+Generated: 2026-10-06T07:03:56Z UTC · registry pin: 2135 · base: wave-343 merge (+3 ownership-* codes, 2129/2135 behaviorally probed; 5 fault-injection residuals: tool-crashed, tool-timed-out, preexec_child_died, post-rotation, offline-verify-internal)
 
 Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code counts as covered when its literal string appears quoted in at least one ``.py`` file under ``tests/`` or ``evals/``. Production ``emit()`` call sites do not count.
 

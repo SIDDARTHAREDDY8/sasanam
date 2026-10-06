@@ -504,8 +504,8 @@ def run_p3_probes():
                % (len(lits), len(set(lits)), lits == sorted(lits)))
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    if "Open findings: F454, F455, F456, F457, F458, F459, F460." in text \
-            and "Next free finding: **F461**" in text:
+    if "Open findings: F461, F462, F463, F464, F465, F466, F467, F468." in text \
+            and "Next free finding: **F469**" in text:
         _held("P3b", "footer open none / next F430")
     else:
         _break("P3b", "footer text mismatch")

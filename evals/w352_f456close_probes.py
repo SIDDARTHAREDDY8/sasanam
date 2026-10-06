@@ -98,8 +98,8 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2135  # Wave-352: F456 closed, no new decision codes; pin unchanged
-FOOTER_OPEN = "F454, F455, F457, F458, F459, F460"  # Wave-352: F456 CLOSED (merge finalizes tree-wide)
-FOOTER_NEXT = "F461"
+FOOTER_OPEN = "F461, F462, F463, F464, F465, F466, F467, F468"  # Wave-352: F456 CLOSED (merge finalizes tree-wide)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)
+FOOTER_NEXT = "F469"  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)
 
 
 from gov import dlp  # noqa: E402
@@ -538,36 +538,37 @@ def p6_noreg_f447f448_closed():
 
 
 def p6_pin_f454_open():
-    # F454 (OPEN): multi-arg Array constructor still misses.
-    return not _blocked("Array('xoxb-','0123456789abcdef').join('')")
+    # F454 CLOSED (wave-352 merge): multi-arg Array constructor blocks.
+    return _blocked("Array('xoxb-','0123456789abcdef').join('')")
 
 
 def p6_pin_f455_open():
-    # F455 (OPEN): ws before dot still misses.
-    return not _blocked("Array .of('xoxb-','0123456789abcdef').join('')")
+    # F455 CLOSED (wave-352 merge): ws before dot blocks.
+    return _blocked("Array .of('xoxb-','0123456789abcdef').join('')")
 
 
 def p6_pin_f457_open():
-    # F457 (OPEN): template `${}` interpolation still misses.
-    return not _blocked("`xoxb-${'0123456789abcdef'}`")
+    # F457 CLOSED (wave-352 merge): template `${}` interpolation blocks.
+    return _blocked("`xoxb-${'0123456789abcdef'}`")
 
 
 def p6_pin_f458_open():
-    # F458 (OPEN): String.fromCharCode with octal spellings still
-    # misses.
+    # F458 CLOSED (wave-352 merge): String.fromCharCode with octal
+    # spellings blocks.
     codes = ",".join("0o%o" % ord(ch) for ch in "xoxb-0123456789abcdef")
-    return not _blocked("String.fromCharCode(%s)" % codes)
+    return _blocked("String.fromCharCode(%s)" % codes)
 
 
 def p6_pin_f459_open():
-    # F459 (OPEN): positional/index .filter predicates still miss.
-    return not _blocked(
+    # F459 CLOSED (wave-352 merge): positional/index .filter predicates
+    # block.
+    return _blocked(
         "['xoxb-','0123456789abcdef','zz'].filter((x,i)=>i<2).join('')")
 
 
 def p6_pin_f460_open():
-    # F460 (OPEN): .map(String) still misses.
-    return not _blocked("['xoxb-','0123456789abcdef'].map(String).join('')")
+    # F460 CLOSED (wave-352 merge): .map(String) blocks.
+    return _blocked("['xoxb-','0123456789abcdef'].map(String).join('')")
 
 
 # ---------------------------------------------------------------- P7: pin + footer
@@ -585,7 +586,7 @@ def p7_pin_and_footer():
     # Accept the lane footer (F456 closed) -- the base footer still
     # lists F456 open until the merge sweep.
     ok = ok and (("Open findings: %s." % FOOTER_OPEN) in footer
-                 or "Open findings: F454, F455, F456, F457, F458, F459, F460."
+                 or "Open findings: F461, F462, F463, F464, F465, F466, F467, F468."
                  in footer)
     ok = ok and "(F456 " in footer
     return ok

@@ -132,35 +132,34 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F454-F468 open, next F469 (wave-352 lane 5:
-    F461-F468 filed)."""
+    """Control: footer shows F461-F468 open, next F469 (wave-352 merge:
+    F454-F460 closed, F461-F468 filed)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F469**" in text
-          and "**Open findings: F454, F455, F456, F457, F458, F459, F460, "
-               "F461, F462, F463, F464, F465, F466, F467, F468.**" in text)
+          and "**Open findings: F461, F462, F463, F464, F465, F466, F467, F468.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
-# ------------------------------------------------- F454-F460 open pins
+# ------------------------------------------------- F454-F460 closed pins (wave-352 merge)
 
 @_t
 def test_b1_f454_multiarg_array_open():
-    """F454 pinned open: multi-arg Array constructor misses."""
-    miss = not _blocked("Array('" + _A + "','" + _B + "').join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F454 pinned CLOSED (wave-352 merge): multi-arg Array constructor blocks."""
+    hit = _blocked("Array('" + _A + "','" + _B + "').join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
 def test_b1_f455_ws_dot_open():
-    """F455 pinned open: whitespace before the dot in Array .of misses."""
-    miss = not _blocked("Array .of('" + _A + "','" + _B + "').join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F455 pinned CLOSED (wave-352 merge): ws before the dot in Array .of blocks."""
+    hit = _blocked("Array .of('" + _A + "','" + _B + "').join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
 def test_b1_f456_b64_junk_frag_open():
-    """F456 pinned open: base64 with NUL junk fragmentation misses."""
+    """F456 pinned CLOSED (wave-352 merge): base64 with NUL junk fragmentation blocks."""
     b64 = base64.b64encode(_CRED2.encode()).decode()
     frag, i, parts = b64, 0, []
     while i < len(frag):
@@ -168,38 +167,38 @@ def test_b1_f456_b64_junk_frag_open():
         i += 12
         if i < len(frag):
             parts.append("\x00")
-    miss = not _blocked("".join(parts))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    hit = _blocked("".join(parts))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
 def test_b1_f457_tmpl_interp_open():
-    """F457 pinned open: template-literal ${} interpolation misses."""
-    miss = not _blocked("`%s${'%s'}`" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F457 pinned CLOSED (wave-352 merge): template-literal ${} interpolation blocks."""
+    hit = _blocked("`%s${'%s'}`" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
 def test_b1_f458_fcc_octal_open():
-    """F458 pinned open: fromCharCode with octal literals misses."""
+    """F458 pinned CLOSED (wave-352 merge): fromCharCode with octal literals blocks."""
     codes = ",".join("0o%o" % c for c in _CRED2.encode())
-    miss = not _blocked("String.fromCharCode(%s)" % codes)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    hit = _blocked("String.fromCharCode(%s)" % codes)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
 def test_b1_f459_filter_index_open():
-    """F459 pinned open: positional .filter predicate misses."""
-    miss = not _blocked("['" + _A + "','" + _B + "','zz'].filter((x,i)=>i<2)"
+    """F459 pinned CLOSED (wave-352 merge): positional .filter predicate blocks."""
+    hit = _blocked("['" + _A + "','" + _B + "','zz'].filter((x,i)=>i<2)"
                         ".join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
 def test_b1_f460_map_string_open():
-    """F460 pinned open: .map(String) misses."""
-    miss = not _blocked("['" + _A + "','" + _B + "'].map(String).join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F460 pinned CLOSED (wave-352 merge): .map(String) blocks."""
+    hit = _blocked("['" + _A + "','" + _B + "'].map(String).join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F461-F468 open pins
