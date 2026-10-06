@@ -135,13 +135,13 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F469-F472 open, next F473 (wave-353 merge:
+    """Control: footer shows F469-F471 open, next F473 (wave-353 merge:
     F461-F468 closed; F469-F471 attack-lane filings, commit e79af076;
-    F472 repeat-tagged)."""
+    F472 closed wave-354 lane 4)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F473**" in text
-          and "**Open findings: F469, F470, F471, F472.**" in text)
+          and "**Open findings: F469, F470, F471.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -231,14 +231,12 @@ def test_b2_f463_tagged_template_join_closed():
 
 
 @_t
-def test_b2_f472_tagged_template_repeat_open():
-    """F472 pinned open (wave-353 lane 2; renumbered F469->F472 -- the
-    wave-353 attack lane committed F469-F471 first, commit e79af076):
-    repeat as a tagged template misses -- the F463 closure models the
-    tag-call site for .join/.concat/.fill only; repeat's ToNumber count
-    conversion is a distinct unmodeled shape."""
-    miss = not _blocked("'" + _A + "'.repeat" + _BT + "2" + _BT)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b2_f472_tagged_template_repeat_closed():
+    """F472 pinned CLOSED (wave-354 lane 4): repeat as a tagged template
+    now blocks -- the bounded ToNumber count conversion is modeled by
+    _js_tag_repeat_count."""
+    hit = _blocked("'" + _A + "'.repeat" + _BT + "2" + _BT)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t

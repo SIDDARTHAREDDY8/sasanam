@@ -1525,6 +1525,8 @@ def _try_jsfuck_decode(run):
 
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 _OCT_DIGITS = frozenset("01234567")
+_BIN_DIGITS = frozenset("01")  # F472: ToNumber 0b radix
+_DEC_DIGITS = frozenset("0123456789")  # F472: strict ToNumber decimal scan
 # F436: the semicolon is optional (legacy lenient form, mirroring
 # html.unescape); the strict form is matched first by alternation
 # order in _ENTITY_RUN, so &#65; still decodes identically.
@@ -3630,8 +3632,95 @@ def _js_apply_method(text, j, name, value, depth, state):
         raise _JSExprFail("bad concat")
 
 
+def _js_tag_repeat_count(cooked):
+    """Bounded ToNumber for a `.repeat`N`` tag count (F472).
+
+    The tag receives the TemplateStringsArray ``[cooked]``; the engine
+    computes ``ToNumber(String([cooked])) == ToNumber(cooked)`` and then
+    ``ToIntegerOrInfinity``. Node-verified (v24.20.0) semantics on the
+    modeled subset:
+      '2' / ' 2 ' / '+3' / '00' / '.5' / '2.5' / '2e0' / '0x2' / '0b10' /
+      '0o10' -> that int
+      '' / ' ' -> 0 reps (the '' result is gated exactly like the F463
+        fill`` empty case)
+      '-1' / '-2.5' / 'Infinity' / '-Infinity' -> engine RangeError
+        -> fail closed (the shape throws; it produces no text)
+    Anything outside the strict decimal/radix/Infinity grammar
+    ('abc', 'NaN', '1_0', '.', 'e5', '0x' with bad digits, ...) fails
+    closed -- the engine evaluates those to NaN -> '' -> gated, so both
+    sides surface no text either way.
+    Bounds: the count VALUE is bounded by _JS_EXPR_MAX_REPEAT at the
+    caller, exactly like the paren form's standing bound. The strict
+    grammar scan is linear and float()/int() conversion of the
+    template-bounded (<= _JS_EXPR_MAX_LITERAL chars) cooked string is
+    safe, so no string-length cap is needed: parse first, then bound the
+    value (a length cap would miss zero-padded counts like
+    '000..02', which the engine evaluates to 2). Radix forms (0x/0b/0o)
+    carry no sign ('-0x2' is NaN in ToNumber); the decimal converts
+    with float64 -- exactly the engine's own literal parsing, including
+    its round-to-nearest at the truncation boundary ('0.99..9' parses
+    to 1.0, '63.99..9' to 64.0, node-verified) -- then truncates toward
+    zero. No regexes; never evals.
+    """
+    s = cooked.strip(" \t\n\r\f\v\xa0\ufeff")
+    if s == "":
+        return 0  # ToNumber('') == 0
+    if s in ("Infinity", "+Infinity", "-Infinity"):
+        raise _JSExprFail("repeat infinite")  # engine RangeError
+    neg = s[0] in "+-"
+    body = s[1:] if neg else s
+    prefix = body[:2].lower()
+    if prefix in ("0x", "0b", "0o"):
+        # ToNumber radix forms: no sign allowed and >= 1 valid digit;
+        # anything else fails closed (the engine's NaN -> '' -> gated).
+        digits = body[2:]
+        valid = {"0x": _HEX_DIGITS, "0b": _BIN_DIGITS,
+                 "0o": _OCT_DIGITS}[prefix]
+        if neg or not digits or any(c not in valid for c in digits):
+            raise _JSExprFail("bad repeat count")
+        # digits <= _JS_EXPR_MAX_LITERAL chars: under int()'s digit
+        # limit; the caller bounds the value.
+        return int(digits, {"0x": 16, "0b": 2, "0o": 8}[prefix])
+    # Strict decimal: [+-]?(digits[.digits] | .digits)([eE][+-]?digits)?
+    j, n = (1, len(s)) if neg else (0, len(s))
+    int_digits = 0
+    while j < n and s[j] in _DEC_DIGITS:
+        j += 1
+        int_digits += 1
+    if j < n and s[j] == ".":
+        j += 1
+        while j < n and s[j] in _DEC_DIGITS:
+            j += 1
+            int_digits += 1
+    if int_digits == 0:
+        raise _JSExprFail("bad repeat count")
+    if j < n and s[j] in "eE":
+        j += 1
+        if j < n and s[j] in "+-":
+            j += 1
+        exp_digits = 0
+        while j < n and s[j] in _DEC_DIGITS:
+            j += 1
+            exp_digits += 1
+        if exp_digits == 0 or j != n:
+            raise _JSExprFail("bad repeat count")
+    elif j != n:
+        raise _JSExprFail("bad repeat count")
+    num = float(s)  # grammar-validated: correct round-to-nearest,
+                    # exactly the engine's decimal literal parsing
+    if math.isnan(num):
+        raise _JSExprFail("bad repeat count")
+    if math.isinf(num):
+        raise _JSExprFail("repeat infinite")  # engine RangeError
+    trunc = math.trunc(num)
+    if trunc < 0:
+        raise _JSExprFail("repeat negative")  # engine RangeError
+    return trunc
+
+
 def _js_apply_tag_method(text, j, name, value, depth, state):
-    """Apply .join`...` / .concat`...` / .fill`...` with text[j] == '`' (F463).
+    """Apply .join`...` / .concat`...` / .fill`...` / .repeat`N`` with
+    text[j] == '`' (F463, F472).
 
     A tagged call passes the TemplateStringsArray as the method's first
     (only) argument. For a literal-only template the array is exactly
@@ -3641,12 +3730,14 @@ def _js_apply_tag_method(text, j, name, value, depth, state):
       .join`T`   == .join(cooked)    -- cooked is the separator
       .concat`T` == .concat(cooked)  -- single string arg is appended
       .fill`T`   == .fill(cooked)    -- single string arg fills
+      .repeat`N` == .repeat(ToNumber(cooked)) -- _js_tag_repeat_count
     Receiver rules match the paren forms exactly: join/fill require a
     _JSArr (F434/F443), concat fails closed on _JSArr (the decoder never
-    surfaces arrays). A tag call takes exactly one template argument, so
-    fill's start/end args cannot be expressed. The tag call is
-    obfuscation-shaped (ops += 1); the cooked string is bounded by
-    _MAX_DECODE_BYTES. No new regexes; never evals.
+    surfaces arrays), repeat fails closed on _JSArr (engine TypeError).
+    A tag call takes exactly one template argument, so fill's start/end
+    args cannot be expressed. The tag call is obfuscation-shaped
+    (ops += 1); the cooked string is bounded by _MAX_DECODE_BYTES.
+    No new regexes; never evals.
     """
     cooked, i = _js_parse_tag_template(text, j, state)
     if name == "join":
@@ -3679,6 +3770,23 @@ def _js_apply_tag_method(text, j, name, value, depth, state):
             raise _JSExprFail("fill too long")
         state["ops"] += 1
         return _JSArr(elements), i
+    if name == "repeat":
+        # F472: 'frag'.repeat`2` -- the tag receives ['2'] as the
+        # count; ToNumber(String(['2'])) == ToNumber(cooked), then
+        # ToIntegerOrInfinity (see _js_tag_repeat_count). Receiver
+        # rules match the paren form: the engine throws TypeError on
+        # arrays, so _JSArr fails closed. NaN counts (-> '' result)
+        # are gated exactly like the F463 fill`` empty case.
+        if isinstance(value, _JSArr):
+            raise _JSExprFail("repeat on array")
+        count = _js_tag_repeat_count(cooked)
+        if count > _JS_EXPR_MAX_REPEAT:
+            raise _JSExprFail("repeat too big")
+        result = value * count
+        if len(result) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("repeat too long")
+        state["ops"] += 1
+        return result, i
     raise _JSExprFail("tag call unsupported")
 
 
@@ -3703,11 +3811,12 @@ def _js_parse_postfix(text, i, value, depth, state):
                                                 depth, state)
                     break
                 if (k < len(text) and text[k] == "`"
-                        and name in ("join", "concat", "fill")):
+                        and name in ("join", "concat", "fill", "repeat")):
                     # F463: tagged-template call site -- .join`...` /
-                    # .concat`...` / .fill`...`; whitespace between the
-                    # method name and the template is allowed, exactly
-                    # as the engine tokenizes.
+                    # .concat`...` / .fill`...`; F472: .repeat`N`;
+                    # whitespace between the method name and the
+                    # template is allowed, exactly as the engine
+                    # tokenizes.
                     value, i = _js_apply_tag_method(text, k, name, value,
                                                     depth, state)
                     break
@@ -3801,7 +3910,10 @@ def _try_js_expr_decode(text, start):
     the reflection-API factory desugared to the fragment list
     (argsArray: string-literal array literal, Array.of, or the
     F443/F454 Array constructor forms; any other target or arg class
-    fails closed)
+    fails closed), (F472) the `.repeat`N`` tagged-template call site
+    with a literal-only count template (ToNumber + ToIntegerOrInfinity
+    via _js_tag_repeat_count; interpolation, negative/infinite counts
+    fail closed).
 . Bounded by part, depth, codepoint, repeat, and output budgets; never
     evals; undecodable runs are ignored. A bare string literal (or an
     unjoined array literal) with no operator or call is not rewritten
