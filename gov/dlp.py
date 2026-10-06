@@ -2943,6 +2943,197 @@ def _js_has_nonstr_element(elements):
     return any(type(e) is not str for e in elements)
 
 
+def _js_match_kw(text, i, kw):
+    """Match keyword *kw* at text[i] (ident-boundary checked).
+
+    Returns the index just past the keyword, or None. The caller must
+    ensure text[i] is at a token start (the check covers the trailing
+    boundary only). Never evals.
+    """
+    n = len(text)
+    if not text.startswith(kw, i):
+        return None
+    k = i + len(kw)
+    if k < n and text[k] in _JS_IDENT_CONT:
+        return None
+    return k
+
+
+def _js_parse_new_set(text, i, depth, state):
+    """Parse `new Set([...])` at text[i] (text[i] == 'n') (F494).
+
+    Desugars the Set-construction spread source: node-evaluated,
+    [...new Set(['f1','f2'])] is element-identical to ['f1','f2'] with
+    SameValueZero dedup (first-occurrence order, node v24.20.0
+    verified). Elements must be plain string literals -- numeric,
+    marker, or nested-array elements fail closed (honest, documented
+    boundary; the filed shapes are string-only). Returns
+    (_JSArr, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_match_kw(text, i, "new")
+    if j is None:
+        raise _JSExprFail("not a new-expression")
+    j = _js_match_kw(text, _js_skip_ws(text, j), "Set")
+    if j is None:
+        raise _JSExprFail("not new Set")
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("Set arg not an array literal")
+    arr, j = _js_parse_array(text, j, depth, state)
+    seen = set()
+    elements = []
+    for e in arr.elements:
+        if not isinstance(e, str) or isinstance(e, _JSNumStr):
+            raise _JSExprFail("Set of non-string literals")
+        if e not in seen:
+            seen.add(e)
+            elements.append(e)
+    j = _js_expect(text, j, ")")
+    state["ops"] += 1  # the iterable-spread source is obfuscation-shaped
+    return _JSArr(elements), j
+
+
+def _js_parse_new_map_values(text, i, depth, state):
+    """Parse `new Map([[k,v],...]).values()` at text[i] (F494).
+
+    Desugars the Map-values spread source: node-evaluated,
+    [...new Map([[0,'f1'],[1,'f2']]).values()] is ['f1','f2'] --
+    values in insertion order with later-wins on duplicate keys
+    (node v24.20.0 verified). Entries must be [key, value] pairs
+    with string/numeric literal keys and plain string-literal values;
+    anything else fails closed (honest, documented boundary; the
+    filed shapes are literal-only). Returns (_JSArr, next_index).
+    Never evals.
+    """
+    n = len(text)
+    j = _js_match_kw(text, i, "new")
+    if j is None:
+        raise _JSExprFail("not a new-expression")
+    j = _js_match_kw(text, _js_skip_ws(text, j), "Map")
+    if j is None:
+        raise _JSExprFail("not new Map")
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("Map arg not an array literal")
+    outer, j = _js_parse_array(text, j, depth, state)
+    order = []
+    index = {}
+    for p in outer.elements:
+        if not isinstance(p, _JSArr) or len(p.elements) != 2:
+            raise _JSExprFail("Map entry not a [k,v] pair")
+        k, v = p.elements
+        if isinstance(k, _JSNumStr):
+            kid = ("n", str(k))
+        elif isinstance(k, str):
+            kid = ("s", k)
+        else:
+            raise _JSExprFail("Map key not a literal")
+        if not isinstance(v, str) or isinstance(v, _JSNumStr):
+            raise _JSExprFail("Map value not a string literal")
+        if kid in index:
+            order[index[kid]] = v
+        else:
+            index[kid] = len(order)
+            order.append(v)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("expected .values()")
+    j = _js_match_kw(text, _js_skip_ws(text, j + 1), "values")
+    if j is None:
+        raise _JSExprFail("not .values()")
+    j = _js_expect(text, j, "(")
+    j = _js_expect(text, j, ")")
+    state["ops"] += 1  # the iterable-spread source is obfuscation-shaped
+    return _JSArr(order), j
+
+
+def _js_parse_generator_iife(text, i, depth, state):
+    """Parse `(function*(){yield 'lit';...})()` at text[i] (F494).
+
+    Desugars the immediately-invoked fixed-yield generator spread
+    source: node-evaluated, [...(function*(){yield 'f1';yield
+    'f2'})()] is ['f1','f2'] -- yields happen in order, and a
+    trailing `return` (with or without a literal) contributes nothing
+    to the spread (node v24.20.0 verified). The body must be a bare
+    sequence of `yield '<literal>';` statements (ws-tolerant,
+    optional parens around the literal, ASI-tolerant before `}`);
+    parameters, non-literal yields, loops, a non-trailing `return`,
+    or call args all fail closed (honest, documented boundary; the
+    filed shapes are fixed-literal yields). Returns (_JSArr,
+    next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, i, "(")
+    j = _js_match_kw(text, _js_skip_ws(text, j), "function")
+    if j is None:
+        raise _JSExprFail("not a function expression")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "*":
+        raise _JSExprFail("not a generator")
+    j = _js_skip_ws(text, j + 1)
+    if j < n and text[j] in _JS_IDENT_START:
+        # Optional generator name: (function* gen(){...})().
+        _, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, "{")
+    yields = []
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "}":
+            j += 1
+            break
+        rk = _js_match_kw(text, j, "return")
+        if rk is not None:
+            # A trailing `return` (with or without a literal) never
+            # contributes to the spread -- node-exact to skip it; it
+            # must be the last statement.
+            j = _js_skip_ws(text, rk)
+            if j < n and text[j] in "'\"":
+                _, j = _js_parse_string(text, j)
+                j = _js_skip_ws(text, j)
+            if j < n and text[j] == ";":
+                j += 1
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != "}":
+                raise _JSExprFail("return not last in generator")
+            j += 1
+            break
+        j = _js_match_kw(text, j, "yield")
+        if j is None:
+            raise _JSExprFail("generator body not fixed yields")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "(":
+            j = _js_skip_ws(text, j + 1)
+            paren = True
+        else:
+            paren = False
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("yield of non-literal")
+        val, j = _js_parse_string(text, j)
+        if paren:
+            j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ";":
+            j += 1
+        yields.append(val)
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+    if not yields:
+        raise _JSExprFail("generator yields nothing")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, "(")
+    j = _js_expect(text, j, ")")
+    state["ops"] += 1  # the iterable-spread source is obfuscation-shaped
+    return _JSArr(yields), j
+
+
 def _js_parse_spread_copy(text, i, depth, state):
     """Parse '[...X]' spread-copy factory at text[i] (F471).
 
@@ -2961,10 +3152,15 @@ def _js_parse_spread_copy(text, i, depth, state):
     closed via the in_spread_copy guard; spread of a non-array
     ([...'ab'], [...'ab'.length]) fails closed -- the iterable-spread
     of strings is node-real but out of scope (documented candidate).
-    No new parts are charged: every element was parts-charged at
-    source parse (same convention as F461's reversal). Whitespace
-    after '...' is tolerated (punctuator + _js_skip_ws, node-verified).
-    Never evals.
+    (F494) spread of the non-literal iterables `new Set([...])`,
+    `new Map([[k,v],...]).values()`, and immediately-invoked
+    fixed-yield generators `(function*(){yield 'lit';...})()` desugars
+    engine-exactly (SameValueZero dedup, insertion-order values with
+    later-wins keys, ordered yields); anything outside those bounded
+    classes fails closed. No new parts are charged: every element was
+    parts-charged at source parse (same convention as F461's
+    reversal). Whitespace after '...' is tolerated (punctuator +
+    _js_skip_ws, node-verified). Never evals.
     """
     n = len(text)
     if state.get("in_spread_copy"):
@@ -2974,7 +3170,29 @@ def _js_parse_spread_copy(text, i, depth, state):
         raise _JSExprFail("not a spread copy")
     state["in_spread_copy"] = True
     try:
-        src, j = _js_parse_primary(text, j + 3, depth, state)
+        k = _js_skip_ws(text, j + 3)
+        src = None
+        kk = _js_match_kw(text, k, "new")
+        if kk is not None:
+            # F494: new Set([...]) / new Map([...]).values() spread
+            # sources. Any other `new X` falls through to the primary
+            # path, which fails closed exactly as before.
+            kkk = _js_skip_ws(text, kk)
+            if _js_match_kw(text, kkk, "Set") is not None:
+                src, j = _js_parse_new_set(text, k, depth, state)
+            elif _js_match_kw(text, kkk, "Map") is not None:
+                src, j = _js_parse_new_map_values(text, k, depth, state)
+        elif k < n and text[k] == "(":
+            # F494: (function*(){yield ...})() spread source. A plain
+            # parenthesized primary falls through to the primary path.
+            kp = _js_match_kw(text, _js_skip_ws(text, k + 1), "function")
+            if kp is not None:
+                kf = _js_skip_ws(text, kp)
+                if kf < n and text[kf] == "*":
+                    src, j = _js_parse_generator_iife(text, k, depth,
+                                                      state)
+        if src is None:
+            src, j = _js_parse_primary(text, j + 3, depth, state)
     finally:
         state["in_spread_copy"] = False
     if not isinstance(src, _JSArr):
@@ -7771,6 +7989,365 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
     raise _JSExprFail("not a primary")
 
 
+def _js_parse_binding_source(text, i):
+    """Parse a whitelisted binding source at text[i] (F495).
+
+    Sources: `[].<ident>` (ws-tolerant) or exactly `Array.prototype`
+    (ws-tolerant). Returns (canonical_source_text, next_index);
+    anything else fails closed. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if text.startswith("[]", j):
+        k = _js_skip_ws(text, j + 2)
+        if k < n and text[k] == ".":
+            name, k2 = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+            return "[]." + name, k2
+        raise _JSExprFail("binding source not a member")
+    if text.startswith("Array", j):
+        k = j + len("Array")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("binding source not Array")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ".":
+            pname, k2 = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+            if pname != "prototype":
+                raise _JSExprFail("binding source not Array.prototype")
+            return "Array.prototype", k2
+    raise _JSExprFail("binding source not whitelisted")
+
+
+def _js_ident_tokens(text):
+    """Yield (name, start, end) for identifier tokens in *text*.
+
+    String literals ('...', "...") and // and /* */ comments are
+    skipped exactly; a backtick anywhere aborts the scan by raising
+    _JSExprFail (template literals are not tokenized -- over-skipping
+    there is fail-safe, under-skipping would risk substituting inside
+    a literal, so the F495 rewrite declines). Never evals.
+
+    Note: this is a single linear pass with no parts/ops budget
+    charge -- deliberate, since it only classifies characters (no
+    parse tree, no variant expansion): O(len(text)) time, O(tokens)
+    memory, and callers are bounded by _MAX_CANDIDATES on the decode
+    side. No adversarial blowup is possible.
+    """
+    if "`" in text:
+        raise _JSExprFail("template literal in binding scope")
+    toks = []
+    n = len(text)
+    i = 0
+    while i < n:
+        c = text[i]
+        if c in "'\"":
+            q = c
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == q:
+                    i += 1
+                    break
+                i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+        if c in _JS_IDENT_START:
+            j = i + 1
+            while j < n and text[j] in _JS_IDENT_CONT:
+                j += 1
+            toks.append((text[i:j], i, j))
+            i = j
+            continue
+        i += 1
+    return toks
+
+
+def _js_bracket_map(text):
+    """Map brackets in *text*: (open_to_close, close_to_open, arrow_eqs).
+
+    open_to_close maps each opening bracket index (`(`, `[`, `{`) to
+    its matching close; close_to_open is the inverse; arrow_eqs lists
+    indices of `=` immediately followed by `>` (arrow functions).
+    String literals and // and /* */ comments are skipped exactly;
+    a backtick returns None (fail closed). Unbalanced closers are
+    ignored (node would throw; the decoder fails closed elsewhere).
+    No regex. Linear.
+    """
+    n = len(text)
+    stack = []
+    open_to_close = {}
+    close_to_open = {}
+    arrow_eqs = []
+    i = 0
+    while i < n:
+        c = text[i]
+        if c in "'\"":
+            q = c
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == q:
+                    i += 1
+                    break
+                i += 1
+            continue
+        if c == "`":
+            return None
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+        if c in "([{":
+            stack.append(i)
+        elif c in ")]}":
+            if stack:
+                o = stack.pop()
+                open_to_close[o] = i
+                close_to_open[i] = o
+        elif c == "=" and i + 1 < n and text[i + 1] == ">":
+            arrow_eqs.append(i)
+        i += 1
+    return (open_to_close, close_to_open, arrow_eqs)
+
+
+def _js_remainder_rebinds(rest, toks, bound):
+    """True if the remainder may rebind a bound name (F495) -- abort.
+
+    Detects function/catch parameter lists, named-function bindings,
+    for-loop groups, nested const/let/var declarators (incl.
+    destructuring), and arrow-function parameters. Anything
+    unparseable (unbalanced brackets, backtick, unknown arrow-param
+    shape) returns True -- fail closed. Over-collection inside
+    param/for groups is deliberate: it can only abort, never wrongly
+    substitute. Method-shorthand and class methods are NOT detected
+    (documented residual). No regex. Never evals.
+    """
+    mapped = _js_bracket_map(rest)
+    if mapped is None:
+        return True
+    open_to_close, close_to_open, arrow_eqs = mapped
+    n = len(rest)
+
+    def _group_has_bound(open_idx):
+        close_idx = open_to_close.get(open_idx)
+        if close_idx is None:
+            return True
+        for tname, ts, _te in toks:
+            if tname in bound and open_idx < ts < close_idx:
+                return True
+        return False
+
+    for tname, ts, te in toks:
+        if tname in ("function", "catch", "for"):
+            j = te
+            while j < n and rest[j] in " \t\n\r*":
+                j += 1
+            if tname == "function":
+                # A named function binds its name in the enclosing scope.
+                m = j
+                while m < n and rest[m] in _JS_IDENT_CONT:
+                    m += 1
+                if m > j and rest[j:m] in bound:
+                    return True
+                j = m
+                while j < n and rest[j] in " \t\n\r":
+                    j += 1
+            if j < n and rest[j] == "(" and _group_has_bound(j):
+                return True
+        elif tname in ("const", "let", "var"):
+            j = te
+            while j < n and rest[j] in " \t\n\r":
+                j += 1
+            if j < n and rest[j] in "[{":
+                if _group_has_bound(j):
+                    return True
+            # Otherwise the first ident after the keyword is the
+            # declared name (a later `= c` use is not a rebinding).
+            for nt, ns, _ne in toks:
+                if ns >= j and nt not in ("const", "let", "var"):
+                    if nt in bound:
+                        return True
+                    break
+    for eq in arrow_eqs:
+        j = eq - 1
+        while j >= 0 and rest[j] in " \t\n\r":
+            j -= 1
+        if j >= 0 and rest[j] == ")":
+            o = close_to_open.get(j)
+            if o is None or _group_has_bound(o):
+                return True
+        elif j >= 0 and rest[j] in _JS_IDENT_CONT:
+            m = j
+            while m >= 0 and rest[m] in _JS_IDENT_CONT:
+                m -= 1
+            if rest[m + 1:j + 1] in bound:
+                return True
+        else:
+            # Destructuring / unknown arrow params: fail closed.
+            return True
+    return False
+
+
+def _js_resolve_local_bindings(text):
+    """Rewrite leading local bindings to built-in members (F495).
+
+    Matches one leading `const`/`let` statement binding identifiers
+    to whitelisted built-in member expressions -- `const {m} =
+    Array.prototype;`, `const {m: local} = Array.prototype;`, `let c
+    = [].concat;` (comma-separated declarators allowed) -- then
+    substitutes callee-position uses of the bound identifiers in the
+    remainder with their bound member text, so the normal anchors
+    handle `concat.call(...)` / `c.call(...)` / `K.of(...)` exactly
+    as the direct forms.
+
+    Fail-safe: any reassignment (`=`, `+=`, `++`, `--`, ...) or
+    rebinding (function/catch/arrow parameters, for-loop
+    declarators, nested const/let/var declarations) of a bound name
+    anywhere in the remainder aborts the whole rewrite (returns
+    None) -- this is conservative: a shadow inside a nested scope
+    declines even outer legitimate uses (fail closed). Non-leading
+    statements, `var`, non-whitelisted sources, destructuring
+    defaults, and template literals in the remainder all decline.
+    Method-shorthand and class methods are not scope-checked
+    (documented residual). Substitution is callee-position only
+    (identifier followed by `(` or `.`, not preceded by `.`/`$`/word
+    char) and never touches string literals or comments. Returns the
+    rewritten text, or None. Never evals.
+    """
+    n = len(text)
+    i = _js_skip_ws(text, 0)
+    for kw in ("const", "let"):
+        k = i + len(kw)
+        if text.startswith(kw, i) and (k >= n or text[k] not in _JS_IDENT_CONT):
+            i = k
+            break
+    else:
+        return None
+    bindings = []
+    try:
+        while True:
+            i = _js_skip_ws(text, i)
+            if i < n and text[i] == "{":
+                # Destructuring: {a, b: local, ...} = Array.prototype.
+                i += 1
+                names = []
+                while True:
+                    i = _js_skip_ws(text, i)
+                    prop, i = _js_parse_ident(text, i)
+                    i = _js_skip_ws(text, i)
+                    local = prop
+                    if i < n and text[i] == ":":
+                        local, i = _js_parse_ident(
+                            text, _js_skip_ws(text, i + 1))
+                        i = _js_skip_ws(text, i)
+                    names.append((local, prop))
+                    if i < n and text[i] == ",":
+                        i += 1
+                        continue
+                    if i < n and text[i] == "}":
+                        i += 1
+                        break
+                    raise _JSExprFail("bad destructuring")
+                i = _js_skip_ws(text, i)
+                if i >= n or text[i] != "=":
+                    raise _JSExprFail("destructure without source")
+                src, i = _js_parse_binding_source(text, i + 1)
+                if src != "Array.prototype":
+                    raise _JSExprFail("destructure source not modeled")
+                for local, prop in names:
+                    bindings.append((local, src + "." + prop))
+            else:
+                name, i = _js_parse_ident(text, i)
+                i = _js_skip_ws(text, i)
+                if i >= n or text[i] != "=":
+                    raise _JSExprFail("binding without source")
+                src, i = _js_parse_binding_source(text, i + 1)
+                bindings.append((name, src))
+            i = _js_skip_ws(text, i)
+            if i < n and text[i] == ",":
+                i += 1
+                continue
+            if i < n and text[i] == ";":
+                i += 1
+                break
+            raise _JSExprFail("binding statement not closed")
+    except _JSExprFail:
+        return None
+    if not bindings:
+        return None
+    rest = text[i:]
+    try:
+        toks = _js_ident_tokens(rest)
+    except _JSExprFail:
+        return None
+    names = {b[0] for b in bindings}
+    # A bound name rebound anywhere in the remainder (function/catch/
+    # arrow parameters, for-loop declarators, nested declarations)
+    # aborts the rewrite: substituting there would be node-wrong.
+    if _js_remainder_rebinds(rest, toks, names):
+        return None
+    # Index tokens by position for neighbor checks.
+    for idx, (tname, ts, te) in enumerate(toks):
+        if tname in names:
+            # Reassignment of a bound name aborts: `=`, `+=`, ...,
+            # `++`/`--` (prefix or postfix).
+            j = te
+            while j < n and rest[j] in " \t\n\r":
+                j += 1
+            nxt2 = rest[j:j + 2]
+            nxt1 = rest[j:j + 1]
+            if nxt1 == "=" and nxt2 not in ("==", "=>"):
+                return None
+            if nxt2 in ("+=", "-=", "*=", "/=", "%=", "++", "--"):
+                return None
+            p = ts - 1
+            while p >= 0 and rest[p] in " \t\n\r":
+                p -= 1
+            if p >= 1 and rest[p - 1:p + 1] in ("++", "--"):
+                return None
+    # Substitute callee-position uses: not preceded by a word char,
+    # `$`, or `.`; followed (after ws) by `(` or `.`.
+    out = []
+    pos = 0
+    for tname, ts, te in toks:
+        binding = next((b for b in bindings if b[0] == tname), None)
+        if binding is None:
+            continue
+        if ts > 0 and (rest[ts - 1] in _JS_IDENT_CONT or
+                       rest[ts - 1] in ".$"):
+            continue
+        j = te
+        while j < n and rest[j] in " \t\n\r":
+            j += 1
+        if j >= n or rest[j] not in "(.":
+            continue
+        out.append(rest[pos:ts])
+        out.append(binding[1])
+        pos = te
+    out.append(rest[pos:])
+    # Leading whitespace is an artifact of dropping the binding
+    # statement; strip it so the rewritten text anchors cleanly.
+    return "".join(out).lstrip(" \t\n\r")
+
+
 def _try_js_expr_decode(text, start):
     """Strict static decode of one JS string expression (F430).
 
@@ -8011,6 +8588,13 @@ def _decode_layer(text):
         decoded = _try_jsfuck_decode(m.group(0))
         if decoded is not None:
             _add(text[:m.start()] + decoded + text[m.end():])
+    # F495: resolve the single leading local-binding statement (if any)
+    # now; its rewritten-text variant is decoded after the whole-text
+    # scan below so the pre-existing variant order is preserved
+    # exactly (F441). The rewrite turns identifier callees into their
+    # bound member text so `concat.call(...)` decodes exactly like
+    # `Array.prototype.concat.call(...)`.
+    _bound_text = _js_resolve_local_bindings(text)
     # Whole-text JS-expression scan (F444): one variant decoding every
     # strictly-decodable JS expression left-to-right, so junk
     # quoted-concat prefixes cannot starve the real expression out of
@@ -8023,6 +8607,14 @@ def _decode_layer(text):
         _add(decoded)
         if len(variants) >= _MAX_CANDIDATES:
             return variants
+    # F495 bound-text variant: runs after the whole-text scan so the
+    # pre-existing variant order is preserved exactly (F441).
+    if _bound_text is not None:
+        decoded = _try_js_expr_decode_all(_bound_text)
+        if decoded is not None:
+            _add(decoded)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
     # JS string-expression runs (F430/F434/F437/F457): strict static decode of
     # quoted '+' concatenation, template literals (literal-only ${...}),
     # String.fromCharCode,

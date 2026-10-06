@@ -281,17 +281,17 @@ def test_b1_f493_stringraw_closed():
 
 
 @_t
-def test_b3_f494_set_spread_open():
-    """F494 pinned OPEN: [...new Set(...)] spread still misses."""
+def test_b3_f494_set_spread_closed():
+    """F494 pinned CLOSED (wave-360 lane 3): [...new Set(...)] spread blocks."""
     hit = _blocked("[...new Set(['" + _A + "','" + _B + "'])].join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
-def test_b3_f495_freevar_open():
-    """F495 pinned OPEN: destructured concat.call still misses."""
+def test_b3_f495_freevar_closed():
+    """F495 pinned CLOSED (wave-360 lane 3): destructured concat.call blocks."""
     hit = _blocked("const {concat} = Array.prototype; concat.call([], '" + _A + "','" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 # ------------------------------------------------- green check (depth-1)
