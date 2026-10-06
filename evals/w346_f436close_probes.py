@@ -72,9 +72,9 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2135  # Wave-346: pin 2134 (no new codes in wave-346 merge); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
-FOOTER_OPEN = "F444, F445"  # wave-347 merge final: F437-F442 CLOSED, F443 OPEN; wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446)
+FOOTER_OPEN = "F446, F447, F448, F449, F450"  # wave-347 merge final: F437-F442 CLOSED, F443 OPEN; wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451)
 
-FOOTER_NEXT = "F446"  #wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446)
+FOOTER_NEXT = "F451"  #wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451)
 
 
 from gov import dlp  # noqa: E402

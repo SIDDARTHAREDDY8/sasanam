@@ -61,7 +61,7 @@ if REPO not in sys.path:
 PIN = 2135  #Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 FOOTER_OPEN = ("F444", "F445")  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446)
 
-FOOTER_NEXT = "F446"  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446)
+FOOTER_NEXT = "F451"  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451)
 
 
 _results = []

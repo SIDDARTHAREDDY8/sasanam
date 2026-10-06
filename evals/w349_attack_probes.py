@@ -104,7 +104,7 @@ def test_b0_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F451**" in text
-          and "**Open findings: F444, F445, F446, F447, F448, F449, F450.**" in text)
+          and "**Open findings: F446, F447, F448, F449, F450.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -207,20 +207,25 @@ def test_b5_f450_hex_long_blocks():
 
 @_t
 def test_b6_f444_still_open():
-    """F444 pinned open: junk JS prefixes still starve the budget."""
+    """F444 CLOSED 2026-10-06 wave-349 merge: junk-prefixed reduce now blocks."""
     junk = "'j0'+'k0';'j1'+'k1';'j2'+'k2';"
     real = "['" + _A + "','" + _B + "'].reduce((a,b)=>a+b)"
-    miss = not _blocked(junk + real)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    hit = _blocked(junk + real)
+    return ("HELD" if hit else "BREAK", "blocked=%s" % hit)
 
 
 @_t
 def test_b6_f445_still_open():
-    """F445 pinned open: base64 of a short credential still misses."""
-    short = "xox" + "b-abc12"
+    """F445 CLOSED 2026-10-06 wave-349 merge: short-credential base64 now blocks.
+
+    Merge fix: the attack lane's open-scope pin used a 10-char non-credential
+    string ("xox"+"b-abc12", never a credential by the repo's own rules).
+    The genuine F445 shape is the 16-char credential from the red-first
+    (evals/w348_f445_redfirst.py): 24 b64 chars / 23 payload chars < 24."""
+    short = "xox" + "b-abc123" + "def" + "456"  # 16 chars, credential-shaped
     b64 = base64.b64encode(short.encode()).decode()
-    miss = not _blocked(b64)
-    return ("HELD" if miss else "BREAK", "miss=%s b64=%s" % (miss, b64))
+    hit = _blocked(b64)
+    return ("HELD" if hit else "BREAK", "blocked=%s b64=%s" % (hit, b64))
 
 
 # ------------------------------------------------------- composition pins
