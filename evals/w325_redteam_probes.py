@@ -37,8 +37,8 @@ import w324_vsa_probes as _wv  # noqa: E402
 import w322_redteam_probes as _w322  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
-FOOTER_OPEN = "F437, F438, F439, F440, F441"  # F409-F423 CLOSED; F424, F425 open (wave-336 merge).; F442 CLOSED 2026-10-05 wave-347 lane 6
-FOOTER_NEXT = "F442"  # Next free finding number.
+FOOTER_OPEN = "F443"  # F409-F423 CLOSED; F424, F425 open (wave-336 merge).; F442 CLOSED 2026-10-05 wave-347 lane 6; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444)
+FOOTER_NEXT = "F444"  # Next free finding number.; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444)
 
 _results = []
 _PROBES = []

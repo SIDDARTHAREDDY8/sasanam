@@ -399,8 +399,8 @@ def P6c():
               encoding="utf-8") as fh:
         text = fh.read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F442**" in text
-          and m_open and m_open[-1].strip() == "F436")
+    ok = ("Next free finding: **F444**" in text
+          and m_open and m_open[-1].strip() == "F443")
     if ok:
         _held(pid, "footer: open none / next F430")
     else:

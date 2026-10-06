@@ -57,7 +57,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2134  # no new decision codes
+TAXONOMY_PIN = 2135  # no new decision codes; Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -190,14 +190,14 @@ def test_z1_findings_filed_open_with_final_footer():
     ok = ("(F443 filed 2026-10-05, wave-347 lane 7" in text
           and "LOW, OPEN: JS higher-order" in text
           and "Next free finding: **F444**" in text
-          and "Open findings: F437, F438, F439, F440, F441, F442, F443."
+          and "Open findings: F443."
           in text)
     return ("HELD" if ok else "BREAK", "F443 filed open=%s" % ok)
 
 
 @_t
 def test_z2_taxonomy_pin():
-    """Taxonomy pin unchanged at 2134 (no new decision codes)."""
+    """Taxonomy pin unchanged at 2135 (no new decision codes)."""
     ok = (len(TAXONOMY) == TAXONOMY_PIN
           and sorted(TAXONOMY) == list(TAXONOMY))
     return ("HELD" if ok else "BREAK",

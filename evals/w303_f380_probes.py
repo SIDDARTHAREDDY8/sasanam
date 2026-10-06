@@ -150,7 +150,7 @@ class BaseStateTest(unittest.TestCase):
         # Wave-303 F380 closure lane: F380 CLOSED; F381-F384 still OPEN.
         ok = (m_open and m_open[-1].strip()
               == "F429"
-              and m_next and m_next[-1] == "F436")
+              and m_next and m_next[-1] == "F444")
         self.assertTrue(_expect_held(
             "footer-state", ok,
             "want open F429 / next free F430")

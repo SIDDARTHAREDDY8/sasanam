@@ -126,7 +126,7 @@ class BaseStateTest(unittest.TestCase):
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
         # Wave-341 merge: F428 OPEN; next F429.
         ok = (m_open and m_open[-1].strip().lower() == "f433, f434, f435"
-              and m_next and m_next[-1] == "F436")
+              and m_next and m_next[-1] == "F444")
         self.assertTrue(_expect_held(
             "footer-state", ok,
             "want open F429 / next free F430") == "HELD")

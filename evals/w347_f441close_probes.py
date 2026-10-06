@@ -40,7 +40,7 @@ Probes:
   P7  no-regression: adjacent closures still block (F429 unicode/
       hex/octal, F432 single-escape, F433 CSS non-hex terminator,
       F434 Array.join, F436 no-semicolon entity).
-  P8  pin + footer: taxonomy pin 2134, footer open
+  P8  pin + footer: taxonomy pin 2135, footer open
       F437, F438, F439, F440, F442 / next F443.
   PZ  green check: adjacent DLP batteries green (depth-1).
 
@@ -63,9 +63,9 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2134  # Wave-347: pin 2134 (no new codes in wave-347 lane 5)
-FOOTER_OPEN = "F437, F438, F439, F440, F442"  # wave-347 lane 5 (F441 closed)
-FOOTER_NEXT = "F443"
+TAXONOMY_PIN = 2135  # Wave-347: pin 2135 (no new codes in wave-347 lane 5); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+FOOTER_OPEN = "F443"  # wave-347 lane 5 (F441 closed); wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444)
+FOOTER_NEXT = "F444"  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -255,7 +255,7 @@ def p8_pin_and_footer():
     with open(footer_path, encoding="utf-8") as f:
         footer = f.read()
     codes = sorted(TAXONOMY)
-    ok = (len(codes) == TAXONOMY_PIN == 2134
+    ok = (len(codes) == TAXONOMY_PIN == 2135
           and codes == sorted(set(codes))
           and all(c == c.strip() for c in codes))
     ok = ok and ("Next free finding: **%s**" % FOOTER_NEXT) in footer

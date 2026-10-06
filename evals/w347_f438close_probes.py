@@ -44,7 +44,7 @@ Probes:
   P7  layering: the entity+NUL variant appears in one decode layer;
       it composes with the base64 layer inside the 2-layer budget
       (entity+NUL stacked on base64 blocks).
-  P8  pin + footer: taxonomy pin 2134, footer open F437, F439, F440,
+  P8  pin + footer: taxonomy pin 2135, footer open F437, F439, F440,
       F441, F442 / next F443 (F438 closed).
 
 Usage:
@@ -66,9 +66,9 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2134  # Wave-347: pin 2134 (no new codes in wave-347 lane 2)
-FOOTER_OPEN = "F437, F439, F440, F441, F442"  # F438 closed wave-347 lane 2
-FOOTER_NEXT = "F443"
+TAXONOMY_PIN = 2135  # Wave-347: pin 2135 (no new codes in wave-347 lane 2); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+FOOTER_OPEN = "F443"  # F438 closed wave-347 lane 2; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444)
+FOOTER_NEXT = "F444"  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -253,7 +253,7 @@ def p8_pin_and_footer():
     ok = ok and ("Open findings: %s." % FOOTER_OPEN) in text
     ok = ok and "F438 filed 2026-10-05, wave-346 lane 2" in text
     ok = ok and "CLOSED 2026-10-05 wave-347 lane 2" in text
-    return _check("p8: pin 2134 + closed footer", ok)
+    return _check("p8: pin 2135 + closed footer", ok)
 
 
 # --------------------------------------------------------------- PZ: green checks

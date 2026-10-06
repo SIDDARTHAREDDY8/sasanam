@@ -55,7 +55,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
-FOOTER_NEXT = "F442"  # Next free finding number (wave-337 merge: F426 filed by red team).
+FOOTER_NEXT = "F444"  # Next free finding number (wave-337 merge: F426 filed by red team).; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444)
 
 _results = []
 _PROBES = []

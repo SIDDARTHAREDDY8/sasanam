@@ -55,8 +55,8 @@ from gov import policy_gate as _pg  # noqa: E402
 from gov.policy_gate import PolicyGateError  # noqa: E402
 
 VENV_PYTHON = os.path.expanduser("~/workspace/.gov-venv/bin/python")
-FOOTER_OPEN = "F437, F438, F439, F440, F441"  # wave-346 merge final; F442 CLOSED 2026-10-05 wave-347 lane 6
-FOOTER_NEXT = "F442"
+FOOTER_OPEN = "F443"  # wave-346 merge final; F442 CLOSED 2026-10-05 wave-347 lane 6; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444)
+FOOTER_NEXT = "F444"  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444)
 TAXONOMY_PIN = 2135  #Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
 
 

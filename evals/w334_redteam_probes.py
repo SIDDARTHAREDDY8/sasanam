@@ -781,17 +781,17 @@ def P5b():
 def P5c():
     """Footer honesty: open none / next F430 (raw literals included --
     wave-331 lesson)."""
-    pid = "P5c-footer-open-f433-f434-f435-next-f436"
+    pid = "P5c-footer-open-F443-next-F444"
     with open(os.path.join(REPO, "evals", "FINDINGS.md"),
               encoding="utf-8") as fh:
         text = fh.read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F442**" in text
-          and m_open and m_open[-1].strip() == "F436")
+    ok = ("Next free finding: **F444**" in text
+          and m_open and m_open[-1].strip() == "F443")
     if ok:
-        _held(pid, "footer: open none / next F430")
+        _held(pid, "footer: open F443 / next F444")
     else:
-        _break(pid, "footer mismatch vs open none / next F430")
+        _break(pid, "footer mismatch vs open F443 / next F444")
 
 _PROBES = [
     ("P1a-nul-in-join-fields", P1a),
