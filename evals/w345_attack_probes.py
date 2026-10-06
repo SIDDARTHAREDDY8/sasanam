@@ -336,7 +336,7 @@ def test_z0_f436_closed_with_final_footer():
           and "(F445 filed 2026-10-06, wave-348 lane 2" in text
           and "CLOSED 2026-10-06 wave-349 lane 1" in text
           and "Next free finding: **F451**" in text
-          and "Open findings: F446, F447, F448, F449, F450." in text)
+          and "Open findings: F447, F448, F449, F450." in text)
     return ("HELD" if ok else "BREAK", "F436-F445 filed+pinned=%s" % ok)
 
 

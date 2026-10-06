@@ -1602,7 +1602,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|Array\(|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|Array(\(|\.of)|\(")
 _JS_EXPR_MAX_PARTS = 64        # bound on '+' operands per expression
 _JS_EXPR_MAX_CODEPOINTS = 512  # bound on fromCharCode argument count
 _JS_EXPR_MAX_DEPTH = 8         # bound on parenthesization depth
@@ -1814,11 +1814,66 @@ def _js_expect(text, i, ch):
     return i + 1
 
 
-def _js_parse_array_constructor(text, i, state):
-    """Parse 'Array()' or 'Array(N)' at text[i] (F443).
+def _js_parse_array_of(text, i, state):
+    """Parse 'Array.of(arg, ...)' at text[i] (F446).
 
-    Returns (_JSArr, next_index). N is a decimal or 0x integer
-    literal 0.._JS_EXPR_MAX_FILL; the zero-arg form is an empty array.
+    Returns (_JSArr, next_index). Every argument must be a string
+    literal -- numeric args (Array.of(2) is the 1-element array [2]
+    in JS, NOT the Array(N) hole form), nested-array args, and
+    additive ('a'+'b') args fail closed (documented scope boundary:
+    they are rejected, never mis-decoded). Zero args is the empty
+    array. The 'of' name is ident-boundary-checked
+    (Array.off / Array.ofx fail closed); whitespace is tolerated around the dot,
+    the name, and the parens, exactly as the engine allows. Nested
+    calls inside array literals fail closed, same as Array(N) (F443).
+    Element count is charged to the part budget; the joined output is
+    charged to _MAX_DECODE_BYTES in _js_apply_method. Never evals.
+    """
+    n = len(text)
+    if state.get("in_array"):
+        raise _JSExprFail("Array inside array literal")
+    j = _js_skip_ws(text, i + len("Array"))
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("Array without dot")
+    k = _js_skip_ws(text, j + 1)
+    if not text.startswith("of", k):
+        raise _JSExprFail("Array not of")
+    k += 2
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("Array.ofx is not of")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("Array.of without paren")
+    k = _js_skip_ws(text, k + 1)
+    elements = []
+    if k < n and text[k] == ")":
+        return _JSArr(elements), k + 1
+    while True:
+        if k >= n or text[k] not in "'\"`":
+            raise _JSExprFail("Array.of arg not a string literal")
+        frag, k = _js_parse_string(text, k)
+        elements.append(frag)
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        k = _js_skip_ws(text, k)
+        if k >= n:
+            raise _JSExprFail("unterminated Array.of")
+        if text[k] == ",":
+            k = _js_skip_ws(text, k + 1)
+            continue
+        if text[k] == ")":
+            return _JSArr(elements), k + 1
+        raise _JSExprFail("bad Array.of args")
+
+
+def _js_parse_array_constructor(text, i, state):
+    """Parse 'Array()' / 'Array(N)' / 'Array.of(...)' at text[i].
+
+    The '.of' factory form dispatches to _js_parse_array_of (F446);
+    the plain form is the F443 single-integer constructor. Returns
+    (_JSArr, next_index). N is a decimal or 0x integer literal
+    0.._JS_EXPR_MAX_FILL; the zero-arg form is an empty array.
     Elements start as the empty string: real Array(N) is sparse, but
     holes join exactly as "" does, so modeling them as "" is
     byte-identical through .join/.fill/.filter(Boolean). A string or
@@ -1829,10 +1884,11 @@ def _js_parse_array_constructor(text, i, state):
     Never evals.
     """
     n = len(text)
-    j = i + len("Array")
+    j = _js_skip_ws(text, i + len("Array"))
+    if j < n and text[j] == ".":
+        return _js_parse_array_of(text, i, state)
     if state.get("in_array"):
         raise _JSExprFail("Array inside array literal")
-    j = _js_skip_ws(text, j)
     if j >= n or text[j] != "(":
         raise _JSExprFail("Array without paren")
     j = _js_skip_ws(text, j + 1)
@@ -2254,10 +2310,11 @@ def _js_parse_primary(text, i, depth, state):
         state["ops"] += 1  # an array literal is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("Array", i):
-        # F443: Array(N) constructor. startswith alone admits Arrayfoo,
-        # which the constructor parse then fails closed (no paren).
+        # F443: Array(N) constructor; F446: Array.of(...) factory.
+        # startswith alone admits Arrayfoo, which the constructor
+        # parse then fails closed (no paren / no .of).
         val, i = _js_parse_array_constructor(text, i, state)
-        state["ops"] += 1  # an Array(N) construction is obfuscation-shaped
+        state["ops"] += 1  # an Array(N)/Array.of construction is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
     if c in _ASCII_DIGITS:
         num, i = _js_parse_number(text, i)
@@ -2275,7 +2332,9 @@ def _try_js_expr_decode(text, start):
     (F434), (F437) .reduce(...) / .reduceRight(...) array-assembly
     plus identity .map(...) / constant-true .filter(...) passthroughs,
     and (F443) Array(N).fill(x) construction plus .filter(Boolean)
-    truthiness filtering. Bounded by part, depth, codepoint, repeat, and output budgets; never
+    truthiness filtering, and (F446) the Array.of('frag', ...) fragment-
+    list factory (string-literal args only; numeric/nested/additive args
+    fail closed). Bounded by part, depth, codepoint, repeat, and output budgets; never
     evals; undecodable runs are ignored. A bare string literal (or an
     unjoined array literal) with no operator or call is not rewritten
     (not obfuscation-shaped).
