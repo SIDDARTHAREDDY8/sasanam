@@ -353,7 +353,10 @@ def _green_check():
         elif script == "w346_dlp_composition_probes.py":
             m = re.search(r"(\d+)\s+BREAK", tail)
             nbreak = int(m.group(1)) if m else None
-            green = (r.returncode == 1 and nbreak == 4
+            # wave-347 merge: F440's residuals and F441's shapes are all
+            # CLOSED (coded refusals); _EXPECTED_BREAKS is empty, so the
+            # battery is green at rc=0 with zero BREAKs.
+            green = (r.returncode == 0 and nbreak == 0
                      and "unexpected" not in r.stdout)
         else:
             m = re.search(r"(\d+)\s+BREAK", tail)

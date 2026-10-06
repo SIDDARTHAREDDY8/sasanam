@@ -14,7 +14,10 @@ Shapes (B1/B2/B3 = the three wave-347 attack targets):
        credential in a real JS engine (node-verified) while the
        bounded static decoder handles only join/repeat/concat on
        literals. GENUINE: filed as F443 (LOW, OPEN).
-     - ['a','b'].map(s=>s).join(''): same class. GENUINE: F443.
+     - ['a','b'].map(s=>s).join(''): same class. GENUINE: F443; ABSORBED
+       at the wave-347 merge by the F437 closure (identity-.map
+       passthrough composes with .join) -- F443 stays OPEN on the
+       3 residuals.
      - ['a','','b'].filter(Boolean).join(''): same class. GENUINE: F443.
      - Array(1).fill('a').join('b'): same class. GENUINE: F443.
      - (function(){return 'a'+'b';})(): the inner quoted-'+' is
@@ -91,7 +94,8 @@ def _f443_shapes():
     a = _A
     b = _B
     return {
-        "map-join": '["' + a + '","' + b + '"].map(s=>s).join("")',
+        # map-join ABSORBED at the wave-347 merge by the F437 closure
+        # (identity-.map passthrough); kept as an absorbed control below.
         "filter-join": '["' + a + '","","' + b + '"].filter(Boolean).join("")',
         "fill-join-concat":
             'Array(2).fill("' + "xox" + "b-" + "abc" + '").join("123").concat("' + b + '")',
@@ -102,11 +106,27 @@ def _f443_shapes():
 @_t
 def test_b1_f443_shapes_pinned_open():
     """F443 (LOW, OPEN): JS higher-order array/string assembly misses
-    find_credential (node-verified to evaluate to the credential)."""
+    find_credential (node-verified to evaluate to the credential).
+    3 residuals (filter/fill); map-join absorbed by the F437 closure
+    at the wave-347 merge (absorbed control below)."""
     miss = all(dlp.find_credential(p) is None for p in _f443_shapes().values())
     assert all(_CRED not in p for p in _f443_shapes().values())
     return ("HELD" if miss else "BREAK",
-            "F443 miss reproduced=%s" % miss)
+            "F443 residuals miss reproduced=%s" % miss)
+
+
+@_t
+def test_b1_f443_map_join_absorbed():
+    """F443 scope note (wave-347 merge): the .map(s=>s).join('') shape is
+    ABSORBED by the F437 closure -- the bounded static decoder's
+    identity-.map passthrough (a verified F437 shape) composes with
+    .join(''), so it now blocks coded dlp-slack-token. F443 stays OPEN
+    on the 3 residuals."""
+    payload = '["' + _A + '","' + _B + '"].map(s=>s).join("")'
+    assert _CRED not in payload
+    hit = dlp.find_credential(payload) == "dlp-slack-token"
+    return ("HELD" if hit else "BREAK",
+            "F443 map-join absorbed (blocks)=%s" % hit)
 
 
 @_t
@@ -176,9 +196,14 @@ def test_z0_redfirst_scripts_print_break():
     buf = io.StringIO()
     g = {"__name__": "__main__", "__file__": path}
     with redirect_stdout(buf):
-        exec(compile(open(path).read(), path, "exec"), g)
-    tail = buf.getvalue().strip().splitlines()[-1]
-    ok = tail.startswith("tally: 4 BREAK")
+        try:
+            exec(compile(open(path).read(), path, "exec"), g)
+        except SystemExit:
+            pass  # red-first calls sys.exit(verdict); verdict read from stdout
+    out = buf.getvalue()
+    tail = out.strip().splitlines()[-1]
+    ok = (tail.startswith("tally: 3 BREAK")
+          and "map-join(absorbed): OK(blocks)" in out)
     return ("HELD" if ok else "BREAK", "red-first=%s" % tail)
 
 

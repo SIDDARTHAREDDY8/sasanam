@@ -37,8 +37,10 @@ Probes:
       docs with escaped quotes, docs with entities but no NULs,
       NUL-separated non-credential text).
   P5  depth-2 design bound pinned: the documented composition bound
-      is unchanged -- F439 triple-base64 still MISSes (open finding),
-      and _decoded_variants still defaults to max_layers=2.
+      is unchanged -- _decoded_variants still defaults to max_layers=2;
+      F439 triple-base64 (the old depth-3 residual) is CLOSED
+      2026-10-05 wave-347 lane 3 and now blocks coded (depth-4+ is the
+      documented non-goal).
   P6  ReDoS: hostile near-miss inputs (&# storms, NUL floods)
       complete fast with no exceptions.
   P7  layering: the entity+NUL variant appears in one decode layer;
@@ -189,15 +191,16 @@ def p5_depth2_bound_pinned():
     ok = ok and sig.parameters["max_layers"].default == 2
     print("    _decoded_variants max_layers default: %s"
           % sig.parameters["max_layers"].default)
-    # F439 triple-base64 is the documented residual of that bound --
-    # still OPEN, still misses (boundary pin, not a closure claim)
+    # F439 triple-base64 was the documented residual of that bound --
+    # CLOSED 2026-10-05 wave-347 lane 3 (bounded fixpoint, max 3 rounds):
+    # triple stacks now block coded; depth-4+ is the documented non-goal.
     cred = _LONG
     w1 = base64.b64encode(cred.encode()).decode()
     w2 = base64.b64encode(w1.encode()).decode()
     w3 = base64.b64encode(w2.encode()).decode()
-    miss = dlp.find_credential(w3) is None
-    ok = ok and miss
-    print("    F439 triple-base64 still MISS (bound): %s" % miss)
+    hit = dlp.find_credential(w3) == "dlp-slack-token"
+    ok = ok and hit
+    print("    F439 triple-base64 now BLOCKS (closed): %s" % hit)
     # but double-base64 still blocks (the in-budget control)
     ok = ok and _blocks(w2)
     print("    double-base64 still blocks (control): %s" % _blocks(w2))

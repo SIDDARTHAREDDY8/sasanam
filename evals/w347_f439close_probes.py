@@ -42,10 +42,11 @@ Probes:
   P7  ReDoS/timing: hostile near-miss inputs (long alphabet runs,
       bad padding, non-round-tripping runs) complete fast with no
       exceptions. No new regexes were added for this closure.
-  P8  no-absorption: sibling open findings still BREAK (F437 .reduce,
-      F438 entity+NUL, F440 double-entity, F441 double-backslash,
-      F442 policy-delta) and F436 stays HELD -- the fixpoint widened
-      nothing outside base64 stacks.
+  P8  no-absorption: all sibling findings are CLOSED by their own
+      lanes (F437/F438/F439/F440/F441/F442 red-firsts print HELD) and
+      F436 stays HELD -- the fixpoint widened nothing outside base64
+      stacks (absorption pinned by the composition battery + F443
+      scope note).
   P9  pin + footer: taxonomy pin 2135, footer open
       F437, F438, F440, F441, F442 / next F443.
 
@@ -241,22 +242,25 @@ def p7_redos_bounds():
 
 # ------------------------------------------------------- P8: no absorption
 def p8_no_sibling_absorption():
-    # The fixpoint widens ONLY base64 stacks. Sibling open findings
-    # (entity/escape/policy-delta classes) must still BREAK; the closed
-    # F436 must stay HELD. Statuses pinned via their red-first scripts.
+    # The fixpoint widens ONLY base64 stacks. At the wave-347 merge every
+    # sibling is CLOSED by its own lane (entity/escape/policy-delta
+    # classes) -- all red-firsts print HELD; the closed F436 stays HELD.
+    # Absorption is pinned by the composition battery (0/45/0) and the
+    # F443 scope note (map-join absorbed by F437, documented in FINDINGS).
+    # Statuses pinned via their red-first scripts.
     venv_python = os.path.expanduser("~/workspace/.gov-venv/bin/python")
     pairs = [
-        ("w346_f437_redfirst.py", "BREAK"),  # attack: .reduce assembly
-        ("w346_f438_redfirst.py", "BREAK"),  # attack: entity+NUL
-        ("w346_f440_redfirst.py", "BREAK"),  # dlpaudit: double-entity
-        ("w346_f441_redfirst.py", "BREAK"),  # dlpaudit: double-backslash
-        ("w346_f442_redfirst.py", "BREAK"),  # cigated: policy-delta
-        ("w345_f436_redfirst.py", "HELD"),   # closed wave-346
+        ("w346_f437_redfirst.py", "HELD"),  # closed wave-347 lane 1
+        ("w346_f438_redfirst.py", "HELD"),  # closed wave-347 lane 2
+        ("w346_f440_redfirst.py", "HELD"),  # closed wave-347 lane 4
+        ("w346_f441_redfirst.py", "HELD"),  # closed wave-347 lane 5
+        ("w346_f442_redfirst.py", "HELD"),  # closed wave-347 lane 6
+        ("w345_f436_redfirst.py", "HELD"),  # closed wave-346
         ("w346_f439_redfirst.py", "HELD"),   # closed this lane
     ]
     ok = True
     for script, want in pairs:
-        tmp = "/var/tmp/g347-noabs-%s" % script.replace(".py", "")
+        tmp = "/var/tmp/g347-noabs-%s-%d" % (script.replace(".py", ""), os.getpid())
         os.makedirs(tmp, exist_ok=True)
         env = dict(os.environ)
         env["GOV_DEPLOYMENT_MODE"] = "staging"
@@ -273,7 +277,8 @@ def p8_no_sibling_absorption():
         if want == "BREAK":
             good = ("BREAK" in tail and "HELD" not in tail)
         else:
-            good = (r.returncode == 0 and tail == "HELD")
+            good = (r.returncode == 0 and "HELD" in tail
+                    and "BREAK" not in tail)
         ok = ok and good
         print("    %-24s -> %s (want %s) %s"
               % (script, tail, want, "ok" if good else "BAD"))
@@ -326,10 +331,12 @@ def _green_check():
         elif script == "w346_dlp_composition_probes.py":
             # w311 convention: expected BREAKs are listed in the
             # battery's own _EXPECTED_BREAKS; the battery fails loudly
-            # on any unexpected BREAK or missing expected BREAK, so
-            # rc=1 with the exact expected tally is green.
-            green = (r.returncode == 1
-                     and "7 BREAK / 38 HELD / 0 ERROR" in tail)
+            # on any unexpected BREAK or missing expected BREAK. At the
+            # wave-347 merge F440's residuals and F441's shapes are all
+            # CLOSED (coded refusals), so _EXPECTED_BREAKS is empty and
+            # the battery is green at rc=0 with zero BREAKs.
+            green = (r.returncode == 0
+                     and "0 BREAK / 45 HELD / 0 ERROR" in tail)
         else:
             m = re.search(r"(\d+)\s+BREAK", tail)
             nbreak = int(m.group(1)) if m else None

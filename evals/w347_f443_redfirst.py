@@ -5,11 +5,16 @@ the F430/F434 JS-expression decoder.
 find_credential decodes quoted '+' concat, String.fromCharCode, .concat(),
 .repeat(), and array-literal .join() -- but higher-order assembly shapes
 evaluate to the credential in a real JS engine while missing the decoder:
-  .map(s=>s).join("")      (higher-order pass-through)
   .filter(Boolean).join("") (falsy-filter assembly)
   Array(N).fill(frag).join(sep).concat(rest) (constructor assembly)
 
-Prints BREAK when the shapes MISS (open tree), HELD when blocked.
+SCOPE NOTE (wave-347 merge): the .map(s=>s).join("") shape filed with
+F443 is ABSORBED by the F437 closure (wave-347 lane 1): the bounded
+static decoder's identity-.map passthrough (a verified F437 shape)
+composes with .join(""), so map-join now blocks coded dlp-slack-token.
+F443 stays OPEN on the 3 residuals (filter/fill shapes).
+
+Prints BREAK when the residual shapes MISS (open tree), HELD when blocked.
 """
 import os
 import sys
@@ -24,8 +29,8 @@ A = "xox" + "b-" + "abc" + "123"
 B = "def" + "456"
 CRED = A + B
 
+# Residuals: the 3 shapes still missing on the merged tree.
 SHAPES = [
-    ('map-join', '["' + A + '","' + B + '"].map(s=>s).join("")'),
     ('filter-join', '["' + A + '","","' + B + '"].filter(Boolean).join("")'),
     ('fill-join-concat',
      'Array(2).fill("' + "xox" + "b-" + "abc" + '").join("123").concat("' + B + '")'),
@@ -35,6 +40,12 @@ SHAPES = [
 CONTROLS = [
     ('plain-credential', CRED, True),   # must block
     ('honest-array', '["red","green","blue"].map(s=>s).join(", ")', False),
+]
+
+# Absorbed by the F437 closure (wave-347 merge scope note): the identity
+# .map passthrough composes with .join(""), so this now blocks coded.
+ABSORBED = [
+    ('map-join', '["' + A + '","' + B + '"].map(s=>s).join("")'),
 ]
 
 
@@ -52,6 +63,13 @@ def main():
         ok = hit == want_hit
         print("%s(control): %s" % (name, "OK" if ok else "CONTROL-FAIL"))
         if ok:
+            held += 1
+        else:
+            breaks += 1
+    for name, payload in ABSORBED:
+        hit = find_credential(payload) is not None
+        print("%s(absorbed): %s" % (name, "OK(blocks)" if hit else "ABSORPTION-LOST"))
+        if hit:
             held += 1
         else:
             breaks += 1
