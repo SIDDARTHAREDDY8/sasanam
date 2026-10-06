@@ -223,13 +223,14 @@ def test_z0_redfirst_scripts_print_held():
 @_t
 def test_z1_findings_filed_closed_with_final_footer():
     """F443 is filed (wave-347 lane 7) and CLOSED (wave-348 lane 1) with
-    the final footer. Pins the filing + closure so neither goes
-    undocumented. (Wave-306 maintenance: pinned OPEN in wave-347.)"""
+    the final footer (F444/F445 OPEN, next F446). Pins the filing +
+    closure so neither goes undocumented. (Wave-306 maintenance: pinned
+    OPEN in wave-347; footer repointed at the wave-348 merge.)"""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F443 filed 2026-10-05, wave-347 lane 7" in text
           and "CLOSED 2026-10-06 wave-348 lane 1" in text
-          and "Next free finding: **F444**" in text
-          and "Open findings: none."
+          and "Next free finding: **F446**" in text
+          and "Open findings: F444, F445." in text)
           in text)
     return ("HELD" if ok else "BREAK", "F443 filed+closed=%s" % ok)
 
