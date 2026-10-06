@@ -41,7 +41,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2134  # Wave-341 merge: pin 2131 (no new codes in wave-342 lane 1); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = "F436"
+FOOTER_OPEN = "none"  # F436 CLOSED 2026-10-05 wave-346 lane 1
 
 FOOTER_NEXT = "F437"
 
@@ -189,7 +189,7 @@ def p6_pin_and_footer():
                 "%d/%d" % (len(TAXONOMY), len(set(TAXONOMY)))) and ok
     last = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
                 ).read().splitlines()[-1]
-    ok = _check("P6b footer open F436 / next F437",
+    ok = _check("P6b footer open none / next F437",
 
                 ("Next free finding: **%s**." % FOOTER_NEXT) in last
                 and ("Open findings: %s." % FOOTER_OPEN) in last,

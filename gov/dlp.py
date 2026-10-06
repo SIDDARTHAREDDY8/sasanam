@@ -369,7 +369,13 @@ _ESC_RUN = re.compile(
     r"|[0-9a-fA-F]{1,6}|[0-7]{1,3}))+")
 # F429: numeric HTML entities (&#x..; / &#..;), 1+ (F432: a single
 # entity decodes to the raw credential in any real HTML parser).
-_ENTITY_RUN = re.compile(r"(?:&#[xX][0-9a-fA-F]{1,6};|&#[0-9]{1,7};)+")
+# F436: the trailing semicolon is OPTIONAL -- a real HTML parser
+# (html.unescape) recovers the legacy no-semicolon form (&#65), so a
+# no-semicolon entity inside a base64 run poisons the run match while
+# the parser still recovers the credential. Greedy digit consumption
+# (6 hex / 7 decimal max) mirrors html.unescape; 7+ hex or 8+ decimal
+# digits are always out of range, so the cap is semantically identical.
+_ENTITY_RUN = re.compile(r"(?:&#[xX][0-9a-fA-F]{1,6};?|&#[0-9]{1,7};?)+")
 # F429: UTF-16 null-interleaved runs (ASCII bytes separated by NULs).
 _UTF16N_RUN = re.compile(r"(?:[\x20-\x7e]\x00){4,}|(?:\x00[\x20-\x7e]){4,}")
 # F429: zero-width / invisible joiners stripped by the confusable
@@ -446,6 +452,11 @@ _WS_RUN = re.compile(r"\s+")
 _MAX_DECODE_BYTES = 4096  # bound on any single decoded blob
 _MAX_JSFUCK_BYTES = 100000  # bound on a JSFuck run (artifact: 34635)
 _MAX_CANDIDATES = 8       # bound on decode attempts per layer
+# F436: bound on entities / escape runs decoded by a whole-text pass.
+# One whole-text variant is a single decode attempt, so the item bound
+# is a DoS guard, not an attempt budget: 64 stacked fragments still
+# compose in 2 layers; beyond 64 the per-run path still tries.
+_MAX_WHOLETEXT_ITEMS = 64
 
 
 def _printable_ascii(data, min_ratio=0.9):
@@ -913,7 +924,10 @@ def _try_jsfuck_decode(run):
 
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 _OCT_DIGITS = frozenset("01234567")
-_ENTITY_ONE = re.compile(r"&#([xX][0-9a-fA-F]{1,6}|[0-9]{1,7});")
+# F436: the semicolon is optional (legacy lenient form, mirroring
+# html.unescape); the strict form is matched first by alternation
+# order in _ENTITY_RUN, so &#65; still decodes identically.
+_ENTITY_ONE = re.compile(r"&#([xX][0-9a-fA-F]{1,6}|[0-9]{1,7});?")
 
 
 def _safe_chr(cp):
@@ -1111,6 +1125,91 @@ def _try_entity_decode(run):
     if pos != len(run) or not out:
         return None
     return _ascii_printable_or_none("".join(out))
+
+
+def _try_entity_decode_all(text):
+    """Whole-text numeric-entity decode (F436): decode every numeric
+    entity (strict &#..; / &#x..; and the legacy no-semicolon forms a
+    real HTML parser recovers) in a single pass, returning one variant.
+
+    Per-run decoding alone needs one decode layer per entity, so two
+    single entities separated by base64 chunks (F436 residual b) --
+    or a no-semicolon entity poisoning a base64 run (residual a) --
+    cannot compose with the base64 layer inside the 2-layer budget.
+    One whole-text variant keeps entity+base64 stacks closable in 2
+    layers; undecodable entities are left for the per-run path.
+
+    Returns the decoded text, or None when the text holds no entities
+    or any entity is malformed, out of range, a surrogate, or the
+    decode is not ASCII text (fail closed: no variant). Bounded by
+    _MAX_WHOLETEXT_ITEMS entities; static; never executes.
+    """
+    if "&#" not in text:
+        return None
+    out = []
+    pos = 0
+    n = 0
+    for m in _ENTITY_ONE.finditer(text):
+        body = m.group(1)
+        cp = int(body[1:], 16) if body[0] in "xX" else int(body, 10)
+        ch = _safe_chr(cp)
+        if ch is None:
+            return None
+        out.append(text[pos:m.start()])
+        out.append(ch)
+        pos = m.end()
+        n += 1
+        if n > _MAX_WHOLETEXT_ITEMS:
+            return None
+    if n == 0:
+        return None
+    out.append(text[pos:])
+    return _ascii_printable_or_none("".join(out))
+
+
+def _try_escape_decode_all(text):
+    """Whole-text backslash-escape decode (F436): decode every escape
+    run under one interpretation in a single pass, returning one
+    variant per interpretation (F429 priority via _try_escape_decode,
+    space-free CSS via _try_escape_decode_css_free -- the same two
+    interpretations the per-run path tries).
+
+    Per-run decoding alone needs one decode layer per escape run, so
+    two single escape fragments separated by base64 chunks (the escape
+    analogue of F436 residual b) cannot compose with the base64 layer
+    inside the 2-layer budget. One whole-text variant per
+    interpretation keeps escape+base64 stacks closable in 2 layers.
+
+    Returns a list of 0-2 decoded variants (an interpretation is
+    skipped when any run fails under it -- fail closed, the per-run
+    path still covers individually-decodable runs). Bounded by
+    _MAX_WHOLETEXT_ITEMS runs; static; never executes.
+    """
+    if "\\" not in text:
+        return []
+    runs = list(_ESC_RUN.finditer(text))[:_MAX_WHOLETEXT_ITEMS + 1]
+    if not runs or len(runs) > _MAX_WHOLETEXT_ITEMS:
+        return []
+    variants = []
+    for decode in (_try_escape_decode, _try_escape_decode_css_free):
+        out = []
+        pos = 0
+        ok = True
+        for m in runs:
+            decoded = decode(m.group(0))
+            if decoded is None:
+                ok = False
+                break
+            out.append(text[pos:m.start()])
+            out.append(decoded)
+            pos = m.end()
+        if not ok:
+            continue
+        out.append(text[pos:])
+        gated = _ascii_printable_or_none("".join(out))
+        if gated is not None and gated != text:
+            variants.append(gated)
+    return variants
 
 
 def _try_utf16_null_decode(run):
@@ -1593,6 +1692,24 @@ def _decode_layer(text):
         decoded = _try_entity_decode(m.group(0))
         if decoded is not None:
             _add(text[:m.start()] + decoded + text[m.end():])
+    # Whole-text numeric-entity decode (F436): one variant decoding
+    # every entity (strict and legacy no-semicolon forms) at once, so
+    # entity+base64 stacks -- a no-semicolon entity or two spaced
+    # single entities poisoning a base64 run -- compose with the
+    # base64 layer inside the 2-layer budget.
+    decoded = _try_entity_decode_all(text)
+    if decoded is not None:
+        _add(decoded)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # Whole-text backslash-escape decode (F436): one variant per
+    # escape-run interpretation, so spaced single escape fragments
+    # poisoning a base64 run compose with the base64 layer inside the
+    # 2-layer budget.
+    for decoded in _try_escape_decode_all(text):
+        _add(decoded)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
     # UTF-16 null-interleaved runs (F429): strip the NUL bytes.
     for m in list(_UTF16N_RUN.finditer(text))[:_MAX_CANDIDATES]:
         decoded = _try_utf16_null_decode(m.group(0))
