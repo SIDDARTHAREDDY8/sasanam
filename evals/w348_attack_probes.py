@@ -114,11 +114,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F446-F448 open, next F451 (F449/F450 CLOSED wave-350 lane 3)."""
+    """Control: footer shows F451, F452 open, next F454 (F453 CLOSED
+    wave-351 lane 3 -- ws-b64 outer layer composes via fixpoint)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F454**" in text
-          and "Open findings: F451, F452, F453." in text)
+          and "Open findings: F451, F452." in text)
     return ("HELD" if ok else "BREAK", "footer-ok=%s" % ok)
 
 

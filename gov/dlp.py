@@ -543,13 +543,40 @@ def _b64_fixpoint_variants(text):
     checked directly by the strict scan and are NOT fed back into the
     layer pipeline, so the total base64 decode depth across the scan
     stays <= _MAX_B64_ROUNDS.
+
+    F453: whitespace-tolerant spans (_iter_b64_ws_spans) seed the
+    fixpoint too, as their whitespace-stripped whole-span candidate.
+    A ws-b64 outer layer decoding to a non-credential-shaped inner
+    payload (e.g. an inner contiguous base64 run) previously
+    terminated -- the F449 _b64_ws_variants gate only emits
+    credential-shaped decodes -- while base64.b64decode recovers the
+    credential exactly through both layers. Seeding the fixpoint with
+    the stripped candidate feeds the outer layer through the existing
+    stack path: round 1 decodes the ws outer, round 2+ the inner
+    stack. Each round strips whitespace from its input first
+    (base64.b64decode ignores whitespace, so this is ground truth --
+    a no-op for the round-1 seed of contiguous runs; rounds 2+ may
+    now strip whitespace from decoded intermediates regardless of
+    seed origin, a strict superset toward stdlib ground truth) --
+    which also composes ws-b64(ws-b64) two-whitespace-layer stacks.
+    Short seeds keep the F445 credential-shape-gated short retry, so
+    the short-run gating discipline is unchanged. Contiguous runs are
+    seeded first, so base budget behavior for them is identical; the
+    ws seeds only fill leftover _MAX_CANDIDATES budget. No new
+    regexes; bounded; static; never executes.
     """
     seen = set()
-    for m in list(_B64_RUN.finditer(text))[:_MAX_CANDIDATES]:
-        run = m.group(0)
+    seeds = [(m.start(), m.end(), m.group(0))
+             for m in _B64_RUN.finditer(text)]
+    for start, end, words in _iter_b64_ws_spans(text):
+        seeds.append((start, end,
+                      "".join(text[s:e] for s, e in words)))
+    for start, end, run in seeds[:_MAX_CANDIDATES]:
         prev = run
         for _ in range(_MAX_B64_ROUNDS):
-            decoded = _try_b64_decode(prev)
+            # F453: whitespace-tolerant round input -- see docstring.
+            prev_stripped = "".join(prev.split())
+            decoded = _try_b64_decode(prev_stripped)
             if decoded is None:
                 # F445: the innermost run of a short-credential stack can
                 # be under 24 payload chars -- attempt the
@@ -558,15 +585,15 @@ def _b64_fixpoint_variants(text):
                 # the pipeline short path: only a credential-shaped
                 # decode becomes a variant. (On a 24+ run this retry is
                 # a no-op -- the floor is the only difference.)
-                gated = _try_b64_decode(prev,
+                gated = _try_b64_decode(prev_stripped,
                                         min_payload=_B64_SHORT_FLOOR)
                 if (gated is None
                         or _match_credential_forms(gated) is None):
                     break
                 decoded = gated
-            if decoded == prev:
+            if decoded == prev_stripped:
                 break
-            variant = text[:m.start()] + decoded + text[m.end():]
+            variant = text[:start] + decoded + text[end:]
             if variant not in seen:
                 seen.add(variant)
                 yield variant

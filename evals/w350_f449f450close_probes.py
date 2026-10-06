@@ -96,7 +96,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2135  # Wave-350: F449+F450 closed, no new decision codes; pin unchanged
-FOOTER_OPEN = "F452, F453"  # Wave-351: F451 CLOSED (wave-351 lane 1); F452/F453 OPEN (next F454)
+FOOTER_OPEN = "F452"  # Wave-351: F451+F453 CLOSED (lanes 1+3); F452 OPEN (next F454)
 FOOTER_NEXT = "F454"
 
 
@@ -450,25 +450,28 @@ def p6_noreg_f441_bslash():
 def p6_noreg_ws_b64_stacks_compose():
     # b64(ws-b64) composes via the 2-layer pipeline: the outer
     # contiguous run decodes ungated (long path), the inner ws-run is
-    # handled at layer 2. The reverse direction ws-b64(b64) does NOT
-    # compose (the ws path's credential-shape gate keeps the
-    # non-credential inner text out of layer 2) -- filed as F453
-    # (pinned open below; renumbered F451->F453 at the wave-350 merge).
+    # handled at layer 2. The reverse direction ws-b64(b64) composes
+    # via the F453 fixpoint seed: the whitespace-stripped outer
+    # candidate seeds _b64_fixpoint_variants, round 1 decodes the ws
+    # outer, round 2 the inner contiguous stack (CLOSED 2026-10-06
+    # wave-351 lane 3; was pinned open as F453 below).
     b64 = _b64(_CRED.encode())
     inner_ws = b64[:16] + " " + b64[16:]
     outer = _b64(inner_ws.encode())
     return _blocked(outer)
 
 
-def p6_pin_f453_ws_outer_stack_open():
-    # F453 pinned open: ws-b64 as the OUTER layer of a stack misses
-    # (the inner contiguous b64 never reaches layer 2).
+def p6_pin_f453_ws_outer_stack_closed():
+    # F453 CLOSED 2026-10-06 wave-351 lane 3: ws-b64 as the OUTER
+    # layer of a stack composes -- the whitespace-stripped outer
+    # candidate seeds the base64 fixpoint, so the inner contiguous
+    # b64 stack decodes within the round budget.
     inner = _b64(_CRED.encode())
     outer = _b64(inner.encode())
     outer_ws = outer[:20] + " " + outer[20:32] + "\n" + outer[32:]
     assert base64.b64decode(outer_ws) == inner.encode()
     assert base64.b64decode(inner) == _CRED.encode()
-    return not _blocked(outer_ws)
+    return _blocked(outer_ws)
 
 
 def p6_noreg_long_b64_stack():
@@ -535,7 +538,7 @@ _PROBES = [
     ("p6-noreg-f440-double-entity", p6_noreg_f440_double_entity),
     ("p6-noreg-f441-bslash", p6_noreg_f441_bslash),
     ("p6-noreg-ws-b64-stacks-compose", p6_noreg_ws_b64_stacks_compose),
-    ("p6-pin-f453-ws-outer-stack-open", p6_pin_f453_ws_outer_stack_open),
+    ("p6-pin-f453-ws-outer-stack-closed", p6_pin_f453_ws_outer_stack_closed),
     ("p6-noreg-long-b64-stack", p6_noreg_long_b64_stack),
     ("p7-pin-and-footer", p7_pin_and_footer),
 ]
