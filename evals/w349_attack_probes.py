@@ -13,11 +13,13 @@ F447-F450 OPEN, red-first verified):
         string-literal factory modeled in gov/dlp.py; the open-tree
         miss probe is now a coded-refusal assertion.
 - F447: non-Boolean .filter(...) predicates (x=>x!=='', x=>!!x,
-        x=>x.length>0, function(x){return x;}) bypass the decoder
-        (only bare Boolean is modeled).
+        x=>x.length>0, function(x){return x;}) bypassed the decoder
+        (only bare Boolean was modeled). CLOSED 2026-10-06 wave-350
+        lane 2: truthiness predicates decode within the same budgets.
 - F448: .map with a block-body identity callback (x=>{return x;})
-        bypasses the identity-map passthrough (concise + function
-        forms are modeled).
+        bypassed the identity-map passthrough (concise + function
+        forms were modeled). CLOSED 2026-10-06 wave-350 lane 2:
+        block-body identity decodes within the same budgets.
 - F449: base64 with embedded whitespace evades the contiguous-run
         gate (base64.b64decode ignores whitespace; distinct from the
         F445 length gate).
@@ -104,11 +106,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F447-F450 open, next F451 (F446 closed wave-350 lane 1)."""
+    """Control: footer shows F446/F449/F450 open, next F451 (wave-350
+    lane 2: F447+F448 CLOSED)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F451**" in text
-          and "**Open findings: F447, F448, F449, F450.**" in text)
+          and "**Open findings: F446, F449, F450.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -133,14 +136,15 @@ def test_b1_f446_arrayof_verbatim_blocks():
 # ---------------------------------------------------------------- F447 pins
 
 @_t
-def test_b2_f447_filter_predicates_open():
-    """F447 pinned open: non-Boolean filter predicates miss."""
+def test_b2_f447_filter_predicates_closed():
+    """F447 CLOSED 2026-10-06 wave-350 lane 2: truthiness filter
+    predicates now decode within the same budgets."""
     arr = "['" + _A + "','" + _B + "','','']"
     preds = ["x=>x!==''", "x=>!!x", "x=>x.length>0",
              "function(x){return x;}"]
-    misses = [not _blocked(arr + ".filter(" + p + ").join('')") for p in preds]
-    ok = all(misses)
-    return ("HELD" if ok else "BREAK", "misses=%s" % misses)
+    hits = [_blocked(arr + ".filter(" + p + ").join('')") for p in preds]
+    ok = all(hits)
+    return ("HELD" if ok else "BREAK", "hits=%s" % hits)
 
 
 @_t
@@ -153,10 +157,11 @@ def test_b2_f447_filter_boolean_blocks():
 # ---------------------------------------------------------------- F448 pins
 
 @_t
-def test_b3_f448_map_blockbody_open():
-    """F448 pinned open: block-body identity map misses."""
-    miss = not _blocked("['" + _A + "','" + _B + "'].map(x=>{return x;}).join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b3_f448_map_blockbody_closed():
+    """F448 CLOSED 2026-10-06 wave-350 lane 2: block-body identity map
+    now decodes within the same budgets."""
+    hit = _blocked("['" + _A + "','" + _B + "'].map(x=>{return x;}).join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
@@ -266,9 +271,10 @@ def test_b7_reversed_credential_blocks():
 # ---------------------------------------------------------------- green check
 
 _EXPECTED_BREAKS = set()  # this battery asserts HELD everywhere: the
-# F446-F450 misses are pinned as known-open (each probe returns HELD when
-# the miss reproduces); a literal BREAK verdict means the pin failed or a
-# NEW unexpected break appeared.
+# F446/F449/F450 misses are pinned as known-open (each probe returns HELD
+# when the miss reproduces); F447/F448 probes were flipped to closure
+# assertions 2026-10-06 wave-350 lane 2. A literal BREAK verdict means a
+# pin failed or a NEW unexpected break appeared.
 
 
 def _green_check():

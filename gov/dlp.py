@@ -2007,9 +2007,11 @@ def _js_parse_return_body_single(text, i, p):
 def _js_parse_map_callback(text, i):
     """Parse an identity .map callback at text[i]; returns next_index.
 
-    Recognized (F437 family): (s)=>s | s=>s | function(s){return s;}
-    The callback must return its own single parameter unchanged; the
-    elements pass through untouched. Anything else fails closed.
+    Recognized (F437/F448 family): (s)=>s | s=>s | function(s){return s;}
+    | s=>{return s;} (F448 -- block-body identity: a single return of
+    the parameter, no other statements). The callback must return its
+    own single parameter unchanged; the elements pass through
+    untouched. Anything else fails closed.
     """
     n = len(text)
     if text.startswith("function", i):
@@ -2032,25 +2034,90 @@ def _js_parse_map_callback(text, i):
     i = _js_skip_ws(text, i)
     if not text.startswith("=>", i):
         raise _JSExprFail("bad map callback")
-    q, i = _js_parse_ident(text, _js_skip_ws(text, i + 2))
+    i = _js_skip_ws(text, i + 2)
+    if i < n and text[i] == "{":
+        # F448: block-body identity s=>{return s;} -- single return of
+        # the parameter, no other statements. s=>{var y=1; return s;}
+        # fails closed (not a bare return), as does s=>{return (s);}
+        # (parenthesized return) and s=>{return s;;} (extra semicolon).
+        i = _js_expect(text, i, "{")
+        _, _, i = _js_parse_return_body_single(text, i, p)
+        i = _js_expect(text, i, "}")
+        return i
+    q, i = _js_parse_ident(text, i)
     if q != p:
         raise _JSExprFail("map callback not identity")
     return i
 
 
-def _js_parse_filter_callback(text, i):
-    """Parse a constant-true or Boolean .filter callback at text[i].
+def _js_parse_truthy_body(text, i, p):
+    """Parse an F447 truthiness-test .filter body; returns (True, next).
 
-    Recognized (F437/F443 family): ()=>true | (s)=>true |
+    p is the single declared parameter. Recognized:
+      p!==''    -- strict neq against the empty-string literal
+      !!p       -- double negation
+      p.length>0
+      p         -- bare identity (truthiness over parsed strings)
+    Parsed array elements are always string literals, whose only falsy
+    value is "", so every form above drops exactly the falsy elements
+    -- provably equivalent to .filter(Boolean). Anything else fails
+    closed: loose !=, !== against a non-empty literal, length!=0 or
+    length>=1, other member access, single negation (!p drops the
+    truthy elements, not a bypass), block-body arrows. Never evals.
+    """
+    n = len(text)
+    i = _js_skip_ws(text, i)
+    if text.startswith("!!", i):
+        q, j = _js_parse_ident(text, _js_skip_ws(text, i + 2))
+        if q != p:
+            raise _JSExprFail("not a truthiness test")
+        return True, j
+    q, j = _js_parse_ident(text, i)
+    if q != p:
+        raise _JSExprFail("not a truthiness test")
+    j = _js_skip_ws(text, j)
+    if text.startswith("!==", j):
+        # Strict neq against the empty-string literal only.
+        k = _js_skip_ws(text, j + 3)
+        if k >= n or text[k] not in ("'", '"'):
+            raise _JSExprFail("not a truthiness test")
+        if k + 1 >= n or text[k + 1] != text[k]:
+            raise _JSExprFail("not a truthiness test")
+        return True, k + 2
+    if j < n and text[j] == ".":
+        m, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        if m != "length":
+            raise _JSExprFail("not a truthiness test")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ">":
+            raise _JSExprFail("not a truthiness test")
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != "0":
+            raise _JSExprFail("not a truthiness test")
+        if j + 1 < n and text[j + 1] in "0123456789":
+            raise _JSExprFail("not a truthiness test")  # >01 is >1
+        return True, j + 1
+    # Bare identity: truthiness over parsed strings.
+    return True, j
+
+
+def _js_parse_filter_callback(text, i):
+    """Parse a constant-true, Boolean, or truthiness .filter callback.
+
+    Recognized (F437/F443/F447 family): ()=>true | (s)=>true |
     function(){return true;} | function(s){return true;} |
     Boolean (F443 -- bare identifier only, never Boolean(...) which is
-    a call, not a function reference).
+    a call, not a function reference) |
+    s=>s!=='' | s=>!!s | s=>s.length>0 | s=>s |
+    function(s){return s;} (F447 -- truthiness predicates).
 
-    Returns (drop_falsy, next_index): drop_falsy is True only for the
-    bare Boolean predicate. JS Boolean(x) coerces to boolean, so
-    .filter(Boolean) drops every falsy element; array elements here
-    are always parsed string literals, so exactly the empty string is
-    dropped. Anything else fails closed. Never evals.
+    Returns (drop_falsy, next_index): drop_falsy is True for the bare
+    Boolean predicate and the F447 truthiness forms. JS Boolean(x)
+    coerces to boolean, so .filter(Boolean) drops every falsy element;
+    array elements here are always parsed string literals, so exactly
+    the empty string is dropped -- and every F447 form is provably
+    equivalent to that same test. Anything else fails closed.
+    Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, i)
@@ -2066,8 +2133,9 @@ def _js_parse_filter_callback(text, i):
             raise _JSExprFail("bad filter callback")
         i = _js_expect(text, i, "(")
         i = _js_skip_ws(text, i)
+        param = None
         if i < n and text[i] in _JS_IDENT_START:
-            _, i = _js_parse_ident(text, i)
+            param, i = _js_parse_ident(text, i)
         i = _js_expect(text, i, ")")
         i = _js_expect(text, i, "{")
         i = _js_skip_ws(text, i)
@@ -2076,32 +2144,50 @@ def _js_parse_filter_callback(text, i):
         if i + 6 < n and text[i + 6] in _JS_IDENT_CONT:
             raise _JSExprFail("expected return")
         i = _js_skip_ws(text, i + 6)
-        if not text.startswith("true", i):
-            raise _JSExprFail("filter callback not constant-true")
-        if i + 4 < n and text[i + 4] in _JS_IDENT_CONT:
-            raise _JSExprFail("filter callback not constant-true")
-        i += 4
+        if text.startswith("true", i) and (i + 4 >= n
+                                           or text[i + 4] not in _JS_IDENT_CONT):
+            i += 4
+            i = _js_skip_ws(text, i)
+            if i < n and text[i] == ";":
+                i += 1
+            i = _js_expect(text, i, "}")
+            return False, i
+        # F447: function(s){return s;} -- the bare param is a truthiness
+        # test over parsed strings (only falsy value is ""). Free
+        # variables (no declared param) fail closed.
+        if param is None:
+            raise _JSExprFail("filter predicate needs a param")
+        q, i = _js_parse_ident(text, i)
+        if q != param:
+            raise _JSExprFail("not a truthiness predicate")
         i = _js_skip_ws(text, i)
         if i < n and text[i] == ";":
             i += 1
         i = _js_expect(text, i, "}")
-        return False, i
-    # Arrow form: zero or one params, body exactly `true`.
+        return True, i
+    # Arrow form: zero, one-parenthesized, or one-bare params.
     j = _js_skip_ws(text, i)
+    param = None
     if j < n and text[j] == "(":
         k = _js_skip_ws(text, j + 1)
         if k < n and text[k] in _JS_IDENT_START:
-            _, k = _js_parse_ident(text, k)
+            param, k = _js_parse_ident(text, k)
         i = _js_expect(text, k, ")")
+    elif j < n and text[j] in _JS_IDENT_START:
+        # F447: bare single param s=>...
+        param, i = _js_parse_ident(text, j)
     i = _js_skip_ws(text, i)
     if not text.startswith("=>", i):
         raise _JSExprFail("bad filter callback")
     i = _js_skip_ws(text, i + 2)
-    if not text.startswith("true", i):
-        raise _JSExprFail("filter callback not constant-true")
-    if i + 4 < n and text[i + 4] in _JS_IDENT_CONT:
-        raise _JSExprFail("filter callback not constant-true")
-    return False, i + 4
+    if text.startswith("true", i) and (i + 4 >= n
+                                       or text[i + 4] not in _JS_IDENT_CONT):
+        return False, i + 4
+    # F447: truthiness predicates -- require exactly one declared param
+    # (an unbound body identifier would be a ReferenceError in node).
+    if param is None:
+        raise _JSExprFail("filter predicate needs a param")
+    return _js_parse_truthy_body(text, i, param)
 
 
 def _js_apply_method(text, j, name, value, depth, state):
