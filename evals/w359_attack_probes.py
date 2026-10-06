@@ -115,12 +115,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F489-F495 open, next F496 (wave-359 merge:
-    F482-F488 CLOSED; F489-F495 filed OPEN)."""
+    """Control: footer shows F489-F493 open, next F496 (wave-360 lane 3:
+    F494, F495 CLOSED locally; merge finalizes tree-wide)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F496**" in text
-          and "**Open findings: F489, F490, F491, F492, F493, F494, F495.**" in text)
+          and "Open findings: F489, F490, F491, F492, F493." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -282,17 +282,17 @@ def test_b3_f493_stringraw_open():
 
 
 @_t
-def test_b3_f494_set_spread_open():
-    """F494 pinned OPEN: [...new Set(...)] spread still misses."""
+def test_b3_f494_set_spread_closed():
+    """F494 pinned CLOSED (wave-360 lane 3): [...new Set(...)] spread blocks."""
     hit = _blocked("[...new Set(['" + _A + "','" + _B + "'])].join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
-def test_b3_f495_freevar_open():
-    """F495 pinned OPEN: destructured concat.call still misses."""
+def test_b3_f495_freevar_closed():
+    """F495 pinned CLOSED (wave-360 lane 3): destructured concat.call blocks."""
     hit = _blocked("const {concat} = Array.prototype; concat.call([], '" + _A + "','" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 # ------------------------------------------------- green check (depth-1)
