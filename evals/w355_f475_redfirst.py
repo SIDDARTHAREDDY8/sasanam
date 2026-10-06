@@ -7,9 +7,6 @@ them:
 
 - ['x'].concat(123456789,'y'): numeric concat args are stringified by the
   engine; the decoder's concat branch accepts only string/spread args.
-- 'xy'.repeat([2]) / 'xy'.repeat('2'): ToNumber('2')=2, ToNumber([2])=2;
-  the decoder models only integer-literal paren counts (F472: literal-only
-  tag templates).
 - 'x'.padStart(22,['z']): padString=String(['z'])='z'; the decoder's
   padStart accepts only literal pad strings (F465).
 - 'a,b'.replace(/,/g,['']): replacement=String([''])=''; the decoder's
@@ -17,9 +14,19 @@ them:
 - String(['a','b']).replace(/,/g,''): the decoder models .toString() on
   arrays (F464) but not the String() constructor call.
 
-All six node-evaluate to the credential while the decoder produces no
+All four node-evaluate to the credential while the decoder produces no
 variant. Distinct from F473 (array RECEIVER fail-closed) and F474
 (TypeError on _JSArr args -- these shapes fail closed silently, no raise).
+
+Dropped from the first draft (2026-10-06 takeover validation): two
+repeat-coercion shapes whose receivers were the verbatim credential --
+they trip the raw-text rule (HELD), so they cannot demonstrate a bypass;
+a non-verbatim repeat-coercion cannot build the 21-char non-periodic
+credential, documented as a scope note. The draft padStart shape was
+also reworked: the original used a verbatim-credential receiver (no
+padding needed, coercion unexercised); the filed shape
+'123456789abcdef'.padStart(21,['xoxb-0']) forces real String(['xoxb-0])
+coercion to build the credential.
 
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
 """
@@ -40,12 +47,8 @@ SHAPES = [
     # (name, payload, real-engine-recovers-credential [node-verified])
     ("concat-numeric-arg",
      "['%s'].concat(%s,'%s').join('')" % (A1, A2, A3), True),
-    ("repeat-array-count",
-     "'%s%s%s'.repeat([1])" % (A1, A2, A3), True),
-    ("repeat-string-count",
-     "'%s%s%s'.repeat('1')" % (A1, A2, A3), True),
     ("padstart-array-pad",
-     "'%s%s%s'.padStart(21,['z'])" % (A1, A2, A3), True),
+     "'%s'.padStart(21,['%s'])" % (A2 + A3, A1), True),
     ("replace-array-repl",
      "'%s,%s%s'.replace(/,/g,[''])" % (A1, A2, A3), True),
     ("string-ctor-array",
@@ -56,7 +59,8 @@ CONTROLS = [
     # (name, payload, want_hit)
     ("junk-quiet", "['ab'].concat(12,'cd').join('')", False),
     ("neighbor-f462-closed", "\"\".concat(...['%s','%s'])" % (A1 + A2, A3), True),
-    ("neighbor-repeat-lit", "'%s%s%s'.repeat(1)" % (A1, A2, A3), True),
+    ("neighbor-padstart-lit", "'%s'.padStart(21,'%s')" % (A2 + A3, A1), True),
+    ("neighbor-string-tostring", "['%s','%s'].toString().replace(/,/g,'')" % (A1 + A2[:4], A2[4:] + A3), True),
 ]
 
 
