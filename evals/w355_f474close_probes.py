@@ -210,13 +210,20 @@ def p3_no_new_regexes():
     # additions since F463: F469 widened Reflect to (construct|apply),
     # F471 added the Object.assign alternative -- both character-class
     # only). Wave-356 lane 1: F476 added the Array['of'] bracket
-    # alternative (character-class only, no new re.compile).
+    # alternative (character-class only, no new re.compile). Wave-356
+    # lane 2: F477 added the String( constructor alternative. Wave-357
+    # lane 1: F478 added the X.prototype dispatch-target alternatives
+    # (character class only, no new re.compile).
     assert dlp._JS_EXPR_START.pattern == (
-        r"['\"`\[]|String\.fromCharCode|Array(\(|"
+        r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*\(|Array(\(|"
         r"[ \t\n\r]*(\.[ \t\n\r]*of|\[[ \t\n\r]*['\"]))|"
+        r"Array[ \t\n\r]*\.[ \t\n\r]*prototype|"
+        r"String[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Reflect[ \t\n\r]*\.[ \t\n\r]*(construct|apply)|Object[ \t\n\r]*\.[ \t\n\r]*assign|\(")
     for s in ["'", '"', "`", "[", "String.fromCharCode",
-              "Array(", "Array.of", "Reflect.construct", "Reflect.apply",
+              "Array(", "Array.of", "Array.prototype.concat",
+              "String.prototype.concat", "String(",
+              "Reflect.construct", "Reflect.apply",
               "Object.assign", "("]:
         assert dlp._JS_EXPR_START.search(s) is not None, s
     return True

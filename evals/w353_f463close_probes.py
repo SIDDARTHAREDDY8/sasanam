@@ -264,13 +264,21 @@ def p3_pin_no_new_regexes():
     # (construct|apply) for the Reflect.apply concat shape; wave-354
     # lane 3 (F471) legitimately added the Object.assign alternative
     # (ws-tolerant, character class only -- the same F468 precedent);
-    # the F463 closure itself added no regex.
+    # wave-356 lane 2 (F477) legitimately added the String( constructor
+    # alternative; wave-357 lane 1 (F478) legitimately added the
+    # X.prototype dispatch-target alternatives (ws-tolerant, character
+    # class only -- the same F468 precedent); the F463 closure itself
+    # added no regex.
     assert dlp._JS_EXPR_START.pattern == (
-        r"['\"`\[]|String\.fromCharCode|Array(\(|"
-        r"[ \t\n\r]*\.[ \t\n\r]*of)|"
+        r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*\(|Array(\(|"
+        r"[ \t\n\r]*(\.[ \t\n\r]*of|\[[ \t\n\r]*['\"]))|"
+        r"Array[ \t\n\r]*\.[ \t\n\r]*prototype|"
+        r"String[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Reflect[ \t\n\r]*\.[ \t\n\r]*(construct|apply)|Object[ \t\n\r]*\.[ \t\n\r]*assign|\(")
     for s in ["'", '"', "`", "[", "String.fromCharCode",
-              "Array(", "Array.of", "Reflect.construct", "Reflect.apply",
+              "Array(", "Array.of", "Array.prototype.concat",
+              "String.prototype.concat", "String(",
+              "Reflect.construct", "Reflect.apply",
               "Object.assign", "("]:
         assert dlp._JS_EXPR_START.search(s) is not None, s
     return True

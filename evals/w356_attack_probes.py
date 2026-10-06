@@ -118,12 +118,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F478, F479 open, next F480 (wave-356 merge:
-    F478 .call-dispatch + F479 join-coercion filed)."""
+    """Control: footer shows F479 open, next F480 (wave-357 lane 1:
+    F478 .call-dispatch CLOSED locally; merge finalizes tree-wide)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F480**" in text
-          and "**Open findings: F478, F479.**" in text)
+          and "**Open findings: F479.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -193,23 +193,23 @@ def test_b2_f476_ctor_from_blocked():
 
 @_t
 def test_b2_f478_call_concat_open():
-    """F478 pinned OPEN: Array.prototype.concat.call miss reproduces."""
+    """F478 CLOSED (wave-357 lane 1): Array.prototype.concat.call now blocked."""
     hit = _blocked("Array.prototype.concat.call([], '" + _A + "', '" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "miss-reproduces=%s" % (not hit))
+    return ("HELD" if hit else "BREAK", "blocked=%s" % hit)  # Wave-357 lane 1: F478 CLOSED
 
 
 @_t
 def test_b2_f478_bind_concat_open():
-    """F478 pinned OPEN: String.prototype.concat.bind miss reproduces."""
+    """F478 CLOSED (wave-357 lane 1): String.prototype.concat.bind now blocked."""
     hit = _blocked("String.prototype.concat.bind('" + _A + "')('" + _B + "')")
-    return ("HELD" if not hit else "BREAK", "miss-reproduces=%s" % (not hit))
+    return ("HELD" if hit else "BREAK", "blocked=%s" % hit)  # Wave-357 lane 1: F478 CLOSED
 
 
 @_t
 def test_b2_f478_call_filter_open():
-    """F478 pinned OPEN: Array.prototype.filter.call miss reproduces."""
+    """F478 CLOSED (wave-357 lane 1): Array.prototype.filter.call now blocked."""
     hit = _blocked("Array.prototype.filter.call(['" + _A + "','" + _B + "',''], x=>x!=='').join('')")
-    return ("HELD" if not hit else "BREAK", "miss-reproduces=%s" % (not hit))
+    return ("HELD" if hit else "BREAK", "blocked=%s" % hit)  # Wave-357 lane 1: F478 CLOSED
 
 
 @_t
