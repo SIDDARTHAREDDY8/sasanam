@@ -26,8 +26,8 @@ covers it, so it rides with F449.
 
 Known-open pins (each probe returns HELD when the miss reproduces;
 a literal BREAK verdict means the pin failed or a NEW break appeared):
-F446 (Array.of), F447 (truthy .filter), F448 (block-body identity .map),
-F449 (b64 whitespace), F450 (hex min-length gate). Composition probes
+F451 (hex whitespace), F452 (attempt-budget starvation),
+F453 (ws-b64 outer-layer stack). Composition probes
 pin the closed shapes still blocking.
 
 Dead proposals validated locally and NOT filed: template-literal
@@ -105,12 +105,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F446-F452 open, next F453."""
+    """Control: footer shows F451, F452, F453 open, next F454 (wave-350
+    merge reconciliation)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F453**" in text
-          and "**Open findings: F446, F447, F448, F449, F450, F451, F452.**"
-          in text)
+    ok = ("Next free finding: **F454**" in text
+          and "**Open findings: F451, F452, F453.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -177,54 +177,53 @@ def test_b2_f452_decodable_junk70_blocks():
 
 @_t
 def test_b3_f449_short_b64_spaced_open():
-    """F449 scope: short-cred base64 with whitespace misses (F449 x F445).
-
-    Same contiguity gate as F449, same regex family -- rides with F449's
-    close-when, documented here as a composition pin."""
+    """F449 scope CLOSED (wave-350 lane 3): short-cred base64 with whitespace
+    now blocks -- rode with F449's close-when; kept as a composition pin."""
     b64 = base64.b64encode(_CRED.encode()).decode()
-    miss = not _blocked(b64[:8] + " " + b64[8:])
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    hit = _blocked(b64[:8] + " " + b64[8:])
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
 def test_b3_f449_long_b64_spaced_open():
-    """F449 pinned open: long-cred base64 with whitespace misses."""
+    """F449 CLOSED (wave-350 lane 3): long-cred base64 with whitespace
+    now blocks."""
     b64 = base64.b64encode(_CRED2.encode()).decode()
-    miss = not _blocked(b64[:12] + " " + b64[12:])
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    hit = _blocked(b64[:12] + " " + b64[12:])
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F446-F450 scope pins
 
 @_t
 def test_b4_f446_arrayof_open():
-    """F446 pinned open: Array.of frag-join misses."""
-    miss = not _blocked("Array.of('" + _A + "','" + _B + "').join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F446 CLOSED (wave-350 lane 1): Array.of frag-join now blocks."""
+    hit = _blocked("Array.of('" + _A + "','" + _B + "').join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
 def test_b4_f447_truthy_filter_open():
-    """F447 pinned open: truthy .filter predicate misses."""
-    miss = not _blocked("['" + _A + "','" + _B + "',''].filter(x=>x!=='')"
-                        ".join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F447 CLOSED (wave-350 lane 2): truthy .filter predicate now blocks."""
+    hit = _blocked("['" + _A + "','" + _B + "',''].filter(x=>x!=='')"
+                       ".join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
 def test_b4_f448_blockbody_map_open():
-    """F448 pinned open: block-body identity .map misses."""
-    miss = not _blocked("['" + _A + "','" + _B + "'].map(x=>{return x;})"
-                        ".join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F448 CLOSED (wave-350 lane 2): block-body identity .map now blocks."""
+    hit = _blocked("['" + _A + "','" + _B + "'].map(x=>{return x;})"
+                       ".join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
 def test_b4_f450_short_hex_open():
-    """F450 pinned open: hex of a short credential misses."""
+    """F450 CLOSED (wave-350 lane 3): hex of a short credential now blocks."""
     short = "xoxb-" + "1234567890"  # 15 chars -> 30 hex < 32
-    miss = not _blocked(short.encode().hex())
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    hit = _blocked(short.encode().hex())
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- closed-shape pins
@@ -262,7 +261,7 @@ def test_b5_f437_reduce_blocks():
 # ---------------------------------------------------------------- green check
 
 _EXPECTED_BREAKS = set()  # this battery asserts HELD everywhere: the
-# F446-F452 misses are pinned as known-open (each probe returns HELD when
+# F451-F453 misses are pinned as known-open (each probe returns HELD when
 # the miss reproduces); a literal BREAK verdict means the pin failed or a
 # NEW unexpected break appeared.
 

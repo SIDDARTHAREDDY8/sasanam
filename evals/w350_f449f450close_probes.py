@@ -68,10 +68,11 @@ Probes:
   P6  no-regression: adjacent closures still block (F437 reduce,
       F439 triple-b64, F440 double-entity, F441 bslash, F443
       fill/filter, F444 junk-prefix, F445 short-b64, long stacks,
-      b64(ws-b64) composes via 2 layers); F451 pinned open
-      (ws-b64 outer stack misses -- filed this lane).
+      b64(ws-b64) composes via 2 layers); F453 pinned open
+      (ws-b64 outer stack misses -- filed this lane, renumbered
+      F451->F453 at the wave-350 merge).
   P7  pin + footer: taxonomy pin 2135 (no new decision codes),
-      footer open F446, F447, F448, F451 / next F452, F449+F450
+      footer open F451, F452, F453 / next F454, F449+F450
       CLOSED entries present.
   PZ  green check: adjacent DLP batteries green (depth-1).
 
@@ -95,8 +96,8 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2135  # Wave-350: F449+F450 closed, no new decision codes; pin unchanged
-FOOTER_OPEN = "F446, F447, F448, F451"  # Wave-350: F449+F450 CLOSED, F451 filed OPEN (merge finalizes tree-wide)
-FOOTER_NEXT = "F452"
+FOOTER_OPEN = "F451, F452, F453"  # Wave-350: F449+F450 CLOSED; wave-350 merge: F446-F450 CLOSED, F451/F452/F453 OPEN (next F454)
+FOOTER_NEXT = "F454"
 
 
 from gov import dlp  # noqa: E402
@@ -451,16 +452,16 @@ def p6_noreg_ws_b64_stacks_compose():
     # contiguous run decodes ungated (long path), the inner ws-run is
     # handled at layer 2. The reverse direction ws-b64(b64) does NOT
     # compose (the ws path's credential-shape gate keeps the
-    # non-credential inner text out of layer 2) -- filed as F451
-    # (pinned open below).
+    # non-credential inner text out of layer 2) -- filed as F453
+    # (pinned open below; renumbered F451->F453 at the wave-350 merge).
     b64 = _b64(_CRED.encode())
     inner_ws = b64[:16] + " " + b64[16:]
     outer = _b64(inner_ws.encode())
     return _blocked(outer)
 
 
-def p6_pin_f451_ws_outer_stack_open():
-    # F451 pinned open: ws-b64 as the OUTER layer of a stack misses
+def p6_pin_f453_ws_outer_stack_open():
+    # F453 pinned open: ws-b64 as the OUTER layer of a stack misses
     # (the inner contiguous b64 never reaches layer 2).
     inner = _b64(_CRED.encode())
     outer = _b64(inner.encode())
@@ -534,7 +535,7 @@ _PROBES = [
     ("p6-noreg-f440-double-entity", p6_noreg_f440_double_entity),
     ("p6-noreg-f441-bslash", p6_noreg_f441_bslash),
     ("p6-noreg-ws-b64-stacks-compose", p6_noreg_ws_b64_stacks_compose),
-    ("p6-pin-f451-ws-outer-stack-open", p6_pin_f451_ws_outer_stack_open),
+    ("p6-pin-f453-ws-outer-stack-open", p6_pin_f453_ws_outer_stack_open),
     ("p6-noreg-long-b64-stack", p6_noreg_long_b64_stack),
     ("p7-pin-and-footer", p7_pin_and_footer),
 ]

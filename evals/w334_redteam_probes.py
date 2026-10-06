@@ -786,12 +786,12 @@ def P5c():
               encoding="utf-8") as fh:
         text = fh.read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F451**" in text
-          and m_open and m_open[-1].strip() == "F444, F445")
+    ok = ("Next free finding: **F454**" in text
+          and m_open and m_open[-1].strip() == "F451, F452, F453")
     if ok:
-        _held(pid, "footer: open F444, F445 / next F446")
+        _held(pid, "footer: open F451, F452, F453 / next F454")
     else:
-        _break(pid, "footer mismatch vs open F444, F445 / next F446")
+        _break(pid, "footer mismatch vs open F451, F452, F453 / next F454")
 
 _PROBES = [
     ("P1a-nul-in-join-fields", P1a),

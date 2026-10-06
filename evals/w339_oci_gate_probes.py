@@ -43,9 +43,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
-FOOTER_OPEN = ("F444", "F445")  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446)
+FOOTER_OPEN = ("F451", "F452", "F453")  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454)
 
-FOOTER_NEXT = "F451"  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451)
+FOOTER_NEXT = "F454"  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451)
 
 
 _EXPECTED_BREAKS = set()
@@ -225,9 +225,9 @@ def _p9():
     assert literals == sorted(literals), "taxonomy not sorted"
     assert "oci-registry-onboarding-refused" in DC.TAXONOMY
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
-    assert "Next free finding: **F451**" in text, "footer next free"
-    assert "Open findings: F446, F447, F448, F449, F450." in text, "footer open findings"
-    assert FOOTER_OPEN == ("F444", "F445") and FOOTER_NEXT == "F446"
+    assert "Next free finding: **F454**" in text, "footer next free"
+    assert "Open findings: F451, F452, F453." in text, "footer open findings"
+    assert FOOTER_OPEN == ("F444", "F445") and FOOTER_NEXT == "F446"  # wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454)
     _held("P9-pin-taxonomy",
           "2135/2135/0 sorted-unique; oci-registry-onboarding-refused "
           "registered; footer open none / next F430")

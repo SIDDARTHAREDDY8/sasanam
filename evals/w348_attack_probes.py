@@ -117,8 +117,8 @@ def test_b0_footer_state():
     """Control: footer shows F446-F448 open, next F451 (F449/F450 CLOSED wave-350 lane 3)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F452**" in text
-          and "Open findings: F446, F447, F448, F451." in text)
+    ok = ("Next free finding: **F454**" in text
+          and "Open findings: F451, F452, F453." in text)
     return ("HELD" if ok else "BREAK", "footer-ok=%s" % ok)
 
 

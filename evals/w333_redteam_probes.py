@@ -52,9 +52,9 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
-FOOTER_OPEN = "F446, F447, F448, F449, F450"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).; F442 CLOSED 2026-10-05 wave-347 lane 6; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451)
+FOOTER_OPEN = "F451, F452, F453"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).; F442 CLOSED 2026-10-05 wave-347 lane 6; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454)
 
-FOOTER_NEXT = "F451"  # Next free finding number.; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451)
+FOOTER_NEXT = "F454"  # Next free finding number.; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451)
 
 
 _results = []
@@ -599,9 +599,9 @@ def _p6b():
                 encoding="utf-8").read()
     # Raw-literal assertions (wave-331 lesson): the footer must read
     # correctly as literal text, not only via constants.
-    if "Next free finding: **F451**." not in text:
+    if "Next free finding: **F454**." not in text:
         return _break("P6b-footer-open-f433-f434-f435-next-f436",
-                      "raw literal 'Next free finding: **F451**.' absent")
+                      "raw literal 'Next free finding: **F454**.' absent")
     if "**Open findings: F446, F447, F448, F449, F450.**" not in text:
         return _break("P6b-footer-open-f433-f434-f435-next-f436",
                       "raw literal '**Open findings: F436.**' absent")

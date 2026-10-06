@@ -91,8 +91,8 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2135  # Wave-350: F447+F448 closed, no new decision codes; pin unchanged 2135
-FOOTER_OPEN = "F446, F449, F450"  # Wave-350: F447+F448 CLOSED locally (merge finalizes tree-wide)
-FOOTER_NEXT = "F451"  # Wave-350: next free finding unchanged
+FOOTER_OPEN = "F451, F452, F453"  # Wave-350: F447+F448 CLOSED locally (merge finalizes tree-wide); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454)
+FOOTER_NEXT = "F454"  # Wave-350: next free finding unchanged
 
 from gov import dlp  # noqa: E402
 from gov.dlp import find_credential  # noqa: E402
