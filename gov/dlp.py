@@ -2079,13 +2079,16 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|Array(\(|[ \t\n\r]*\.[ \t\n\r]*of)|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|Array(\(|[ \t\n\r]*\.[ \t\n\r]*of)|Reflect[ \t\n\r]*\.[ \t\n\r]*construct|\(")
 # F455: the Array.of factory anchor tolerates whitespace around the dot
 # ([ \t\n\r]*, exactly the _js_skip_ws class the parser skips), so
 # `Array .of(...)` / `Array\t.of(...)` / `Array\n.of(...)` /
 # `Array . of(...)` reach _js_parse_array_of -- the anchor/parser
-# contradiction is closed. The ws class is a character class, not a
-# nested quantifier: matching stays linear (no ReDoS surface).
+# contradiction is closed. F468: the same ws-tolerant anchor class
+# covers Reflect.construct, so `Reflect .construct(...)` /
+# `Reflect . construct(...)` reach _js_parse_reflect_construct. The ws
+# class is a character class, not a nested quantifier: matching stays
+# linear (no ReDoS surface).
 _JS_EXPR_MAX_PARTS = 64        # bound on '+' operands per expression
 _JS_EXPR_MAX_CODEPOINTS = 512  # bound on fromCharCode argument count
 _JS_EXPR_MAX_DEPTH = 8         # bound on parenthesization depth
@@ -2670,6 +2673,114 @@ def _js_parse_array_constructor(text, i, state):
     return _JSArr([""] * count), j
 
 
+def _js_parse_string_literal_array(text, i, state):
+    """Parse '[' lit (, lit)* ']' -- string literals only (F468).
+
+    The F468 Reflect.construct args-list array: every element must be a
+    string literal ('...', "...", or `...` via _js_parse_template,
+    mirroring _js_parse_array_of's element classes). Numeric, additive,
+    nested, or otherwise non-literal elements fail closed (documented
+    scope boundary -- consistent with the F454/F446 arg classes the
+    desugar targets: the F454 multi-arg constructor also requires
+    string-literal args). Element count is charged to the part budget.
+    Nested inside another array literal fails closed (same rule as the
+    F443/F454 constructors). Never evals.
+    """
+    n = len(text)
+    if state.get("in_array"):
+        raise _JSExprFail("Array inside array literal")
+    j = _js_skip_ws(text, i + 1)
+    elements = []
+    if j < n and text[j] == "]":
+        return _JSArr(elements), j + 1
+    while True:
+        if j >= n or text[j] not in "'\"`":
+            raise _JSExprFail("Reflect args not string literals")
+        if text[j] == "`":
+            frag, j = _js_parse_template(text, j, 0, state)
+        else:
+            frag, j = _js_parse_string(text, j)
+        elements.append(frag)
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("unterminated Reflect args")
+        if text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            continue
+        if text[j] == "]":
+            return _JSArr(elements), j + 1
+        raise _JSExprFail("bad Reflect args")
+
+
+def _js_parse_reflect_construct(text, i, depth, state):
+    """Parse 'Reflect.construct(Array, <argsArray>)' at text[i] (F468).
+
+    Desugars the reflection-API factory: node-evaluated,
+    Reflect.construct(Array, X) calls new Array(...X). The target must
+    be the bare `Array` identifier -- any other target (String, Object,
+    an expression, newTarget as a third argument) fails closed. The
+    arguments-list X must parse as a fragment array: a string-literal
+    array literal (via _js_parse_string_literal_array -- numeric,
+    additive, or nested elements fail closed, consistent with the
+    F454/F446 arg classes), the F446 Array.of(...) factory, or the
+    F443/F454 Array constructor call forms (`Array(...)` / `Array(N)`;
+    the `new Array(...)` spelling as reflect-args fails closed --
+    conservative, documented). They compose through the existing
+    parsers, within their own part budgets. Anything else
+    (numeric args, nested calls, additive args, a third argument)
+    fails closed -- documented scope boundary: rejected, never
+    mis-decoded.
+
+    The result only survives when consumed by .join() etc. through
+    _js_parse_postfix; a bare Reflect.construct(...) with no call
+    decodes to nothing (not obfuscation-shaped, same as bare
+    Array(...)). Whitespace is tolerated around the dot (F455-class,
+    exactly the _js_skip_ws class), matching the _JS_EXPR_START
+    anchor. Reflect.apply is NOT in scope -- it is not parsed at all,
+    so it fails closed (documented only). Never evals.
+    """
+    n = len(text)
+    j = i + len("Reflect")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        raise _JSExprFail("Reflectx is not Reflect")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("Reflect without dot")
+    j = _js_skip_ws(text, j + 1)
+    if not text.startswith("construct", j):
+        raise _JSExprFail("Reflect without construct")
+    k = j + len("construct")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("constructx is not construct")
+    j = _js_skip_ws(text, k)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("Reflect.construct without paren")
+    j = _js_skip_ws(text, j + 1)
+    # Target: exactly the bare Array identifier.
+    tgt, j = _js_parse_ident(text, j)
+    if tgt != "Array":
+        raise _JSExprFail("Reflect.construct non-Array target")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("Reflect.construct without args")
+    j = _js_skip_ws(text, j + 1)
+    if j < n and text[j] == "[":
+        arr, j = _js_parse_string_literal_array(text, j, state)
+    elif text.startswith("Array", j):
+        arr, j = _js_parse_array_constructor(text, j, state)
+    else:
+        raise _JSExprFail("Reflect.construct args not a fragment array")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        # A third argument (newTarget) changes the created object's
+        # identity -- fails closed.
+        raise _JSExprFail("Reflect.construct with extra args")
+    return arr, j + 1
+
+
 def _js_parse_reduce_params(text, i):
     """Parse '(p0, p1)' at text[i]; returns (p0, p1, next_index)."""
     i = _js_expect(text, i, "(")
@@ -2827,20 +2938,85 @@ def _js_parse_map_callback(text, i):
     return i
 
 
-def _js_parse_truthy_body(text, i, p):
-    """Parse an F447 truthiness-test .filter body; returns (True, next).
+def _js_scan_neq_op(text, i):
+    """Scan a strict/loose not-equal operator at text[i] (F467/F459).
 
-    p is the single declared parameter. Recognized:
+    Returns "!==" or "!=", or None when neither is present. The strict
+    form is checked first ("!==" starts with "!=").
+    """
+    if text.startswith("!==", i):
+        return "!=="
+    if text.startswith("!=", i):
+        return "!="
+    return None
+
+
+def _js_parse_null_cmp_rhs(text, i, op, p):
+    """Parse the keyword RHS of an F467 constant-true null comparison.
+
+    op is "!==" or "!=" (the operator at the comparison site); i is the
+    position after the operator; p is the callback's declared parameter.
+    Returns (next_index). Raises _JSExprFail for anything else.
+    Semantics: parsed array elements are always string literals --
+    never null/undefined -- so p!==null, p!==undefined, and p!=null
+    (abstract equality also matches undefined, still never a string)
+    are all provably constant-true over the decoder's domain
+    (node-verified): the filter is the identity. The RHS keyword must
+    resolve to the null/undefined VALUE, not a shadowed param: a param
+    named `undefined` (legal in sloppy-mode JS) makes
+    `undefined!==undefined` param-vs-param (always false in node), so
+    the constant-true reading fails closed. (`null` can never be a
+    param name -- node SyntaxErrors -- but the same guard keeps the
+    decoder conservative.) Bound to exactly these three forms:
+    !==null, !==undefined, !=null. p!=undefined, p!==0, p!=='a',
+    p==null, p===null, and non-keyword RHS all fail closed (documented
+    scope boundary: rejected, never mis-decoded). Never evals.
+    """
+    n = len(text)
+    if p in ("null", "undefined"):
+        raise _JSExprFail("shadowed null keyword")
+    i = _js_skip_ws(text, i)
+    kw = None
+    k = i
+    for cand in ("null", "undefined"):
+        if text.startswith(cand, i):
+            k = i + len(cand)
+            if k < n and text[k] in _JS_IDENT_CONT:
+                raise _JSExprFail("not a null comparison")
+            kw = cand
+            break
+    if kw is None:
+        raise _JSExprFail("not a null comparison")
+    if op == "!=" and kw != "null":
+        raise _JSExprFail("not a null comparison")  # p!=undefined out of scope
+    return k
+
+
+def _js_parse_truthy_body(text, i, p):
+    """Parse an F447/F467 .filter body; returns (spec, next).
+
+    p is the single declared parameter. spec is "truthy" (drop exactly
+    the falsy elements -- equivalent to .filter(Boolean) over parsed
+    strings) or "all" (constant-true: keep every element -- F467).
+
+    Recognized truthiness forms (F447):
       p!==''    -- strict neq against the empty-string literal
       !!p       -- double negation
       p.length>0
       p         -- bare identity (truthiness over parsed strings)
+    Recognized constant-true forms (F467):
+      p!==null | p!==undefined | p!=null
+    (abstract equality also matches undefined; parsed elements are
+    string literals, never null/undefined, so all three are
+    provably true for every element -- node-verified).
+
     Parsed array elements are always string literals, whose only falsy
-    value is "", so every form above drops exactly the falsy elements
-    -- provably equivalent to .filter(Boolean). Anything else fails
-    closed: loose !=, !== against a non-empty literal, length!=0 or
-    length>=1, other member access, single negation (!p drops the
-    truthy elements, not a bypass), block-body arrows. Never evals.
+    value is "", so every truthiness form above drops exactly the
+    falsy elements. Anything else fails closed: !== against a
+    non-empty literal, p!=undefined, p!==0, p!=='a', p==null /
+    p===null, length!=0 or length>=1, other member access, single
+    negation (!p drops the truthy elements, not a bypass), block-body
+    arrows. Never evals.
     """
     n = len(text)
     i = _js_skip_ws(text, i)
@@ -2848,19 +3024,22 @@ def _js_parse_truthy_body(text, i, p):
         q, j = _js_parse_ident(text, _js_skip_ws(text, i + 2))
         if q != p:
             raise _JSExprFail("not a truthiness test")
-        return True, j
+        return "truthy", j
     q, j = _js_parse_ident(text, i)
     if q != p:
         raise _JSExprFail("not a truthiness test")
     j = _js_skip_ws(text, j)
-    if text.startswith("!==", j):
-        # Strict neq against the empty-string literal only.
-        k = _js_skip_ws(text, j + 3)
-        if k >= n or text[k] not in ("'", '"'):
-            raise _JSExprFail("not a truthiness test")
-        if k + 1 >= n or text[k + 1] != text[k]:
-            raise _JSExprFail("not a truthiness test")
-        return True, k + 2
+    op = _js_scan_neq_op(text, j)
+    if op is not None:
+        if op == "!==":
+            k = _js_skip_ws(text, j + 3)
+            if k < n and text[k] in ("'", '"'):
+                # Strict neq against the empty-string literal only.
+                if k + 1 >= n or text[k + 1] != text[k]:
+                    raise _JSExprFail("not a truthiness test")
+                return "truthy", k + 2
+        # F467: constant-true null comparison (shadow guard inside).
+        return "all", _js_parse_null_cmp_rhs(text, j + len(op), op, p)
     if j < n and text[j] == ".":
         m, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
         if m != "length":
@@ -2873,9 +3052,9 @@ def _js_parse_truthy_body(text, i, p):
             raise _JSExprFail("not a truthiness test")
         if j + 1 < n and text[j + 1] in "0123456789":
             raise _JSExprFail("not a truthiness test")  # >01 is >1
-        return True, j + 1
+        return "truthy", j + 1
     # Bare identity: truthiness over parsed strings.
-    return True, j
+    return "truthy", j
 
 
 def _js_index_cmp(idx, op, k):
@@ -2902,12 +3081,17 @@ def _js_index_cmp(idx, op, k):
 def _js_parse_filter_callback(text, i):
     """Parse a constant-true, Boolean, truthiness, or positional .filter callback.
 
-    Recognized (F437/F443/F447/F459 family): ()=>true | (s)=>true |
+    Recognized (F437/F443/F447/F459/F467 family): ()=>true | (s)=>true |
     function(){return true;} | function(s){return true;} |
     Boolean (F443 -- bare identifier only, never Boolean(...) which is
     a call, not a function reference) |
     s=>s!=='' | s=>!!s | s=>s.length>0 | s=>s |
     function(s){return s;} (F447 -- truthiness predicates) |
+    s=>s!==null | s=>s!==undefined | s=>s!=null |
+    function(s){return s!==null;} (F467 -- constant-true null
+    comparisons: parsed elements are string literals, never
+    null/undefined, so all three are provably true for every
+    element) |
     (x,i)=>i<2 | (x,i)=>i<=2 | (x,i)=>i>0 | (x,i)=>i>=1 |
     (x,i)=>i!==2 (F459 -- positional predicates: the SECOND param is
     the index, compared against a numeric literal).
@@ -2921,8 +3105,10 @@ def _js_parse_filter_callback(text, i):
     JS Boolean(x) coerces to boolean; every F447 form is provably
     equivalent to the same empty-string test over parsed strings.
 
-    Fail-closed (documented): loose !=, !== against a non-empty
-    literal, ===/==/!= index comparisons, non-literal bounds, index
+    Fail-closed (documented): !== against a non-empty literal, !=undefined,
+    !==0, !=='a', ==null / ===null (constant-false over strings, not a
+    bypass), loose != against anything but null, ===/==/!= index
+    comparisons, non-literal bounds, index
     arithmetic, body references to the element param, three-param
     arrows, function-form positional bodies, bare (x,i)=>i
     (index-truthiness is NOT element-truthiness: it drops index 0,
@@ -2964,12 +3150,24 @@ def _js_parse_filter_callback(text, i):
         # F447: function(s){return s;} -- the bare param is a truthiness
         # test over parsed strings (only falsy value is ""). Free
         # variables (no declared param) fail closed.
+        # F467: function(s){return s!==null;} (also s!==undefined /
+        # s!=null) -- constant-true null comparison, the identity.
         if param is None:
             raise _JSExprFail("filter predicate needs a param")
         q, i = _js_parse_ident(text, i)
         if q != param:
             raise _JSExprFail("not a truthiness predicate")
         i = _js_skip_ws(text, i)
+        op = _js_scan_neq_op(text, i)
+        if op is not None:
+            # F467: return s!==null / s!==undefined / s!=null (keyword-
+            # RHS shadowing guard lives in _js_parse_null_cmp_rhs).
+            i = _js_parse_null_cmp_rhs(text, i + len(op), op, param)
+            i = _js_skip_ws(text, i)
+            if i < n and text[i] == ";":
+                i += 1
+            i = _js_expect(text, i, "}")
+            return ("all",), i
         if i < n and text[i] == ";":
             i += 1
         i = _js_expect(text, i, "}")
@@ -3023,10 +3221,12 @@ def _js_parse_filter_callback(text, i):
         return ("index", op, k), m
     # F447: truthiness predicates -- require exactly one declared param
     # (an unbound body identifier would be a ReferenceError in node).
+    # F467: constant-true null comparisons return spec "all" (keep every
+    # element, including "") rather than "truthy".
     if param is None:
         raise _JSExprFail("filter predicate needs a param")
-    _, m = _js_parse_truthy_body(text, i, param)
-    return ("truthy",), m
+    spec, m = _js_parse_truthy_body(text, i, param)
+    return (spec,), m
 
 
 def _js_add_concat_part(parts, part, state):
@@ -3516,7 +3716,8 @@ def _js_parse_postfix(text, i, value, depth, state):
 
 
 def _js_parse_primary(text, i, depth, state):
-    """Parse one primary (literal / fromCharCode / parens / number / array)."""
+    """Parse one primary (literal / fromCharCode / parens / number / array /
+    Array constructor / Reflect.construct)."""
     i = _js_skip_ws(text, i)
     if i >= len(text):
         raise _JSExprFail("empty")
@@ -3551,6 +3752,14 @@ def _js_parse_primary(text, i, depth, state):
         # parse then fails closed (no paren / no .of).
         val, i = _js_parse_array_constructor(text, i, state)
         state["ops"] += 1  # an Array(N)/Array.of construction is obfuscation-shaped
+        return _js_parse_postfix(text, i, val, depth, state)
+    if text.startswith("Reflect", i):
+        # F468: Reflect.construct(Array, <argsArray>) reflection-API
+        # factory -- desugars to the fragment list. startswith alone
+        # admits Reflectx, which the parser then fails closed
+        # (ident-boundary check).
+        val, i = _js_parse_reflect_construct(text, i, depth, state)
+        state["ops"] += 1  # the construct call is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
     if c in _ASCII_DIGITS:
         num, i = _js_parse_number(text, i)
@@ -3587,7 +3796,13 @@ def _try_js_expr_decode(text, start):
     .slice(start[,end]) on string arrays with literal numeric bounds
     (negative indices and out-of-range clamps engine-exact) plus the
     .flat() identity and the literal .splice(0,2) removed-elements
-    forms. Bounded by part, depth, codepoint, repeat, and output budgets; never
+    forms,
+    skips), (F468) Reflect.construct(Array, <argsArray>) --
+    the reflection-API factory desugared to the fragment list
+    (argsArray: string-literal array literal, Array.of, or the
+    F443/F454 Array constructor forms; any other target or arg class
+    fails closed)
+. Bounded by part, depth, codepoint, repeat, and output budgets; never
     evals; undecodable runs are ignored. A bare string literal (or an
     unjoined array literal) with no operator or call is not rewritten
     (not obfuscation-shaped).

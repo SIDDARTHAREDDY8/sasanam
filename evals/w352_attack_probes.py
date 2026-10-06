@@ -205,7 +205,8 @@ def test_b1_f460_map_string_open():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
-# ------------------------------------------------- F461-F468 open pins
+# ------------------------------------------------- F461-F466 open pins
+# (F467+F468 closed wave-353 lane 4 -- see closed pins below)
 
 @_t
 def test_b2_f461_reverse_join_closed():
@@ -263,19 +264,20 @@ def test_b2_f466_slice_noop_open():
 
 
 @_t
-def test_b2_f467_filter_neq_null_open():
-    """F467 pinned open: .filter(x=>x!==null) misses."""
-    miss = not _blocked("['" + _A + "','" + _B + "',''].filter(x=>x!==null)"
-                        ".join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b2_f467_filter_neq_null_closed():
+    """F467 pinned CLOSED (wave-353 lane 4): .filter(x=>x!==null) blocks."""
+    hit = _blocked("['" + _A + "','" + _B + "',''].filter(x=>x!==null)"
+                   ".join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b2_f468_reflect_construct_open():
-    """F468 pinned open: Reflect.construct(Array,[...]) misses."""
-    miss = not _blocked("Reflect.construct(Array,['" + _A + "','" + _B + "'])"
-                        ".join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b2_f468_reflect_construct_closed():
+    """F468 pinned CLOSED (wave-353 lane 4): Reflect.construct(Array,[...])
+    blocks."""
+    hit = _blocked("Reflect.construct(Array,['" + _A + "','" + _B + "'])"
+                   ".join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F451-F453 closed pins
@@ -378,22 +380,23 @@ def test_b4_f448_blockbody_map_blocks():
 # ------------------------------------------------- round-20 scope notes
 
 @_t
-def test_b5_f467_undefined_open():
+def test_b5_f467_undefined_closed():
     """F467 scope (round 20, model C5): x=>x!==undefined is constant-true
-    over strings -- same null-comparison mechanism as F467; rides with
-    F467's close-when."""
-    miss = not _blocked("['" + _A + "','" + _B + "',''].filter(x=>x!==undefined)"
-                        ".join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    over strings -- closed by the same null-comparison mechanism as F467
+    (wave-353 lane 4)."""
+    hit = _blocked("['" + _A + "','" + _B + "',''].filter(x=>x!==undefined)"
+                   ".join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b5_f467_loose_null_open():
+def test_b5_f467_loose_null_closed():
     """F467 scope (round 20, model C5): function(x){return x!=null;} is
-    constant-true over strings -- same mechanism as F467."""
-    miss = not _blocked("['" + _A + "','" + _B + "','']"
-                        ".filter(function(x){return x!=null;}).join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    constant-true over strings -- closed by the same mechanism as F467
+    (wave-353 lane 4)."""
+    hit = _blocked("['" + _A + "','" + _B + "','']"
+                   ".filter(function(x){return x!=null;}).join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
@@ -416,9 +419,10 @@ def test_b5_f464_flat_tostring_open():
 # ---------------------------------------------------------------- green check
 
 _EXPECTED_BREAKS = set()  # this battery asserts HELD everywhere: the
-# F454-F468 misses are pinned as known-open (each probe returns HELD when
-# the miss reproduces); a literal BREAK verdict means the pin failed or a
-# NEW unexpected break appeared.
+# F454-F466 misses are pinned as known-open (each probe returns HELD when
+# the miss reproduces), and F467+F468 are pinned closed (each probe returns
+# HELD when the block reproduces); a literal BREAK verdict means the pin
+# failed or a NEW unexpected break appeared.
 
 
 def _green_check():
