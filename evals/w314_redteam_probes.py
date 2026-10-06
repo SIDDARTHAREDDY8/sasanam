@@ -44,8 +44,8 @@ sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
-FOOTER_OPEN = "F436"
-FOOTER_NEXT = "F437"
+FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"
+FOOTER_NEXT = "F443"
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -1165,7 +1165,7 @@ def _p_footer_state():
     last = footers[-1]
     # Wave-336 lane 1: footer-state probe repaired -- the F412-era
     # assertion rotted through several merges; assert the live footer.
-    if "Open findings: F436." not in last:
+    if "Open findings: F437, F438, F439, F440, F441, F442." not in last:
         raise _Break("footer-state: open findings present: %s" % last[:80])
     if FOOTER_NEXT not in last:
         raise _Break("footer-state: next is not %s: %s" %

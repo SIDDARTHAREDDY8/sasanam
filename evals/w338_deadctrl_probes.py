@@ -167,9 +167,9 @@ def p2_pin():
     except Exception:
         return "ERROR", "P2", traceback.format_exc(limit=3)
     if TAXONOMY_PIN != 2134:
-        return "BREAK", "P2", "TAXONOMY_PIN = %r, want 2131" % TAXONOMY_PIN
+        return "BREAK", "P2", "TAXONOMY_PIN = %r, want 2134" % TAXONOMY_PIN
     if len(codes) != 2134:
-        return "BREAK", "P2", "registry has %d codes, want 2131" % len(codes)
+        return "BREAK", "P2", "registry has %d codes, want 2134" % len(codes)
     return "HELD", "P2", "pin 2131; registry 2131 codes"
 
 
@@ -182,7 +182,7 @@ def p3_footer():
         return "ERROR", "P3", "FINDINGS.md unreadable"
     lines = text.splitlines()
     last = lines[-1] if lines else ""
-    if "Next free finding: **F437**" not in last:
+    if "Next free finding: **F443**" not in last:
         return "BREAK", "P3", "footer next-free is not F436"
     if not re.search(r"\*\*Open findings: F436.\*\*", last):
         return "BREAK", "P3", "footer open findings is not F436"

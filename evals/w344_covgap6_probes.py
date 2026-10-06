@@ -59,8 +59,8 @@ if REPO not in sys.path:
     sys.path.insert(0, REPO)
 
 PIN = 2134
-FOOTER_OPEN = ("F436",)
-FOOTER_NEXT = "F437"
+FOOTER_OPEN = ("F437", "F438", "F439", "F440", "F441", "F442")
+FOOTER_NEXT = "F443"
 
 _results = []
 _EXPECTED_BREAKS = set()  # empty set, never {} (dict) -- wave-331 lesson

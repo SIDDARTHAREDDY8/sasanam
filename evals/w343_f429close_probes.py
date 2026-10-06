@@ -48,9 +48,9 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2134  # Wave-343: pin 2131 (no new codes in wave-343 lane 1); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = "none"  # F432, F433, F434, F435 CLOSED 2026-10-05 wave-345 lanes 1-4; F436 CLOSED 2026-10-05 wave-346 lane 1
+FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # F432, F433, F434, F435 CLOSED 2026-10-05 wave-345 lanes 1-4; F436 CLOSED 2026-10-05 wave-346 lane 1
 
-FOOTER_NEXT = "F437"
+FOOTER_NEXT = "F443"
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -236,7 +236,7 @@ def p8_pin_and_footer():
         ok = ok and "Open findings: none." in footer
     else:
         ok = ok and ("Open findings: %s." % FOOTER_OPEN) in footer
-    return _check("p8: pin 2134, footer open none / next F437", ok,
+    return _check("p8: pin 2134, footer open F437-F442 / next F443", ok,
 
                   footer[-70:])
 

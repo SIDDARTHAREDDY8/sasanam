@@ -48,9 +48,9 @@ def p2_pin():
     """TAXONOMY_PIN == 2134 and the registry holds 2127 codes."""
     from gov.decision_codes import TAXONOMY
     if TAXONOMY_PIN != 2134:
-        return "BREAK", "P2", "TAXONOMY_PIN = %r, want 2131" % TAXONOMY_PIN
+        return "BREAK", "P2", "TAXONOMY_PIN = %r, want 2134" % TAXONOMY_PIN
     if len(TAXONOMY) != 2134:
-        return "BREAK", "P2", "registry has %d codes, want 2131" % len(TAXONOMY)
+        return "BREAK", "P2", "registry has %d codes, want 2134" % len(TAXONOMY)
     return "HELD", "P2", "pin 2131; registry 2127 codes"
 
 

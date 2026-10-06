@@ -52,8 +52,8 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = "F436"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
-FOOTER_NEXT = "F437"  # Next free finding number.
+FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
+FOOTER_NEXT = "F443"  # Next free finding number.
 
 _results = []
 _PROBES = []
@@ -578,7 +578,7 @@ def _p5a():
 def _p6a():
     if TAXONOMY_PIN != 2134:
         return _break("P6a-pin-taxonomy-2134-sorted",
-                      "TAXONOMY_PIN is %r, want 2131" % (TAXONOMY_PIN,))
+                      "TAXONOMY_PIN is %r, want 2134" % (TAXONOMY_PIN,))
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)

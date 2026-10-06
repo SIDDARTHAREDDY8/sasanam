@@ -239,7 +239,7 @@ def test_pin_taxonomy_2127():
     if TAXONOMY_PIN != 2134:
         return "BREAK", "battery pin drifted: %r" % (TAXONOMY_PIN,)
     if len(TAXONOMY) != 2134:
-        return "BREAK", "registry holds %d codes, want 2131" % len(TAXONOMY)
+        return "BREAK", "registry holds %d codes, want 2134" % len(TAXONOMY)
     keys = list(TAXONOMY)
     if keys != sorted(keys):
         return "BREAK", "taxonomy not sorted"
@@ -253,8 +253,8 @@ def test_footer_state():
     with open(path, encoding="utf-8") as fh:
         lines = fh.read().splitlines()
     last = lines[-1] if lines else ""
-    ok = ("Next free finding: **F437**" in last
-          and "Open findings: F436." in last)
+    ok = ("Next free finding: **F443**" in last
+          and "Open findings: F437, F438, F439, F440, F441, F442." in last)
     return ("HELD" if ok else "BREAK",
             "footer last line: %r" % (last[:120],))
 

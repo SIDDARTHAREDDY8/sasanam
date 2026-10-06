@@ -328,9 +328,9 @@ def p10_pin():
     except Exception:
         return "ERROR", "P10", traceback.format_exc(limit=3)
     if TAXONOMY_PIN != 2134:
-        return "BREAK", "P10", "TAXONOMY_PIN = %r, want 2131" % TAXONOMY_PIN
+        return "BREAK", "P10", "TAXONOMY_PIN = %r, want 2134" % TAXONOMY_PIN
     if len(TAXONOMY) != 2134:
-        return "BREAK", "P10", "registry has %d codes, want 2131" % len(TAXONOMY)
+        return "BREAK", "P10", "registry has %d codes, want 2134" % len(TAXONOMY)
     return "HELD", "P10", "pin 2131; registry 2127 codes"
 
 

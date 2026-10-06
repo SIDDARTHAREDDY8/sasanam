@@ -101,7 +101,7 @@ class BaseStateTest(unittest.TestCase):
     def test_taxonomy_pin(self):
         self.assertTrue(_expect_held(
             "taxonomy-pin", TAXONOMY_PIN == 2134,#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*)
-            "TAXONOMY_PIN=%s, want 2131" % (TAXONOMY_PIN,)) == "HELD")
+            "TAXONOMY_PIN=%s, want 2134" % (TAXONOMY_PIN,)) == "HELD")
 
 
 

@@ -76,8 +76,8 @@ from tests.keyfixture import provision_test_key  # noqa: E402
 provision_test_key()
 
 TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = "F436"  # F409-F427 CLOSED; F428 OPEN (wave-341 lane C).
-FOOTER_NEXT = "F437"
+FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # F409-F427 CLOSED; F428 OPEN (wave-341 lane C).
+FOOTER_NEXT = "F443"
 
 _results = []
 _PROBES = []

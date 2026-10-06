@@ -64,8 +64,8 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2134  # Wave-345: pin 2134 (no new codes in wave-345 lane 4)
-FOOTER_OPEN = "F436"
-FOOTER_NEXT = "F437"
+FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"
+FOOTER_NEXT = "F443"
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -235,7 +235,7 @@ def p8_pin_and_footer():
         ok = ok and "Open findings: none." in footer
     else:
         ok = ok and ("Open findings: %s." % FOOTER_OPEN) in footer
-    return _check("p8: pin 2134, footer open F436 / next F437", ok,
+    return _check("p8: pin 2134, footer open F437-F442 / next F443", ok,
                   footer[-60:])
 
 

@@ -576,7 +576,7 @@ def _p6a():
         _held("P6-pin-taxonomy-2134-sorted", "2134/2134/0 sorted")
     else:
         _break("P6-pin-taxonomy-2134-sorted",
-               "want 2131/2121/00 sorted, got %d (sorted=%s)"
+               "want 2134/2121/00 sorted, got %d (sorted=%s)"
 
 
                % (n, list(DC.TAXONOMY.keys()) == codes))
@@ -586,8 +586,8 @@ def _p6a():
 def _p6b():
     src = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
     # Wave-336 lane 1: repaired stale F412/F413-era assertions.
-    if ("Next free finding: **F437**" in src
-            and "Open findings: F436." in src):
+    if ("Next free finding: **F443**" in src
+            and "Open findings: F437, F438, F439, F440, F441, F442." in src):
         _held("P6-footer-state", "open none / next F430")
     else:
         _break("P6-footer-state", "footer mismatch")

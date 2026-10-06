@@ -36,8 +36,8 @@ if REPO_ROOT not in sys.path:
 from gov import landlock_jail as lj  # noqa: E402
 
 TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = "F436"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
-FOOTER_NEXT = "F437"  # Next free finding number.
+FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).
+FOOTER_NEXT = "F443"  # Next free finding number.
 
 PROBES = []
 
@@ -444,7 +444,7 @@ def _e5():
 def _p1():
     name = "P1-pin-taxonomy-2134"
     if TAXONOMY_PIN != 2134:
-        return _break(name, "TAXONOMY_PIN is %r, want 2131"
+        return _break(name, "TAXONOMY_PIN is %r, want 2134"
                       % (TAXONOMY_PIN,))
     import re as _re
     lits = _re.findall(r'"code"\s*:\s*\'([^\']+)\'',

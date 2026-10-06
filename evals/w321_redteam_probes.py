@@ -69,8 +69,8 @@ import gov.provenance_labels as PL  # noqa: E402
 
 TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
-FOOTER_OPEN = "F436"
-FOOTER_NEXT = "F437"
+FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"
+FOOTER_NEXT = "F443"
 
 _results = []
 

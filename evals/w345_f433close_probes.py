@@ -65,8 +65,8 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2134  # Wave-345: pin 2134 (no new codes in wave-345 lane 2)
-FOOTER_OPEN = "none"  # F436 CLOSED 2026-10-05 wave-346 lane 1
-FOOTER_NEXT = "F437"
+FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # F436 CLOSED 2026-10-05 wave-346 lane 1
+FOOTER_NEXT = "F443"
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -251,8 +251,8 @@ def p7_pin_and_footer():
     codes = sorted(TAXONOMY)
     ok_pin = len(codes) == TAXONOMY_PIN == 2134
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok_footer = ("Next free finding: **F437**" in text
-                 and "Open findings: none." in text
+    ok_footer = ("Next free finding: **F443**" in text
+                 and "Open findings: F437, F438, F439, F440, F441, F442." in text
                  and "(F433 filed 2026-10-05, wave-344 lane 4" in text
                  and "LOW, CLOSED 2026-10-05 wave-345 lane 2" in text)
     print("    pin=%d footer-open=%s footer-next=%s"

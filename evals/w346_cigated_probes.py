@@ -55,8 +55,8 @@ from gov import policy_gate as _pg  # noqa: E402
 from gov.policy_gate import PolicyGateError  # noqa: E402
 
 VENV_PYTHON = os.path.expanduser("~/workspace/.gov-venv/bin/python")
-FOOTER_OPEN = "F436, F437"
-FOOTER_NEXT = "F438"
+FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # wave-346 merge final
+FOOTER_NEXT = "F443"
 TAXONOMY_PIN = 2134
 
 

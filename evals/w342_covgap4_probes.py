@@ -82,8 +82,8 @@ sys.path.insert(0, os.path.join(REPO, "tests"))
 
 TAXONOMY_PIN = 2134  # Wave-341 merge (c47ab9e8). Footer: open F429 / next F430.; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
 
-FOOTER_OPEN = "F436"
-FOOTER_NEXT = "F437"
+FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"
+FOOTER_NEXT = "F443"
 
 _results = []
 
