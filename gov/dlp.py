@@ -2636,7 +2636,7 @@ def _try_js_expr_decode(text, start):
 
 
 def _try_js_expr_decode_all(text):
-    """Whole-text JS string-expression scan (F444).
+    """Whole-text JS string-expression scan (F444, F452).
 
     Decodes every strictly-decodable JS expression in *text* in one
     left-to-right pass, producing a single variant: at each
@@ -2654,6 +2654,30 @@ def _try_js_expr_decode_all(text):
     expression alike in a single layer, so no positional window can
     starve the real expression out.
 
+    Budget semantics (F452): the ``_MAX_WHOLETEXT_ITEMS`` budget
+    counts only DECODE-PRODUCING attempts -- matches that decode to a
+    variant and splice new text. A match that fails closed (returns
+    None: not obfuscation-shaped, e.g. a bare string-literal
+    statement) consumes no budget; it is copied verbatim and the scan
+    continues. This is what defeats F452: 32 fail-closed bare-literal
+    statements (64 quote matches) used to burn the whole 64-attempt
+    budget before the real expression was reached; now they consume
+    zero, and the real expression decodes.
+
+    Why this is still a DoS guard: the budget counts the actual
+    decoding work -- each counted attempt splices decoded text into
+    the output and advances the scan past it, so output growth and
+    splice count are both bounded by ``_MAX_WHOLETEXT_ITEMS``. A
+    fail-closed attempt costs only one bounded
+    :func:`_try_js_expr_decode` call (itself ops/literal/run-bounded:
+    ``_JS_EXPR_MAX_LITERAL`` per string, ``_JS_EXPR_MAX_RUN`` per run;
+    a bare literal fails fast on the shape check), so junk that
+    provably decodes to nothing can neither starve the real
+    expression nor buy unbounded work. The F444 residual stands: junk
+    that DOES decode still consumes the budget, so ~130+ decodable
+    junk expressions remain a documented non-goal (each layer
+    decodes at most 64, and the 2-layer budget caps the rest).
+
     Bounded: at most ``_MAX_WHOLETEXT_ITEMS`` decode attempts per
     scan (each attempt is ops-bounded inside
     :func:`_try_js_expr_decode`); beyond the bound the remainder is
@@ -2668,15 +2692,16 @@ def _try_js_expr_decode_all(text):
         s = m.start()
         if s < pos:
             continue  # inside an already-decoded span
-        if attempts >= _MAX_WHOLETEXT_ITEMS:
-            break
-        attempts += 1
         r = _try_js_expr_decode(text, s)
         if r is None:
-            continue  # fail closed: copy verbatim below
+            continue  # F452: fail closed -- no variant produced, so no
+                      # budget consumed; copy verbatim below
         decoded, end = r
         if end <= s:
             continue  # defensive: never retreat
+        if attempts >= _MAX_WHOLETEXT_ITEMS:
+            break
+        attempts += 1  # F452: only decode-producing attempts count
         out.append(text[pos:s])
         out.append(decoded)
         pos = end

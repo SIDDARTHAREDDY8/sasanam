@@ -154,9 +154,10 @@ _REAL = "['" + _A + "','" + _B + "'].reduce((a,b)=>a+b)"
 
 @_t
 def test_b2_f452_failclosed_junk32_open():
-    """F452 pinned open: 32 fail-closed junk statements starve the scan."""
-    miss = not _blocked(_junk(32) + _REAL)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F452 CLOSED (wave-351 lane 2): 32 fail-closed junk statements no
+    longer starve the scan -- fail-closed matches consume no budget."""
+    hit = _blocked(_junk(32) + _REAL)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
