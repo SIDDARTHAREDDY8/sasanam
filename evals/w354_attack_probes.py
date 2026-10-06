@@ -181,40 +181,41 @@ def test_b1_f468_reflect_construct_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
-# ------------------------------------------------- F469-F472 open pins
+# ------------------------------------------------- F469-F472 closed pins (wave-354 merge)
 
 @_t
-def test_b2_f469_reflect_apply_open():
-    """F469 pinned open: Reflect.apply(Array.prototype.concat,...)
-    misses -- distinct Reflect method from F468's construct."""
-    miss = not _blocked("Reflect.apply(Array.prototype.concat,[],[['"
-                        + _A + "'],['" + _B + "']]).join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_b2_f470_match_predicate_open():
-    """F470 pinned open: .filter(x=>x.match(/[a-z]/)) misses --
-    method-call truthiness bypasses F447's syntactic model."""
-    miss = not _blocked("['" + _A + "','" + _B + "','']"
-                        ".filter(x=>x.match(/[a-z]/)).join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b2_f469_reflect_apply_closed():
+    """F469 pinned CLOSED (wave-354 merge, lane 1): Reflect.apply concat
+    now blocks via the F462 desugar."""
+    hit = _blocked("Reflect.apply(Array.prototype.concat,[],[['"
+                   + _A + "'],['" + _B + "']]).join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b2_f471_object_assign_open():
-    """F471 pinned open: Object.assign([], [...]) array-copy misses."""
-    miss = not _blocked("Object.assign([],['" + _A + "','" + _B + "'])"
-                        ".join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b2_f470_match_predicate_closed():
+    """F470 pinned CLOSED (wave-354 merge, lane 2): match-truthiness
+    filter predicates now block."""
+    hit = _blocked("['" + _A + "','" + _B + "','']"
+                   ".filter(x=>x.match(/[a-z]/)).join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b2_f472_repeat_tagged_open():
-    """F472 pinned open: 'frag'.repeat`2` misses -- repeat's ToNumber
-    count conversion is an unmodeled tag-call shape."""
-    miss = not _blocked("'" + _A + "'.repeat`" + "2`")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b2_f471_object_assign_closed():
+    """F471 pinned CLOSED (wave-354 merge, lane 3): array-copy factories
+    now block."""
+    hit = _blocked("Object.assign([],['" + _A + "','" + _B + "'])"
+                   ".join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_b2_f472_repeat_tagged_closed():
+    """F472 pinned CLOSED (wave-354 merge, lane 4): tagged-template
+    repeat now blocks."""
+    hit = _blocked("'" + _A + "'.repeat`" + "2`")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F473/F474 open pins

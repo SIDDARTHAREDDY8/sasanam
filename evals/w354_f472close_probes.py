@@ -318,17 +318,19 @@ def p3_pin_nan_gated():
 def p3_pin_no_new_regexes():
     # Functional pin: the repeat tag-call site needed no anchor change
     # -- it lives inside _js_parse_postfix. The anchor pattern is pinned
-    # here as the exact pattern string (F468's Reflect-construct
-    # alternative is the only legitimate addition since F463).
+    # here as the exact pattern string. Legitimate additions since F463:
+    # wave-354 lane 1 (F469) widened Reflect to (construct|apply); wave-354
+    # lane 3 (F471) added the Object.assign alternative (F468 precedent,
+    # character class only). The F472 closure itself added no regex.
     assert dlp._JS_EXPR_START.pattern == (
         r"['\"`\[]|String\.fromCharCode|Array(\(|"
-        r"[ \t\n\r]*\.[ \t\n\r]*of)|Reflect[ \t\n\r]*"
-        r"\.[ \t\n\r]*construct|\(")
+        r"[ \t\n\r]*\.[ \t\n\r]*of)|"
+        r"Reflect[ \t\n\r]*\.[ \t\n\r]*(construct|apply)|Object[ \t\n\r]*\.[ \t\n\r]*assign|\(")
     for s in ["'", '"', "`", "[", "String.fromCharCode",
-              "Array(", "Array.of", "Reflect.construct", "("]:
+              "Array(", "Array.of", "Reflect.construct", "Reflect.apply",
+              "Object.assign", "("]:
         assert dlp._JS_EXPR_START.search(s) is not None, s
     return True
-
 
 def p3_pin_f441_ordering_untouched():
     # _try_bslash_unescape_all still precedes the _ESC_RUN layers.

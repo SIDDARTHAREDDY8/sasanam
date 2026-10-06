@@ -267,8 +267,8 @@ def p3_pin_no_new_regexes():
     # the F463 closure itself added no regex.
     assert dlp._JS_EXPR_START.pattern == (
         r"['\"`\[]|String\.fromCharCode|Array(\(|"
-        r"[ \t\n\r]*\.[ \t\n\r]*of)|Reflect[ \t\n\r]*"
-        r"\.[ \t\n\r]*(construct|apply)|Object[ \t\n\r]*\.[ \t\n\r]*assign|\(\"")
+        r"[ \t\n\r]*\.[ \t\n\r]*of)|"
+        r"Reflect[ \t\n\r]*\.[ \t\n\r]*(construct|apply)|Object[ \t\n\r]*\.[ \t\n\r]*assign|\(")
     for s in ["'", '"', "`", "[", "String.fromCharCode",
               "Array(", "Array.of", "Reflect.construct", "Reflect.apply",
               "Object.assign", "("]:

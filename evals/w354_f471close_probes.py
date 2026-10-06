@@ -408,16 +408,26 @@ def _redfirst_breaks(path):
     return r.returncode == 1 and "BREAK" in r.stdout
 
 
+def _redfirst_held(path):
+    r = subprocess.run(
+        [sys.executable, os.path.join(REPO_ROOT, "evals", path)],
+        capture_output=True, text=True, cwd=REPO_ROOT,
+        env={**os.environ, "GOV_DEPLOYMENT_MODE": "staging"})
+    return r.returncode == 0 and "HELD" in r.stdout and "0 BREAK" in r.stdout
+
+
 def p6_noreg_f469_reflect_apply_open():
     return _redfirst_breaks("w353_f469_redfirst.py")
 
 
-def p6_noreg_f470_filter_pred_open():
-    return _redfirst_breaks("w353_f470_redfirst.py")
+def p6_noreg_f470_filter_pred_closed():
+    # Wave-354 merge: F470 CLOSED by wave-354 lane 2 -- the red-first now HELDs.
+    return _redfirst_held("w353_f470_redfirst.py")
 
 
-def p6_noreg_f472_repeat_tag_open():
-    return _redfirst_breaks("w353_f472_redfirst.py")
+def p6_noreg_f472_repeat_tag_closed():
+    # Wave-354 merge: F472 CLOSED by wave-354 lane 4 -- the red-first now HELDs.
+    return _redfirst_held("w353_f472_redfirst.py")
 
 
 # ---------------------------------------------------------------- P7: pin + footer
@@ -476,8 +486,8 @@ _PROBES = [
     ("p6-noreg-f462-spread-concat", p6_noreg_f462_spread_concat),
     ("p6-noreg-f463-tagged-join", p6_noreg_f463_tagged_join),
     ("p6-noreg-f469-reflect-apply-open", p6_noreg_f469_reflect_apply_open),
-    ("p6-noreg-f470-filter-pred-open", p6_noreg_f470_filter_pred_open),
-    ("p6-noreg-f472-repeat-tag-open", p6_noreg_f472_repeat_tag_open),
+    ("p6-noreg-f470-filter-pred-closed", p6_noreg_f470_filter_pred_closed),
+    ("p6-noreg-f472-repeat-tag-closed", p6_noreg_f472_repeat_tag_closed),
     ("p7-pin-and-footer", p7_pin_and_footer),
 ]
 
