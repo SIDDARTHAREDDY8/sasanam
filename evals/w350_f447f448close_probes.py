@@ -37,12 +37,16 @@ parameter, no other statements) + '}'. Red-first verified
 
 Honest fail-closed residuals (documented, not findings): F447 loose
 x!='', !== vs non-empty literals, x.length!=0 / x.length>=1,
-block-body arrows, function(x){return x!=='';}; F448 block bodies
+block-body arrows; F448 block bodies
 with extra statements, parenthesized return values, double
 semicolons. All probed against node v24.20.0: they fail closed with
 zero overblocking. Also newly handled as a documented extension:
 bare-param constant-true x=>true (semantically identical to
 (s)=>true).
+(Wave-354: function(x){return x!=='';} / return x.length>0; /
+return !!x; are no longer residuals -- the F470 function-form
+unification decodes them node-exactly; pinned by
+p4_function_form_truthiness_now_handled.)
 
 $0 SPEND BY CONSTRUCTION: canned payloads only, no model calls. Do NOT
 add ModelDriver/SpendLedger usage here.
@@ -91,7 +95,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2135  # Wave-350: F447+F448 closed, no new decision codes; pin unchanged 2135
-FOOTER_OPEN = "F469, F470, F471, F472"  # Wave-352 merge (4/5): F454-F460 CLOSED; open none (next F461)  # Wave-352 merge (3/5): F454-F457 CLOSED; F458-F460 OPEN (next F461)  # Wave-352 merge (2/5): F456+F457 CLOSED; F458-F460 still OPEN (next F461)  # Wave-351 lane 3: F453 CLOSED (ws-b64 outer composes via fixpoint seed)  # Wave-350: F447+F448 CLOSED locally (merge finalizes tree-wide); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461); wave-352 lane 1: F454+F455 CLOSED locally  # Wave-352 lane 4: F458-F460 CLOSED (merge finalizes tree-wide); Wave-351 lane 3: F453 CLOSED (ws-b64 outer composes via fixpoint seed)  # Wave-350: F447+F448 CLOSED locally (merge finalizes tree-wide); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 lane 2: F463 CLOSED, F469 filed OPEN (next F470)  # Wave-353 lane 2 renumber: F469->F472 (attack lane committed F469-F471 first, e79af076); footer next F473  # Wave-353 lane 4: F467+F468 CLOSED locally (merge finalizes tree-wide)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)
+FOOTER_OPEN = "F469, F471, F472"  # Wave-352 merge (4/5): F454-F460 CLOSED; open none (next F461)  # Wave-352 merge (3/5): F454-F457 CLOSED; F458-F460 OPEN (next F461)  # Wave-352 merge (2/5): F456+F457 CLOSED; F458-F460 still OPEN (next F461)  # Wave-351 lane 3: F453 CLOSED (ws-b64 outer composes via fixpoint seed)  # Wave-350: F447+F448 CLOSED locally (merge finalizes tree-wide); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461); wave-352 lane 1: F454+F455 CLOSED locally  # Wave-352 lane 4: F458-F460 CLOSED (merge finalizes tree-wide); Wave-351 lane 3: F453 CLOSED (ws-b64 outer composes via fixpoint seed)  # Wave-350: F447+F448 CLOSED locally (merge finalizes tree-wide); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 lane 2: F463 CLOSED, F469 filed OPEN (next F470)  # Wave-353 lane 2 renumber: F469->F472 (attack lane committed F469-F471 first, e79af076); footer next F473  # Wave-353 lane 4: F467+F468 CLOSED locally (merge finalizes tree-wide)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354: F470 CLOSED
 FOOTER_NEXT = "F473"  # Wave-350: next free finding unchanged  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 lane 2: F463 CLOSED, F469 filed OPEN (next F470)  # Wave-353 lane 2 renumber: F469->F472 (attack lane committed F469-F471 first, e79af076); footer next F473  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)
 
 from gov import dlp  # noqa: E402
@@ -220,18 +224,33 @@ def p3_no_new_regexes():
 
 def p4_failclosed_residuals_quiet():
     # Documented conservative residuals: fail closed, no variant.
+    # (Wave-354: function(x){return x!=='';} / return x.length>0; /
+    # return !!x; moved out -- the F470 function-form unification now
+    # decodes them node-exactly; see
+    # p4_function_form_truthiness_now_handled.)
     residuals = [
         _ARR + ".filter(x=>x!='').join('')",          # loose !=
         _ARR + ".filter(x=>x!=='zz').join('')",       # neq vs non-empty
         _ARR + ".filter(x=>x.length!=0).join('')",
         _ARR + ".filter(x=>x.length>=1).join('')",
         _ARR + ".filter(x=>{return !!x;}).join('')",  # block-body arrow
-        _ARR + ".filter(function(x){return x!=='';}).join('')",
         _ARR2 + ".map(x=>{var y=1; return x;}).join('')",
         _ARR2 + ".map(x=>{return (x);}).join('')",
         _ARR2 + ".map(x=>{return x;;}).join('')",
     ]
     return all(find_credential(p) is None for p in residuals)
+
+
+def p4_function_form_truthiness_now_handled():
+    # Wave-354 (F470): the function-form filter body shares the arrow
+    # grammar, so function(x){return x!=='';} / return x.length>0; /
+    # return !!x; now decode node-exactly and block coded.
+    return (find_credential(_ARR + ".filter(function(x){return x!=='';})"
+                           ".join('')") == "dlp-slack-token"
+            and find_credential(_ARR + ".filter(function(x){return x.length>0;})"
+                               ".join('')") == "dlp-slack-token"
+            and find_credential(_ARR + ".filter(function(x){return !!x;})"
+                               ".join('')") == "dlp-slack-token")
 
 
 def p4_single_negation_not_bypass():
@@ -391,6 +410,8 @@ _PROBES = [
     ("p3-f441-ordering-intact", p3_f441_ordering_intact),
     ("p3-no-new-regexes", p3_no_new_regexes),
     ("p4-failclosed-residuals-quiet", p4_failclosed_residuals_quiet),
+    ("p4-function-form-truthiness-now-handled",
+     p4_function_form_truthiness_now_handled),
     ("p4-single-negation-not-bypass", p4_single_negation_not_bypass),
     ("p4-junk-never-manufactures-credential",
      p4_junk_never_manufactures_credential),
