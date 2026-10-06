@@ -2472,12 +2472,27 @@ class _JSArr:
     F434: array values only survive when immediately consumed by .join();
     a bare (unjoined) array is not obfuscation-shaped and decodes to
     nothing -- _try_js_expr_decode returns None for _JSArr values.
+    Elements parsed from JS number literals are _JSNumStr (F475), so
+    mixed-type arrays are detectable at predicate-apply time.
     """
 
     __slots__ = ("elements",)
 
     def __init__(self, elements):
         self.elements = elements
+
+
+class _JSNumStr(str):
+    """Internal: a str parsed from a JS number literal (F475).
+
+    The decoder's expression grammar is string-typed, so a numeric
+    primary is coerced with str(num) at parse -- but the element was
+    NOT a string in the engine, and member access on it behaves
+    differently there (1..length is undefined; (1).match throws).
+    _JSNumStr marks that provenance: it behaves exactly like str
+    everywhere (join, len, ord, comparisons) except where a consumer
+    explicitly checks for it to fail closed on mixed-type arrays.
+    """
 
 
 def _js_parse_spread_copy(text, i, depth, state):
@@ -3171,7 +3186,9 @@ def _js_parse_return_body_single(text, i, p):
 
 
 def _js_parse_map_callback(text, i):
-    """Parse an identity .map callback at text[i]; returns next_index.
+    """Parse an identity .map callback at text[i].
+
+    Returns (next_index, stringifies).
 
     Recognized (F437/F448/F460 family): (s)=>s | s=>s | function(s){return s;}
     | s=>{return s;} (F448 -- block-body identity: a single return of
@@ -3180,6 +3197,12 @@ def _js_parse_map_callback(text, i):
     The callback must return its own single parameter unchanged; the
     elements pass through untouched. Anything else fails closed
     (notably .map(Number): NaN-producing, never identity).
+
+    stringifies is True only for the bare-String callback: String(x)
+    genuinely stringifies in the engine (String(1) === '1', a real
+    string primitive), so the F475 numeric-provenance mark is cleared
+    on those elements. Identity callbacks keep provenance (node:
+    ['a',1].map(s=>s) keeps 1 a number).
     """
     n = len(text)
     j = _js_skip_ws(text, i)
@@ -3195,7 +3218,7 @@ def _js_parse_map_callback(text, i):
             if m < n and text[m] in "(.":
                 raise _JSExprFail("bad map callback")
             if not text.startswith("=>", m):
-                return k
+                return k, True
     if text.startswith("function", i):
         i += len("function")
         if i < n and text[i] in _JS_IDENT_CONT:
@@ -3206,7 +3229,7 @@ def _js_parse_map_callback(text, i):
         i = _js_expect(text, i, "{")
         q, _, i = _js_parse_return_body_single(text, i, p)
         i = _js_expect(text, i, "}")
-        return i
+        return i, False
     j = _js_skip_ws(text, i)
     if j < n and text[j] == "(":
         p, i = _js_parse_ident(text, _js_skip_ws(text, j + 1))
@@ -3225,11 +3248,11 @@ def _js_parse_map_callback(text, i):
         i = _js_expect(text, i, "{")
         _, _, i = _js_parse_return_body_single(text, i, p)
         i = _js_expect(text, i, "}")
-        return i
+        return i, False
     q, i = _js_parse_ident(text, i)
     if q != p:
         raise _JSExprFail("map callback not identity")
-    return i
+    return i, False
 
 
 def _js_scan_neq_op(text, i):
@@ -3338,18 +3361,26 @@ def _js_parse_truthy_body(text, i, p):
       ("truthy",)          -- drop exactly the falsy elements
                               (equivalent to .filter(Boolean) over
                               parsed strings)
+      ("plen",)            -- x.length>0 (F447 form, F475): drop exactly
+                              the empty strings -- but ONLY over
+                              all-string arrays; a _JSNumStr element
+                              makes the predicate undecidable (node:
+                              (1).length is undefined, undefined>0 is
+                              false), so the apply site fails closed
       ("all",)             -- constant-true: keep every element (F467)
       ("match", lo, hi)    -- keep elements containing a char in the
-                              class range (F470)
+                              class range (F470); F475-fail-closed on
+                              mixed-type arrays (engine throws)
       ("ccmp", idx, op, k) -- keep elements whose UTF-16 code unit at
                               idx satisfies OP k; OP in <,<=,>,>=;
                               empty/short strings are NaN (dropped)
-                              (F470)
+                              (F470); F475-fail-closed on mixed-type
+                              arrays (engine throws)
 
     Recognized truthiness forms (F447):
       p!==''    -- strict neq against the empty-string literal
       !!p       -- double negation
-      p.length>0
+      p.length>0  -- property-length form (spec ("plen",); F475)
       p         -- bare identity (truthiness over parsed strings)
     Recognized constant-true forms (F467):
       p!==null | p!==undefined | p!=null
@@ -3363,9 +3394,14 @@ def _js_parse_truthy_body(text, i, p):
                                     non-negative int; K a literal int
                                     (optional leading '-')
 
-    Parsed array elements are always string literals, whose only falsy
-    value is "", so every truthiness form above drops exactly the
-    falsy elements. Anything else fails closed: !== against a
+    Parsed array elements are string literals or _JSNumStr (numbers
+    coerced at parse, F475); the only falsy string value is "", so
+    every truthiness form above drops exactly the falsy elements --
+    except the type-dependent forms (x.length>0, x.match(...),
+    x.charCodeAt(...)), which fail closed at the apply site when any
+    element is a _JSNumStr (node: (1).length is undefined so the
+    comparison is false; (1).match/(1).charCodeAt throw). Anything else
+    fails closed: !== against a
     non-empty literal, p!=undefined, p!==0, p!=='a', p==null /
     p===null, length!=0 or length>=1, single negation (!p drops the
     truthy elements, not a bypass), block-body arrows, other member
@@ -3408,7 +3444,9 @@ def _js_parse_truthy_body(text, i, p):
                 raise _JSExprFail("not a truthiness test")
             if j + 1 < n and text[j + 1] in "0123456789":
                 raise _JSExprFail("not a truthiness test")  # >01 is >1
-            return ("truthy",), j + 1
+            # F475: the property-length form gets its own spec so the
+            # apply site can fail closed on mixed-type arrays.
+            return ("plen",), j + 1
         if m not in ("match", "charCodeAt"):
             raise _JSExprFail("not a truthiness test")
         # F470: method-call-result predicates. The F467 shadow guard
@@ -3514,7 +3552,9 @@ def _js_parse_filter_callback(text, i):
     Returns (spec, next_index) where spec is ("all",) for constant-true
     (keep every element), ("truthy",) for the bare Boolean predicate
     and the F447 truthiness forms (drop exactly the falsy elements --
-    for parsed string elements, the empty string),
+    for parsed string elements, the empty string), ("plen",) for the
+    F447 x.length>0 form (same as truthy over all-string arrays, but
+    F475-fail-closed on mixed-type arrays),
     ("match", lo, hi) for F470 (keep elements containing a char in the
     class range), ("ccmp", idx, op, k) for F470 (keep elements whose
     UTF-16 code unit at idx satisfies OP k), or
@@ -3864,22 +3904,35 @@ def _js_apply_method(text, j, name, value, depth, state):
         # identity transform fails closed.
         if not isinstance(value, _JSArr):
             raise _JSExprFail("map on non-array")
-        i = _js_parse_map_callback(text, _js_skip_ws(text, i))
+        i, stringifies = _js_parse_map_callback(text, _js_skip_ws(text, i))
         i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != ")":
             raise _JSExprFail("bad map")
         state["ops"] += 1
-        return _JSArr(list(value.elements)), i + 1
+        elements = list(value.elements)
+        if stringifies:
+            # F460/F475: bare String genuinely stringifies in the
+            # engine (String(1) === '1'), so numeric provenance is
+            # cleared -- downstream type-dependent predicates see real
+            # strings, exactly as the engine does.
+            elements = [str(e) if isinstance(e, _JSNumStr) else e
+                        for e in elements]
+        return _JSArr(elements), i + 1
     if name == "filter":
         # F437 family: ['a','b'].filter(()=>true) -- constant-true keeps
         # every element; (F443) .filter(Boolean) drops every falsy
         # element -- for parsed string elements, exactly the empty
-        # string; (F459) positional (x,i)=>i<2 keeps elements whose
-        # index satisfies the comparison; (F470) method-call-result
-        # predicates: x.match(/[a-z]/) keeps elements containing the
-        # class, x.charCodeAt(IDX) OP K keeps elements whose UTF-16
-        # code unit at IDX satisfies the comparison (empty/short
-        # strings are NaN, dropped). Any other predicate fails closed.
+        # string; (F447) s=>s.length>0 drops the empty strings (spec
+        # ("plen",): F475 fails closed when any element is a _JSNumStr,
+        # since (1).length is undefined in the engine); (F459)
+        # positional (x,i)=>i<2 keeps elements whose index satisfies
+        # the comparison; (F470) method-call-result predicates:
+        # x.match(/[a-z]/) keeps elements containing the class,
+        # x.charCodeAt(IDX) OP K keeps elements whose UTF-16 code unit
+        # at IDX satisfies the comparison (empty/short strings are
+        # NaN, dropped) -- both F475-fail-closed on _JSNumStr elements
+        # (the engine throws on (1).match / (1).charCodeAt). Any other
+        # predicate fails closed.
         if not isinstance(value, _JSArr):
             raise _JSExprFail("filter on non-array")
         spec, i = _js_parse_filter_callback(text, _js_skip_ws(text, i))
@@ -3889,15 +3942,32 @@ def _js_apply_method(text, j, name, value, depth, state):
         elements = list(value.elements)
         if spec[0] == "truthy":
             elements = [e for e in elements if e != ""]
+        elif spec[0] == "plen":
+            # F475: x.length>0 is only decidable over all-string
+            # arrays. A numeric element has no .length in the engine
+            # ((1).length is undefined, undefined>0 is false), and the
+            # string-coerced model cannot reproduce that -- fail
+            # closed, never decode.
+            if any(isinstance(e, _JSNumStr) for e in elements):
+                raise _JSExprFail("mixed-type array under length filter")
+            elements = [e for e in elements if e != ""]
         elif spec[0] == "index":
             _, op, k = spec
             elements = [e for idx, e in enumerate(elements)
                         if _js_index_cmp(idx, op, k)]
         elif spec[0] == "match":
+            # F475: (1).match throws in the engine; the string model
+            # would silently drop the element instead. Fail closed.
+            if any(isinstance(e, _JSNumStr) for e in elements):
+                raise _JSExprFail("mixed-type array under match filter")
             _, lo, hi = spec
             elements = [e for e in elements
                         if any(lo <= ord(c) <= hi for c in e)]
         elif spec[0] == "ccmp":
+            # F475: (1).charCodeAt throws in the engine; the string
+            # model would evaluate it as if on "1". Fail closed.
+            if any(isinstance(e, _JSNumStr) for e in elements):
+                raise _JSExprFail("mixed-type array under charCodeAt filter")
             _, idx, op, k = spec
             kept = []
             for e in elements:
@@ -4392,7 +4462,9 @@ def _js_parse_primary(text, i, depth, state):
         return _js_parse_postfix(text, i, val, depth, state)
     if c in _ASCII_DIGITS:
         num, i = _js_parse_number(text, i)
-        return str(num), i
+        # F475: mark numeric provenance -- the engine sees a number,
+        # not a string, and member access on it diverges.
+        return _JSNumStr(str(num)), i
     raise _JSExprFail("not a primary")
 
 

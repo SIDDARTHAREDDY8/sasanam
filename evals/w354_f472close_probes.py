@@ -92,7 +92,7 @@ from gov.decision_codes import TAXONOMY  # noqa: E402
 TAXONOMY_PIN = 2135  # Wave-354: F472 closed; no new decision codes
 FOOTER_OPEN = "none"  # Wave-355 lanes 1+2: F473, F474 CLOSED; open none / next F475 (merge intermediate)
 
-FOOTER_NEXT = "F475"  # Wave-354 lane 4: F472 closed; next free F473  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)
+FOOTER_NEXT = "F476"  # Wave-354 lane 4: F472 closed; next free F473  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 lane 3: F475 filed + CLOSED
 
 # Constructed via concatenation: the write path redacts credential literals.
 _CRED = "xox" + "b-abc123" + "def" + "456"
