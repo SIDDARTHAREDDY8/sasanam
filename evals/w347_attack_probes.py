@@ -224,16 +224,20 @@ def test_z0_redfirst_scripts_print_held():
 def test_z1_findings_filed_closed_with_final_footer():
     """F443 is filed (wave-347 lane 7) and CLOSED (wave-348 lane 1), F444 is
     filed (wave-348 lane 2) and CLOSED (wave-349 lane 1), F445 is filed
-    (wave-348 lane 2) and CLOSED (wave-349 lane 2), with the final footer
-    (open none, next F446). Pins the filings + closures so none go
+    (wave-348 lane 2) and CLOSED (wave-349 lane 2), F453 is filed
+    (wave-350 lane 3) and CLOSED (wave-351 lane 3), with the final footer
+    (open F451, F452, next F454). Pins the filings + closures so none go
     undocumented. (Wave-306 maintenance: pinned OPEN in wave-347; footer
-    repointed at the wave-348 merge; F444+F445 flipped to CLOSED wave-349.)"""
+    repointed at the wave-348 merge; F444+F445 flipped to CLOSED wave-349;
+    F453 flipped to CLOSED wave-351.)"""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F443 filed 2026-10-05, wave-347 lane 7" in text
           and "CLOSED 2026-10-06 wave-348 lane 1" in text
+          and "(F453 filed 2026-10-06, wave-350 lane 3" in text
+          and "CLOSED 2026-10-06 wave-351 lane 3" in text
           and "Next free finding: **F454**" in text
-          and "Open findings: F451, F452, F453." in text)
-    return ("HELD" if ok else "BREAK", "F443 filed+closed=%s" % ok)
+          and "Open findings: F451, F452." in text)
+    return ("HELD" if ok else "BREAK", "F443/F453 filed+closed=%s" % ok)
 
 
 @_t

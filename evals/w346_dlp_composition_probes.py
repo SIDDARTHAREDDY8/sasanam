@@ -79,7 +79,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2135  # Wave-346: pin 2134 (no new codes in lane 6); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
-FOOTER_OPEN = "F451, F452, F453"  # wave-350 lane 3: F449+F450 CLOSED locally (merge finalizes tree-wide); F446-F448 OPEN (next F451); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454)
+FOOTER_OPEN = "F451, F452"  # Wave-351 lane 3: F453 CLOSED (ws-b64 outer composes via fixpoint seed)  # wave-350 lane 3: F449+F450 CLOSED locally (merge finalizes tree-wide); F446-F448 OPEN (next F451); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454)
 
 FOOTER_NEXT = "F454"  #wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451)
 
