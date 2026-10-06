@@ -58,7 +58,7 @@ Probes:
   P3  decoder pins: node byte-fidelity differential (subprocess); no
       new regexes (re.compile count + anchor pattern string); F430
       bounds honored on dispatch args; F441 ordering untouched.
-  P4  pin + footer (F481 CLOSED; open F480 / next F482).
+  P4  pin + footer (F481 CLOSED; open F482-F488 / next F489).  # Wave-358 merge
 """
 
 import os
@@ -79,8 +79,8 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-358 lane 2: F481 closed; no new decision codes
-FOOTER_OPEN = "F480"  # Wave-358 lane 2: F481 CLOSED locally (merge finalizes tree-wide)
-FOOTER_NEXT = "F482"
+FOOTER_OPEN = "F482, F483, F484, F485, F486, F487, F488"  # Wave-358 lane 2: F481 CLOSED locally (merge finalizes tree-wide)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN
+FOOTER_NEXT = "F489"  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN
 
 # Constructed via concatenation: the write path redacts credential literals.
 _A = "xox" + "b-0123456789"
@@ -206,9 +206,9 @@ def p2_still_closed():
 
 
 def p2_f480_intact():
-    # F480 must stay BREAK-open: run its red-first and require the
-    # filed 8 BREAKs to still miss (proves the F481 closure did not
-    # accidentally close F480's constructor-dispatch shapes).
+    # F480 CLOSED by wave-358 lane 1 (merge): run its red-first and require
+    # the filed 8 shapes to now block coded (proves the F481 closure did not
+    # regress F480's constructor-dispatch closure).
     venv_python = os.path.expanduser("~/workspace/.gov-venv/bin/python")
     tmp = "/var/tmp/g358-p2-f480-%d" % os.getpid()
     os.makedirs(tmp, exist_ok=True)
@@ -225,9 +225,9 @@ def p2_f480_intact():
     for line in out.splitlines():
         if line.startswith("tally:"):
             m = line
-    if m != "tally: 8 BREAK / 4 HELD":
+    if m != "tally: 0 BREAK / 12 HELD":
         return ("BREAK", "f480 red-first changed: %r" % m)
-    return ("HELD", "F480 still 8 BREAK / 4 HELD")
+    return ("HELD", "F480 closed: 0 BREAK / 12 HELD")
 
 
 def p2_neighbors_intact():
@@ -293,11 +293,13 @@ def p3_node_differential():
 def p3_no_new_regexes():
     import re
     assert dlp._JS_EXPR_START.pattern == (
-        r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*\(|Array(\(|"
-        r"[ \t\n\r]*(\.[ \t\n\r]*of|\[[ \t\n\r]*['\"]))|"
-        r"Array[ \t\n\r]*\.[ \t\n\r]*prototype|"
-        r"String[ \t\n\r]*\.[ \t\n\r]*prototype|"
-        r"Reflect[ \t\n\r]*\.[ \t\n\r]*(construct|apply)|Object[ \t\n\r]*\.[ \t\n\r]*assign|\(")
+        r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|\[[ \t\n\r]*['\"])"
+        r"|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"])"
+        r")|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|"
+        r"Reflect([ \t\n\r]*\.[ \t\n\r]*(construct|apply)|[ \t\n\r]*\[[ \t\n\r]*['\"])"
+        r"|Object([ \t\n\r]*\.[ \t\n\r]*assign|[ \t\n\r]*\[[ \t\n\r]*['\"])"
+        r"|\("
+    )
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     assert len(re.findall(r"re\.compile\(", src)) == 28
     return ("HELD", "no new regexes; anchor pinned")

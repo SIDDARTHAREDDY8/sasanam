@@ -799,7 +799,7 @@ def _p4b():
         text = fh.read()
     lines = [ln for ln in text.split("\n") if "Next free finding:" in ln]
     line = lines[-1] if lines else ""
-    ok = ("**F430**" in line and "Open findings: F480, F481." in line)
+    ok = ("**F430**" in line and "Open findings: F482, F483, F484, F485, F486, F487, F488." in line)
     if ok:
         return _held("P4-footer-state", "open F436 / next F437")
     return _break("P4-footer-state", "footer line: %r" % (line[:120],))

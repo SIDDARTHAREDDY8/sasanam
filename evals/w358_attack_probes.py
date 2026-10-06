@@ -109,12 +109,13 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F480-F488 open, next F489 (wave-358 lane 3:
+    """Control: footer shows F482-F488 open, next F489 (wave-358 merge:
+    F480, F481 CLOSED; wave-358 lane 3:
     F482-F488 filed)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F489**" in text
-          and "**Open findings: F480, F481, F482, F483, F484, F485, F486, F487, F488.**" in text)
+          and "**Open findings: F482, F483, F484, F485, F486, F487, F488.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -164,29 +165,29 @@ def test_b1_f475_numstr_closed():
     return ("HELD" if not hit else "BREAK", "hit=%s" % hit)
 
 
-# ------------------------------------------------- F480/F481 open pins
+# ------------------------------------------------- F480/F481 closed pins
 
 @_t
-def test_b2_f480_apply_ctor_open():
-    """F480 pinned OPEN (wave-357 lane 3): Array.apply ctor dispatch."""
+def test_b2_f480_apply_ctor_closed():
+    """F480 CLOSED (wave-358 lane 1, merge): Array.apply ctor dispatch blocks coded."""
     hit = _blocked("Array.apply(Array, ['" + _A + "','" + _B + "']).join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
-def test_b2_f480_fcc_bracket_open():
-    """F480 pinned OPEN: String['fromCharCode'] bracket access."""
+def test_b2_f480_fcc_bracket_closed():
+    """F480 CLOSED (wave-358 lane 1, merge): String['fromCharCode'] bracket access blocks coded."""
     codes = [120, 111, 120, 98, 45, 48, 49, 50, 51, 52, 53, 54, 55, 56,
              57, 97, 98, 99, 100, 101, 102]
     hit = _blocked("String['fromCharCode'](%s)" % ",".join(str(c) for c in codes))
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
-def test_b2_f481_call_markers_open():
-    """F481 pinned OPEN (wave-357 merge): concat.call drops F479 markers."""
+def test_b2_f481_call_markers_closed():
+    """F481 CLOSED (wave-358 lane 2, merge): concat.call keeps F479 markers, blocks coded."""
     hit = _blocked("[].concat.call([],['" + _A + "',null,'" + _B + "']).join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 # ------------------------------------------------- F482-F488 open pins

@@ -63,7 +63,7 @@ Probes:
   P3  decoder pins: node byte-fidelity differential (subprocess); no
       new regexes (re.compile count + anchor pattern string); F430
       bounds honored.
-  P4  pin + footer (F478, F479 CLOSED; open F480 / next F481).
+  P4  pin + footer (F478, F479 CLOSED; open F482-F488 / next F489).  # Wave-358 merge: F480, F481 CLOSED
 """
 
 import os
@@ -85,4 +85,4 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-357 lane 1: F478 closed; no new decision codes
-FOOTER_OPEN = "F480"  # Wave-357 lane 1: F478 CLOSED locally (merge finalizes tree-wide)  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 lane 2: F481 CLOSED locally
+FOOTER_OPEN = "F482, F483, F484, F485, F486, F487, F488"  # Wave-357 lane 1: F478 CLOSED locally (merge finalizes tree-wide)  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 lane 2: F481 CLOSED locally  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN

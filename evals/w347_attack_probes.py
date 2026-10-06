@@ -235,8 +235,8 @@ def test_z1_findings_filed_closed_with_final_footer():
           and "CLOSED 2026-10-06 wave-348 lane 1" in text
           and "(F453 filed 2026-10-06, wave-350 lane 3" in text
           and "CLOSED 2026-10-06 wave-351 lane 3" in text
-          and "Next free finding: **F482**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
-and "Open findings: F480, F481." in text)
+          and "Next free finding: **F489**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
+and "Open findings: F482, F483, F484, F485, F486, F487, F488." in text)
     return ("HELD" if ok else "BREAK", "F443/F453 filed+closed=%s" % ok)
 
 

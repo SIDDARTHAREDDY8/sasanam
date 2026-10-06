@@ -74,7 +74,7 @@ Probes:
   P2  fail-closed boundaries: non-constructor thisArg, extra args,
       marker/numeric/template args, bad members/keys, unmodeled
       members, Reflect['construct'], non-Array targets, junk quiet,
-      F469/F458/F471/F476/F478 neighbors intact, F481 still open.
+      F469/F458/F471/F476/F478 neighbors intact, F481 closed (coded refusal).
   P3  decoder pins: node byte-fidelity differential (subprocess); no
       new regexes (re.compile count + anchor pattern string); F430
       bounds honored; F441 ordering untouched.
@@ -100,8 +100,8 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-358 lane 1: F480 closed; no new decision codes
-FOOTER_OPEN = "F481"  # Wave-358 lane 1: F480 CLOSED locally (merge finalizes tree-wide)
-FOOTER_NEXT = "F482"
+FOOTER_OPEN = "F482, F483, F484, F485, F486, F487, F488"  # Wave-358 lane 1: F480 CLOSED locally (merge finalizes tree-wide)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN
+FOOTER_NEXT = "F489"  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN
 
 # Constructed via concatenation: the write path redacts credential literals.
 _A = "xox" + "b-0123456789"
@@ -280,7 +280,9 @@ def p2_junk_quiet():
 
 
 def p2_neighbors_intact():
-    # Adjacent closures still hold; F481 (filed, open) still breaks.
+    # Adjacent closures still hold; F481 CLOSED by wave-358 lane 2 (merge):
+    # the dispatch desugar is faithful for marker elements, so the F481
+    # shape now decodes node-exactly and blocks coded.
     hold = [
         "Reflect.apply(Array.prototype.concat,[],[['%s'],['%s']]).join('')" % (_A, _B),
         "String.fromCharCode(%s)" % ",".join(str(c) for c in
@@ -300,9 +302,9 @@ def p2_neighbors_intact():
     _F1 = "xoxb-" + "0123"
     _F2 = "456789" + "abcdef"
     f481 = "[].concat.call([],['%s',null,'%s']).join('')" % (_F1, _F2)
-    if _blocked(f481):
-        return ("BREAK", "F481 accidentally closed")
-    return ("HELD", "neighbors intact; F481 still open")
+    if not _blocked(f481):
+        return ("BREAK", "F481 closure regressed: marker shape misses")
+    return ("HELD", "neighbors intact; F481 closed (coded refusal)")
 
 
 # ------------------------------------------------------- P3: decoder pins

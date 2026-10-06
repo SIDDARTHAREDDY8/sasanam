@@ -106,13 +106,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F481 open, next F482 (wave-358 lane 1:
-    F480 constructor-dispatch/bracket-access CLOSED locally; merge
-    finalizes tree-wide)."""
+    """Control: footer shows F482-F488 open, next F489 (wave-358 merge:
+    F480, F481 CLOSED; F482-F488 filed OPEN)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F482**" in text
-          and "**Open findings: F481.**" in text)
+    ok = ("Next free finding: **F489**" in text
+          and "**Open findings: F482, F483, F484, F485, F486, F487, F488.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

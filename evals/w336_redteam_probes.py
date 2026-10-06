@@ -868,11 +868,11 @@ def P6b():
               "rb") as f:
         lines = f.read().decode("utf-8").splitlines()
     last = lines[-1] if lines else ""
-    if "Open findings: F480, F481." not in last:
+    if "Open findings: F482, F483, F484, F485, F486, F487, F488." not in last:
         _break(pid, "last line lacks 'Open findings: F443.': %r"
                % (last[:160],))
         return
-    if "Next free finding: **F482**" not in last:
+    if "Next free finding: **F489**" not in last:
         _break(pid, "last line lacks next-F436: %r" % (last[:160],))
         return
     for fnum in ("F424", "F425", "F426"):

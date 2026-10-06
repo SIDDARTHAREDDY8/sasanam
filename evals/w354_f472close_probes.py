@@ -90,9 +90,9 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-354: F472 closed; no new decision codes
-FOOTER_OPEN = "F480, F481"  # Wave-355 lanes 1+2: F473, F474 CLOSED; open none / next F475 (merge intermediate)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 lane 1: F476 CLOSED  # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480)  # Wave-357 merge: F478, F479 CLOSED (next F481)
+FOOTER_OPEN = "F482, F483, F484, F485, F486, F487, F488"  # Wave-355 lanes 1+2: F473, F474 CLOSED; open none / next F475 (merge intermediate)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 lane 1: F476 CLOSED  # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480)  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN
 
-FOOTER_NEXT = "F482"  # Wave-354 lane 4: F472 closed; next free F473  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 lane 3: F475 filed + CLOSED  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: next F480  # Wave-357 merge: F478, F479 CLOSED (next F481)
+FOOTER_NEXT = "F489"  # Wave-354 lane 4: F472 closed; next free F473  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 lane 3: F475 filed + CLOSED  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: next F480  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN
 
 # Constructed via concatenation: the write path redacts credential literals.
 _CRED = "xox" + "b-abc123" + "def" + "456"
