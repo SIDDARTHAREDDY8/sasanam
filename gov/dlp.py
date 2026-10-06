@@ -1293,6 +1293,10 @@ _JS_EXPR_MAX_REPEAT = 64       # bound on .repeat(n)
 _JS_EXPR_MAX_LITERAL = 4096    # bound on one string literal
 _JS_EXPR_MAX_RUN = 100000      # bound on expression run length
 _ASCII_DIGITS = frozenset("0123456789")
+_JS_IDENT_START = frozenset(
+    "_$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+_JS_IDENT_CONT = frozenset(
+    "_$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 
 
 def _js_skip_ws(text, i):
@@ -1470,11 +1474,216 @@ def _js_parse_additive(text, i, depth, state):
         state["ops"] += 1
 
 
-def _js_apply_method(text, j, name, value, depth, state):
-    """Apply .concat(...) / .repeat(...) / .join(...) with text[j] == '('.
+def _js_parse_ident(text, i):
+    """Parse a JS identifier at text[i] (ASCII only); returns (name, next).
 
-    .join requires an array-literal value (F434); .concat/.repeat require
-    a string value. Anything else fails closed -- never evals.
+    Fail closed on anything else -- never evals.
+    """
+    n = len(text)
+    if i >= n or text[i] not in _JS_IDENT_START:
+        raise _JSExprFail("not an identifier")
+    j = i + 1
+    while j < n and text[j] in _JS_IDENT_CONT:
+        j += 1
+    return text[i:j], j
+
+
+def _js_expect(text, i, ch):
+    """Skip whitespace, then require the literal char *ch*; returns next."""
+    i = _js_skip_ws(text, i)
+    if i >= len(text) or text[i] != ch:
+        raise _JSExprFail("expected %r" % (ch,))
+    return i + 1
+
+
+def _js_parse_reduce_params(text, i):
+    """Parse '(p0, p1)' at text[i]; returns (p0, p1, next_index)."""
+    i = _js_expect(text, i, "(")
+    p0, i = _js_parse_ident(text, _js_skip_ws(text, i))
+    i = _js_expect(text, i, ",")
+    p1, i = _js_parse_ident(text, _js_skip_ws(text, i))
+    i = _js_expect(text, i, ")")
+    if p0 == p1:
+        raise _JSExprFail("duplicate reduce params")
+    return p0, p1, i
+
+
+def _js_parse_reduce_body(text, i, p0, p1):
+    """Parse 'idA + idB' at text[i] (ws-tolerant); returns (idA, idB, next).
+
+    idA/idB must each be one of the callback params (any order); the
+    accumulator/currentValue binding is applied at fold time, so
+    (x,y)=>y+x assembles in reverse -- exactly as the JS engine does.
+    """
+    i = _js_skip_ws(text, i)
+    idA, i = _js_parse_ident(text, i)
+    i = _js_expect(text, i, "+")
+    idB, i = _js_parse_ident(text, _js_skip_ws(text, i))
+    if idA not in (p0, p1) or idB not in (p0, p1):
+        raise _JSExprFail("reduce body not param assembly")
+    return idA, idB, i
+
+
+def _js_parse_return_body(text, i, p0, p1):
+    """Parse 'return idA + idB ;' at text[i]; returns (idA, idB, next)."""
+    n = len(text)
+    i = _js_skip_ws(text, i)
+    if not text.startswith("return", i):
+        raise _JSExprFail("expected return")
+    if i + 6 < n and text[i + 6] in _JS_IDENT_CONT:
+        raise _JSExprFail("expected return")
+    idA, idB, i = _js_parse_reduce_body(text, i + 6, p0, p1)
+    i = _js_skip_ws(text, i)
+    if i < n and text[i] == ";":
+        i += 1
+    return idA, idB, i
+
+
+def _js_parse_reduce_callback(text, i):
+    """Parse a .reduce/.reduceRight callback at text[i].
+
+    Recognized (F437) -- all strictly static, never evaluated:
+      (p0,p1)=>pA+pB
+      (p0,p1)=>{return pA+pB;}
+      function(p0,p1){return pA+pB;}
+    Returns (p0, p1, idA, idB, next_index); anything else fails closed.
+    """
+    n = len(text)
+    if text.startswith("function", i):
+        i += len("function")
+        if i < n and text[i] in _JS_IDENT_CONT:
+            raise _JSExprFail("bad function callback")
+        p0, p1, i = _js_parse_reduce_params(text, i)
+        i = _js_expect(text, i, "{")
+        idA, idB, i = _js_parse_return_body(text, i, p0, p1)
+        i = _js_expect(text, i, "}")
+        return p0, p1, idA, idB, i
+    # Arrow form: parenthesized params are required (single bare params
+    # cannot name both accumulator and currentValue).
+    p0, p1, i = _js_parse_reduce_params(text, i)
+    i = _js_skip_ws(text, i)
+    if not text.startswith("=>", i):
+        raise _JSExprFail("bad arrow callback")
+    i += 2
+    j = _js_skip_ws(text, i)
+    if j < n and text[j] == "{":
+        idA, idB, i = _js_parse_return_body(text, j + 1, p0, p1)
+        i = _js_expect(text, i, "}")
+        return p0, p1, idA, idB, i
+    idA, idB, i = _js_parse_reduce_body(text, i, p0, p1)
+    return p0, p1, idA, idB, i
+
+
+def _js_parse_return_body_single(text, i, p):
+    """Parse 'return <p> ;' at text[i]; returns (name, name, next)."""
+    n = len(text)
+    i = _js_skip_ws(text, i)
+    if not text.startswith("return", i):
+        raise _JSExprFail("expected return")
+    if i + 6 < n and text[i + 6] in _JS_IDENT_CONT:
+        raise _JSExprFail("expected return")
+    q, i = _js_parse_ident(text, _js_skip_ws(text, i + 6))
+    if q != p:
+        raise _JSExprFail("not identity return")
+    i = _js_skip_ws(text, i)
+    if i < n and text[i] == ";":
+        i += 1
+    return q, q, i
+
+
+def _js_parse_map_callback(text, i):
+    """Parse an identity .map callback at text[i]; returns next_index.
+
+    Recognized (F437 family): (s)=>s | s=>s | function(s){return s;}
+    The callback must return its own single parameter unchanged; the
+    elements pass through untouched. Anything else fails closed.
+    """
+    n = len(text)
+    if text.startswith("function", i):
+        i += len("function")
+        if i < n and text[i] in _JS_IDENT_CONT:
+            raise _JSExprFail("bad map callback")
+        i = _js_expect(text, i, "(")
+        p, i = _js_parse_ident(text, _js_skip_ws(text, i))
+        i = _js_expect(text, i, ")")
+        i = _js_expect(text, i, "{")
+        q, _, i = _js_parse_return_body_single(text, i, p)
+        i = _js_expect(text, i, "}")
+        return i
+    j = _js_skip_ws(text, i)
+    if j < n and text[j] == "(":
+        p, i = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        i = _js_expect(text, i, ")")
+    else:
+        p, i = _js_parse_ident(text, j)
+    i = _js_skip_ws(text, i)
+    if not text.startswith("=>", i):
+        raise _JSExprFail("bad map callback")
+    q, i = _js_parse_ident(text, _js_skip_ws(text, i + 2))
+    if q != p:
+        raise _JSExprFail("map callback not identity")
+    return i
+
+
+def _js_parse_filter_callback(text, i):
+    """Parse a constant-true .filter callback at text[i]; returns next.
+
+    Recognized (F437 family): ()=>true | (s)=>true |
+    function(){return true;} | function(s){return true;}
+    Elements are kept unchanged. Anything else fails closed.
+    """
+    n = len(text)
+    if text.startswith("function", i):
+        i += len("function")
+        if i < n and text[i] in _JS_IDENT_CONT:
+            raise _JSExprFail("bad filter callback")
+        i = _js_expect(text, i, "(")
+        i = _js_skip_ws(text, i)
+        if i < n and text[i] in _JS_IDENT_START:
+            _, i = _js_parse_ident(text, i)
+        i = _js_expect(text, i, ")")
+        i = _js_expect(text, i, "{")
+        i = _js_skip_ws(text, i)
+        if not text.startswith("return", i):
+            raise _JSExprFail("expected return")
+        if i + 6 < n and text[i + 6] in _JS_IDENT_CONT:
+            raise _JSExprFail("expected return")
+        i = _js_skip_ws(text, i + 6)
+        if not text.startswith("true", i):
+            raise _JSExprFail("filter callback not constant-true")
+        if i + 4 < n and text[i + 4] in _JS_IDENT_CONT:
+            raise _JSExprFail("filter callback not constant-true")
+        i += 4
+        i = _js_skip_ws(text, i)
+        if i < n and text[i] == ";":
+            i += 1
+        i = _js_expect(text, i, "}")
+        return i
+    # Arrow form: zero or one params, body exactly `true`.
+    j = _js_skip_ws(text, i)
+    if j < n and text[j] == "(":
+        k = _js_skip_ws(text, j + 1)
+        if k < n and text[k] in _JS_IDENT_START:
+            _, k = _js_parse_ident(text, k)
+        i = _js_expect(text, k, ")")
+    i = _js_skip_ws(text, i)
+    if not text.startswith("=>", i):
+        raise _JSExprFail("bad filter callback")
+    i = _js_skip_ws(text, i + 2)
+    if not text.startswith("true", i):
+        raise _JSExprFail("filter callback not constant-true")
+    if i + 4 < n and text[i + 4] in _JS_IDENT_CONT:
+        raise _JSExprFail("filter callback not constant-true")
+    return i + 4
+
+
+def _js_apply_method(text, j, name, value, depth, state):
+    """Apply .concat(...) / .repeat(...) / .join(...) / .reduce(...) /
+    .reduceRight(...) / .map(...) / .filter(...) with text[j] == '('.
+
+    .join/.reduce/.reduceRight/.map/.filter require an array-literal
+    value (F434/F437); .concat/.repeat require a string value. Anything
+    else fails closed -- never evals.
     """
     i = j + 1
     if name == "join":
@@ -1498,6 +1707,71 @@ def _js_apply_method(text, j, name, value, depth, state):
             raise _JSExprFail("join too long")
         state["ops"] += 1
         return result, i
+    if name in ("reduce", "reduceRight"):
+        # F437: ['a','b'].reduce((a,b)=>a+b) -- bounded static fold of
+        # string fragments. The callback must be exactly param-assembly
+        # (idA + idB over the two params, any order); the JS
+        # accumulator/currentValue binding is applied per step, so
+        # (x,y)=>y+x assembles in reverse -- exactly as the engine does.
+        if not isinstance(value, _JSArr):
+            raise _JSExprFail("reduce on non-array")
+        i = _js_skip_ws(text, i)
+        p0, p1, idA, idB, i = _js_parse_reduce_callback(text, i)
+        i = _js_skip_ws(text, i)
+        if i < len(text) and text[i] == ",":
+            # Optional initial value: an additive string expression; the
+            # fold starts with it over every element (JS stringifies a
+            # numeric init, which _js_parse_additive already does).
+            init, i = _js_parse_additive(text, i + 1, depth, state)
+            if isinstance(init, _JSArr):
+                raise _JSExprFail("bad reduce init")
+            acc = init
+            elems = (value.elements if name == "reduce"
+                     else value.elements[::-1])
+        else:
+            if not value.elements:
+                raise _JSExprFail("reduce of empty array")  # JS throws
+            if name == "reduce":
+                acc = value.elements[0]
+                elems = value.elements[1:]
+            else:
+                acc = value.elements[-1]
+                elems = value.elements[-2::-1]
+        for cur in elems:
+            first = acc if idA == p0 else cur
+            second = acc if idB == p0 else cur
+            acc = first + second
+            state["ops"] += 1
+            if len(acc) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("reduce too long")
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("bad reduce")
+        state["ops"] += 1
+        return acc, i + 1
+    if name == "map":
+        # F437 family: ['a','b'].map(s=>s) -- identity callbacks pass the
+        # array through untouched for a later .join(); anything but the
+        # identity transform fails closed.
+        if not isinstance(value, _JSArr):
+            raise _JSExprFail("map on non-array")
+        i = _js_parse_map_callback(text, _js_skip_ws(text, i))
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("bad map")
+        state["ops"] += 1
+        return _JSArr(list(value.elements)), i + 1
+    if name == "filter":
+        # F437 family: ['a','b'].filter(()=>true) -- constant-true keeps
+        # every element; any other predicate fails closed.
+        if not isinstance(value, _JSArr):
+            raise _JSExprFail("filter on non-array")
+        i = _js_parse_filter_callback(text, _js_skip_ws(text, i))
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("bad filter")
+        state["ops"] += 1
+        return _JSArr(list(value.elements)), i + 1
     if isinstance(value, _JSArr):
         raise _JSExprFail("method on unjoined array")
     if name == "repeat":
@@ -1538,12 +1812,14 @@ def _js_apply_method(text, j, name, value, depth, state):
 
 
 def _js_parse_postfix(text, i, value, depth, state):
-    """Consume chained .concat(...) / .repeat(...) / .join(...) on *value*."""
+    """Consume chained .concat(...) / .repeat(...) / .join(...) /
+    .reduce(...) / .reduceRight(...) / .map(...) / .filter(...) on *value*."""
     while True:
         j = _js_skip_ws(text, i)
         if j >= len(text) or text[j] != ".":
             return value, i
-        for name in ("concat", "repeat", "join"):
+        for name in ("concat", "repeat", "join", "reduce", "reduceRight",
+                     "map", "filter"):
             if text.startswith(name, j + 1):
                 k = _js_skip_ws(text, j + 1 + len(name))
                 if k < len(text) and text[k] == "(":
@@ -1591,11 +1867,13 @@ def _try_js_expr_decode(text, start):
     Returns (decoded, end_index), or None when the run at *start* is not
     a decodable expression. Handles quoted-string '+' concatenation,
     template literals (no ${...}), String.fromCharCode(...),
-    .concat(...) / .repeat(...) postfix calls, and (F434) array-literal
-    + .join(sep) expressions. Bounded by part, depth, codepoint, repeat,
-    and output budgets; never evals; undecodable runs are ignored. A bare
-    string literal (or an unjoined array literal) with no operator or call
-    is not rewritten (not obfuscation-shaped).
+    .concat(...) / .repeat(...) postfix calls, array-literal .join(sep)
+    (F434), and (F437) .reduce(...) / .reduceRight(...) array-assembly
+    plus identity .map(...) / constant-true .filter(...) passthroughs.
+    Bounded by part, depth, codepoint, repeat, and output budgets; never
+    evals; undecodable runs are ignored. A bare string literal (or an
+    unjoined array literal) with no operator or call is not rewritten
+    (not obfuscation-shaped).
     """
     if len(text) - start > _JS_EXPR_MAX_RUN:
         return None
@@ -1663,10 +1941,11 @@ def _decode_layer(text):
         decoded = _try_jsfuck_decode(m.group(0))
         if decoded is not None:
             _add(text[:m.start()] + decoded + text[m.end():])
-    # JS string-expression runs (F430/F434): strict static decode of
+    # JS string-expression runs (F430/F434/F437): strict static decode of
     # quoted '+' concatenation, template literals, String.fromCharCode,
-    # .concat/.repeat postfix calls, and array-literal .join(sep)
-    # (F434); undecodable runs are ignored.
+    # .concat/.repeat postfix calls, array-literal .join(sep) (F434),
+    # and .reduce/.reduceRight assembly + identity .map / constant-true
+    # .filter passthroughs (F437); undecodable runs are ignored.
     for m in list(_JS_EXPR_START.finditer(text))[:_MAX_CANDIDATES]:
         r = _try_js_expr_decode(text, m.start())
         if r is not None:

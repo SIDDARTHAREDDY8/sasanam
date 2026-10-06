@@ -121,14 +121,15 @@ def test_b1_atob_short_inner_run_held_by_design():
 
 @_t
 def test_b1_reduce_shape_pinned_open():
-    """F437: ['frag1','frag2'].reduce((a,b)=>a+b) evaluates to the
-    credential in a real JS engine but misses find_credential -- the
-    JS decoder handles only join/repeat/concat. Known-open miss."""
+    """F437 is CLOSED 2026-10-05 wave-347 lane 1: the
+    ['frag1','frag2'].reduce((a,b)=>a+b) shape now refuses coded
+    dlp-slack-token (was filed OPEN and pinned as a miss; flipped to a
+    refusal assertion on closure)."""
     payload = "['xoxb-" + "abc123','def456'].reduce((a,b)=>a+b)"
     assert _CRED not in payload
-    miss = dlp.find_credential(payload) is None
-    return ("HELD" if miss else "BREAK",
-            "F437 reduce miss reproduced=%s" % miss)
+    ok = dlp.find_credential(payload) == "dlp-slack-token"
+    return ("HELD" if ok else "BREAK",
+            "F437 reduce coded refusal=%s" % ok)
 
 
 @_t
@@ -216,37 +217,42 @@ def test_b3_bidi_inside_credential_blocks():
 
 @_t
 def test_z0_redfirst_scripts_print_break():
-    """The three F437/F438/F439 red-first scripts print BREAK on this
-    open tree."""
+    """The F438/F439 red-first scripts print BREAK on this tree (still
+    OPEN); the F437 red-first script prints HELD (F437 CLOSED
+    2026-10-05 wave-347 lane 1)."""
     import io
     from contextlib import redirect_stdout
     ok = True
-    for mod in ("w346_f437_redfirst", "w346_f438_redfirst", "w346_f439_redfirst"):
+    for mod, want in (("w346_f437_redfirst", "HELD"),
+                      ("w346_f438_redfirst", "BREAK"),
+                      ("w346_f439_redfirst", "BREAK")):
         path = os.path.join(REPO_ROOT, "evals", mod + ".py")
         buf = io.StringIO()
         g = {"__name__": "__main__", "__file__": path}
         with redirect_stdout(buf):
             exec(compile(open(path).read(), path, "exec"), g)
         tail = buf.getvalue().strip().splitlines()[-1]
-        ok = ok and (tail == "BREAK")
-    return ("HELD" if ok else "BREAK", "red-first BREAKs=%s" % ok)
+        ok = ok and (tail == want)
+    return ("HELD" if ok else "BREAK", "red-first states=%s" % ok)
 
 
 @_t
 def test_z1_findings_filed_open_with_final_footer():
-    """F437-F442 are filed OPEN with the wave-346 merge final footer
-    (renumber: attack keeps F437/F438/F439; dlpaudit F440/F441; cigated
-    F442): pins the filings so the misses cannot go undocumented."""
+    """F438-F442 are filed OPEN with the wave-347 lane 1 final footer
+    (F437 CLOSED 2026-10-05 wave-347 lane 1; renumber history: attack
+    keeps F437/F438/F439; dlpaudit F440/F441; cigated F442): pins the
+    filings so the misses cannot go undocumented."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = (all("(F43%d filed 2026-10-05, wave-346 lane 2" % i in text
               for i in (7, 8, 9))
           and "(F440 filed 2026-10-05, wave-346 lane 6" in text
           and "(F441 filed 2026-10-05, wave-346 lane 6" in text
           and "(F442 filed 2026-10-05, wave-346 lane 3" in text
-          and text.count("LOW, OPEN:") >= 6
+          and "LOW, CLOSED 2026-10-05 wave-347 lane 1" in text
+          and text.count("LOW, OPEN:") >= 5
           and "Next free finding: **F443**" in text
-          and "Open findings: F437, F438, F439, F440, F441, F442." in text)
-    return ("HELD" if ok else "BREAK", "F437-F442 filed open=%s" % ok)
+          and "Open findings: F438, F439, F440, F441, F442." in text)
+    return ("HELD" if ok else "BREAK", "F438-F442 filed open=%s" % ok)
 
 
 @_t

@@ -29,8 +29,8 @@ Probes:
       nothing (never raise); the 64-part boundary decodes.
   P4  end-to-end: scan_value and scan_tool_args block the join form.
   P5  ReDoS pins: hostile near-miss inputs are fast and exception-free.
-  P6  pin + footer: taxonomy pin 2134, footer open F432, F433, F435 /
-      next F436, F434 closed entry present.
+  P6  pin + footer: taxonomy pin 2134, footer open F438, F439, F440,
+      F441, F442 / next F443, F434 closed entry present.
 
 Usage:
   ~/workspace/.gov-venv/bin/python evals/w345_f434close_probes.py
@@ -52,7 +52,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
 TAXONOMY_PIN = 2134  # Wave-343 merge pin; no new codes in wave-345 lane 3
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"
+FOOTER_OPEN = "F438, F439, F440, F441, F442"
 FOOTER_NEXT = "F443"
 
 from gov import dlp  # noqa: E402
@@ -234,7 +234,7 @@ def p6_pin_and_footer():
                 "%d/%d" % (len(TAXONOMY), len(set(TAXONOMY)))) and ok
     last = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
                 ).read().splitlines()[-1]
-    ok = _check("P6b footer open F436 / next F437",
+    ok = _check("P6b footer open F438-F442 / next F443",
                 ("Next free finding: **%s**." % FOOTER_NEXT) in last
                 and ("Open findings: %s." % FOOTER_OPEN) in last,
                 last[:60]) and ok
