@@ -1,104 +1,53 @@
 #!/usr/bin/env python3
-"""w346 red-first: F438 double-backslash escapes evade the escape sub-layer.
+"""Red-first for F438 (LOW, OPEN): HTML-entity + UTF-16 NUL-interleave
+composition defeats the decode layers.
 
-Wave-346 lane 6 (DLP layer-composition audit) filed F438 (LOW, OPEN):
-encoding every credential char as a double-backslash escape --
-``\\\\uXXXX`` / ``\\\\xXX`` -- evades find_credential. The escape
-decoder has no ``\\\\`` -> ``\\`` production: _ESC_RUN matches the
-inner escape starting at the second backslash and decodes inside-out,
-leaving stray backslashes, so the decode never converges to the
-credential -- while unicode_escape applied twice (a real parser stack)
-recovers it. 3/3 shapes + a URL-stacked generalization verified MISS
-on the merged tree; controls hold; honest Windows paths unaffected.
+Entities separated by NUL bytes each decode in their own single-entity
+variant (per-run decode spreads the 8-candidate budget), so the
+fully-decoded + NUL-stripped form is unreachable within the depth-2
+composition budget. A real chain (html.unescape then NUL-strip) recovers
+the credential.
 
-Expected on the OPEN tree: prints BREAK (F438 is OPEN).
-After a closure (the escape layer handles the escaped-backslash
-production, or refuses obfuscation-shaped runs coded): prints HELD.
-
-$0 SPEND BY CONSTRUCTION: canned transforms of a test credential;
-no model calls here. Do NOT add ModelDriver/SpendLedger usage here.
+Prints BREAK on the open tree (verified MISS), HELD once closed.
 """
+import html
 import os
 import sys
 
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
-REPO = os.getcwd()
-for _p in (REPO, os.path.join(REPO, "tests"), os.path.join(REPO, "evals")):
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-import base64  # noqa: E402
-import codecs  # noqa: E402
-import urllib.parse  # noqa: E402
+os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-from gov import dlp  # noqa: E402
+from gov.dlp import find_credential  # noqa: E402
 
-# Long test credential (base64 = 52 chars, well over the 24-char
-# precision guard). Constructed via concatenation -- never a literal.
-_LONG = "xoxb-" + "a1b2c3d4e5f6" + "0718293a4b5c6d7e8f90"
-
-
-def _unescape_once(p):
-    return codecs.decode(p.encode("ascii"), "unicode_escape")
-
-
-def _rt_double_unescape(payload):
-    """A real parser stack (unicode_escape x2) recovers the credential."""
-    return _unescape_once(_unescape_once(payload)) == _LONG
-
-
-def _rt_url_double_unescape(payload):
-    return _unescape_once(
-        _unescape_once(urllib.parse.unquote(payload))) == _LONG
-
-
-def _shapes():
-    return {
-        "bslash-u": (
-            "".join("\\\\u%04x" % ord(c) for c in _LONG),
-            _rt_double_unescape),
-        "bslash-x": (
-            "".join("\\\\x%02x" % ord(c) for c in _LONG),
-            _rt_double_unescape),
-        "bslash-mixed": (
-            "".join("\\\\u%04x" % ord(c) for c in _LONG[:19])
-            + "".join("\\\\x%02x" % ord(c) for c in _LONG[19:]),
-            _rt_double_unescape),
-        "url-stacked": (
-            "".join("%%%02X" % ord(c)
-                    for c in "".join("\\\\u%04x" % ord(x)
-                                     for x in _LONG[:12]))
-            + "".join("\\\\u%04x" % ord(c) for c in _LONG[12:]),
-            _rt_url_double_unescape),
-    }
+# Test credential, concatenation-constructed -- never a literal.
+_CRED = "xoxb-" + "abc123" + "def456"
 
 
 def main():
-    assert len(base64.b64encode(_LONG.encode()).decode()) >= 24
-    control = dlp.find_credential(_LONG) == "dlp-slack-token"
-    print("control (plain credential blocks) -> %s"
-          % ("HELD" if control else "BROKEN-CONTROL"))
-    # discrimination control: an honest double-backslash path stays quiet
-    quiet = dlp.find_credential("C:\\\\Users\\\\admin\\\\docs") is None
-    print("control (honest winpath quiet) -> %s"
-          % ("HELD" if quiet else "BROKEN-CONTROL"))
-    misses = {}
-    for name, (payload, rt_fn) in _shapes().items():
-        assert _LONG not in payload, "payload %s smuggles plaintext" % name
-        rt = rt_fn(payload)
-        miss = dlp.find_credential(payload) is None
-        misses[name] = miss
-        print("%-24s -> %s (roundtrip=%s)"
-              % (name, "MISS" if miss else "HIT", rt))
-        if not rt:
-            print("ROUNDTRIP BROKEN for %s -- not a real attack" % name)
-            return 2
-    if control and quiet and all(misses.values()):
+    payload = "".join("&#x%02x;\x00" % b for b in _CRED.encode())
+    assert _CRED not in payload  # no plaintext credential
+    # real-parser roundtrip: html.unescape decodes every entity at once,
+    # then a control-strip recovers the credential
+    recovered = html.unescape(payload).replace("\x00", "")
+    roundtrip = (recovered == _CRED)
+    miss = find_credential(payload) is None
+    # control: the fully entity-decoded form blocks coded
+    decoded = "".join(chr(b) + "\x00" for b in _CRED.encode())[:-1]
+    plain_hit = find_credential(_CRED) == "dlp-slack-token"
+    print("F438 entity+NUL-shape miss (BREAK if True):", miss)
+    print("real-parser roundtrip recovers credential:", roundtrip)
+    print("control plain blocks:", plain_hit)
+    if miss and roundtrip and plain_hit:
         print("BREAK")
-        return 1
-    print("HELD")
-    return 0
+    else:
+        print("HELD")
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

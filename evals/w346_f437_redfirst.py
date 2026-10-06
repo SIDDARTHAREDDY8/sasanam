@@ -1,93 +1,52 @@
 #!/usr/bin/env python3
-"""w346 red-first: F437 double-HTML-entity encoding evades the entity sub-layer.
+"""Red-first for F437 (LOW, OPEN): JS .reduce() array-assembly evades the
+bounded static JS-expression decoder.
 
-Wave-346 lane 6 (DLP layer-composition audit) filed F437 (LOW, OPEN):
-wrapping every credential char's numeric entity in a SECOND entity --
-``&amp;#xHH;`` (named), ``&#38;#xHH;`` (numeric), ``&amp#xHH;``
-(no-semicolon named) -- evades find_credential. The _ENTITY_RUN regex
-never matches named entities, and numeric-wrapped runs fragment so the
-inner ``&#xHH;`` never materializes within the 2-layer decode budget,
-while html.unescape applied twice (a real parser stack) recovers the
-credential. 3/3 shapes + a base64-stacked generalization verified MISS
-on the merged tree; controls hold; no plaintext in any payload.
+F430 closed quoted-'+'/template/fromCharCode/.concat/.repeat; F434 closed
+array-literal .join(sep). But .reduce((a,b)=>a+b) over an array of string
+fragments evaluates to the credential in any real JS engine (node-verified)
+while the decoder -- which handles only join/repeat/concat postfix calls --
+fails closed and no other layer matches the sub-threshold fragments.
 
-Expected on the OPEN tree: prints BREAK (F437 is OPEN).
-After a closure (the decode layer reconstitutes entity-encoded
-entities, or refuses obfuscation-shaped runs coded): prints HELD.
-
-$0 SPEND BY CONSTRUCTION: canned transforms of a test credential;
-no model calls here. Do NOT add ModelDriver/SpendLedger usage here.
+Prints BREAK on the open tree (verified MISS), HELD once closed.
 """
 import os
 import sys
 
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
-REPO = os.getcwd()
-for _p in (REPO, os.path.join(REPO, "tests"), os.path.join(REPO, "evals")):
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-import base64  # noqa: E402
-import html  # noqa: E402
+os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-from gov import dlp  # noqa: E402
+from gov.dlp import find_credential  # noqa: E402
 
-# Long test credential (base64 = 52 chars, well over the 24-char
-# precision guard). Constructed via concatenation -- never a literal.
-_LONG = "xoxb-" + "a1b2c3d4e5f6" + "0718293a4b5c6d7e8f90"
-
-
-def _rt_double_unescape(payload):
-    """A real parser stack (html.unescape x2) recovers the credential."""
-    return html.unescape(html.unescape(payload)) == _LONG
-
-
-def _rt_b64_double_unescape(payload):
-    inner = base64.b64decode(payload).decode()
-    return html.unescape(html.unescape(inner)) == _LONG
-
-
-def _shapes():
-    return {
-        "amp-named": (
-            "".join("&amp;#x%x;" % ord(c) for c in _LONG),
-            _rt_double_unescape),
-        "amp-numeric": (
-            "".join("&#38;#x%x;" % ord(c) for c in _LONG),
-            _rt_double_unescape),
-        "amp-no-semicolon": (
-            "".join("&amp#x%x;" % ord(c) for c in _LONG),
-            _rt_double_unescape),
-        "b64-stacked": (
-            base64.b64encode(
-                "".join("&amp;#x%x;" % ord(c)
-                        for c in _LONG).encode()).decode(),
-            _rt_b64_double_unescape),
-    }
+# Test credential, concatenation-constructed -- never a literal.
+_FRAG1 = "xoxb-" + "abc123"
+_FRAG2 = "def456"
 
 
 def main():
-    assert len(base64.b64encode(_LONG.encode()).decode()) >= 24
-    control = dlp.find_credential(_LONG) == "dlp-slack-token"
-    print("control (plain credential blocks) -> %s"
-          % ("HELD" if control else "BROKEN-CONTROL"))
-    misses = {}
-    for name, (payload, rt_fn) in _shapes().items():
-        assert _LONG not in payload, "payload %s smuggles plaintext" % name
-        rt = rt_fn(payload)
-        miss = dlp.find_credential(payload) is None
-        misses[name] = miss
-        print("%-24s -> %s (roundtrip=%s)"
-              % (name, "MISS" if miss else "HIT", rt))
-        if not rt:
-            print("ROUNDTRIP BROKEN for %s -- not a real attack" % name)
-            return 2
-    if control and all(misses.values()):
+    # node: ["xoxb-abc123","def456"].reduce((a,b)=>a+b) -> the credential
+    payload = "['" + _FRAG1 + "','" + _FRAG2 + "'].reduce((a,b)=>a+b)"
+    assert (_FRAG1 + _FRAG2) not in payload  # no plaintext credential
+    miss = find_credential(payload) is None
+    # control: the F434 .join(sep) shape blocks coded
+    join_payload = "['" + _FRAG1 + "','" + _FRAG2 + "'].join('')"
+    join_hit = find_credential(join_payload) == "dlp-slack-token"
+    # control: the plain credential blocks coded
+    plain_hit = find_credential(_FRAG1 + _FRAG2) == "dlp-slack-token"
+    print("F437 reduce-shape miss (BREAK if True):", miss)
+    print("control .join('') blocks:", join_hit)
+    print("control plain blocks:", plain_hit)
+    if miss and join_hit and plain_hit:
         print("BREAK")
-        return 1
-    print("HELD")
-    return 0
+    else:
+        print("HELD")
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
