@@ -136,12 +136,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F454-F460 open, next F461 (wave-351 merge:
-    F451/F452/F453 closed)."""
+    """Control: footer shows F454, F455, F457-F460 open, next F461
+    (wave-352 lane 2: F456 closed)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F461**" in text
-          and "**Open findings: F454, F455, F456, F457, F458, F459, F460.**" in text)
+          and "**Open findings: F454, F455, F457, F458, F459, F460.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -205,11 +205,12 @@ def _frag(s, junk, every=12):
 
 
 @_t
-def test_b2_f456_b64_junk_frag_open():
-    """F456 pinned open: base64 with NUL junk fragmentation misses."""
+def test_b2_f456_b64_junk_frag_closed():
+    """F456 pinned CLOSED (wave-352 lane 2): base64 with NUL junk
+    fragmentation now blocks via the junk-tolerant spans."""
     b64 = base64.b64encode(_CRED2.encode()).decode()
-    miss = not _blocked(_frag(b64, "\x00"))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    hit = _blocked(_frag(b64, "\x00"))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
