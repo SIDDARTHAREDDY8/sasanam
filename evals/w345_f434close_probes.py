@@ -52,7 +52,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
 TAXONOMY_PIN = 2134  # Wave-343 merge pin; no new codes in wave-345 lane 3
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"
+FOOTER_OPEN = "F437, F439, F440, F441, F442"
 FOOTER_NEXT = "F443"
 
 from gov import dlp  # noqa: E402

@@ -37,7 +37,7 @@ import gov.tool_rate_limit as TRL  # noqa: E402
 _EXPECTED_BREAKS = set()
 
 TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # F426 closed wave-338 lane 1.
+FOOTER_OPEN = "F437, F439, F440, F441, F442"  # F426 closed wave-338 lane 1.
 FOOTER_NEXT = "F443"
 
 _results = []
@@ -449,7 +449,7 @@ def P3b():
     if "Next free finding: **F443**" not in last:
         _break(pid, "footer does not read next F427")
         return
-    if "Open findings: F437, F438, F439, F440, F441, F442." not in last:
+    if "Open findings: F437, F439, F440, F441, F442." not in last:
         _break(pid, "footer does not read open none")
         return
     import re as _re

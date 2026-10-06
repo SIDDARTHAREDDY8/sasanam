@@ -179,18 +179,18 @@ def test_b2_bidi_plus_hex_composes():
 
 
 @_t
-def test_b2_entity_null_interleave_pinned_open():
-    """F438: entities interleaved with NUL bytes -- each decodes in its
-    own single-entity variant (budget spread), so the fully-decoded +
-    NUL-stripped form is unreachable within depth-2; html.unescape +
-    NUL-strip recovers the credential. Known-open miss."""
+def test_b2_entity_null_interleave_closed():
+    """F438: entities interleaved with NUL bytes -- CLOSED 2026-10-05
+    wave-347 lane 2. The decode layer now strips NULs and decodes
+    every entity in one whole-text variant, so the stacked form
+    blocks coded dlp-slack-token (roundtrip-verified)."""
     payload = "".join("&#x%02x;\x00" % b for b in _LONG.encode())
     assert _LONG not in payload
     recovered = html.unescape(payload).replace("\x00", "")
     assert recovered == _LONG  # real-parser roundtrip holds
-    miss = dlp.find_credential(payload) is None
-    return ("HELD" if miss else "BREAK",
-            "F438 entity+NUL miss reproduced=%s" % miss)
+    hit = dlp.find_credential(payload) == "dlp-slack-token"
+    return ("HELD" if hit else "BREAK",
+            "F438 entity+NUL now blocks coded=%s" % hit)
 
 
 # ---------------------------------------------------------------- B3: precision boundaries
@@ -216,12 +216,12 @@ def test_b3_bidi_inside_credential_blocks():
 
 @_t
 def test_z0_redfirst_scripts_print_break():
-    """The three F437/F438/F439 red-first scripts print BREAK on this
-    open tree."""
+    """The F437/F439 red-first scripts print BREAK on this open tree;
+    the F438 script prints HELD (closed wave-347 lane 2)."""
     import io
     from contextlib import redirect_stdout
     ok = True
-    for mod in ("w346_f437_redfirst", "w346_f438_redfirst", "w346_f439_redfirst"):
+    for mod in ("w346_f437_redfirst", "w346_f439_redfirst"):
         path = os.path.join(REPO_ROOT, "evals", mod + ".py")
         buf = io.StringIO()
         g = {"__name__": "__main__", "__file__": path}
@@ -229,24 +229,33 @@ def test_z0_redfirst_scripts_print_break():
             exec(compile(open(path).read(), path, "exec"), g)
         tail = buf.getvalue().strip().splitlines()[-1]
         ok = ok and (tail == "BREAK")
-    return ("HELD" if ok else "BREAK", "red-first BREAKs=%s" % ok)
+    path = os.path.join(REPO_ROOT, "evals", "w346_f438_redfirst.py")
+    buf = io.StringIO()
+    g = {"__name__": "__main__", "__file__": path}
+    with redirect_stdout(buf):
+        exec(compile(open(path).read(), path, "exec"), g)
+    ok = ok and (buf.getvalue().strip().splitlines()[-1] == "HELD")
+    return ("HELD" if ok else "BREAK", "red-first BREAKs/HELDs=%s" % ok)
 
 
 @_t
 def test_z1_findings_filed_open_with_final_footer():
-    """F437-F442 are filed OPEN with the wave-346 merge final footer
-    (renumber: attack keeps F437/F438/F439; dlpaudit F440/F441; cigated
-    F442): pins the filings so the misses cannot go undocumented."""
+    """F437/F439/F440/F441/F442 are filed OPEN with the wave-347 final
+    footer (renumber: attack keeps F437/F439; dlpaudit F440/F441; cigated
+    F442; F438 closed wave-347 lane 2): pins the filings so the misses
+    cannot go undocumented."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = (all("(F43%d filed 2026-10-05, wave-346 lane 2" % i in text
-              for i in (7, 8, 9))
+              for i in (7, 9))
+          and "(F438 filed 2026-10-05, wave-346 lane 2" in text
+          and "CLOSED 2026-10-05 wave-347 lane 2" in text
           and "(F440 filed 2026-10-05, wave-346 lane 6" in text
           and "(F441 filed 2026-10-05, wave-346 lane 6" in text
           and "(F442 filed 2026-10-05, wave-346 lane 3" in text
-          and text.count("LOW, OPEN:") >= 6
+          and text.count("LOW, OPEN:") >= 5
           and "Next free finding: **F443**" in text
-          and "Open findings: F437, F438, F439, F440, F441, F442." in text)
-    return ("HELD" if ok else "BREAK", "F437-F442 filed open=%s" % ok)
+          and "Open findings: F437, F439, F440, F441, F442." in text)
+    return ("HELD" if ok else "BREAK", "F437-F442 filed/closed=%s" % ok)
 
 
 @_t
@@ -273,8 +282,9 @@ def test_z3_no_paid_api_refs():
 # ---------------------------------------------------------------- green check
 
 _EXPECTED_BREAKS = set()  # this battery asserts HELD everywhere:
-# the F437/F438/F439 misses are pinned as known-open (probe returns HELD
-# when the miss reproduces); a literal BREAK verdict would mean the pin
+# the F437/F439 misses are pinned as known-open (probe returns HELD
+# when the miss reproduces); F438's miss is now a coded-refusal pin
+# (closed wave-347 lane 2); a literal BREAK verdict would mean the pin
 # failed or a NEW unexpected break appeared.
 
 

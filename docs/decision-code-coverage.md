@@ -1,6 +1,6 @@
 # Decision-code coverage table (generated)
 
-Generated: 2026-10-05T19:53:20Z UTC · registry pin: 2134 · base: wave-343 merge (+3 ownership-* codes, 2129/2134 behaviorally probed; 5 fault-injection residuals: tool-crashed, tool-timed-out, preexec_child_died, post-rotation, offline-verify-internal)
+Generated: 2026-10-06T01:18:04Z UTC · registry pin: 2134 · base: wave-343 merge (+3 ownership-* codes, 2129/2134 behaviorally probed; 5 fault-injection residuals: tool-crashed, tool-timed-out, preexec_child_died, post-rotation, offline-verify-internal)
 
 Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code counts as covered when its literal string appears quoted in at least one ``.py`` file under ``tests/`` or ``evals/``. Production ``emit()`` call sites do not count.
 
@@ -1076,8 +1076,8 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `kms-signer-message-too-large` | kms | medium | yes | evals/w226_kms_probes.py, tests/test_kms_signer.py |
 | `kms-signer-refused` | kms | medium | yes | tests/test_kms_signer.py |
 | `label-annotation-unregistered` | label | high | yes | evals/w342_r40_label_probes.py, evals/w343_attack_probes.py |
-| `label-egress-refused` | label | high | yes | evals/w342_r40_arb_redfirst.py, evals/w342_r40_label_probes.py, evals/w343_recovery_probes.py |
-| `label-remedy-empty-unliftable` | label | high | yes | evals/w342_r40_label_probes.py, evals/w343_recovery_probes.py |
+| `label-egress-refused` | label | high | yes | evals/w342_r40_arb_redfirst.py, evals/w342_r40_label_probes.py, evals/w343_recovery_probes.py (+1) |
+| `label-remedy-empty-unliftable` | label | high | yes | evals/w342_r40_label_probes.py, evals/w343_recovery_probes.py, evals/w346_recoveryux_probes.py |
 | `label-trust-floor-refused` | label | high | yes | evals/w342_r40_label_probes.py |
 | `lease_expired` | lease | medium | yes | evals/w78_probes.py, tests/test_decision_codes.py, tests/test_w78_supplychain.py |
 | `lease_missing` | lease | medium | yes | evals/w78_probes.py, tests/test_w78_supplychain.py |
@@ -1245,9 +1245,9 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `oracle-evaluated-and-refused` | oracle | medium | yes | tests/test_refusal_oracle_guard.py |
 | `oracle-verifier-misconfigured` | oracle | high | yes | tests/test_refusal_oracle_guard.py |
 | `outside_sandbox` | deployment | medium | yes | evals/w341_covgap3_probes.py |
-| `ownership-directory-malformed` | identity | medium | yes | evals/w343_ownership_probes.py |
-| `ownership-inference-ambiguous` | identity | medium | yes | evals/w343_ownership_probes.py |
-| `ownership-inference-unresolved` | identity | low | yes | evals/w343_ownership_probes.py |
+| `ownership-directory-malformed` | identity | medium | yes | evals/w343_ownership_probes.py, evals/w345_ownthread_probes.py, evals/w346_identity_surface_probes.py |
+| `ownership-inference-ambiguous` | identity | medium | yes | evals/w343_ownership_probes.py, evals/w345_ownthread_probes.py, evals/w346_identity_surface_probes.py |
+| `ownership-inference-unresolved` | identity | low | yes | evals/w343_ownership_probes.py, evals/w345_ownthread_probes.py, evals/w346_identity_surface_probes.py |
 | `pack-expired` | pack | medium | yes | tests/test_audit_detect.py |
 | `pack-invalid` | audit | medium | yes | evals/sigma_detection_probes.py |
 | `pack-lint-failed` | pack | medium | yes | evals/pack_lint_probes.py, tests/test_pack_lint.py |
@@ -1358,12 +1358,12 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `policy-delta-check-removed` | policy-delta | medium | yes | tests/test_policy_delta_gate.py |
 | `policy-delta-counterexample-raised` | policy-delta | medium | yes | evals/w267_poldelta_probes.py, tests/test_policy_delta.py |
 | `policy-delta-default-deny` | policy-delta | medium | yes | evals/w268_redteam_probes.py, evals/w269_poldelta_skip_probes.py, tests/test_policy_delta.py |
-| `policy-delta-effect-weakened` | policy-delta | high | yes | evals/w246_policy_delta_probes.py, evals/w247_redteam_probes.py, tests/test_policy_delta_gate.py |
+| `policy-delta-effect-weakened` | policy-delta | high | yes | evals/w246_policy_delta_probes.py, evals/w247_redteam_probes.py, evals/w346_cigated_probes.py (+1) |
 | `policy-delta-evaluation-error` | policy-delta | medium | yes | evals/w343_covgap5_probes.py |
 | `policy-delta-forbid` | policy-delta | high | yes | evals/w268_redteam_probes.py, evals/w269_poldelta_skip_probes.py, evals/w270_redteam_probes.py (+1) |
 | `policy-delta-forbid-modified` | policy-delta | medium | yes | tests/test_policy_delta_gate.py |
 | `policy-delta-forbid-narrowed` | policy-delta | high | yes | evals/w246_policy_delta_probes.py, tests/test_policy_delta_gate.py |
-| `policy-delta-forbid-removed` | policy-delta | high | yes | evals/w246_policy_delta_probes.py, evals/w247_redteam_probes.py, tests/test_policy_delta_gate.py |
+| `policy-delta-forbid-removed` | policy-delta | high | yes | evals/w246_policy_delta_probes.py, evals/w247_redteam_probes.py, evals/w346_cigated_probes.py (+1) |
 | `policy-delta-forbid-residual` | policy-delta | high | yes | evals/w267_poldelta_probes.py, evals/w268_redteam_probes.py, evals/w269_poldelta_skip_probes.py (+1) |
 | `policy-delta-malformed` | policy-delta | high | yes | evals/w246_policy_delta_probes.py, evals/w267_poldelta_probes.py, evals/w269_poldelta_skip_probes.py (+3) |
 | `policy-delta-role-added` | policy-delta | medium | yes | tests/test_policy_delta_gate.py |

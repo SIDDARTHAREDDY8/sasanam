@@ -55,7 +55,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = ("F437", "F438", "F439", "F440", "F441", "F442")
+FOOTER_OPEN = ("F437", "F439", "F440", "F441", "F442")
 FOOTER_NEXT = "F443"
 
 _EXPECTED_BREAKS = set()
@@ -601,8 +601,8 @@ def _p9():
     assert "oci-bundle-not-verifiable" in DC.TAXONOMY
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
     assert "Next free finding: **F443**" in text, "footer next free"
-    assert "Open findings: F437, F438, F439, F440, F441, F442." in text, "footer open findings"
-    assert FOOTER_OPEN == ("F437", "F438", "F439", "F440", "F441", "F442") and FOOTER_NEXT == "F443"
+    assert "Open findings: F437, F439, F440, F441, F442." in text, "footer open findings"
+    assert FOOTER_OPEN == ("F437", "F439", "F440", "F441", "F442") and FOOTER_NEXT == "F443"
     _held("P9-pin-taxonomy",
           "2134/2134/0 sorted-unique; oci-bundle-not-verifiable "
           "registered; footer open none / next F430")

@@ -41,7 +41,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2134  # Wave-341 merge: pin 2131 (no new codes in wave-342 lane 1); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # F436 CLOSED 2026-10-05 wave-346 lane 1
+FOOTER_OPEN = "F437, F439, F440, F441, F442"  # F436 CLOSED 2026-10-05 wave-346 lane 1
 
 FOOTER_NEXT = "F443"
 

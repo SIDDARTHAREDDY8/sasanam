@@ -31,8 +31,8 @@ Probes:
       fast with no exceptions.
   P7  layering: URL-encoded single-escape credentials block via the
       2-layer decode budget.
-  P8  pin + footer: taxonomy pin 2134, footer open F436, F437, F438 /
-      next F439 (wave-346 lane 6 filed F437/F438).
+  P8  pin + footer: taxonomy pin 2134, footer open F437, F439, F440,
+      F441, F442 / next F443 (F438 closed wave-347 lane 2).
 
 Usage:
   ~/workspace/.gov-venv/bin/python evals/w345_f432close_probes.py
@@ -52,7 +52,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2134  # Wave-345: pin 2134 (no new codes in wave-345 lane 1)
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # wave-346 merge final
+FOOTER_OPEN = "F437, F439, F440, F441, F442"  # wave-346 merge final
 FOOTER_NEXT = "F443"
 
 from gov import dlp  # noqa: E402

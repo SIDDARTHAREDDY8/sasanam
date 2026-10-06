@@ -39,7 +39,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
 TAXONOMY_PIN = 2134  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*)
-FOOTER_OPEN = "F437, F438, F439, F440, F441, F442"  # F415/F416/F417/F423/F424/F425 CLOSED; F426 closed wave-338 lane 1.
+FOOTER_OPEN = "F437, F439, F440, F441, F442"  # F415/F416/F417/F423/F424/F425 CLOSED; F426 closed wave-338 lane 1.
 FOOTER_NEXT = "F443"  # Next free finding number.
 
 _results = []
