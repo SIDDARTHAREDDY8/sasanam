@@ -132,12 +132,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F461-F468 open, next F469 (wave-352 merge:
-    F454-F460 closed, F461-F468 filed)."""
+    """Control: footer shows F463-F468 open, next F469 (wave-353 lane 1:
+    F461+F462 closed; F454-F460 closed, F463-F468 filed)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F469**" in text
-          and "**Open findings: F461, F462, F463, F464, F465, F466, F467, F468.**" in text)
+          and "**Open findings: F463, F464, F465, F466, F467, F468.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -204,17 +204,17 @@ def test_b1_f460_map_string_open():
 # ------------------------------------------------- F461-F468 open pins
 
 @_t
-def test_b2_f461_reverse_join_open():
-    """F461 pinned open: .reverse().join('') misses."""
-    miss = not _blocked("['" + _B + "','" + _A + "'].reverse().join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b2_f461_reverse_join_closed():
+    """F461 pinned CLOSED (wave-353 lane 1): .reverse().join('') blocks."""
+    hit = _blocked("['" + _B + "','" + _A + "'].reverse().join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b2_f462_spread_concat_open():
-    """F462 pinned open: spread-args concat misses."""
-    miss = not _blocked("\"" + "\".concat(...['" + _A + "','" + _B + "'])")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b2_f462_spread_concat_closed():
+    """F462 pinned CLOSED (wave-353 lane 1): spread-args concat blocks."""
+    hit = _blocked("\"" + "\".concat(...['" + _A + "','" + _B + "'])")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t

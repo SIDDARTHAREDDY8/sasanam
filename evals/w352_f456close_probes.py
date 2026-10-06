@@ -98,7 +98,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2135  # Wave-352: F456 closed, no new decision codes; pin unchanged
-FOOTER_OPEN = "F461, F462, F463, F464, F465, F466, F467, F468"  # Wave-352: F456 CLOSED (merge finalizes tree-wide)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)
+FOOTER_OPEN = "F463, F464, F465, F466, F467, F468"  # Wave-352: F456 CLOSED (merge finalizes tree-wide)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 lane 1: F461+F462 CLOSED (merge finalizes tree-wide)
 FOOTER_NEXT = "F469"  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)
 
 
@@ -584,9 +584,10 @@ def p7_pin_and_footer():
     ok = ok and ("Next free finding: **%s**" % FOOTER_NEXT) in footer
     # This lane closes F456 locally; the merge finalizes tree-wide.
     # Accept the lane footer (F456 closed) -- the base footer still
-    # lists F456 open until the merge sweep.
+    # lists F456 open until the merge sweep. Wave-353 lane 1: the
+    # merge-finalized footer now lists F461+F462 closed too.
     ok = ok and (("Open findings: %s." % FOOTER_OPEN) in footer
-                 or "Open findings: F461, F462, F463, F464, F465, F466, F467, F468."
+                 or "Open findings: F463, F464, F465, F466, F467, F468."
                  in footer)
     ok = ok and "(F456 " in footer
     return ok

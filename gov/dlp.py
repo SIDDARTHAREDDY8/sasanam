@@ -2970,13 +2970,25 @@ def _js_parse_filter_callback(text, i):
         raise _JSExprFail("filter predicate needs a param")
     _, m = _js_parse_truthy_body(text, i, param)
     return ("truthy",), m
+
+
+def _js_add_concat_part(parts, part, state):
+    """Append one .concat() argument, charging the F430 parts budget."""
+    parts.append(part)
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+
+
 def _js_apply_method(text, j, name, value, depth, state):
     """Apply .concat(...) / .repeat(...) / .join(...) / .reduce(...) /
-    .reduceRight(...) / .map(...) / .filter(...) / .fill(...) with text[j] == '('.
+    .reduceRight(...) / .map(...) / .filter(...) / .fill(...) /
+    .reverse(...) with text[j] == '('.
 
-    .join/.reduce/.reduceRight/.map/.filter/.fill require an array-literal
-    or Array(N) value (F434/F437/F443); .concat/.repeat require a string
-    value. Anything else fails closed -- never evals.
+    .join/.reduce/.reduceRight/.map/.filter/.fill/.reverse require an
+    array-literal or Array(N) value (F434/F437/F443/F461);
+    .concat/.repeat require a string value (F462: .concat accepts
+    ...spread-of-array args). Anything else fails closed -- never evals.
     """
     i = j + 1
     if name == "join":
@@ -3097,6 +3109,21 @@ def _js_apply_method(text, j, name, value, depth, state):
             raise _JSExprFail("fill too long")
         state["ops"] += 1
         return _JSArr(elements), i
+    if name == "reverse":
+        # F461: ['b','a'].reverse() -- node-exact reversal of the element
+        # list. Only the no-arg form is modeled; reverse-with-args and
+        # reverse on non-arrays fail closed. Unmodeled chain steps
+        # (.sort, .toString, ...) end the postfix parse, so a reversed
+        # array never decodes past a step the grammar cannot model.
+        if not isinstance(value, _JSArr):
+            raise _JSExprFail("reverse on non-array")
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("reverse takes no args")
+        i += 1
+        elements = list(value.elements)[::-1]
+        state["ops"] += 1
+        return _JSArr(elements), i
     if isinstance(value, _JSArr):
         raise _JSExprFail("method on unjoined array")
     if name == "repeat":
@@ -3118,12 +3145,26 @@ def _js_apply_method(text, j, name, value, depth, state):
         state["ops"] += 1
         return value, i + 1
     while True:
-        arg, i = _js_parse_additive(text, i, depth, state)
-        parts.append(arg)
-        state["parts"] += 1
-        if state["parts"] > _JS_EXPR_MAX_PARTS:
-            raise _JSExprFail("too many parts")
         i = _js_skip_ws(text, i)
+        if text.startswith("...", i):
+            # F462: "".concat(...['a','b']) -- spread of a parsed string
+            # array; each element becomes a concat arg in engine-exact
+            # order. The spread target parses as a primary (array
+            # literal / factory / constructor, postfix chains allowed);
+            # non-array spreads, nested spreads, and non-string elements
+            # fail closed.
+            arr, i = _js_parse_primary(text, i + 3, depth, state)
+            if not isinstance(arr, _JSArr):
+                raise _JSExprFail("spread of non-array")
+            for e in arr.elements:
+                if not isinstance(e, str):
+                    raise _JSExprFail("spread of non-string element")
+                _js_add_concat_part(parts, e, state)
+            i = _js_skip_ws(text, i)
+        else:
+            arg, i = _js_parse_additive(text, i, depth, state)
+            _js_add_concat_part(parts, arg, state)
+            i = _js_skip_ws(text, i)
         if i < len(text) and text[i] == ",":
             i = _js_skip_ws(text, i + 1)
             continue
@@ -3139,13 +3180,13 @@ def _js_apply_method(text, j, name, value, depth, state):
 def _js_parse_postfix(text, i, value, depth, state):
     """Consume chained .concat(...) / .repeat(...) / .join(...) /
     .reduce(...) / .reduceRight(...) / .map(...) / .filter(...) /
-    .fill(...) on *value*."""
+    .fill(...) / .reverse() on *value*."""
     while True:
         j = _js_skip_ws(text, i)
         if j >= len(text) or text[j] != ".":
             return value, i
         for name in ("concat", "repeat", "join", "reduce", "reduceRight",
-                     "map", "filter", "fill"):
+                     "map", "filter", "fill", "reverse"):
             if text.startswith(name, j + 1):
                 k = _js_skip_ws(text, j + 1 + len(name))
                 if k < len(text) and text[k] == "(":
@@ -3210,7 +3251,9 @@ def _try_js_expr_decode(text, start):
     (F434), (F437) .reduce(...) / .reduceRight(...) array-assembly
     plus identity .map(...) / constant-true .filter(...) passthroughs,
     and (F443) Array(N).fill(x) construction plus .filter(Boolean)
-    truthiness filtering, (F446) the Array.of('frag', ...) fragment-
+    truthiness filtering, (F461) the no-arg .reverse() array-reversal
+    step on parsed arrays, (F462) ...spread-of-array args in .concat(),
+    (F446) the Array.of('frag', ...) fragment-
     list factory (string-literal args only; numeric/nested/additive args
     fail closed), (F454) the multi-argument Array('frag', ...) /
     new Array('frag', ...) constructor (string-literal args only; the
