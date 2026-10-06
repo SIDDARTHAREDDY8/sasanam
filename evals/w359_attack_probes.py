@@ -115,12 +115,13 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F489-F495 open, next F496 (wave-359 merge:
-    F482-F488 CLOSED; F489-F495 filed OPEN)."""
+    """Control: footer shows F491/F492/F493 CLOSED locally, open F489,
+    F490, F494, F495, next F496 (wave-360 lane 2; merge finalizes
+    tree-wide)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F496**" in text
-          and "**Open findings: F489, F490, F491, F492, F493, F494, F495.**" in text)
+          and "**Open findings: F489, F490, F494, F495.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -261,24 +262,24 @@ def test_b3_f490_optchain_open():
 
 
 @_t
-def test_b3_f491_reflect_get_open():
-    """F491 pinned OPEN: Reflect.get(...).call still misses."""
+def test_b1_f491_reflect_get_closed():
+    """F491 pinned CLOSED (wave-360 lane 2): Reflect.get(...).call blocks coded."""
     hit = _blocked("Reflect.get(Array.prototype,'concat').call([], '" + _A + "','" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b3_f492_computed_key_open():
-    """F492 pinned OPEN: ['con'+'cat'].call still misses."""
+def test_b1_f492_computed_key_closed():
+    """F492 pinned CLOSED (wave-360 lane 2): ['con'+'cat'].call blocks coded."""
     hit = _blocked("Array.prototype['con'+'cat'].call([], '" + _A + "','" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b3_f493_stringraw_open():
-    """F493 pinned OPEN: String.raw({raw:[...]}) still misses."""
+def test_b1_f493_stringraw_closed():
+    """F493 pinned CLOSED (wave-360 lane 2): String.raw({raw:[...]}) blocks coded."""
     hit = _blocked("String.raw({raw:['" + _A + "','" + _B + "']})")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t

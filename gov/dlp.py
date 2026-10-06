@@ -2082,7 +2082,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*\.[ \t\n\r]*(construct|apply)|[ \t\n\r]*\[[ \t\n\r]*['\"])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf)|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*\.[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor)|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
 # F455: the Array.of factory anchor tolerates whitespace around the dot
 # ([ \t\n\r]*, exactly the _js_skip_ws class the parser skips), so
 # `Array .of(...)` / `Array\t.of(...)` / `Array\n.of(...)` /
@@ -2106,9 +2106,15 @@ _JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|
 # `Reflect['apply']`), so they reach the parsers below. `[].constructor`
 # shapes start with `[`, already in the anchor's character class. F483:
 # `Function.prototype` (double dispatch) is covered by the same
-# ws-tolerant prototype class. The added groups are alternations of
-# character-class-bounded literals: matching stays linear (no ReDoS
-# surface).
+# ws-tolerant prototype class. F491: the anchor class also covers
+# `Reflect.get(` (so `Reflect .get(` reaches _js_parse_reflect_get)
+# and `Object.getOwnPropertyDescriptor(` (reaching
+# _js_parse_gopd_value). F493: the String alternative also covers
+# `String.raw(` and `String.raw.call(` (ws-tolerant, so
+# `String . raw (` / `String.raw . call (` reach _js_parse_string_raw);
+# the tag form `String.raw`...`` keeps anchoring via the backtick
+# character class. The added groups are alternations of character-class-bounded literals: matching stays
+# linear (no ReDoS surface).
 _JS_EXPR_MAX_PARTS = 64        # bound on '+' operands per expression
 _JS_EXPR_MAX_CODEPOINTS = 512  # bound on fromCharCode argument count
 _JS_EXPR_MAX_DEPTH = 8         # bound on parenthesization depth
@@ -2470,6 +2476,105 @@ def _js_stringify_coercible(arg, label):
     if isinstance(arg, str):
         return str(arg)
     raise _JSExprFail(label + ": not coercible")
+
+
+def _js_parse_raw_template_arg(text, j, state):
+    """Parse `{raw:[...]}` at text[j] for `String.raw` (F493).
+
+    The template object must have exactly one key, `raw`, whose value
+    is an array literal of string literals (the
+    _js_parse_string_literal_list grammar -- numeric, nested,
+    marker, additive, or template segments fail closed, the same
+    fail-closed classes as the F454/F446 factories). With no
+    substitutions the engine concatenates the raw segments, so the
+    decoded value is the plain join. Returns (segments, idx_after_}).
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "{":
+        raise _JSExprFail("String.raw arg not an object")
+    j = _js_skip_ws(text, j + 1)
+    if not text.startswith("raw", j):
+        raise _JSExprFail("String.raw object without raw key")
+    k = j + len("raw")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("rawx is not raw")
+    j = _js_skip_ws(text, k)
+    if j >= n or text[j] != ":":
+        raise _JSExprFail("String.raw raw without colon")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("String.raw raw not an array")
+    segs, j = _js_parse_string_literal_list(text, j + 1, state, "]")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "}":
+        raise _JSExprFail("String.raw object not closed")
+    return segs, j + 1
+
+
+def _js_parse_string_raw(text, i, depth, state):
+    """Parse `String.raw({raw:[...]})` / `String.raw.call(R, {raw:[...]})`
+    at text[i] (F493).
+
+    The call form of String.raw: with a single `{raw:[...]}` argument
+    and no substitutions the engine concatenates the raw segments
+    (node v24.20.0 verified: `String.raw({raw:['f1','f2']})` ===
+    'f1f2'). The `.call` dispatch's thisArg is parsed and discarded
+    (the engine ignores it); `.apply`/`.bind` and any substitution
+    arguments fail closed (documented scope boundary -- the engine
+    interleaves substitutions, which is not modeled). The tag form
+    `` String.raw`...` `` is excluded by the caller (_js_parse_primary
+    never routes a backtick here); it keeps its F463/F457 handling --
+    the tag form is the coded-refusal control and must keep its
+    existing behavior.
+
+    Returns (joined_segments, next_index); the caller applies the
+    postfix chain and the ops charge. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i + len("String"))
+    if j < n and text[j] in _JS_IDENT_CONT:
+        raise _JSExprFail("Stringx is not String")
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("String without dot")
+    j = _js_skip_ws(text, j + 1)
+    if not text.startswith("raw", j):
+        raise _JSExprFail("String member not raw")
+    k = j + len("raw")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("rawx is not raw")
+    j = _js_skip_ws(text, k)
+    if j < n and text[j] == ".":
+        # F493 dispatch form: String.raw.call(R, {raw:[...]}). The
+        # dispatch head commits the parse; only `.call` is modeled.
+        peek = _js_peek_dispatch_call(text, j)
+        if peek is None:
+            raise _JSExprFail("String.raw without call form")
+        dname, paren = peek
+        if dname != "call":
+            raise _JSExprFail("String.raw apply/bind not modeled")
+        p = _js_skip_ws(text, paren + 1)
+        _, p = _js_parse_ignored_value(text, p, depth, state)
+        p = _js_skip_ws(text, p)
+        if p >= n or text[p] != ",":
+            raise _JSExprFail("String.raw.call without template arg")
+        segs, p = _js_parse_raw_template_arg(text, p + 1, state)
+        p = _js_skip_ws(text, p)
+        if p >= n or text[p] != ")":
+            raise _JSExprFail("String.raw.call unterminated")
+        if len("".join(segs)) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("String.raw too long")
+        return "".join(segs), p + 1
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("String.raw without paren")
+    segs, j = _js_parse_raw_template_arg(text, j + 1, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("String.raw unterminated")
+    if len("".join(segs)) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("String.raw too long")
+    return "".join(segs), j + 1
 
 
 def _js_parse_string_ctor(text, i, depth, state):
@@ -3191,6 +3296,79 @@ def _js_parse_bracket_member(text, j):
     j = _js_skip_ws(text, k + 1)
     if j >= n or text[j] != "]":
         raise _JSExprFail("unterminated member bracket")
+    return name, _js_skip_ws(text, j + 1)
+
+
+def _js_fold_key_expr(text, k, depth, state):
+    """Fold a computed member-key expression to its string value (F492).
+
+    Parses one string literal or template literal followed by zero or
+    more `+` literal operands at text[k] (whitespace tolerated exactly
+    as the engine tokenizes), returning (folded_name, next_index).
+    This is the engine's own constant evaluation for the filed key
+    forms: `'con'+'cat'` === 'concat', `` `con${'cat'}` `` ===
+    'concat' (node v24.20.0 verified) -- the cooked template string,
+    which is what computed property access uses as the key.
+
+    Only string-literal and literal-only-template operands are
+    folded: numeric/additive/variable/call operands fail closed
+    (documented scope boundary -- the decoder never guesses a key).
+    The folded name must be a non-empty ASCII identifier, the same
+    constraint as _js_parse_bracket_member; anything else fails
+    closed. Each `+` operand is charged to the part budget. Never
+    evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, k)
+    if k >= n:
+        raise _JSExprFail("empty key expression")
+    c = text[k]
+    if c in "'\"":
+        part, k = _js_parse_string(text, k)
+    elif c == "`":
+        part, k = _js_parse_template(text, k, depth, state)
+    else:
+        raise _JSExprFail("key not a literal")
+    out = [part]
+    while True:
+        j = _js_skip_ws(text, k)
+        if j >= n or text[j] != "+":
+            break
+        j = _js_skip_ws(text, j + 1)
+        if j >= n:
+            raise _JSExprFail("dangling key +")
+        c = text[j]
+        if c in "'\"":
+            part, j = _js_parse_string(text, j)
+        elif c == "`":
+            part, j = _js_parse_template(text, j, depth, state)
+        else:
+            raise _JSExprFail("key operand not a literal")
+        out.append(part)
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many key parts")
+        k = j
+    name = "".join(out)
+    if not name or any(ch not in _JS_IDENT_CONT for ch in name):
+        raise _JSExprFail("folded key not an identifier")
+    return name, k
+
+
+def _js_fold_bracket_key(text, j, depth, state):
+    """Fold `['a'+'b']` / `` [`a${'b'}`] `` at text[j] == '[' (F492).
+
+    Returns (folded_name, idx_after_rbracket), whitespace-tolerant.
+    The plain-literal case is handled by _js_parse_bracket_member;
+    callers try that first and fall back here for computed keys.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j + 1)
+    name, j = _js_fold_key_expr(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "]":
+        raise _JSExprFail("unterminated computed key bracket")
     return name, _js_skip_ws(text, j + 1)
 
 
@@ -3974,6 +4152,215 @@ def _js_parse_reflect_apply_concat(text, i, depth, state):
         # A third argument changes the call arity -- fails closed.
         raise _JSExprFail("Reflect.apply with extra args")
     return _JSArr(elements), j + 1
+
+
+def _js_parse_reflect_get_target(text, j):
+    """Parse the TARGET of `Reflect.get(TARGET, KEY)` (F491).
+
+    Returns ((kind, tname), next_index) where kind is "proto" (with
+    tname "array"/"string") or "ctor". Only the filed target classes
+    are modeled: `Array.prototype` / `String.prototype` (textual,
+    ws-tolerant, ident-boundary-checked) and the Array constructor
+    reference (`Array` / `[].constructor`, via
+    _js_parse_array_ctor_ref). Anything else -- `Math`, bracket
+    targets (`Array['prototype']`), non-empty receivers -- fails
+    closed (documented scope boundary). Never evals.
+    """
+    n = len(text)
+    for tname, kind in (("Array", "array"), ("String", "string")):
+        if text.startswith(tname, j):
+            k = j + len(tname)
+            if k < n and text[k] in _JS_IDENT_CONT:
+                break  # Arrayx / Stringx -- not a target
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ".":
+                k = _js_skip_ws(text, k + 1)
+                if text.startswith("prototype", k):
+                    k2 = k + len("prototype")
+                    if k2 >= n or text[k2] not in _JS_IDENT_CONT:
+                        return ("proto", kind), k2
+            break
+    try:
+        k = _js_parse_array_ctor_ref(text, j)
+    except _JSExprFail:
+        raise _JSExprFail("Reflect.get target not modeled")
+    return ("ctor", None), k
+
+
+def _js_desugar_indirect_member(kind, tname, key, text, j, depth, state):
+    """Desugar a resolved `TARGET.KEY` indirection (F491).
+
+    *kind* is "proto" (tname "array"/"string") or "ctor"; *key* is the
+    folded member name; text[j] is just past the indirection's closing
+    paren (and `.value` for the descriptor form). The resolved
+    reference is engine-identical to the direct member access
+    (node-verified, v24.20.0): the parse continues as if the text
+    were the canonical direct form, so every downstream grammar,
+    bound, and fail-closed behavior is shared with it -- faithful by
+    construction, no F481-class composition gap. Index mapping back
+    to the original text is positional (the suffix is verbatim).
+
+    Returns (value, next_index) with the postfix chain applied, or
+    None when the text after the indirection is not a modeled call
+    (the caller falls through; the bare indirection is not a
+    decodable shape). Never evals.
+    """
+    n = len(text)
+    state["ops"] += 1  # the indirection is obfuscation-shaped
+    if kind == "ctor":
+        if key != "of":
+            # Engine-exact: `Reflect.get(Array,'from')` resolves, but
+            # calling `from` with string args throws -- same boundary
+            # as F476's direct form. Never mis-decoded.
+            raise _JSExprFail("Reflect.get ctor key not of")
+        canon = "Array.of"
+        synth = canon + text[j:]
+        sval, send = _js_parse_array_constructor(synth, 0, state)
+        if send < len(canon):
+            raise _JSExprFail("bad ctor desugar")
+        return _js_parse_postfix(text, j + (send - len(canon)), sval,
+                                 depth, state)
+    table = _F478_ARRAY_METHODS if tname == "array" else _F478_STRING_METHODS
+    if key not in table:
+        # Engine-exact: the resolved reference is undefined
+        # (`Array.prototype.replace`), so any call throws in node --
+        # not a decodable shape. Same validation as
+        # _js_parse_prototype_dispatch. Never mis-decoded.
+        raise _JSExprFail("Reflect.get key not a modeled method")
+    canon = ("Array.prototype." if tname == "array"
+             else "String.prototype.") + key
+    synth = canon + text[j:]
+    r = _js_parse_prototype_dispatch(synth, 0, depth, state)
+    if r is None:
+        return None
+    sval, send = r
+    return sval, j + (send - len(canon))
+
+
+def _js_parse_reflect_get(text, i, depth, state):
+    """Parse `Reflect.get(TARGET, KEY)` / `Reflect['get'](TARGET, KEY)`
+    at text[i] (F491).
+
+    Desugars the indirection to the direct member reference:
+    `Reflect.get(Array.prototype,'concat')` is engine-identical to
+    `Array.prototype.concat`; `Reflect.get(Array,'of')` is
+    engine-identical to `Array.of` (node v24.20.0 verified). KEY may
+    be a string literal or a constant-folded computed key (the
+    F491xF492 composition, via _js_fold_key_expr).
+
+    Returns (value, next_index), or None when text[i] is not a
+    `Reflect.get` shape (the caller falls through to
+    _js_parse_reflect_call, which fails closed on it). Once the `get`
+    member commits the parse, malformed shapes fail closed via
+    _JSExprFail. Descriptor objects with getters/setters cannot
+    arise: only the filed (TARGET, KEY) data-descriptor pairs are
+    modeled. Never evals.
+    """
+    n = len(text)
+    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+        return None
+    j = i + len("Reflect")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        return None
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        try:
+            mname, j = _js_parse_bracket_member(text, j)
+        except _JSExprFail:
+            return None
+        if mname != "get":
+            return None
+    else:
+        if j >= n or text[j] != ".":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        if not text.startswith("get", j):
+            return None
+        k = j + len("get")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            return None  # getx / getOwnPropertyDescriptor -- not get
+        j = k
+    # The `get` member commits the parse: malformed shapes fail closed.
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("Reflect.get without paren")
+    j = _js_skip_ws(text, j + 1)
+    (kind, tname), j = _js_parse_reflect_get_target(text, j)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("Reflect.get without key")
+    key, j = _js_fold_key_expr(text, _js_skip_ws(text, j + 1), depth,
+                              state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("Reflect.get unterminated")
+    return _js_desugar_indirect_member(kind, tname, key, text, j + 1,
+                                      depth, state)
+
+
+def _js_parse_gopd_value(text, i, depth, state):
+    """Parse `Object.getOwnPropertyDescriptor(TARGET, KEY).value` at
+    text[i] (F491).
+
+    Desugars the descriptor indirection: `.value` on the filed
+    (TARGET, KEY) pairs is engine-identical to the direct member
+    reference (node v24.20.0 verified), so the parse continues via
+    _js_desugar_indirect_member exactly as `Reflect.get` does.
+
+    Returns (value, next_index), or None when text[i] is not this
+    shape (the caller falls through). Once the
+    `getOwnPropertyDescriptor` member commits the parse, malformed
+    shapes fail closed via _JSExprFail. Only `.value` (dot or
+    bracket-string) is modeled -- other descriptor fields fail
+    closed. Never evals.
+    """
+    n = len(text)
+    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+        return None
+    j = i + len("Object")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        return None
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        return None
+    j = _js_skip_ws(text, j + 1)
+    if not text.startswith("getOwnPropertyDescriptor", j):
+        return None
+    k = j + len("getOwnPropertyDescriptor")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        return None
+    j = k
+    # The member commits the parse: malformed shapes fail closed.
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("gopd without paren")
+    j = _js_skip_ws(text, j + 1)
+    (kind, tname), j = _js_parse_reflect_get_target(text, j)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("gopd without key")
+    key, j = _js_fold_key_expr(text, _js_skip_ws(text, j + 1), depth,
+                              state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("gopd unterminated")
+    j = _js_skip_ws(text, j + 1)
+    if j < n and text[j] == "[":
+        vname, j = _js_parse_bracket_member(text, j)
+        if vname != "value":
+            raise _JSExprFail("gopd field not value")
+    elif j < n and text[j] == ".":
+        j = _js_skip_ws(text, j + 1)
+        if not text.startswith("value", j):
+            raise _JSExprFail("gopd field not value")
+        k = j + len("value")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("valuex is not value")
+        j = k
+    else:
+        raise _JSExprFail("gopd without .value")
+    return _js_desugar_indirect_member(kind, tname, key, text, j,
+                                      depth, state)
 
 
 def _js_parse_reflect_call(text, i, depth, state):
@@ -4793,11 +5180,16 @@ def _js_parse_prototype_dispatch(text, i, depth, state):
         # engine-identical to the dot form (node v24.20.0 verified). A
         # non-literal key falls through to None (the primary path
         # fails closed on `.prototype`); a literal naming no modeled
-        # method falls through as well.
+        # method falls through as well. F492: a computed key
+        # (`['con'+'cat']`, `` [`con${'cat'}`] ``) is constant-folded
+        # to its engine-exact value and routed identically.
         try:
             method, k = _js_parse_bracket_member(text, j)
         except _JSExprFail:
-            return None
+            try:
+                method, k = _js_fold_bracket_key(text, j, depth, state)
+            except _JSExprFail:
+                return None
     elif j < n and text[j] == ".":
         j = _js_skip_ws(text, j + 1)
         if j >= n or text[j] not in _JS_IDENT_START:
@@ -4829,7 +5221,7 @@ def _js_parse_prototype_dispatch(text, i, depth, state):
     return _js_parse_postfix(text, j, val, depth, state)
 
 
-def _js_parse_dispatch_target_ref(text, i):
+def _js_parse_dispatch_target_ref(text, i, depth, state):
     """Parse `Array.prototype.M` / `String.prototype.M` (dot or
     bracket-string member, F482) at text[i] (F483).
 
@@ -4863,7 +5255,11 @@ def _js_parse_dispatch_target_ref(text, i):
         try:
             method, k = _js_parse_bracket_member(text, j)
         except _JSExprFail:
-            raise _JSExprFail("not a dispatch target")
+            # F492: computed key on the double-dispatch target.
+            try:
+                method, k = _js_fold_bracket_key(text, j, depth, state)
+            except _JSExprFail:
+                raise _JSExprFail("not a dispatch target")
     elif j < n and text[j] == ".":
         j = _js_skip_ws(text, j + 1)
         if j >= n or text[j] not in _JS_IDENT_START:
@@ -4949,7 +5345,7 @@ def _js_parse_function_dispatch(text, i, depth, state):
     outer, paren = peek
     try:
         method, k = _js_parse_dispatch_target_ref(
-            text, _js_skip_ws(text, paren + 1))
+            text, _js_skip_ws(text, paren + 1), depth, state)
     except _JSExprFail:
         return None
     k = _js_skip_ws(text, k)
@@ -5009,11 +5405,15 @@ def _js_parse_postfix_dispatch(text, j, value, depth, state):
     if text[j] == "[":
         # F482: EXPR['METHOD'] -- bracket-string member access on the
         # already-parsed value. A non-literal key is not a dispatch
-        # (falls through; the chain ends per F461 as before).
+        # (falls through; the chain ends per F461 as before). F492: a
+        # computed key is constant-folded and routed identically.
         try:
             method, m = _js_parse_bracket_member(text, j)
         except _JSExprFail:
-            return None
+            try:
+                method, m = _js_fold_bracket_key(text, j, depth, state)
+            except _JSExprFail:
+                return None
     else:
         k = j + 1
         if k >= n or text[k] not in _JS_IDENT_START:
@@ -6468,6 +6868,64 @@ def _js_parse_postfix(text, i, value, depth, state):
             return value, i
 
 
+def _js_parse_paren_member_call(text, i, depth, state):
+    """Parse `(ARR_EXPR[KEY])(args)` at text[i] == '(' (F492).
+
+    A parenthesized member reference used as a call callee:
+    `([]['con'+'cat'])('f1','f2')` is engine-identical to
+    `[].concat('f1','f2')` (node v24.20.0 verified) -- the reference
+    keeps its base as the receiver. The receiver is a parsed array
+    literal; KEY is a string-literal member (via
+    _js_parse_bracket_member) or a constant-folded computed key (via
+    _js_fold_bracket_key). The method must name a modeled array
+    method; the call desugars to the direct method-call path
+    (_js_apply_method_at -- the same text-form grammar, bounds, and
+    fail-closed behavior as `[].concat(...)`, so no F481-class
+    composition gap).
+
+    Returns (value, next_index) with the postfix chain applied, or
+    None when text[i] is not this shape (the caller falls through to
+    the normal parenthesized-expression path). A malformed member
+    call (key parsed but the call parens bad) fails closed via
+    _JSExprFail. Non-array receivers and unmodeled methods are not
+    this shape (None -- the normal path fails closed on them).
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i + 1)
+    if j >= n or text[j] != "[":
+        return None
+    try:
+        recv, j = _js_parse_array(text, j, depth, state)
+    except _JSExprFail:
+        return None
+    if not isinstance(recv, _JSArr):
+        return None
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "[":
+        return None
+    try:
+        method, j = _js_parse_bracket_member(text, j)
+    except _JSExprFail:
+        try:
+            method, j = _js_fold_bracket_key(text, j, depth, state)
+        except _JSExprFail:
+            return None
+    if method not in _F478_ARRAY_METHODS:
+        return None
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        return None
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "(":
+        return None
+    # Desugar to recv.method(args): the text-form argument grammar is
+    # shared with the direct call, faithful by construction.
+    state["ops"] += 1  # the member-call indirection is obfuscation-shaped
+    val, j = _js_apply_method_at(text, j + 1, method, recv, depth, state)
+    return _js_parse_postfix(text, j, val, depth, state)
+
+
 def _js_parse_primary(text, i, depth, state, _forbid_template=False):
     """Parse one primary (literal / fromCharCode / parens / number / array /
     Array constructor / Reflect.construct).
@@ -6552,6 +7010,28 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         state["ops"] += 1  # the call itself is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("String", i):
+        # F493: String.raw({raw:[...]}) / String.raw.call(R, {raw:[...]})
+        # -- the call form of String.raw. The tag form String.raw`...`
+        # is explicitly NOT routed here: it falls through to the
+        # F463/F457 template handling (the tag form is the
+        # coded-refusal control and must keep its existing behavior;
+        # routing it into the call-form parser would rely on
+        # exception recovery to preserve it).
+        _sj = _js_skip_ws(text, i + len("String"))
+        if not (_sj < len(text) and text[_sj] in _JS_IDENT_CONT):
+            if _sj < len(text) and text[_sj] == ".":
+                _rk = _js_skip_ws(text, _sj + 1)
+                if text.startswith("raw", _rk):
+                    _re = _rk + len("raw")
+                    if _re >= len(text) or text[_re] not in _JS_IDENT_CONT:
+                        _rq = _js_skip_ws(text, _re)
+                        if not (_rq < len(text) and text[_rq] == "`"):
+                            val, i = _js_parse_string_raw(text, i, depth,
+                                                          state)
+                            state["ops"] += 1  # the call is obfuscation-shaped
+                            return _js_parse_postfix(text, i, val, depth,
+                                                     state)
+    if text.startswith("String", i):
         # F477: String(x) constructor -- engine-exact String()
         # coercion for the modeled argument classes (parsed string
         # arrays via their F464 toString; numbers via their decimal
@@ -6585,6 +7065,12 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                     state["ops"] += 1  # the call is obfuscation-shaped
                     return _js_parse_postfix(text, _k, _JSArr(elements),
                                              depth, state)
+        # F492: (ARR_EXPR[KEY])(args) -- parenthesized member-call
+        # desugared to the direct method call; None falls through to
+        # the parenthesized-additive path below.
+        _pmc = _js_parse_paren_member_call(text, i, depth, state)
+        if _pmc is not None:
+            return _pmc
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
         val, i = _js_parse_additive(text, i + 1, depth + 1, state,
@@ -6644,9 +7130,15 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # F468: Reflect.construct(Array, <argsArray>) reflection-API
         # factory -- desugars to the fragment list. F469:
         # Reflect.apply(Array.prototype.concat, <thisArg>, <argsArray>)
-        # -- desugars to thisArg.concat(...argsArray). startswith alone
-        # admits Reflectx, which the parser then fails closed
+        # -- desugars to thisArg.concat(...argsArray). F491:
+        # Reflect.get(TARGET, KEY) -- member indirection desugared to
+        # the direct reference; None falls through to the
+        # construct/apply dispatch below. startswith alone admits
+        # Reflectx, which the parsers then fail closed
         # (ident-boundary check).
+        _rg = _js_parse_reflect_get(text, i, depth, state)
+        if _rg is not None:
+            return _rg
         val, i = _js_parse_reflect_call(text, i, depth, state)
         state["ops"] += 1  # the Reflect call is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
@@ -6665,6 +7157,12 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             val, i = _js_parse_object_assign_args(text, _mj, depth, state)
             state["ops"] += 1  # the assign call is obfuscation-shaped
             return _js_parse_postfix(text, i, val, depth, state)
+        # F491: Object.getOwnPropertyDescriptor(TARGET, KEY).value --
+        # descriptor indirection desugared to the direct reference;
+        # None falls through to the constructor-callee / assign paths.
+        _gv = _js_parse_gopd_value(text, i, depth, state)
+        if _gv is not None:
+            return _gv
         # F488: Object.getPrototypeOf([]).constructor(...) /
         # Object.getPrototypeOf([])['constructor'](...) -- direct
         # constructor invocation via the prototype chain (no parens
