@@ -456,7 +456,7 @@ def p_footer_state():
         text = f.read()
     # Wave-336 lane 1: repaired stale F412/F413-era assertions.
     assert "Open findings: F473, F474." in text, "footer must show open none"
-    assert "Next free finding: **F475**" in text, "next free must be F427"
+    assert "Next free finding: **F478**" in text, "next free must be F427"
     _record("footer-state", "HELD", "open none / next F430")
 
 

@@ -312,7 +312,7 @@ def p_footer_state():
     # Footer lines repeat through history; the LAST one is current.
     # Wave-316 merge footer: F398/F399/F400 CLOSED; F401/F402/F403 OPEN; next F404.
     ok = (m_next and m_next[-1] == "F475"
-          and m_open and m_open[-1].strip() == "F473, F474")
+          and m_open and m_open[-1].strip() == "F476, F477")
     _record("footer-state", "HELD" if ok else "BREAK",
             "open F412 / next F413" if ok else "footer drift")
 
