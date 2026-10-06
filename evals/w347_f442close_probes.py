@@ -60,7 +60,7 @@ from gov import decision_codes as _dc  # noqa: E402
 from gov.policy_delta_gate import PolicyDeltaError  # noqa: E402
 
 VENV_PYTHON = os.path.expanduser("~/workspace/.gov-venv/bin/python")
-FOOTER_OPEN = "F445"  # wave-347 lane 6: F442 closed; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444) Wave-348: F443 closed (open none).; wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 lane 1: F444 CLOSED (open F445)
+FOOTER_OPEN = "none"  # wave-347 lane 6: F442 closed; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444) Wave-348: F443 closed (open none).; wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 lane 1: F444 CLOSED (open F445); wave-349 merge: F444+F445 CLOSED (open none)
 
 FOOTER_NEXT = "F446"  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446)
 

@@ -144,19 +144,20 @@ def test_a5_named_entities_no_ascii_shape():
 
 @_t
 def test_a6_b64_24min_precision_boundary():
-    """Precision boundary, probed and dismissed: base64 of the 16-char
-    test credential is 23 chars + pad, under the deliberate _B64_RUN
-    24-char minimum (F2/F8-era precision guard against random
-    base64-looking words). Real tokens are far longer. Not a defeated
-    control; pinned as held-by-design."""
+    """F445 is CLOSED 2026-10-06 wave-349 lane 1: base64 of the 16-char
+    test credential (23 chars + pad, under the old deliberate _B64_RUN
+    24-char minimum) now blocks coded dlp-slack-token -- short runs
+    (8-23 payload chars) are strict-decoded with the credential-shape
+    gate (was filed OPEN and pinned as a held-by-design miss; flipped
+    to a refusal assertion on closure)."""
     import base64
     b64 = base64.b64encode(_CRED.encode()).decode()
     # neutral prefix: "token=" would inflate the result via the
     # entropy tripwire; the pin is about the base64 decode layer.
-    miss = dlp.find_credential("k=" + b64) is None
-    ok = miss and len(b64.rstrip("=")) < 24
+    hit = dlp.find_credential("k=" + b64) == "dlp-slack-token"
+    ok = hit and len(b64.rstrip("=")) < 24
     return ("HELD" if ok else "BREAK",
-            "short-b64 miss=%s (precision guard)" % miss)
+            "short-b64 blocks=%s (F445 closed)" % hit)
 
 
 # ---------------------------------------------------------------- A3: structural shapes
@@ -215,9 +216,10 @@ def test_b2_f433_css_nospace_closed():
 @_t
 def test_b3_f432_f433_filings_pinned():
     """F432-F436 filed and CLOSED (lanes 1-4, wave-346 lane 1), F437-F442
-    filed and CLOSED (wave-347 lanes 1-6), F443 filed OPEN (wave-347
-    lane 7): pins the filings and the closed footer so none can go
-    undocumented."""
+    filed and CLOSED (wave-347 lanes 1-6), F443 filed and CLOSED
+    (wave-348 lane 1), F444 filed OPEN (wave-348 lane 2), F445 filed
+    and CLOSED (wave-349 lane 1): pins the filings and the closed
+    footer so none can go undocumented."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F432 filed 2026-10-05, wave-344 lane 4" in text
           and "(F433 filed 2026-10-05, wave-344 lane 4" in text
@@ -246,9 +248,9 @@ def test_b3_f432_f433_filings_pinned():
           and "(F444 filed 2026-10-06, wave-348 lane 2" in text
           and "CLOSED 2026-10-06 wave-349 lane 1" in text
           and "(F445 filed 2026-10-06, wave-348 lane 2" in text
-          and "LOW, OPEN: the base64 minimum-length gate" in text
+          and "CLOSED 2026-10-06 wave-349 lane 1" in text
           and "Next free finding: **F446**" in text
-          and "Open findings: F445." in text)
+          and "Open findings: none." in text)
     return ("HELD" if ok else "BREAK", "F432-F445 filed+pinned=%s" % ok)
 
 
