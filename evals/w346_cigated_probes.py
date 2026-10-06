@@ -28,7 +28,7 @@ battery selection); scripts/policy_ci_gate.py does the running half
   P10 RED (second mechanism): removing a forbid rule outright also
       fails the gate (delta: policy-delta-forbid-removed).
   P8  observe-lifecycle + pin-registry impact units.
-  P9  pin 2134, footer open F436, F437 / next F438 (no new decision
+  P9  pin 2134, footer open F437-F442 / next F443 (no new decision
       codes -- F437 is filed, not closed).
 
 $0 spend. No network. Scratch files live under /var/tmp only.
@@ -284,7 +284,7 @@ def p9_pin_and_footer():
     footer = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ok and ("Next free finding: **%s**" % FOOTER_NEXT) in footer
     ok = ok and ("Open findings: %s." % FOOTER_OPEN) in footer
-    return _check("p9: pin 2134, footer open F436, F437 / next F438", ok,
+    return _check("p9: pin 2134, footer open F437-F442 / next F443", ok,
                   footer[-60:])
 
 

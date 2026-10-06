@@ -49,7 +49,7 @@ Probes:
       complete fast with no exceptions.
   P7  layering: no-semicolon hex entity + base64 composes; entity
       decode feeds the JS-expression layer within the 2-layer budget.
-  P8  pin + footer: taxonomy pin 2134, footer open none / next F437.
+  P8  pin + footer: taxonomy pin 2134, footer open F437-F442 / next F443.
 
 Usage:
   ~/workspace/.gov-venv/bin/python evals/w346_f436close_probes.py
@@ -315,7 +315,7 @@ def p8_pin_and_footer():
     footer = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ok and ("Next free finding: **%s**" % FOOTER_NEXT) in footer
     ok = ok and ("Open findings: %s." % FOOTER_OPEN) in footer
-    return _check("p8: pin 2134, footer open none / next F437",
+    return _check("p8: pin 2134, footer open F437-F442 / next F443",
                   ok, footer[-60:])
 
 
