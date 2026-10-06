@@ -129,12 +129,13 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F470-F472 open, next F473 (wave-354 lane 1:
-    F469 closed; F470-F471 attack-lane filings; F472 repeat-tagged)."""
+    """Control: footer shows F472 open, next F473 (wave-354: F469-F471
+    CLOSED; F472 repeat-tagged, renumbered F469->F472; F473/F474
+    attack-lane filings; wave-354 lane 3: F471 CLOSED)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F473**" in text
-          and "**Open findings: F471, F472.**" in text)
+          and "**Open findings: F472.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -201,7 +202,8 @@ def test_b1_f468_reflect_construct_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
-# ------------------------------------------------- F469-F471 open pins
+# ------------------------------------------------- F469-F470 open pins
+# (F471 moved to the closed pins below -- wave-354 lane 3)
 
 @_t
 def test_b2_f469_reflect_apply_closed():
@@ -232,19 +234,21 @@ def test_b2_f470_charcode_predicate_closed():
 
 
 @_t
-def test_b2_f471_object_assign_open():
-    """F471 pinned open: Object.assign([], [...]) array-copy misses."""
-    miss = not _blocked("Object.assign([],['" + _A + "','" + _B + "'])"
-                        ".join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b2_f471_object_assign_closed():
+    """F471 CLOSED (wave-354 lane 3): Object.assign([], [...]) array-copy
+    now blocks via _js_parse_object_assign."""
+    hit = _blocked("Object.assign([],['" + _A + "','" + _B + "'])"
+                   ".join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_b2_f471_spread_copy_open():
-    """F471 pinned open: spread-copy [...['frag1','frag2']] misses --
-    same array-copy-factory mechanism as Object.assign."""
-    miss = not _blocked("[...['" + _A + "','" + _B + "']].join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b2_f471_spread_copy_closed():
+    """F471 CLOSED (wave-354 lane 3): spread-copy [...['frag1','frag2']]
+    now blocks via _js_parse_spread_copy -- same array-copy-factory
+    mechanism as Object.assign."""
+    hit = _blocked("[...['" + _A + "','" + _B + "']].join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- round-21 scope notes
@@ -339,9 +343,9 @@ def test_b4_f457_tmpl_interp_closed():
 # ---------------------------------------------------------------- green check
 
 _EXPECTED_BREAKS = set()  # this battery asserts HELD everywhere: the
-# F461-F471 misses are pinned as known-open (each probe returns HELD when
-# the miss reproduces); a literal BREAK verdict means the pin failed or a
-# NEW unexpected break appeared.
+# F469/F470/F472 misses are pinned as known-open (each probe returns HELD
+# when the miss reproduces; F461-F468 and F471 are closed); a literal
+# BREAK verdict means the pin failed or a NEW unexpected break appeared.
 
 
 def _green_check():

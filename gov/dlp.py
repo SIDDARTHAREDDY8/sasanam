@@ -2079,7 +2079,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|Array(\(|[ \t\n\r]*\.[ \t\n\r]*of)|Reflect[ \t\n\r]*\.[ \t\n\r]*(construct|apply)|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|Array(\(|[ \t\n\r]*\.[ \t\n\r]*of)|Reflect[ \t\n\r]*\.[ \t\n\r]*(construct|apply)|Object[ \t\n\r]*\.[ \t\n\r]*assign|\(\"")
 # F455: the Array.of factory anchor tolerates whitespace around the dot
 # ([ \t\n\r]*, exactly the _js_skip_ws class the parser skips), so
 # `Array .of(...)` / `Array\t.of(...)` / `Array\n.of(...)` /
@@ -2088,7 +2088,10 @@ _JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|Array(\(|[ \t\n\r]*\
 # covers Reflect.construct, so `Reflect .construct(...)` /
 # `Reflect . construct(...)` reach _js_parse_reflect_construct. F469:
 # the anchor class also covers Reflect.apply, so `Reflect .apply(...)` /
-# `Reflect . apply(...)` reach _js_parse_reflect_apply_concat. The ws
+# `Reflect . apply(...)` reach _js_parse_reflect_apply_concat. F471: the
+# same ws-tolerant anchor class covers Object.assign, so
+# `Object .assign(...)` / `Object . assign(...)` reach
+# _js_parse_object_assign. The ws
 # class is a character class, not a nested quantifier: matching stays
 # linear (no ReDoS surface).
 _JS_EXPR_MAX_PARTS = 64        # bound on '+' operands per expression
@@ -2474,6 +2477,49 @@ class _JSArr:
         self.elements = elements
 
 
+def _js_parse_spread_copy(text, i, depth, state):
+    """Parse '[...X]' spread-copy factory at text[i] (F471).
+
+    Desugars the array-copy factory: node-evaluated, [...X] is
+    element-identical to X for parsed string arrays (holes join as ""
+    exactly like the decoder's other hole models, and the parser's
+    source classes can never be sparse -- holes fail closed at parse).
+    The source composes through the existing parsers
+    (_js_parse_primary): array literals, Array.of / Array(...)
+    factories, Reflect.construct, Object.assign copies, and postfix
+    chains on them. Returns a fresh _JSArr over the source's element
+    list (a copy, so downstream mutation-shaped steps cannot alias the
+    source).
+
+    Bounded scope: the spread must be the ONLY element -- mixed forms
+    ([...X, 'y']) fail closed; nested spread copies ([...[...X]]) fail
+    closed via the in_spread_copy guard; spread of a non-array
+    ([...'ab'], [...'ab'.length]) fails closed -- the iterable-spread
+    of strings is node-real but out of scope (documented candidate).
+    No new parts are charged: every element was parts-charged at
+    source parse (same convention as F461's reversal). Whitespace
+    after '...' is tolerated (punctuator + _js_skip_ws, node-verified).
+    Never evals.
+    """
+    n = len(text)
+    if state.get("in_spread_copy"):
+        raise _JSExprFail("nested spread copy")
+    j = _js_skip_ws(text, i + 1)
+    if not text.startswith("...", j):
+        raise _JSExprFail("not a spread copy")
+    state["in_spread_copy"] = True
+    try:
+        src, j = _js_parse_primary(text, j + 3, depth, state)
+    finally:
+        state["in_spread_copy"] = False
+    if not isinstance(src, _JSArr):
+        raise _JSExprFail("spread of non-array")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "]":
+        raise _JSExprFail("spread copy not closed")
+    return _JSArr(list(src.elements)), j + 1
+
+
 def _js_parse_array(text, i, depth, state):
     """Parse '[' element (, element)* ']' at text[i] (F434).
 
@@ -2482,6 +2528,12 @@ def _js_parse_array(text, i, depth, state):
     expression part budget; the joined output is charged to
     _MAX_DECODE_BYTES in _js_apply_method.
     """
+    j = _js_skip_ws(text, i + 1)
+    if text.startswith("...", j):
+        # F471: the spread-copy factory is checked before the
+        # nested-array guard so the source can itself be an array
+        # literal parsed through the existing parsers.
+        return _js_parse_spread_copy(text, i, depth, state)
     if state.get("in_array"):
         raise _JSExprFail("nested array")
     state["in_array"] = True
@@ -2956,6 +3008,68 @@ def _js_parse_reflect_call(text, i, depth, state):
     if text.startswith("apply", j):
         return _js_parse_reflect_apply_concat(text, i, depth, state)
     raise _JSExprFail("Reflect without construct/apply")
+
+
+def _js_parse_object_assign(text, i, depth, state):
+    """Parse 'Object.assign([], <src>)' at text[i] (F471).
+
+    Desugars the array-copy factory: node-evaluated,
+    Object.assign([], X) copies X's elements into a fresh array, so
+    for parsed string arrays the result is element-identical to X
+    (holes join as "" exactly like the decoder's other hole models;
+    the parser's source classes can never be sparse -- holes fail
+    closed at parse). The target must be exactly the empty array
+    literal [] (whitespace tolerated); a non-empty target
+    (Object.assign(['x'], X) overwrites index 0 in node) fails
+    closed. The source composes through the existing parsers
+    (_js_parse_primary): array literals, Array.of / Array(...)
+    factories, Reflect.construct, spread copies, and postfix chains
+    on them; a non-_JSArr source (string, number, plain object)
+    fails closed.
+
+    Bounded scope: a second source argument fails closed --
+    node-verified, Object.assign([],[a],[b]) overwrites by index
+    (result [b]), which is NOT concat-equivalent. Non-Object
+    receivers (Objectx, Object.assignx) fail closed on the
+    ident-boundary checks. Returns a fresh _JSArr over the source's
+    element list. Whitespace is tolerated around the dot (F455-class,
+    exactly the _js_skip_ws class), matching the _JS_EXPR_START
+    anchor. Never evals.
+    """
+    n = len(text)
+    j = i + len("Object")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        raise _JSExprFail("Objectx is not Object")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("Object without dot")
+    j = _js_skip_ws(text, j + 1)
+    if not text.startswith("assign", j):
+        raise _JSExprFail("Object without assign")
+    k = j + len("assign")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("assignx is not assign")
+    j = _js_skip_ws(text, k)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("Object.assign without paren")
+    j = _js_skip_ws(text, j + 1)
+    # Target: exactly the empty array literal [].
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("Object.assign non-array target")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "]":
+        raise _JSExprFail("Object.assign non-empty target")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("Object.assign without source")
+    j = _js_skip_ws(text, j + 1)
+    src, j = _js_parse_primary(text, j, depth, state)
+    if not isinstance(src, _JSArr):
+        raise _JSExprFail("Object.assign non-array source")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("Object.assign with extra sources")
+    return _JSArr(list(src.elements)), j + 1
 
 
 def _js_parse_reduce_params(text, i):
@@ -4075,6 +4189,14 @@ def _js_parse_primary(text, i, depth, state):
         val, i = _js_parse_reflect_call(text, i, depth, state)
         state["ops"] += 1  # the Reflect call is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
+    if text.startswith("Object", i):
+        # F471: Object.assign([], <src>) array-copy factory --
+        # desugars to the source's element list. startswith alone
+        # admits Objectx, which the parser then fails closed
+        # (ident-boundary check).
+        val, i = _js_parse_object_assign(text, i, depth, state)
+        state["ops"] += 1  # the assign call is obfuscation-shaped
+        return _js_parse_postfix(text, i, val, depth, state)
     if c in _ASCII_DIGITS:
         num, i = _js_parse_number(text, i)
         return str(num), i
@@ -4115,13 +4237,18 @@ def _try_js_expr_decode(text, start):
     the reflection-API factory desugared to the fragment list
     (argsArray: string-literal array literal, Array.of, or the
     F443/F454 Array constructor forms; any other target or arg class
-    fails closed), (F469) Reflect.apply(Array.prototype.concat,
-    <thisArg>, <argsArray>) -- the reflection-API method-application
-    shape desugared to thisArg.concat(...argsArray) (target exactly
-    Array.prototype.concat; thisArg/argsArray: string-literal array
-    literals or Array constructor call forms; array args extended one
-    level, engine-exact; any other target, arg class, or a third
-    argument fails closed)
+      fails closed), (F469) Reflect.apply(Array.prototype.concat,
+      <thisArg>, <argsArray>) -- the reflection-API method-application
+      shape desugared to thisArg.concat(...argsArray) (target exactly
+      Array.prototype.concat; thisArg/argsArray: string-literal array
+      literals or Array constructor call forms; array args extended one
+      level, engine-exact; any other target, arg class, or a third
+      argument fails closed), and (F471) the array-copy factories
+      Object.assign([], <src>) and [...<src>] -- desugared to the
+      source's element list (source: any parsed string array through
+      the existing parsers; target must be exactly []; multi-source
+      Object.assign, nested/mixed spreads, and spread of non-arrays
+      fail closed)
 . Bounded by part, depth, codepoint, repeat, and output budgets; never
     evals; undecodable runs are ignored. A bare string literal (or an
     unjoined array literal) with no operator or call is not rewritten

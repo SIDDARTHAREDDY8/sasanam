@@ -94,7 +94,7 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-353: F461+F462 closed, no new decision codes
-FOOTER_OPEN = "F471, F472"  # Wave-353 lane 1: F461+F462 CLOSED (merge finalizes tree-wide)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 lane 1: F469 CLOSED locally (merge finalizes tree-wide)  # Wave-354: F470 CLOSED
+FOOTER_OPEN = "F472"  # Wave-353 lane 1: F461+F462 CLOSED (merge finalizes tree-wide)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 lane 1: F469 CLOSED locally (merge finalizes tree-wide)  # Wave-354: F470 CLOSED  # Wave-354 lane 3: F471 CLOSED
 
 FOOTER_NEXT = "F473"  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)
 
@@ -245,8 +245,13 @@ def p4_disc_spread_nonarray_quiet():
     return _decoded("\"\".concat(...'ab')") is None
 
 
-def p4_disc_spread_nested_quiet():
-    return _decoded("\"\".concat(...[...['a']])") is None
+def p4_disc_spread_nested_decodes():
+    # Wave-354 lane 3 (F471): the inner [...['a']] is now a modeled
+    # spread-copy factory, so the F462 spread-concat target resolves
+    # through it -- node-evaluates to 'a' (node v24.20.0), and the
+    # decoder agrees byte-exactly. The old quiet pin (nested spreads
+    # fail closed) is superseded by the F471 composition.
+    return _decoded("\"\".concat(...[...['a']])") == "a"
 
 
 def p4_disc_spread_empty_quiet():
@@ -370,7 +375,7 @@ _PROBES = [
     ("p4-disc-reverse-with-args-quiet", p4_disc_reverse_with_args_quiet),
     ("p4-disc-sort-chain-quiet", p4_disc_sort_chain_quiet),
     ("p4-disc-spread-nonarray-quiet", p4_disc_spread_nonarray_quiet),
-    ("p4-disc-spread-nested-quiet", p4_disc_spread_nested_quiet),
+    ("p4-disc-spread-nested-decodes", p4_disc_spread_nested_decodes),
     ("p4-disc-spread-empty-quiet", p4_disc_spread_empty_quiet),
     ("p4-disc-spread-joined-array-quiet", p4_disc_spread_joined_array_quiet),
     ("p1-closure-f462-spread-ws-after-dots", p1_closure_f462_spread_ws_after_dots),

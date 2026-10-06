@@ -90,7 +90,7 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-353: F463 closed, F472 filed; no new decision codes
-FOOTER_OPEN = "F471, F472"  # Wave-353 lane 2: F463 CLOSED locally (merge finalizes tree-wide); F472 repeat-tagged filed OPEN (renumbered F469->F472); F469-F471 are wave-353 attack-lane filings (commit e79af076)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 lane 1: F469 CLOSED locally (merge finalizes tree-wide)  # Wave-354: F470 CLOSED
+FOOTER_OPEN = "F472"  # Wave-353 lane 2: F463 CLOSED locally (merge finalizes tree-wide); F472 repeat-tagged filed OPEN (renumbered F469->F472); F469-F471 are wave-353 attack-lane filings (commit e79af076)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 lane 1: F469 CLOSED locally (merge finalizes tree-wide)  # Wave-354: F470 CLOSED  # Wave-354 lane 3: F471 CLOSED
 
 FOOTER_NEXT = "F473"  # Wave-353 lane 2: F463 CLOSED, F472 filed OPEN; attack lane filed F469-F471 (next F473)
 
@@ -260,14 +260,17 @@ def p3_pin_no_new_regexes():
     # as the exact pattern string. Wave-353 lane 4 (F468) legitimately
     # added the Reflect-construct alternative (ws-tolerant, character
     # class only); wave-354 lane 1 (F469) legitimately widened it to
-    # (construct|apply) for the Reflect.apply concat shape; the F463
-    # closure itself added no regex.
+    # (construct|apply) for the Reflect.apply concat shape; wave-354
+    # lane 3 (F471) legitimately added the Object.assign alternative
+    # (ws-tolerant, character class only -- the same F468 precedent);
+    # the F463 closure itself added no regex.
     assert dlp._JS_EXPR_START.pattern == (
         r"['\"`\[]|String\.fromCharCode|Array(\(|"
         r"[ \t\n\r]*\.[ \t\n\r]*of)|Reflect[ \t\n\r]*"
-        r"\.[ \t\n\r]*(construct|apply)|\(")
+        r"\.[ \t\n\r]*(construct|apply)|Object[ \t\n\r]*\.[ \t\n\r]*assign|\(\"")
     for s in ["'", '"', "`", "[", "String.fromCharCode",
-              "Array(", "Array.of", "Reflect.construct", "Reflect.apply", "("]:
+              "Array(", "Array.of", "Reflect.construct", "Reflect.apply",
+              "Object.assign", "("]:
         assert dlp._JS_EXPR_START.search(s) is not None, s
     return True
 
