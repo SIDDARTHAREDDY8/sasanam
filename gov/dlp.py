@@ -2281,6 +2281,95 @@ def _js_parse_number(text, i):
     return val, j
 
 
+_OCT_DIGITS = frozenset("01234567")
+_BIN_DIGITS = frozenset("01")
+
+
+def _js_scan_int_digits(text, i, digits):
+    """Scan ASCII digits (with numeric separators) at text[i].
+
+    Separators are allowed only between two digits -- node-verified:
+    leading, trailing, doubled, and prefix-adjacent separators are
+    SyntaxErrors, so the caller fails closed on them. Returns
+    (digit_string_without_separators, next_index); the digit string is
+    empty when no digit was scanned.
+    """
+    n = len(text)
+    out = []
+    k = i
+    while k < n:
+        c = text[k]
+        if c in digits:
+            out.append(c)
+            k += 1
+        elif c == "_" and out and k + 1 < n and text[k + 1] in digits:
+            out.append(text[k + 1])
+            k += 2
+        else:
+            break
+    return "".join(out), k
+
+
+def _js_parse_fcc_number(text, i):
+    """Parse one String.fromCharCode integer-literal argument (F458).
+
+    Covers the engine's integer-literal spellings, all node-verified
+    against node v24.20.0: decimal with numeric separators (1_20),
+    0x/0X hex (with separators), 0o/0O octal (with separators),
+    0b/0B binary (with separators), and sloppy-mode legacy octal
+    (0170 -> 120; no separators -- 01_41 is a SyntaxError in node).
+    A legacy 0NNN containing 8/9 is decimal per sloppy semantics
+    (08 -> 8, node-verified). Mixed-radix argument lists work because
+    each argument is parsed independently by _js_parse_fromcharcode.
+    Anything else -- floats, exponents, signs, bad separators,
+    invalid radix digits -- fails closed. ASCII only; the value bound
+    is 0x10FFFF, matching _js_parse_number. Deliberately separate
+    from _js_parse_number so .repeat()/Array(N) keep their existing
+    (narrower) number grammar.
+    """
+    n = len(text)
+    for p0, p1, radix, digits, maxdig in (("0x", "0X", 16, _HEX_DIGITS, 8),
+                                         ("0o", "0O", 8, _OCT_DIGITS, 7),
+                                         ("0b", "0B", 2, _BIN_DIGITS, 21)):
+        if text.startswith((p0, p1), i):
+            raw, k = _js_scan_int_digits(text, i + 2, digits)
+            if not raw:
+                raise _JSExprFail("bad fcc number")
+            if len(raw) > maxdig:  # int() digit-limit safety
+                raise _JSExprFail("number too big")
+            val = int(raw, radix)
+            if val > 0x10FFFF:
+                raise _JSExprFail("number too big")
+            return val, k
+    if i < n and text[i] == "0":
+        # Sloppy-mode legacy octal: 0NNN with N in 0-7. A lone "0"
+        # returns 0 here (k == j); floats/exponents fail closed at the
+        # argument separator in _js_parse_fromcharcode.
+        j = i + 1
+        k = j
+        while k < n and text[k] in _ASCII_DIGITS:
+            k += 1
+        if k == j:
+            return 0, j
+        digs = text[j:k]
+        if all(c in _OCT_DIGITS for c in digs):
+            val = int(digs, 8)
+        else:
+            val = int(digs)  # 8/9 -> sloppy decimal fallback (08 -> 8)
+        if val > 0x10FFFF:
+            raise _JSExprFail("number too big")
+        return val, k
+    raw, k = _js_scan_int_digits(text, i, _ASCII_DIGITS)
+    if not raw:
+        raise _JSExprFail("not a number")
+    if len(raw) > 7:  # 0x10FFFF needs 7 decimal digits at most
+        raise _JSExprFail("number too big")
+    val = int(raw)
+    if val > 0x10FFFF:
+        raise _JSExprFail("number too big")
+    return val, k
+
+
 def _js_parse_fromcharcode(text, i):
     """Parse String.fromCharCode(n, ...) at text[i]; returns (value, idx)."""
     i += len("String.fromCharCode")
@@ -2293,7 +2382,7 @@ def _js_parse_fromcharcode(text, i):
     if i < len(text) and text[i] == ")":
         return "", i + 1
     while True:
-        val, i = _js_parse_number(text, i)
+        val, i = _js_parse_fcc_number(text, i)  # F458: engine spellings
         ch = _safe_chr(val)
         if ch is None:
             raise _JSExprFail("bad codepoint")
@@ -2622,13 +2711,29 @@ def _js_parse_return_body_single(text, i, p):
 def _js_parse_map_callback(text, i):
     """Parse an identity .map callback at text[i]; returns next_index.
 
-    Recognized (F437/F448 family): (s)=>s | s=>s | function(s){return s;}
+    Recognized (F437/F448/F460 family): (s)=>s | s=>s | function(s){return s;}
     | s=>{return s;} (F448 -- block-body identity: a single return of
-    the parameter, no other statements). The callback must return its
-    own single parameter unchanged; the elements pass through
-    untouched. Anything else fails closed.
+    the parameter, no other statements) | String (F460 -- the bare
+    String constructor, the identity over parsed string fragments).
+    The callback must return its own single parameter unchanged; the
+    elements pass through untouched. Anything else fails closed
+    (notably .map(Number): NaN-producing, never identity).
     """
     n = len(text)
+    j = _js_skip_ws(text, i)
+    if text.startswith("String", j):
+        k = j + len("String")
+        if k >= n or text[k] not in _JS_IDENT_CONT:
+            # F460: bare String is the identity over parsed string
+            # fragments (node-verified: ['a','b'].map(String) is
+            # ['a','b']). String( is a call and String.x is member
+            # access -- both fail closed. A param NAMED String
+            # (String=>...) falls through to arrow parsing below.
+            m = _js_skip_ws(text, k)
+            if m < n and text[m] in "(.":
+                raise _JSExprFail("bad map callback")
+            if not text.startswith("=>", m):
+                return k
     if text.startswith("function", i):
         i += len("function")
         if i < n and text[i] in _JS_IDENT_CONT:
@@ -2716,23 +2821,55 @@ def _js_parse_truthy_body(text, i, p):
     return True, j
 
 
-def _js_parse_filter_callback(text, i):
-    """Parse a constant-true, Boolean, or truthiness .filter callback.
+def _js_index_cmp(idx, op, k):
+    """Index comparison for F459 positional .filter predicates.
 
-    Recognized (F437/F443/F447 family): ()=>true | (s)=>true |
+    idx is the element index, op one of <, <=, >, >=, !== (all
+    node-verified), k the literal bound. Semantics are exact per the
+    engine: ['p','q','zz'].filter((x,i)=>i<2) -> ['p','q'],
+    (x,i)=>i!==2 -> ['p','q'], (x,i)=>i>0 -> ['q','zz'].
+    """
+    if op == "<":
+        return idx < k
+    if op == "<=":
+        return idx <= k
+    if op == ">":
+        return idx > k
+    if op == ">=":
+        return idx >= k
+    if op == "!==":
+        return idx != k
+    raise _JSExprFail("bad index op")  # unreachable: parser gates op
+
+
+def _js_parse_filter_callback(text, i):
+    """Parse a constant-true, Boolean, truthiness, or positional .filter callback.
+
+    Recognized (F437/F443/F447/F459 family): ()=>true | (s)=>true |
     function(){return true;} | function(s){return true;} |
     Boolean (F443 -- bare identifier only, never Boolean(...) which is
     a call, not a function reference) |
     s=>s!=='' | s=>!!s | s=>s.length>0 | s=>s |
-    function(s){return s;} (F447 -- truthiness predicates).
+    function(s){return s;} (F447 -- truthiness predicates) |
+    (x,i)=>i<2 | (x,i)=>i<=2 | (x,i)=>i>0 | (x,i)=>i>=1 |
+    (x,i)=>i!==2 (F459 -- positional predicates: the SECOND param is
+    the index, compared against a numeric literal).
 
-    Returns (drop_falsy, next_index): drop_falsy is True for the bare
-    Boolean predicate and the F447 truthiness forms. JS Boolean(x)
-    coerces to boolean, so .filter(Boolean) drops every falsy element;
-    array elements here are always parsed string literals, so exactly
-    the empty string is dropped -- and every F447 form is provably
-    equivalent to that same test. Anything else fails closed.
-    Never evals.
+    Returns (spec, next_index) where spec is ("all",) for constant-true
+    (keep every element), ("truthy",) for the bare Boolean predicate
+    and the F447 truthiness forms (drop exactly the falsy elements --
+    for parsed string elements, the empty string), or
+    ("index", op, k) for F459 (keep elements whose index satisfies
+    idx OP k, evaluated against the known array length at apply time).
+    JS Boolean(x) coerces to boolean; every F447 form is provably
+    equivalent to the same empty-string test over parsed strings.
+
+    Fail-closed (documented): loose !=, !== against a non-empty
+    literal, ===/==/!= index comparisons, non-literal bounds, index
+    arithmetic, body references to the element param, three-param
+    arrows, function-form positional bodies, bare (x,i)=>i
+    (index-truthiness is NOT element-truthiness: it drops index 0,
+    not ""), param shadowing. Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, i)
@@ -2741,7 +2878,7 @@ def _js_parse_filter_callback(text, i):
         if k >= n or text[k] not in _JS_IDENT_CONT:
             if k < n and text[k] == "(":
                 raise _JSExprFail("Boolean() is not a predicate")
-            return True, k
+            return ("truthy",), k
     if text.startswith("function", i):
         i += len("function")
         if i < n and text[i] in _JS_IDENT_CONT:
@@ -2766,7 +2903,7 @@ def _js_parse_filter_callback(text, i):
             if i < n and text[i] == ";":
                 i += 1
             i = _js_expect(text, i, "}")
-            return False, i
+            return ("all",), i
         # F447: function(s){return s;} -- the bare param is a truthiness
         # test over parsed strings (only falsy value is ""). Free
         # variables (no declared param) fail closed.
@@ -2779,14 +2916,25 @@ def _js_parse_filter_callback(text, i):
         if i < n and text[i] == ";":
             i += 1
         i = _js_expect(text, i, "}")
-        return True, i
-    # Arrow form: zero, one-parenthesized, or one-bare params.
+        return ("truthy",), i
+    # Arrow form: zero, one-parenthesized, or one-bare params; the
+    # F459 positional form takes exactly two parenthesized params.
     j = _js_skip_ws(text, i)
     param = None
+    param2 = None
     if j < n and text[j] == "(":
         k = _js_skip_ws(text, j + 1)
         if k < n and text[k] in _JS_IDENT_START:
             param, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ",":
+                # F459: (x,i)=> -- exactly two params; a third param
+                # fails closed at the ")" expectation below.
+                k = _js_skip_ws(text, k + 1)
+                if k >= n or text[k] not in _JS_IDENT_START:
+                    raise _JSExprFail("bad filter params")
+                param2, k = _js_parse_ident(text, k)
+                k = _js_skip_ws(text, k)
         i = _js_expect(text, k, ")")
     elif j < n and text[j] in _JS_IDENT_START:
         # F447: bare single param s=>...
@@ -2797,14 +2945,31 @@ def _js_parse_filter_callback(text, i):
     i = _js_skip_ws(text, i + 2)
     if text.startswith("true", i) and (i + 4 >= n
                                        or text[i + 4] not in _JS_IDENT_CONT):
-        return False, i + 4
+        return ("all",), i + 4
+    if param2 is not None:
+        # F459: positional predicate -- the body must be exactly
+        # <second-param> OP <numeric literal>; the element param must
+        # not appear (param shadowing / mixed tests fail closed).
+        q, m = _js_parse_ident(text, i)
+        if q != param2:
+            raise _JSExprFail("not a positional predicate")
+        m = _js_skip_ws(text, m)
+        op = None
+        for cand in ("!==", "<=", ">=", "<", ">"):
+            if text.startswith(cand, m):
+                op = cand
+                m += len(cand)
+                break
+        if op is None:
+            raise _JSExprFail("not a positional predicate")
+        k, m = _js_parse_number(text, _js_skip_ws(text, m))
+        return ("index", op, k), m
     # F447: truthiness predicates -- require exactly one declared param
     # (an unbound body identifier would be a ReferenceError in node).
     if param is None:
         raise _JSExprFail("filter predicate needs a param")
-    return _js_parse_truthy_body(text, i, param)
-
-
+    _, m = _js_parse_truthy_body(text, i, param)
+    return ("truthy",), m
 def _js_apply_method(text, j, name, value, depth, state):
     """Apply .concat(...) / .repeat(...) / .join(...) / .reduce(...) /
     .reduceRight(...) / .map(...) / .filter(...) / .fill(...) with text[j] == '('.
@@ -2893,16 +3058,22 @@ def _js_apply_method(text, j, name, value, depth, state):
         # F437 family: ['a','b'].filter(()=>true) -- constant-true keeps
         # every element; (F443) .filter(Boolean) drops every falsy
         # element -- for parsed string elements, exactly the empty
-        # string. Any other predicate fails closed.
+        # string; (F459) positional (x,i)=>i<2 keeps elements whose
+        # index satisfies the comparison. Any other predicate fails
+        # closed.
         if not isinstance(value, _JSArr):
             raise _JSExprFail("filter on non-array")
-        drop_falsy, i = _js_parse_filter_callback(text, _js_skip_ws(text, i))
+        spec, i = _js_parse_filter_callback(text, _js_skip_ws(text, i))
         i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != ")":
             raise _JSExprFail("bad filter")
         elements = list(value.elements)
-        if drop_falsy:
+        if spec[0] == "truthy":
             elements = [e for e in elements if e != ""]
+        elif spec[0] == "index":
+            _, op, k = spec
+            elements = [e for idx, e in enumerate(elements)
+                        if _js_index_cmp(idx, op, k)]
         state["ops"] += 1
         return _JSArr(elements), i + 1
     if name == "fill":

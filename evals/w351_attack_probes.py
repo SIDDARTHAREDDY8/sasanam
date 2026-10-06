@@ -142,11 +142,11 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F458-F460 open, next F461 (wave-352 merge: F454-F457 closed)."""
+"""Control: footer shows no open findings, next F461 (wave-352 merge: F454-F460 closed)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F461**" in text
-          and "**Open findings: F458, F459, F460.**" in text)
+          and "**Open findings: none.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -189,8 +189,7 @@ def test_b1_f457_tmpl_interp_closed():
     return (("HELD" if (hit and hit2) else "BREAK"),
             "hit=%s hit2=%s" % (hit, hit2))
 
-
-# --------------------------------- F454-F460 pins (F454/F455 CLOSED wave-352)
+# ------------------------------------------------- F454-F457 open pins
 
 @_t
 def test_b2_f454_multiarg_array_closed():
@@ -232,26 +231,40 @@ def test_b2_f456_b64_junk_frag_closed():
 
 
 @_t
-def test_b2_f458_fcc_octal_open():
-    """F458 pinned open: fromCharCode with octal literals misses."""
-    codes = ",".join("0o%o" % c for c in _CRED2.encode())
-    miss = not _blocked("String.fromCharCode(%s)" % codes)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b1_f458_fcc_spellings_closed():
+    """F458 pinned CLOSED (wave-352 lane 4): fromCharCode with the
+    engine's integer-literal spellings now blocks -- octal, binary,
+    legacy octal, numeric separators, and mixed-radix arg lists."""
+    codes = _CRED2.encode()
+    octal = ",".join("0o%o" % c for c in codes)
+    binary = ",".join("0b" + bin(c)[2:] for c in codes)
+    legacy = ",".join("0%o" % c for c in codes)
+    seps = ",".join(str(c)[:-2] + "_" + str(c)[-2:] if c >= 100
+                    else str(c) for c in codes)
+    mixed = ",".join(("0o%o" % c, "0x%x" % c, str(c),
+                      "0b" + bin(c)[2:])[i % 4]
+                     for i, c in enumerate(codes))
+    shapes = [octal, binary, legacy, seps, mixed]
+    ok = all(_blocked("String.fromCharCode(%s)" % s) for s in shapes)
+    return ("HELD" if ok else "BREAK", "all5=%s" % ok)
 
 
 @_t
-def test_b2_f459_filter_index_open():
-    """F459 pinned open: positional .filter predicate misses."""
-    miss = not _blocked("['" + _A + "','" + _B + "','zz'].filter((x,i)=>i<2)"
-                        ".join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b1_f459_filter_index_closed():
+    """F459 pinned CLOSED (wave-352 lane 4): positional .filter
+    predicates now decode -- i<2 and i!==2 both block."""
+    p1 = "['" + _A + "','" + _B + "','zz'].filter((x,i)=>i<2).join('')"
+    p2 = "['" + _A + "','" + _B + "','zz'].filter((x,i)=>i!==2).join('')"
+    ok = _blocked(p1) and _blocked(p2)
+    return ("HELD" if ok else "BREAK", "lt/ne=%s" % ok)
 
 
 @_t
-def test_b2_f460_map_string_open():
-    """F460 pinned open: .map(String) misses."""
-    miss = not _blocked("['" + _A + "','" + _B + "'].map(String).join('')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_b1_f460_map_string_closed():
+    """F460 pinned CLOSED (wave-352 lane 4): .map(String) is the
+    identity over string fragments and now blocks."""
+    hit = _blocked("['" + _A + "','" + _B + "'].map(String).join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- composition / scope pins
@@ -376,7 +389,7 @@ def test_b4_f445_short_b64_blocks():
 # ---------------------------------------------------------------- green check
 
 _EXPECTED_BREAKS = set()  # this battery asserts HELD everywhere: the
-# F451-F460 misses are pinned as known-open (each probe returns HELD when
+# F454-F457 misses are pinned as known-open (each probe returns HELD when
 # the miss reproduces); a literal BREAK verdict means the pin failed or a
 # NEW unexpected break appeared.
 
