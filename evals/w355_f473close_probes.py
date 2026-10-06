@@ -123,6 +123,10 @@ def p2_compositions_block():
         "['%s'].concat(['%s']).slice(0,2).join('')" % (A1, A2),
         # concat result feeds .reverse (F461)
         "['%s','%s'].reverse().concat(['zz']).join('')" % (A2, A1),
+        # F481: nested single-level array arg -- carried engine-exactly
+        # (node: the nested array is kept as an element and join
+        # comma-coerces it)
+        "['%s'].concat([['%s']]).join('')" % (A1, A2),
     ]
     bad = [s for s in shapes if not _hit(s)]
     return (not bad, "missed=%d" % len(bad))
@@ -130,9 +134,13 @@ def p2_compositions_block():
 
 # ------------------------------------------------------------ P3: fail-closed
 def p3_fail_closed():
-    # (name, payload) -- all must stay quiet (no decode variant)
+    # (name, payload) -- all must stay quiet (no decode variant).
+    # F481: the nested-array-arg shape below was removed from this
+    # list -- F479 marker elements (incl. single-level nested arrays)
+    # are now carried through concat engine-exactly, so
+    # "['f1'].concat([['f2']]).join('')" decodes node-exactly (it is
+    # asserted in p2 instead).
     shapes = [
-        ("nested-array-arg", "['%s'].concat([['%s']]).join('')" % (A1, A2)),
         ("numeric-arg", "['%s'].concat(1).join('')" % A1),
         ("spread-of-string", "['%s'].concat(...'%s').join('')" % (A1, A2)),
         ("spread-of-number", "['%s'].concat(...1).join('')" % A1),
@@ -209,7 +217,8 @@ def p7_pin_and_footer():
     # This lane: F473 CLOSED. Merged: F473-F475 CLOSED; F476, F477 OPEN.
     # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480).
     # Wave-357 lane 2: F479 CLOSED locally (merge finalizes tree-wide).
-    ok = ok and nxt == "F482" and open_s == "F480, F481"
+    # Wave-358 lane 2: F481 CLOSED locally (merge finalizes tree-wide).
+    ok = ok and nxt == "F482" and open_s == "F480"
     return (ok, "nxt=%s open=%s" % (nxt, open_s))
 
 

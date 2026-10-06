@@ -3809,7 +3809,8 @@ def _js_concat_values(recv, args, state):
     Mirrors the _js_apply_method concat branches exactly: the F473
     array-receiver form (string args appended as-is, array args
     extended exactly one level with the F475 nested guard, via the
-    F430 parts budget) and the F462/F474 string-receiver form (the
+    F430 parts budget; F481: F479 marker elements are carried, see
+    _js_concat_carriable) and the F462/F474 string-receiver form (the
     F474 non-string-arg guard -- the engine coerces via Array
     toString, which the static decoder cannot model, so fail closed).
     `fn.apply(R, argsArray)` and `fn.bind(R, ...)(...)` supply their
@@ -3823,10 +3824,17 @@ def _js_concat_values(recv, args, state):
         for arg in args:
             if isinstance(arg, str):
                 _js_add_concat_part(elems, arg, state)
+            elif isinstance(arg, (_JSNil, _JSBool)):
+                # F481: a bare null/undefined/boolean concat arg is kept
+                # as an element, exactly as the engine does
+                # ([].concat(null) === [null], node-verified); the
+                # join/toString apply sites coerce it via
+                # _js_join_element.
+                _js_add_concat_part(elems, arg, state)
             elif isinstance(arg, _JSArr):
                 for e in arg.elements:
-                    if not isinstance(e, str):
-                        raise _JSExprFail("concat arg nested array")
+                    if not _js_concat_carriable(e):
+                        raise _JSExprFail("concat arg bad element")
                     _js_add_concat_part(elems, e, state)
             else:
                 raise _JSExprFail("concat of non-string argument")
@@ -3844,6 +3852,31 @@ def _js_concat_values(recv, args, state):
     raise _JSExprFail("concat on non-string/non-array receiver")
 
 
+def _js_parse_marker_kw(text, i):
+    """Parse an F479 marker keyword at text[i] (F481).
+
+    Returns (marker, next_index), or (None, i) when no keyword is
+    present. null/undefined -> _JSNil, true/false -> _JSBool --
+    ident-boundary checked, the same keyword branch as
+    _js_parse_array_element (duplicated, not shared, so the F479
+    array path is untouched). Used by the F478 dispatch value lists,
+    whose additive grammar cannot parse bare keywords:
+    [].concat.apply([],[null,'f']) === [].concat(null,'f')
+    (node-verified, v24.20.0). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    for kw in ("null", "undefined", "true", "false"):
+        if text.startswith(kw, j):
+            k = j + len(kw)
+            if k < n and text[k] in _JS_IDENT_CONT:
+                return None, i
+            if kw in ("null", "undefined"):
+                return _JSNil(), k
+            return _JSBool("true" if kw == "true" else "false"), k
+    return None, i
+
+
 def _js_parse_value_list(text, i, depth, state, closer):
     """Parse a comma-separated `_js_parse_additive` value list at text[i].
 
@@ -3853,7 +3886,9 @@ def _js_parse_value_list(text, i, depth, state, closer):
     charge, F469 precedent: the budget trips sooner, i.e. fails closed
     sooner -- do not "dedupe"). F478: supplies the argument values for
     `.apply(R, argsArray)` and `.bind(R, ...)(...)`, whose arguments
-    arrive as values rather than as a text argument list. Never evals.
+    arrive as values rather than as a text argument list. F481: a bare
+    F479 marker keyword (null/undefined/true/false) parses as a direct
+    marker arg -- the additive grammar cannot parse it. Never evals.
     """
     n = len(text)
     vals = []
@@ -3861,7 +3896,15 @@ def _js_parse_value_list(text, i, depth, state, closer):
     if i < n and text[i] == closer:
         return vals, i + 1
     while True:
-        arg, i = _js_parse_additive(text, i, depth, state)
+        # F481: a bare F479 marker keyword is a direct dispatch arg
+        # ([].concat.apply([],[null,'f']) === [].concat(null,'f'),
+        # node-verified) -- the additive grammar cannot parse it, so
+        # the keyword is recognized here, in the value list only.
+        marker, mi = _js_parse_marker_kw(text, i)
+        if marker is not None:
+            arg, i = marker, mi
+        else:
+            arg, i = _js_parse_additive(text, i, depth, state)
         vals.append(arg)
         state["parts"] += 1
         if state["parts"] > _JS_EXPR_MAX_PARTS:
@@ -3909,7 +3952,7 @@ def _js_apply_fn_dispatch(text, i, method, dname, depth, state):
     - `.call(R, args...)` is exactly `R.M(args...)`: the arguments are
       parsed by _js_apply_method_at, the same grammar/bounds/fail-closed
       behavior as the direct form (F462 spread, F477 numeric coercion,
-      F474 guards, etc.).
+      F474 guards, F481 marker-element carriage, etc.).
     - `.apply(R, argsArray)` spreads the parsed array elements as the
       argument list (concat only -- the filed shape).
     - `.bind(R, bound...)(call...)` concatenates bound and call
@@ -4666,6 +4709,22 @@ def _js_parse_filter_callback(text, i):
     return spec, m
 
 
+def _js_concat_carriable(e):
+    """True when a concat array-arg element may be carried (F481).
+
+    F479 marker elements (_JSNil/_JSBool/single-level nested _JSArr;
+    _JSNumStr passes as a str subclass) are carried through concat
+    exactly one level, engine-exactly: the engine keeps them as
+    elements and the join/toString apply sites coerce them
+    (null/undefined -> "", booleans -> "true"/"false", nested arrays
+    -> comma-joined toString, via _js_join_element). Used by the F473
+    text path (_js_apply_array_concat) and the F478 value path
+    (_js_concat_values) alike, so the dispatch desugar stays faithful
+    to the direct form. Never evals.
+    """
+    return isinstance(e, (str, _JSNil, _JSBool, _JSArr))
+
+
 def _js_add_concat_part(parts, part, state):
     """Append one .concat() argument, charging the F430 parts budget."""
     parts.append(part)
@@ -4686,10 +4745,14 @@ def _js_apply_array_concat(text, i, value, depth, state):
     appended element charges the F430 parts budget via
     _js_add_concat_part, exactly like the string-receiver form.
 
-    Fail closed: nested-array args beyond one level (the decoder's domain
-    is flat string arrays; ['a'].concat([['b']]) would hold a nested
-    array element, which node keeps as a nested object), args that are
-    neither str nor _JSArr, and _JSArr args carrying non-string elements.
+    Fail closed: args that are neither str nor _JSArr, doubly-nested
+    array args (unparseable -- the array parser fails them closed),
+    and _JSArr args carrying elements outside the _js_concat_carriable
+    classes. F481: F479 marker elements (_JSNil/_JSBool/single-level
+    nested _JSArr) are carried through concat exactly one level --
+    node keeps them as elements and the join/toString apply sites
+    coerce them engine-exactly; anything else is rejected, never
+    mis-decoded.
     An explicit type check on every arg keeps this branch free of the
     F474-class uncaught TypeError on the string-receiver path. No new
     regexes; never evals.
@@ -4718,8 +4781,8 @@ def _js_apply_array_concat(text, i, value, depth, state):
             arg, i = _js_parse_additive(text, i, depth, state)
             if isinstance(arg, _JSArr):
                 for e in arg.elements:
-                    if not isinstance(e, str):
-                        raise _JSExprFail("concat arg nested array")
+                    if not _js_concat_carriable(e):
+                        raise _JSExprFail("concat arg bad element")
                     _js_add_concat_part(elems, e, state)
             elif isinstance(arg, str):
                 _js_add_concat_part(elems, arg, state)
