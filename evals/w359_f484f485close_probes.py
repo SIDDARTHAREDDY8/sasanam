@@ -346,12 +346,15 @@ def p3_no_new_regexes():
     # Wave-361 lane 1 finisher: F490's optional-chaining normalization adds
     # the (\?\.\|\.) alternative to the Reflect anchor (still
     # literal-alternation only); re.compile count still 28.
+    # Wave-362 lane 2 (F504): the Reflect bracket-member class gains
+    # backtick and nested-bracket (literal-alternation only);
+    # re.compile count unchanged.
     assert dlp._JS_EXPR_START.pattern == (
         r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])"
         r"|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"])"
         r")|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Function[ \t\n\r]*\.[ \t\n\r]*prototype|"
-        r"Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"])"
+        r"Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])"
         r"|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor)|[ \t\n\r]*\[[ \t\n\r]*['\"])"
         r"|\("
     )
