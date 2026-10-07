@@ -244,10 +244,11 @@ def p6_pin_and_footer():
                 ("Next free finding: **%s**." % FOOTER_NEXT) in last
                 and ("Open findings: %s." % FOOTER_OPEN) in last,
                 last[:60]) and ok
+    full = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = _check("P6c F434 closed entry",
-                "(F434 filed 2026-10-05, wave-344 merge" in last
-                and "LOW, CLOSED 2026-10-05 wave-345 lane 3" in last,
-                "") and ok
+                "(F434 filed 2026-10-05, wave-344 merge" in full
+                and "LOW, CLOSED 2026-10-05 wave-345 lane 3" in full,
+                "") and ok  # Wave-361 merge: entries moved off the footer line to standalone lines (format migration); check the file, not just the last line
     return ok
 
 

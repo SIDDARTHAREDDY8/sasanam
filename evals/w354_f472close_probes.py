@@ -330,13 +330,14 @@ def p3_pin_no_new_regexes():
     # Reflect -> (construct|apply|get), Object gains
     # getOwnPropertyDescriptor, String gains .raw( / .raw.call(
     # (literal-alternation only, no new re.compile).
+    # Wave-361 lane 1 (F496): Reflect alternative widened \. -> (\?\.|\.) for optional-chaining dispatch (literal alternation only, F468 precedent).
     assert dlp._JS_EXPR_START.pattern == (
         r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|"
         r"Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"]))|"
         r"Array[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"String[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Function[ \t\n\r]*\.[ \t\n\r]*prototype|"
-        r"Reflect([ \t\n\r]*\.[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"])|"
+        r"Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"])|"
         r"Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor)|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
     # F480 (wave-358 lane 1): anchor widened for the constructor-function
     # dispatch (Array.apply/call) and the bracket-string member forms
