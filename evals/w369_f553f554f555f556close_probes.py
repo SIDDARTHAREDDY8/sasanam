@@ -528,21 +528,20 @@ def p9_compositions():
         % {"A1": _A1, "A2": _A2},
     ]
     bad = [s for s in held if _verdict(s, True)[0] == "BREAK"]
-    # Siblings' OPEN findings must still MISS (no accidental closes):
-    # F574 flat depth>1 / flatMap (attack round 37) -- pin the ones
-    # adjacent to this lane's machinery.
-    open_quiet = [
-        # F574: flat at depth>1 still misses
+    # Wave-370 lane 5 CLOSED F574 (flat depth>1 / flatMap identity):
+    # the shapes adjacent to this lane's machinery now block.
+    now_closed = [
+        # F574: flat at depth>1 now blocks
         "[[['%(A1)s']],[['%(A2)s']]].flat(2).join('')"
         % {"A1": _A1, "A2": _A2},
-        # F574: flatMap identity still misses
+        # F574: flatMap identity now blocks
         "['%(A1)s','%(A2)s'].flatMap(x=>[x]).join('')"
         % {"A1": _A1, "A2": _A2},
     ]
-    bad += [s for s in open_quiet if _verdict(s, False)[0] == "BREAK"]
+    bad += [s for s in now_closed if _verdict(s, True)[0] == "BREAK"]
     return ("HELD" if not bad else "BREAK",
-            "%d/%d compositions honest" % (len(held) + len(open_quiet) - len(bad),
-                                           len(held) + len(open_quiet)))
+            "%d/%d compositions honest" % (len(held) + len(now_closed) - len(bad),
+                                           len(held) + len(now_closed)))
 
 
 # ------------------------------------------------------------- P10: node differential
@@ -611,7 +610,7 @@ def p11_pin_footer():
         "guac_graph.TAXONOMY_PIN=%r want 2140" % (guac_graph.TAXONOMY_PIN,)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("Next free finding: **F583**" in text  # Wave-369 lane 4: F553-F556 CLOSED, F570 filed (renumbered F582 at merge, wave-272 rule); Wave-369 merge: F547-F569 CLOSED; F570-F582 OPEN (next F583)
-          and "**Open findings: F570, F571, F572, F573, F574, F575, F576, F577, F578, F579, F580, F581, F582.**" in text  # Wave-369 lane 4: F553-F556 CLOSED, F570 filed (renumbered F582 at merge, wave-272 rule); Wave-369 merge: F547-F569 CLOSED; F570-F582 OPEN (next F583)
+          and "**Open findings: F570, F571, F572, F573, F575, F576, F577, F578, F579, F581, F582.**" in text  # Wave-370 lane 5: F574/F580 CLOSED
           and "**Status: CLOSED 2026-10-07 wave-369 lane 4.**" in text)
     return ("HELD" if ok else "BREAK",
             "pin=%s footer=%s" % (TAXONOMY_PIN, ok))

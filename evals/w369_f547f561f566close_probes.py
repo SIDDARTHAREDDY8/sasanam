@@ -342,21 +342,24 @@ def p10_compositions():
          % (_A, _B)),
     ]
     missed_closed = [s for s in held if not _blocked(s)]
-    # Mechanism-adjacent OPEN findings (attack round 37): F574 flat depth>1
-    # and F580 sort-with-comparator stay missed (this lane must not
-    # accidentally close them -- the merge reconciles).
-    still_open = [
+    # Wave-370 lane 5 CLOSED F574 (flat depth>1) and the F580
+    # length-comparator shape: these now block. The default-sort shape
+    # ['_A','_B'].sort() decodes to _B+_A (non-credential order) -- it
+    # is modeled but does not block; assert the honest decode below.
+    now_closed = [
         "[[['%s']],[['%s']]].flat(Infinity).join('')" % (_A, _B),
         "[[['%s']],[['%s']]].flat(2).join('')" % (_A, _B),
         "['%s','%s'].sort((a,b)=>a.length-b.length).join('')" % (_B, _A),
-        "['%s','%s'].sort().join('')" % (_A, _B),
     ]
-    closed_open = [s for s in still_open if _blocked(s)]
-    ok = not missed_closed and not closed_open
+    missed_now_closed = [s for s in now_closed if not _blocked(s)]
+    sort_default_decodes = (dlp._try_js_expr_decode_all(
+        "['%s','%s'].sort().join('')" % (_A, _B)) == _B + _A)
+    ok = not missed_closed and not missed_now_closed and sort_default_decodes
     return ("HELD" if ok else "BREAK",
-            "neighbors held %d/%d, open stayed open %d/%d"
+            "neighbors held %d/%d, f574/f580 closed %d/%d, sort-default decodes=%s"
             % (len(held) - len(missed_closed), len(held),
-               len(still_open) - len(closed_open), len(still_open)))
+               len(now_closed) - len(missed_now_closed), len(now_closed),
+               sort_default_decodes))
 
 
 # ---------------------------------------------------- P11: node differential
@@ -451,7 +454,7 @@ def p12_pin_footer():
         "re.compile count moved"
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("Next free finding: **F583**" in text  # Wave-369 lane 1: F547/F561/F566 CLOSED
-          and "**Open findings: F570, F571, F572, F573, F574, F575, F576, F577, F578, F579, F580, F581, F582.**" in text  # Wave-369 lane 1: F547/F561/F566 CLOSED
+          and "**Open findings: F570, F571, F572, F573, F575, F576, F577, F578, F579, F581, F582.**" in text  # Wave-370 lane 5: F574/F580 CLOSED
           and "Status: CLOSED 2026-10-07 wave-369 lane 1." in text)
     return ("HELD" if ok else "BREAK",
             "pin=%s footer=%s" % (TAXONOMY_PIN, ok))
