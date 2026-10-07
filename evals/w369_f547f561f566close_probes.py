@@ -451,7 +451,7 @@ def p12_pin_footer():
         "re.compile count moved"
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("Next free finding: **F583**" in text  # Wave-369 lane 1: F547/F561/F566 CLOSED
-          and "**Open findings: F570, F571, F572, F573, F574, F575, F576, F577, F578, F579, F580, F581, F582.**" in text  # Wave-369 lane 1: F547/F561/F566 CLOSED
+          and "**Open findings: F570, F571, F572, F574, F575, F576, F577, F579, F580, F581, F582.**" in text  # Wave-369 lane 1: F547/F561/F566 CLOSED; wave-370 lane 4: F573/F578 CLOSED
           and "Status: CLOSED 2026-10-07 wave-369 lane 1." in text)
     return ("HELD" if ok else "BREAK",
             "pin=%s footer=%s" % (TAXONOMY_PIN, ok))

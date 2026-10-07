@@ -11973,6 +11973,115 @@ def _js_parse_entries_projection(text, i):
     return ("keys" if idx == 0 else "vals"), j + consumed
 
 
+def _js_parse_f573_entries_literal(text, i, depth, state):
+    """Parse `Object.entries(OBJLIT)` / `Object['entries'](OBJLIT)` bare
+    (F573).
+
+    The F517 parser (`_js_parse_object_entries`) requires a `.map`
+    projection after the call; a bare `Object.entries(OBJLIT)` is a
+    different production -- an array of `[k, v]` pairs the composer
+    can thread into index reads (`[0][1]`), member reads (`.y`), and
+    join chains via the normal postfix grammar. Node-exact
+    (v24.20.0): the literal is parsed by `_js_parse_f535_object`
+    (string literals, canonical ints, nested objects; getters
+    evaluated at parse time exactly like F535 -- the engine invokes
+    them during enumeration) and keys are reordered to engine
+    enumeration order (integer-index keys ascending numerically
+    first, then string keys in insertion order; duplicates keep
+    first-insertion position with the later value -- both match the
+    engine and the F535 dict behavior).
+
+    Returns (value, next_index) via _js_parse_postfix over the
+    `_JSArr` of `_JSArr([k, v])` pairs, or None when text[i] is not
+    this shape (the caller falls through to F517's parser). When the
+    call IS followed by `.map`, this parser defers (returns None) so
+    F517 keeps its mandatory-projection grammar unchanged. Once the
+    `entries` member commits the parse, malformed shapes fail closed
+    via _JSExprFail.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a non-`{` argument (variables, calls, wrappers -- F517's
+      enumeration sources stay F517's);
+    - symbol keys are SKIPPED (the engine excludes them from
+      entries() -- node v24.20.0 verified);
+    - octal-looking digit keys (`01` -- the engine reads an octal
+      literal, the static key text would mis-order);
+    - extra call arguments (F517 parity -- its parser raises
+      identically on the `.map` form).
+    Never evals.
+    """
+    n = len(text)
+    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+        return None
+    if not text.startswith("Object", i):
+        return None
+    j = i + len("Object")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        return None  # Objectx -- fall through
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        # F480: Object['entries'] -- bracket-string member access,
+        # engine-identical to the dot form (node v24.20.0 verified).
+        _mname, j = _js_parse_bracket_member(text, j)
+        if _mname != "entries":
+            return None  # not entries -- fall through
+    elif j < n and text[j] == ".":
+        j = _js_skip_ws(text, j + 1)
+        m = _js_match_kw(text, j, "entries")
+        if m is None:
+            return None  # not entries -- fall through
+        j = m
+    else:
+        return None
+    # The `entries` member commits the parse.
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("F573 entries without paren")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "{":
+        # Not a plain object literal -- F517's enumeration sources
+        # (wrappers, reduce-rebuild) stay F517's.
+        return None
+    props, j = _js_parse_f535_object(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("F573 entries with extra args")
+    j += 1
+    # F517 owns the `.map` projection form -- defer so its
+    # mandatory-projection grammar is unchanged.
+    q = _js_skip_ws(text, j)
+    if q < n and text[q] == ".":
+        if _js_match_kw(text, _js_skip_ws(text, q + 1), "map") is not None:
+            return None
+    # Engine enumeration order via the F517 helper (node v24.20.0
+    # verified): integer indices ascending first, then string keys
+    # in insertion order. Symbol keys fail closed (documented).
+    key_order = []
+    int_poss = []
+    str_poss = []
+    for key in props:
+        if not isinstance(key, str):
+            # Symbol keys: the engine EXCLUDES them from
+            # Object.entries() (node v24.20.0 verified), so the
+            # model skips them rather than fail closed.
+            continue
+        if (len(key) > 1 and key[0] == "0"
+                and all("0" <= c <= "9" for c in key)):
+            # Octal-looking digit key: the engine reads an octal
+            # literal, so the static key text would mis-order.
+            raise _JSExprFail("F573 octal-looking key fails closed")
+        pos = len(key_order)
+        key_order.append(key)
+        if _js_is_integer_index_key(key):
+            int_poss.append((int(key), pos))
+        else:
+            str_poss.append(pos)
+    ordered = _js_order_object_keys(key_order, int_poss, str_poss)
+    pairs = _JSArr([_JSArr([k, props[k]]) for k in ordered])
+    state["ops"] += 1  # the entries call is obfuscation-shaped
+    return _js_parse_postfix(text, j, pairs, depth, state)
+
+
 def _js_parse_object_entries(text, i, depth, state):
     """Parse `Object.entries(OBJ).map(P=>P[0|1])` at text[i] (F517).
 
@@ -15460,6 +15569,222 @@ def _js_split_forin_accum(text, a, b):
     if j != b:
         raise _JSExprFail("forin trailing statements")
     return acc, obj, keyvar, objlit_text
+
+
+def _js_parse_f578_defineprop_stmt(text, sj, oname, depth, state):
+    """Parse one `Object.defineProperty(o,'K',DESC);` statement at
+    text[sj] (F578).
+
+    The target must be the bare bound ident *oname*; the key a
+    string literal (`__proto__` fails closed); the descriptor parsed
+    by `_js_parse_f548f550_descriptor` (F550's exact discipline).
+    Returns (key, dval, next_index) just after the statement's `;`.
+    Raises _JSExprFail on any mismatch (the caller treats it as
+    end-of-sequence or a hard fail). Never evals.
+    """
+    n = len(text)
+    sj = _js_skip_ws(text, sj)
+    if not text.startswith("Object", sj):
+        raise _JSExprFail("F578 not defineProperty")
+    q = sj + len("Object")
+    if q < n and text[q] in _JS_IDENT_CONT:
+        raise _JSExprFail("F578 Objectx")
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ".")
+    q = _js_skip_ws(text, q)
+    if not text.startswith("defineProperty", q):
+        raise _JSExprFail("F578 not defineProperty member")
+    q2 = q + len("defineProperty")
+    if q2 < n and text[q2] in _JS_IDENT_CONT:
+        raise _JSExprFail("F578 defineProperties")
+    q = _js_skip_ws(text, q2)
+    q = _js_expect(text, q, "(")
+    q = _js_skip_ws(text, q)
+    tname, q = _js_parse_ident(text, q)
+    if tname != oname:
+        raise _JSExprFail("F578 defineProperty other target")
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ",")
+    q = _js_skip_ws(text, q)
+    if q >= n or text[q] not in "'\"":
+        raise _JSExprFail("F578 key not a literal")
+    key, q = _js_parse_string(text, q)
+    if key == "__proto__":
+        raise _JSExprFail("F578 __proto__ fails closed")
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ",")
+    q = _js_skip_ws(text, q)
+    if q >= n or text[q] != "{":
+        raise _JSExprFail("F578 descriptor not an object")
+    _, dval, q = _js_parse_f548f550_descriptor(text, q, depth, state)
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ")")
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ";")
+    return key, dval, q
+
+
+def _js_parse_f578_defineprop_iife(text, i, depth, state):
+    """Parse `(function(){DECL o=OBJLIT;Object.defineProperty(o,K,D);
+    return o.M;})(...)` at text[i] (F578).
+
+    Descriptor replacement on a var-bound literal target: F550
+    models `Object.defineProperty` on a DIRECT literal target, but a
+    target bound to a var (the IIFE statement-sequence form) is a
+    different production. Node-exact desugar (v24.20.0): the var
+    binds the parsed literal (F535 object -- string values,
+    canonical ints, nested objects; getters evaluated at parse
+    time), the defineProperty call replaces key K's descriptor per
+    the engine's descriptor-merge semantics, and the IIFE evaluates
+    to the return member read on the replaced object (defineProperty
+    returns the target itself).
+
+    The exact modeled shape (ws-tolerant):
+        (function(){var|const|let o={...};
+         Object.defineProperty(o,'K',{value:V} | {get:FN}); [...];
+         return o.M;})()
+    One or more defineProperty statements may follow the binding
+    (descriptor merge is a per-key overwrite, so sequences apply
+    node-exactly in order).
+    The descriptor is parsed by `_js_parse_f548f550_descriptor` --
+    F550's exact discipline: `{value: V}` installs V; `{get:
+    function(){return EXPR}}` installs the getter's evaluated
+    return; `set`/unknown keys fail closed; `{get, writable}` and
+    `{value, get}` throw in the engine and fail closed here.
+    Descriptor merge is an overwrite of the key (node-exact for the
+    modeled classes: data->data value swap, data->accessor getter
+    install, accessor->data replacement -- verified against node
+    v24.20.0).
+
+    Returns (value, next_index), or None when text[i] is not this
+    shape (the caller falls through to F535). The invocation must be
+    exactly `()` -- the filed shapes take no arguments.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, or any other body shape (extra
+      statements, reassignment of the var -- the exact-shape
+      grammar has no room for rebinding);
+    - a defineProperty target other than the bare bound ident, a
+      non-literal key, `__proto__`;
+    - a return member other than `.ident` / `['literal']` on the
+      bound ident; a missing key (the engine yields undefined --
+      not a decodable value);
+    - non-empty call arguments (the engine ignores them for a
+      zero-param function, but the lane stays conservative --
+      documented boundary).
+    Residual (documented, negligible): a descriptor carrying
+    `configurable:false` followed by a redefine throws TypeError in
+    the engine, but F550's shared descriptor parser accepts-and-
+    ignores the flag, so the decoder yields the later value on a
+    throwing shape. Throwing shapes cannot exfiltrate (the engine
+    never produces a value), and the flag grammar is F550's -- out
+    of this lane's scope.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_skip_ws(text, j + 1)
+    if not text.startswith("function", k):
+        return None
+    k2 = k + len("function")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        return None  # functionx -- not our shape
+    if k2 < n and text[k2] in _JS_IDENT_START:
+        return None  # named function -- not our shape
+    try:
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        # F560: skip a leading directive prologue ('use strict'; ...)
+        # before matching the binding declaration (node-exact:
+        # directives are inert string-literal statements at body
+        # start).
+        sj = inner_start + _js_skip_directive_prologue(
+            text[inner_start:inner_end], state)
+        sj = _js_skip_ws(text, sj)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F578 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            raise _JSExprFail("F578 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "{":
+            raise _JSExprFail("F578 binding not an object literal")
+        props, sj = _js_parse_f535_object(text, sj, depth, state)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        # One or more `Object.defineProperty(o,'K',DESC);`
+        # statements -- descriptor merge is a per-key overwrite, so
+        # a sequence applies node-exactly in order (each statement
+        # charges the parts budget via the descriptor parse, and
+        # every iteration consumes input, so the loop is bounded).
+        new_props = dict(props)
+        count = 0
+        while True:
+            save = sj
+            try:
+                key, dval, sj = _js_parse_f578_defineprop_stmt(
+                    text, sj, oname, depth, state)
+            except _JSExprFail:
+                sj = save
+                break
+            new_props[key] = dval
+            count += 1
+        if count == 0:
+            raise _JSExprFail("F578 no defineProperty statement")
+        # return o.M;
+        q = _js_skip_ws(text, sj)
+        rk = _js_match_kw(text, q, "return")
+        if rk is None:
+            raise _JSExprFail("F578 body not return")
+        q = _js_skip_ws(text, rk)
+        rname, q = _js_parse_ident(text, q)
+        if rname != oname:
+            raise _JSExprFail("F578 returns another ident")
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == "[":
+            member, q = _js_parse_bracket_member(text, q)
+        elif q < n and text[q] == ".":
+            q = _js_skip_ws(text, q + 1)
+            member, q = _js_parse_ident(text, q)
+        else:
+            raise _JSExprFail("F578 return not a member read")
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == ";":
+            q += 1
+        q = _js_skip_ws(text, q)
+        if q != inner_end:
+            raise _JSExprFail("F578 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        # Descriptor merge is a per-key overwrite (node-exact for the
+        # modeled descriptor classes -- data->data, data->accessor,
+        # accessor->data); sequences apply in order.
+        if not isinstance(member, str) or member not in new_props:
+            # The engine yields undefined -- not a decodable value.
+            raise _JSExprFail("F578 return key missing")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        state["parts"] += 1  # the defineProperty statement(s) are
+                           # obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        return new_props[member], j
+    except _JSExprFail:
+        return None
 
 
 def _js_parse_forin_accum_iife(text, i, depth, state):
@@ -19240,6 +19565,14 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f517 is not None:
             val, i = _f517
             return _js_parse_postfix(text, i, val, depth, state)
+        # F578: (function(){var|const|let o=OBJLIT;
+        #   Object.defineProperty(o,'K',DESC);return o.M;})() --
+        # descriptor replacement on a var-bound literal target.
+        # None falls through to F535 like F517.
+        _f578 = _js_parse_f578_defineprop_iife(text, i, depth, state)
+        if _f578 is not None:
+            val, i = _f578
+            return _js_parse_postfix(text, i, val, depth, state)
         # F535: (OBJ_LITERAL).member / (new Proxy(T, H)).member --
         # statically-resolved member reads on object literals. None
         # falls through to the parenthesized-additive path (which
@@ -19495,6 +19828,14 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _gn = _js_parse_object_gopn(text, i, depth, state)
         if _gn is not None:
             return _gn
+        # F573: Object.entries(OBJLIT) / Object['entries'](OBJLIT) --
+        # bare entries on an object literal (no .map projection).
+        # Defers to F517 when a .map projection follows, so F517's
+        # mandatory-projection grammar is unchanged. None falls
+        # through to F517 like the other enumeration paths.
+        _f573 = _js_parse_f573_entries_literal(text, i, depth, state)
+        if _f573 is not None:
+            return _f573
         # F517: Object.entries(OBJ).map(P=>P[0|1]) -- entries
         # indirection with a mandatory projection. None falls through
         # to the assign/getter paths below.

@@ -550,10 +550,10 @@ def test_p2_f572_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f573_open():
-    """F573 OPEN: Object.entries index reads on literals still miss."""
-    ms = _misses("Object.entries({a:'%s'})[0][1]+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f573_closed():
+    """F573 CLOSED (wave-370): Object.entries index reads on literals now block coded."""
+    hit = _blocked("Object.entries({a:'%s'})[0][1]+'%s'" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_p2_f574_open():
@@ -580,10 +580,10 @@ def test_p2_f577_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f578_open():
-    """F578 OPEN: defineProperty descriptor replacement still misses (var-target forms)."""
-    ms = _misses("(function(){var o={c:'x'};Object.defineProperty(o,'c',{get:function(){return '%s';}});return o.c;})()+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f578_closed():
+    """F578 CLOSED (wave-370): defineProperty value/getter replacement on var targets now blocks coded."""
+    hit = _blocked("(function(){var o={c:'x'};Object.defineProperty(o,'c',{get:function(){return '%s';}});return o.c;})()+'%s'" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_p2_f579_closed():
