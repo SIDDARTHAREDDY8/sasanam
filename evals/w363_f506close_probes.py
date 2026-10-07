@@ -116,12 +116,13 @@ def p1_combos_and_variants():
 
 def p1_compositions():
     # F469 / F504 direct forms must not regress; F483 prototype-method
-    # double dispatch intact; F511 stays OPEN (different target).
+    # double dispatch intact; F511 CLOSED by wave-363 lane 4 (merge flips
+    # the expectation -- wave-306 class).
     cases = [
         ("Reflect.apply(Array.prototype.concat,[],[['%s'],['%s']]).join('')" % (_A1, _A2), True),
         ("Reflect['apply']([].concat, [], ['%s','%s']).join('')" % (_A1, _A2), True),
         ("Function.prototype.call.call(Array.prototype.concat, [], '%s', '%s').join('')" % (_A1, _A2), True),
-        ("Array.prototype.splice.call(['%s','%s'],0,2).join('')" % (_A1, _A2), False),  # F511 OPEN
+        ("Array.prototype.splice.call(['%s','%s'],0,2).join('')" % (_A1, _A2), True),  # F511 CLOSED (lane 4)
         ("Function.prototype.call.call(Reflect.get, Reflect, ['%s']) " % _A1, False),  # F491 boundary
     ]
     bad = [c for c, want in cases if _verdict(c, want)[0] == "BREAK"]

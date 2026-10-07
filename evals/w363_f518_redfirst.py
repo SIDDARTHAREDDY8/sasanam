@@ -32,8 +32,8 @@ SHAPES = [
 ]
 
 CONTROLS = [
-    ("f511-splice-call-open",
-     "Array.prototype.splice.call(['%s','%s'],0,2).join('')" % (A1, A2), False),
+    ("f511-splice-call-closed",  # F511 CLOSED wave-363 lane 4 (merge; wave-306)
+     "Array.prototype.splice.call(['%s','%s'],0,2).join('')" % (A1, A2), True),
     # NOTE: even DIRECT push on a local var misses (no dataflow tracking) --
     # that is a documented decoder boundary, not F518's dispatch scope.
     ("push-direct-dataflow-miss",

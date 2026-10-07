@@ -173,45 +173,51 @@ def test_p1_f512_closed():
 # ------------------------------------------------- open pins (must miss)
 
 @_t
-def test_p2_f506_open():
-    """F506 OPEN: Reflect.apply via call/apply indirection still misses."""
+def test_p2_f506_closed():
+    """F506 CLOSED (wave-363 lane 1, merge): Reflect.apply via call/apply
+    indirection now blocks (wave-306 maintenance)."""
     ms = _misses("Function.prototype.apply.call(Reflect.apply, Reflect, [[].concat, [], ['%s','%s']]).join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 @_t
-def test_p2_f507_open():
-    """F507 OPEN: bracket on string literals still misses."""
+def test_p2_f507_closed():
+    """F507 CLOSED (wave-363 lane 2, merge): bracket on string literals
+    now blocks (wave-306 maintenance)."""
     ms = _misses("''['concat']('%s','%s')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 @_t
-def test_p2_f508_open():
-    """F508 OPEN: Array.from with mapper still misses."""
+def test_p2_f508_closed():
+    """F508 CLOSED (wave-363 lane 2, merge): Array.from with mapper
+    now blocks (wave-306 maintenance)."""
     ms = _misses("Array.from(['%s','%s'], x=>x).join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 @_t
-def test_p2_f509_open():
-    """F509 OPEN: bare arguments receiver still misses."""
+def test_p2_f509_closed():
+    """F509 CLOSED (wave-363 lane 3, merge): bare arguments receiver
+    now blocks (wave-306 maintenance)."""
     ms = _misses("(function(){return Array.prototype.join.call(arguments, '')})('%s','%s')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 @_t
-def test_p2_f510_open():
-    """F510 OPEN: Object.values indirection still misses."""
+def test_p2_f510_closed():
+    """F510 CLOSED (wave-363 lane 4, merge): Object.values indirection
+    now blocks (wave-306 maintenance)."""
     ms = _misses("Object.values({0:'%s',1:'%s'}).join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 @_t
-def test_p2_f511_open():
-    """F511 OPEN: splice.call dispatch still misses."""
+def test_p2_f511_closed():
+    """F511 CLOSED (wave-363 lane 4, merge): splice.call dispatch
+    now blocks (wave-306 maintenance)."""
     ms = _misses("Array.prototype.splice.call(['%s','%s'],0,2).join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 @_t
@@ -223,9 +229,23 @@ def test_p2_f513_open():
 
 @_t
 def test_p2_f514_open():
-    """F514 OPEN (this round): bracket on String objects still misses."""
-    ms = _misses("new String('%s')['concat']('%s')" % (_A, _B))
+    """F514 OPEN (this round, narrowed at wave-363 merge): the single-bracket
+    String-object shapes were honestly closed by lane 2's F507 generalization
+    (dot forms already decoded on the wave-362 base; node-identical). The
+    nested-bracket shape still misses."""
+    ms = _misses("String('%s')[[['concat'][0]]](String('%s'))" % (_A, _B))
     return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+
+
+@_t
+def test_p2_f514_partial_closed():
+    """F514 shapes 1-2 CLOSED by accident at wave-363 merge (honest: the F507
+    lane-2 generalization routes them to the already-modeled dot-form path;
+    base-vs-merged evidence in the merge report)."""
+    b1 = not _misses("new String('%s')['concat']('%s')" % (_A, _B))
+    b2 = not _misses("String('%s')['concat']('%s')" % (_A, _B))
+    ok = b1 and b2
+    return ("HELD" if ok else "BREAK", "shape1=%s shape2=%s" % (b1, b2))
 
 
 @_t

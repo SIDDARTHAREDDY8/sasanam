@@ -153,7 +153,8 @@ def p3_fail_closed_boundaries():
 
 def p4_compositions():
     """Neighbor findings unchanged: F489 IIFE shapes HELD; F506/F507/F508/
-    F510/F511 still open (miss); F505 still HELD."""
+    F510/F511 CLOSED by wave-363 lanes 1/2/4 (merge flips -- wave-306);
+    F505 still HELD."""
     # F489 (closed wave-360): exact-IIFE receiver still blocks
     if not _blocked("Array.prototype.join.call((function(){return arguments})('%s','%s'), '')" % (_A1, _A2)):
         return ("BREAK", "F489 regression: exact-IIFE receiver misses")
@@ -165,21 +166,22 @@ def p4_compositions():
     # F509 in receiver position: array-like body decodes
     if not _blocked("Array.prototype.join.call((function(){return [...arguments]})('%s','%s'), '')" % (_A1, _A2)):
         return ("BREAK", "F509 receiver position: spread body misses")
-    # F506/F507/F508/F510/F511 (OPEN): still miss -- no accidental closes
-    still_open = [
+    # F506/F507/F508/F510/F511 CLOSED by wave-363 lanes 1/2/4 (merge flips
+    # the expectations -- wave-306 class): they must now block.
+    now_closed = [
         "Function.prototype.apply.call(Reflect.apply, Reflect, [[].concat, [], ['%s','%s']]).join('')" % (_A1, _A2),
         "''['concat']('%s','%s')" % (_A1, _A2),
         "Array.from(['%s','%s'], x=>x).join('')" % (_A1, _A2),
         "Object.values({0:'%s',1:'%s'}).join('')" % (_A1, _A2),
         "Array.prototype.splice.call(['%s','%s'],0,2).join('')" % (_A1, _A2),
     ]
-    for payload in still_open:
-        if _blocked(payload):
-            return ("BREAK", "accidental close: %s" % payload[:50])
+    for payload in now_closed:
+        if not _blocked(payload):
+            return ("BREAK", "closure regression (misses): %s" % payload[:50])
     # F505 (closed wave-362): fromCodePoint spread still blocks (full-credential codes)
     if not _blocked("String.fromCodePoint(...[120,111,120,98,45,48,49,50,51,52,53,54,55,56,57,97,98,99,100,101,102])"):
         return ("BREAK", "F505 regression")
-    return ("HELD", "F489 HELD; F506/F507/F508/F510/F511 still open; F505 HELD")
+    return ("HELD", "F489 HELD; F506/F507/F508/F510/F511 CLOSED; F505 HELD")
 
 
 def p5_pin_and_footer():

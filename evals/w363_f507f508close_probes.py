@@ -187,13 +187,13 @@ def p4_compositions():
          True),
         ("f508-set-mapper",
          "Array.from(new Set(['%s','%s']), x=>x).join('')" % (A1, A2), True),
-        # F510 stays OPEN (miss)
-        ("f510-still-open",
-         "Object.values({0:'%s',1:'%s'}).join('')" % (A1, A2), False),
-        # F506/F509/F511 stay OPEN (miss)
-        ("f506-still-open",
+        # F510 CLOSED by wave-363 lane 4 (merge flips -- wave-306 class)
+        ("f510-closed",
+         "Object.values({0:'%s',1:'%s'}).join('')" % (A1, A2), True),
+        # F506/F509/F511 CLOSED by wave-363 lanes 1/3/4 (merge flips)
+        ("f506-closed",
          "Function.prototype.apply.call(Reflect.apply, Reflect, [[].concat, [], ['%s','%s']]).join('')" % (A1, A2),
-         False),
+         True),
     ]
     bad = [name for name, payload, want in checks
            if _blocked(payload) != want]

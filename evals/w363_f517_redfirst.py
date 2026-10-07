@@ -29,8 +29,8 @@ SHAPES = [
 ]
 
 CONTROLS = [
-    ("f510-values-open",
-     "Object.values({0:'%s',1:'%s'}).join('')" % (A1, A2), False),
+    ("f510-values-closed",  # F510 CLOSED wave-363 lane 4 (merge; wave-306)
+     "Object.values({0:'%s',1:'%s'}).join('')" % (A1, A2), True),
     ("junk-quiet",
      "Object.entries({0:'ab',1:'cd'}).map(p=>p[1]).join('')", False),
 ]

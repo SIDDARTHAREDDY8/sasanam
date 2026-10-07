@@ -30,8 +30,8 @@ SHAPES = [
 ]
 
 CONTROLS = [
-    ("f507-strconcat-fold-open",
-     "'%s'['c'+'oncat']('%s')" % (A1, A2), False),
+    ("f507-strconcat-fold-closed",  # F507 CLOSED wave-363 lane 2 (merge; wave-306)
+     "'%s'['c'+'oncat']('%s')" % (A1, A2), True),
     ("f504-reflect-idx-fold-closed",
      "Reflect[['apply'][0]]([].concat, [], ['%s','%s']).join('')" % (A1, A2), True),
     ("junk-quiet",

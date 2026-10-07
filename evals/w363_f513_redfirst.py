@@ -29,8 +29,8 @@ SHAPES = [
 ]
 
 CONTROLS = [
-    ("f506-call-indirect-open",
-     "Function.prototype.apply.call(Reflect.apply, Reflect, [[].concat, [], ['%s','%s']]).join('')" % (A1, A2), False),
+    ("f506-call-indirect-closed",  # F506 CLOSED wave-363 lane 1 (merge; wave-306)
+     "Function.prototype.apply.call(Reflect.apply, Reflect, [[].concat, [], ['%s','%s']]).join('')" % (A1, A2), True),
     ("junk-quiet",
      "Reflect.apply.bind(Reflect)([].concat, [], ['ab','cd']).join('')", False),
 ]

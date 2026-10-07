@@ -205,8 +205,8 @@ def p5_pin_and_footer():
     for f in ("F510", "F511"):
         if f not in text:
             return ("BREAK", "%s entry missing" % f)
-    if "F510+F511 CLOSED" not in text:
-        return ("BREAK", "lane-local footer not repointed")
+    if "F506-F511 CLOSED" not in text:
+        return ("BREAK", "merged footer not repointed")  # wave-363 merge: lanes 1-4 closed F506-F511
     if dlp._JS_EXPR_START.search("Object.values") is None:
         return ("BREAK", "anchor missing values")
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()

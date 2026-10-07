@@ -33,8 +33,8 @@ SHAPES = [
 ]
 
 CONTROLS = [
-    ("f509-bare-args-open",
-     "(function(){return Array.prototype.join.call(arguments, '')})('%s','%s')" % (A1, A2), False),
+    ("f509-bare-args-closed",  # F509 CLOSED wave-363 lane 3 (merge; wave-306)
+     "(function(){return Array.prototype.join.call(arguments, '')})('%s','%s')" % (A1, A2), True),
     ("junk-quiet",
      "(function(){var a=arguments;return a[0]+a[1]})('ab','cd')", False),
 ]

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Red-first for F514: bracket member access on String-object receivers.
 
-F507 models bracket-form member access on string LITERAL receivers, but a
-String object (new String('f1')) or a boxed primitive (String('f1')) is a
-different receiver class with a different textual anchor. All three shapes
-node-evaluate (v24.20.0) to the exact credential while the decoder
-produces zero variants. Prints BREAK when a payload MISSES (open tree),
-HELD when blocked.
+NARROWED at the wave-363 merge: shapes 1-2 (single-bracket on `new String`
+/ `String()` receivers) were honestly closed by accident via lane 2's F507
+generalization (the dot forms already decoded on the wave-362 base;
+node-identical). The remaining genuinely-open shape is the nested-bracket
+key on a String-object receiver. Prints BREAK when a payload MISSES
+(open tree), HELD when blocked.
 """
 import os
 import sys
@@ -21,17 +21,20 @@ A1 = "xoxb-" + "0123"
 A2 = "456789" + "abcdef"
 
 SHAPES = [
-    ("newstr-bracket",
-     "new String('%s')['concat']('%s')" % (A1, A2), True),
-    ("strfn-bracket",
-     "String('%s')['concat']('%s')" % (A1, A2), True),
+    # Genuinely open: nested-bracket key on a String-object receiver.
     ("strfn-nested-bracket",
      "String('%s')[[['concat'][0]]](String('%s'))" % (A1, A2), True),
 ]
 
 CONTROLS = [
-    ("f507-strlit-open",
-     "''['concat']('%s','%s')" % (A1, A2), False),
+    # Closed by accident at wave-363 merge (honest: F507 lane-2 generalization;
+    # dot forms decoded on the wave-362 base; node-identical). Must block.
+    ("newstr-bracket-closed",
+     "new String('%s')['concat']('%s')" % (A1, A2), True),
+    ("strfn-bracket-closed",
+     "String('%s')['concat']('%s')" % (A1, A2), True),
+    ("f507-strlit-closed",
+     "''['concat']('%s','%s')" % (A1, A2), True),
     ("strlit-dot-held",
      "'%s'.concat('%s')" % (A1, A2), True),
     ("junk-quiet",
