@@ -12394,6 +12394,7 @@ _JS_POSTFIX_METHOD_NAMES = (
     "concat", "repeat", "join", "reduce", "reduceRight", "map", "filter",
     "fill", "reverse", "toString", "slice", "flat", "splice", "replace",
     "padStart", "padEnd", "at", "toReversed", "with", "split",
+    "flatMap", "sort",
 )
 # F547: "at" is the direct element-read form (ARR.at(INTLIT));
 # F561: "toReversed"/"with" are the ES2023 copy-on-write array methods
@@ -17929,6 +17930,147 @@ def _js_parse_comma_regex(text, i):
     return "".join(flags), j
 
 
+def _js_flatten_f574(elements, depth):
+    """Flatten array elements to the given depth (F574).
+
+    depth None = Infinity (full flatten); depth 0 = identity.
+    Nested _JSArr elements recurse while depth remains; plain str
+    elements (incl. _JSNumStr, a str) pass through. Holes and
+    null/undefined/boolean markers (_JSNil/_JSBool) fail closed: the
+    engine SKIPS holes but KEEPS null literals, and the F485 marker
+    cannot distinguish them. Any other element type fails closed.
+    Never evals. Recursion is bounded by _JS_ARRAY_NEST_MAX (the
+    parser cannot build deeper nesting).
+    """
+    if depth == 0:
+        return list(elements)
+    out = []
+    for e in elements:
+        if isinstance(e, (_JSNil, _JSBool)):
+            raise _JSExprFail("F574 flatten over hole/marker")
+        if isinstance(e, _JSArr) and (depth is None or depth > 0):
+            sub = _js_flatten_f574(e.elements,
+                                   None if depth is None else depth - 1)
+            out.extend(sub)
+        elif isinstance(e, str):
+            out.append(e)
+        else:
+            raise _JSExprFail("F574 flatten over non-string element")
+    return out
+
+
+def _js_parse_f574_flatmap_identity(text, j):
+    """Parse a flatMap identity callback `x=>[x]` at text[j] (F574).
+
+    Recognized (node-verified, v24.20.0): `x=>[x]`, `(x)=>[x]`,
+    `x=>{return [x];}`, `function(x){return [x];}` -- the F543
+    four-form precedent applied to the single-element-array form.
+    Any other callback fails closed (documented scope boundary).
+    Returns next_index. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+
+    def _single_elem_array(k, p):
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "[")
+        p2, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        if p2 != p:
+            raise _JSExprFail("F574 flatMap identity other ident")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "]")
+        return k
+
+    if text.startswith("function", j):
+        k = j + len("function")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F574 flatMap identity bad function")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            # optional function name: function f(x){...}
+            _, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "(")
+        p, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "{")
+        rk = _js_match_kw(text, _js_skip_ws(text, k), "return")
+        if rk is None:
+            raise _JSExprFail("F574 flatMap identity not return")
+        k = _single_elem_array(rk, p)
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ";")
+        k = _js_expect(text, _js_skip_ws(text, k), "}")
+        return k
+    if j < n and text[j] == "(":
+        p, k = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        j = k
+    else:
+        p, j = _js_parse_ident(text, j)
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F574 flatMap identity without =>")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        rk = _js_match_kw(text, _js_skip_ws(text, j + 1), "return")
+        if rk is None:
+            raise _JSExprFail("F574 flatMap identity not return")
+        k = _single_elem_array(rk, p)
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ";")
+        k = _js_expect(text, _js_skip_ws(text, k), "}")
+        return k
+    return _single_elem_array(j, p)
+
+
+def _js_parse_f580_length_cmp(text, i):
+    """Parse a sort length comparator at text[i] (F580).
+
+    Recognized (node-verified, v24.20.0): `(a,b)=>a.length-b.length`
+    (ascending; param names free, ws-tolerant). Returns (True,
+    next_index). Any other comparator -- including the descending
+    form, `<`-comparison forms, and non-function args (the engine
+    throws TypeError on those, node-verified) -- fails closed
+    (documented scope boundary). Never evals.
+    """
+    n = len(text)
+    i = _js_skip_ws(text, i)
+    i = _js_expect(text, i, "(")
+    p, i = _js_parse_ident(text, _js_skip_ws(text, i))
+    i = _js_skip_ws(text, i)
+    i = _js_expect(text, i, ",")
+    q, i = _js_parse_ident(text, _js_skip_ws(text, i))
+    i = _js_skip_ws(text, i)
+    i = _js_expect(text, i, ")")
+    i = _js_skip_ws(text, i)
+    if not text.startswith("=>", i):
+        raise _JSExprFail("F580 sort comparator without =>")
+    i = _js_skip_ws(text, i + 2)
+    r, i = _js_parse_ident(text, i)
+    if r != p:
+        raise _JSExprFail("F580 sort comparator not length-diff")
+    i = _js_skip_ws(text, i)
+    if not text.startswith(".length", i):
+        raise _JSExprFail("F580 sort comparator not length-diff")
+    i = _js_skip_ws(text, i + len(".length"))
+    # now expect `-` q `.length`
+    if i >= n or text[i] != "-":
+        raise _JSExprFail("F580 sort comparator not length-diff")
+    i = _js_skip_ws(text, i + 1)
+    r, i = _js_parse_ident(text, i)
+    if r != q:
+        raise _JSExprFail("F580 sort comparator not length-diff")
+    i = _js_skip_ws(text, i)
+    if not text.startswith(".length", i):
+        raise _JSExprFail("F580 sort comparator not length-diff")
+    i = i + len(".length")
+    return True, i
+
+
 def _js_apply_method(text, j, name, value, depth, state):
     """Apply .concat(...) / .repeat(...) / .join(...) / .reduce(...) /
     .reduceRight(...) / .map(...) / .filter(...) / .fill(...) /
@@ -18236,16 +18378,111 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         state["ops"] += 1
         return _JSArr(elements), i
     if name == "flat":
-        # F466 scope note: ['a','b'].flat() -- the decoder's arrays
-        # hold only strings (never nested), so the no-arg form is the
-        # identity. Any args fail closed.
+        # F466: ['a','b'].flat() -- identity on flat arrays. F574:
+        # flat(INTLIT) / flat(Infinity) -- node-exact recursive
+        # flatten (v24.20.0) of nested _JSArr elements. depth 0 is the
+        # identity (node-verified); negative/fractional/string depths
+        # fail closed (the engine ToIntegerOrInfinity's them, but the
+        # static grammar only admits literal non-negative ints and
+        # Infinity -- documented scope boundary). Holes and null/bool
+        # markers (_JSNil/_JSBool) fail closed: a hole is SKIPPED by
+        # the engine while a null literal is KEPT, and the decoder's
+        # F485 _JSNil marker cannot tell them apart -- failing closed
+        # is the only honest option. Non-str/non-_JSArr elements fail
+        # closed likewise. Checked BEFORE the "method on unjoined
+        # array" guard below (it legitimately reads unjoined arrays).
         if not isinstance(value, _JSArr):
             raise _JSExprFail("flat on non-array")
         i = _js_skip_ws(text, i)
+        if i < len(text) and text[i] == ")":
+            depth = 1
+            i += 1
+        else:
+            if text.startswith("Infinity", i):
+                k = i + len("Infinity")
+                if k < len(text) and text[k] in _JS_IDENT_CONT:
+                    raise _JSExprFail("flat Infinityx is not Infinity")
+                depth = None  # full flatten
+                i = k
+            else:
+                depth, i = _js_parse_number(text, i)
+            i = _js_skip_ws(text, i)
+            if i >= len(text) or text[i] != ")":
+                raise _JSExprFail("flat bad args")
+            i += 1
+        elements = _js_flatten_f574(value.elements, depth)
+        state["ops"] += 1  # the flatten is obfuscation-shaped
+        return _JSArr(elements), i
+    if name == "flatMap":
+        # F574: ARR.flatMap(x=>[x]) -- the identity callback. Node-exact
+        # (v24.20.0): flatMap maps each element e to [e] and then
+        # flattens one level, so the identity callback is the IDENTITY
+        # on the array -- verified: [1,[2,3]].flatMap(x=>[x]) is
+        # [1,[2,3]], while [1,[2,3]].flat(1) is [1,2,3]. (An earlier
+        # draft modeled this as flat(1); the spec-axis review caught
+        # the over-flatten on nested arrays.) Only the identity
+        # callback is modeled (x=>[x], (x)=>[x],
+        # x=>{return [x];}, function(x){return [x];} -- the F543
+        # four-form precedent); any other callback fails closed
+        # (documented scope boundary). Holes and null/undefined/
+        # boolean markers (_JSNil/_JSBool) fail closed explicitly: the
+        # engine REMOVES holes in its flatten step, which a bare
+        # identity return would silently preserve -- failing closed is
+        # the only honest option. Non-str/non-_JSArr elements fail
+        # closed likewise (same strictness as _js_flatten_f574).
+        # Checked BEFORE the "method on unjoined array" guard below.
+        if not isinstance(value, _JSArr):
+            raise _JSExprFail("flatMap on non-array")
+        i = _js_parse_f574_flatmap_identity(text, _js_skip_ws(text, i))
+        i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != ")":
-            raise _JSExprFail("flat args unsupported")
-        state["ops"] += 1
-        return _JSArr(list(value.elements)), i + 1
+            raise _JSExprFail("flatMap bad args")
+        i += 1
+        for e in value.elements:
+            if isinstance(e, (_JSNil, _JSBool)):
+                raise _JSExprFail("F574 flatMap over hole/marker")
+            if not isinstance(e, (str, _JSArr)):
+                raise _JSExprFail("F574 flatMap over non-string element")
+        elements = list(value.elements)  # identity: net no-op
+        state["ops"] += 1  # the map-flatten is obfuscation-shaped
+        return _JSArr(elements), i
+    if name == "sort":
+        # F580: ARR.sort() / ARR.sort((a,b)=>a.length-b.length) --
+        # node-exact (v24.20.0) on literal string arrays. Default sort
+        # compares UTF-16 code units; Python compares code points, so
+        # any element with an astral char (ord > 0xFFFF) fails closed
+        # (verified divergence: node sorts ["\uE000","\U0001F600"] as
+        # ["\U0001F600","\uE000"], Python as ["\uE000","\U0001F600"]).
+        # The length comparator is modeled as a stable sort by len():
+        # (a,b)=>a.length-b.length is a consistent total preorder on
+        # lengths and V8's sort is stable, so it equals Python's
+        # stable sorted(key=len) on BMP-only strings (node-verified,
+        # incl. ties). Any other comparator (incl. a non-function
+        # arg -- the engine THROWS TypeError, node-verified) fails
+        # closed. Non-str elements (incl. _JSNumStr provenance
+        # markers, _JSNil/_JSBool, nested arrays) fail closed.
+        # Checked BEFORE the "method on unjoined array" guard below.
+        if not isinstance(value, _JSArr):
+            raise _JSExprFail("sort on non-array")
+        i = _js_skip_ws(text, i)
+        if i < len(text) and text[i] == ")":
+            by_len = False
+            i += 1
+        else:
+            by_len, i = _js_parse_f580_length_cmp(text, i)
+            i = _js_skip_ws(text, i)
+            if i >= len(text) or text[i] != ")":
+                raise _JSExprFail("sort bad args")
+            i += 1
+        for e in value.elements:
+            if type(e) is not str:
+                raise _JSExprFail("sort non-string element")
+            if any(ord(c) > 0xFFFF for c in e):
+                raise _JSExprFail("sort astral element")
+        elements = (sorted(value.elements, key=len) if by_len
+                    else sorted(value.elements))
+        state["ops"] += 1  # the reorder is obfuscation-shaped
+        return _JSArr(elements), i
     if name == "splice":
         # F466 scope note: ['a','b'].splice(0,2) -- returns the removed
         # elements (node-verified), so the filed literal (0,2) pair
