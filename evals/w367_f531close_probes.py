@@ -180,10 +180,10 @@ def p3_compositions():
         ("Reflect.apply([].slice.bind(['%(A1)s','%(A2)s'], 0, 2), null, []).join('')"
          % {"A1": _A1, "A2": _A2}, True),
         # F519xF533 composition: for-of over arguments-alias inside a function-valued
-        # Reflect.apply target -- filed as F546 at the wave-367 merge (honest
-        # merge-time filing). Must still MISS.
+        # Reflect.apply target -- filed as F546 at the wave-367 merge, CLOSED
+        # wave-368 lane 4. Must now BLOCK.
         ("Reflect.apply(function(){var a=arguments;var s='';for(var x of a){s+=x;}return s;}, null, ['%(A1)s','%(A2)s'])"
-         % {"A1": _A1, "A2": _A2}, False),
+         % {"A1": _A1, "A2": _A2}, True),
     ]
     bad = [s for s, want in pairs if _verdict(s, want)[0] == "BREAK"]
     return ("HELD" if not bad else "BREAK",
@@ -198,7 +198,7 @@ def p4_pin_and_footer():
         "guac_graph.TAXONOMY_PIN=%r want 2135" % (guac_graph.TAXONOMY_PIN,)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("Next free finding: **F547**" in text
-          and "**Open findings: F543, F545, F546, F567.**" in text)  # Wave-367 merge: F537-F546 open, next F547 (wave-368 merge lanes 1-3; lane-3 F547->F567)
+          and "**Open findings: F567.**" in text)  # wave-368 merge lanes 1-4: F543/F545/F546 CLOSED
     return ("HELD" if ok else "BREAK",
             "pin=%s footer=%s" % (TAXONOMY_PIN, ok))
 

@@ -5829,6 +5829,138 @@ def _js_parse_f519_apply_args_array(text, j, state):
         return _js_parse_f544_spread_apply_args(text, j, state)
     elements, j = _js_parse_string_literal_list(text, j, state, "]")
     return elements, j
+def _js_parse_f546_aliasadd_body(text, j, alias, state):
+    """Parse `return a[K](+ a[K])*;` at text[j] (F546).
+
+    The bare-alias additive body over the arguments alias: each
+    operand is exactly `ALIAS[INT]` with a canonical decimal-int
+    literal (no leading zeros except "0", no sign); whitespace
+    tolerated. Returns (operand_indices, next_index). The indices
+    are bounds-checked against the argsArray length by the caller
+    (node coerces out-of-range to `undefined` -- conservative
+    fail-closed, the F519-arity-mismatch precedent). Never evals.
+    """
+    n = len(text)
+    rk = _js_match_kw(text, j, "return")
+    if rk is None:
+        raise _JSExprFail("F546 aliasadd without return")
+    j = _js_skip_ws(text, rk)
+    ops = []
+    while True:
+        a2, k = _js_parse_ident(text, j)
+        if a2 != alias:
+            raise _JSExprFail("F546 aliasadd operand not the alias")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "[")
+        k = _js_skip_ws(text, k)
+        d0 = k
+        while k < n and text[k] in "0123456789":
+            k += 1
+        keytok = text[d0:k]
+        if not keytok or (len(keytok) > 1 and keytok[0] == "0"):
+            raise _JSExprFail("F546 aliasadd non-canonical index")
+        ops.append(int(keytok))
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "]")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == "+":
+            k = _js_skip_ws(text, k + 1)
+            j = k
+            continue
+        if k < n and text[k] == ";":
+            k += 1
+        if _js_skip_ws(text, k) != len(text):
+            raise _JSExprFail("F546 aliasadd trailing statements")
+        return ops, k
+
+
+def _js_parse_fn_enum_body_target(text, j, depth, state):
+    """Parse `function(){DECL a=arguments; BODY}` at text[j] (F546).
+
+    A function-valued Reflect.apply target whose body enumerates
+    the arguments exotic object (the F519 x F529/F533 composition):
+    `var|const|let a=arguments;` followed by one of
+    - the F533 for-of accumulation idiom
+      (`var|let s='';for(var|let|const x of a){s+=x;}return s;`),
+    - the F529 for-in accumulation idiom
+      (`var s='';for(var k in a){s+=a[k];}return s;`), or
+    - the bare-alias additive body (`return a[0]+a[1];`).
+    The target must be a `function` expression (not an arrow -- the
+    arrow's body grammar is F519's additive chain, unchanged) with
+    an EMPTY parameter list (declared params alongside the
+    arguments-exotic enumeration change the engine binding --
+    fail closed, documented), anonymous-or-named (the name is
+    ignored). Returns (kind, operand_indices, next_index) where kind
+    is "forof", "forin", or "aliasadd" and operand_indices is the
+    index list for aliasadd (None otherwise). Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - `function*` (generator), async, rebound aliases, bare
+      `arguments` (not the alias) as the enumeration source,
+      destructuring loop targets, non-empty accumulator
+      initializers, `const` accumulators, loop bodies other than
+      the exact idioms, and any other body shape.
+    """
+    n = len(text)
+    if not text.startswith("function", j):
+        raise _JSExprFail("F546 target not a function")
+    k = j + len("function")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("F546 functionx")
+    if k < n and text[k] == "*":
+        raise _JSExprFail("F546 generator target")
+    j = _js_skip_ws(text, k)
+    if j < n and text[j] in _JS_IDENT_START:
+        # Optional name (engine-exact; ignored).
+        _, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+    params, j = _js_parse_fn_params(text, j)
+    if params:
+        raise _JSExprFail("F546 target has declared params")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "{":
+        raise _JSExprFail("F546 target without brace")
+    inner_start, inner_end, j = _js_span_braced(text, j)
+    stmts = text[inner_start:inner_end]
+    sj = _js_skip_ws(stmts, 0)
+    _kw, m = _js_match_decl_kw(stmts, sj)
+    if m is None:
+        raise _JSExprFail("F546 decl not var/const/let")
+    sj = _js_skip_ws(stmts, m)
+    alias, sj = _js_parse_ident(stmts, sj)
+    if alias == "arguments":
+        raise _JSExprFail("F546 alias named arguments")
+    sj = _js_skip_ws(stmts, sj)
+    sj = _js_expect(stmts, sj, "=")
+    m = _js_match_kw(stmts, _js_skip_ws(stmts, sj), "arguments")
+    if m is None:
+        raise _JSExprFail("F546 source not arguments")
+    sj = _js_skip_ws(stmts, m)
+    sj = _js_expect(stmts, sj, ";")
+    rest = stmts[sj:]
+    rj = _js_skip_ws(rest, 0)
+    rk = _js_match_kw(rest, rj, "return")
+    if rk is not None:
+        # The bare-alias additive body.
+        ops, _ = _js_parse_f546_aliasadd_body(rest, rj, alias, state)
+        return "aliasadd", ops, j
+    # The accumulation idioms, reused verbatim from F533/F529.
+    if _js_match_kw(rest, rj, "var") is not None or \
+            _js_match_kw(rest, rj, "let") is not None:
+        try:
+            _js_parse_f533_forof_accum(rest, rj, alias)
+            return "forof", None, j
+        except _JSExprFail:
+            pass
+        try:
+            _js_parse_f529_forin_accum(rest, rj, alias)
+            return "forin", None, j
+        except _JSExprFail:
+            pass
+    raise _JSExprFail("F546 body not an enumerating idiom")
 
 
 def _js_parse_reflect_apply_fn(text, i, depth, state):
@@ -5883,6 +6015,9 @@ def _js_parse_reflect_apply_fn(text, i, depth, state):
     if j >= n or text[j] != "(":
         raise _JSExprFail("Reflect.apply without paren")
     j = _js_skip_ws(text, j + 1)
+    _target_mode = "additive"
+    _enum_kind = None
+    _enum_ops = None
     try:
         params, body, j = _js_parse_iife_fn_target(text, j, depth, state)
     except _JSExprFail:
@@ -5891,7 +6026,20 @@ def _js_parse_reflect_apply_fn(text, i, depth, state):
         # succeeds where the literal parse fails (it requires the
         # trailing `()` invocation), so no previously-decoded input
         # changes behavior.
-        params, body, j = _js_parse_fn_target(text, j, depth, state)
+        try:
+            params, body, j = _js_parse_fn_target(text, j, depth, state)
+        except _JSExprFail:
+            # F546: a function-valued target whose body enumerates
+            # the arguments exotic object (the F519 x F529/F533
+            # composition). The F519 additive grammar rejects these
+            # bodies chargeless (its operand parse fails on the
+            # `var` keyword), so this path only accepts inputs that
+            # previously failed closed -- no previously-decoded
+            # input changes behavior.
+            _enum_kind, _enum_ops, j = _js_parse_fn_enum_body_target(
+                text, j, depth, state)
+            _target_mode = "enum"
+            params = []
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ",":
         raise _JSExprFail("F519 target without thisArg")
@@ -5903,10 +6051,23 @@ def _js_parse_reflect_apply_fn(text, i, depth, state):
     j = _js_skip_ws(text, j + 1)
     if j >= n or text[j] != "[":
         raise _JSExprFail("F519 argsArray not an array")
+    # F544+F546 composition (wave-368 merge): the argsArray grammar
+    # admits the F544 spread form; enum bodies (F546) read the expanded
+    # elements.
     elements, j = _js_parse_f519_apply_args_array(text, j + 1, state)
-    if len(elements) != len(params):
-        raise _JSExprFail("F519 arity mismatch")
-    result = "".join(elements[idx] for idx in body)
+    if _target_mode == "enum":
+        # F546: the arguments exotic is the argsArray elements.
+        if _enum_kind in ("forof", "forin"):
+            result = "".join(elements)
+        else:
+            for k in _enum_ops:
+                if k >= len(elements):
+                    raise _JSExprFail("F546 aliasadd index out of range")
+            result = "".join(elements[k] for k in _enum_ops)
+    else:
+        if len(elements) != len(params):
+            raise _JSExprFail("F519 arity mismatch")
+        result = "".join(elements[idx] for idx in body)
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ")":
         raise _JSExprFail("F519 with extra args")
@@ -10767,27 +10928,34 @@ def _js_bind_iife_arguments(body_expr, arg_texts, ident="arguments",
     return rewritten
 
 
-def _js_bind_destructure_arguments(body_expr, arg_texts, names):
-    """Bind destructured element idents in *body_expr* (F524).
+def _js_bind_destructure_arguments(body_expr, arg_texts, names, keys):
+    """Bind destructured element idents in *body_expr* (F524, F545).
 
-    *names* are the pattern identifiers in order: `const [a,b] =
-    arguments` binds a->arg_texts[0], b->arg_texts[1] (node v24.20.0
-    verified). Only the bare-identifier use is modeled -- every
-    code-span occurrence of names[k] must be a bare use, rewriting
-    to the k-th call-site literal's raw text. Any other use
-    (`...name`, `name[N]`, `name.M`, `name(`, `.name`) fails closed:
-    a destructured element is a STRING value in the engine, so the
-    F509 three-form grammar (spread/index/bare over the exotic
-    object) is NOT node-exact here -- `a[0]` is string indexing and
-    `...a` spreads characters (node v24.20.0 verified). Guards mirror
-    _js_bind_iife_arguments for every bound name (no nested
-    function/delete/new/class, no bare assignment, no arrow-param
-    shadowing). Substitution never touches string-literal contents.
-    Plain string scanning throughout -- zero new regexes. Never
-    evals.
+    *names* are the pattern identifiers in order and *keys* the
+    parallel list of argument indices (array patterns: positional
+    0..n-1; object patterns: the canonical decimal-int keys):
+    `const [a,b] = arguments` binds a->arg_texts[0], b->arg_texts[1];
+    `const {1:a,0:b} = arguments` binds a->arg_texts[1],
+    b->arg_texts[0] (node v24.20.0 verified). Keys beyond the call
+    args fail closed (node coerces `undefined` into the string --
+    the decoder never guesses a value). Only the bare-identifier
+    use is modeled -- every code-span occurrence of names[k] must
+    be a bare use, rewriting to the key-th call-site literal's raw
+    text. Any other use (`...name`, `name[N]`, `name.M`, `name(`,
+    `.name`) fails closed: a destructured element is a STRING value
+    in the engine, so the F509 three-form grammar (spread/index/
+    bare over the exotic object) is NOT node-exact here -- `a[0]`
+    is string indexing and `...a` spreads characters (node v24.20.0
+    verified). Guards mirror _js_bind_iife_arguments for every bound
+    name (no nested function/delete/new/class, no bare assignment,
+    no arrow-param shadowing). Substitution never touches
+    string-literal contents. Plain string scanning throughout --
+    zero new regexes. Never evals.
     """
-    if len(names) > len(arg_texts):
-        raise _JSExprFail("f524 pattern longer than args")
+    if len(keys) != len(names):
+        raise _JSExprFail("f524 names/keys length mismatch")
+    if any(k >= len(arg_texts) for k in keys):
+        raise _JSExprFail("f524 pattern key beyond args")
     segs = _js_split_code_strings(body_expr)
     code = "".join(s for is_code, s in segs if is_code)
     for kw, msg in (("function", "nested function in bound body"),
@@ -10822,7 +10990,7 @@ def _js_bind_destructure_arguments(body_expr, arg_texts, names):
                     or s[max(0, st - 3):st].endswith("...")):
                 raise _JSExprFail("unmodeled destructure use")
             buf.append(s[pos:st])
-            buf.append(arg_texts[k])
+            buf.append(arg_texts[keys[k]])
             pos = en
         buf.append(s[pos:])
         out.append("".join(buf))
@@ -11028,18 +11196,25 @@ def _js_split_laundered_var_decl(stmts):
 
 def _js_split_destructure_var_decl(stmts):
     """Split `(var|const|let) [n0(, n1)?] = arguments;` from *stmts*
-    (F524).
+    (F524), or `(var|const|let) {K0:n0(, K1:n1)?} = arguments;`
+    (F545, object-pattern destructuring).
 
     *stmts* is the inner text of a function body. Returns (names,
-    body_expr) where names is the one- or two-element pattern list
-    in order. The source must be exactly bare `arguments`
+    keys, body_expr) where names is the one- or two-element pattern
+    list in order and keys is the parallel list of argument indices
+    (array patterns bind positionally, so keys are 0..n-1; object
+    patterns bind key-based, so keys are the canonical decimal-int
+    keys). The source must be exactly bare `arguments`
     (destructuring from `Array.from(...)` / `Object.values(...)`
     is outside the filed scope -- fail closed, documented). Only
     one- and two-element patterns of plain identifiers are modeled:
     holes, defaults, rest elements, nested patterns, duplicate
-    names, or a name of `arguments` fail closed (documented scope
-    boundary -- the decoder never guesses a binding). Raises
-    _JSExprFail on any other shape. Never evals.
+    names, duplicate keys, non-canonical keys (leading zeros, signs,
+    string keys -- node accepts `{'0':a}` but the lane rejects it
+    rather than mis-decodes, documented), or a name of `arguments`
+    fail closed (documented scope boundary -- the decoder never
+    guesses a binding). Raises _JSExprFail on any other shape. Never
+    evals.
     """
     n = len(stmts)
     j = _js_skip_ws(stmts, 0)
@@ -11050,6 +11225,52 @@ def _js_split_destructure_var_decl(stmts):
     else:
         raise _JSExprFail("f524 decl not var/const/let")
     j = _js_skip_ws(stmts, m)
+    if j < n and stmts[j] == "{":
+        # F545: object-pattern destructuring
+        # (`var|const|let {0:a,1:b}=arguments`).
+        j = _js_skip_ws(stmts, j + 1)
+        names = []
+        keys = []
+        while True:
+            j = _js_skip_ws(stmts, j)
+            d0 = j
+            while j < n and stmts[j] in "0123456789":
+                j += 1
+            keytok = stmts[d0:j]
+            if not keytok or (len(keytok) > 1 and keytok[0] == "0"):
+                raise _JSExprFail("f545 non-canonical key")
+            key = int(keytok)
+            j = _js_skip_ws(stmts, j)
+            j = _js_expect(stmts, j, ":")
+            name, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+            names.append(name)
+            keys.append(key)
+            j = _js_skip_ws(stmts, j)
+            if j < n and stmts[j] == ",":
+                j = _js_skip_ws(stmts, j + 1)
+                continue
+            if j < n and stmts[j] == "}":
+                j += 1
+                break
+            raise _JSExprFail("f545 bad pattern")
+        if not 1 <= len(names) <= 2:
+            raise _JSExprFail("f545 pattern arity")
+        if len(set(names)) != len(names):
+            raise _JSExprFail("f545 duplicate names")
+        if len(set(keys)) != len(keys):
+            raise _JSExprFail("f545 duplicate keys")
+        if "arguments" in names:
+            raise _JSExprFail("f545 name is arguments")
+        j = _js_skip_ws(stmts, j)
+        j = _js_expect(stmts, j, "=")
+        sj = _js_skip_ws(stmts, j)
+        m = _js_match_kw(stmts, sj, "arguments")
+        if m is None:
+            raise _JSExprFail("f545 source not arguments")
+        j = _js_skip_ws(stmts, m)
+        j = _js_expect(stmts, j, ";")
+        body_expr = _js_require_single_return(stmts[j:])
+        return names, keys, body_expr
     j = _js_expect(stmts, j, "[")
     names = []
     while True:
@@ -11079,7 +11300,7 @@ def _js_split_destructure_var_decl(stmts):
     j = _js_skip_ws(stmts, m)
     j = _js_expect(stmts, j, ";")
     body_expr = _js_require_single_return(stmts[j:])
-    return names, body_expr
+    return names, list(range(len(names))), body_expr
 
 
 def _js_parse_args_laundered_iife(text, i, depth, state):
@@ -11139,8 +11360,10 @@ def _js_parse_args_laundered_iife(text, i, depth, state):
                     stmts)
             except _JSExprFail:
                 # F524: destructuring pattern binding
-                # (`var|const|let [a,b]=arguments`).
-                alias, body_expr = _js_split_destructure_var_decl(stmts)
+                # (`var|const|let [a,b]=arguments`; F545 adds the
+                # object-pattern form `{K0:n0,K1:n1}=arguments`).
+                alias, keys, body_expr = _js_split_destructure_var_decl(
+                    stmts)
                 src_kind = "destructure"
             # Array.from/Object.values aliases are real Arrays in
             # the engine (member substitution node-exact); a bare
@@ -11186,7 +11409,7 @@ def _js_parse_args_laundered_iife(text, i, depth, state):
         rewritten = _js_bind_iife_arguments(body_expr, args)
         if src_kind == "destructure":
             rewritten = _js_bind_destructure_arguments(rewritten, args,
-                                                       alias)
+                                                       alias, keys)
         else:
             rewritten = _js_bind_iife_arguments(rewritten, args, alias,
                                                 member_ok)
@@ -11614,6 +11837,345 @@ def _js_parse_args_forof_iife(text, i, depth, state):
                     break
                 raise _JSExprFail("bad iife call")
         val = "".join(args)
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f543_entries_values_head(text, j, alias):
+    """Parse `Object.entries(a)` / `Object.values(a)` at text[j] (F543).
+
+    The call argument must be exactly the arguments alias *alias*
+    (a bare ident); anything else fails closed. The member is
+    `entries` or `values` in the dot form or the F480 bracket-string
+    form (both engine-identical, node v24.20.0 verified). Returns
+    (member_name, next_index) just after the call's closing paren.
+    Never evals.
+    """
+    n = len(text)
+    if not text.startswith("Object", j):
+        raise _JSExprFail("F543 not Object.entries/values")
+    k = j + len("Object")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("F543 Objectx")
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == "[":
+        _mname, k = _js_parse_bracket_member(text, k)
+        if _mname not in ("entries", "values"):
+            raise _JSExprFail("F543 not entries/values member")
+        member = _mname
+    elif k < n and text[k] == ".":
+        k = _js_skip_ws(text, k + 1)
+        if text.startswith("entries", k):
+            m = k + len("entries")
+            if m < n and text[m] in _JS_IDENT_CONT:
+                raise _JSExprFail("F543 entriesx")
+            member = "entries"
+            k = m
+        elif text.startswith("values", k):
+            m = k + len("values")
+            if m < n and text[m] in _JS_IDENT_CONT:
+                raise _JSExprFail("F543 valuesx")
+            member = "values"
+            k = m
+        else:
+            raise _JSExprFail("F543 not entries/values member")
+    else:
+        raise _JSExprFail("F543 entries/values without member")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, "(")
+    a2, k = _js_parse_ident(text, _js_skip_ws(text, k))
+    if a2 != alias:
+        raise _JSExprFail("F543 entries/values of another ident")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, ")")
+    return member, k
+
+
+def _js_parse_f543_pair_projection(text, j):
+    """Parse a `.map` callback projecting `e[1]` at text[j] (F543).
+
+    Recognized (node-verified, v24.20.0): `e=>e[1]`, `(e)=>e[1]`,
+    `e=>{return e[1];}`, `function(e){return e[1];}` -- the pair's
+    second element (the value). Any other projection fails closed
+    (documented scope boundary). The parameter name is unrestricted
+    (it binds the pair, never the alias -- no shadowing concern),
+    but must not BE the alias name elsewhere: the projection indexes
+    the pair by the literal index 1, so there is no alias reference
+    at all. Returns next_index. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if text.startswith("function", j):
+        k = j + len("function")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F543 bad map callback")
+        k = _js_expect(text, k, "(")
+        p, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "{")
+        rk = _js_match_kw(text, _js_skip_ws(text, k), "return")
+        if rk is None:
+            raise _JSExprFail("F543 map callback not return")
+        p2, k = _js_parse_ident(text, _js_skip_ws(text, rk))
+        if p2 != p:
+            raise _JSExprFail("F543 map callback other ident")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "[")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "1":
+            raise _JSExprFail("F543 map callback not [1]")
+        k += 1
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F543 map callback not [1]")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "]")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ";")
+        k = _js_expect(text, _js_skip_ws(text, k), "}")
+        return k
+    if j < n and text[j] == "(":
+        p, k = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        j = k
+    else:
+        p, j = _js_parse_ident(text, j)
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F543 map callback without =>")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        rk = _js_match_kw(text, _js_skip_ws(text, j + 1), "return")
+        if rk is None:
+            raise _JSExprFail("F543 map callback not return")
+        p2, k = _js_parse_ident(text, _js_skip_ws(text, rk))
+        if p2 != p:
+            raise _JSExprFail("F543 map callback other ident")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "[")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "1":
+            raise _JSExprFail("F543 map callback not [1]")
+        k += 1
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F543 map callback not [1]")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "]")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ";")
+        k = _js_expect(text, _js_skip_ws(text, k), "}")
+        return k
+    p2, k = _js_parse_ident(text, j)
+    if p2 != p:
+        raise _JSExprFail("F543 map callback other ident")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, "[")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "1":
+        raise _JSExprFail("F543 map callback not [1]")
+    k += 1
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("F543 map callback not [1]")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, "]")
+    return k
+
+
+def _js_parse_f543_identity_map(text, j):
+    """Parse a `.map` identity callback `x=>x` at text[j] (F543).
+
+    Recognized (node-verified, v24.20.0): `x=>x`, `(x)=>x`,
+    `x=>{return x;}`, `function(x){return x;}` -- a no-op over the
+    values array. Any other callback fails closed (documented scope
+    boundary). Returns next_index. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if text.startswith("function", j):
+        k = j + len("function")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F543 bad identity map")
+        k = _js_expect(text, k, "(")
+        p, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "{")
+        rk = _js_match_kw(text, _js_skip_ws(text, k), "return")
+        if rk is None:
+            raise _JSExprFail("F543 identity map not return")
+        p2, k = _js_parse_ident(text, _js_skip_ws(text, rk))
+        if p2 != p:
+            raise _JSExprFail("F543 identity map other ident")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ";")
+        k = _js_expect(text, _js_skip_ws(text, k), "}")
+        return k
+    if j < n and text[j] == "(":
+        p, k = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        j = k
+    else:
+        p, j = _js_parse_ident(text, j)
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F543 identity map without =>")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        rk = _js_match_kw(text, _js_skip_ws(text, j + 1), "return")
+        if rk is None:
+            raise _JSExprFail("F543 identity map not return")
+        p2, k = _js_parse_ident(text, _js_skip_ws(text, rk))
+        if p2 != p:
+            raise _JSExprFail("F543 identity map other ident")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ";")
+        k = _js_expect(text, _js_skip_ws(text, k), "}")
+        return k
+    p2, k = _js_parse_ident(text, j)
+    if p2 != p:
+        raise _JSExprFail("F543 identity map other ident")
+    return k
+
+
+def _js_parse_args_entries_values_iife(text, i, depth, state):
+    """Parse `(function(){DECL a=arguments; BODY})(lit, ...)` (F543).
+
+    Desugars enumeration builtins on the arguments alias:
+    - `return Object.entries(a).map(CB)POSTFIX;` where CB is the
+      F543 pair-projection `e[1]` (the four forms in
+      _js_parse_f543_pair_projection); the entries of the arguments
+      object are the [index-string, value] pairs in ascending index
+      order (node v24.20.0), so the map is element-identical to the
+      argument array and the POSTFIX parses over it via the normal
+      postfix grammar.
+    - `return Object.values(a)(.map(ID))?POSTFIX;` (POSTFIX
+      required, non-empty); the values array is element-identical
+      to the argument array (node v24.20.0); an optional identity
+      map (the four `x=>x` forms) is a no-op desugar, and the
+      POSTFIX parses over the values via the normal postfix
+      grammar.
+    DECL is var/const/let (all three bind identically here, node
+    verified). Call args are string literals (the F509/F516 arg
+    grammar). Returns (value, next_index), or None when the head
+    does not match or a guard fails (the caller falls through to
+    the F529/F516 paths). Bounded by the part/depth budgets; the
+    IIFE wrapper charges one op (obfuscation-shaped). Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a source other than bare `arguments`, an alias rebound
+      anywhere (the exact-shape grammar has no room for
+      reassignment), a non-alias receiver (`Object.entries(x)`),
+      entries without the `e[1]` map (the pairs are not string
+      values -- the decoder never guesses a join), a values body
+      without postfix, a non-identity pair projection, non-literal
+      call args, and any other body shape.
+    """
+    if not _js_peek_arguments_iife_head(text, i):
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, i)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j) + len("function")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        _kw, m = _js_match_decl_kw(stmts, sj)
+        if m is None:
+            raise _JSExprFail("F543 decl not var/const/let")
+        sj = _js_skip_ws(stmts, m)
+        alias, sj = _js_parse_ident(stmts, sj)
+        if alias == "arguments":
+            raise _JSExprFail("F543 alias named arguments")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "=")
+        m = _js_match_kw(stmts, _js_skip_ws(stmts, sj), "arguments")
+        if m is None:
+            raise _JSExprFail("F543 source not arguments")
+        sj = _js_skip_ws(stmts, m)
+        sj = _js_expect(stmts, sj, ";")
+        rest = stmts[sj:]
+        rj = _js_skip_ws(rest, 0)
+        rk = _js_match_kw(rest, rj, "return")
+        if rk is None:
+            raise _JSExprFail("F543 body not return")
+        rj = _js_skip_ws(rest, rk)
+        member, q = _js_parse_f543_entries_values_head(rest, rj, alias)
+        if member == "entries":
+            q = _js_skip_ws(rest, q)
+            q = _js_expect(rest, q, ".")
+            mm = _js_match_kw(rest, _js_skip_ws(rest, q), "map")
+            if mm is None:
+                raise _JSExprFail("F543 entries without map")
+            q = _js_expect(rest, _js_skip_ws(rest, mm), "(")
+            q = _js_parse_f543_pair_projection(rest, q)
+            q = _js_skip_ws(rest, q)
+            q = _js_expect(rest, q, ")")
+        else:
+            # Optional identity map over the values array (a no-op
+            # desugar -- the values are already element-identical to
+            # the argument array).
+            qq = _js_skip_ws(rest, q)
+            if qq < len(rest) and rest[qq] == ".":
+                mm = _js_match_kw(rest, _js_skip_ws(rest, qq + 1), "map")
+                if mm is not None:
+                    mq = _js_expect(rest, _js_skip_ws(rest, mm), "(")
+                    mq = _js_parse_f543_identity_map(rest, mq)
+                    mq = _js_skip_ws(rest, mq)
+                    mq = _js_expect(rest, mq, ")")
+                    q = mq
+        be = len(rest)
+        while be > q and rest[be - 1] in " \t\n\r":
+            be -= 1
+        if be > q and rest[be - 1] == ";":
+            be -= 1
+        postfix_text = rest[q:be]
+        if not postfix_text.strip():
+            raise _JSExprFail("F543 empty postfix")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        args = []
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ")":
+            j += 1
+        else:
+            while True:
+                j = _js_skip_ws(text, j)
+                if j >= n or text[j] not in "'\"":
+                    raise _JSExprFail("F543 arg not string literal")
+                aval, j = _js_parse_string(text, j)
+                args.append(aval)
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                j = _js_skip_ws(text, j)
+                if j >= n:
+                    raise _JSExprFail("unterminated iife call")
+                if text[j] == ",":
+                    j = _js_skip_ws(text, j + 1)
+                    continue
+                if text[j] == ")":
+                    j += 1
+                    break
+                raise _JSExprFail("bad iife call")
+        values = _JSArr(list(args))
+        val, k = _js_parse_postfix(postfix_text, 0, values, depth, state)
+        if _js_skip_ws(postfix_text, k) != len(postfix_text):
+            raise _JSExprFail("F543 postfix trailing junk")
         state["ops"] += 1  # the iife wrapper is obfuscation-shaped
         return val, j
     except _JSExprFail:
@@ -14845,6 +15407,18 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f533 = _js_parse_args_forof_iife(text, i, depth, state)
         if _f533 is not None:
             val, i = _f533
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F543: (function(){DECL a=arguments;
+        #   return Object.entries(a).map(e=>e[1])POSTFIX;})(lit, ...) or
+        #   (function(){DECL a=arguments;
+        #   return Object.values(a)POSTFIX;})(lit, ...) -- enumeration
+        #   builtins on the arguments alias (F516 x F517 x F529).
+        #   Tried before F529: the exact entries/values grammar is
+        #   disjoint from F529's (F529's keys head rejects entries/
+        #   values chargeless), and None falls through to F529.
+        _f543 = _js_parse_args_entries_values_iife(text, i, depth, state)
+        if _f543 is not None:
+            val, i = _f543
             return _js_parse_postfix(text, i, val, depth, state)
         # F529: (function(){DECL a=arguments;
         #   return Object.keys(a).map(i=>a[i])POSTFIX;})(lit, ...) or
