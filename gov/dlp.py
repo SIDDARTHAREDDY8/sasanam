@@ -76,7 +76,7 @@ import json
 import math
 import re
 import unicodedata
-from urllib.parse import unquote, unquote_plus, urlparse
+from urllib.parse import parse_qsl, unquote, unquote_plus, urlparse, urlsplit
 
 # ---------------------------------------------------------------- patterns
 
@@ -2109,7 +2109,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty|fromEntries|groupBy)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|Map[ \t\n\r]*\.[ \t\n\r]*groupBy(?![_$A-Za-z0-9])|new[ \t\n\r]+Map(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty|fromEntries|groupBy)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|Map[ \t\n\r]*\.[ \t\n\r]*groupBy(?![_$A-Za-z0-9])|new[ \t\n\r]+Map(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|new[ \t\n\r]+URLSearchParams(?![_$A-Za-z0-9])|new[ \t\n\r]+URL(?![_$A-Za-z0-9])|\(")
 # F536: the structuredClone anchor carries its own ident-boundary
 # lookahead so `structuredClonex(` never anchors (no wasted F512
 # total-attempt budget); the primary branch re-checks the boundary
@@ -10210,6 +10210,43 @@ class _JSMap:
         self.entries = entries
 
 
+class _JSURLParams:
+    """Statically-resolved URLSearchParams (F576).
+
+    pairs is a list of (name, value) in insertion order, decoded
+    with the application/x-www-form-urlencoded rules (node-exact,
+    v24.20.0, verified by differential test against
+    urllib.parse.parse_qsl: '+' decodes to space, %XX
+    percent-decoding with U+FFFD on invalid sequences, ';' is not a
+    separator, missing '=' means the empty value). .get returns the
+    FIRST pair with the name (engine-exact); a missing name fails
+    closed (the engine returns null, which the decoder never
+    decodes). A resolved params object only flows through the
+    _JSURLParams branch of _js_parse_postfix (.get); any other use
+    fails closed.
+    """
+    __slots__ = ("pairs",)
+
+    def __init__(self, pairs):
+        self.pairs = pairs
+
+
+class _JSURL:
+    """Statically-resolved URL (F576).
+
+    query is the URL's raw query string (the text after '?' up to
+    '#', node-exact for absolute URLs parsed by urllib.parse).
+    Only the .searchParams member is modeled (resolving to a
+    _JSURLParams over the query); every other member fails closed.
+    A resolved URL only flows through the _JSURL branch of
+    _js_parse_postfix (.searchParams); any other use fails closed.
+    """
+    __slots__ = ("query",)
+
+    def __init__(self, query):
+        self.query = query
+
+
 def _js_f535_deepcopy(props):
     """Rebuild a resolved property map as fresh nested structures
     (F536): the structuredClone deep-copy identity. Strings are
@@ -15145,6 +15182,69 @@ def _js_parse_f563_map(text, i, depth, state):
     return _JSMap(entries), j
 
 
+def _js_parse_f576_new_url(text, i, depth, state):
+    """Parse `new URLSearchParams('LIT')` / `new URL('LIT')` (F576).
+
+    Desugars the URL-family laundering builtins node-exactly
+    (v24.20.0):
+    - `new URLSearchParams('a=f1&b=f2')` -> _JSURLParams over the
+      form-urlencoded pairs (urllib.parse.parse_qsl, verified
+      node-identical on 22 differential cases including malformed
+      % sequences, invalid UTF-8, '+'-as-space, and ';' handling).
+    - `new URL('https://h/?a=f1')` -> _JSURL holding the raw query;
+      `.searchParams` resolves to the _JSURLParams over it.
+    The argument must be a single string literal; the two-argument
+    URL form (base), non-literal arguments, relative URLs, and
+    URLs without a scheme+host all fail closed (documented scope
+    boundary -- the engine throws on relative URLs, and the
+    decoder never decodes a throw). Returns (_JSURLParams |
+    _JSURL, next_index), or None when text[i] is not a
+    `new URL(SParams)` head (the caller falls through, failing
+    closed on `new` as before). Never evals, never network.
+    """
+    n = len(text)
+    j = _js_match_kw(text, i, "new")
+    if j is None:
+        return None
+    j = _js_skip_ws(text, j)
+    k = _js_match_kw(text, j, "URLSearchParams")
+    if k is not None:
+        is_params, j = True, k
+    else:
+        k = _js_match_kw(text, j, "URL")
+        if k is None:
+            return None
+        is_params, j = False, k
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        return None  # `new URL` without call -- not a value here
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail("F576 URL arg not a string literal")
+    lit, j = _js_parse_string(text, j)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        # The two-argument URL(url, base) form and anything after
+        # the literal fail closed (documented scope boundary).
+        raise _JSExprFail("F576 URL with extra args")
+    if is_params:
+        pairs = parse_qsl(lit, keep_blank_values=True)
+        state["parts"] += len(pairs) + 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        return _JSURLParams(pairs), j + 1
+    try:
+        split = urlsplit(lit)
+    except ValueError:
+        raise _JSExprFail("F576 URL unparseable")
+    if not split.scheme or not split.netloc:
+        # The engine throws on relative URLs; without a host there
+        # is no meaningful searchParams -- fail closed, never
+        # mis-decoded.
+        raise _JSExprFail("F576 URL not absolute")
+    return _JSURL(split.query), j + 1
+
+
 
 # Object integrity-level wrappers that return their argument unchanged (the
 # same object reference -- node v24.20.0): a wrapped dispatch receiver is
@@ -17747,6 +17847,28 @@ def _js_parse_indexed_array_read(text, j, value, state):
     return elem, k
 
 
+def _js_f576_member_name(text, j, what):
+    """Resolve a dot- or bracket-string member name (F576).
+
+    Both the `_JSURLParams.get` and `_JSURL.searchParams` postfix
+    branches accept the dot form (`.get`) and the string-literal
+    bracket form (`['get']`); anything else fails closed. Returns
+    (member_name, next_index). Never evals.
+    """
+    if text[j] == ".":
+        _mk = _js_skip_ws(text, j + 1)
+        try:
+            return _js_parse_ident(text, _mk)
+        except _JSExprFail:
+            raise _JSExprFail(what + " dot member not an ident")
+    if text[j] == "[":
+        try:
+            return _js_parse_bracket_member(text, j)
+        except _JSExprFail:
+            raise _JSExprFail(what + " bracket member not a literal")
+    raise _JSExprFail(what + " needs dot/bracket member")
+
+
 def _js_parse_postfix(text, i, value, depth, state):
     """Consume chained .concat(...) / .repeat(...) / .join(...) /
     .reduce(...) / .reduceRight(...) / .map(...) / .filter(...) /
@@ -17842,6 +17964,53 @@ def _js_parse_postfix(text, i, value, depth, state):
                 value, i = value.entries[_kid], _gk + 1
                 continue
             raise _JSExprFail("map member not modeled")
+
+
+        # F576: `.get('lit')` on a statically-resolved URLSearchParams.
+        # get resolves the literal name to the FIRST pair's value
+        # (engine-exact); a missing name fails closed (the engine
+        # returns null, which the decoder never decodes). Dot and
+        # string-literal bracket forms both resolve (F563 precedent);
+        # any other member fails closed.
+        if isinstance(value, _JSURLParams):
+            _mname, _mk = _js_f576_member_name(text, j, "urlparams")
+            if _mname != "get":
+                raise _JSExprFail("urlparams member not modeled")
+            _gk = _js_skip_ws(text, _mk)
+            if _gk >= len(text) or text[_gk] != "(":
+                raise _JSExprFail("urlparams get without paren")
+            _gk = _js_skip_ws(text, _gk + 1)
+            if _gk >= len(text) or text[_gk] not in "'\"":
+                raise _JSExprFail("urlparams get key not a literal")
+            _gkey, _gk = _js_parse_string(text, _gk)
+            _gk = _js_skip_ws(text, _gk)
+            if _gk >= len(text) or text[_gk] != ")":
+                raise _JSExprFail("urlparams get unterminated")
+            _gval = None
+            for _pname, _pval in value.pairs:
+                if _pname == _gkey:
+                    _gval = _pval
+                    break
+            if _gval is None:
+                raise _JSExprFail("urlparams get missing name")
+            state["ops"] += 1  # the get is obfuscation-shaped
+            value, i = _gval, _gk + 1
+            continue
+        # F576: `.searchParams` on a statically-resolved URL. Resolves
+        # to the _JSURLParams over the URL's query string. Dot and
+        # string-literal bracket forms both resolve; any other member
+        # fails closed.
+        if isinstance(value, _JSURL):
+            _mname, _mk = _js_f576_member_name(text, j, "url")
+            if _mname != "searchParams":
+                raise _JSExprFail("url member not modeled")
+            state["ops"] += 1  # the member read is obfuscation-shaped
+            _pairs = parse_qsl(value.query, keep_blank_values=True)
+            state["parts"] += len(_pairs) + 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            value, i = _JSURLParams(_pairs), _mk
+            continue
         # F490: a step on a method reference -- dispatch it
         # (./?./bracket call/apply/bind) or apply the factory `(args)`.
         # None returns the bare reference; upstream fails closed via
@@ -18100,6 +18269,179 @@ def _js_f541_json_value(obj, state, depth=0):
             elems.append(_js_f541_json_value(e, state, depth + 1))
         return _JSArr(elems)
     raise _JSExprFail("F541 JSON non-literal leaf")
+
+
+def _js_f571_json_escape_str(s):
+    """Escape a Python str as a JSON string literal, node-exact (F571).
+
+    Matches node v24.20.0 JSON.stringify string escaping exactly
+    (verified by differential test on 20 cases): `"` and `\\`
+    escaped; \\b \\f \\n \\r \\t shortcuts; other control chars
+    < 0x20 as \\u00XX (lowercase hex); lone surrogates (U+D800-U+DFFF,
+    which cannot appear paired inside a Python str) escaped as
+    \\uXXXX -- node escapes them (well-formed stringify, ES2019);
+    an adjacent high+low surrogate pair is combined and the astral
+    char emitted raw, matching node; everything else -- including
+    U+2028/U+2029, non-ASCII, and astral chars -- emitted raw
+    (Python's json.dumps escapes U+2028/U+2029 where node does not,
+    so the stdlib serializer cannot be used). Never evals.
+    """
+    out = ['"']
+    _i = 0
+    _n = len(s)
+    while _i < _n:
+        ch = s[_i]
+        o = ord(ch)
+        # Astral pair: a high surrogate immediately followed by a low
+        # surrogate is one JS character; node emits it raw.
+        if (0xD800 <= o <= 0xDBFF and _i + 1 < _n
+                and 0xDC00 <= ord(s[_i + 1]) <= 0xDFFF):
+            out.append(chr(0x10000 + ((o - 0xD800) << 10)
+                           + (ord(s[_i + 1]) - 0xDC00)))
+            _i += 2
+            continue
+        if ch == '"':
+            out.append('\\"')
+        elif ch == '\\':
+            out.append('\\\\')
+        elif ch == '\b':
+            out.append('\\b')
+        elif ch == '\f':
+            out.append('\\f')
+        elif ch == '\n':
+            out.append('\\n')
+        elif ch == '\r':
+            out.append('\\r')
+        elif ch == '\t':
+            out.append('\\t')
+        elif o < 0x20 or 0xD800 <= o <= 0xDFFF:
+            out.append('\\u%04x' % o)
+        else:
+            out.append(ch)
+        _i += 1
+    out.append('"')
+    return ''.join(out)
+
+
+def _js_f571_array_index_key(k):
+    """Return the numeric index for an integer-like object key (F571).
+
+    Node's JSON.stringify emits canonical-array-index keys (ASCII
+    decimal, no leading zeros, 0..2**32-2) sorted numerically ahead
+    of all other keys (node v24.20.0 verified: {"2":..,"10":..}
+    serializes "2" before "10"; {"01":..} keeps insertion order).
+    Returns the int index, or None when the key is not integer-like.
+    Never evals.
+    """
+    if not k:
+        return None
+    for c in k:
+        if c not in _ASCII_DIGITS:
+            return None
+    if len(k) > 1 and k[0] == '0':
+        return None
+    v = int(k)
+    return v if v <= 2**32 - 2 else None
+
+
+def _js_f571_stringify(val, state, depth=0):
+    """Serialize a modeled value to its node-exact JSON text (F571).
+
+    Inverse of _js_f541_json_value over the modeled value classes:
+    str -> escaped string; _JSNumStr -> bare canonical number (the
+    literal text is already the engine's decimal repr, F475);
+    _JSArr -> [...] (elements must be str/_JSNumStr/_JSArr/_JSObj);
+    _JSObj -> {...} with integer-like keys numerically first
+    (node-exact), F552 symbol-registry keys dropped (the engine
+    skips symbol-keyed properties), later-wins already applied at
+    parse. Nesting is bounded by _JS_F541_MAX_JSON_DEPTH and every
+    node charges the F430 parts budget. Anything outside the
+    JSON-literal input class fails closed -- rejected, never
+    mis-serialized. Never evals.
+    """
+    if depth > _JS_F541_MAX_JSON_DEPTH:
+        raise _JSExprFail("F571 stringify too deep")
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    if isinstance(val, _JSNumStr):
+        return str(val)
+    if isinstance(val, str):
+        return _js_f571_json_escape_str(val)
+    if isinstance(val, _JSArr):
+        parts = []
+        for e in val.elements:
+            if not isinstance(e, (str, _JSArr, _JSObj)):
+                raise _JSExprFail("F571 stringify non-JSON element")
+            parts.append(_js_f571_stringify(e, state, depth + 1))
+        return "[" + ",".join(parts) + "]"
+    if isinstance(val, _JSObj):
+        int_keys = []
+        str_keys = []
+        for k in val.props:
+            if isinstance(k, tuple):
+                continue  # F552 symbol key: engine skips it
+            ik = _js_f571_array_index_key(k)
+            if ik is None:
+                str_keys.append(k)
+            else:
+                int_keys.append((ik, k))
+        int_keys.sort()
+        parts = []
+        for _, k in int_keys:
+            parts.append(_js_f571_json_escape_str(k) + ":" +
+                         _js_f571_stringify(val.props[k], state, depth + 1))
+        for k in str_keys:
+            parts.append(_js_f571_json_escape_str(k) + ":" +
+                         _js_f571_stringify(val.props[k], state, depth + 1))
+        return "{" + ",".join(parts) + "}"
+    raise _JSExprFail("F571 stringify non-JSON value")
+
+
+def _js_parse_f571_stringify_call(text, j, depth, state):
+    """Parse `JSON.stringify(VALUE)` at text[j] (F571).
+
+    Returns the node-exact JSON text of VALUE. VALUE is a JSON-literal
+    input: a string literal, an array of string literals
+    (_js_parse_string_literal_array), or an object literal
+    (_js_parse_f535_object, default mode). Replacer/space arguments,
+    the bracket-string member form, template-literal values, and
+    non-literal values all fail closed (documented scope boundary).
+    Never evals.
+    """
+    n = len(text)
+    k = _js_match_kw(text, j, "JSON")
+    if k is None:
+        raise _JSExprFail("F571 not JSON.stringify")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ".":
+        raise _JSExprFail("F571 JSON without dot")
+    k = _js_skip_ws(text, k + 1)
+    k = _js_match_kw(text, k, "stringify")
+    if k is None:
+        raise _JSExprFail("F571 not JSON.stringify")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("F571 stringify without paren")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n:
+        raise _JSExprFail("F571 stringify without arg")
+    c = text[k]
+    if c in "'\"":
+        val, k = _js_parse_string(text, k)
+    elif c == "[":
+        val, k = _js_parse_string_literal_array(text, k, state)
+    elif c == "{":
+        props, k = _js_parse_f535_object(text, k, depth, state)
+        val = _JSObj(props)
+    else:
+        raise _JSExprFail("F571 stringify arg not a JSON literal")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        # A replacer/space argument or anything after the value fails
+        # closed (documented scope boundary).
+        raise _JSExprFail("F571 stringify with extra args")
+    return _js_f571_stringify(val, state), k + 1
 
 
 def _js_parse_primary(text, i, depth, state, _forbid_template=False):
@@ -18474,11 +18816,19 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _jk >= len(text) or text[_jk] != "(":
             raise _JSExprFail("JSON.parse without paren")
         _jk = _js_skip_ws(text, _jk + 1)
-        if _jk >= len(text) or text[_jk] not in "'\"":
-            # A non-literal argument (template, concat, identifier)
-            # fails closed -- only literal JSON strings are modeled.
-            raise _JSExprFail("JSON.parse arg not a string literal")
-        _jstr, _jk = _js_parse_string(text, _jk)
+        if _jk < len(text) and text[_jk] in "'\"":
+            _jstr, _jk = _js_parse_string(text, _jk)
+        else:
+            # F571: JSON.parse(JSON.stringify(VALUE)) -- the
+            # stringify/parse round trip. The stringify argument is a
+            # JSON-literal input serialized node-exactly; the text
+            # then flows through the identical json.loads +
+            # _js_f541_json_value tail as the literal path. A
+            # non-stringify argument (identifier, concat, template)
+            # fails closed here as before -- rejected, never
+            # mis-decoded.
+            _jstr, _jk = _js_parse_f571_stringify_call(text, _jk,
+                                                       depth, state)
         _jk = _js_skip_ws(text, _jk)
         if _jk >= len(text) or text[_jk] != ")":
             # A reviver argument or anything after the string fails
@@ -18524,6 +18874,14 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
     if _f563 is not None:
         val, i = _f563
         state["ops"] += 1  # the Map construction is obfuscation-shaped
+        return _js_parse_postfix(text, i, val, depth, state)
+    # F576: new URLSearchParams('LIT') / new URL('LIT') -- URL-family
+    # laundering builtins. None falls through (fails closed on `new`
+    # as before).
+    _f576 = _js_parse_f576_new_url(text, i, depth, state)
+    if _f576 is not None:
+        val, i = _f576
+        state["ops"] += 1  # the URL construction is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("Object", i):
         # F525: Object.values(Object.getOwnPropertyDescriptors(OBJ))
