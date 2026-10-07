@@ -318,7 +318,7 @@ def p8_compositions_honest():
 
 def p9_pin_and_footer():
     """Pin stays 2135; re.compile stays 28; F535/F536 CLOSED in
-    FINDINGS; lane-local footer."""
+    FINDINGS; lane-local footer (repointed wave-368 lane 3)."""
     if TAXONOMY_PIN != 2135:
         return ("BREAK", "pin moved: %s" % TAXONOMY_PIN)
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
@@ -327,12 +327,12 @@ def p9_pin_and_footer():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     if text.count("CLOSED 2026-10-07 wave-367 lane 4") < 2:
         return ("BREAK", "F535/F536 CLOSED entries missing")
-    if "**Open findings: F541, F543, F544, F545, F546.**" not in text:  # wave-368 merge: lanes 1+2 (F537-F540, F542 CLOSED)
+    if "**Open findings: F543, F545, F546, F567.**" not in text:  # wave-368 merge lanes 1-3 (F537-F542, F544 CLOSED; lane-3 F547->F567)
         return ("BREAK", "lane-local footer wrong")
     if "Next free finding: **F547**" not in text:
         return ("BREAK", "next-free footer wrong")
     return ("HELD", "pin 2135; 28 re.compile; F535/F536 CLOSED; "
-            "footer F537,F538,F541-F546/next F547 (wave-368 lane 2)")
+            "footer F543/F545/F546/F567/next F547 (wave-368 merge lanes 1-3)")
 
 
 def _green_check():

@@ -237,7 +237,7 @@ def p6_pin_and_footer():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     if "CLOSED 2026-10-07 wave-367 lane 2" not in text:
         return ("BREAK", "F533 CLOSED entry missing")
-    if "**Open findings: F539, F540, F541, F543, F544, F545, F546.**" not in text:  # wave-368 lane 1: F537/F538/F542 CLOSED
+    if "**Open findings: F543, F545, F546, F567.**" not in text:  # wave-368 lane 1: F537/F538/F542 CLOSED
         return ("BREAK", "merged footer wrong")
     if "Next free finding: **F547**" not in text:
         return ("BREAK", "next-free footer wrong")

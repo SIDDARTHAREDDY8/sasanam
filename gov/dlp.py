@@ -72,6 +72,7 @@ reaches the log at all.
 
 import base64
 import hashlib
+import json
 import math
 import re
 import unicodedata
@@ -2108,7 +2109,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|\(")
 # F536: the structuredClone anchor carries its own ident-boundary
 # lookahead so `structuredClonex(` never anchors (no wasted F512
 # total-attempt budget); the primary branch re-checks the boundary
@@ -5772,6 +5773,64 @@ def _js_parse_fn_target(text, j, depth, state):
     raise _JSExprFail("F519 target not a function")
 
 
+def _js_parse_f544_spread_apply_args(text, j, state):
+    """Parse `...['lit', ...]` as the SOLE element of a Reflect.apply
+    argsArray at text[j] (F544); text[j] is the first dot of `...`.
+
+    Node-exact desugar (v24.20.0): in
+    `Reflect.apply(FN, thisArg, [...['f1', 'f2']])` the spread expands
+    into the argsArray, so the spread array's elements ARE the
+    arguments -- an empty spread is exactly no arguments. The array
+    is parsed with the same bounded string-literal-only grammar as
+    literal args (`_js_parse_string_literal_list`; parts-budget
+    charged per element, plus one part for the spread itself); the
+    array is never evaluated. Mirrors `_js_parse_f531_spread_bound_args`
+    (F531), which covers the .bind-arguments position; this covers the
+    apply-argsArray position (a different position per the F544
+    distinctness rationale).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - the spread source must be an array literal; any other source
+      (`...x`, `...{'0':'f1'}`, a spread of a spread) fails closed.
+    - the spread must be the SOLE element of the argsArray: this
+      function consumes the argsArray's closing `]` -- multiple
+      spreads, mid-list spreads, and literal+spread mixes fail closed
+      (node accepts them; the lane rejects rather than mis-decodes --
+      documented scope boundary).
+    Returns (elements, idx_after_close_bracket). Never evals.
+    """
+    n = len(text)
+    if not text.startswith("...", j):
+        raise _JSExprFail("F544 spread without ellipsis")
+    state["parts"] += 1  # the spread is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    j = _js_skip_ws(text, j + 3)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F544 spread source not an array literal")
+    elements, j = _js_parse_string_literal_list(text, j + 1, state, "]")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "]":
+        raise _JSExprFail("F544 spread not the sole argsArray element")
+    return elements, j + 1
+
+
+def _js_parse_f519_apply_args_array(text, j, state):
+    """Parse a Reflect.apply argsArray's element list at text[j] --
+    text[j] is just after the argsArray's opening `[` (F519/F544).
+
+    The literal list (`['f1', 'f2']`, F519) or a single spread of a
+    string-literal-only array literal (`[...['f1', 'f2']]`, F544).
+    Returns (elements, idx_after_close_bracket). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text.startswith("...", j):
+        return _js_parse_f544_spread_apply_args(text, j, state)
+    elements, j = _js_parse_string_literal_list(text, j, state, "]")
+    return elements, j
+
+
 def _js_parse_reflect_apply_fn(text, i, depth, state):
     """Parse 'Reflect.apply(FN, thisArg, argsArray)' at text[i] (F519).
 
@@ -5793,8 +5852,10 @@ def _js_parse_reflect_apply_fn(text, i, depth, state):
       (node-verified) -- the parse keeps the grammar honest (F483
       precedent).
     - argsArray must be a string-literal-only list
-      (_js_parse_string_literal_list); arity must match the parameter
-      count (node coerces missing params to undefined -- conservative
+      (_js_parse_string_literal_list), or a single spread of one
+      (F544, `[...['f1','f2']]` -- node-exact, engine-identical to
+      the literal form); arity must match the parameter count (node
+      coerces missing params to undefined -- conservative
       fail-closed, documented).
     Returns (result_string, next_index) without the postfix chain
     (the caller applies it). Never evals.
@@ -5842,7 +5903,7 @@ def _js_parse_reflect_apply_fn(text, i, depth, state):
     j = _js_skip_ws(text, j + 1)
     if j >= n or text[j] != "[":
         raise _JSExprFail("F519 argsArray not an array")
-    elements, j = _js_parse_string_literal_list(text, j + 1, state, "]")
+    elements, j = _js_parse_f519_apply_args_array(text, j + 1, state)
     if len(elements) != len(params):
         raise _JSExprFail("F519 arity mismatch")
     result = "".join(elements[idx] for idx in body)
@@ -6593,11 +6654,13 @@ def _js_parse_f521_call_dispatch(text, paren, depth, state):
     and (T, thisArg, argsList) as the arguments. The target must be
     the F521 `.bind`-bound concat class, the F530 `.bind`-bound join
     class, the F534 `.bind`-bound slice class, the F537 `.bind`-bound
-    filter class, the F538 `.bind`-bound map class, or the F542 Proxy
-    apply-trap target; any other target fails closed here --
-    call-indirection with other targets is a documented residual, not
-    filed. Returns (value, next_index) without the postfix chain (the
-    caller applies it). Never evals.
+    filter class, the F538 `.bind`-bound map class, the F542 Proxy
+    apply-trap target, or a plain F519-class function value (F544 --
+    additive body over declared params, literal-or-spread argsArray);
+    any other target fails closed here -- call-indirection with other
+    targets is a documented residual, not filed. Returns (value,
+    next_index) without the postfix chain (the caller applies it).
+    Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, paren + 1)
@@ -6680,13 +6743,64 @@ def _js_parse_f521_call_dispatch(text, paren, depth, state):
                         # receiver check before any value parse), so
                         # try the F542 proxy-apply triple. Returns the
                         # delegated string.
-                        result, j = _js_parse_f542_proxy_apply_triple(
-                            text, _js_skip_ws(text, j + 1), depth, state)
-                        j = _js_skip_ws(text, j)
-                        if j >= n or text[j] != ")":
-                            raise _JSExprFail("F521 call dispatch arity")
-                        state["ops"] += 1  # the call indirection is obfuscation-shaped
-                        return result, j + 1
+                        try:
+                            result, j = _js_parse_f542_proxy_apply_triple(
+                                text, _js_skip_ws(text, j + 1), depth, state)
+                            j = _js_skip_ws(text, j)
+                            if j >= n or text[j] != ")":
+                                raise _JSExprFail("F521 call dispatch arity")
+                            state["ops"] += 1  # the call indirection is obfuscation-shaped
+                            return result, j + 1
+                        except _JSExprFail:
+                            # F544 (wave-368 lane 3): the target is a plain
+                            # F519-class function value (arrow or function-expr
+                            # with an additive body over declared params), not a
+                            # bound target. Desugars to the direct form:
+                            # Reflect.apply.call(Reflect, FN, thisArg, argsList)
+                            # is exactly Reflect.apply(FN, thisArg, argsList)
+                            # (node v24.20.0: Function.prototype.call invokes
+                            # Reflect.apply with (T, thisArg, argsList)). The
+                            # argsArray admits the F544 spread form. F546 bodies
+                            # (arguments-enumerating, no declared params) fail
+                            # the additive-body parse and stay fail-closed here.
+                            # Disjoint from the F537/F538/F542 bound/proxy
+                            # shapes above (those require .bind/Proxy
+                            # receivers), so no previously-decoded input
+                            # changes behavior.
+                            _tj = _js_skip_ws(text, j + 1)
+                            try:
+                                params, body, _tj = _js_parse_iife_fn_target(
+                                    text, _tj, depth, state)
+                            except _JSExprFail:
+                                # Not an IIFE-evaluated target (F522) -- fall
+                                # through to the literal arrow/fn-expr target
+                                # (F519). The IIFE parse only succeeds where the
+                                # literal parse fails (it requires the trailing
+                                # `()` invocation), so no previously-decoded
+                                # input changes behavior.
+                                params, body, _tj = _js_parse_fn_target(
+                                    text, _tj, depth, state)
+                            _tj = _js_skip_ws(text, _tj)
+                            if _tj >= n or text[_tj] != ",":
+                                raise _JSExprFail("F544 call dispatch without thisArg")
+                            _, _tj = _js_parse_ignored_value(
+                                text, _js_skip_ws(text, _tj + 1), depth, state)
+                            _tj = _js_skip_ws(text, _tj)
+                            if _tj >= n or text[_tj] != ",":
+                                raise _JSExprFail("F544 call dispatch without argsArray")
+                            _tj = _js_skip_ws(text, _tj + 1)
+                            if _tj >= n or text[_tj] != "[":
+                                raise _JSExprFail("F544 call dispatch argsArray not array")
+                            elements, _tj = _js_parse_f519_apply_args_array(
+                                text, _tj + 1, state)
+                            if len(elements) != len(params):
+                                raise _JSExprFail("F544 call dispatch arity mismatch")
+                            result = "".join(elements[idx] for idx in body)
+                            _tj = _js_skip_ws(text, _tj)
+                            if _tj >= n or text[_tj] != ")":
+                                raise _JSExprFail("F544 call dispatch with extra args")
+                            state["ops"] += 1  # the call indirection is obfuscation-shaped
+                            return result, _tj + 1
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ")":
         raise _JSExprFail("F521 call dispatch arity")
@@ -14490,6 +14604,63 @@ def _js_parse_paren_member_call(text, i, depth, state):
     return _js_parse_postfix(text, j, val, depth, state)
 
 
+_JS_F541_MAX_JSON_DEPTH = 32  # bound on JSON nesting depth (F541)
+
+
+def _js_f541_json_value(obj, state, depth=0):
+    """Convert a json.loads result into the decoder's internal value
+    graph (F541).
+
+    dict -> _JSObj (json.loads already keeps the later value for
+    duplicate keys -- engine-exact), list -> _JSArr, str -> str, int
+    -> str (canonical decimal). The F535 member-read model then
+    resolves the subsequent member chain in _js_parse_postfix.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - booleans, null, floats, and non-canonical/huge ints (beyond
+      2**53-1, where the engine's double precision would diverge
+      from Python's) fail closed -- the credential is a string, so a
+      string-only result graph is never mis-decoded by this
+      restriction (documented residual, F535 precedent).
+    - "__proto__" keys fail closed (F535-consistent conservatism).
+    - nesting beyond _JS_F541_MAX_JSON_DEPTH fails closed, and the
+      F430 parts budget is charged per key/element (a Python
+      RecursionError from pathological nesting also fails closed).
+    Never evals.
+    """
+    if depth > _JS_F541_MAX_JSON_DEPTH:
+        raise _JSExprFail("F541 JSON too deep")
+    if isinstance(obj, bool):
+        raise _JSExprFail("F541 JSON boolean leaf")
+    if isinstance(obj, str):
+        return obj
+    if isinstance(obj, int):
+        if abs(obj) > 2**53 - 1:
+            raise _JSExprFail("F541 JSON int beyond double precision")
+        # -0 == 0 in Python and str(-0) == "0" == String(-0) in the
+        # engine: canonical without special-casing.
+        return str(obj)
+    if isinstance(obj, dict):
+        props = {}
+        for k, v in obj.items():
+            if k == "__proto__":
+                raise _JSExprFail("F541 __proto__ key fails closed")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            props[k] = _js_f541_json_value(v, state, depth + 1)
+        return _JSObj(props)
+    if isinstance(obj, list):
+        elems = []
+        for e in obj:
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            elems.append(_js_f541_json_value(e, state, depth + 1))
+        return _JSArr(elems)
+    raise _JSExprFail("F541 JSON non-literal leaf")
+
+
 def _js_parse_primary(text, i, depth, state, _forbid_template=False):
     """Parse one primary (literal / fromCharCode / parens / number / array /
     Array constructor / Reflect.construct).
@@ -14811,6 +14982,53 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         return _js_parse_postfix(text, _sk + 1,
                                  _JSObj(_js_f535_deepcopy(_sprops)),
                                  depth, state)
+    if text.startswith("JSON", i):
+        # F541: JSON.parse('LITERAL') -- deserializing-builtin
+        # laundering. Node-exact (v24.20.0): JSON.parse builds an
+        # object graph from a string; the decoder converts the
+        # stdlib json.loads result into the internal value graph
+        # (_js_f541_json_value) and the F535 member-read model
+        # resolves the subsequent member chain. The parse is
+        # deterministic and side-effect-free -- a value conversion,
+        # not evaluation. Only a single string-literal argument; the
+        # bracket-string member form (JSON['parse']) fails closed
+        # (documented scope boundary). The ident-boundary check keeps
+        # JSONx failing closed.
+        _jk = i + len("JSON")
+        if _jk < len(text) and text[_jk] in _JS_IDENT_CONT:
+            raise _JSExprFail("JSONx is not JSON")
+        _jk = _js_skip_ws(text, _jk)
+        if _jk >= len(text) or text[_jk] != ".":
+            raise _JSExprFail("JSON without dot")
+        _jk = _js_skip_ws(text, _jk + 1)
+        if not text.startswith("parse", _jk):
+            raise _JSExprFail("JSON without parse")
+        _pk = _jk + len("parse")
+        if _pk < len(text) and text[_pk] in _JS_IDENT_CONT:
+            raise _JSExprFail("parsex is not parse")
+        _jk = _js_skip_ws(text, _pk)
+        if _jk >= len(text) or text[_jk] != "(":
+            raise _JSExprFail("JSON.parse without paren")
+        _jk = _js_skip_ws(text, _jk + 1)
+        if _jk >= len(text) or text[_jk] not in "'\"":
+            # A non-literal argument (template, concat, identifier)
+            # fails closed -- only literal JSON strings are modeled.
+            raise _JSExprFail("JSON.parse arg not a string literal")
+        _jstr, _jk = _js_parse_string(text, _jk)
+        _jk = _js_skip_ws(text, _jk)
+        if _jk >= len(text) or text[_jk] != ")":
+            # A reviver argument or anything after the string fails
+            # closed (documented scope boundary).
+            raise _JSExprFail("JSON.parse with extra args")
+        try:
+            _jval = json.loads(_jstr)
+        except (ValueError, RecursionError):
+            # Not valid JSON (or pathologically deep) -- the engine
+            # throws; fail closed, never mis-decoded.
+            raise _JSExprFail("JSON.parse arg not valid JSON")
+        _jobj = _js_f541_json_value(_jval, state)
+        state["ops"] += 1  # the parse call is obfuscation-shaped
+        return _js_parse_postfix(text, _jk + 1, _jobj, depth, state)
     if text.startswith("Reflect", i):
         # F468: Reflect.construct(Array, <argsArray>) reflection-API
         # factory -- desugars to the fragment list. F469:
