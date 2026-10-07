@@ -481,6 +481,25 @@ _MAX_CANDIDATES = 8       # bound on decode attempts per layer
 # is a DoS guard, not an attempt budget: 64 stacked fragments still
 # compose in 2 layers; beyond 64 the per-run path still tries.
 _MAX_WHOLETEXT_ITEMS = 64
+# F512: bound on TOTAL _JS_EXPR_START match attempts per whole-text
+# scan (decode-producing or fail-closed). The F452 closure counted
+# only decode-producing attempts against _MAX_WHOLETEXT_ITEMS, which
+# fixes the F452 starvation class but removed the DoS guard on
+# fail-closed attempts: a hostile input with thousands of
+# obfuscation-shaped-but-undecodable matches (e.g. '"a".concat(' *
+# 2000, 6000 anchor matches) forces one deep recursive
+# _try_js_expr_decode per match -- measured 13.45s on a 22KB input,
+# red on the P5 ReDoS pins (5s threshold). The total-attempt cap
+# restores the guard; it is 8x the decode budget (512) so the F452
+# battery's pinned scenario (200 fail-closed statements = 400 matches
+# ahead of a real expression) still decodes with margin, and the
+# F452 filing scenario (64 matches) with wide margin. Honest
+# residual: 512+ fail-closed matches ahead of a real expression
+# reintroduce the F452 starvation shape
+# (strictly beyond the documented F444 ~130+ decodable-junk
+# residual); each attempt stays internally bounded (literal/run/ops
+# budgets), so the cap bounds aggregate work, not just item count.
+_MAX_WHOLETEXT_ATTEMPTS = 512
 # F439: bound on base64 decode rounds in the decode-until-fixpoint pass.
 # A credential wrapped in up to 3 base64 layers blocks; depth-4+ stays a
 # documented non-goal (bounded decode budget, not a finding).
@@ -9295,19 +9314,19 @@ def _try_js_expr_decode_all(text):
     budget before the real expression was reached; now they consume
     zero, and the real expression decodes.
 
-    Why this is still a DoS guard: the budget counts the actual
-    decoding work -- each counted attempt splices decoded text into
-    the output and advances the scan past it, so output growth and
-    splice count are both bounded by ``_MAX_WHOLETEXT_ITEMS``. A
-    fail-closed attempt costs only one bounded
-    :func:`_try_js_expr_decode` call (itself ops/literal/run-bounded:
-    ``_JS_EXPR_MAX_LITERAL`` per string, ``_JS_EXPR_MAX_RUN`` per run;
-    a bare literal fails fast on the shape check), so junk that
-    provably decodes to nothing can neither starve the real
-    expression nor buy unbounded work. The F444 residual stands: junk
-    that DOES decode still consumes the budget, so ~130+ decodable
-    junk expressions remain a documented non-goal (each layer
-    decodes at most 64, and the 2-layer budget caps the rest).
+    Why this is still a DoS guard: the decode-item budget
+    (_MAX_WHOLETEXT_ITEMS) counts the actual decoding work -- each
+    counted attempt splices decoded text into the output and advances
+    the scan past it, so output growth and splice count stay bounded
+    by 64. A second, independent cap (_MAX_WHOLETEXT_ATTEMPTS, F512)
+    counts EVERY match attempt, fail-closed included: each
+    _try_js_expr_decode call is internally bounded (literal/run/ops
+    budgets) but thousands of such calls were not, so the total cap
+    bounds aggregate work. The F444 residual stands: junk that DOES
+    decode still consumes the item budget, so ~130+ decodable junk
+    expressions remain a documented non-goal (each layer decodes at
+    most 64, and the 2-layer budget caps the rest); the F512
+    residual is 512+ fail-closed matches ahead of a real expression.
 
     Bounded: at most ``_MAX_WHOLETEXT_ITEMS`` decode attempts per
     scan (each attempt is ops-bounded inside
@@ -9319,20 +9338,26 @@ def _try_js_expr_decode_all(text):
     out = []
     pos = 0
     attempts = 0
+    total = 0  # F512: every match attempt counts against the DoS cap
     for m in _JS_EXPR_START.finditer(text):
         s = m.start()
         if s < pos:
             continue  # inside an already-decoded span
+        if total >= _MAX_WHOLETEXT_ATTEMPTS:
+            break  # F512: DoS guard -- fail-closed junk cannot buy
+                   # unbounded per-match parse work
+        total += 1
         r = _try_js_expr_decode(text, s)
         if r is None:
-            continue  # F452: fail closed -- no variant produced, so no
-                      # budget consumed; copy verbatim below
+            continue  # F452: fail closed -- no variant produced, so
+                      # no ITEM budget consumed; copy verbatim below
         decoded, end = r
         if end <= s:
             continue  # defensive: never retreat
         if attempts >= _MAX_WHOLETEXT_ITEMS:
             break
         attempts += 1  # F452: only decode-producing attempts count
+                       # against the item budget
         out.append(text[pos:s])
         out.append(decoded)
         pos = end
