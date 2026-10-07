@@ -5644,7 +5644,7 @@ def _js_parse_f521_bound_target(text, j, depth, state):
       F521 scope (concat-family bound targets only). A bound JOIN
       target (`[].join.bind(['f1','f2'], '')`) node-evaluates to the
       credential through a different builtin and is filed separately
-      as F526 (F500/F505 different-builtins precedent), not silently
+      as F530 (F500/F505 different-builtins precedent), not silently
       dropped.
     - the `.bind` member is the dot form, the F490 `?.` form, or the
       F482 bracket-string form (all engine-identical, node v24.20.0
@@ -5654,9 +5654,9 @@ def _js_parse_f521_bound_target(text, j, depth, state):
       fails closed.
     - every bound ARG must be a string literal (F454 grammar);
       numeric, template, and additive args fail closed.
-    - a second `.bind` on the bound function (deeper chain) fails
-      closed structurally -- the caller expects `,` after the bind
-      call (documented residual).
+    - a third `.bind` on the two-hop chain (three-hop chain) fails
+      closed structurally -- the triple caller expects `,` after the
+      bound target (documented residual).
     """
     n = len(text)
     if j < n and text[j] == "[":
@@ -5719,10 +5719,47 @@ def _js_parse_f521_bound_target(text, j, depth, state):
         raise _JSExprFail("F521 bind this non-string element")
     k = _js_skip_ws(text, k)
     if k < n and text[k] == ")":
-        return list(bind_this.elements), [], k + 1
-    if k >= n or text[k] != ",":
-        raise _JSExprFail("F521 bind without args")
-    bound_args, k = _js_parse_string_literal_list(text, k + 1, state, ")")
+        bound_args, k = [], k + 1
+    else:
+        if k >= n or text[k] != ",":
+            raise _JSExprFail("F521 bind without args")
+        bound_args, k = _js_parse_string_literal_list(text, k + 1, state, ")")
+    # F526: exactly one additional `.bind` hop (a two-hop chain), e.g.
+    # `[].concat.bind([],'f1').bind([])`. Node-exact (v24.20.0):
+    # B2 = B1.bind(BINDTHIS2, ...ARGS2) where B1 is itself
+    # .bind-bound -- B2's [[BoundThis]] is discarded when the call
+    # reaches B1 (a bound function ignores its receiver), so the FIRST
+    # hop's BINDTHIS wins; args accumulate hop1-then-hop2-then-call.
+    # Node-verified: [].concat.bind(['T1'],'f1').bind(['T2']) invoked
+    # => the 'T1' array receives the args. BINDTHIS2 is parsed with the
+    # same bounded array grammar (fail closed) and its value discarded.
+    # The hop member accepts the same dot / F490 `?.` / F482
+    # bracket-string forms as hop one (via _js_peek_dispatch_call).
+    # A third `.bind` hop fails closed structurally -- the triple
+    # caller expects `,` after the bound target. Never evals.
+    k = _js_skip_ws(text, k)
+    _hop = _js_peek_dispatch_call(text, k)
+    if _hop is not None and _hop[0] == "bind":
+        k = _js_skip_ws(text, _hop[1] + 1)
+        if k < n and text[k] == "[":
+            _b2, k = _js_parse_array(text, k, depth, state)
+        elif text.startswith("Array", k):
+            _b2, k = _js_parse_array_constructor(text, k, state)
+        else:
+            raise _JSExprFail("F526 second bind this not an array")
+        if not isinstance(_b2, _JSArr):
+            raise _JSExprFail("F526 second bind this not an array")
+        if any(not isinstance(e, str) for e in _b2.elements):
+            raise _JSExprFail("F526 second bind this non-string element")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ")":
+            k = k + 1
+        else:
+            if k >= n or text[k] != ",":
+                raise _JSExprFail("F526 second bind without args")
+            _args2, k = _js_parse_string_literal_list(text, k + 1, state,
+                                                      ")")
+            bound_args = bound_args + _args2
     return list(bind_this.elements), bound_args, k
 
 

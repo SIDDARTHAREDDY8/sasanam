@@ -162,8 +162,9 @@ def p2_f521_bounds():
         # numeric bound arg / non-array BINDTHIS
         "Reflect.apply([].concat.bind([], 1), null, ['%s']).join('')" % _A2,
         "Reflect.apply([].concat.bind('x', '%s'), null, ['%s']).join('')" % (_A1, _A2),
-        # deeper .bind chain: one hop only (documented residual)
-        "Reflect.apply([].concat.bind([], '%s').bind([], 'x'), null, ['%s']).join('')" % (_A1, _A2),
+        # deeper .bind chain: two hops now decode (F526 CLOSED wave-366
+        # lane 1); three hops fail closed (documented residual)
+        "Reflect.apply([].concat.bind([], '%s').bind([], 'x').bind([]), null, ['%s']).join('')" % (_A1, _A2),
         # extra Reflect.apply argument
         "Reflect.apply([].concat.bind([], '%s'), null, ['%s'], 'x').join('')" % (_A1, _A2),
         # nested-bracket dispatch member: pre-existing F513 boundary

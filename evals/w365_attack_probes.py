@@ -132,12 +132,12 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F526-F530 open, next F531 (wave-365 merge:
-    F521-F525 CLOSED lanes 1-3; F526-F529 OPEN attack round 33; F530 OPEN lane 1 renumbered)."""
+    """Control: footer shows F527-F530 open, next F531 (wave-366 lane 1:
+    F526 CLOSED; F527-F529 OPEN attack round 33; F530 OPEN lane 1 renumbered)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F531**" in text
-          and "**Open findings: F526, F527, F528, F529, F530.**" in text)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 OPEN (next F531)
+          and "**Open findings: F527, F528, F529, F530.**" in text)  # Wave-366 lane 1: F526 CLOSED; F527-F530 OPEN (next F531)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -282,11 +282,11 @@ def test_p2_f525_closed():
 
 
 @_t
-def test_p2_f526_open():
-    """F526 OPEN (this round): two-hop .bind-chained target still misses."""
-    ms = _misses("Reflect.apply([].concat.bind([],'%(A1)s').bind([]), null, ['%(A2)s']).join('')"
-                 % {"A1": _A, "A2": _B})
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f526_closed():
+    """F526 CLOSED (wave-366 lane 1): two-hop .bind-chained target now blocks coded."""
+    hit = _blocked("Reflect.apply([].concat.bind([],'%(A1)s').bind([]), null, ['%(A2)s']).join('')"
+                   % {"A1": _A, "A2": _B})
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
