@@ -406,8 +406,9 @@ def run_pin_footer_probes():
                 encoding="utf-8").read()
     # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
     # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531) (applies to assertion below)
-    if "Open findings: F526, F527, F528, F529, F530." in text \
-            and "Next free finding: **F537**" in text:  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+    # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+    if "Open findings: F547, F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566, F567, F568, F569." in text \
+            and "Next free finding: **F570**" in text:  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
         _held("P0b", "footer open F436 / next F437")
     else:
         _break("P0b", "footer text mismatch")

@@ -351,9 +351,7 @@ def p6_f542_bounds():
 # ------------------------------------------------------------- P7: compositions
 def p7_compositions():
     # Neighbors must stay HELD (no regression); F546 (filed at the
-    # wave-367 merge: arguments-enumerating bodies in function-valued
-    # Reflect.apply targets) must stay a MISS -- it is OPEN and out
-    # of this lane's scope.
+    # wave-367 merge, CLOSED 2026-10-07 wave-368 lane 4) must now HIT.
     held = [
         # F521 bound concat
         "Reflect.apply([].concat.bind([], '%(A1)s'), null, ['%(A2)s']).join('')"
@@ -371,9 +369,10 @@ def p7_compositions():
         "({c:'%(A1)s'}).c+'%(A2)s'" % {"A1": _A1, "A2": _A2},
     ]
     bad = [s for s in held if _verdict(s, True)[0] == "BREAK"]
-    # F546 must MISS (open): arguments-exotic body under Reflect.apply
+    # F546 CLOSED 2026-10-07 wave-368 lane 4 (merge maintenance):
+    # arguments-exotic body under Reflect.apply must now HIT.
     f546 = "Reflect.apply(function(){var a=arguments;return a[0]+a[1];}, null, ['%(A1)s','%(A2)s'])" % {"A1": _A1, "A2": _A2}
-    if _verdict(f546, False)[0] == "BREAK":
+    if _verdict(f546, True)[0] == "BREAK":
         bad.append(f546)
     return ("HELD" if not bad else "BREAK",
             "%d/%d compositions honest" % (len(held) + 1 - len(bad), len(held) + 1))
@@ -431,8 +430,8 @@ def p9_pin_footer():
     assert guac_graph.TAXONOMY_PIN == 2135, \
         "guac_graph.TAXONOMY_PIN=%r want 2135" % (guac_graph.TAXONOMY_PIN,)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F547**" in text
-          and "**Open findings: F539, F540, F541, F543, F544, F545, F546.**" in text
+    ok = ("Next free finding: **F570**" in text  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+          and "**Open findings: F547, F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566, F567, F568, F569.**" in text  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
           and "**Status: CLOSED 2026-10-07 wave-368 lane 1**" in text)
     return ("HELD" if ok else "BREAK",
             "pin=%s footer=%s" % (TAXONOMY_PIN, ok))

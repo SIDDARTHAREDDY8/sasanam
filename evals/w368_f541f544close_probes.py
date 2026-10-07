@@ -207,12 +207,13 @@ def p3_compositions():
         ("(function(){var a=arguments;var s='';for(var x of a){s+=x;}return s;})('%s','%s')" % (_A1, _A2), True),
         # F534 (bound slice) CLOSED wave-367 -- untouched
         ("Reflect.apply([].slice.bind(['%s','%s'], 0, 2), null, []).join('')" % (_A1, _A2), True),
-        # F546 (arguments-enumerating bodies in Reflect.apply targets) OPEN --
-        # all three filed shapes must still MISS (no accidental close).
-        ("Reflect.apply(function(){var a=arguments;var s='';for(var x of a){s+=x;}return s;}, null, ['%s','%s'])" % (_A1, _A2), False),
-        ("Reflect.apply(function(){var a=arguments;var s='';for(var i in a){s+=a[i];}return s;}, null, ['%s','%s'])" % (_A1, _A2), False),
-        ("Reflect.apply(function(){var a=arguments;return a[0]+a[1];}, null, ['%s','%s'])" % (_A1, _A2), False),
-        # F546 call-indirect with arguments-exotic body must also stay open
+        # F546 (arguments-enumerating bodies in Reflect.apply targets) CLOSED
+        # 2026-10-07 wave-368 lane 4 -- the three filed shapes must now HIT.
+        ("Reflect.apply(function(){var a=arguments;var s='';for(var x of a){s+=x;}return s;}, null, ['%s','%s'])" % (_A1, _A2), True),
+        ("Reflect.apply(function(){var a=arguments;var s='';for(var i in a){s+=a[i];}return s;}, null, ['%s','%s'])" % (_A1, _A2), True),
+        ("Reflect.apply(function(){var a=arguments;return a[0]+a[1];}, null, ['%s','%s'])" % (_A1, _A2), True),
+        # F569 (call-indirect enum-body targets, filed at wave-368 merge) OPEN --
+        # must still MISS (no accidental close).
         ("Reflect.apply.call(Reflect, function(){var a=arguments;return a[0]+a[1];}, null, ['%s','%s'])" % (_A1, _A2), False),
         # junk-quiet: JSON.parse of junk stays quiet
         ('JSON.parse(\'{"x":["ab"]}\').x.join(\'\')', False),
@@ -229,8 +230,8 @@ def p4_pin_and_footer():
     assert guac_graph.TAXONOMY_PIN == 2135, \
         "guac_graph.TAXONOMY_PIN=%r want 2135" % (guac_graph.TAXONOMY_PIN,)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F547**" in text
-          and "Open findings: F543, F545, F546, F567." in text)  # wave-368 merge lanes 1-3: F537-F542, F544 CLOSED; lane-3 F547->F567
+    ok = ("Next free finding: **F570**" in text  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+          and "Open findings: F547, F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566, F567, F568, F569." in text)  # wave-368 merge lanes 1-3: F537-F542, F544 CLOSED; lane-3 F547->F567  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
     return ("HELD" if ok else "BREAK",
             "pin=%s footer=%s" % (TAXONOMY_PIN, ok))
 

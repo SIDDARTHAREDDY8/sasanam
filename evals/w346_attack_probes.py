@@ -274,8 +274,8 @@ def test_z1_findings_filed_open_with_final_footer():
           and "CLOSED 2026-10-06 wave-349 lane 1" in text
           and "(F445 filed 2026-10-06, wave-348 lane 2" in text
           and "CLOSED 2026-10-06 wave-349 lane 1" in text
-          and "Next free finding: **F537**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
-          and "Open findings: F526, F527, F528, F529, F530." in text  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+          and "Next free finding: **F570**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+          and "Open findings: F547, F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566, F567, F568, F569." in text  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
           and "(F453 filed 2026-10-06, wave-350 lane 3" in text
           and "CLOSED 2026-10-06 wave-351 lane 3" in text)
     return ("HELD" if ok else "BREAK", "F437-F445 filed+pinned=%s" % ok)

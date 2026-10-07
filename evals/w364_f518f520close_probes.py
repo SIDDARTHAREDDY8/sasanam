@@ -232,9 +232,9 @@ def p6_pin_and_footer():
         if f not in text:
             return ("BREAK", "%s entry missing" % f)
     # Lane-local footer: F518, F520 CLOSED; open F513-F517, F519; next F521.
-    if "Open findings: F526, F527, F528, F529, F530." not in text:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526); Wave-365 lane 2: F522, F525 CLOSED  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+    if "Open findings: F547, F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566, F567, F568, F569." not in text:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526); Wave-365 lane 2: F522, F525 CLOSED  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
         return ("BREAK", "footer open-list not lane-local")
-    if "Next free finding: **F537**" not in text:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+    if "Next free finding: **F570**" not in text:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
         return ("BREAK", "footer next-free not F521")
     if dlp._JS_EXPR_START.search("Array.fromAsync") is None:
         return ("BREAK", "anchor missing fromAsync")

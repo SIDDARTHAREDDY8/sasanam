@@ -160,11 +160,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F547-F566 open, next F567 (wave-368 lane 5)."""
+    """Control: footer shows F547-F569 open, next F570 (wave-368 merge)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F567**" in text
-          and "Open findings: F547, F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566." in text)
+    ok = ("Next free finding: **F570**" in text  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+          and "Open findings: F547, F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566, F567, F568, F569." in text)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -391,77 +391,77 @@ def test_p2_f536_open():
 
 @_t
 def test_p2_f537_open():
-    """F537 OPEN (this round): bound filter target still misses."""
+    """F537 CLOSED (wave-368 lane 1): bound filter target still misses. now blocks."""
     ms = _misses("Reflect.apply([].filter.bind(['%s','%s','zz'], function(e){return e.length>2;}), null, []).join('')"
                  % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t
 def test_p2_f538_open():
-    """F538 OPEN (this round): bound map target still misses."""
+    """F538 CLOSED (wave-368 lane 1): bound map target still misses. now blocks."""
     ms = _misses("Reflect.apply([].map.bind(['%s','%s'], function(e){return e;}), null, []).join('')"
                  % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t
 def test_p2_f539_open():
-    """F539 OPEN (this round): property read on builtin results still misses."""
+    """F539 CLOSED (wave-368 lane 2): property read on builtin results still misses. now blocks."""
     ms = _misses("Object.assign({}, {c:'%s'}).c+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t
 def test_p2_f540_open():
-    """F540 OPEN (this round): Reflect.get on literals still misses."""
+    """F540 CLOSED (wave-368 lane 2): Reflect.get on literals still misses. now blocks."""
     ms = _misses("Reflect.get({c:'%s'}, 'c')+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t
 def test_p2_f541_open():
-    """F541 OPEN (this round): JSON.parse laundering still misses."""
+    """F541 CLOSED (wave-368 lane 3): JSON.parse laundering still misses. now blocks."""
     ms = _misses("JSON.parse('{\"x\":[\"%s\",\"%s\"]}').x.join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t
 def test_p2_f542_open():
-    """F542 OPEN (this round): Proxy apply-trap target still misses."""
+    """F542 CLOSED (wave-368 lane 1): Proxy apply-trap target still misses. now blocks."""
     ms = _misses("Reflect.apply(new Proxy(function(a,b){return a+b;},{apply:function(t,th,args){return Reflect.apply(t,th,args);}}), null, ['%s','%s'])"
                  % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t
 def test_p2_f543_open():
-    """F543 OPEN (this round): enumeration builtins on aliased args still miss."""
+    """F543 CLOSED (wave-368 lane 4): enumeration builtins on aliased args still miss. now blocks."""
     ms = _misses("(function(){var a=arguments;return Object.entries(a).map(function(e){return e[1];}).join('');})('%s','%s')"
                  % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t
 def test_p2_f544_open():
-    """F544 OPEN (this round): spread in apply args array still misses."""
+    """F544 CLOSED (wave-368 lane 3): spread in apply args array still misses. now blocks."""
     ms = _misses("Reflect.apply(function(a,b){return a+b;}, null, [...['%s','%s']])" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t
 def test_p2_f545_open():
-    """F545 OPEN (this round): object-pattern destructuring still misses."""
+    """F545 CLOSED (wave-368 lane 4): object-pattern destructuring still misses. now blocks."""
     ms = _misses("(function(){const {0:a,1:b}=arguments;return a+b;})('%s','%s')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t
 def test_p2_f546_open():
-    """F546 OPEN (wave-367 merge): arguments-enumerating Reflect.apply target still misses."""
+    """F546 CLOSED (wave-368 lane 4): arguments-enumerating Reflect.apply target still misses. now blocks."""
     ms = _misses("Reflect.apply(function(){var a=arguments;var s='';for(var x of a){s+=x;}return s;}, null, ['%s','%s'])"
                  % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t

@@ -381,8 +381,8 @@ def test_footer_state():
     with open(path, encoding="utf-8") as f:
         lines = f.read().splitlines()
     footer = ([ln for ln in lines if "Next free finding:" in ln] or [""])[-1]  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531) (footer is not the last line; entries follow)
-    ok = ("Next free finding: **F537**" in footer  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
-          and "Open findings: F526, F527, F528, F529, F530." in footer)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+    ok = ("Next free finding: **F570**" in footer  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+          and "Open findings: F547, F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566, F567, F568, F569." in footer)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
     return ("HELD" if ok else "BREAK",
             "footer: %r" % footer[:80])
 
