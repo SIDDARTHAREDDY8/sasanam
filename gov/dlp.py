@@ -4068,6 +4068,36 @@ def _js_parse_nested_bracket_key(text, j, depth, state):
     return name, _js_skip_ws(text, j + 1)
 
 
+def _js_parse_array_wrapped_array(text, j, depth, state):
+    """Parse `[[['concat'][0]]]` at text[j] == '[' (wrapper-array open).
+
+    F514 core, extracted from _js_parse_array_wrapped_key: a
+    single-element array literal whose element is an F504
+    indexed-key fold (`['concat'][0]`): `[[['concat'][0]]]` is
+    engine-identical to the single-string array `['concat']` (node
+    v24.20.0 verified) -- ToPropertyKey of a single-string array is
+    the string itself. Returns (folded_name, idx_after_wrapper_close).
+    A multi-element wrapper array, a malformed structure, or a
+    missing wrapper close fails closed (documented scope boundary --
+    the decoder never guesses a key). The wrapper layer charges one
+    part. Never evals.
+    """
+    n = len(text)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("array-wrapped key not an array")
+    j = _js_skip_ws(text, j + 1)
+    # The wrapper array's single element is itself an F504 indexed-key
+    # fold (`['concat'][0]`): parse it at the inner array open.
+    name, j = _js_parse_indexed_key_array(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "]":
+        raise _JSExprFail("unterminated array-wrapped key")
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many key parts")
+    return name, _js_skip_ws(text, j + 1)
+
+
 def _js_parse_array_wrapped_key(text, j, depth, state):
     """Fold `[[[<lit>, ...][<idx>]]]` at text[j] == '[' (member open)
     (F514).
@@ -4079,26 +4109,75 @@ def _js_parse_array_wrapped_key(text, j, depth, state):
     engine-identical to `String('f1')['concat']`. Returns (folded_name,
     idx_after_rbracket). A multi-element wrapper array, a malformed
     structure, or a missing member close fails closed (documented
-    scope boundary -- the decoder never guesses a key). The wrapper
-    layer charges one part. Never evals.
+    scope boundary -- the decoder never guesses a key). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j + 1)
+    name, j = _js_parse_array_wrapped_array(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "]":
+        raise _JSExprFail("unterminated member key")
+    return name, _js_skip_ws(text, j + 1)
+
+
+def _js_parse_triple_nested_bracket_key(text, j, depth, state):
+    """Fold `[[[['concat'][0]]][0]]` at text[j] == '[' (member open)
+    (F523).
+
+    A member-open bracket whose key is a double-array-wrapped F504
+    indexed-key fold indexed by a literal integer: with
+    E = `['concat'][0]` (engine-identical to the string `'concat'`),
+    `[[E]]` is the single-element array `[['concat']]`, and
+    `[[E]][0]` is the array `['concat']` (node v24.20.0 verified) --
+    whose ToPropertyKey is `'concat'`, so
+    `'f1'[[[['concat'][0]]][0]]` is engine-identical to
+    `'f1'['concat']`. Returns (folded_name, idx_after_rbracket). A
+    fourth nesting, a non-literal index, an index other than 0 (the
+    double-wrapped array has exactly one element; `[1]` is
+    `undefined`, whose ToPropertyKey is a different key), or a
+    malformed structure fails closed (documented scope boundary --
+    the decoder never guesses a key). The double-wrap layer
+    charges one part. Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, j + 1)
     if j >= n or text[j] != "[":
-        raise _JSExprFail("array-wrapped key not an array")
-    # The wrapper array's single element is itself an F504 indexed-key
-    # fold (`['concat'][0]`): parse it at the inner array open.
+        raise _JSExprFail("triple-nested key not double-array")
     j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("triple-nested key not double-array")
+    j = _js_skip_ws(text, j + 1)
+    # Inner element: the F504 indexed-key fold E (`['concat'][0]`).
     name, j = _js_parse_indexed_key_array(text, j, depth, state)
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != "]":
-        raise _JSExprFail("unterminated array-wrapped key")
+        raise _JSExprFail("unterminated triple-nested inner array")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "]":
+        raise _JSExprFail("unterminated triple-nested outer array")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("triple-nested key without index")
+    j = _js_skip_ws(text, j + 1)
+    k = j
+    while k < n and text[k].isdigit():
+        k += 1
+    if k == j:
+        raise _JSExprFail("triple-nested key index not a literal")
+    if k - j > _JS_EXPR_MAX_INT_DIGITS:
+        raise _JSExprFail("triple-nested key index too long")
+    idx = int(text[j:k])
+    j = _js_skip_ws(text, k)
+    if j >= n or text[j] != "]":
+        raise _JSExprFail("unterminated triple-nested key index")
+    if idx != 0:
+        raise _JSExprFail("triple-nested key index out of range")
     state["parts"] += 1
     if state["parts"] > _JS_EXPR_MAX_PARTS:
         raise _JSExprFail("too many key parts")
     j = _js_skip_ws(text, j + 1)
     if j >= n or text[j] != "]":
-        raise _JSExprFail("unterminated member key")
+        raise _JSExprFail("unterminated triple-nested member key")
     return name, _js_skip_ws(text, j + 1)
 
 
@@ -7663,6 +7742,76 @@ def _js_bind_iife_arguments(body_expr, arg_texts, ident="arguments",
     return rewritten
 
 
+def _js_bind_destructure_arguments(body_expr, arg_texts, names):
+    """Bind destructured element idents in *body_expr* (F524).
+
+    *names* are the pattern identifiers in order: `const [a,b] =
+    arguments` binds a->arg_texts[0], b->arg_texts[1] (node v24.20.0
+    verified). Only the bare-identifier use is modeled -- every
+    code-span occurrence of names[k] must be a bare use, rewriting
+    to the k-th call-site literal's raw text. Any other use
+    (`...name`, `name[N]`, `name.M`, `name(`, `.name`) fails closed:
+    a destructured element is a STRING value in the engine, so the
+    F509 three-form grammar (spread/index/bare over the exotic
+    object) is NOT node-exact here -- `a[0]` is string indexing and
+    `...a` spreads characters (node v24.20.0 verified). Guards mirror
+    _js_bind_iife_arguments for every bound name (no nested
+    function/delete/new/class, no bare assignment, no arrow-param
+    shadowing). Substitution never touches string-literal contents.
+    Plain string scanning throughout -- zero new regexes. Never
+    evals.
+    """
+    if len(names) > len(arg_texts):
+        raise _JSExprFail("f524 pattern longer than args")
+    segs = _js_split_code_strings(body_expr)
+    code = "".join(s for is_code, s in segs if is_code)
+    for kw, msg in (("function", "nested function in bound body"),
+                    ("delete", "delete in bound body"),
+                    ("new", "new in bound body"),
+                    ("class", "class in bound body")):
+        if _js_code_find_idents(code, kw):
+            raise _JSExprFail(msg)
+    if _js_code_has_bare_assign(code):
+        raise _JSExprFail("assignment in bound body")
+    for nm in names:
+        if _js_code_has_ident_arrow_param(code, nm):
+            raise _JSExprFail("bound ident as arrow param")
+    by_name = {nm: k for k, nm in enumerate(names)}
+    out = []
+    for is_code, s in segs:
+        if not is_code:
+            out.append(s)
+            continue
+        occ = []
+        for nm, k in by_name.items():
+            for st in _js_code_find_idents(s, nm):
+                occ.append((st, nm, k))
+        occ.sort()
+        pos = 0
+        buf = []
+        for st, nm, k in occ:
+            en = st + len(nm)
+            rest = s[en:]
+            if (rest[:1] in (".", "[", "(")
+                    or (st > 0 and s[st - 1] == ".")
+                    or s[max(0, st - 3):st].endswith("...")):
+                raise _JSExprFail("unmodeled destructure use")
+            buf.append(s[pos:st])
+            buf.append(arg_texts[k])
+            pos = en
+        buf.append(s[pos:])
+        out.append("".join(buf))
+    rewritten = "".join(out)
+    # Defensive: every code-span occurrence must have been consumed.
+    # (String spans may legitimately contain the word.)
+    rcode = "".join(s for is_code, s in _js_split_code_strings(rewritten)
+                    if is_code)
+    for nm in names:
+        if _js_code_find_idents(rcode, nm):
+            raise _JSExprFail("destructure ident left unsubstituted")
+    return rewritten
+
+
 def _js_parse_args_binding_iife(text, i, depth, state):
     """Parse `(function(){return BODY})(lit, ...)` at text[i] (F509).
 
@@ -7852,6 +8001,62 @@ def _js_split_laundered_var_decl(stmts):
     return alias, src_kind, body_expr
 
 
+def _js_split_destructure_var_decl(stmts):
+    """Split `(var|const|let) [n0(, n1)?] = arguments;` from *stmts*
+    (F524).
+
+    *stmts* is the inner text of a function body. Returns (names,
+    body_expr) where names is the one- or two-element pattern list
+    in order. The source must be exactly bare `arguments`
+    (destructuring from `Array.from(...)` / `Object.values(...)`
+    is outside the filed scope -- fail closed, documented). Only
+    one- and two-element patterns of plain identifiers are modeled:
+    holes, defaults, rest elements, nested patterns, duplicate
+    names, or a name of `arguments` fail closed (documented scope
+    boundary -- the decoder never guesses a binding). Raises
+    _JSExprFail on any other shape. Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, 0)
+    for kw in ("var", "const", "let"):
+        m = _js_match_kw(stmts, j, kw)
+        if m is not None:
+            break
+    else:
+        raise _JSExprFail("f524 decl not var/const/let")
+    j = _js_skip_ws(stmts, m)
+    j = _js_expect(stmts, j, "[")
+    names = []
+    while True:
+        j = _js_skip_ws(stmts, j)
+        name, j = _js_parse_ident(stmts, j)
+        names.append(name)
+        j = _js_skip_ws(stmts, j)
+        if j < n and stmts[j] == ",":
+            j = _js_skip_ws(stmts, j + 1)
+            continue
+        if j < n and stmts[j] == "]":
+            j += 1
+            break
+        raise _JSExprFail("f524 bad pattern")
+    if not 1 <= len(names) <= 2:
+        raise _JSExprFail("f524 pattern arity")
+    if len(set(names)) != len(names):
+        raise _JSExprFail("f524 duplicate names")
+    if "arguments" in names:
+        raise _JSExprFail("f524 name is arguments")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "=")
+    sj = _js_skip_ws(stmts, j)
+    m = _js_match_kw(stmts, sj, "arguments")
+    if m is None:
+        raise _JSExprFail("f524 source not arguments")
+    j = _js_skip_ws(stmts, m)
+    j = _js_expect(stmts, j, ";")
+    body_expr = _js_require_single_return(stmts[j:])
+    return names, body_expr
+
+
 def _js_parse_args_laundered_iife(text, i, depth, state):
     """Parse `(function(){var A=SRC;return BODY})(lit, ...)` or
     `(function(...A){return BODY})(lit, ...)` at text[i] (F516).
@@ -7860,19 +8065,21 @@ def _js_parse_args_laundered_iife(text, i, depth, state):
     (`var a=arguments`), a rest parameter (`...args`), or an
     `Array.from(arguments)` / `Object.values(arguments)` binding --
     all element-identical to the call-site args array (node
-    v24.20.0 verified). The IIFE must be anonymous; params are
-    either exactly `...A` or empty (with the single `var` decl);
-    the body is a single `return EXPR;`. Call args are string
-    literals (the F509 arg grammar). The body is rewritten by
-    `_js_bind_iife_arguments` twice -- once for `arguments`
-    itself, once for the alias/rest name -- and the rewritten text
-    is parsed by the normal additive grammar at depth+1, so every
-    downstream decoder, bound, and fail-closed rule applies
-    unchanged. Returns (value, next_index), or None when the head
-    does not match or a guard fails (the caller falls through to
-    fail-closed paths). Bounded by the part/depth budgets; the IIFE
-    wrapper charges one op (obfuscation-shaped), each arg one part.
-    Never evals.
+    v24.20.0 verified) -- or a destructuring pattern binding
+    (`var|const|let [a,b]=arguments`, F524). The IIFE must be
+    anonymous; params are either exactly `...A` or empty (with the
+    single `var`/`const`/`let` decl); the body is a single `return
+    EXPR;`. Call args are string literals (the F509 arg grammar).
+    The body is rewritten by `_js_bind_iife_arguments` twice -- once
+    for `arguments` itself, once for the alias/rest name -- or, for
+    the destructure form, by `_js_bind_destructure_arguments` for
+    the pattern names; the rewritten text is parsed by the normal
+    additive grammar at depth+1, so every downstream decoder,
+    bound, and fail-closed rule applies unchanged. Returns (value,
+    next_index), or None when the head does not match or a guard
+    fails (the caller falls through to fail-closed paths). Bounded
+    by the part/depth budgets; the IIFE wrapper charges one op
+    (obfuscation-shaped), each arg one part. Never evals.
     """
     if not _js_peek_arguments_iife_head(text, i):
         return None
@@ -7902,14 +8109,23 @@ def _js_parse_args_laundered_iife(text, i, depth, state):
         stmts = text[inner_start:inner_end]
         member_ok = alias is not None  # rest param: a real Array
         if alias is None:
-            alias, src_kind, body_expr = _js_split_laundered_var_decl(
-                stmts)
+            try:
+                alias, src_kind, body_expr = _js_split_laundered_var_decl(
+                    stmts)
+            except _JSExprFail:
+                # F524: destructuring pattern binding
+                # (`var|const|let [a,b]=arguments`).
+                alias, body_expr = _js_split_destructure_var_decl(stmts)
+                src_kind = "destructure"
             # Array.from/Object.values aliases are real Arrays in
             # the engine (member substitution node-exact); a bare
             # `arguments` alias is the exotic object (member access
-            # fails closed, the F509 discipline).
+            # fails closed, the F509 discipline); destructured names
+            # bind string values (member access fails closed, the
+            # F524 discipline).
             member_ok = src_kind == "array"
         else:
+            src_kind = "rest"
             body_expr = _js_require_single_return(stmts)
         j = _js_skip_ws(text, j)
         j = _js_expect(text, j, ")")
@@ -7943,8 +8159,12 @@ def _js_parse_args_laundered_iife(text, i, depth, state):
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
         rewritten = _js_bind_iife_arguments(body_expr, args)
-        rewritten = _js_bind_iife_arguments(rewritten, args, alias,
-                                            member_ok)
+        if src_kind == "destructure":
+            rewritten = _js_bind_destructure_arguments(rewritten, args,
+                                                       alias)
+        else:
+            rewritten = _js_bind_iife_arguments(rewritten, args, alias,
+                                                member_ok)
         val, k = _js_parse_additive(rewritten, 0, depth + 1, state)
         k = _js_skip_ws(rewritten, k)
         if k != len(rewritten):
@@ -10635,12 +10855,19 @@ def _js_parse_postfix(text, i, value, depth, state):
             # (`[[['concat'][0]]]`) fold via _js_parse_array_wrapped_key
             # (F514 on String-object receivers -- engine-identical to
             # the literal member name regardless of receiver class, the
-            # fold is ToPropertyKey, node v24.20.0 verified). A
-            # non-literal key or an unmodeled method name ends the chain
-            # (F461 principle); the call itself routes to
-            # _js_apply_method / _js_apply_tag_method exactly like the
-            # dot form, so all fail-closed classes are identical.
-            # Never evals.
+            # fold is ToPropertyKey, node v24.20.0 verified);
+            # triple-nested keys (`[[[['concat'][0]]][0]]`) fold via
+            # _js_parse_triple_nested_bracket_key (F523), tried BEFORE
+            # the array-wrapped form: the triple parser fails
+            # chargeless on the F514/F504 shapes (its w2 `[` check
+            # rejects before any indexed-fold parse), while the
+            # reverse order would charge the F514 sub-parse twice on
+            # triple input. Each shape therefore charges exactly its
+            # documented parts. A non-literal key or an unmodeled
+            # method name ends the chain (F461 principle); the call
+            # itself routes to _js_apply_method / _js_apply_tag_method
+            # exactly like the dot form, so all fail-closed classes
+            # are identical. Never evals.
             try:
                 _bname, _bm = _js_parse_bracket_member(text, j)
             except _JSExprFail:
@@ -10653,10 +10880,15 @@ def _js_parse_postfix(text, i, value, depth, state):
                             text, j, depth, state)
                     except _JSExprFail:
                         try:
-                            _bname, _bm = _js_parse_array_wrapped_key(
-                                text, j, depth, state)
+                            _bname, _bm = (
+                                _js_parse_triple_nested_bracket_key(
+                                    text, j, depth, state))
                         except _JSExprFail:
-                            return value, i
+                            try:
+                                _bname, _bm = _js_parse_array_wrapped_key(
+                                    text, j, depth, state)
+                            except _JSExprFail:
+                                return value, i
             if _bname in _JS_POSTFIX_METHOD_NAMES:
                 _bk = _js_skip_ws(text, _bm)
                 if _bk < len(text) and text[_bk] == "(":

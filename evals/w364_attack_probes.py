@@ -129,11 +129,13 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F513-F525 open, next F526 (wave-364 lane 5)."""
+    """Control: footer shows F521, F522, F525 open, next F526
+    (wave-365 lane 3: F523, F524 CLOSED lane-locally; merge
+    finalizes)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F526**" in text
-          and "**Open findings: F521, F522, F523, F524, F525.**" in text)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+          and "**Open findings: F521, F522, F525.**" in text)  # Wave-365 lane 3: F523, F524 CLOSED (merge finalizes)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -310,17 +312,28 @@ def test_p2_f522_open():
 
 
 @_t
-def test_p2_f523_open():
-    """F523 OPEN (this round): triple-nested bracket key still misses."""
+def test_p2_f523_closed():
+    """F523 CLOSED (wave-365 lane 3): triple-nested bracket key now
+    blocks (coded refusal -- wave-306 class: the probe that
+    demonstrated the BREAK now asserts the refusal)."""
     ms = _misses("'%s'[[[['concat'][0]]][0]]('%s')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    ms2 = _misses("String('%s')[[[['concat'][0]]][0]](String('%s'))"
+                  % (_A, _B))
+    return ("HELD" if not ms and not ms2 else "BREAK",
+            "miss=%s miss2=%s" % (ms, ms2))
 
 
 @_t
-def test_p2_f524_open():
-    """F524 OPEN (this round): destructured arguments still misses."""
-    ms = _misses("(function(){const [a,b]=arguments;return a+b})('%s','%s')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f524_closed():
+    """F524 CLOSED (wave-365 lane 3): destructured arguments now
+    block (coded refusal -- wave-306 class: the probe that
+    demonstrated the BREAK now asserts the refusal)."""
+    ms = _misses("(function(){const [a,b]=arguments;return a+b})('%s','%s')"
+                 % (_A, _B))
+    ms2 = _misses("(function(){var [x,y]=arguments;return x+y})('%s','%s')"
+                  % (_A, _B))
+    return ("HELD" if not ms and not ms2 else "BREAK",
+            "miss=%s miss2=%s" % (ms, ms2))
 
 
 @_t
