@@ -2176,6 +2176,40 @@ _JS_IDENT_CONT = frozenset(
     "_$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 
 
+def _js_ident_cont_char(ch):
+    """Identifier-continue check including Unicode (F567).
+
+    ``_JS_IDENT_CONT`` is ASCII-only, but JS identifiers admit Unicode
+    ID_Start/ID_Continue chars: node v24.20.0 parses ``éJSON`` as one
+    identifier, so ``éJSON.parse(...)`` throws ReferenceError and the
+    decoder must stay quiet. Categories per ECMAScript: ID_Start =
+    Lu/Ll/Lt/Lm/Lo/Nl (plus ``$``/``_``, already in
+    ``_JS_IDENT_CONT``); ID_Continue adds Mn/Mc/Nd/Pc. ZWNJ/ZWJ
+    (category Cf) are also identifier-continue in JS but are excluded
+    here -- a documented residual, vanishingly rare in practice.
+    Never evals.
+    """
+    if ch in _JS_IDENT_CONT:
+        return True
+    return unicodedata.category(ch) in (
+        "Lu", "Ll", "Lt", "Lm", "Lo", "Nl", "Mn", "Mc", "Nd", "Pc")
+
+
+def _js_left_boundary_ok(text, i):
+    """Left ident-boundary guard for identifier anchors (F567).
+
+    True when position *i* is not the suffix of a longer identifier:
+    *i* is 0, or the character immediately left is not an
+    identifier-continuation char (Unicode-aware via
+    :func:`_js_ident_cont_char` -- ``éJSON`` is one identifier in
+    node v24.20.0, so ``éJSON.parse`` throws ReferenceError). The
+    caller applies this only to matches that START with an identifier
+    char (``text[s] in _JS_IDENT_START``); quote, bracket, and paren
+    anchors keep their existing behavior. Never evals.
+    """
+    return i == 0 or not _js_ident_cont_char(text[i - 1])
+
+
 def _js_skip_ws(text, i):
     n = len(text)
     while i < n and text[i] in " \t\n\r":
@@ -5877,6 +5911,79 @@ def _js_parse_f546_aliasadd_body(text, j, alias, state):
         return ops, k
 
 
+def _js_parse_f568_entries_values_body(text, j, alias, state):
+    """Parse `return Object.entries(a).map(e=>e[1]).join(SEP);` /
+    `return Object.values(a)(.map(x=>x))?.join(SEP);` at text[j] (F568).
+
+    The F546xF543 composition: an arguments-enumerating body in a
+    function-valued Reflect.apply target using the entries/values
+    idioms (F543's IIFE-dispatch grammar, reused verbatim). The
+    entries pairs / values array of the arguments exotic are
+    element-identical to the argument array in ascending index order
+    (node v24.20.0 verified), so the result is ``SEP.join(elements)``
+    with a node-exact string-literal separator. Returns (kind, sep,
+    next_index) where kind is "entries" or "values". The caller
+    applies the join over the argsArray elements. Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - entries without the `e[1]` pair projection, a values body
+      without `.join`, a non-literal join separator, `.join()` with
+      no separator (node inserts "," -- the lane models only the
+      literal-sep form, documented), non-identity maps, and any
+      other body shape.
+    """
+    n = len(text)
+    rk = _js_match_kw(text, j, "return")
+    if rk is None:
+        raise _JSExprFail("F568 body not return")
+    j = _js_skip_ws(text, rk)
+    member, q = _js_parse_f543_entries_values_head(text, j, alias)
+    q = _js_skip_ws(text, q)
+    if member == "entries":
+        q = _js_expect(text, q, ".")
+        mm = _js_match_kw(text, _js_skip_ws(text, q), "map")
+        if mm is None:
+            raise _JSExprFail("F568 entries without map")
+        q = _js_expect(text, _js_skip_ws(text, mm), "(")
+        q = _js_parse_f543_pair_projection(text, q)
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ")")
+    else:
+        # Optional identity map over the values array (a no-op
+        # desugar -- the values are already element-identical to
+        # the argument array).
+        qq = _js_skip_ws(text, q)
+        if qq < n and text[qq] == ".":
+            mm = _js_match_kw(text, _js_skip_ws(text, qq + 1), "map")
+            if mm is not None:
+                mq = _js_expect(text, _js_skip_ws(text, mm), "(")
+                mq = _js_parse_f543_identity_map(text, mq)
+                mq = _js_skip_ws(text, mq)
+                mq = _js_expect(text, mq, ")")
+                q = mq
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ".")
+    mm = _js_match_kw(text, _js_skip_ws(text, q), "join")
+    if mm is None:
+        raise _JSExprFail("F568 idiom without join")
+    q = _js_expect(text, _js_skip_ws(text, mm), "(")
+    q = _js_skip_ws(text, q)
+    if q >= n or text[q] not in "'\"":
+        raise _JSExprFail("F568 join separator not a literal")
+    sep, q = _js_parse_string(text, q)
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ")")
+    q = _js_skip_ws(text, q)
+    if q < n and text[q] == ";":
+        q += 1
+    if _js_skip_ws(text, q) != len(text):
+        raise _JSExprFail("F568 trailing statements")
+    state["parts"] += 1  # the idiom body is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return member, sep, q
+
+
 def _js_parse_fn_enum_body_target(text, j, depth, state):
     """Parse `function(){DECL a=arguments; BODY}` at text[j] (F546).
 
@@ -5886,16 +5993,21 @@ def _js_parse_fn_enum_body_target(text, j, depth, state):
     - the F533 for-of accumulation idiom
       (`var|let s='';for(var|let|const x of a){s+=x;}return s;`),
     - the F529 for-in accumulation idiom
-      (`var s='';for(var k in a){s+=a[k];}return s;`), or
-    - the bare-alias additive body (`return a[0]+a[1];`).
+      (`var s='';for(var k in a){s+=a[k];}return s;`),
+    - the bare-alias additive body (`return a[0]+a[1];`), or
+    - the F568 entries/values idioms
+      (`return Object.entries(a).map(e=>e[1]).join(SEP);` /
+      `return Object.values(a)(.map(x=>x))?.join(SEP);`).
     The target must be a `function` expression (not an arrow -- the
     arrow's body grammar is F519's additive chain, unchanged) with
     an EMPTY parameter list (declared params alongside the
     arguments-exotic enumeration change the engine binding --
     fail closed, documented), anonymous-or-named (the name is
     ignored). Returns (kind, operand_indices, next_index) where kind
-    is "forof", "forin", or "aliasadd" and operand_indices is the
-    index list for aliasadd (None otherwise). Never evals.
+    is "forof", "forin", "aliasadd", "entries", or "values"; payload is
+    the index list for "aliasadd", the join separator string for
+    "entries"/"values" (F568), and None for "forof"/"forin". Never
+    evals.
 
     Bounds (all fail closed -- rejected, never mis-decoded):
     - `function*` (generator), async, rebound aliases, bare
@@ -5944,6 +6056,17 @@ def _js_parse_fn_enum_body_target(text, j, depth, state):
     rj = _js_skip_ws(rest, 0)
     rk = _js_match_kw(rest, rj, "return")
     if rk is not None:
+        # F568: the entries/values idiom bodies (the F546xF543
+        # composition). Tried before the aliasadd body: disjoint
+        # (the idioms call Object.entries/values on the alias; the
+        # aliasadd body indexes `a[K]` directly, so each rejects
+        # the other's shape chargeless).
+        try:
+            member, sep, _ = _js_parse_f568_entries_values_body(
+                rest, rj, alias, state)
+            return member, sep, j
+        except _JSExprFail:
+            pass
         # The bare-alias additive body.
         ops, _ = _js_parse_f546_aliasadd_body(rest, rj, alias, state)
         return "aliasadd", ops, j
@@ -5963,6 +6086,113 @@ def _js_parse_fn_enum_body_target(text, j, depth, state):
     raise _JSExprFail("F546 body not an enumerating idiom")
 
 
+def _js_parse_fn_destructure_body_target(text, j, depth, state):
+    """Parse `function(){DECL PAT=arguments;return BODY;}` at text[j] (F558).
+
+    A function-valued Reflect.apply target whose body destructures
+    the arguments exotic object (the F519 x F524/F545 composition):
+    `var|const|let [a,b]=arguments` (array pattern, F524) or
+    `var|const|let {K0:n0(,K1:n1)?}=arguments` (object pattern, F545)
+    followed by a single `return EXPR;`. The target must be a
+    `function` expression with an EMPTY parameter list (declared
+    params alongside the arguments-exotic destructure change the
+    engine binding -- fail closed, documented), anonymous-or-named
+    (the name is ignored). Returns (names, keys, body_expr,
+    next_index). The caller binds the names to the argsArray
+    elements via `_js_bind_destructure_arguments` and parses the
+    rewritten body with the additive grammar. Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): the
+    full `_js_split_destructure_var_decl` scope boundary applies
+    verbatim (1-2 element patterns of plain identifiers, canonical
+    decimal-int object keys, bare `arguments` source, no holes /
+    defaults / rest / nested patterns / duplicate names or keys, no
+    `arguments` as a bound name), plus `function*` generators,
+    non-empty params, and any other body shape. The enum-body
+    parser rejects these inputs chargeless (its decl parse fails on
+    the pattern bracket), so the two target classes are disjoint.
+    """
+    n = len(text)
+    if not text.startswith("function", j):
+        raise _JSExprFail("F558 target not a function")
+    k = j + len("function")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("F558 functionx")
+    if k < n and text[k] == "*":
+        raise _JSExprFail("F558 generator target")
+    j = _js_skip_ws(text, k)
+    if j < n and text[j] in _JS_IDENT_START:
+        # Optional name (engine-exact; ignored).
+        _, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+    params, j = _js_parse_fn_params(text, j)
+    if params:
+        raise _JSExprFail("F558 target has declared params")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "{":
+        raise _JSExprFail("F558 target without brace")
+    inner_start, inner_end, j = _js_span_braced(text, j)
+    stmts = text[inner_start:inner_end]
+    names, keys, body_expr = _js_split_destructure_var_decl(stmts)
+    state["parts"] += 1  # the destructure body is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return names, keys, body_expr, j
+
+
+def _js_apply_enum_body_result(kind, payload, elements):
+    """Desugar an F546/F568 enum-body target over *elements* (F546/F568/F569).
+
+    The arguments exotic is the argsArray elements: for-of/for-in
+    accumulation and the entries/values idioms (element-identical to
+    the argument array, node v24.20.0) yield the joined elements;
+    the bare-alias additive body yields the indexed elements in
+    operand order (indices bounds-checked against the elements
+    length -- node coerces out-of-range to `undefined`, conservative
+    fail-closed, the F519-arity-mismatch precedent). Never evals.
+    """
+    if kind in ("forof", "forin"):
+        return "".join(elements)
+    if kind in ("entries", "values"):
+        return payload.join(elements)
+    for k in payload:
+        if k >= len(elements):
+            raise _JSExprFail("F546 aliasadd index out of range")
+    return "".join(elements[k] for k in payload)
+
+
+def _js_apply_destructure_body_result(names, keys, body_expr, elements,
+                                      depth, state):
+    """Desugar an F558 destructure-body target over *elements* (F558/F569).
+
+    Each pattern key is bounds-checked against the elements length
+    (node coerces out-of-range to `undefined` -- conservative
+    fail-closed). The names are bound to the elements via
+    `_js_bind_destructure_arguments` and the rewritten body is
+    parsed by the additive grammar at depth+1, so every downstream
+    decoder, bound, and fail-closed rule applies unchanged. The
+    elements are re-quoted as single-quoted string literals for the
+    substitution (`\\` and `'` escaped -- `_js_parse_string`
+    decodes them back losslessly, node-exact round-trip). Never
+    evals.
+    """
+    for k in keys:
+        if k >= len(elements):
+            raise _JSExprFail("F558 destructure key beyond argsArray")
+    raw = ["'" + v.replace("\\", "\\\\").replace("'", "\\'") + "'"
+           for v in elements]
+    rewritten = _js_bind_destructure_arguments(body_expr, raw, names, keys)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    val, k = _js_parse_additive(rewritten, 0, depth + 1, state)
+    k = _js_skip_ws(rewritten, k)
+    if k != len(rewritten):
+        raise _JSExprFail("F558 destructure body trailing text")
+    if not isinstance(val, str):
+        raise _JSExprFail("F558 destructure body not a string")
+    return val
+
+
 def _js_parse_reflect_apply_fn(text, i, depth, state):
     """Parse 'Reflect.apply(FN, thisArg, argsArray)' at text[i] (F519).
 
@@ -5970,10 +6200,14 @@ def _js_parse_reflect_apply_fn(text, i, depth, state):
     thisArg and the argsArray elements as arguments. FN is a
     statically-known function value -- an arrow `(p1, p2) => BODY` or
     a function expression `function(p1, p2){return BODY}` -- whose
-    body is exactly an additive chain over its declared parameters;
-    with an all-string argsArray of matching arity the result is the
-    parameter-ordered concatenation (the `+` operands are all
-    strings, so no coercion surprises). The member name accepts the
+    body is exactly an additive chain over its declared parameters
+    (F519); or a function expression with an arguments-enumerating
+    body (F546: for-of/for-in/bare-alias idioms; F568 adds the
+    entries/values idioms); or a function expression with a
+    destructuring-pattern body over `arguments` (F558); or an
+    IIFE-evaluated target (F522). With an all-string argsArray the
+    result is the parameter-ordered concatenation (the `+` operands
+    are all strings, so no coercion surprises). The member name accepts the
     dot form and the F504 bracket-string forms (routed here by
     _js_parse_reflect_call, which already verified the name;
     re-verified defense-in-depth).
@@ -6017,7 +6251,8 @@ def _js_parse_reflect_apply_fn(text, i, depth, state):
     j = _js_skip_ws(text, j + 1)
     _target_mode = "additive"
     _enum_kind = None
-    _enum_ops = None
+    _enum_payload = None
+    _dest = None
     try:
         params, body, j = _js_parse_iife_fn_target(text, j, depth, state)
     except _JSExprFail:
@@ -6036,10 +6271,25 @@ def _js_parse_reflect_apply_fn(text, i, depth, state):
             # `var` keyword), so this path only accepts inputs that
             # previously failed closed -- no previously-decoded
             # input changes behavior.
-            _enum_kind, _enum_ops, j = _js_parse_fn_enum_body_target(
-                text, j, depth, state)
-            _target_mode = "enum"
-            params = []
+            try:
+                _enum_kind, _enum_payload, j = _js_parse_fn_enum_body_target(
+                    text, j, depth, state)
+                _target_mode = "enum"
+                params = []
+            except _JSExprFail:
+                # F558: a function-valued target whose body
+                # destructures the arguments exotic object (the F519
+                # x F524/F545 composition). The enum-body parser
+                # rejects these inputs chargeless (its decl parse
+                # fails on the pattern bracket), so this path only
+                # accepts inputs that previously failed closed -- no
+                # previously-decoded input changes behavior.
+                _dest_names, _dest_keys, _dest_body, j = \
+                    _js_parse_fn_destructure_body_target(
+                        text, j, depth, state)
+                _dest = (_dest_names, _dest_keys, _dest_body)
+                _target_mode = "destructure"
+                params = []
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ",":
         raise _JSExprFail("F519 target without thisArg")
@@ -6056,14 +6306,13 @@ def _js_parse_reflect_apply_fn(text, i, depth, state):
     # elements.
     elements, j = _js_parse_f519_apply_args_array(text, j + 1, state)
     if _target_mode == "enum":
-        # F546: the arguments exotic is the argsArray elements.
-        if _enum_kind in ("forof", "forin"):
-            result = "".join(elements)
-        else:
-            for k in _enum_ops:
-                if k >= len(elements):
-                    raise _JSExprFail("F546 aliasadd index out of range")
-            result = "".join(elements[k] for k in _enum_ops)
+        # F546/F568: the arguments exotic is the argsArray elements.
+        result = _js_apply_enum_body_result(_enum_kind, _enum_payload,
+                                            elements)
+    elif _target_mode == "destructure":
+        # F558: the pattern names are bound to the argsArray elements.
+        result = _js_apply_destructure_body_result(
+            _dest[0], _dest[1], _dest[2], elements, depth, state)
     else:
         if len(elements) != len(params):
             raise _JSExprFail("F519 arity mismatch")
@@ -6817,11 +7066,12 @@ def _js_parse_f521_call_dispatch(text, paren, depth, state):
     class, the F534 `.bind`-bound slice class, the F537 `.bind`-bound
     filter class, the F538 `.bind`-bound map class, the F542 Proxy
     apply-trap target, or a plain F519-class function value (F544 --
-    additive body over declared params, literal-or-spread argsArray);
-    any other target fails closed here -- call-indirection with other
-    targets is a documented residual, not filed. Returns (value,
-    next_index) without the postfix chain (the caller applies it).
-    Never evals.
+    additive body over declared params, literal-or-spread argsArray;
+    F569 adds the F546 enumerating-body and F558 destructuring-body
+    targets); any other target fails closed here -- call-indirection
+    with other targets is a documented residual, not filed. Returns
+    (value, next_index) without the postfix chain (the caller applies
+    it). Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, paren + 1)
@@ -6921,14 +7171,21 @@ def _js_parse_f521_call_dispatch(text, paren, depth, state):
                             # is exactly Reflect.apply(FN, thisArg, argsList)
                             # (node v24.20.0: Function.prototype.call invokes
                             # Reflect.apply with (T, thisArg, argsList)). The
-                            # argsArray admits the F544 spread form. F546 bodies
-                            # (arguments-enumerating, no declared params) fail
-                            # the additive-body parse and stay fail-closed here.
+                            # argsArray admits the F544 spread form. F569
+                            # (wave-369 lane 7): arguments-enumerating
+                            # (F546) and destructuring-pattern (F558)
+                            # bodies are also modeled here -- the
+                            # F544xF546 / F544xF558 compositions desugar
+                            # to the direct form (node v24.20.0).
                             # Disjoint from the F537/F538/F542 bound/proxy
                             # shapes above (those require .bind/Proxy
                             # receivers), so no previously-decoded input
                             # changes behavior.
                             _tj = _js_skip_ws(text, j + 1)
+                            _c_mode = "additive"
+                            _c_enum_kind = None
+                            _c_enum_payload = None
+                            _c_dest = None
                             try:
                                 params, body, _tj = _js_parse_iife_fn_target(
                                     text, _tj, depth, state)
@@ -6939,8 +7196,31 @@ def _js_parse_f521_call_dispatch(text, paren, depth, state):
                                 # literal parse fails (it requires the trailing
                                 # `()` invocation), so no previously-decoded
                                 # input changes behavior.
-                                params, body, _tj = _js_parse_fn_target(
-                                    text, _tj, depth, state)
+                                try:
+                                    params, body, _tj = _js_parse_fn_target(
+                                        text, _tj, depth, state)
+                                except _JSExprFail:
+                                    # F569: the target is a function-valued
+                                    # target with an arguments-enumerating
+                                    # body (F546) or a destructuring-pattern
+                                    # body (F558). Each class rejects the
+                                    # others' shapes chargeless, so this path
+                                    # only accepts inputs that previously
+                                    # failed closed -- no previously-decoded
+                                    # input changes behavior.
+                                    try:
+                                        _c_enum_kind, _c_enum_payload, _tj = \
+                                            _js_parse_fn_enum_body_target(
+                                                text, _tj, depth, state)
+                                        _c_mode = "enum"
+                                        params = []
+                                    except _JSExprFail:
+                                        _cd_names, _cd_keys, _cd_body, _tj = \
+                                            _js_parse_fn_destructure_body_target(
+                                                text, _tj, depth, state)
+                                        _c_dest = (_cd_names, _cd_keys, _cd_body)
+                                        _c_mode = "destructure"
+                                        params = []
                             _tj = _js_skip_ws(text, _tj)
                             if _tj >= n or text[_tj] != ",":
                                 raise _JSExprFail("F544 call dispatch without thisArg")
@@ -6954,9 +7234,17 @@ def _js_parse_f521_call_dispatch(text, paren, depth, state):
                                 raise _JSExprFail("F544 call dispatch argsArray not array")
                             elements, _tj = _js_parse_f519_apply_args_array(
                                 text, _tj + 1, state)
-                            if len(elements) != len(params):
-                                raise _JSExprFail("F544 call dispatch arity mismatch")
-                            result = "".join(elements[idx] for idx in body)
+                            if _c_mode == "enum":
+                                result = _js_apply_enum_body_result(
+                                    _c_enum_kind, _c_enum_payload, elements)
+                            elif _c_mode == "destructure":
+                                result = _js_apply_destructure_body_result(
+                                    _c_dest[0], _c_dest[1], _c_dest[2],
+                                    elements, depth, state)
+                            else:
+                                if len(elements) != len(params):
+                                    raise _JSExprFail("F544 call dispatch arity mismatch")
+                                result = "".join(elements[idx] for idx in body)
                             _tj = _js_skip_ws(text, _tj)
                             if _tj >= n or text[_tj] != ")":
                                 raise _JSExprFail("F544 call dispatch with extra args")
@@ -16404,7 +16692,12 @@ def _try_js_expr_decode_all(text):
         if total >= _MAX_WHOLETEXT_ATTEMPTS:
             break  # F512: DoS guard -- fail-closed junk cannot buy
                    # unbounded per-match parse work
-        total += 1
+        total += 1  # F452/F512: every match attempt counts, including
+                    # F567-guarded ones (fail-closed matches consume
+                    # scan budget -- the guard only skips the decode)
+        if text[s] in _JS_IDENT_START and not _js_left_boundary_ok(text, s):
+            continue  # F567: identifier-suffixed anchor -- node throws
+                      # ReferenceError; the decoder stays quiet.
         r = _try_js_expr_decode(text, s)
         if r is None:
             continue  # F452: fail closed -- no variant produced, so
@@ -16555,6 +16848,10 @@ def _decode_layer(text):
     # and .reduce/.reduceRight assembly + identity .map / constant-true
     # .filter passthroughs (F437); undecodable runs are ignored.
     for m in list(_JS_EXPR_START.finditer(text))[:_MAX_CANDIDATES]:
+        if text[m.start()] in _JS_IDENT_START and \
+                not _js_left_boundary_ok(text, m.start()):
+            continue  # F567: identifier-suffixed anchor -- node throws
+                      # ReferenceError; the decoder stays quiet.
         r = _try_js_expr_decode(text, m.start())
         if r is not None:
             decoded, end = r
