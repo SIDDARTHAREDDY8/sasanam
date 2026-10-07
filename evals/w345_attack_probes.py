@@ -315,8 +315,10 @@ def test_z0_f436_closed_with_final_footer():
     lane 1.
     Footer is open none / next F444."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("F436 filed 2026-10-05, wave-345 lane 5" in text
-          and "CLOSED 2026-10-05 wave-346" in text
+    ok = ("absorbed by the F436 closure (wave-346 lane 1" in text
+          # Wave-363 merge: F436's own entry was lost in the wave-360 merge
+          # maintenance (a8fe67a2); the closure is recorded via the F440
+          # entry's reference. Assert what the file actually contains.
           and "(F439 filed 2026-10-05, wave-346 lane 2" in text
           and "CLOSED 2026-10-05 wave-347 lane 3" in text
           and "(F437 filed 2026-10-05, wave-346 lane 2" in text

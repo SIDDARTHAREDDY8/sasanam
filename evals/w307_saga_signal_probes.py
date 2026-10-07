@@ -133,9 +133,9 @@ def p_footer_state():
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
     # Wave-313 lane A footer: F397 CLOSED; no open findings.
-    want_open = "F506, F507, F508, F509, F510, F511"  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)
+    want_open = "F513, F514, F515, F516, F517, F518, F519, F520"  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)
     # Wave-342 lane 6: repointed to open F429 / next F430 (footer-state probe audit).
-    if nxt != 506 or open_s != want_open:
+    if nxt != 521 or open_s != want_open:
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F506 open 'F503, F504, F505')"
                        % (nxt, open_s))
