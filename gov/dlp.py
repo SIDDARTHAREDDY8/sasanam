@@ -2108,7 +2108,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor)|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor)|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
 # F455: the Array.of factory anchor tolerates whitespace around the dot
 # ([ \t\n\r]*, exactly the _js_skip_ws class the parser skips), so
 # `Array .of(...)` / `Array\t.of(...)` / `Array\n.of(...)` /
@@ -3645,6 +3645,14 @@ def _js_parse_array_of(text, i, state):
         raise _JSExprFail("Array without dot")
     k = _js_skip_ws(text, j + 1)
     if not text.startswith("of", k):
+        # F508: Array.from(src[, mapFn]) -- the from factory (mapping
+        # function / array-like / Set sources). Anything else still
+        # fails closed ("Array not of").
+        if text.startswith("from", k):
+            _fe = k + len("from")
+            if _fe < n and text[_fe] in _JS_IDENT_CONT:
+                raise _JSExprFail("Array.fromx is not from")
+            return _js_parse_array_from(text, _fe, state)
         raise _JSExprFail("Array not of")
     k += 2
     if k < n and text[k] in _JS_IDENT_CONT:
@@ -3662,6 +3670,64 @@ def _js_parse_array_of(text, i, state):
                 raise _JSExprFail("factory bind not modeled")
             return _js_parse_of_dispatch(text, _paren, _dname, 0, state)
     return _js_parse_of_args(text, k, state)
+
+
+def _js_parse_array_from(text, j, state):
+    """Parse the '(src[, mapFn])' argument list of Array.from (F508).
+
+    *j* is just past the 'from' member name (dot or bracket-string
+    form). The source is one of three modeled classes, each desugared
+    to the element list engine-exactly (node v24.20.0 verified):
+      - an array literal: `Array.from(['f1','f2'])` === `['f1','f2']`
+        (parsed by _js_parse_array -- additive elements are engine
+        values before Array.from reads them);
+      - an array-like object literal: `Array.from({length:2, 0:'f1',
+        1:'f2'})` === `['f1','f2']` (parsed by _js_parse_arraylike_recv,
+        F487 -- the engine reads length then indices 0..length-1; the
+        F487 grammar's all-indices-present requirement is conservative
+        and engine-exact on the modeled class);
+      - `new Set([...])`: `Array.from(new Set(['f1','f2']))` ===
+        `['f1','f2']` (parsed by _js_parse_new_set, F494 --
+        SameValueZero dedup, engine-exact).
+    The optional mapper must be an identity callback
+    (`x=>x` / `(x)=>x` / `function(x){return x;}` / `s=>{return s;}`,
+    via _js_parse_map_callback, F437/F448) -- the elements pass
+    through untouched, exactly as the engine applies it. The bare
+    `String` mapper (stringifies numerics) fails closed (documented
+    scope boundary -- the filed shapes are string-only); a thisArg
+    third parameter fails closed; any other source (generators,
+    Map, strings, numbers) fails closed. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("from without paren")
+    j = _js_skip_ws(text, j + 1)
+    if j < n and text[j] == "[":
+        arr, j = _js_parse_array(text, j, 0, state)
+    elif j < n and text[j] == "{":
+        arr, j = _js_parse_arraylike_recv(text, j, 0, state)
+    elif _js_match_kw(text, j, "new") is not None:
+        # new Set(...) (a `new Map` here fails closed inside
+        # _js_parse_new_set -- the engine would iterate entries,
+        # not values, so it is never mis-decoded as a Set).
+        arr, j = _js_parse_new_set(text, j, 0, state)
+    else:
+        raise _JSExprFail("from source not modeled")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ",":
+        _me, _stringifies = _js_parse_map_callback(text,
+                                                   _js_skip_ws(text,
+                                                               j + 1))
+        if _stringifies:
+            raise _JSExprFail("from String mapper not modeled")
+        j = _js_skip_ws(text, _me)
+        if j < n and text[j] == ",":
+            raise _JSExprFail("from thisArg not modeled")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("from without close paren")
+    return arr, j + 1
 
 
 def _js_parse_bracket_member(text, j):
@@ -4276,6 +4342,11 @@ def _js_parse_array_bracket_dispatch(text, i, state):
         return _js_parse_of_args(text, j, state)
     if name in ("apply", "call"):
         return _js_parse_ctor_apply(text, i, state)
+    if name == "from":
+        # F508: Array['from'](...) -- bracket-string member form of the
+        # from factory, engine-identical to the dot form (F480
+        # precedent).
+        return _js_parse_array_from(text, j, state)
     raise _JSExprFail("Array bracket member not modeled")
 
 
@@ -5382,6 +5453,16 @@ _F478_STRING_METHODS = frozenset({
 })
 _F478_DISPATCH_METHODS = _F478_ARRAY_METHODS | _F478_STRING_METHODS
 _F478_DISPATCH_NAMES = ("call", "apply", "bind")
+# F507: the method names the postfix chain may invoke directly on a
+# parsed value (dot form EXPR.METHOD(...) and bracket-string form
+# EXPR['METHOD'](...), engine-identical). Shared by the dot loop and
+# the bracket branch in _js_parse_postfix so the two spellings can
+# never drift apart.
+_JS_POSTFIX_METHOD_NAMES = (
+    "concat", "repeat", "join", "reduce", "reduceRight", "map", "filter",
+    "fill", "reverse", "toString", "slice", "flat", "splice", "replace",
+    "padStart", "padEnd",
+)
 # F483: the dispatch value-list callback grammar is fixed by the method
 # (never guessed) -- the map from dispatched method name to cb_kind.
 _F483_CB_KINDS = {"reduce": "reduce", "reduceRight": "reduce",
@@ -8276,9 +8357,43 @@ def _js_parse_postfix(text, i, value, depth, state):
         if disp is not None:
             value, i = disp
             continue
-        for name in ("concat", "repeat", "join", "reduce", "reduceRight",
-                     "map", "filter", "fill", "reverse", "toString", "slice",
-                     "flat", "splice", "replace", "padStart", "padEnd"):
+        if text[j] == "[":
+            # F507: EXPR['METHOD'](...) -- bracket-string member call on
+            # the already-parsed value (string or array literal
+            # receiver), engine-identical to the dot form (node
+            # v24.20.0 verified). Dispatch shapes
+            # (['METHOD'].call/apply/bind) were handled above by
+            # _js_parse_postfix_dispatch; None there means no dispatch
+            # follows, so a '(' (or tag-template '`' for the F463
+            # tag-call names) after the key is the direct-call form.
+            # Literal keys parse via _js_parse_bracket_member;
+            # computed keys constant-fold via _js_fold_bracket_key
+            # (F492). A non-literal key or an unmodeled method name
+            # ends the chain (F461 principle); the call itself routes
+            # to _js_apply_method / _js_apply_tag_method exactly like
+            # the dot form, so all fail-closed classes are identical.
+            try:
+                _bname, _bm = _js_parse_bracket_member(text, j)
+            except _JSExprFail:
+                try:
+                    _bname, _bm = _js_fold_bracket_key(text, j, depth,
+                                                       state)
+                except _JSExprFail:
+                    return value, i
+            if _bname in _JS_POSTFIX_METHOD_NAMES:
+                _bk = _js_skip_ws(text, _bm)
+                if _bk < len(text) and text[_bk] == "(":
+                    value, i = _js_apply_method(text, _bk, _bname, value,
+                                                depth, state)
+                    continue
+                if (_bk < len(text) and text[_bk] == "`"
+                        and _bname in ("join", "concat", "fill",
+                                       "repeat")):
+                    value, i = _js_apply_tag_method(text, _bk, _bname,
+                                                    value, depth, state)
+                    continue
+            return value, i
+        for name in _JS_POSTFIX_METHOD_NAMES:
 
             if text.startswith(name, j + 1):
                 k = _js_skip_ws(text, j + 1 + len(name))

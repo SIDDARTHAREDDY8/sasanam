@@ -383,10 +383,11 @@ def p3_no_new_regexes():
     # F505 (wave-362 lane 3): String.fromCodePoint alternative
     # added (literal-alternation only -- the same F468
     # precedent); re.compile count unchanged (28).
+    # F508 (wave-363 lane 2): Array.from alternative added (literal-alternation only); re.compile count unchanged (28).
     assert dlp._JS_EXPR_START.pattern == (
         r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|"
         r"[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|"
-        r"apply|call)|\[[ \t\n\r]*['\"]))|"
+        r"apply|call|from)|\[[ \t\n\r]*['\"]))|"
         r"Array[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"String[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Function[ \t\n\r]*\.[ \t\n\r]*prototype|"
@@ -394,7 +395,7 @@ def p3_no_new_regexes():
         r"[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|"
         r"Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor)|"
         r"[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
-    for s in ["Array.apply(", "Array.of.call", "[].constructor.of.call",
+    for s in ["Array.apply(", "Array.of.call", "Array.from(", "[].constructor.of.call",
               "String.fromCharCode.apply", "Object.getPrototypeOf",
               "Array.prototype.concat", "Object.assign"]:
         assert dlp._JS_EXPR_START.search(s) is not None, s

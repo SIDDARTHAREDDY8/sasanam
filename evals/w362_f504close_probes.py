@@ -55,7 +55,7 @@ A2 = "456789" + "abcdef"
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TAXONOMY_PIN = 2135
-FOOTER_OPEN = "F506, F507, F508, F509, F510, F511"  # F504 CLOSED locally (merge finalizes tree-wide)  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)
+FOOTER_OPEN = "F506, F509, F510, F511"  # F504 CLOSED locally (merge finalizes tree-wide)  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 lane 2: F507+F508 CLOSED locally
 FOOTER_NEXT = "F513"  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)
 
 
@@ -183,12 +183,13 @@ def p3_no_new_regexes():
     # F505 (wave-362 lane 3): String.fromCodePoint alternative
     # added (literal-alternation only -- the same F468
     # precedent); re.compile count unchanged (28).
+    # F508 (wave-363 lane 2): Array.from alternative added (literal-alternation only); re.compile count unchanged (28).
     assert dlp._JS_EXPR_START.pattern == (
         r"['\"`\[]|"
         r"String\.fromCharCode|"
         r"String\.fromCodePoint|"
         r"String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|"
-        r"Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"]))|"
+        r"Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|"
         r"Array[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"String[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Function[ \t\n\r]*\.[ \t\n\r]*prototype|"
@@ -196,7 +197,7 @@ def p3_no_new_regexes():
         r"Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor)|[ \t\n\r]*\[[ \t\n\r]*['\"])|"
         r"\("
     )
-    for s in ["Array.apply(", "Array.of.call", "[].constructor.of.call",
+    for s in ["Array.apply(", "Array.of.call", "Array.from(", "[].constructor.of.call",
               "String.fromCharCode.apply", "Object.getPrototypeOf",
               "Array.prototype.concat", "Object.assign"]:
         assert dlp._JS_EXPR_START.search(s) is not None, s
