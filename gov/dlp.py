@@ -6129,6 +6129,406 @@ def _js_parse_arguments_iife_recv(text, i, depth, state):
     return _JSArr(args), j
 
 
+def _js_peek_args_binding_iife(text, i):
+    """Peek `(function(){return` at text[i] (F509); True/False, never raises.
+
+    The F509 call-site-argument-binding IIFE: an anonymous, zero-parameter
+    function expression whose body opens with a `return` statement,
+    immediately invoked. The exact F489 shape (`return arguments`) is a
+    subset -- the F489 receiver parser keeps priority in receiver
+    position; this peek only gates the general-body form.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return False
+    j = _js_skip_ws(text, j + 1)
+    if not text.startswith("function", j):
+        return False
+    j += len("function")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        return False
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        return False
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != ")":
+        return False
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "{":
+        return False
+    j = _js_skip_ws(text, j + 1)
+    return _js_match_kw(text, j, "return") is not None
+
+
+def _js_skip_quoted(text, i):
+    """Return the index just past the quoted span at text[i] (F509).
+
+    text[i] is the opening `'` or `"`. Backslash escapes are honored.
+    Raises _JSExprFail on an unterminated quote. Never evals.
+    """
+    n = len(text)
+    q = text[i]
+    k = i + 1
+    while k < n and text[k] != q:
+        if text[k] == "\\":
+            k += 1
+        k += 1
+    if k >= n:
+        raise _JSExprFail("unterminated string in iife")
+    return k + 1
+
+
+def _js_span_braced(text, brace):
+    """Span the `{ ... }` block at text[brace] == '{' (F509).
+
+    Returns (inner_start, inner_end, after_close): absolute indices of
+    the text between the braces and the index just past the matching
+    `}`. `'...'` / `"..."` spans are skipped with escape handling so a
+    brace inside a string never terminates the scan. Fails closed
+    (raises _JSExprFail) on backticks and on `/` in code -- template
+    literals, regex literals, division, and comments are all outside
+    the modeled F509 body grammar (documented boundary; a miss, never
+    a mis-decode). Unterminated input fails closed. Never evals.
+    """
+    n = len(text)
+    depth = 0
+    k = brace
+    while k < n:
+        c = text[k]
+        if c in "'\"":
+            k = _js_skip_quoted(text, k)
+            continue
+        if c == "`":
+            raise _JSExprFail("template in iife body")
+        if c == "/":
+            raise _JSExprFail("slash in iife body")
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return brace + 1, k, k + 1
+        k += 1
+    raise _JSExprFail("unterminated iife body")
+
+
+def _js_split_code_strings(body):
+    """Split *body* into (is_code, segment) pairs (F509).
+
+    `'...'` / `"..."` spans (backslash escapes honored) become
+    non-code segments; everything else is code. Backticks must not
+    appear -- `_js_span_braced` rejects them before this runs. An
+    unterminated quote runs to the end of the body (the downstream
+    additive parse then fails closed). Never evals.
+    """
+    segs = []
+    i = 0
+    n = len(body)
+    cur = []
+    while i < n:
+        c = body[i]
+        if c in "'\"":
+            if cur:
+                segs.append((True, "".join(cur)))
+                cur = []
+            j = _js_skip_quoted(body, i)
+            segs.append((False, body[i:j]))
+            i = j
+        else:
+            cur.append(c)
+            i += 1
+    if cur:
+        segs.append((True, "".join(cur)))
+    return segs
+
+
+# Guards for the F509 body rewrite, all applied to code spans only
+# (string contents never trigger them). Each is a documented,
+# node-checked fail-closed boundary: violating inputs are misses,
+# never mis-decodes. Implemented with plain string scanning -- zero
+# new regexes (the 28-pattern pin stands).
+def _js_code_ident_at(code, name, i):
+    """True if identifier *name* occurs at code[i] (boundary-checked)."""
+    L = len(name)
+    return (code.startswith(name, i)
+            and (i == 0 or code[i - 1] not in _JS_IDENT_CONT)
+            and (i + L >= len(code) or code[i + L] not in _JS_IDENT_CONT))
+
+
+def _js_code_find_idents(code, name):
+    """All start indices of identifier *name* in *code* (boundary-checked)."""
+    occ = []
+    i = 0
+    while True:
+        i = code.find(name, i)
+        if i < 0:
+            return occ
+        if _js_code_ident_at(code, name, i):
+            occ.append(i)
+        i += 1
+
+
+def _js_code_has_bare_assign(code):
+    """True if *code* has a bare `=` (assignment, F509 guard).
+
+    `==`, `!=`, `<=`, `>=`, `=>`, `??=`, and compound assignments
+    (`+=`, ...) are not bare: writes through the arguments object
+    (`arguments[0]=x`, or sloppy-mode `arguments = x`) would break
+    the binding model, so only the bare form fails closed.
+    """
+    n = len(code)
+    for i, c in enumerate(code):
+        if c != "=":
+            continue
+        prev = code[i - 1] if i > 0 else ""
+        nxt = code[i + 1] if i + 1 < n else ""
+        if prev not in "=!<>+-*/%&|^?" and nxt not in "=>":
+            return True
+    return False
+
+
+def _js_code_has_arguments_arrow_param(code):
+    """True if an arrow param list names `arguments` (F509 guard).
+
+    `(arguments) => ...` (or `(a, arguments) => ...`) shadows the
+    binding inside that arrow. Conservative: a `=>` whose parameter
+    list cannot be delimited without crossing parens, or is
+    unbalanced, counts as a hit (fail closed).
+    """
+    n = len(code)
+    i = 0
+    while True:
+        i = code.find("=>", i)
+        if i < 0:
+            return False
+        k = i - 1
+        while k >= 0 and code[k] in " \t\n\r":
+            k -= 1
+        if k >= 0 and code[k] == ")":
+            close = k
+            k -= 1
+            found = False
+            while k >= 0:
+                if code[k] in ")":
+                    break  # nested parens: conservative hit below
+                if code[k] == "(":
+                    found = True
+                    break
+                k -= 1
+            if not found:
+                return True  # nested or unbalanced: conservative hit
+            if _js_code_find_idents(code[k + 1:close], "arguments"):
+                return True
+        elif k >= 0 and code[k] in _JS_IDENT_CONT:
+            # Bare identifier param: `arguments => ...` shadows too.
+            kb = k
+            while kb >= 0 and code[kb] in _JS_IDENT_CONT:
+                kb -= 1
+            if code[kb + 1:k + 1] == "arguments":
+                return True
+        i += 2
+    return False
+
+
+def _js_parse_bracket_index(rest):
+    """Parse `[<digits>]` at the start of *rest* (F509).
+
+    Returns (index, chars_consumed), or None when *rest* does not
+    start with a decimal index bracket. Whitespace is tolerated
+    exactly as the engine tokenizes. Never evals.
+    """
+    n = len(rest)
+    k = 0
+    while k < n and rest[k] in " \t\n\r":
+        k += 1
+    if k >= n or rest[k] != "[":
+        return None
+    k += 1
+    while k < n and rest[k] in " \t\n\r":
+        k += 1
+    d0 = k
+    while k < n and rest[k] in "0123456789":
+        k += 1
+    if k == d0:
+        return None
+    if k - d0 > _JS_EXPR_MAX_INT_DIGITS:
+        # int() digit-limit safety (same bound as the F477 numeric
+        # grammar); absurd indices fail closed.
+        return None
+    idx = int(rest[d0:k])
+    while k < n and rest[k] in " \t\n\r":
+        k += 1
+    if k >= n or rest[k] != "]":
+        return None
+    return idx, k + 1
+
+
+def _js_bind_iife_arguments(body_expr, arg_texts):
+    """Bind call-site args to `arguments` in *body_expr* (F509).
+
+    *arg_texts* are the raw source texts of the call-site string
+    literals. Every `arguments` occurrence in code spans must be one
+    of three node-exact forms, verified against node v24.20.0:
+    - `...arguments` -> `...['lit1','lit2']` (the exotic object
+      spreads element-wise, exactly like the array literal);
+    - `arguments[N]` (decimal N, in range) -> the Nth literal's raw
+      text (`arguments[n]` with n < length IS the argument value);
+    - bare `arguments` (not a member/call/index use) ->
+      `['lit1','lit2']` (the exotic object as an array-like).
+    Any other use (`arguments.length`, `arguments(`, non-decimal or
+    out-of-range indices, member access like `x.arguments`) fails
+    closed. Substitution never touches string-literal contents.
+    Returns the rewritten expression text. Raises _JSExprFail on any
+    guard violation. Plain string scanning throughout -- zero new
+    regexes. Never evals.
+    """
+    segs = _js_split_code_strings(body_expr)
+    code = "".join(s for is_code, s in segs if is_code)
+    for kw, msg in (("function", "nested function in f509 body"),
+                    ("delete", "delete in f509 body"),
+                    ("new", "new in f509 body"),
+                    ("class", "class in f509 body")):
+        if _js_code_find_idents(code, kw):
+            raise _JSExprFail(msg)
+    if _js_code_has_bare_assign(code):
+        raise _JSExprFail("assignment in f509 body")
+    if _js_code_has_arguments_arrow_param(code):
+        raise _JSExprFail("arguments as arrow param")
+    arr_text = "[" + ",".join(arg_texts) + "]"
+    out = []
+    for is_code, s in segs:
+        if not is_code:
+            out.append(s)
+            continue
+        pos = 0
+        buf = []
+        for st in _js_code_find_idents(s, "arguments"):
+            en = st + len("arguments")
+            if s[max(0, st - 3):st].endswith("..."):
+                # Spread position: the next non-ws char must continue
+                # the spread site (`,`, `]`, `)`); anything else
+                # (`...arguments.length`) is an unmodeled use.
+                rs = s[en:].lstrip(" \t\n\r")
+                if not rs or rs[0] not in ",])":
+                    raise _JSExprFail("unmodeled arguments use")
+                buf.append(s[pos:st - 3])
+                buf.append("..." + arr_text)
+                pos = en
+                continue
+            rest = s[en:]
+            br = _js_parse_bracket_index(rest)
+            if br is not None:
+                idx, consumed = br
+                if idx >= len(arg_texts):
+                    raise _JSExprFail("arguments index out of range")
+                buf.append(s[pos:st])
+                buf.append(arg_texts[idx])
+                pos = en + consumed
+                continue
+            if rest[:1] in (".", "[", "(") or (st > 0 and s[st - 1] == "."):
+                raise _JSExprFail("unmodeled arguments use")
+            buf.append(s[pos:st])
+            buf.append(arr_text)
+            pos = en
+        buf.append(s[pos:])
+        out.append("".join(buf))
+    rewritten = "".join(out)
+    # Defensive: every code-span occurrence must have been consumed.
+    # (String spans may legitimately contain the word.)
+    rcode = "".join(s for is_code, s in _js_split_code_strings(rewritten)
+                    if is_code)
+    if _js_code_find_idents(rcode, "arguments"):
+        raise _JSExprFail("arguments left unsubstituted")
+    return rewritten
+
+
+def _js_parse_args_binding_iife(text, i, depth, state):
+    """Parse `(function(){return BODY})(lit, ...)` at text[i] (F509).
+
+    Desugars call-site argument binding for the bare `arguments`
+    exotic object: the IIFE must be anonymous with zero parameters
+    and a single `return EXPR;` body (ws-tolerant, optional trailing
+    `;`); the call args must all be string literals (the F489 marker
+    / numeric classes fail closed here -- narrower, documented). The
+    body is rewritten by `_js_bind_iife_arguments` (node-exact for
+    the three modeled `arguments` forms) and the rewritten text is
+    parsed by the normal additive grammar at depth+1, so every
+    downstream decoder, bound, and fail-closed rule applies
+    unchanged. Returns (value, next_index), or None when the head
+    does not match or a guard fails (the caller falls through to
+    fail-closed paths). Bounded by the part/depth budgets; the IIFE
+    wrapper charges one op (obfuscation-shaped), each arg one part.
+    Never evals.
+    """
+    if not _js_peek_args_binding_iife(text, i):
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, i)
+        j = _js_expect(text, j, "(")
+        # The 'function' keyword (peek verified it and its trailing
+        # boundary); _js_expect skips leading whitespace itself.
+        j = _js_skip_ws(text, j) + len("function")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        rk = _js_match_kw(text, _js_skip_ws(text, inner_start), "return")
+        if rk is None:
+            return None  # peek guaranteed it; defensive
+        rk = _js_skip_ws(text, rk)
+        be = inner_end
+        while be > rk and text[be - 1] in " \t\n\r":
+            be -= 1
+        if be > rk and text[be - 1] == ";":
+            be -= 1
+            while be > rk and text[be - 1] in " \t\n\r":
+                be -= 1
+        body_expr = text[rk:be]
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        args = []
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ")":
+            j += 1
+        else:
+            while True:
+                j = _js_skip_ws(text, j)
+                if j >= n or text[j] not in "'\"":
+                    raise _JSExprFail("f509 arg not string literal")
+                a0 = j
+                _, j = _js_parse_string(text, j)
+                args.append(text[a0:j])
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                j = _js_skip_ws(text, j)
+                if j >= n:
+                    raise _JSExprFail("unterminated iife call")
+                if text[j] == ",":
+                    j = _js_skip_ws(text, j + 1)
+                    continue
+                if text[j] == ")":
+                    j += 1
+                    break
+                raise _JSExprFail("bad iife call")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        rewritten = _js_bind_iife_arguments(body_expr, args)
+        val, k = _js_parse_additive(rewritten, 0, depth + 1, state)
+        k = _js_skip_ws(rewritten, k)
+        if k != len(rewritten):
+            raise _JSExprFail("f509 body trailing junk")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
 # Object integrity-level wrappers that return their argument unchanged (the
 # same object reference -- node v24.20.0): a wrapped dispatch receiver is
 # engine-identical to the inner receiver (F502/F503).
@@ -6255,7 +6655,26 @@ def _js_parse_dispatch_receiver(text, i, depth, state):
     if _js_peek_proxy_head(text, _ri):
         return _js_parse_proxy_recv(text, _ri, depth, state)
     if _js_peek_arguments_iife_head(text, _ri):
-        return _js_parse_arguments_iife_recv(text, _ri, depth, state)
+        _saved = dict(state)
+        try:
+            return _js_parse_arguments_iife_recv(text, _ri, depth, state)
+        except _JSExprFail:
+            pass
+        state.clear()
+        state.update(_saved)
+        # F509: (function(){return BODY})(lit, ...) with a general body
+        # -- the call-site argument binding desugar; only array-like
+        # results are valid receivers on this path (a string-valued
+        # body is not a dispatch receiver -- fail closed here).
+        # Note: the whole-text scanner still decodes the IIFE at its
+        # own inner `(` anchor and splices the value, so
+        # `X.prototype.M.call((function(){...})(...), ...)` with a
+        # string-valued body is caught node-exactly one level down
+        # (verified true positive, not a miss).
+        _f509 = _js_parse_args_binding_iife(text, _ri, depth, state)
+        if _f509 is None or not isinstance(_f509[0], _JSArr):
+            raise _JSExprFail("f509 receiver not array-like")
+        return _f509
     if _js_peek_integrity_wrap_head(text, _ri):
         return _js_parse_integrity_wrap_recv(text, _ri, depth, state)
     return _js_parse_additive(text, _ri, depth, state)
@@ -8524,6 +8943,14 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _pmc = _js_parse_paren_member_call(text, i, depth, state)
         if _pmc is not None:
             return _pmc
+        # F509: (function(){return BODY})(lit, ...) -- call-site
+        # argument binding for the bare `arguments` object; None falls
+        # through to the parenthesized-additive path below (which
+        # fails closed on the `function` keyword).
+        _f509 = _js_parse_args_binding_iife(text, i, depth, state)
+        if _f509 is not None:
+            val, i = _f509
+            return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
         val, i = _js_parse_additive(text, i + 1, depth + 1, state,
