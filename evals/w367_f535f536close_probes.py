@@ -318,7 +318,7 @@ def p8_compositions_honest():
 
 def p9_pin_and_footer():
     """Pin stays 2140; re.compile stays 28; F535/F536 CLOSED in
-    FINDINGS; lane-local footer (repointed wave-368 lane 3)."""
+    FINDINGS; lane-local footer (repointed wave-369 lane 2)."""
     if TAXONOMY_PIN != 2140:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
         return ("BREAK", "pin moved: %s" % TAXONOMY_PIN)
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
@@ -327,12 +327,12 @@ def p9_pin_and_footer():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     if text.count("CLOSED 2026-10-07 wave-367 lane 4") < 2:
         return ("BREAK", "F535/F536 CLOSED entries missing")
-    if "**Open findings: F547, F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566, F567, F568, F569.**" not in text:  # wave-368 merge lanes 1-4: F543/F545/F546 CLOSED; lane-3 F547->F567  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+    if "**Open findings: F547, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566, F567, F568, F569.**" not in text:  # Wave-369 lane 2 local: F548/F549/F550 CLOSED (merge finalizes)
         return ("BREAK", "lane-local footer wrong")
-    if "Next free finding: **F570**" not in text:  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+    if "Next free finding: **F570**" not in text:  # Wave-369 lane 2 local: F548/F549/F550 CLOSED (merge finalizes)
         return ("BREAK", "next-free footer wrong")
     return ("HELD", "pin 2140; 28 re.compile; F535/F536 CLOSED; "
-            "footer F567/next F547 (wave-368 merge lanes 1-4)")
+            "footer F547,F551-F569/next F570 (wave-369 lane 2)")
 
 
 def _green_check():

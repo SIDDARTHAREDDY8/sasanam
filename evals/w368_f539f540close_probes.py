@@ -218,15 +218,15 @@ COMPOSITIONS = [
      "new WeakRef({c:'ab'}).deref().c+'cd'", False),
 ]
 
-FOOTER_OPEN = (  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
-               "F547", "F548", "F549", "F550",
+FOOTER_OPEN = (  # Wave-369 lane 2 local: F548/F549/F550 CLOSED (merge finalizes)
+               "F547",
                "F551", "F552", "F553", "F554",
                "F555", "F556", "F557", "F558",
                "F559", "F560", "F561", "F562",
                "F563", "F564", "F565", "F566",
                "F567", "F568", "F569"
-               )  # Wave-368 lane 2 local
-FOOTER_NEXT = "F570"  # Wave-368 lane 2 local  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+               )  # Wave-369 lane 2 local
+FOOTER_NEXT = "F570"  # Wave-369 lane 2 local  # Wave-369 lane 2 local: F548/F549/F550 CLOSED (merge finalizes)
 
 
 def p1_f539_filed_held():
@@ -319,12 +319,12 @@ def p8_pin_and_footer():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     if text.count("CLOSED 2026-10-07 wave-368 lane 2") < 2:
         return ("BREAK", "F539/F540 CLOSED entries missing")
-    if ("**Open findings: %s.**" % ", ".join(FOOTER_OPEN)) not in text:  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+    if ("**Open findings: %s.**" % ", ".join(FOOTER_OPEN)) not in text:  # Wave-369 lane 2 local: F548/F549/F550 CLOSED (merge finalizes)
         return ("BREAK", "lane-local footer wrong")
     if "Next free finding: **%s**" % FOOTER_NEXT not in text:
         return ("BREAK", "next-free footer wrong")
     return ("HELD", "pin 2140; 28 re.compile; F539/F540 CLOSED; "
-            "footer %s/next %s (wave-368 lane 2)"
+            "footer %s/next %s (wave-369 lane 2)"
             % (",".join(FOOTER_OPEN), FOOTER_NEXT))
 
 

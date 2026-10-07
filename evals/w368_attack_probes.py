@@ -160,11 +160,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F548-F560/F562-F565/F567-F569 open, next F570 (wave-369 lane 1)."""
+    """Control: footer shows F551-F560/F562-F565/F567-F569 open, next F570 (wave-369 merge: lanes 1+2 CLOSED)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F570**" in text  # Wave-369 lane 1: F547/F561/F566 CLOSED; next F570
-          and "Open findings: F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F562, F563, F564, F565, F567, F568, F569." in text)  # Wave-369 lane 1: F547/F561/F566 CLOSED
+    ok = ("Next free finding: **F570**" in text  # Wave-369 merge: lanes 1+2 (F547,F561,F566 / F548,F549,F550) CLOSED; next F570
+          and "Open findings: F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F562, F563, F564, F565, F567, F568, F569." in text)  # Wave-369 merge: lanes 1+2 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -473,23 +473,23 @@ def test_p2_f547_closed():
 
 @_t
 def test_p2_f548_open():
-    """F548 OPEN (this round): Object.create prototype-chain reads still miss."""
+    """F548 CLOSED (wave-369 lane 2): Object.create prototype-chain reads now blocks."""
     ms = _misses("Object.create({c:'%s'}).c+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t
 def test_p2_f549_open():
-    """F549 OPEN (this round): getOwnPropertyDescriptor fragment reads still miss."""
+    """F549 CLOSED (wave-369 lane 2): getOwnPropertyDescriptor fragment reads now blocks."""
     ms = _misses("Object.getOwnPropertyDescriptor({c:'%s'},'c').value+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t
 def test_p2_f550_open():
-    """F550 OPEN (this round): defineProperty property-adding still misses."""
+    """F550 CLOSED (wave-369 lane 2): defineProperty property-adding now blocks."""
     ms = _misses("Object.defineProperty({},'c',{get:function(){return '%s';}}).c+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t
