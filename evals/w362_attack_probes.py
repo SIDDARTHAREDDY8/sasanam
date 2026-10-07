@@ -122,12 +122,12 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F506 closed (wave-363 lane 1), F507-F511 open,
-    next F513 (lane-local; the merge finalizes tree-wide)."""
+    """Control: footer shows F506+F507+F508 closed (wave-363 lanes 1+2),
+    F509/F510/F511 open, next F513 (lane-local; merge finalizes)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F513**" in text
-          and "**Open findings: F507, F508, F509, F510, F511.**" in text)
+          and "**Open findings: F509, F510, F511.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -250,32 +250,32 @@ def test_p3_f506_call_closed():
 
 
 @_t
-def test_p3_f507_open():
-    """F507 OPEN: bracket member on string literal misses."""
-    miss = _misses("''['concat']('%s','%s')" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p3_f507_closed():
+    """F507 CLOSED (wave-363 lane 2): bracket member on string literal now blocks."""
+    hit = _blocked("''['concat']('%s','%s')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
-def test_p3_f507_computed_open():
-    """F507 OPEN: computed-key bracket on string literal misses."""
-    miss = _misses("'%s'['c'+'oncat']('%s')" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p3_f507_computed_closed():
+    """F507 CLOSED (wave-363 lane 2): computed-key bracket on string literal now blocks."""
+    hit = _blocked("'%s'['c'+'oncat']('%s')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
-def test_p3_f508_open():
-    """F508 OPEN: Array.from with mapper misses."""
-    miss = _misses("Array.from(['%s','%s'], x=>x).join('')" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p3_f508_closed():
+    """F508 CLOSED (wave-363 lane 2): Array.from with mapper now blocks."""
+    hit = _blocked("Array.from(['%s','%s'], x=>x).join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
-def test_p3_f508_sources_open():
-    """F508 OPEN: Array.from array-like / Set sources miss."""
-    m1 = _misses("Array.from({length:2, 0:'%s', 1:'%s'}).join('')" % (_A, _B))
-    m2 = _misses("Array.from(new Set(['%s','%s'])).join('')" % (_A, _B))
-    return ("HELD" if (m1 and m2) else "BREAK", "miss=%s/%s" % (m1, m2))
+def test_p3_f508_sources_closed():
+    """F508 CLOSED (wave-363 lane 2): Array.from array-like / Set sources now block."""
+    h1 = _blocked("Array.from({length:2, 0:'%s', 1:'%s'}).join('')" % (_A, _B))
+    h2 = _blocked("Array.from(new Set(['%s','%s'])).join('')" % (_A, _B))
+    return ("HELD" if (h1 and h2) else "BREAK", "hit=%s/%s (want block)" % (h1, h2))
 
 
 @_t
