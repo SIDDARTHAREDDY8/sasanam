@@ -160,9 +160,8 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F558/F560/F562/F563/F567/F568/F569 open, next F570 (wave-369 merge: lanes 1-5 CLOSED)."""
-    ok = ("Next free finding: **F570**" in text  # Wave-369 merge: lanes 1-5 (F547-F557,F565) CLOSED; next F570
-          and "**Open findings: F558, F560, F562, F563, F567, F568, F569.**" in text)  # Wave-369 merge: lanes 1-5 CLOSED
+    """Control: footer shows no open findings, next F570 (wave-369 merge: lanes 1-7 CLOSED; maintenance finalizes)."""
+    ok = ("Next free finding: **F570**" in text)  # Wave-369 merge: lanes 1-7 (F547-F569) CLOSED; maintenance finalizes open set
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -541,9 +540,10 @@ def test_p2_f557_closed():
 
 @_t
 def test_p2_f558_open():
-    """F558 OPEN (this round): object-pattern in Reflect.apply target still misses."""
+    """F558 CLOSED 2026-10-07 wave-369 lane 7: object-pattern in Reflect.apply
+    target now blocks coded."""
     ms = _misses("Reflect.apply(function(){const {0:a,1:b}=arguments;return a+b;},null,['%s','%s'])" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("BREAK" if ms else "HELD", "miss=%s" % ms)
 
 
 @_t
