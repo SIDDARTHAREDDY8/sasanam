@@ -424,7 +424,7 @@ def p4_pin_and_footer():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     assert "Next free finding: **F506**" in text
     assert "**Open findings: F503, F504, F505.**" in text  # Wave-361 lane 1: F496, F497 CLOSED locally (merge finalizes tree-wide)
-    return ("HELD", "pin=2135 footer open F498-F502 next F503 (wave-361 lane 1 local)")
+    return ("HELD", "pin=2135 footer open F503, F504, F505 next F506 (wave-361 merge)")
 
 
 PROBES = [

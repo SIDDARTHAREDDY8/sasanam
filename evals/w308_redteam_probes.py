@@ -124,7 +124,7 @@ def p_footer_state():
     # Wave-359 merge: repointed to open F489, F490, F491, F492, F493, F494, F495 / next F506 (footer-state probe audit).
     if nxt != 506 or open_s != "F503, F504, F505":
         return _record("footer-state", "BREAK",
-                       "footer pins next F%d open '%s', want next F503 open 'F489, F490, F491, F492, F493, F494, F495'" % (nxt, open_s))
+                       "footer pins next F%d open '%s', want next F506 open 'F489, F490, F491, F492, F493, F494, F495'" % (nxt, open_s))
     _record("footer-state", "HELD", "footer pins open F489, F490, F491, F492, F493, F494, F495 / next F506")
 
 

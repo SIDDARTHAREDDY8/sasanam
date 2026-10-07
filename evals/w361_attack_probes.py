@@ -126,55 +126,57 @@ def test_p0_closed_f480_direct():
     return ("HELD" if _blocked(p) else "BREAK", "F480 direct")
 
 
-# ------------------------------------------------- open pins (round 28)
+# ------------------------------------------------- closed pins (wave-361
+# merge: F496-F502 closed by lanes 1-3; flipped from open pins per
+# wave-306 maintenance)
 
 @_t
-def test_p1_f496_open():
-    """F496 OPEN: ownKeys enumeration indirection still misses."""
+def test_p1_f496_closed():
+    """F496 CLOSED: ownKeys enumeration indirection now blocks."""
     p = "Array.prototype[Reflect.ownKeys(Array.prototype).filter(k=>k==='concat')[0]].call([], '%s','%s').join('')" % (_A, _B)
-    return ("HELD" if _misses(p) else "BREAK", "F496 pin")
+    return ("HELD" if _blocked(p) else "BREAK", "F496 pin")
 
 
 @_t
-def test_p1_f497_open():
-    """F497 OPEN: non-empty-array constructor factory still misses."""
+def test_p1_f497_closed():
+    """F497 CLOSED: non-empty-array constructor factory now blocks."""
     p = "['x'].constructor.of('%s','%s').join('')" % (_A, _B)
-    return ("HELD" if _misses(p) else "BREAK", "F497 pin")
+    return ("HELD" if _blocked(p) else "BREAK", "F497 pin")
 
 
 @_t
-def test_p1_f498_open():
-    """F498 OPEN: bracket Reflect['construct'] still misses."""
+def test_p1_f498_closed():
+    """F498 CLOSED: bracket Reflect['construct'] now blocks."""
     p = "Reflect['construct'](Array, ['%s','%s']).join('')" % (_A, _B)
-    return ("HELD" if _misses(p) else "BREAK", "F498 pin")
+    return ("HELD" if _blocked(p) else "BREAK", "F498 pin")
 
 
 @_t
-def test_p1_f499_open():
-    """F499 OPEN: string-literal spread still misses."""
+def test_p1_f499_closed():
+    """F499 CLOSED: string-literal spread now blocks."""
     p = "[...'%s', ...'%s'].join('')" % (_A, _B)
-    return ("HELD" if _misses(p) else "BREAK", "F499 pin")
+    return ("HELD" if _blocked(p) else "BREAK", "F499 pin")
 
 
 @_t
-def test_p1_f500_open():
-    """F500 OPEN: fromCharCode spread args still miss."""
+def test_p1_f500_closed():
+    """F500 CLOSED: fromCharCode spread args now block."""
     p = "String.fromCharCode(...[120, 111, 120, 98, 45, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 100, 101, 102])"
-    return ("HELD" if _misses(p) else "BREAK", "F500 pin")
+    return ("HELD" if _blocked(p) else "BREAK", "F500 pin")
 
 
 @_t
-def test_p1_f501_open():
-    """F501 OPEN: value-binding fragment assembly still misses."""
+def test_p1_f501_closed():
+    """F501 CLOSED: value-binding fragment assembly now blocks."""
     p = "const a='%s', b='%s'; a+b" % (_A, _B)
-    return ("HELD" if _misses(p) else "BREAK", "F501 pin")
+    return ("HELD" if _blocked(p) else "BREAK", "F501 pin")
 
 
 @_t
-def test_p1_f502_open():
-    """F502 OPEN: freeze receivers still miss."""
+def test_p1_f502_closed():
+    """F502 CLOSED: freeze receivers now block."""
     p = "Array.prototype.join.call(Object.freeze({length:2,0:'%s',1:'%s'}), '')" % (_A, _B)
-    return ("HELD" if _misses(p) else "BREAK", "F502 pin")
+    return ("HELD" if _blocked(p) else "BREAK", "F502 pin")
 
 
 # ------------------------------------------------- open pins (this round)

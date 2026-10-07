@@ -253,10 +253,10 @@ def p2_neighbors_hold():
 
 
 def p2_open_findings_still_open():
-    # F496/F497/F500/F501/F502 must stay BREAK-open on this tree.
-    # Honest filed shapes (from the w360 red-first batteries / F502
-    # entry): each node-recovers the credential but must not block.
-    open_shapes = [
+    # F496/F497 (lane 1) and F500/F501/F502 (lane 3) are CLOSED on the
+    # merged tree -- their shapes must now block (wave-306 maintenance).
+    # F503/F504/F505 (attack round 29) stay BREAK-open.
+    closed_shapes = [
         # F496: Reflect.ownKeys enumeration indirection
         "Array.prototype[Reflect.ownKeys(Array.prototype).filter(k=>k==='concat')[0]].call([], '%s','%s').join('')" % (_A, _B),
         # F497: non-empty-array constructor-property factory
@@ -268,10 +268,21 @@ def p2_open_findings_still_open():
         # F502: Object.freeze-wrapped array-like receiver
         "Array.prototype.join.call(Object.freeze({length:2,0:'%s',1:'%s'}), '')" % (_A, _B),
     ]
+    bad = [s for s in closed_shapes if not _blocked(s)]
+    if bad:
+        return ("BREAK", "closed finding missed: %s" % bad)
+    open_shapes = [
+        # F503: Object.seal-wrapped array-like receiver
+        "Array.prototype.concat.call(Object.seal(['%s','%s']), []).join('')" % (_A, _B),
+        # F504: bracket-form Reflect.apply
+        "Reflect['apply']([].concat, [], ['%s','%s']).join('')" % (_A, _B),
+        # F505: String.fromCodePoint with spread args
+        "String.fromCodePoint(...[120,111,120,98,45,48,49,50,51])",
+    ]
     bad = [s for s in open_shapes if _blocked(s)]
     if bad:
         return ("BREAK", "open finding accidentally closed: %s" % bad)
-    return ("HELD", "F496/F497/F500/F501/F502 still open")
+    return ("HELD", "F496/F497/F500/F501/F502 closed; F503/F504/F505 still open")
 
 
 # ------------------------------------------------------------ P3: decoder pins

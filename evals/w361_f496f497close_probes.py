@@ -370,6 +370,10 @@ def p2_neighbors_intact():
         "Array.prototype['con'+'cat'].call([], '%s','%s').join('')" % (_A, _B),  # F492
         "String.raw({raw:['%s','%s']})" % (_A, _B),  # F493
         "[...new Set(['%s','%s'])].join('')" % (_A, _B),  # F494
+        "Reflect['construct'](Array, ['%s','%s']).join('')" % (_A, _B),  # F498 CLOSED (wave-361 lane 2; merge maintenance)
+        "[...'%s',...'%s'].join('')" % (_A, _B),  # F499 CLOSED (wave-361 lane 2; merge maintenance)
+        "Array.prototype.join.call(Object.freeze({length:2,0:'%s',1:'%s'}), '')" % (_A, _B),  # F502 CLOSED (wave-361 lane 3; merge maintenance)
+        "const a='%s'; const b='%s'; a+b" % (_A, _B),  # F501 CLOSED (wave-361 lane 3; merge maintenance)
     ]
     for payload in closed:
         v, _ = _verdict(payload, True)
@@ -377,18 +381,14 @@ def p2_neighbors_intact():
             return ("BREAK", "closed neighbor missed: %s" % payload[:60])
     # Open findings must still miss.
     open_shapes = [
-        "Reflect['construct'](Array, ['%s','%s']).join('')" % (_A, _B),  # F498
-        "[...'%s',...'%s'].join('')" % (_A, _B),  # F499
         "String.fromCharCode(...['%s','%s'].map(c=>c.charCodeAt(0)))" % (_A, _B),  # F500-adjacent (must miss: non-literal map)
-        "Array.prototype.join.call(Object.freeze({length:2,0:'%s',1:'%s'}), '')" % (_A, _B),  # F502 (freeze-wrapped receiver)
-        "const a='%s'; const b='%s'; a+b" % (_A, _B),  # F501 (value bindings)
         "Array.prototype.concat.call(Object.seal([]), '%s','%s').join('')" % (_A, _B),  # F503 (seal-wrapped receiver)
     ]
     for payload in open_shapes:
         v, _ = _verdict(payload, False)
         if v != "HELD":
             return ("BREAK", "open finding decoded: %s" % payload[:60])
-    return ("HELD", "closed neighbors decode; F498/F499/F500/F501/F502/F503 still miss")
+    return ("HELD", "closed neighbors decode; F500-adjacent/F503 still miss")
 
 
 # ------------------------------------------------------- P3: decoder pins

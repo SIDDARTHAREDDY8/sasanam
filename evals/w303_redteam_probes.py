@@ -129,7 +129,7 @@ def p_footer_state():
     # Wave-342 lane 6: repointed to open F429 / next F430 (footer-state probe audit).
     if nxt != 506 or open_s != want_open:
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F503 open 'F503, F504, F505')"
+                       "footer drift: next F%d open %r (want next F506 open 'F503, F504, F505')"
                        % (nxt, open_s))
     _record("footer-state", "HELD",
             "footer pins open F436 / next F437")

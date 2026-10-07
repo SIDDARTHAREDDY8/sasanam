@@ -141,7 +141,7 @@ def p_footer_state():
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next 503 open 'F503, F504, F505')" % (nxt, open_s))
     _record("footer-state", "HELD",
-            "footer: open F496-F502 / next F506")
+            "footer: open F503, F504, F505 / next F506")
 
 
 AT = 1_700_000_000
