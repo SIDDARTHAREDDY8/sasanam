@@ -2109,14 +2109,18 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|\(")
 # F536: the structuredClone anchor carries its own ident-boundary
 # lookahead so `structuredClonex(` never anchors (no wasted F512
 # total-attempt budget); the primary branch re-checks the boundary
 # defensively.
 # F539: `Object.freeze` joins the Object member anchor class (same
 # ws-tolerant class as `assign`), so `Object .freeze(...)` reaches
-# _js_parse_f539_object_identity. The `new WeakRef` anchor carries
+# _js_parse_f539_object_identity. F548/F550: `Object.create` and
+# `Object.defineProperty` join the same class (alternation members
+# added to the existing pattern -- the module keeps its 28 compiled
+# patterns), so they reach _js_parse_f548_object_create /
+# _js_parse_f550_define_property. The `new WeakRef` anchor carries
 # the same ident-boundary lookahead as structuredClone, so
 # `new WeakRefx(` never anchors; the primary branch re-checks both
 # keywords defensively via _js_match_kw.
@@ -8561,15 +8565,55 @@ def _js_parse_object_literal_values(text, i, depth, state):
 class _JSObj:
     """Statically-resolved object literal (F535/F536).
 
-    props maps key -> str (string value) or _JSObj (nested object).
-    A resolved object only ever flows through _js_parse_postfix
+    props maps key -> str (string value) | _JSObj (nested object) |
+    _JSAccessor (a getter, already evaluated -- only produced when an
+    object is parsed accessor-aware, F549). proto is the prototype
+    object for Object.create results (F548): member reads delegate
+    down the chain (own properties shadow), engine-exact for the
+    data/getter-evaluated properties this decoder resolves. A
+    resolved object only ever flows through _js_parse_postfix
     member reads; any other use fails closed (it never reaches the
     additive, so it can never be mis-decoded as a string).
     """
-    __slots__ = ("props",)
+    __slots__ = ("props", "proto")
 
-    def __init__(self, props):
+    def __init__(self, props, proto=None):
         self.props = props
+        self.proto = proto
+
+
+class _JSAccessor:
+    """A getter on a statically-parsed object (F549).
+
+    Produced only by _js_parse_f535_object when accessor_aware=True:
+    wraps the getter's already-evaluated return value (str | _JSObj).
+    The engine invokes the getter on read; the static model already
+    holds the value (the return grammar has no `this`, so the
+    evaluation is argument-independent). Flows only into F549
+    descriptor construction; the _JSObj postfix member-read branch
+    unwraps it via _jsobj_lookup. Never evals.
+    """
+    __slots__ = ("value",)
+
+    def __init__(self, value):
+        self.value = value
+
+
+def _jsobj_lookup(obj, key):
+    """Resolve *key* on a _JSObj, walking the F548 prototype chain.
+
+    Returns the stored value (unwrapping _JSAccessor), or None when
+    the key resolves nowhere. Getters were already evaluated at
+    literal-parse time, matching the engine's read-time invocation
+    (node v24.20.0). Never evals.
+    """
+    cur = obj
+    while cur is not None:
+        if key in cur.props:
+            v = cur.props[key]
+            return v.value if isinstance(v, _JSAccessor) else v
+        cur = cur.proto
+    return None
 
 
 def _js_f535_deepcopy(props):
@@ -8577,15 +8621,20 @@ def _js_f535_deepcopy(props):
     (F536): the structuredClone deep-copy identity. Strings are
     immutable; nested _JSObj values are rebuilt so the clone shares
     no structure with the source -- a later mutation of the clone
-    cannot alias the original (node-verified semantics)."""
+    cannot alias the original (node-verified semantics). _JSAccessor
+    values unwrap to their evaluated result: the engine's
+    structuredClone reads the property (invoking the getter), so the
+    clone holds a data property (node v24.20.0 verified)."""
     out = {}
     for k, v in props.items():
+        if isinstance(v, _JSAccessor):
+            v = v.value
         out[k] = (_JSObj(_js_f535_deepcopy(v.props))
                   if isinstance(v, _JSObj) else v)
     return out
 
 
-def _js_parse_f535_value(text, i, depth, state):
+def _js_parse_f535_value(text, i, depth, state, accessor_aware=False):
     """Parse one F535 object-literal value at text[i] (F535/F536).
 
     Returns (str | _JSObj, next_index). Values: string literals,
@@ -8594,6 +8643,9 @@ def _js_parse_f535_value(text, i, depth, state):
     and fail closed), or nested object literals (depth-bounded).
     Arrays, template literals, booleans, null, and non-canonical
     numbers fail closed (documented boundary). Never evals.
+
+    accessor_aware (F549): propagated to nested object parses so
+    getter-ness survives at every level.
     """
     n = len(text)
     if i >= n:
@@ -8617,12 +8669,13 @@ def _js_parse_f535_value(text, i, depth, state):
             raise _JSExprFail("non-canonical number")
         return lit, m
     if c == "{":
-        props, j = _js_parse_f535_object(text, i, depth + 1, state)
+        props, j = _js_parse_f535_object(text, i, depth + 1, state,
+                                         accessor_aware=accessor_aware)
         return _JSObj(props), j
     raise _JSExprFail("object value not a literal")
 
 
-def _js_parse_f535_object(text, i, depth, state):
+def _js_parse_f535_object(text, i, depth, state, accessor_aware=False):
     """Parse `{k0:v0, ...}` at text[i] (text[i] == '{') (F535/F536).
 
     Returns (props, next_index): props maps key -> str | _JSObj.
@@ -8635,6 +8688,11 @@ def _js_parse_f535_object(text, i, depth, state):
     elements, and computed keys fail closed (documented boundary).
     Duplicate keys: the later value wins (engine-exact). Each
     property charges the F430 parts budget. Never evals.
+
+    accessor_aware (F549): getters resolve to _JSAccessor(VAL)
+    instead of VAL, preserving the data-vs-accessor distinction the
+    getOwnPropertyDescriptor builtin needs. All other callers use
+    the default (plain evaluated values).
     """
     n = len(text)
     if depth >= _JS_EXPR_MAX_DEPTH:
@@ -8687,7 +8745,8 @@ def _js_parse_f535_object(text, i, depth, state):
             if gk >= n or text[gk] != "}":
                 raise _JSExprFail("bad getter body")
             j = _js_skip_ws(text, gk + 1)
-            props[gname] = gval
+            props[gname] = (_JSAccessor(gval) if accessor_aware
+                            else gval)
             state["parts"] += 1
             if state["parts"] > _JS_EXPR_MAX_PARTS:
                 raise _JSExprFail("too many parts")
@@ -8700,7 +8759,8 @@ def _js_parse_f535_object(text, i, depth, state):
             if k >= n or text[k] != ":":
                 raise _JSExprFail("object literal needs colon")
             val, j = _js_parse_f535_value(text, _js_skip_ws(text, k + 1),
-                                          depth, state)
+                                          depth, state,
+                                          accessor_aware=accessor_aware)
             props[key] = val
             state["parts"] += 1
             if state["parts"] > _JS_EXPR_MAX_PARTS:
@@ -9021,6 +9081,442 @@ def _js_parse_f539_weakref(text, i, depth, state):
     if j >= n or text[j] != ")":
         raise _JSExprFail("deref takes no arguments")
     return _JSObj(props), j + 1
+
+
+def _js_parse_descriptor_getter(text, k, depth, state):
+    """Parse `function(){return EXPR;}` at text[k] (F548/F550).
+
+    Returns (evaluated_value, next_index). The engine invokes the
+    getter on property read; the static model evaluates the return
+    expression with _js_parse_f535_getter_value (the F535 getter
+    grammar -- `this`-dependent bodies fail closed there, so the
+    evaluation is argument-independent, node v24.20.0 verified).
+    An optional function name is accepted (engine-exact). Arrow
+    getters fail closed (documented boundary -- the filed shapes use
+    function expressions). Never evals.
+    """
+    n = len(text)
+    if not (text.startswith("function", k)
+            and (k + 8 >= n or text[k + 8] not in _JS_IDENT_CONT)):
+        raise _JSExprFail("getter not a function expression")
+    k = _js_skip_ws(text, k + 8)
+    if k < n and text[k] in _JS_IDENT_START:
+        _, k = _js_parse_ident(text, k)
+        k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("getter needs parens")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("getter takes no args")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "{":
+        raise _JSExprFail("getter needs a body")
+    k = _js_skip_ws(text, k + 1)
+    if not (text.startswith("return", k)
+            and (k + 6 >= n or text[k + 6] not in _JS_IDENT_CONT)):
+        raise _JSExprFail("getter body not a return")
+    gval, k = _js_parse_f535_getter_value(text, _js_skip_ws(text, k + 6),
+                                          depth + 1, state)
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ";":
+        k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "}":
+        raise _JSExprFail("bad getter body")
+    return gval, k + 1
+
+
+def _js_parse_f548f550_descriptor(text, j, depth, state):
+    """Parse a property-descriptor object `{...}` at text[j] == '{'
+    (F548/F550).
+
+    Returns ("value", val, next_index) for `{value: V}` (V via
+    _js_parse_f535_value) or ("get", fnval, next_index) for
+    `{get:function(){return EXPR}}` (via _js_parse_descriptor_getter).
+    `writable`/`enumerable`/`configurable` with true/false literals
+    are accepted and ignored (they do not affect the decoded value)
+    -- except `writable` alongside `get`: the engine throws
+    TypeError on {get, writable} (either boolean, node v24.20.0
+    verified), so that combination fails closed rather than
+    mis-decoding a shape the engine rejects.
+    `set` descriptors and any other descriptor key fail closed --
+    the engine would invoke them on read/write, which the static
+    model cannot reproduce node-exactly. `{value:V, get:...}`
+    together throws in the engine (node v24.20.0 verified), so a
+    second semantic key fails closed. Keys: identifiers or string
+    literals. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    k = _js_skip_ws(text, j + 1)
+    kind = None
+    val = None
+    saw_writable = False
+    if k < n and text[k] == "}":
+        raise _JSExprFail("empty descriptor")
+    while True:
+        k = _js_skip_ws(text, k)
+        if k >= n:
+            raise _JSExprFail("unterminated descriptor")
+        c = text[k]
+        if c in "'\"":
+            dkey, k = _js_parse_string(text, k)
+        elif c in _JS_IDENT_START:
+            dkey, k = _js_parse_ident(text, k)
+        else:
+            raise _JSExprFail("descriptor key not a literal")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ":":
+            raise _JSExprFail("descriptor needs colon")
+        k = _js_skip_ws(text, k + 1)
+        if dkey == "value":
+            if kind is not None:
+                raise _JSExprFail("descriptor has two semantics")
+            v, k = _js_parse_f535_value(text, k, depth, state)
+            kind, val = "value", v
+        elif dkey == "get":
+            if kind is not None:
+                raise _JSExprFail("descriptor has two semantics")
+            if saw_writable:
+                # The engine throws TypeError on {get, writable}
+                # (either boolean, node v24.20.0 verified) -- decoding
+                # it would mis-decode a shape the engine rejects.
+                raise _JSExprFail("get with writable throws")
+            v, k = _js_parse_descriptor_getter(text, k, depth, state)
+            kind, val = "get", v
+        elif dkey in ("writable", "enumerable", "configurable"):
+            if (text.startswith("true", k)
+                    and (k + 4 >= n
+                         or text[k + 4] not in _JS_IDENT_CONT)):
+                k += 4
+            elif (text.startswith("false", k)
+                    and (k + 5 >= n
+                         or text[k + 5] not in _JS_IDENT_CONT)):
+                k += 5
+            else:
+                raise _JSExprFail("descriptor flag not a boolean")
+            if dkey == "writable":
+                if kind == "get":
+                    # The engine throws TypeError on {get, writable}
+                    # (either boolean, node v24.20.0 verified).
+                    raise _JSExprFail("get with writable throws")
+                saw_writable = True
+        else:
+            # `set` and anything else fail closed (documented).
+            raise _JSExprFail("descriptor key not modeled")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ",":
+            k = _js_skip_ws(text, k + 1)
+            continue
+        if k < n and text[k] == "}":
+            if kind is None:
+                raise _JSExprFail("descriptor without value")
+            return kind, val, k + 1
+        raise _JSExprFail("bad descriptor")
+
+
+def _js_parse_f548_props_object(text, j, depth, state):
+    """Parse the PROPS properties-object `{k:DESC, ...}` of
+    Object.create's second argument at text[j] == '{' (F548).
+
+    Returns (own_props, next_index). Each value is a descriptor
+    parsed by _js_parse_f548f550_descriptor: only `value`
+    descriptors are modeled -- a `get` descriptor fails closed
+    (documented boundary; the engine would install an accessor,
+    which the static own-property map cannot reproduce
+    node-exactly). Keys follow the F535 key grammar (`__proto__`
+    fails closed). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    own = {}
+    k = _js_skip_ws(text, j + 1)
+    if k < n and text[k] == "}":
+        return own, k + 1
+    while True:
+        k = _js_skip_ws(text, k)
+        if k >= n:
+            raise _JSExprFail("unterminated props object")
+        c = text[k]
+        if c in "'\"":
+            pkey, k = _js_parse_string(text, k)
+        elif c in _ASCII_DIGITS:
+            m = k + 1
+            while m < n and text[m] in _ASCII_DIGITS:
+                m += 1
+            pkey, k = text[k:m], m
+        elif c in _JS_IDENT_START:
+            pkey, k = _js_parse_ident(text, k)
+        else:
+            raise _JSExprFail("props key not a literal")
+        if pkey == "__proto__":
+            raise _JSExprFail("__proto__ key fails closed")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ":":
+            raise _JSExprFail("props needs colon")
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "{":
+            raise _JSExprFail("props value not a descriptor")
+        dkind, dval, k = _js_parse_f548f550_descriptor(text, k, depth,
+                                                       state)
+        if dkind != "value":
+            raise _JSExprFail("props getter fails closed")
+        own[pkey] = dval
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ",":
+            k = _js_skip_ws(text, k + 1)
+            continue
+        if k < n and text[k] == "}":
+            return own, k + 1
+        raise _JSExprFail("bad props object")
+
+
+def _js_parse_f548_object_create(text, i, depth, state):
+    """Parse `Object.create(PROTO[, PROPS])` at text[i] (F548).
+
+    Returns (_JSObj, next_index), or None when text[i] is not an
+    `Object.create` head (the caller falls through). The engine
+    builds a new object with PROTO as its prototype: the decoded
+    value is a _JSObj whose member reads delegate down the
+    prototype chain via _jsobj_lookup (own properties shadow,
+    engine-exact -- the chain is built from already-evaluated
+    literal properties, so read-time getter invocation matches the
+    engine, node v24.20.0 verified).
+
+    PROTO: an object literal (parsed by _js_parse_f535_object), a
+    nested `Object.create(...)` (the filed nested shape), or `null`
+    (reads fail closed -- the engine yields undefined, which is not
+    a decodable value). Any other proto (identifiers, calls,
+    arrays, templates) fails closed (documented boundary). PROPS
+    (optional): `{}` or a properties-object parsed by
+    _js_parse_f548_props_object. Dot form only (`Object['create']`
+    fails closed, documented residual). Never evals.
+    """
+    n = len(text)
+    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+        return None
+    j = i + len("Object")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        return None
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        return None
+    j = _js_skip_ws(text, j + 1)
+    if not text.startswith("create", j):
+        return None
+    k = j + len("create")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        return None
+    # The `create` member commits the parse: malformed shapes fail
+    # closed.
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("create without paren")
+    k = _js_skip_ws(text, k + 1)
+    if depth + 1 >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    if k < n and text[k] == "{":
+        pprops, k = _js_parse_f535_object(text, k, depth + 1, state)
+        proto = _JSObj(pprops)
+    elif text.startswith("Object", k):
+        # Nested Object.create(...) -- the recursive call
+        # re-validates the head (its i-1 guard rejects a
+        # mid-identifier `Object`, engine-exact).
+        sub = _js_parse_f548_object_create(text, k, depth + 1, state)
+        if sub is None:
+            raise _JSExprFail("create proto not an object")
+        proto, k = sub
+    elif (text.startswith("null", k)
+            and (k + 4 >= n or text[k + 4] not in _JS_IDENT_CONT)):
+        proto, k = None, k + 4
+    else:
+        raise _JSExprFail("create proto not a literal")
+    own = {}
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ",":
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "{":
+            raise _JSExprFail("create props not an object")
+        own, k = _js_parse_f548_props_object(text, k, depth + 1,
+                                             state)
+        k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("create unterminated")
+    state["ops"] += 1  # the create call is obfuscation-shaped
+    return _JSObj(own, proto=proto), k + 1
+
+
+def _js_parse_f549_gopd_object(text, i, depth, state):
+    """Parse `Object.getOwnPropertyDescriptor(OBJLIT, KEY).value` /
+    `.get()` at text[i] (F549).
+
+    Returns (value, next_index) with the postfix chain applied, or
+    None when text[i] is not a getOwnPropertyDescriptor head with an
+    object-literal target (the caller falls through to F491, which
+    owns the Array/String-prototype targets). The target is parsed
+    accessor-aware by _js_parse_f535_object, so the data-vs-accessor
+    distinction survives:
+    - data property + `.value` (dot form): the parsed value
+      (engine-exact: gopd returns the data descriptor).
+    - accessor property + `.get()` (zero-arg call): the getter's
+      already-evaluated return value (engine-exact: the engine
+      invokes the getter with no arguments; the return grammar has
+      no `this`, so the evaluation is argument-independent, node
+      v24.20.0 verified).
+    `.value` on an accessor / `.get()` on a data property fail
+    closed (node: the field is undefined -- not a decodable value).
+    `.set`, `.writable`, `.enumerable`, `.configurable`, and bracket
+    forms (`['value']`) fail closed (documented boundary). A missing
+    key fails closed (node: gopd returns undefined). KEY is a string
+    literal (filed shapes); computed keys fail closed. Exactly two
+    arguments. Never evals.
+    """
+    n = len(text)
+    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+        return None
+    j = i + len("Object")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        return None
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        return None
+    j = _js_skip_ws(text, j + 1)
+    if not text.startswith("getOwnPropertyDescriptor", j):
+        return None
+    k = j + len("getOwnPropertyDescriptor")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        return None  # getOwnPropertyDescriptors -- not this builtin
+    # The member commits the parse: malformed shapes fail closed.
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("gopd without paren")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "{":
+        # Not an object-literal target: F491 owns the remaining
+        # target classes -- fall through without committing.
+        return None
+    props, k = _js_parse_f535_object(text, k, depth, state,
+                                     accessor_aware=True)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ",":
+        raise _JSExprFail("gopd without key")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] not in "'\"":
+        raise _JSExprFail("gopd key not a literal")
+    key, k = _js_parse_string(text, k)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("gopd unterminated")
+    k = _js_skip_ws(text, k + 1)
+    if key not in props:
+        raise _JSExprFail("gopd missing key")
+    raw = props[key]
+    is_accessor = isinstance(raw, _JSAccessor)
+    if k < n and text[k] == ".":
+        k = _js_skip_ws(text, k + 1)
+        if (text.startswith("value", k)
+                and (k + 5 >= n
+                     or text[k + 5] not in _JS_IDENT_CONT)):
+            if is_accessor:
+                raise _JSExprFail("gopd .value on accessor")
+            val, k = raw, k + 5
+        elif (text.startswith("get", k)
+                and (k + 3 >= n
+                     or text[k + 3] not in _JS_IDENT_CONT)):
+            if not is_accessor:
+                raise _JSExprFail("gopd .get on data property")
+            k = _js_skip_ws(text, k + 3)
+            if k >= n or text[k] != "(":
+                raise _JSExprFail("gopd .get without call")
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] != ")":
+                raise _JSExprFail("gopd .get takes no args")
+            val, k = raw.value, k + 1
+        else:
+            raise _JSExprFail("gopd field not modeled")
+    else:
+        raise _JSExprFail("gopd without terminal read")
+    state["ops"] += 1  # the descriptor indirection is
+                       # obfuscation-shaped
+    return _js_parse_postfix(text, k, val, depth, state)
+
+
+def _js_parse_f550_define_property(text, i, depth, state):
+    """Parse `Object.defineProperty(OBJ, KEY, DESC)` at text[i]
+    (F550).
+
+    Returns (_JSObj, next_index), or None when text[i] is not an
+    `Object.defineProperty` head (the caller falls through). The
+    engine defines the property on TARGET and returns TARGET: the
+    decoded value is a fresh props dict -- the target's parsed
+    properties plus KEY -> the descriptor's value (later wins,
+    engine-exact). DESC is parsed by _js_parse_f548f550_descriptor:
+    `{value: V}` installs V (via _js_parse_f535_value);
+    `{get:function(){return EXPR}}` installs the getter's evaluated
+    return value (the engine invokes the getter on read; the static
+    model evaluates the return expression, exactly like F535
+    getters -- `this`-dependent bodies fail closed because the
+    value grammar has no `this`). `set` descriptors fail closed
+    (documented). TARGET: `{}` or an object literal (freshly parsed
+    per call -- no aliasing). KEY: a string literal (`__proto__`
+    fails closed). Exactly three arguments; dot form only
+    (`Object['defineProperty']` fails closed, documented residual).
+    Never evals.
+    """
+    n = len(text)
+    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+        return None
+    j = i + len("Object")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        return None
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        return None
+    j = _js_skip_ws(text, j + 1)
+    if not text.startswith("defineProperty", j):
+        return None
+    k = j + len("defineProperty")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        return None  # defineProperties -- not this builtin
+    # The member commits the parse: malformed shapes fail closed.
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("defineProperty without paren")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "{":
+        raise _JSExprFail("defineProperty target not an object")
+    tprops, k = _js_parse_f535_object(text, k, depth, state)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ",":
+        raise _JSExprFail("defineProperty without key")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] not in "'\"":
+        raise _JSExprFail("defineProperty key not a literal")
+    key, k = _js_parse_string(text, k)
+    if key == "__proto__":
+        raise _JSExprFail("__proto__ key fails closed")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ",":
+        raise _JSExprFail("defineProperty without descriptor")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "{":
+        raise _JSExprFail("defineProperty descriptor not an object")
+    _, dval, k = _js_parse_f548f550_descriptor(text, k, depth, state)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("defineProperty unterminated")
+    state["ops"] += 1  # the defineProperty call is
+                       # obfuscation-shaped
+    new_props = dict(tprops)
+    new_props[key] = dval
+    return _JSObj(new_props), k + 1
 
 
 def _js_parse_f540_reflect_get_object(text, j, depth, state):
@@ -14949,11 +15445,13 @@ def _js_parse_postfix(text, i, value, depth, state):
         if j >= len(text):
             return value, i
         # F535/F536: member reads on a statically-resolved object
-        # literal (or a structuredClone / Proxy-passthrough result).
-        # Dot and string-literal bracket reads resolve against the
-        # parsed properties; a missing key, a non-literal member, or
-        # any other step fails closed -- the _JSObj never escapes the
-        # postfix chain as a value (the additive cannot consume it).
+        # literal (or a structuredClone / Proxy-passthrough /
+        # Object.create result). Dot and string-literal bracket reads
+        # resolve against the parsed properties, walking the F548
+        # prototype chain (own properties shadow, engine-exact); a
+        # missing key, a non-literal member, or any other step fails
+        # closed -- the _JSObj never escapes the postfix chain as a
+        # value (the additive cannot consume it).
         if isinstance(value, _JSObj):
             if text[j] == ".":
                 _mk = _js_skip_ws(text, j + 1)
@@ -14969,10 +15467,11 @@ def _js_parse_postfix(text, i, value, depth, state):
                                       "literal")
             else:
                 raise _JSExprFail("object literal needs a member read")
-            if _mname not in value.props:
+            _mval = _jsobj_lookup(value, _mname)
+            if _mval is None:
                 raise _JSExprFail("missing object key")
             state["ops"] += 1  # the member read is obfuscation-shaped
-            value, i = value.props[_mname], _mk
+            value, i = _mval, _mk
             continue
         # F490: a step on a method reference -- dispatch it
         # (./?./bracket call/apply/bind) or apply the factory `(args)`.
@@ -15678,6 +16177,13 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             val, i = _js_parse_object_assign_args(text, _mj, depth, state)
             state["ops"] += 1  # the assign call is obfuscation-shaped
             return _js_parse_postfix(text, i, val, depth, state)
+        # F549: Object.getOwnPropertyDescriptor(OBJLIT, KEY).value /
+        # .get() -- descriptor reads on object literals (F491 owns
+        # the Array/String-prototype targets). None falls through to
+        # F491.
+        _g549 = _js_parse_f549_gopd_object(text, i, depth, state)
+        if _g549 is not None:
+            return _g549
         # F491: Object.getOwnPropertyDescriptor(TARGET, KEY).value --
         # descriptor indirection desugared to the direct reference;
         # None falls through to the constructor-callee / assign paths.
@@ -15708,6 +16214,19 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f539 is not None:
             val, i = _f539
             state["ops"] += 1  # the builtin call is obfuscation-shaped
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F548: Object.create(PROTO[, PROPS]) -- prototype-chain
+        # member reads. None falls through to defineProperty / F471
+        # (which fails closed on non-assign as before).
+        _f548 = _js_parse_f548_object_create(text, i, depth, state)
+        if _f548 is not None:
+            val, i = _f548
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F550: Object.defineProperty(OBJ, KEY, DESC) --
+        # property-adding builtin. None falls through to F471.
+        _f550 = _js_parse_f550_define_property(text, i, depth, state)
+        if _f550 is not None:
+            val, i = _f550
             return _js_parse_postfix(text, i, val, depth, state)
         # F471: Object.assign([], <src>) array-copy factory --
         # desugars to the source's element list. startswith alone
