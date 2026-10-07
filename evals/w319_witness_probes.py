@@ -456,7 +456,7 @@ def footer_state():
     # the LAST one is current (w314 convention).
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
     ok = ("Next free finding: **F506**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
-          and m_open and m_open[-1].strip() == "F503, F504, F505")
+          and m_open and m_open[-1].strip() == "F506, F507, F508, F509, F510, F511")
     if ok:
         _record("footer-state", "HELD", "footer: open F436 / next F437")
     else:

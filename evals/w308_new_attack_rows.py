@@ -547,7 +547,7 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    want_open = "F503, F504, F505"  # wave-316: F398/F399/F400 OPEN (wave-315
+    want_open = "F506, F507, F508, F509, F510, F511"  # wave-316: F398/F399/F400 OPEN (wave-315  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)
     # Wave-342 lane 6: repointed to open F429 / next F430 (footer-state probe audit).
     # merge footer); F393-F397 all CLOSED.
     if nxt != 506 or open_s != want_open:

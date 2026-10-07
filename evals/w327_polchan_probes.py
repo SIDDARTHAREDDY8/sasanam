@@ -473,7 +473,7 @@ def _p2b():
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
     assert "Next free finding: **F506**" in text, "footer next-free wrong"  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
-    assert "**Open findings: F503, F504, F505.**" in text, "footer open set wrong"  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
+    assert "**Open findings: F506, F507, F508, F509, F510, F511.**" in text, "footer open set wrong"  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
     _held("P2b-footer-open-f433-f434-f435-next-f436", "footer open none / next F430")
 
 

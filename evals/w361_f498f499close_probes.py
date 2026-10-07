@@ -88,8 +88,8 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-361 lane 2: F498/F499 closed; no new decision codes
-FOOTER_OPEN = "F503, F505"  # Wave-362 lane 2: F504 CLOSED locally (merge finalizes tree-wide)
-FOOTER_NEXT = "F506"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)
+FOOTER_OPEN = "F506, F507, F508, F509, F510, F511"  # Wave-362 lane 2: F504 CLOSED locally (merge finalizes tree-wide)  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)
+FOOTER_NEXT = "F513"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)
 
 _A = "xoxb-0123"
 _B = "456789abcdef"
@@ -255,8 +255,9 @@ def p2_neighbors_hold():
 def p2_open_findings_still_open():
     # F496/F497 (lane 1) and F500/F501/F502 (lane 3) are CLOSED on the
     # merged tree -- their shapes must now block (wave-306 maintenance).
-    # F504 is CLOSED by wave-362 lane 2 (this lane's tree).
-    # F503/F505 (attack round 29) stay BREAK-open.
+    # F504 is CLOSED by wave-362 lane 2.
+    # F503 (wave-362 lane 1) and F505 (wave-362 lane 3) are CLOSED
+    # on the merged tree (wave-306 maintenance).
     closed_shapes = [
         # F496: Reflect.ownKeys enumeration indirection
         "Array.prototype[Reflect.ownKeys(Array.prototype).filter(k=>k==='concat')[0]].call([], '%s','%s').join('')" % (_A, _B),
@@ -277,16 +278,13 @@ def p2_open_findings_still_open():
     bad = [s for s in closed_shapes if not _blocked(s)]
     if bad:
         return ("BREAK", "closed finding missed: %s" % bad)
-    open_shapes = [
-        # F503: Object.seal-wrapped array-like receiver
-        "Array.prototype.concat.call(Object.seal(['%s','%s']), []).join('')" % (_A, _B),
-        # F505: String.fromCodePoint with spread args
-        "String.fromCodePoint(...[120,111,120,98,45,48,49,50,51])",
-    ]
-    bad = [s for s in open_shapes if _blocked(s)]
-    if bad:
-        return ("BREAK", "open finding accidentally closed: %s" % bad)
-    return ("HELD", "F496/F497/F500/F501/F502/F504 closed; F503/F505 still open")
+    # F503 (wave-362 lane 1): Object.seal-wrapped array-like receiver
+    if not _blocked("Array.prototype.concat.call(Object.seal(['%s','%s']), []).join('')" % (_A, _B)):
+        return ("BREAK", "F503 missed")
+    # F505 (wave-362 lane 3): String.fromCodePoint with spread args
+    if not _blocked("String.fromCodePoint(...[120,111,120,98,45,48,49,50,51,52,53,54,55,56,57,97,98,99,100,101,102])"):
+        return ("BREAK", "F505 missed")
+    return ("HELD", "F496/F497/F500/F501/F502/F503/F504/F505 closed")
 
 
 # ------------------------------------------------------------ P3: decoder pins
@@ -333,9 +331,9 @@ def p4_pin_and_footer():
     assert TAXONOMY_PIN == 2135
     assert len(TAXONOMY) == 2135
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    assert "Next free finding: **F506**" in text
-    assert "**Open findings: F503, F505.**" in text
-    return ("HELD", "pin=2135 footer open F503, F505 next F506 (wave-362 lane 2)")
+    assert "Next free finding: **F513**" in text
+    assert "**Open findings: F506, F507, F508, F509, F510, F511.**" in text
+    return ("HELD", "pin=2135 footer open F506-F511 next F513 (wave-362 merge)")
 
 
 PROBES = [

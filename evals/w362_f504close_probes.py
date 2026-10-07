@@ -55,8 +55,8 @@ A2 = "456789" + "abcdef"
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TAXONOMY_PIN = 2135
-FOOTER_OPEN = "F503, F505"  # F504 CLOSED locally (merge finalizes tree-wide)
-FOOTER_NEXT = "F506"
+FOOTER_OPEN = "F506, F507, F508, F509, F510, F511"  # F504 CLOSED locally (merge finalizes tree-wide)  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)
+FOOTER_NEXT = "F513"  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)
 
 
 def _blocked(payload):

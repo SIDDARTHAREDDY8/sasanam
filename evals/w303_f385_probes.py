@@ -279,7 +279,7 @@ class FooterStateTest(unittest.TestCase):
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
                 # Wave-342 lane 6: repointed to open F429 / next F430 (footer-state probe audit).
-        want_open, want_next = "F503, F504, F505", "F506"  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # wave-323 lane 1: F407 closed
+        want_open, want_next = "F506, F507, F508, F509, F510, F511", "F513"  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # wave-323 lane 1: F407 closed  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)
         self.assertTrue(_expect_held(
             "footer-state",
             m_open and m_open[-1].strip() == want_open

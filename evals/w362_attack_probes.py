@@ -122,12 +122,12 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F503-F511 open, next F512
-    (wave-362 lane 4: F506-F511 filed)."""
+    """Control: footer shows F503-F505 closed, F506-F511 open, next F513
+    (wave-362 merge)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F512**" in text
-          and "**Open findings: F503, F504, F505, F506, F507, F508, F509, F510, F511.**" in text)
+    ok = ("Next free finding: **F513**" in text
+          and "**Open findings: F506, F507, F508, F509, F510, F511.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -199,24 +199,24 @@ def test_p1_f493_spot():
 # --------------------------------------- open pins F503-F505 (must miss)
 
 @_t
-def test_p2_f503_open():
-    """F503 OPEN: seal-wrapped receiver still misses (scope)."""
-    miss = _misses("Array.prototype.concat.call(Object.seal(['%s','%s']), []).join('')" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p2_f503_closed():
+    """F503 CLOSED (wave-362 lane 1): seal-wrapped receiver now blocks."""
+    hit = _blocked("Array.prototype.concat.call(Object.seal(['%s','%s']), []).join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
-def test_p2_f503_nested_open():
-    """F503 scope: nested seal(freeze()) still misses (rides with F503)."""
-    miss = _misses("[].concat.call(Object.seal(Object.freeze(['%s','%s'])), []).join('')" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p2_f503_nested_closed():
+    """F503 CLOSED (wave-362 lane 1): nested seal(freeze()) now blocks."""
+    hit = _blocked("[].concat.call(Object.seal(Object.freeze(['%s','%s'])), []).join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
-def test_p2_f504_open():
-    """F504 OPEN: bracket Reflect.apply still misses (scope)."""
-    miss = _misses("Reflect['apply']([].concat, [], ['%s','%s']).join('')" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p2_f504_closed():
+    """F504 CLOSED (wave-362 lane 2): bracket Reflect.apply now blocks."""
+    hit = _blocked("Reflect['apply']([].concat, [], ['%s','%s']).join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
@@ -227,10 +227,10 @@ def test_p2_f504_dotcall_open():
 
 
 @_t
-def test_p2_f505_open():
-    """F505 OPEN: fromCodePoint spread still misses (scope)."""
-    miss = _misses("String.fromCodePoint(...[%s])" % CODES)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p2_f505_closed():
+    """F505 CLOSED (wave-362 lane 3): fromCodePoint spread now blocks."""
+    hit = _blocked("String.fromCodePoint(...[%s])" % CODES)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 # --------------------------------------- new findings F506-F511 (must miss)
