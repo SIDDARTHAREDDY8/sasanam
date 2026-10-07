@@ -6388,6 +6388,10 @@ def _js_parse_reflect_call(text, i, depth, state):
     # path; a `[].join.bind(` / `Array.prototype.join.bind(` head is
     # the F530 bound-join-target path; a `[].slice.bind(` /
     # `Array.prototype.slice.bind(` head is the F534 bound-slice-target
+    # path; a `[].filter.bind(` / `Array.prototype.filter.bind(` head
+    # is the F537 bound-filter-target path; a `[].map.bind(` /
+    # `Array.prototype.map.bind(` head is the F538 bound-map-target
+    # path; a `new Proxy(` head is the F542 Proxy apply-trap target
     # path. The callees re-parse from i
     # (defense-in-depth); a mis-route here always fails closed inside
     # the callee.
@@ -6411,6 +6415,12 @@ def _js_parse_reflect_call(text, i, depth, state):
         return _js_parse_reflect_apply_bound_join(text, i, depth, state)
     if _ptarget == "boundslice":
         return _js_parse_reflect_apply_bound_slice(text, i, depth, state)
+    if _ptarget == "boundfilter":
+        return _js_parse_reflect_apply_bound_filter(text, i, depth, state)
+    if _ptarget == "boundmap":
+        return _js_parse_reflect_apply_bound_map(text, i, depth, state)
+    if _ptarget == "proxyapply":
+        return _js_parse_reflect_apply_proxy(text, i, depth, state)
     if _ptarget == "fn":
         return _js_parse_reflect_apply_fn(text, i, depth, state)
     return _js_parse_reflect_apply_ctor(text, i, depth, state)
@@ -6491,14 +6501,64 @@ def _js_parse_f513_reflect_bind(text, paren, depth, state):
                 # value parse), so try the F534 bound-slice triple
                 # (fails closed on mismatch). Returns a _JSArr (slice
                 # yields an array), not an element list.
-                elements, k = _js_parse_f534_bound_slice_triple(text, k,
-                                                                 depth,
-                                                                 state)
-                k = _js_skip_ws(text, k)
-                if k >= n or text[k] != ")":
-                    raise _JSExprFail("F513 bind call arity")
-                state["ops"] += 1  # the bind indirection is obfuscation-shaped
-                return _JSArr(elements), k + 1
+                try:
+                    elements, k = _js_parse_f534_bound_slice_triple(text, k,
+                                                                     depth,
+                                                                     state)
+                    k = _js_skip_ws(text, k)
+                    if k >= n or text[k] != ")":
+                        raise _JSExprFail("F513 bind call arity")
+                    state["ops"] += 1  # the bind indirection is obfuscation-shaped
+                    return _JSArr(elements), k + 1
+                except _JSExprFail:
+                    # F537: the triple's target is a .bind-bound
+                    # FILTER function -- outside the F534
+                    # slice-only target class (the F534 raise commits
+                    # nothing on filter input -- it rejects at the
+                    # non-slice member check before any value parse),
+                    # so try the F537 bound-filter triple (fails
+                    # closed on mismatch). Returns a _JSArr.
+                    try:
+                        elements, k = _js_parse_f537_bound_filter_triple(
+                            text, k, depth, state)
+                        k = _js_skip_ws(text, k)
+                        if k >= n or text[k] != ")":
+                            raise _JSExprFail("F513 bind call arity")
+                        state["ops"] += 1  # the bind indirection is obfuscation-shaped
+                        return _JSArr(elements), k + 1
+                    except _JSExprFail:
+                        # F538: the triple's target is a .bind-bound
+                        # MAP function -- outside the F537
+                        # filter-only target class (the F537 raise
+                        # commits nothing on map input -- it rejects
+                        # at the non-filter member check before any
+                        # value parse), so try the F538 bound-map
+                        # triple (fails closed on mismatch). Returns
+                        # a _JSArr.
+                        try:
+                            elements, k = _js_parse_f538_bound_map_triple(
+                                text, k, depth, state)
+                            k = _js_skip_ws(text, k)
+                            if k >= n or text[k] != ")":
+                                raise _JSExprFail("F513 bind call arity")
+                            state["ops"] += 1  # the bind indirection is obfuscation-shaped
+                            return _JSArr(elements), k + 1
+                        except _JSExprFail:
+                            # F542: the triple's target is a Proxy
+                            # apply-trap target -- outside the F538
+                            # map-only target class (the F538 raise
+                            # commits nothing on Proxy input -- it
+                            # rejects at the non-map receiver check
+                            # before any value parse), so try the
+                            # F542 proxy-apply triple (fails closed on
+                            # mismatch). Returns the delegated string.
+                            result, k = _js_parse_f542_proxy_apply_triple(
+                                text, k, depth, state)
+                            k = _js_skip_ws(text, k)
+                            if k >= n or text[k] != ")":
+                                raise _JSExprFail("F513 bind call arity")
+                            state["ops"] += 1  # the bind indirection is obfuscation-shaped
+                            return result, k + 1
     k = _js_skip_ws(text, k)
     if k >= n or text[k] != ")":
         raise _JSExprFail("F513 bind call arity")
@@ -6516,11 +6576,13 @@ def _js_parse_f521_call_dispatch(text, paren, depth, state):
     receiver (ignored by the engine, so only the literal `Reflect`
     namespace is modeled; anything else fails closed, conservative)
     and (T, thisArg, argsList) as the arguments. The target must be
-    the F521 `.bind`-bound concat class or the F530 `.bind`-bound join
-    class; any other target fails closed here -- call-indirection with
-    unbound targets is a documented residual, not filed. Returns
-    (value, next_index) without the postfix chain (the caller applies
-    it). Never evals.
+    the F521 `.bind`-bound concat class, the F530 `.bind`-bound join
+    class, the F534 `.bind`-bound slice class, the F537 `.bind`-bound
+    filter class, the F538 `.bind`-bound map class, or the F542 Proxy
+    apply-trap target; any other target fails closed here --
+    call-indirection with other targets is a documented residual, not
+    filed. Returns (value, next_index) without the postfix chain (the
+    caller applies it). Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, paren + 1)
@@ -6557,13 +6619,59 @@ def _js_parse_f521_call_dispatch(text, paren, depth, state):
             # non-join member check before any value parse), so try
             # the F534 bound-slice triple. Returns a _JSArr (slice
             # yields an array), not an element list.
-            elements, j = _js_parse_f534_bound_slice_triple(
-                text, _js_skip_ws(text, j + 1), depth, state)
-            j = _js_skip_ws(text, j)
-            if j >= n or text[j] != ")":
-                raise _JSExprFail("F521 call dispatch arity")
-            state["ops"] += 1  # the call indirection is obfuscation-shaped
-            return _JSArr(elements), j + 1
+            try:
+                elements, j = _js_parse_f534_bound_slice_triple(
+                    text, _js_skip_ws(text, j + 1), depth, state)
+                j = _js_skip_ws(text, j)
+                if j >= n or text[j] != ")":
+                    raise _JSExprFail("F521 call dispatch arity")
+                state["ops"] += 1  # the call indirection is obfuscation-shaped
+                return _JSArr(elements), j + 1
+            except _JSExprFail:
+                # F537: the target is a .bind-bound FILTER function --
+                # outside the F534 slice-only target class (the F534
+                # raise commits nothing on filter input -- it rejects
+                # at the non-slice member check before any value
+                # parse), so try the F537 bound-filter triple.
+                # Returns a _JSArr.
+                try:
+                    elements, j = _js_parse_f537_bound_filter_triple(
+                        text, _js_skip_ws(text, j + 1), depth, state)
+                    j = _js_skip_ws(text, j)
+                    if j >= n or text[j] != ")":
+                        raise _JSExprFail("F521 call dispatch arity")
+                    state["ops"] += 1  # the call indirection is obfuscation-shaped
+                    return _JSArr(elements), j + 1
+                except _JSExprFail:
+                    # F538: the target is a .bind-bound MAP function --
+                    # outside the F537 filter-only target class (the
+                    # F537 raise commits nothing on map input -- it
+                    # rejects at the non-filter member check before
+                    # any value parse), so try the F538 bound-map
+                    # triple. Returns a _JSArr.
+                    try:
+                        elements, j = _js_parse_f538_bound_map_triple(
+                            text, _js_skip_ws(text, j + 1), depth, state)
+                        j = _js_skip_ws(text, j)
+                        if j >= n or text[j] != ")":
+                            raise _JSExprFail("F521 call dispatch arity")
+                        state["ops"] += 1  # the call indirection is obfuscation-shaped
+                        return _JSArr(elements), j + 1
+                    except _JSExprFail:
+                        # F542: the target is a Proxy apply-trap
+                        # target -- outside the F538 map-only target
+                        # class (the F538 raise commits nothing on
+                        # Proxy input -- it rejects at the non-map
+                        # receiver check before any value parse), so
+                        # try the F542 proxy-apply triple. Returns the
+                        # delegated string.
+                        result, j = _js_parse_f542_proxy_apply_triple(
+                            text, _js_skip_ws(text, j + 1), depth, state)
+                        j = _js_skip_ws(text, j)
+                        if j >= n or text[j] != ")":
+                            raise _JSExprFail("F521 call dispatch arity")
+                        state["ops"] += 1  # the call indirection is obfuscation-shaped
+                        return result, j + 1
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ")":
         raise _JSExprFail("F521 call dispatch arity")
@@ -6955,6 +7063,792 @@ def _js_parse_reflect_apply_bound_slice(text, i, depth, state):
     return _JSArr(sliced), j + 1
 
 
+def _js_utf16_len(s):
+    """UTF-16 code-unit length of a Python str (F537).
+
+    Node-exact for the `.length` property (v24.20.0): astral
+    characters count 2 ('\U00010000'.length === 2). Never evals.
+    """
+    return len(s.encode("utf-16-le")) // 2
+
+
+def _js_parse_f537_length_cmp_body(text, i, p):
+    """Parse `p.length OP K` at text[i] (F537); returns (spec, next).
+
+    p is the callback's declared parameter. OP is one of <,<=,>,>=;
+    K is a non-negative integer literal (the _js_parse_number
+    grammar admits no sign, so `-` never parses; a trailing digit,
+    `.`, or identifier char fails closed). Returns the spec tuple
+    ("plencmp", op, k). Never evals.
+    """
+    n = len(text)
+    q, k = _js_parse_ident(text, _js_skip_ws(text, i))
+    if q != p:
+        raise _JSExprFail("F537 length body not over the param")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ".":
+        raise _JSExprFail("F537 length body without member")
+    m, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+    if m != "length":
+        raise _JSExprFail("F537 length body non-length member")
+    k = _js_skip_ws(text, k)
+    op = None
+    for cand in ("<=", ">=", "<", ">"):
+        if text.startswith(cand, k):
+            op = cand
+            k += len(cand)
+            break
+    if op is None:
+        raise _JSExprFail("F537 length body without comparison")
+    kk, k = _js_parse_number(text, _js_skip_ws(text, k))
+    if k < n and (text[k] in _ASCII_DIGITS or text[k] == "."
+                  or text[k] in _JS_IDENT_CONT):
+        raise _JSExprFail("F537 length body bad bound")
+    return ("plencmp", op, kk), k
+
+
+def _js_parse_f537_length_cmp(text, i):
+    """Parse a length-comparison .filter callback at text[i] (F537).
+
+    Recognized: `function(p){return p.length OP K;}` (optional
+    function name, optional trailing `;`) and the expression-arrow
+    forms `(p)=>p.length OP K` / `p=>p.length OP K` (OP and K per
+    _js_parse_f537_length_cmp_body). Block-body arrows fail closed
+    (the F447 filter grammar's documented scope -- a block body is
+    not a truthiness predicate there either). Returns (spec,
+    next_index) where spec is ("plencmp", op, k). Never evals.
+    """
+    n = len(text)
+    if text.startswith("function", i):
+        k = i + len("function")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F537 functionx callback")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            # Optional name (engine-exact; ignored).
+            _, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "(":
+            raise _JSExprFail("F537 callback without paren")
+        p, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ")":
+            raise _JSExprFail("F537 callback bad params")
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "{":
+            raise _JSExprFail("F537 callback without brace")
+        k = _js_skip_ws(text, k + 1)
+        if not text.startswith("return", k) or (k + 6 < n
+                                                and text[k + 6] in _JS_IDENT_CONT):
+            raise _JSExprFail("F537 callback without return")
+        spec, k = _js_parse_f537_length_cmp_body(text, k + 6, p)
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ";":
+            k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "}":
+            raise _JSExprFail("F537 callback without close brace")
+        return spec, k + 1
+    k = _js_skip_ws(text, i)
+    if k < n and text[k] == "(":
+        p, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ")":
+            raise _JSExprFail("F537 callback bad params")
+        k = _js_skip_ws(text, k + 1)
+    elif k < n and text[k] in _JS_IDENT_START:
+        # F447 precedent: bare single param.
+        p, k = _js_parse_ident(text, k)
+    else:
+        raise _JSExprFail("F537 callback not a function")
+    k = _js_skip_ws(text, k)
+    if not text.startswith("=>", k):
+        raise _JSExprFail("F537 callback without arrow")
+    return _js_parse_f537_length_cmp_body(text, k + 2, p)
+
+
+def _js_parse_f537_bound_filter_target(text, j, depth, state):
+    """Parse a `.bind`-bound filter function value at text[j] (F537).
+
+    Node-exact desugar (v24.20.0): `[].filter.bind(BINDTHIS, CB)`
+    (or `Array.prototype.filter.bind(BINDTHIS, CB)` -- node:
+    `[].filter === Array.prototype.filter`) is the filter function
+    with its this-value fixed to BINDTHIS and the callback
+    pre-bound; invoking it with call-args C is exactly
+    `BINDTHIS.filter(CB)` -- the engine ignores every filter
+    argument after the first two, and both are already bound, so C
+    is irrelevant (node v24.20.0 verified). Returns
+    (filtered_elements, next_index) where next_index is just after
+    the bind call's closing paren. Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - the bound function must be a filter reference (`[].filter`
+      or `Array.prototype.filter`, ws-tolerant,
+      ident-boundary-checked); `.bind` on any other function fails
+      closed -- this is the filed F537 scope (filter-family bound
+      targets only; concat is F521, join is F530, slice is F534, map
+      is F538 -- a different builtin per the F500/F505 precedent).
+    - the `.bind` member is the dot form, the F490 `?.` form, or the
+      F482 bracket-string form (all engine-identical, node v24.20.0
+      verified); the inner `filter` member is dot-only (F506
+      precedent).
+    - BINDTHIS is an array literal or Array-constructor form with
+      all-PLAIN-string elements (the F506 thisArg classes, but
+      `type(e) is str` exactly: _JSNumStr elements fail closed --
+      F475, (1).length is undefined in the engine so the predicate
+      is undecidable there; _JSNil/_JSBool elements likewise fail
+      closed, never mis-decoded).
+    - exactly ONE bound arg: the filter callback. The shared
+      F437/F443/F447/F459/F467/F470 grammar
+      (_js_parse_filter_callback) is tried first; on failure the
+      F537 length-comparison grammar (_js_parse_f537_length_cmp).
+      Any other callback body fails closed (documented -- the
+      decoder never guesses predicate semantics).
+    """
+    n = len(text)
+    if j < n and text[j] == "[":
+        # F504-class receiver: `[].filter`.
+        k = _js_skip_ws(text, j + 1)
+        if k >= n or text[k] != "]":
+            raise _JSExprFail("F537 bound target non-empty receiver")
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ".":
+            raise _JSExprFail("F537 bound target without member dot")
+        k = _js_skip_ws(text, k + 1)
+        if not text.startswith("filter", k):
+            raise _JSExprFail("F537 bound target non-filter")
+        k2 = k + len("filter")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            raise _JSExprFail("F537 filterx is not filter")
+        j = k2
+    elif text.startswith("Array", j):
+        # F469-class receiver: `Array.prototype.filter`.
+        k = j + len("Array")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F537 Arrayx is not Array")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ".":
+            raise _JSExprFail("F537 Array without dot")
+        k = _js_skip_ws(text, k + 1)
+        if not text.startswith("prototype", k):
+            raise _JSExprFail("F537 Array non-prototype")
+        k2 = k + len("prototype")
+        if k2 >= n or text[k2] in _JS_IDENT_CONT:
+            raise _JSExprFail("F537 prototypex")
+        k = _js_skip_ws(text, k2)
+        if k >= n or text[k] != ".":
+            raise _JSExprFail("F537 Array prototype without member dot")
+        k = _js_skip_ws(text, k + 1)
+        if not text.startswith("filter", k):
+            raise _JSExprFail("F537 Array non-filter")
+        k2 = k + len("filter")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            raise _JSExprFail("F537 filterx is not filter")
+        j = k2
+    else:
+        raise _JSExprFail("F537 bound target not a filter reference")
+    j = _js_skip_ws(text, j)
+    _bd = _js_peek_dispatch_call(text, j)
+    if _bd is None or _bd[0] != "bind":
+        raise _JSExprFail("F537 target not .bind-bound")
+    k = _js_skip_ws(text, _bd[1] + 1)
+    # BINDTHIS: array literal or Array-constructor, all-plain-string
+    # elements (the F506 thisArg classes, F475-tightened).
+    if k < n and text[k] == "[":
+        bind_this, k = _js_parse_array(text, k, depth, state)
+    elif text.startswith("Array", k):
+        bind_this, k = _js_parse_array_constructor(text, k, state)
+    else:
+        raise _JSExprFail("F537 bind this not an array")
+    if not isinstance(bind_this, _JSArr):
+        raise _JSExprFail("F537 bind this not an array")
+    if any(type(e) is not str for e in bind_this.elements):
+        raise _JSExprFail("F537 bind this non-plain-string element")
+    elements = list(bind_this.elements)
+    # The callback: exactly one bound arg.
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ",":
+        raise _JSExprFail("F537 bind without callback")
+    k = _js_skip_ws(text, k + 1)
+    try:
+        spec, k = _js_parse_filter_callback(text, k)
+    except _JSExprFail:
+        # Not one of the shared-grammar predicates -- try the F537
+        # length-comparison predicate. The shared parse commits
+        # nothing (it returns next only on success), so the fallback
+        # is clean.
+        spec, k = _js_parse_f537_length_cmp(text, k)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("F537 bind with extra args")
+    state["parts"] += 1  # the callback is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    if spec[0] == "plencmp":
+        # F475: all elements are plain strings here (enforced
+        # above), so .length is decidable -- UTF-16 code units,
+        # node-exact (v24.20.0).
+        _, op, kk = spec
+        filtered = [e for e in elements
+                    if _js_index_cmp(_js_utf16_len(e), op, kk)]
+    else:
+        filtered = _js_filter_spec_apply(spec, elements)
+    return filtered, k + 1
+
+
+def _js_parse_f537_bound_filter_triple(text, j, depth, state):
+    """Parse the F537 `BOUND, thisArg, argsList` triple at text[j].
+
+    BOUND is the `.bind`-bound filter function value
+    (_js_parse_f537_bound_filter_target); thisArg is parsed and
+    discarded -- the bound function's this is fixed by `.bind`, so
+    Reflect.apply's thisArg is ignored by the engine (node v24.20.0
+    verified, F483 precedent); argsList is a string-literal-only list
+    (the F519 grammar) parsed and DISCARDED -- the engine ignores
+    every filter argument after the two bound ones, so call-args are
+    irrelevant (node v24.20.0 verified). Returns (filtered_elements,
+    next_index) where next_index is just after argsList (the caller
+    checks the closing paren -- the _js_parse_f506_triple contract).
+    Never evals.
+    """
+    n = len(text)
+    filtered, j = _js_parse_f537_bound_filter_target(text, j, depth,
+                                                     state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F537 bound target without thisArg")
+    j = _js_skip_ws(text, j + 1)
+    _, j = _js_parse_ignored_value(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F537 thisArg without argsList")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F537 argsList not an array")
+    _, j = _js_parse_string_literal_list(text, j + 1, state, "]")
+    return filtered, j
+
+
+def _js_parse_reflect_apply_bound_filter(text, i, depth, state):
+    """Parse 'Reflect.apply(BOUNDFILTER, thisArg, argsArray)' at text[i]
+    (F537).
+
+    Node-exact desugar (v24.20.0): Reflect.apply invokes the
+    `.bind`-bound filter function with thisArg and the argsArray
+    elements as arguments; the bound this-value and the pre-bound
+    callback win and the engine ignores further filter arguments,
+    so the result is BINDTHIS.filter(CB) -- an array. Like F534's
+    slice (which yields an array), filter returns the array, so the
+    value is a _JSArr and the caller's postfix chain applies (e.g.
+    `.join('')` assembles the credential). The member name accepts
+    the dot form and the F504 bracket-string forms (routed here by
+    _js_parse_reflect_call, which already verified the name;
+    re-verified defense-in-depth). Returns (value, next_index)
+    without the postfix chain (the caller applies it). Never evals.
+    """
+    n = len(text)
+    j = i + len("Reflect")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        raise _JSExprFail("Reflectx is not Reflect")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        _mname, j = _js_parse_reflect_member_key(text, j, depth, state)
+        if _mname != "apply":
+            raise _JSExprFail("Reflect bracket member not apply")
+    else:
+        if j >= n or text[j] != ".":
+            raise _JSExprFail("Reflect without dot")
+        j = _js_skip_ws(text, j + 1)
+        if not text.startswith("apply", j):
+            raise _JSExprFail("Reflect without apply")
+        k = j + len("apply")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("applyx is not apply")
+        j = k
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("Reflect.apply without paren")
+    filtered, j = _js_parse_f537_bound_filter_triple(text,
+                                                      _js_skip_ws(text, j + 1),
+                                                      depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("F537 with extra args")
+    state["ops"] += 1  # the bound-target dispatch is obfuscation-shaped
+    return _JSArr(filtered), j + 1
+
+
+def _js_parse_f538_bound_map_target(text, j, depth, state):
+    """Parse a `.bind`-bound map function value at text[j] (F538).
+
+    Node-exact desugar (v24.20.0): `[].map.bind(BINDTHIS, CB)` (or
+    `Array.prototype.map.bind(BINDTHIS, CB)` -- node: `[].map ===`
+    `Array.prototype.map`) is the map function with its this-value
+    fixed to BINDTHIS and the callback pre-bound; invoking it with
+    call-args C is exactly `BINDTHIS.map(CB)` -- the engine ignores
+    every map argument after the first two, and both are already
+    bound, so C is irrelevant (node v24.20.0 verified). Returns
+    (mapped_elements, next_index) where next_index is just after the
+    bind call's closing paren. Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - the bound function must be a map reference (`[].map` or
+      `Array.prototype.map`, ws-tolerant, ident-boundary-checked);
+      `.bind` on any other function fails closed -- this is the
+      filed F538 scope (map-family bound targets only; concat is
+      F521, join is F530, slice is F534, filter is F537 -- a
+      different builtin per the F500/F505 precedent).
+    - the `.bind` member is the dot form, the F490 `?.` form, or the
+      F482 bracket-string form (all engine-identical, node v24.20.0
+      verified); the inner `map` member is dot-only (F506
+      precedent).
+    - BINDTHIS is an array literal or Array-constructor form with
+      all-PLAIN-string elements (`type(e) is str` exactly: _JSNumStr
+      elements fail closed -- the identity callback preserves
+      numeric provenance in the engine (['a',1].map(s=>s) keeps 1 a
+      number, node-verified), which the string model cannot
+      reproduce; _JSNil/_JSBool likewise fail closed, never
+      mis-decoded).
+    - exactly ONE bound arg: the map callback, parsed by the shared
+      F437/F448/F460 grammar (_js_parse_map_callback -- identity or
+      bare String, engine-exact over strings). Any other callback
+      (notably .map(Number): NaN-producing, never identity) fails
+      closed (documented).
+    """
+    n = len(text)
+    if j < n and text[j] == "[":
+        # F504-class receiver: `[].map`.
+        k = _js_skip_ws(text, j + 1)
+        if k >= n or text[k] != "]":
+            raise _JSExprFail("F538 bound target non-empty receiver")
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ".":
+            raise _JSExprFail("F538 bound target without member dot")
+        k = _js_skip_ws(text, k + 1)
+        if not text.startswith("map", k):
+            raise _JSExprFail("F538 bound target non-map")
+        k2 = k + len("map")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            raise _JSExprFail("F538 mapx is not map")
+        j = k2
+    elif text.startswith("Array", j):
+        # F469-class receiver: `Array.prototype.map`.
+        k = j + len("Array")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F538 Arrayx is not Array")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ".":
+            raise _JSExprFail("F538 Array without dot")
+        k = _js_skip_ws(text, k + 1)
+        if not text.startswith("prototype", k):
+            raise _JSExprFail("F538 Array non-prototype")
+        k2 = k + len("prototype")
+        if k2 >= n or text[k2] in _JS_IDENT_CONT:
+            raise _JSExprFail("F538 prototypex")
+        k = _js_skip_ws(text, k2)
+        if k >= n or text[k] != ".":
+            raise _JSExprFail("F538 Array prototype without member dot")
+        k = _js_skip_ws(text, k + 1)
+        if not text.startswith("map", k):
+            raise _JSExprFail("F538 Array non-map")
+        k2 = k + len("map")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            raise _JSExprFail("F538 mapx is not map")
+        j = k2
+    else:
+        raise _JSExprFail("F538 bound target not a map reference")
+    j = _js_skip_ws(text, j)
+    _bd = _js_peek_dispatch_call(text, j)
+    if _bd is None or _bd[0] != "bind":
+        raise _JSExprFail("F538 target not .bind-bound")
+    k = _js_skip_ws(text, _bd[1] + 1)
+    # BINDTHIS: array literal or Array-constructor, all-plain-string
+    # elements (the F506 thisArg classes, provenance-tightened).
+    if k < n and text[k] == "[":
+        bind_this, k = _js_parse_array(text, k, depth, state)
+    elif text.startswith("Array", k):
+        bind_this, k = _js_parse_array_constructor(text, k, state)
+    else:
+        raise _JSExprFail("F538 bind this not an array")
+    if not isinstance(bind_this, _JSArr):
+        raise _JSExprFail("F538 bind this not an array")
+    if any(type(e) is not str for e in bind_this.elements):
+        raise _JSExprFail("F538 bind this non-plain-string element")
+    elements = list(bind_this.elements)
+    # The callback: exactly one bound arg (the shared identity
+    # grammar -- the callback kind is fixed by the dispatched
+    # method, never guessed).
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ",":
+        raise _JSExprFail("F538 bind without callback")
+    k = _js_skip_ws(text, k + 1)
+    k, _stringifies = _js_parse_map_callback(text, k)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("F538 bind with extra args")
+    state["parts"] += 1  # the callback is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    # Identity (or bare-String, the identity over parsed string
+    # fragments -- F460): elements pass through untouched.
+    return elements, k + 1
+
+
+def _js_parse_f538_bound_map_triple(text, j, depth, state):
+    """Parse the F538 `BOUND, thisArg, argsList` triple at text[j].
+
+    BOUND is the `.bind`-bound map function value
+    (_js_parse_f538_bound_map_target); thisArg is parsed and
+    discarded -- the bound function's this is fixed by `.bind`, so
+    Reflect.apply's thisArg is ignored by the engine (node v24.20.0
+    verified, F483 precedent); argsList is a string-literal-only list
+    (the F519 grammar) parsed and DISCARDED -- the engine ignores
+    every map argument after the two bound ones, so call-args are
+    irrelevant (node v24.20.0 verified). Returns (mapped_elements,
+    next_index) where next_index is just after argsList (the caller
+    checks the closing paren -- the _js_parse_f506_triple contract).
+    Never evals.
+    """
+    n = len(text)
+    mapped, j = _js_parse_f538_bound_map_target(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F538 bound target without thisArg")
+    j = _js_skip_ws(text, j + 1)
+    _, j = _js_parse_ignored_value(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F538 thisArg without argsList")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F538 argsList not an array")
+    _, j = _js_parse_string_literal_list(text, j + 1, state, "]")
+    return mapped, j
+
+
+def _js_parse_reflect_apply_bound_map(text, i, depth, state):
+    """Parse 'Reflect.apply(BOUNDMAP, thisArg, argsArray)' at text[i]
+    (F538).
+
+    Node-exact desugar (v24.20.0): Reflect.apply invokes the
+    `.bind`-bound map function with thisArg and the argsArray
+    elements as arguments; the bound this-value and the pre-bound
+    callback win and the engine ignores further map arguments, so
+    the result is BINDTHIS.map(CB) -- an array. Like F534's slice
+    and F537's filter (which yield arrays), map returns the array,
+    so the value is a _JSArr and the caller's postfix chain applies
+    (e.g. `.join('')` assembles the credential). The member name
+    accepts the dot form and the F504 bracket-string forms (routed
+    here by _js_parse_reflect_call, which already verified the name;
+    re-verified defense-in-depth). Returns (value, next_index)
+    without the postfix chain (the caller applies it). Never evals.
+    """
+    n = len(text)
+    j = i + len("Reflect")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        raise _JSExprFail("Reflectx is not Reflect")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        _mname, j = _js_parse_reflect_member_key(text, j, depth, state)
+        if _mname != "apply":
+            raise _JSExprFail("Reflect bracket member not apply")
+    else:
+        if j >= n or text[j] != ".":
+            raise _JSExprFail("Reflect without dot")
+        j = _js_skip_ws(text, j + 1)
+        if not text.startswith("apply", j):
+            raise _JSExprFail("Reflect without apply")
+        k = j + len("apply")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("applyx is not apply")
+        j = k
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("Reflect.apply without paren")
+    mapped, j = _js_parse_f538_bound_map_triple(text,
+                                                 _js_skip_ws(text, j + 1),
+                                                 depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("F538 with extra args")
+    state["ops"] += 1  # the bound-target dispatch is obfuscation-shaped
+    return _JSArr(mapped), j + 1
+
+
+def _js_parse_f542_delegation(text, i, params):
+    """Parse `Reflect.apply(P1,P2,P3)` at text[i] (F542); returns next.
+
+    params is the trap's declared (p1, p2, p3). The call must be the
+    dot form on the bare `Reflect` identifier with exactly the
+    trap's own parameters in order -- any other shape (shuffled
+    args, extra args, a different receiver) is not a passthrough
+    and fails closed. Never evals.
+    """
+    n = len(text)
+    p1, p2, p3 = params
+    k = _js_skip_ws(text, i)
+    if not text.startswith("Reflect", k) or (k + 7 < n
+                                             and text[k + 7] in _JS_IDENT_CONT):
+        raise _JSExprFail("F542 trap not a Reflect delegation")
+    k = _js_skip_ws(text, k + 7)
+    if k >= n or text[k] != ".":
+        raise _JSExprFail("F542 trap not a Reflect delegation")
+    k = _js_skip_ws(text, k + 1)
+    if not text.startswith("apply", k) or (k + 5 < n
+                                           and text[k + 5] in _JS_IDENT_CONT):
+        raise _JSExprFail("F542 trap not a Reflect delegation")
+    k = _js_skip_ws(text, k + 5)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("F542 trap not a Reflect delegation")
+    k = _js_skip_ws(text, k + 1)  # consume '('
+    qs = []
+    for t in range(3):
+        q, k = _js_parse_ident(text, k)
+        qs.append(q)
+        k = _js_skip_ws(text, k)
+        if t < 2:
+            if k >= n or text[k] != ",":
+                raise _JSExprFail("F542 trap delegation arity")
+            k = _js_skip_ws(text, k + 1)
+    if tuple(qs) != (p1, p2, p3):
+        raise _JSExprFail("F542 trap not a passthrough")
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("F542 trap delegation arity")
+    return k + 1
+
+
+def _js_parse_f542_apply_trap(text, i):
+    """Parse a delegating Proxy apply-trap function at text[i] (F542).
+
+    Recognized (all engine-identical to a direct call, node v24.20.0):
+    `function(P1,P2,P3){return Reflect.apply(P1,P2,P3);}` (optional
+    function name, optional trailing `;`),
+    `(P1,P2,P3)=>Reflect.apply(P1,P2,P3)`, and
+    `(P1,P2,P3)=>{return Reflect.apply(P1,P2,P3);}` (F448 precedent:
+    single-return block body). Exactly three declared params, all
+    distinct (node sloppy-mode duplicate params would shadow --
+    conservative fail-closed, documented). The body must be exactly
+    the delegation (parsed by _js_parse_f542_delegation): the trap
+    receives (target, thisArg, args) and re-invokes the target with
+    them, so `Reflect.apply(proxy, thisArg, argsArray)` is exactly
+    `Reflect.apply(target, thisArg, argsArray)`. Anything else --
+    non-delegating bodies, wrong arg order, free variables, extra
+    statements -- fails closed (documented boundary). Returns
+    ((p1, p2, p3), next_index). Never evals.
+    """
+    n = len(text)
+    if text.startswith("function", i):
+        k = i + len("function")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F542 functionx trap")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            # Optional name (engine-exact; ignored).
+            _, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "(":
+            raise _JSExprFail("F542 trap without paren")
+        ps = []
+        k = _js_skip_ws(text, k + 1)
+        for t in range(3):
+            q, k = _js_parse_ident(text, k)
+            ps.append(q)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ("," if t < 2 else ")"):
+                raise _JSExprFail("F542 trap bad params")
+            k = _js_skip_ws(text, k + 1)
+        if len(set(ps)) != 3:
+            raise _JSExprFail("F542 trap params not distinct")
+        if k >= n or text[k] != "{":
+            raise _JSExprFail("F542 trap without brace")
+        k = _js_skip_ws(text, k + 1)
+        if not text.startswith("return", k) or (k + 6 < n
+                                                and text[k + 6] in _JS_IDENT_CONT):
+            raise _JSExprFail("F542 trap without return")
+        k = _js_parse_f542_delegation(text, k + 6, tuple(ps))
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ";":
+            k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "}":
+            raise _JSExprFail("F542 trap without close brace")
+        return tuple(ps), k + 1
+    # Arrow forms: exactly three parenthesized params (a bare
+    # `p=>...` cannot carry three params; the F519 precedent
+    # requires parenthesized params for multi-param arrows).
+    k = _js_skip_ws(text, i)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("F542 trap not a function")
+    ps = []
+    k = _js_skip_ws(text, k + 1)
+    for t in range(3):
+        q, k = _js_parse_ident(text, k)
+        ps.append(q)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ("," if t < 2 else ")"):
+            raise _JSExprFail("F542 trap bad params")
+        k = _js_skip_ws(text, k + 1)
+    if len(set(ps)) != 3:
+        raise _JSExprFail("F542 trap params not distinct")
+    k = _js_skip_ws(text, k)
+    if not text.startswith("=>", k):
+        raise _JSExprFail("F542 trap without arrow")
+    k = _js_skip_ws(text, k + 2)
+    if k < n and text[k] == "{":
+        # F448: single-return block body.
+        k = _js_skip_ws(text, k + 1)
+        if not text.startswith("return", k) or (k + 6 < n
+                                                and text[k + 6] in _JS_IDENT_CONT):
+            raise _JSExprFail("F542 trap without return")
+        k = _js_parse_f542_delegation(text, k + 6, tuple(ps))
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ";":
+            k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "}":
+            raise _JSExprFail("F542 trap without close brace")
+        return tuple(ps), k + 1
+    k = _js_parse_f542_delegation(text, k, tuple(ps))
+    return tuple(ps), k
+
+
+def _js_parse_f542_proxy_apply_triple(text, j, depth, state):
+    """Parse `new Proxy(FN, HANDLER), thisArg, argsList` at text[j] (F542).
+
+    FN is a statically-known function value -- the F519/F522 target
+    grammar (literal arrow/fn-expression with an additive body over
+    its declared parameters, or an IIFE-evaluated target). HANDLER
+    is exactly `{apply: TRAP}` where TRAP is a delegating apply-trap
+    (_js_parse_f542_apply_trap): the engine invokes the trap as
+    TRAP(FN, thisArg, argsArray) and the delegating body re-invokes
+    `Reflect.apply(FN, thisArg, argsArray)`, so the whole dispatch is
+    engine-identical to the direct F519 form (node v24.20.0
+    verified). thisArg is parsed and discarded (the F519 bodies
+    reference only their parameters, so `this` is unobservable);
+    argsList is a string-literal-only list (the F519 grammar) with
+    arity matching FN's parameter count. Returns (result_string,
+    next_index) where next_index is just after argsList (the caller
+    checks the closing paren -- the _js_parse_f506_triple contract).
+    Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - the target must be a `new Proxy(` construction (ident-
+      boundary-checked); anything else fails closed here -- this
+      parser is only reached on the "proxyapply" peek or the
+      F513/F521 fallbacks.
+    - the handler has exactly one key, `apply` (ident form); extra
+      handler keys, get/set traps, or quoted keys fail closed
+      (documented -- F535 models get-traps on member reads, a
+      different dispatch).
+    - the trap must be a delegating apply-trap (any other body fails
+      closed); the target FN must be F519/F522-shaped (arguments-
+      exotic bodies are F546's OPEN scope, never guessed).
+    """
+    n = len(text)
+    if not (text.startswith("new", j)
+            and (j + 3 >= n or text[j + 3] not in _JS_IDENT_CONT)):
+        raise _JSExprFail("F542 not a new-expression")
+    k = _js_skip_ws(text, j + 3)
+    if not (text.startswith("Proxy", k)
+            and (k + 5 >= n or text[k + 5] not in _JS_IDENT_CONT)):
+        raise _JSExprFail("F542 not a Proxy construction")
+    k = _js_skip_ws(text, k + 5)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("F542 Proxy needs a call")
+    k = _js_skip_ws(text, k + 1)
+    try:
+        params, body, k = _js_parse_iife_fn_target(text, k, depth, state)
+    except _JSExprFail:
+        # Not an IIFE-evaluated target (F522) -- fall through to the
+        # literal arrow/fn-expr target (F519). The IIFE parse only
+        # succeeds where the literal parse fails, so no previously-
+        # decoded input changes behavior.
+        params, body, k = _js_parse_fn_target(text, k, depth, state)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ",":
+        raise _JSExprFail("F542 Proxy needs a handler")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "{":
+        raise _JSExprFail("F542 handler not an object")
+    k = _js_skip_ws(text, k + 1)
+    hname, k = _js_parse_ident(text, k)
+    if hname != "apply":
+        raise _JSExprFail("F542 only the apply trap is modeled")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ":":
+        raise _JSExprFail("F542 handler apply not a function")
+    k = _js_skip_ws(text, k + 1)
+    _tparams, k = _js_parse_f542_apply_trap(text, k)
+    state["parts"] += 1  # the trap is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "}":
+        raise _JSExprFail("F542 bad handler")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("F542 unbalanced Proxy call")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != ",":
+        raise _JSExprFail("F542 target without thisArg")
+    k = _js_skip_ws(text, k + 1)
+    _, k = _js_parse_ignored_value(text, k, depth, state)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ",":
+        raise _JSExprFail("F542 thisArg without argsList")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "[":
+        raise _JSExprFail("F542 argsList not an array")
+    elements, k = _js_parse_string_literal_list(text, k + 1, state, "]")
+    if len(elements) != len(params):
+        raise _JSExprFail("F542 arity mismatch")
+    result = "".join(elements[idx] for idx in body)
+    return result, k
+
+
+def _js_parse_reflect_apply_proxy(text, i, depth, state):
+    """Parse 'Reflect.apply(new Proxy(FN,H), thisArg, argsArray)' at
+    text[i] (F542).
+
+    Node-exact desugar (v24.20.0): Reflect.apply invokes the Proxy's
+    apply trap with (FN, thisArg, argsArray); the delegating trap
+    re-invokes `Reflect.apply(FN, thisArg, argsArray)`, so the result
+    is exactly the F519 evaluation of FN over the argsArray -- a
+    plain string. The member name accepts the dot form and the F504
+    bracket-string forms (routed here by _js_parse_reflect_call,
+    which already verified the name; re-verified defense-in-depth).
+    Returns (result_string, next_index) without the postfix chain
+    (the caller applies it). Never evals.
+    """
+    n = len(text)
+    j = i + len("Reflect")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        raise _JSExprFail("Reflectx is not Reflect")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        _mname, j = _js_parse_reflect_member_key(text, j, depth, state)
+        if _mname != "apply":
+            raise _JSExprFail("Reflect bracket member not apply")
+    else:
+        if j >= n or text[j] != ".":
+            raise _JSExprFail("Reflect without dot")
+        j = _js_skip_ws(text, j + 1)
+        if not text.startswith("apply", j):
+            raise _JSExprFail("Reflect without apply")
+        k = j + len("apply")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("applyx is not apply")
+        j = k
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("Reflect.apply without paren")
+    result, j = _js_parse_f542_proxy_apply_triple(text,
+                                                   _js_skip_ws(text, j + 1),
+                                                   depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("F542 with extra args")
+    state["ops"] += 1  # the proxy-target dispatch is obfuscation-shaped
+    return result, j + 1
+
+
 def _js_peek_reflect_apply_target(text, j):
     """Peek the Reflect.apply target at the '(' following the member name.
 
@@ -6970,9 +7864,14 @@ def _js_peek_reflect_apply_target(text, j):
     `Array.prototype.join.bind(` (the F530 .bind-bound join-target
     path), and "boundslice" when it is `[].slice.bind(` or
     `Array.prototype.slice.bind(` (the F534 .bind-bound slice-target
-    path). Routing peek only -- the callees re-parse from the call
-    start and fail closed on anything unexpected. Raises _JSExprFail
-    when
+    path), "boundfilter" when it is `[].filter.bind(` or
+    `Array.prototype.filter.bind(` (the F537 .bind-bound
+    filter-target path), "boundmap" when it is `[].map.bind(` or
+    `Array.prototype.map.bind(` (the F538 .bind-bound map-target
+    path), and "proxyapply" when it is `new Proxy(` (the F542 Proxy
+    apply-trap target path). Routing peek only -- the callees
+    re-parse from the call start and fail closed on anything
+    unexpected. Raises _JSExprFail when
     the target is not Array-headed, an empty-array concat receiver,
     or a function head.
     """
@@ -7036,7 +7935,41 @@ def _js_peek_reflect_apply_target(text, j):
                             _bd = _js_peek_dispatch_call(text, kk)
                             if _bd is not None and _bd[0] == "bind":
                                 return "boundslice"
+                if text.startswith("filter", k):
+                    k2 = k + len("filter")
+                    if k2 >= n or text[k2] not in _JS_IDENT_CONT:
+                        # F537: `[].filter.bind(...)` -- a .bind-bound
+                        # filter target (pure lookahead; the callee
+                        # re-parses and fails closed on mismatch).
+                        kk = _js_skip_ws(text, k2)
+                        if kk < n and text[kk] in (".", "?", "["):
+                            _bd = _js_peek_dispatch_call(text, kk)
+                            if _bd is not None and _bd[0] == "bind":
+                                return "boundfilter"
+                if text.startswith("map", k):
+                    k2 = k + len("map")
+                    if k2 >= n or text[k2] not in _JS_IDENT_CONT:
+                        # F538: `[].map.bind(...)` -- a .bind-bound
+                        # map target (pure lookahead; the callee
+                        # re-parses and fails closed on mismatch).
+                        kk = _js_skip_ws(text, k2)
+                        if kk < n and text[kk] in (".", "?", "["):
+                            _bd = _js_peek_dispatch_call(text, kk)
+                            if _bd is not None and _bd[0] == "bind":
+                                return "boundmap"
         raise _JSExprFail("Reflect.apply non-Array target")
+    if text.startswith("new", j) and (j + 3 >= n
+                                      or text[j + 3] not in _JS_IDENT_CONT):
+        # F542: `new Proxy(` -- a Proxy apply-trap target (pure
+        # lookahead; the callee re-parses and fails closed on
+        # mismatch). Anything else `new`-headed falls through to the
+        # Array check, which fails closed as before.
+        k = _js_skip_ws(text, j + 3)
+        kk = _js_skip_ws(text, k + 5)
+        if (k + 5 < n and text.startswith("Proxy", k)
+                and text[k + 5] not in _JS_IDENT_CONT
+                and kk < n and text[kk] == "("):
+            return "proxyapply"
     if not text.startswith("Array", j):
         raise _JSExprFail("Reflect.apply non-Array target")
     k = j + len("Array")
@@ -7084,6 +8017,28 @@ def _js_peek_reflect_apply_target(text, j):
                                 _bd = _js_peek_dispatch_call(text, kk)
                                 if _bd is not None and _bd[0] == "bind":
                                     return "boundslice"
+                    if text.startswith("filter", m):
+                        m2 = m + len("filter")
+                        if m2 >= n or text[m2] not in _JS_IDENT_CONT:
+                            # F537: `Array.prototype.filter.bind(...)`
+                            # -- pure lookahead; the callee re-parses
+                            # and fails closed on mismatch.
+                            kk = _js_skip_ws(text, m2)
+                            if kk < n and text[kk] in (".", "?", "["):
+                                _bd = _js_peek_dispatch_call(text, kk)
+                                if _bd is not None and _bd[0] == "bind":
+                                    return "boundfilter"
+                    if text.startswith("map", m):
+                        m2 = m + len("map")
+                        if m2 >= n or text[m2] not in _JS_IDENT_CONT:
+                            # F538: `Array.prototype.map.bind(...)`
+                            # -- pure lookahead; the callee re-parses
+                            # and fails closed on mismatch.
+                            kk = _js_skip_ws(text, m2)
+                            if kk < n and text[kk] in (".", "?", "["):
+                                _bd = _js_peek_dispatch_call(text, kk)
+                                if _bd is not None and _bd[0] == "bind":
+                                    return "boundmap"
         return "concat"
     return "ctor"
 
