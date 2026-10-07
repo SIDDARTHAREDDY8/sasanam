@@ -26,9 +26,9 @@ SHAPES = [
 ]
 
 CONTROLS = [
-    ('f576-open-still-miss',
+    ('f576-closed-now-blocks',  # wave-370 merge: F576 CLOSED by lane 2; control flipped (wave-305 class)
      '"new URLSearchParams(\'q=%(A1)s\').get(\'q\')+\'%(A2)s\'"'
-     % {"A1": A1, "A2": A2}, False),
+     % {"A1": A1, "A2": A2}, True),
     ('junk-quiet',
      '"new URLSearchParams(\'q=ab\').getAll(\'q\').join(\'\')"'
      % {"A1": A1, "A2": A2}, False)
