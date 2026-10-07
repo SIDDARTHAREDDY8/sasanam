@@ -503,7 +503,7 @@ def _p15b():
     # states and must not match.
     opens = re.findall(r"Open findings: ([A-Za-z0-9, ]*)\.", text)
     nexts = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-    if opens and nexts and opens[-1] == "F513, F514, F515, F516, F517, F518, F519, F520" and nexts[-1] == "F521":
+    if opens and nexts and opens[-1] == "F521, F522, F523, F524, F525" and nexts[-1] == "F526":  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
         _held("P15-footer-state", "open F444, F445 / next F446")
     else:
         _break("P15-footer-state", "footer=%r next=%r"

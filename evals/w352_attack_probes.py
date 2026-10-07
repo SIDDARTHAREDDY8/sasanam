@@ -142,8 +142,8 @@ def test_b0_footer_state():
     attack-lane filings, commit e79af076; F472 repeat-tagged)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F521**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
-          and "**Open findings: F513, F514, F515, F516, F517, F518, F519, F520.**" in text)  # Wave-354 merge: F469-F472 CLOSED  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
+    ok = ("Next free finding: **F526**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+          and "**Open findings: F521, F522, F523, F524, F525.**" in text)  # Wave-354 merge: F469-F472 CLOSED  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

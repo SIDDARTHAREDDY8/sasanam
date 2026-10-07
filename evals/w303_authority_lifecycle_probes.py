@@ -102,10 +102,10 @@ def p_footer_state():
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
     # Wave-316 merge footer: F398/F399/F400 CLOSED; F401/F402/F403 OPEN; next F404.
     ok = (m_open and m_open[-1].strip()
-          == "F513, F514, F515, F516, F517, F518, F519, F520"
-          and m_next and m_next[-1] == "F521")  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521)
+          == "F521, F522, F523, F524, F525"  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+          and m_next and m_next[-1] == "F526")  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
     _record("footer-state", "HELD" if ok else "BREAK",
-            "want open F513, F514, F515, F516, F517, F518, F519, F520 / next free F521")
+            "want open F521, F522, F523, F524, F525 / next free F526")  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
 
 
 def _al():

@@ -210,7 +210,7 @@ def p5_pin_and_footer():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     if "CLOSED 2026-10-07 wave-363 lane 2" not in text:
         return ("BREAK", "F507/F508 closure entries missing")
-    if "Open findings: F518, F520." not in text:
+    if "Open findings: F521, F522, F523, F524, F525." not in text:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
         return ("BREAK", "footer wrong")  # Wave-364 merge: F513-F517, F519 CLOSED; merge finalizes
     if dlp._JS_EXPR_START.search("Array.from(") is None:
         return ("BREAK", "anchor missing Array.from")

@@ -197,8 +197,8 @@ def test_footer_state():
     with open(path, encoding="utf-8") as f:
         lines = f.read().splitlines()
     last = lines[-1] if lines else ""
-    ok = ("Next free finding: **F521**" in last
-          and "Open findings: F513, F514, F515, F516, F517, F518, F519, F520." in last)
+    ok = ("Next free finding: **F526**" in last  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+          and "Open findings: F521, F522, F523, F524, F525." in last)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
     return ("HELD" if ok else "BREAK",
             "footer last line: %r" % (last[:120],))
 

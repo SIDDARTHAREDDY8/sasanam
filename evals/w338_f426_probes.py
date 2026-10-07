@@ -328,10 +328,10 @@ def P2b():
                 encoding="utf-8").read()
     lines = text.splitlines()
     last = lines[-1] if lines else ""
-    if "Next free finding: **F521**" not in last:
+    if "Next free finding: **F526**" not in last:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
         _break(pid, "footer does not read next F429")
         return
-    if "Open findings: F513, F514, F515, F516, F517, F518, F519, F520." not in last:
+    if "Open findings: F521, F522, F523, F524, F525." not in last:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
         _break(pid, "footer does not read open F428: %r" % (last[:120],))
         return
     import re as _re

@@ -170,7 +170,7 @@ def p1_compositions():
         ("Function.prototype.call.call(Array.prototype.concat, [], '%s', '%s').join('')" % (_A1, _A2), True),
         ("Reflect.get(Reflect, ['ap'+'ply'])", False),  # F491 boundary
         ("var a=['%s'];Array.prototype.push.call(a,'%s');a.join('')" % (_A1, _A2), False),  # F518 OPEN
-        ("new String('%s')[['concat'][0]]('%s')" % (_A1, _A2), False),  # F514 narrowed OPEN
+        ("new String('%s')[['concat'][0]]('%s')" % (_A1, _A2), True),  # F514 CLOSED wave-364 lane 2
         # .length on a decoded string flags -- parity with the F454
         # direct form (verified on the base tree).
         ("Reflect.apply((a,b)=>a+b, null, ['%s','%s']).length" % (_A1, _A2), True),

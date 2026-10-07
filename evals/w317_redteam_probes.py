@@ -916,7 +916,7 @@ def _p9_footer():
         return _break("P9-footer-open-f433-f434-f435-next-f436",
                       "F407 entry missing from FINDINGS.md")
     return _held("P9-footer-open-f433-f434-f435-next-f436",
-                 "footer pins open F513, F514, F515, F516, F517, F518, F519, F520 / next F521")
+                 "footer pins open F521, F522, F523, F524, F525 / next F526")  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
 
 
 @probe("P9-pin-taxonomy-2135-sorted")

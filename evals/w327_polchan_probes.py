@@ -472,8 +472,8 @@ def _p2b():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
-    assert "Next free finding: **F521**" in text, "footer next-free wrong"  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
-    assert "**Open findings: F513, F514, F515, F516, F517, F518, F519, F520.**" in text, "footer open set wrong"  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
+    assert "Next free finding: **F526**" in text, "footer next-free wrong"  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+    assert "**Open findings: F521, F522, F523, F524, F525.**" in text, "footer open set wrong"  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
     _held("P2b-footer-open-f433-f434-f435-next-f436", "footer open none / next F430")
 
 

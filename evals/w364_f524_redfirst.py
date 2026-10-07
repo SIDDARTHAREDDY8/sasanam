@@ -33,8 +33,8 @@ SHAPES = [
 CONTROLS = [
     ("f509-bare-args-held",  # F509 CLOSED
      "(function(){return arguments[0]+arguments[1]})('%s','%s')" % (A1, A2), True),
-    ("f516-alias-open",  # F516 OPEN (filed shape, must still miss)
-     "(function(){var a=arguments;return a[0]+a[1]})('%s','%s')" % (A1, A2), False),
+    ("f516-alias-closed",  # F516 CLOSED wave-364 lane 3 (must now block)
+     "(function(){var a=arguments;return a[0]+a[1]})('%s','%s')" % (A1, A2), True),
     ("junk-quiet",
      "(function(){const [a,b]=arguments;return a+b})('ab','cd')", False),
 ]

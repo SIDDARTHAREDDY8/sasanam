@@ -133,7 +133,7 @@ def test_b0_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F526**" in text
-          and "**Open findings: F513, F514, F515, F516, F517, F518, F519, F520, F521, F522, F523, F524, F525.**" in text)
+          and "**Open findings: F521, F522, F523, F524, F525.**" in text)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -229,39 +229,46 @@ def test_p1_f512_closed():
 # ------------------------------------------------- open pins (must miss)
 
 @_t
-def test_p2_f513_open():
-    """F513 OPEN (round 31): Reflect.apply via .bind still misses."""
-    ms = _misses("Reflect.apply.bind(Reflect)([].concat, [], ['%s','%s']).join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f513_closed():
+    """F513 CLOSED (wave-364 lane 1): Reflect.apply via .bind now blocks
+    (coded refusal -- wave-306 class)."""
+    hit = _blocked("Reflect.apply.bind(Reflect)([].concat, [], ['%s','%s']).join('')" % (_A, _B))
+    hit2 = _blocked("Function.prototype.bind.call(Reflect.apply, Reflect)([].concat, [], ['%s','%s']).join('')" % (_A, _B))
+    return ("HELD" if hit and hit2 else "BREAK", "hit=%s hit2=%s" % (hit, hit2))
 
 
 @_t
-def test_p2_f514_open():
-    """F514 OPEN (round 31, narrowed at wave-363 merge): nested-bracket key
-    on a String-object receiver still misses."""
-    ms = _misses("String('%s')[[['concat'][0]]](String('%s'))" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f514_closed():
+    """F514 CLOSED (wave-364 lane 2): nested-bracket key on a String-object
+    receiver now blocks (coded refusal -- wave-306 class)."""
+    hit = _blocked("String('%s')[[['concat'][0]]](String('%s'))" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_p2_f515_open():
-    """F515 OPEN (round 31): idx-folded key on strlit still misses."""
-    ms = _misses("''[['concat'][0]]('%s','%s')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f515_closed():
+    """F515 CLOSED (wave-364 lane 2): idx-folded key on strlit now blocks
+    (coded refusal -- wave-306 class)."""
+    hit = _blocked("''[['concat'][0]]('%s','%s')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_p2_f516_open():
-    """F516 OPEN (round 31): laundered arguments still misses."""
-    ms = _misses("(function(){var a=arguments;return a[0]+a[1]})('%s','%s')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f516_closed():
+    """F516 CLOSED (wave-364 lane 3): laundered arguments now block
+    (coded refusal -- wave-306 class)."""
+    hit = _blocked("(function(){var a=arguments;return a[0]+a[1]})('%s','%s')" % (_A, _B))
+    hit2 = _blocked("(function(...args){return args.join('');})('%s','%s')" % (_A, _B))
+    return ("HELD" if hit and hit2 else "BREAK", "hit=%s hit2=%s" % (hit, hit2))
 
 
 @_t
 def test_p2_f517_open():
-    """F517 OPEN (round 31): entries/keys/for-in still misses."""
-    ms = _misses("Object.entries({0:'%s',1:'%s'}).map(p=>p[1]).join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    """F517 CLOSED (wave-364 lane 3): entries/keys/for-in now block
+    (coded refusal -- wave-306 class)."""
+    hit = _blocked("Object.entries({0:'%s',1:'%s'}).map(p=>p[1]).join('')" % (_A, _B))
+    hit2 = _blocked("Object.keys({'%s':'x','%s':'y'}).join('')" % (_A, _B))
+    return ("HELD" if hit and hit2 else "BREAK", "hit=%s hit2=%s" % (hit, hit2))
 
 
 @_t
@@ -272,17 +279,20 @@ def test_p2_f518_open():
 
 
 @_t
-def test_p2_f519_open():
-    """F519 OPEN (round 31): arrow-target Reflect.apply still misses."""
-    ms = _misses("Reflect.apply((a,b)=>a+b, null, ['%s','%s'])" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f519_closed():
+    """F519 CLOSED (wave-364 lane 1): function-valued-target Reflect.apply
+    now blocks (coded refusal -- wave-306 class)."""
+    hit = _blocked("Reflect.apply((a,b)=>a+b, null, ['%s','%s'])" % (_A, _B))
+    hit2 = _blocked("Reflect.apply(function(a,b){return a+b}, null, ['%s','%s'])" % (_A, _B))
+    return ("HELD" if hit and hit2 else "BREAK", "hit=%s hit2=%s" % (hit, hit2))
 
 
 @_t
-def test_p2_f520_open():
-    """F520 OPEN (round 31): Array.fromAsync still misses."""
-    ms = _misses("Array.fromAsync(['%s','%s']).then(a=>a.join(''))" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f520_closed():
+    """F520 CLOSED (wave-364 lane 4): Array.fromAsync.then now blocks
+    (coded refusal -- wave-306 class)."""
+    hit = _blocked("Array.fromAsync(['%s','%s']).then(a=>a.join(''))" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t

@@ -124,8 +124,8 @@ def test_b0_footer_state():
     (wave-364 merge: F513-F519 CLOSED; merge finalizes)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F521**" in text
-          and "**Open findings: F520.**" in text)
+    ok = ("Next free finding: **F526**" in text  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+          and "**Open findings: F521, F522, F523, F524, F525.**" in text)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -260,17 +260,21 @@ def test_p2_f515_closed():
 
 
 @_t
-def test_p2_f516_open():
-    """F516 OPEN (this round): laundered arguments still misses."""
-    ms = _misses("(function(){var a=arguments;return a[0]+a[1]})('%s','%s')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f516_closed():
+    """F516 CLOSED (wave-364 lane 3): laundered arguments now block
+    (coded refusal -- wave-306 class)."""
+    hit = _blocked("(function(){var a=arguments;return a[0]+a[1]})('%s','%s')" % (_A, _B))
+    hit2 = _blocked("(function(...args){return args.join('');})('%s','%s')" % (_A, _B))
+    return ("HELD" if hit and hit2 else "BREAK", "hit=%s hit2=%s" % (hit, hit2))
 
 
 @_t
-def test_p2_f517_open():
-    """F517 OPEN (this round): entries/keys/for-in still misses."""
-    ms = _misses("Object.entries({0:'%s',1:'%s'}).map(p=>p[1]).join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f517_closed():
+    """F517 CLOSED (wave-364 lane 3): entries/keys/for-in now block
+    (coded refusal -- wave-306 class)."""
+    hit = _blocked("Object.entries({0:'%s',1:'%s'}).map(p=>p[1]).join('')" % (_A, _B))
+    hit2 = _blocked("Object.keys({'%s':'x','%s':'y'}).join('')" % (_A, _B))
+    return ("HELD" if hit and hit2 else "BREAK", "hit=%s hit2=%s" % (hit, hit2))
 
 
 @_t

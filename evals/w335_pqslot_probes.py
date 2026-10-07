@@ -399,8 +399,8 @@ def P6c():
               encoding="utf-8") as fh:
         text = fh.read()
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F521**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
-          and m_open and m_open[-1].strip() == "F513, F514, F515, F516, F517, F518, F519, F520")  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521)
+    ok = ("Next free finding: **F526**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+          and m_open and m_open[-1].strip() == "F521, F522, F523, F524, F525")  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
     if ok:
         _held(pid, "footer: open F473, F474 / next F475")
     else:

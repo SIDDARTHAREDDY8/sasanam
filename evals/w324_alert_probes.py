@@ -697,8 +697,8 @@ def _p12():
     # Wave-337 lane 1: probe repaired -- the F417-era assertion rotted
     # through many merges; assert the live footer (open none / next
     # F426; F424/F425 closed by wave-337 lane 1).
-    assert "Next free finding: **F521**" in src, "next-free footer"  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
-    assert "**Open findings: F513, F514, F515, F516, F517, F518, F519, F520.**" in src, "open-none footer"  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
+    assert "Next free finding: **F526**" in src, "next-free footer"  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+    assert "**Open findings: F521, F522, F523, F524, F525.**" in src, "open-none footer"  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
     _held("P12-footer-state", "open none / next F430")
 
 

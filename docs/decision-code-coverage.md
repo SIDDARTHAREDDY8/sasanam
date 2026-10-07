@@ -1,6 +1,6 @@
 # Decision-code coverage table (generated)
 
-Generated: 2026-10-06T07:03:56Z UTC · registry pin: 2135 · base: wave-343 merge (+3 ownership-* codes, 2129/2135 behaviorally probed; 5 fault-injection residuals: tool-crashed, tool-timed-out, preexec_child_died, post-rotation, offline-verify-internal)
+Generated: 2026-10-07T11:02:26Z UTC · registry pin: 2135 · base: wave-343 merge (+3 ownership-* codes, 2129/2135 behaviorally probed; 5 fault-injection residuals: tool-crashed, tool-timed-out, preexec_child_died, post-rotation, offline-verify-internal)
 
 Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code counts as covered when its literal string appears quoted in at least one ``.py`` file under ``tests/`` or ``evals/``. Production ``emit()`` call sites do not count.
 
@@ -121,11 +121,11 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `approval-run-mismatch` | scoped | high | yes | evals/w237_closescoped_probes.py, tests/test_closure_scoped_approvals.py |
 | `approval-sandbox-mismatch` | scoped | high | yes | evals/w237_closescoped_probes.py, tests/test_closure_scoped_approvals.py |
 | `approval-state-stale` | scoped | high | yes | evals/w237_closescoped_probes.py, tests/test_closure_scoped_approvals.py |
-| `approval-token-argument-mismatch` | approval | high | yes | evals/w313_aptokens_probes.py, evals/w314_redteam_probes.py, evals/w333_captoken_probes.py (+1) |
+| `approval-token-argument-mismatch` | approval | high | yes | evals/w313_aptokens_probes.py, evals/w314_redteam_probes.py, evals/w333_captoken_probes.py (+2) |
 | `approval-token-capability-mismatch` | approval | high | yes | evals/w313_aptokens_probes.py, evals/w314_redteam_probes.py, evals/w333_captoken_probes.py (+1) |
-| `approval-token-expired` | approval | medium | yes | evals/w313_aptokens_probes.py, evals/w314_redteam_probes.py, tests/test_approval_tokens.py |
+| `approval-token-expired` | approval | medium | yes | evals/w313_aptokens_probes.py, evals/w314_redteam_probes.py, evals/w360_canonicalization_probes.py (+1) |
 | `approval-token-malformed` | approval | medium | yes | evals/w314_redteam_probes.py, tests/test_approval_tokens.py |
-| `approval-token-replayed` | approval | high | yes | evals/w313_aptokens_probes.py, evals/w314_redteam_probes.py, tests/test_approval_tokens.py |
+| `approval-token-replayed` | approval | high | yes | evals/w313_aptokens_probes.py, evals/w314_redteam_probes.py, evals/w360_canonicalization_probes.py (+1) |
 | `approval-token-tampered` | approval | critical | yes | evals/w313_aptokens_probes.py, evals/w314_redteam_probes.py, tests/test_approval_tokens.py |
 | `arap-error` | arap | medium | yes | evals/w343_covgap5_probes.py |
 | `arg_constraint_violated` | approval | medium | yes | tests/test_delegation_primitive.py |
@@ -291,9 +291,9 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `bundlescan-rce-global` | bundle | critical | yes | evals/w270_bundlescan_probes.py, evals/w271_redteam_probes.py, evals/w272_f255_probes.py (+2) |
 | `bundlescan-suspicious-global` | bundle | high | yes | evals/w270_bundlescan_probes.py, tests/test_bundle_scan.py, tests/test_bundle_scan_f255.py |
 | `bundlescan-unknown-global` | bundle | medium | yes | evals/w270_bundlescan_probes.py, evals/w272_f255_probes.py, tests/test_bundle_scan.py (+1) |
-| `callauthz-check-error` | callauthz | high | yes | evals/w340_covgap2_probes.py |
+| `callauthz-check-error` | callauthz | high | yes | evals/w340_covgap2_probes.py, evals/w360_canonicalization_probes.py |
 | `callauthz-denied` | callauthz | high | yes | evals/w260_callauthz_probes.py |
-| `callauthz-not-configured` | callauthz | high | yes | evals/w340_covgap2_probes.py |
+| `callauthz-not-configured` | callauthz | high | yes | evals/w340_covgap2_probes.py, evals/w360_canonicalization_probes.py |
 | `callback-approval-denied` | callback | medium | yes | evals/w265_callback_probes.py |
 | `callback-approval-expired` | callback | medium | yes | evals/w265_callback_probes.py |
 | `callback-approval-requested` | callback | low | yes | evals/w265_callback_probes.py, tests/test_agent_callbacks.py |
@@ -1293,7 +1293,7 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `permit-leg-refusal-unmapped` | permit | high | yes | tests/test_bound_permit.py |
 | `permit-malformed` | permit | medium | yes | evals/w240_boundpermit_followthrough_probes.py, evals/w242_no_effect_branch_probes.py, evals/w243_action_bound_permits_probes.py (+4) |
 | `permit-mandate-absent` | permit | high | yes | evals/w235_boundpermit_probes.py, tests/test_bound_permit.py |
-| `permit-message-mismatch` | mcp | critical | yes | evals/w243_threat_model_probes.py, evals/w342_covgap4_probes.py |
+| `permit-message-mismatch` | mcp | critical | yes | evals/w243_threat_model_probes.py, evals/w342_covgap4_probes.py, evals/w360_canonicalization_probes.py |
 | `permit-no-effect-unattested` | permit | medium | yes | evals/w240_boundpermit_followthrough_probes.py, evals/w242_no_effect_branch_probes.py, tests/test_bound_permit.py (+1) |
 | `permit-no-fallback` | permit | high | yes | evals/w240_boundpermit_followthrough_probes.py, tests/test_bound_permit.py |
 | `permit-parent-named` | containment | high | yes | evals/w242_containment_probes.py, tests/test_wave242_containment.py |

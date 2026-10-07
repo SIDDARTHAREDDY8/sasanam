@@ -33,8 +33,8 @@ SHAPES = [
 CONTROLS = [
     ("f510-values-held",  # F510 CLOSED
      "Object.values({0:'%s',1:'%s'}).join('')" % (A1, A2), True),
-    ("f517-keys-open",  # F517 OPEN (filed shape, must still miss)
-     "Object.keys({'%s':'x','%s':'y'}).join('')" % (A1, A2), False),
+    ("f517-keys-closed",  # F517 CLOSED wave-364 lane 3 (must now block)
+     "Object.keys({'%s':'x','%s':'y'}).join('')" % (A1, A2), True),
     ("junk-quiet",
      "Object.getOwnPropertyNames({'ab':'x','cd':'y'}).join('')", False),
 ]

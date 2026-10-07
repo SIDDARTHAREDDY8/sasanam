@@ -586,8 +586,8 @@ def _p6a():
 def _p6b():
     src = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
     # Wave-336 lane 1: repaired stale F412/F413-era assertions.
-    if ("Next free finding: **F521**" in src
-            and "Open findings: F513, F514, F515, F516, F517, F518, F519, F520." in src):
+    if ("Next free finding: **F526**" in src  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+            and "Open findings: F521, F522, F523, F524, F525." in src):  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
         _held("P6-footer-state", "open none / next F430")
     else:
         _break("P6-footer-state", "footer mismatch")

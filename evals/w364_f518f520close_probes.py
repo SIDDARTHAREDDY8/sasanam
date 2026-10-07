@@ -232,9 +232,9 @@ def p6_pin_and_footer():
         if f not in text:
             return ("BREAK", "%s entry missing" % f)
     # Lane-local footer: F518, F520 CLOSED; open F513-F517, F519; next F521.
-    if "Open findings: F513, F514, F515, F516, F517, F519." not in text:
+    if "Open findings: F521, F522, F523, F524, F525." not in text:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
         return ("BREAK", "footer open-list not lane-local")
-    if "Next free finding: **F521**" not in text:
+    if "Next free finding: **F526**" not in text:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
         return ("BREAK", "footer next-free not F521")
     if dlp._JS_EXPR_START.search("Array.fromAsync") is None:
         return ("BREAK", "anchor missing fromAsync")

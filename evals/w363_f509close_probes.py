@@ -194,9 +194,9 @@ def p5_pin_and_footer():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     if "F509" not in text or "CLOSED 2026-10-07 wave-363 lane 3" not in text:
         return ("BREAK", "F509 CLOSED entry missing")
-    if "Open findings: F513, F514, F515, F518, F519, F520." not in text:
+    if "Open findings: F521, F522, F523, F524, F525." not in text:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
         return ("BREAK", "lane-local footer wrong")
-    if "Next free finding: **F521**" not in text:
+    if "Next free finding: **F526**" not in text:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
         return ("BREAK", "next-free footer wrong")
     return ("HELD", "pin 2135; 28 re.compile; F509 CLOSED; footer open F506,F507,F508,F510,F511/next F513")
 

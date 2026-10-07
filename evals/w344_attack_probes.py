@@ -249,8 +249,8 @@ def test_b3_f432_f433_filings_pinned():
           and "CLOSED 2026-10-06 wave-349 lane 1" in text
           and "(F445 filed 2026-10-06, wave-348 lane 2" in text
           and "CLOSED 2026-10-06 wave-349 lane 1" in text
-          and "Next free finding: **F521**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
-          and "Open findings: F513, F514, F515, F516, F517, F518, F519, F520." in text
+          and "Next free finding: **F526**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+          and "Open findings: F521, F522, F523, F524, F525." in text  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
           and "(F453 filed 2026-10-06, wave-350 lane 3" in text
           and "CLOSED 2026-10-06 wave-351 lane 3" in text)
     return ("HELD" if ok else "BREAK", "F432-F445 filed+pinned=%s" % ok)

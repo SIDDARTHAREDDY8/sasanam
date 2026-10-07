@@ -176,10 +176,10 @@ def p4_compositions():
         # F491 computed-key get stays fail-closed
         ("f491-computed-get",
          "Reflect['g'+'et'](Object.prototype, 'x')", False),
-        # F513 (Reflect.apply via .bind) still OPEN
-        ("f513-open",
+        # F513 (Reflect.apply via .bind) CLOSED wave-364 lane 1
+        ("f513-closed",
          "Reflect.apply.bind(Reflect)([].concat, [], ['%s','%s']).join('')" % (A1, A2),
-         False),
+         True),
         # F506 (call/apply indirection) stays CLOSED
         ("f506-closed",
          "Function.prototype.apply.call(Reflect.apply, Reflect, [[].concat, [], ['%s','%s']]).join('')" % (A1, A2),
@@ -202,7 +202,7 @@ def p5_pin_and_footer():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     if "CLOSED 2026-10-07 wave-364 lane 2" not in text:
         return ("BREAK", "F514/F515 closure entries missing")
-    if "Open findings: F513, F516, F517, F518, F519, F520." not in text:
+    if "Open findings: F521, F522, F523, F524, F525." not in text:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
         return ("BREAK", "lane-local footer wrong")
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     if len(re.findall(r"re\.compile\(", src)) != 28:

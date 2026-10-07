@@ -30,8 +30,8 @@ SHAPES = [
 ]
 
 CONTROLS = [
-    ("f519-arrow-target-open",  # F519 OPEN (filed shape, must still miss)
-     "Reflect.apply((a,b)=>a+b, null, ['%s','%s'])" % (A1, A2), False),
+    ("f519-arrow-target-closed",  # F519 CLOSED wave-364 lane 1 (must now block)
+     "Reflect.apply((a,b)=>a+b, null, ['%s','%s'])" % (A1, A2), True),
     ("junk-quiet",
      "Reflect.apply((() => (a,b)=>a+b)(), null, ['ab','cd'])", False),
 ]

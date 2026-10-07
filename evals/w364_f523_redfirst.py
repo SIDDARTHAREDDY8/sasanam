@@ -32,8 +32,8 @@ SHAPES = [
 CONTROLS = [
     ("f507-single-bracket-held",  # F507 CLOSED
      "''['concat']('%s','%s')" % (A1, A2), True),
-    ("f515-double-nested-open",  # F515 OPEN (filed shape, must still miss)
-     "'%s'[['concat'][0]]('%s')" % (A1, A2), False),
+    ("f515-double-nested-closed",  # F515 CLOSED wave-364 lane 2 (must now block)
+     "'%s'[['concat'][0]]('%s')" % (A1, A2), True),
     ("junk-quiet",
      "'ab'[[[['concat'][0]]][0]]('cd')", False),
 ]

@@ -858,8 +858,9 @@ def run_pin_footer_probes():
                % (len(lits), len(set(lits)), lits == sorted(lits)))
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    if "Open findings: F513, F514, F515, F516, F517, F518, F519, F520." in text \
-            and "Next free finding: **F521**" in text:  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
+    # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+    if "Open findings: F521, F522, F523, F524, F525." in text \
+            and "Next free finding: **F526**" in text:  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
         _held("P0b", "footer open F436 / next F437")
     else:
         _break("P0b", "footer text mismatch")
