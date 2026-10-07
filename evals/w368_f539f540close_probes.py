@@ -218,12 +218,11 @@ COMPOSITIONS = [
      "new WeakRef({c:'ab'}).deref().c+'cd'", False),
 ]
 
-FOOTER_OPEN = (  # Wave-369 merge: F547-F556 CLOSED (lanes 1-4); open F557/F558/F560/F562/F563/F565/F567-F569
-               "F557", "F558", "F560", "F562",
-               "F563", "F565", "F567", "F568",
-               "F569"
+FOOTER_OPEN = (  # Wave-369 merge: F547-F557,F565 CLOSED (lanes 1-5); open F558/F560/F562/F563/F567-F569
+               "F558", "F560", "F562", "F563",
+               "F567", "F568", "F569"
                )  # Wave-369 merge
-FOOTER_NEXT = "F570"  # Wave-369 merge  # Wave-369 merge: F547-F556 CLOSED (lanes 1-4); next F570
+FOOTER_NEXT = "F570"  # Wave-369 merge  # Wave-369 merge: F547-F557,F565 CLOSED (lanes 1-5); next F570
 
 
 def p1_f539_filed_held():

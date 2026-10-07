@@ -102,7 +102,7 @@ sys.path.insert(0, REPO_ROOT)
 import gov.dlp as dlp  # noqa: E402
 
 TAXONOMY_PIN = 2140  # Wave-354: F471 closed; no new decision codes; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
-FOOTER_OPEN = "F547, F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566, F567, F568, F569"  # Wave-362 lane 2: F504 CLOSED locally (merge finalizes tree-wide)  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-355 lanes 1+2: F473, F474 CLOSED; open none / next F475 (merge intermediate)  # Wave-354 lane 3: F471 CLOSED (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-354 lane 3: F471 CLOSED locally (merge finalizes tree-wide); F469/F470/F472 stay OPEN  # Wave-355 lane 3: F475 filed + CLOSED  # Wave-355 lane 3: F475 FILED + CLOSED (merge intermediate)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 lane 1: F476 CLOSED  # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480)  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 lane 4: F510+F511 CLOSED (lane-local)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+FOOTER_OPEN = "F547, F548, F549, F550, F551, F553, F554, F555, F556, F558, F559, F560, F561, F562, F563, F564, F566, F567, F568, F569"  # Wave-369 lane 5: F552/F557/F565 CLOSED (next F570)  # Wave-362 lane 2: F504 CLOSED locally (merge finalizes tree-wide)  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-355 lanes 1+2: F473, F474 CLOSED; open none / next F475 (merge intermediate)  # Wave-354 lane 3: F471 CLOSED (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-354 lane 3: F471 CLOSED locally (merge finalizes tree-wide); F469/F470/F472 stay OPEN  # Wave-355 lane 3: F475 filed + CLOSED  # Wave-355 lane 3: F475 FILED + CLOSED (merge intermediate)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 lane 1: F476 CLOSED  # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480)  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 lane 4: F510+F511 CLOSED (lane-local)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
 FOOTER_NEXT = "F570"  # Wave-355 lanes 1+2: F473, F474 CLOSED; open none / next F475 (merge intermediate)  # Wave-354 lane 3: F471 CLOSED (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-354 lane 3: F471 CLOSED locally (merge finalizes tree-wide); F469/F470/F472 stay OPEN  # Wave-355 lane 3: F475 filed + CLOSED  # Wave-355 lane 3: F475 FILED + CLOSED (merge intermediate)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: next F480  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: next F496  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
 
 # Fragments built by concatenation: the write path redacts credential literals.
@@ -318,8 +318,9 @@ def p3_pin_anchor_char_class_only():
     line = src[i:src.find("\n", i)]
     j = line.find("Object(")
     assert j > 0, "Object anchor alternative missing"
-    alt = line[j:j + 120]  # F510 (wave-363 lane 4): widened for the
-    # `values` member-name alternative.
+    alt = line[j:j + 240]  # F565 (wave-369 lane 5): widened for the
+    # `freeze`/`fromEntries` member-name alternatives (the 120-char
+    # window no longer reaches the end of the Object alternative).
     # F480 (wave-358 lane 1): the Object alternative gained the
     # bracket-string member form; still character-class-only (the
     # F468 precedent) -- no nested quantifiers.
@@ -339,8 +340,16 @@ def p3_pin_anchor_char_class_only():
     # getOwnPropertyNames/getOwnPropertyDescriptors (key/descriptor
     # enumeration indirection) -- new member-name alternatives, pinned
     # exactly here; re.compile count unchanged (28).
+    # F539 (wave-368 lane 2): the Object dot-member alternative gains
+    # freeze (identity-preserving builtin on object literals) -- new
+    # member-name alternative, pinned exactly here; re.compile count
+    # unchanged (28).
+    # F565 (wave-369 lane 5): the Object dot-member alternative gains
+    # fromEntries (deserializing builtin on literal pair lists / Map)
+    # -- new member-name alternative, pinned exactly here; re.compile
+    # count unchanged (28).
     return alt.startswith(
-        "Object([ \\t\\n\\r]*\\.[ \\t\\n\\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries)|"
+        "Object([ \\t\\n\\r]*\\.[ \\t\\n\\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|fromEntries)|"
         "[ \\t\\n\\r]*\\[[ \\t\\n\\r]*['\\\"])")
 
 

@@ -2109,7 +2109,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty|fromEntries)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|\(")
 # F536: the structuredClone anchor carries its own ident-boundary
 # lookahead so `structuredClonex(` never anchors (no wasted F512
 # total-attempt budget); the primary branch re-checks the boundary
@@ -3977,6 +3977,48 @@ def _js_parse_bracket_member(text, j):
     if j >= n or text[j] != "]":
         raise _JSExprFail("unterminated member bracket")
     return name, _js_skip_ws(text, j + 1)
+
+
+def _js_parse_f552_symbol_for(text, j):
+    """Parse `[Symbol.for('K')]` at text[j] == '[' (F552).
+
+    Symbol-keyed properties: only the shared-registry form is
+    modeled. `Symbol.for('K')` returns the same symbol on every call
+    (node v24.20.0), so a write `[Symbol.for('K')]:v` and a read
+    `[Symbol.for('K')]` provably address the same key. Bare
+    `Symbol()` creates a unique symbol per call -- a static model can
+    never match a write to a read, so it fails closed (documented
+    boundary; engine-exact for the static decoder: the two-call
+    shape never resolves in node either).
+
+    Returns (registry_key_name, next_index_after_rbracket).
+    Malformed shapes fail closed via _JSExprFail. Never evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, j + 1)
+    k2 = _js_match_kw(text, k, "Symbol")
+    if k2 is None:
+        raise _JSExprFail("not a Symbol key")
+    k2 = _js_skip_ws(text, k2)
+    if k2 >= n or text[k2] != ".":
+        raise _JSExprFail("Symbol key needs .for")
+    k3 = _js_match_kw(text, _js_skip_ws(text, k2 + 1), "for")
+    if k3 is None:
+        raise _JSExprFail("Symbol key needs Symbol.for")
+    k3 = _js_skip_ws(text, k3)
+    if k3 >= n or text[k3] != "(":
+        raise _JSExprFail("Symbol.for needs paren")
+    k3 = _js_skip_ws(text, k3 + 1)
+    if k3 >= n or text[k3] not in "'\"":
+        raise _JSExprFail("Symbol.for key not a literal")
+    key, k3 = _js_parse_string(text, k3)
+    k3 = _js_skip_ws(text, k3)
+    if k3 >= n or text[k3] != ")":
+        raise _JSExprFail("Symbol.for unterminated")
+    k3 = _js_skip_ws(text, k3 + 1)
+    if k3 >= n or text[k3] != "]":
+        raise _JSExprFail("Symbol key unterminated")
+    return key, _js_skip_ws(text, k3 + 1)
 
 
 def _js_fold_key_expr(text, k, depth, state):
@@ -9808,7 +9850,11 @@ class _JSObj:
     object is parsed accessor-aware, F549). proto is the prototype
     object for Object.create results (F548): member reads delegate
     down the chain (own properties shadow), engine-exact for the
-    data/getter-evaluated properties this decoder resolves. A
+    data/getter-evaluated properties this decoder resolves. String
+    keys are plain strings. F552 symbol-registry keys are stored as
+    ("symbol", registry_name) tuples -- they can never collide with
+    string keys (node-exact: a symbol key is not addressable by a
+    string read, and dot syntax never reaches a symbol key). A
     resolved object only ever flows through _js_parse_postfix
     member reads; any other use fails closed (it never reaches the
     additive, so it can never be mis-decoded as a string).
@@ -9872,6 +9918,44 @@ def _js_f535_deepcopy(props):
     return out
 
 
+def _js_parse_canonical_int(text, k, what):
+    """Parse a canonical decimal integer at text[k] (F535/F565).
+
+    Shared by the F535 object-literal value grammar and the F565
+    fromEntries entry grammar: the literal text must already be the
+    engine's decimal repr -- `042`/`0x10`/`1e3` are engine-different
+    and fail closed, never mis-decoded (node v24.20.0). `what`
+    names the calling grammar for fail-closed error messages.
+    Returns (decimal_text, next_index). Never evals.
+    """
+    n = len(text)
+    c = text[k] if k < n else ""
+    m = k + 1 if c == "-" else k
+    e = m
+    while e < n and text[e] in _ASCII_DIGITS:
+        e += 1
+    if e == m:
+        raise _JSExprFail("%s bad number" % what)
+    lit = text[k:e]
+    if len(lit) > 16:
+        raise _JSExprFail("%s number too big" % what)
+    if str(int(lit)) != lit:
+        raise _JSExprFail("%s non-canonical number" % what)
+    return lit, e
+
+
+def _js_symbol_key(name):
+    """Build the _JSObj props key for an F552 Symbol.for registry key.
+
+    Symbol keys live in a separate namespace from string keys
+    (node-exact: a symbol key is never addressable by a string
+    read). The tuple form can never collide with a plain string
+    key; constructing it here (not inline) keeps the tag in one
+    place.
+    """
+    return ("symbol", name)
+
+
 def _js_parse_f535_value(text, i, depth, state, accessor_aware=False):
     """Parse one F535 object-literal value at text[i] (F535/F536).
 
@@ -9892,20 +9976,7 @@ def _js_parse_f535_value(text, i, depth, state, accessor_aware=False):
     if c in "'\"":
         return _js_parse_string(text, i)
     if c == "-" or c in _ASCII_DIGITS:
-        k = i + 1 if c == "-" else i
-        m = k
-        while m < n and text[m] in _ASCII_DIGITS:
-            m += 1
-        if m == k:
-            raise _JSExprFail("bad number value")
-        if m - i > 16:
-            raise _JSExprFail("number too big")
-        lit = text[i:m]
-        if str(int(lit)) != lit:
-            # `042` is 34 in the engine (legacy octal), `0x10` is 16
-            # -- non-canonical forms fail closed, never mis-decoded.
-            raise _JSExprFail("non-canonical number")
-        return lit, m
+        return _js_parse_canonical_int(text, i, "object value")
     if c == "{":
         props, j = _js_parse_f535_object(text, i, depth + 1, state,
                                          accessor_aware=accessor_aware)
@@ -9913,24 +9984,59 @@ def _js_parse_f535_value(text, i, depth, state, accessor_aware=False):
     raise _JSExprFail("object value not a literal")
 
 
+def _js_parse_f557_spread(text, j, depth, state):
+    """Parse `...SRC` at text[j] (the `...` at j) (F557).
+
+    Spread sources: an object literal (parsed by
+    _js_parse_f535_object, which itself admits nested spreads and
+    F552 symbol keys) or an F539 identity builtin
+    (`Object.freeze(OBJLIT)` / `Object.assign({}, ...)`), whose
+    resolved _JSObj is spread. Returns (sprops, next_index) where
+    sprops is the source's prop map; the caller merges later-wins
+    (node-exact). Spreading shares nested _JSObj references
+    (shallow copy, node-exact); the static model never mutates
+    props, so sharing cannot alias a mutation.
+
+    Anything else (variables, calls, arrays, templates) fails
+    closed (documented boundary -- never mis-decoded). Spread-nested
+    objects count toward the _JS_EXPR_MAX_DEPTH bound like
+    value-nested objects (deep spread nesting fails closed).
+    Never evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, j + 3)
+    if k < n and text[k] == "{":
+        sprops, k = _js_parse_f535_object(text, k, depth + 1, state)
+        return sprops, k
+    if _js_match_kw(text, k, "Object") is not None:
+        wr = _js_parse_f539_object_identity(text, k, depth, state)
+        if wr is not None:
+            return wr[0].props, wr[1]
+    raise _JSExprFail("spread source not a literal object")
+
+
 def _js_parse_f535_object(text, i, depth, state, accessor_aware=False):
     """Parse `{k0:v0, ...}` at text[i] (text[i] == '{') (F535/F536).
 
     Returns (props, next_index): props maps key -> str | _JSObj.
-    Keys: string literals, decimal integer literals, or identifiers
-    (`__proto__` fails closed). Values: see _js_parse_f535_value.
-    Getters `get name(){return VAL;}` resolve to VAL (the engine
-    invokes the getter on read; the static model evaluates the
-    return expression -- `this`-dependent bodies fail closed because
-    the value grammar has no `this`). Setters, methods, spread
-    elements, and computed keys fail closed (documented boundary).
-    Duplicate keys: the later value wins (engine-exact). Each
-    property charges the F430 parts budget. Never evals.
-
-    accessor_aware (F549): getters resolve to _JSAccessor(VAL)
+    (accessor_aware (F549): getters resolve to _JSAccessor(VAL)
     instead of VAL, preserving the data-vs-accessor distinction the
     getOwnPropertyDescriptor builtin needs. All other callers use
-    the default (plain evaluated values).
+    the default (plain evaluated values).)
+    Keys: string literals, decimal integer literals, identifiers
+    (`__proto__` fails closed), or F552 computed
+    `[Symbol.for('K')]` registry keys (stored as ("symbol", K)
+    tuples). Values: see _js_parse_f535_value. Spread elements
+    `...LITOBJ` (F557) merge a literal object or an F539 identity
+    builtin's _JSObj, later-wins (node-exact); non-literal spread
+    sources fail closed. Getters `get name(){return VAL;}` resolve
+    to VAL (the engine invokes the getter on read; the static model
+    evaluates the return expression -- `this`-dependent bodies fail
+    closed because the value grammar has no `this`). Setters,
+    methods, other computed keys, and anonymous `Symbol()` keys fail
+    closed (documented boundary). Duplicate keys: the later value
+    wins (engine-exact). Each property charges the F430 parts
+    budget. Never evals.
     """
     n = len(text)
     if depth >= _JS_EXPR_MAX_DEPTH:
@@ -9944,65 +10050,87 @@ def _js_parse_f535_object(text, i, depth, state, accessor_aware=False):
         if j >= n:
             raise _JSExprFail("unterminated object literal")
         c = text[j]
-        if c in "'\"":
-            key, j = _js_parse_string(text, j)
-        elif c in _ASCII_DIGITS:
-            k = j + 1
-            while k < n and text[k] in _ASCII_DIGITS:
-                k += 1
-            key = text[j:k]
-            j = k
-        elif c in _JS_IDENT_START:
-            key, j = _js_parse_ident(text, j)
+        if c == ".":
+            # F557: SpreadElement of a literal object -- the spread
+            # source merges into this literal, later-wins
+            # (node-exact: spread copies own enumerable props in
+            # order). Getters in the source were already resolved to
+            # data props by the F535/F539 parsers (engine-exact:
+            # spread invokes [[Get]]). Anything else fails closed.
+            if not text.startswith("...", j):
+                raise _JSExprFail("object literal key not a literal")
+            sprops, j = _js_parse_f557_spread(text, j, depth, state)
+            props.update(sprops)
+            state["parts"] += 1  # the spread element itself; the
+                               # merged properties were already
+                               # charged by the source's own parse
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
         else:
-            # computed keys ([k]:), spread (...x), methods fail closed
-            raise _JSExprFail("object literal key not a literal")
-        if key == "__proto__":
-            raise _JSExprFail("__proto__ key fails closed")
-        k = _js_skip_ws(text, j)
-        if key == "get" and k < n and text[k] not in ":(":
-            # Getter head: `get name(){return VAL;}`. A `get` followed
-            # by ':' is a data property named "get"; a `get` followed
-            # by '(' is a method -- both handled below (the method
-            # fails closed at the colon check).
-            gname, gk = _js_parse_f535_getter_head(text, k)
-            gk = _js_skip_ws(text, gk)
-            if gk >= n or text[gk] != "{":
-                raise _JSExprFail("getter needs a body")
-            gk = _js_skip_ws(text, gk + 1)
-            if not (text.startswith("return", gk)
-                    and (gk + 6 >= n
-                         or text[gk + 6] not in _JS_IDENT_CONT)):
-                raise _JSExprFail("getter body not a return")
-            gk = _js_skip_ws(text, gk + 6)
-            gval, gk = _js_parse_f535_getter_value(text, gk, depth + 1,
-                                                   state)
-            gk = _js_skip_ws(text, gk)
-            if gk < n and text[gk] == ";":
+            if c in "'\"":
+                key, j = _js_parse_string(text, j)
+            elif c in _ASCII_DIGITS:
+                k = j + 1
+                while k < n and text[k] in _ASCII_DIGITS:
+                    k += 1
+                key = text[j:k]
+                j = k
+            elif c in _JS_IDENT_START:
+                key, j = _js_parse_ident(text, j)
+            elif c == "[":
+                # F552: computed `[Symbol.for('K')]` registry key.
+                skey, j = _js_parse_f552_symbol_for(text, j)
+                key = _js_symbol_key(skey)
+            else:
+                # methods, other computed keys, anonymous Symbol()
+                # keys fail closed
+                raise _JSExprFail("object literal key not a literal")
+            if key == "__proto__":
+                raise _JSExprFail("__proto__ key fails closed")
+            k = _js_skip_ws(text, j)
+            if key == "get" and k < n and text[k] not in ":(":
+                # Getter head: `get name(){return VAL;}`. A `get` followed
+                # by ':' is a data property named "get"; a `get` followed
+                # by '(' is a method -- both handled below (the method
+                # fails closed at the colon check).
+                gname, gk = _js_parse_f535_getter_head(text, k)
+                gk = _js_skip_ws(text, gk)
+                if gk >= n or text[gk] != "{":
+                    raise _JSExprFail("getter needs a body")
                 gk = _js_skip_ws(text, gk + 1)
-            if gk >= n or text[gk] != "}":
-                raise _JSExprFail("bad getter body")
-            j = _js_skip_ws(text, gk + 1)
-            props[gname] = (_JSAccessor(gval) if accessor_aware
-                            else gval)
-            state["parts"] += 1
-            if state["parts"] > _JS_EXPR_MAX_PARTS:
-                raise _JSExprFail("too many parts")
-        else:
-            if key == "set" and not (k < n and text[k] == ":"):
-                # `set name(v){...}` -- setters fail closed; a data
-                # property literally named "set" (`{set:'f1'}`) is
-                # still modeled (colon check below).
-                raise _JSExprFail("setters fail closed")
-            if k >= n or text[k] != ":":
-                raise _JSExprFail("object literal needs colon")
-            val, j = _js_parse_f535_value(text, _js_skip_ws(text, k + 1),
-                                          depth, state,
-                                          accessor_aware=accessor_aware)
-            props[key] = val
-            state["parts"] += 1
-            if state["parts"] > _JS_EXPR_MAX_PARTS:
-                raise _JSExprFail("too many parts")
+                if not (text.startswith("return", gk)
+                        and (gk + 6 >= n
+                             or text[gk + 6] not in _JS_IDENT_CONT)):
+                    raise _JSExprFail("getter body not a return")
+                gk = _js_skip_ws(text, gk + 6)
+                gval, gk = _js_parse_f535_getter_value(text, gk, depth + 1,
+                                                       state)
+                gk = _js_skip_ws(text, gk)
+                if gk < n and text[gk] == ";":
+                    gk = _js_skip_ws(text, gk + 1)
+                if gk >= n or text[gk] != "}":
+                    raise _JSExprFail("bad getter body")
+                j = _js_skip_ws(text, gk + 1)
+                props[gname] = (_JSAccessor(gval) if accessor_aware
+                                else gval)
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+            else:
+                if key == "set" and not (k < n and text[k] == ":"):
+                    # `set name(v){...}` -- setters fail closed; a data
+                    # property literally named "set" (`{set:'f1'}`) is
+                    # still modeled (colon check below).
+                    raise _JSExprFail("setters fail closed")
+                if k >= n or text[k] != ":":
+                    raise _JSExprFail("object literal needs colon")
+                val, j = _js_parse_f535_value(text, _js_skip_ws(text, k + 1),
+                                              depth, state,
+                                              accessor_aware=accessor_aware)
+                props[key] = val
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
         j = _js_skip_ws(text, j)
         if j < n and text[j] == ",":
             j = _js_skip_ws(text, j + 1)
@@ -10047,6 +10175,12 @@ def _js_parse_f535_getter_head(text, i):
     c = text[i] if i < n else ""
     if c in "'\"":
         name, j = _js_parse_string(text, i)
+    elif c == "[":
+        # F552: computed Symbol.for registry key on a getter --
+        # `get [Symbol.for('k')](){return v;}`. The name is the
+        # ("symbol", k) tuple, matching the data-property form.
+        skey, j = _js_parse_f552_symbol_for(text, i)
+        name = _js_symbol_key(skey)
     elif c in _JS_IDENT_START:
         name, j = _js_parse_ident(text, i)
     else:
@@ -10175,6 +10309,131 @@ def _js_parse_f535_member_read(text, i, depth, state):
     state["ops"] += 1  # the object/Proxy construction is
                        # obfuscation-shaped
     return _JSObj(props), k + 1
+
+
+def _js_parse_f565_literal(text, k, what):
+    """Parse one fromEntries key/value literal at text[k] (F565).
+
+    Literals: string literals or canonical decimal integers (the
+    engine ToPropertyKey's integer keys to their decimal repr;
+    `str(int(lit)) != lit` forms fail closed, matching the F535
+    value grammar). Returns (literal_text, next_index). Anything
+    else fails closed (documented boundary). Never evals.
+    """
+    n = len(text)
+    c = text[k] if k < n else ""
+    if c in "'\"":
+        return _js_parse_string(text, k)
+    if c == "-" or c in _ASCII_DIGITS:
+        return _js_parse_canonical_int(text, k, "fromEntries %s" % what)
+    raise _JSExprFail("fromEntries %s not a literal" % what)
+
+
+def _js_parse_f565_pair_list(text, j, depth, state):
+    """Parse `[[k0,v0], [k1,v1], ...]` at text[j] == '[' (F565).
+
+    Each entry is exactly `[key, value]` of literals (see
+    _js_parse_f565_literal); longer entries fail closed (the engine
+    ignores extras, but the static model stays conservative --
+    documented boundary). Duplicate keys: later wins (node-exact).
+    Returns (props, next_index_after_close_bracket). Each entry
+    charges the F430 parts budget. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    props = {}
+    k = _js_skip_ws(text, j + 1)
+    if k < n and text[k] == "]":
+        return props, k + 1
+    while True:
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "[":
+            raise _JSExprFail("fromEntries entry not a pair")
+        k = _js_skip_ws(text, k + 1)
+        key, k = _js_parse_f565_literal(text, k, "key")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ",":
+            raise _JSExprFail("fromEntries entry needs comma")
+        k = _js_skip_ws(text, k + 1)
+        val, k = _js_parse_f565_literal(text, k, "value")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "]":
+            raise _JSExprFail("fromEntries entry unterminated")
+        props[key] = val
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        k = _js_skip_ws(text, k + 1)
+        if k < n and text[k] == ",":
+            k = _js_skip_ws(text, k + 1)
+            continue
+        if k < n and text[k] == "]":
+            return props, k + 1
+        raise _JSExprFail("bad fromEntries pair list")
+
+
+def _js_parse_f565_from_entries(text, i, depth, state):
+    """Parse `Object.fromEntries(ENTRIES)` at text[i] == 'O' (F565).
+
+    Deserializing builtin (F500/F505 precedent): node (v24.20.0)
+    builds an object from key/value pairs. ENTRIES is a pair list
+    `[[k0,v0], ...]` or `new Map([[k0,v0], ...])` (empty Map
+    admitted). Duplicate keys: later wins (node-exact). `__proto__`
+    becomes an OWN data property (CreateDataPropertyOnObject --
+    node-exact; unlike the object-literal [[Set]] semantics, so it
+    is stored like any other key here). Non-pair iterables,
+    non-literal keys/values, and malformed shapes fail closed
+    (documented boundary -- never mis-decoded).
+
+    Returns (_JSObj, next_index), or None when text[i] is not the
+    fromEntries head (the caller falls through to the F539
+    identity path). Once the member commits the parse, malformed
+    shapes fail closed via _JSExprFail. Never evals.
+    """
+    n = len(text)
+    j = _js_match_kw(text, i, "Object")
+    if j is None:
+        return None
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        return None
+    j = _js_match_kw(text, _js_skip_ws(text, j + 1), "fromEntries")
+    if j is None:
+        return None
+    # The member commits the parse: malformed shapes fail closed.
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("fromEntries without paren")
+    j = _js_skip_ws(text, j + 1)
+    jn = _js_match_kw(text, j, "new")
+    if jn is not None:
+        jn = _js_skip_ws(text, jn)
+        jm = _js_match_kw(text, jn, "Map")
+        if jm is None:
+            raise _JSExprFail("fromEntries new needs Map")
+        jm = _js_skip_ws(text, jm)
+        if jm >= n or text[jm] != "(":
+            raise _JSExprFail("Map needs paren")
+        jm = _js_skip_ws(text, jm + 1)
+        if jm < n and text[jm] == ")":
+            props, j = {}, jm + 1
+        elif jm < n and text[jm] == "[":
+            props, jm = _js_parse_f565_pair_list(text, jm, depth, state)
+            jm = _js_skip_ws(text, jm)
+            if jm >= n or text[jm] != ")":
+                raise _JSExprFail("Map unterminated")
+            j = jm + 1
+        else:
+            raise _JSExprFail("Map arg not a pair list")
+    elif j < n and text[j] == "[":
+        props, j = _js_parse_f565_pair_list(text, j, depth, state)
+    else:
+        raise _JSExprFail("fromEntries arg not a pair list")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("fromEntries unterminated")
+    return _JSObj(props), j + 1
 
 
 def _js_parse_f539_object_identity(text, i, depth, state):
@@ -16923,8 +17182,17 @@ def _js_parse_postfix(text, i, value, depth, state):
                 try:
                     _mname, _mk = _js_parse_bracket_member(text, j)
                 except _JSExprFail:
-                    raise _JSExprFail("object bracket member not a "
-                                      "literal")
+                    # F552: `[Symbol.for('K')]` read on a symbol-keyed
+                    # literal. Only attempted when the bracket opens
+                    # on the Symbol keyword; anything else keeps the
+                    # original fail-closed error. Dot reads can never
+                    # address symbol keys (node-exact).
+                    k2 = _js_skip_ws(text, j + 1)
+                    if _js_match_kw(text, k2, "Symbol") is None:
+                        raise _JSExprFail("object bracket member not a "
+                                          "literal")
+                    skey, _mk = _js_parse_f552_symbol_for(text, j)
+                    _mname = _js_symbol_key(skey)
             else:
                 raise _JSExprFail("object literal needs a member read")
             _mval = _jsobj_lookup(value, _mname)
@@ -17645,6 +17913,16 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _oe = _js_parse_object_entries(text, i, depth, state)
         if _oe is not None:
             return _oe
+        # F565: Object.fromEntries([[k,v], ...]) /
+        # Object.fromEntries(new Map([[k,v], ...])) -- deserializing
+        # builtin on literal pair lists. None falls through to the
+        # F480 bracket / F539 identity / F471 paths below.
+        _fe = _js_parse_f565_from_entries(text, i, depth, state)
+        if _fe is not None:
+            val, i = _fe
+            state["ops"] += 1  # the fromEntries call is
+                             # obfuscation-shaped
+            return _js_parse_postfix(text, i, val, depth, state)
         # F480: Object['assign'](...) -- bracket-string member access,
         # engine-identical to the dot form (node v24.20.0 verified).
         # Only 'assign' is modeled; any other bracket member fails
