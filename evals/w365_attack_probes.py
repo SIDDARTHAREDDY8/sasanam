@@ -1,0 +1,410 @@
+#!/usr/bin/env python3
+"""Wave-365 attack round 33 battery.
+
+Made 8 gpt-4o-mini calls (8 prompt families x 1 call, ledger 523 -> 531,
+~$0.0003 estimated from token counts, ~$0.0297 lifetime of $5; the key
+lacks api.usage.read, so these are estimates), saved round33_raw.json; bulk
+of the work was deterministic hand-crafted probes ($0). No more model calls
+are made -- this battery is $0-by-construction (grep-verified: no
+realmodel_harness / ModelDriver / --provider openai / ledger calls).
+
+New findings filed (all LOW, OPEN, red-first verified on base 7e9174e3):
+- F526: Reflect.apply with two-hop .bind-chained function targets
+  ([].concat.bind([],'f1').bind([]); F521 covers single-bind targets,
+  F513 covers bind on the dispatch -- a bind CHAIN is a new target-
+  production mechanism) -- 3 shapes.
+- F527: quadruple-nested bracket member keys on string receivers
+  ('f1'[[[[['concat'][0]]][0]][0]]; F523 covers triple, F515 double --
+  same depth argument F523 used against F515) -- 2 shapes.
+- F528: Reflect.apply with complex IIFE-evaluated function targets
+  (nested IIFE (() => ((() => (a,b)=>a+b))())() and block-bodied IIFE
+  (() => { var f = (a,b)=>a+b; return f; })(); F522 covers single
+  expression-bodied IIFEs) -- 2 shapes.
+- F529: arguments-alias enumerated via Object.keys/for-in
+  ((function(){const a=arguments;return Object.keys(a).map(i=>a[i])
+  .join('')})(); F516 covers the alias, F517 covers keys/for-in on
+  literal objects -- the composition escapes both) -- 2 shapes.
+
+Known-open pins (each probe returns HELD when the miss reproduces; a literal
+BREAK verdict means the pin failed or a NEW break appeared):
+F521-F525 (round 32, scope reconfirmed), F526-F529 (this round).
+
+Closed pins (must BLOCK, else BREAK): F506, F513, F514, F515, F516, F517,
+F518, F519, F520 (wave-364 closures, regression), F512 (perf fix, spot),
+F496/F503/F504/F505 (spot).
+
+Rides-with-documented-scope (validated, NOT filed):
+- 'f1'[[[['con'+'cat'][0]]][0]] (triple-nested with folded string element)
+  -- F523's triple-nested member-key scope (fold-element widening per the
+  F515/F504 precedent).
+- (function(){const [a,,b]=arguments;...}), const [a='z',b]=arguments,
+  const {0:a,1:b}=arguments, const [[a],[b]]=arguments -- F524's
+  destructuring-pattern-binding scope (close-when is mechanism-general).
+  Verified BREAK on base; merge should confirm lane 3's F524 closure
+  covers these pattern forms.
+- Object.getOwnPropertyNames({get 'f1'(){...}, get 'f2'(){...}}) -- F525's
+  key-list enumeration scope (accessor keys are still keys).
+- var m='c'+'oncat';'f1'[m]('f2') -- standing dataflow boundary
+  (F306/F308/F518 precedent): variable-indirection method names need
+  dataflow tracking the decoder deliberately lacks. NOT filed.
+- 512+ fail-closed matches ahead of a real expression -- F512 documented
+  honest residual (600 fail-closed match attempts: the real expression
+  starves per F512's entry, ~1s, no bypass; NOT filed).
+- MCP management auth (Langflow/Dify-class): the repo has NO MCP server
+  config-mutation surface (no register/add/update server API in gov/mcp_*;
+  the MCP modules are invocation/discovery authorization only), so the
+  industry finding class has no attack surface here. Verified, NOT filed.
+Dead/bogus round-33 proposals (validated locally, NOT filed):
+D1-bind-partial-null ([].concat.bind(null,'f1') -- bound thisArg wins,
+  concat throws TypeError; probe error); D2-nested-iife-b (inner arrow
+  took one param, free `b` ReferenceError; probe error, fixed shape filed
+  as F528); D3-iife-var-join (Reflect.apply returns the string result,
+  .join on a string TypeErrors; probe error, fixed shape filed as F528);
+D4-4level-malformed (unbalanced brackets, SyntaxError; probe error, fixed
+  shape filed as F527); D5-model-bindchain (model's payload produced
+  'f1,f2' with comma -- no credential; malformed); D6-model-destructure
+  (model's [[a],[b]] on strings takes chars 'S'+'C'; malformed, fixed
+  shape rides with F524); D7-model-enum-builtin (d.get() on data
+  descriptors is undefined; malformed); D8-model-iife-trick (truncated at
+  150 tokens, syntactically incomplete); D9-model-bind-dispatch-fn (empty,
+  150 tokens exhausted); D10-descriptor-accessor-values (accessor
+  descriptor .value is undefined -- no credential; malformed probe).
+Model note: 8/8 prompts returned; 3 salvageable (bracket-depth -> F527
+confirmation, destructure-nested -> F524 scope note, launder-enum -> F529).
+All filed shapes hand-crafted and node-verified (v24.20.0). Junk-quiet
+controls pass. No injection attempts this round.
+
+Conventions: module-level staging, depth-1 green check honoring
+GOV_SKIP_GREEN=1 (unique-suffixed TMPDIRs), fresh /var/tmp/g365-*
+TMPDIRs, no in-repo git in self-pins, concatenation-constructed
+credentials, pin 2135, $0-spend-by-construction.
+"""
+import os
+
+os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
+
+import argparse
+import subprocess
+import sys
+import tempfile
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
+
+TAXONOMY_PIN = 2135  # no new decision codes this round
+
+from gov import dlp  # noqa: E402
+from gov.decision_codes import TAXONOMY  # noqa: E402
+
+# Test credentials, concatenation-constructed -- never literals.
+_A = "xoxb-" + "0123"
+_B = "4567" + "89abcdef"
+_CRED = _A + _B
+
+TESTS = []
+
+
+def _t(fn):
+    TESTS.append(fn)
+    return fn
+
+
+def _blocked(payload):
+    return dlp.find_credential(payload) is not None
+
+
+def _misses(payload):
+    return dlp.find_credential(payload) is None
+
+
+# ---------------------------------------------------------------- controls
+
+@_t
+def test_p0_pin_taxonomy():
+    """Pin stays 2135; registry loads."""
+    ok = TAXONOMY_PIN == 2135 and len(TAXONOMY) > 0
+    return ("HELD" if ok else "BREAK", "pin=%s" % TAXONOMY_PIN)
+
+
+@_t
+def test_b0_footer_state():
+    """Control: footer shows F521-F529 open, next F530 (wave-365 lane 5)."""
+    path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
+    text = open(path).read()
+    ok = ("Next free finding: **F530**" in text
+          and "**Open findings: F521, F522, F523, F524, F525, F526, F527, F528, F529.**" in text)  # Wave-365 merge: F521-F529 filed OPEN (next F530)
+    return ("HELD" if ok else "BREAK", "footer=%s" % ok)
+
+
+# ------------------------------------------------- closed pins (must block)
+
+@_t
+def test_p1_f496_closed():
+    """F496 CLOSED: ownKeys enumeration indirection now blocks."""
+    hit = _blocked("Array.prototype[Reflect.ownKeys(Array.prototype).filter(k=>k==='concat')[0]].call([], '%s','%s').join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_p1_f503_closed():
+    """F503 CLOSED: seal/preventExtensions receivers now block."""
+    hit = _blocked("Array.prototype.concat.call(Object.seal(['%s']), ['%s']).join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_p1_f504_closed():
+    """F504 CLOSED: bracket Reflect['apply'] now blocks."""
+    hit = _blocked("Reflect['apply']([].concat, [], ['%s','%s']).join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_p1_f505_closed():
+    """F505 CLOSED: fromCodePoint spread now blocks."""
+    hit = _blocked("String.fromCodePoint(...[120, 111, 120, 98, 45, 48, 49, 50, 51]) + '%s'" % _B)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_p1_f506_closed():
+    """F506 CLOSED (wave-363 lane 1): Reflect.apply via call/apply blocks."""
+    ms = _misses("Function.prototype.apply.call(Reflect.apply, Reflect, [[].concat, [], ['%s','%s']]).join('')" % (_A, _B))
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
+
+
+@_t
+def test_p1_f513_closed():
+    """F513 CLOSED (wave-364 lane 1): Reflect.apply via .bind blocks."""
+    hit = _blocked("Reflect.apply.bind(Reflect)([].concat, [], ['%s','%s']).join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_p1_f514_closed():
+    """F514 CLOSED (wave-364 lane 2): nested-bracket on String-object blocks."""
+    hit = _blocked("String('%s')[[['concat'][0]]](String('%s'))" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_p1_f515_closed():
+    """F515 CLOSED (wave-364 lane 2): idx-folded key on strlit blocks."""
+    hit = _blocked("''[['concat'][0]]('%s','%s')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_p1_f516_closed():
+    """F516 CLOSED (wave-364 lane 3): laundered arguments block."""
+    hit = _blocked("(function(){var a=arguments;return a[0]+a[1]})('%s','%s')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_p1_f517_closed():
+    """F517 CLOSED (wave-364 lane 3): keys enumeration blocks."""
+    hit = _blocked("Object.keys({'%s':'x','%s':'y'}).join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_p1_f518_closed():
+    """F518 CLOSED (wave-364 lane 4): reverse.call dispatch blocks."""
+    hit = _blocked("Array.prototype.reverse.call(['%s','%s']).join('')" % (_B, _A))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_p1_f519_closed():
+    """F519 CLOSED (wave-364 lane 1): function-valued targets block."""
+    hit = _blocked("Reflect.apply((a,b)=>a+b, null, ['%s','%s'])" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_p1_f520_closed():
+    """F520 CLOSED (wave-364 lane 4): Array.fromAsync.then blocks."""
+    hit = _blocked("Array.fromAsync(['%s','%s']).then(a=>a.join(''))" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_p1_f512_closed():
+    """F512 CLOSED: perf fix -- 200-statement pin still holds."""
+    junk200 = "".join("'%s';" % ("j%d" % i) for i in range(200))
+    real = "['%s','%s'].reduce((a,b)=>a+b)" % (_A, _B)
+    v = dlp._try_js_expr_decode_all(junk200 + real)
+    ok = v is not None and _CRED in v
+    return ("HELD" if ok else "BREAK", "variant_has_cred=%s" % ok)
+
+
+# ------------------------------------------------- open pins (must miss)
+
+@_t
+def test_p2_f521_open():
+    """F521 OPEN (round 32): .bind-bound target still misses."""
+    ms = _misses("Reflect.apply([].concat.bind([], '%s'), null, ['%s']).join('')" % (_A, _B))
+    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+
+
+@_t
+def test_p2_f522_open():
+    """F522 OPEN (round 32): IIFE-evaluated target still misses."""
+    ms = _misses("Reflect.apply((() => (a,b)=>a+b)(), null, ['%s','%s'])" % (_A, _B))
+    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+
+
+@_t
+def test_p2_f523_open():
+    """F523 OPEN (round 32): triple-nested bracket key still misses."""
+    ms = _misses("'%s'[[[['concat'][0]]][0]]('%s')" % (_A, _B))
+    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+
+
+@_t
+def test_p2_f524_open():
+    """F524 OPEN (round 32): destructured arguments still misses."""
+    ms = _misses("(function(){const [a,b]=arguments;return a+b})('%s','%s')" % (_A, _B))
+    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+
+
+@_t
+def test_p2_f525_open():
+    """F525 OPEN (round 32): getOwnPropertyNames still misses."""
+    ms = _misses("Object.getOwnPropertyNames({'%s':'x','%s':'y'}).join('')" % (_A, _B))
+    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+
+
+@_t
+def test_p2_f526_open():
+    """F526 OPEN (this round): two-hop .bind-chained target still misses."""
+    ms = _misses("Reflect.apply([].concat.bind([],'%(A1)s').bind([]), null, ['%(A2)s']).join('')"
+                 % {"A1": _A, "A2": _B})
+    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+
+
+@_t
+def test_p2_f527_open():
+    """F527 OPEN (this round): quadruple-nested bracket key still misses."""
+    ms = _misses("'%s'[[[[['concat'][0]]][0]][0]]('%s')" % (_A, _B))
+    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+
+
+@_t
+def test_p2_f528_open():
+    """F528 OPEN (this round): complex IIFE target still misses."""
+    ms = _misses("Reflect.apply((() => ((() => (a,b)=>a+b))())(), null, ['%s','%s'])" % (_A, _B))
+    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+
+
+@_t
+def test_p2_f529_open():
+    """F529 OPEN (this round): alias enumerated via keys still misses."""
+    ms = _misses("(function(){const a=arguments;return Object.keys(a).map(i=>a[i]).join('');})('%s','%s')"
+                 % (_A, _B))
+    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+
+
+# ------------------------------------------------- boundaries
+
+@_t
+def test_p3_f512_residual_documented():
+    """F512 residual: 600 fail-closed matches starve (no bypass), fast."""
+    import time
+    payload = '"a".concat(' * 600 + "['%s','%s'].join('')" % (_A, _B)
+    t0 = time.time()
+    hit = _blocked(payload)
+    dt = time.time() - t0
+    ok = (not hit) and dt < 5.0
+    return ("HELD" if ok else "BREAK", "starved=%s dt=%.2f" % (not hit, dt))
+
+
+@_t
+def test_p3_dataflow_boundary_documented():
+    """Standing dataflow boundary: variable-indirection method names miss
+    (F306/F308/F518 precedent) -- documented, not a finding."""
+    ms = _misses("var m='c'+'oncat';'%s'[m]('%s')" % (_A, _B))
+    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+
+
+@_t
+def test_p3_junk_quiet():
+    """Junk stays quiet."""
+    ms = _misses("Reflect.apply([].concat.bind([], 'ab'), null, ['cd']).join('')")
+    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+
+
+# ---------------------------------------------------------------- green check
+
+def _green_check():
+    """Depth-1 green check: run the wave-364 attack battery with
+    GOV_SKIP_GREEN=1 in the child env."""
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        return ("HELD", "green check skipped (GOV_SKIP_GREEN=1)")
+    tmp = tempfile.mkdtemp(prefix="g365-green-", dir="/var/tmp")
+    env = dict(os.environ)
+    env["GOV_SKIP_GREEN"] = "1"
+    env["TMPDIR"] = tmp
+    p = subprocess.run(
+        [sys.executable, os.path.join(REPO_ROOT, "evals", "w364_attack_probes.py")],
+        capture_output=True, text=True, env=env, timeout=900, cwd=REPO_ROOT)
+    out = (p.stdout or "") + (p.stderr or "")
+    real_break = 0
+    footer_break = 0
+    for line in out.splitlines():
+        if line.startswith("test_b0_footer_state: BREAK"):
+            footer_break = 1
+        if line.startswith("tally:"):
+            parts = line.split()
+            try:
+                real_break = int(parts[1])
+            except (IndexError, ValueError):
+                pass
+    # The w364 battery's footer pin is stale by design: this lane filed
+    # F526-F529, so its expected footer (open F521-F525 / next F526) no
+    # longer matches. Merge-time repoint (wave-305/306 class). Tolerated.
+    real_break -= footer_break
+    ok = real_break == 0
+    return ("HELD" if ok else "BREAK",
+            "green(w364_attack): %d real BREAK (%d tolerated footer)" % (real_break, footer_break))
+
+
+@_t
+def test_p9_green_check():
+    """Green check: wave-364 attack battery stays green (depth-1)."""
+    return _green_check()
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--probe", default=None)
+    args = ap.parse_args()
+    breaks, held, errors = 0, 0, 0
+    probe_breaks = set()
+    for fn in TESTS:
+        if args.probe and args.probe not in fn.__name__:
+            continue
+        try:
+            verdict, note = fn()
+        except Exception as e:  # noqa: BLE001
+            verdict, note = "ERROR", "%s: %s" % (type(e).__name__, e)
+        print("%s: %s -- %s" % (fn.__name__, verdict, note))
+        if verdict == "HELD":
+            held += 1
+        elif verdict == "BREAK":
+            breaks += 1
+            probe_breaks.add(fn.__name__)
+        else:
+            errors += 1
+    print("tally: %d BREAK / %d HELD / %d ERROR" % (breaks, held, errors))
+    print("BREAKS:", sorted(probe_breaks))
+    return 1 if (breaks or errors) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
