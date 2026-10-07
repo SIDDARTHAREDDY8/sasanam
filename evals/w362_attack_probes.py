@@ -122,12 +122,12 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F503-F505 closed, F506-F511 open, next F513
-    (wave-362 merge)."""
+    """Control: footer shows F506 closed (wave-363 lane 1), F507-F511 open,
+    next F513 (lane-local; the merge finalizes tree-wide)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F513**" in text
-          and "**Open findings: F506, F507, F508, F509, F510, F511.**" in text)
+          and "**Open findings: F507, F508, F509, F510, F511.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -233,20 +233,20 @@ def test_p2_f505_closed():
     return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
-# --------------------------------------- new findings F506-F511 (must miss)
+# ----------------- new findings F507-F511 (must miss); F506 closed above
 
 @_t
-def test_p3_f506_open():
-    """F506 OPEN: Function.prototype.apply.call(Reflect.apply,...) misses."""
-    miss = _misses("Function.prototype.apply.call(Reflect.apply, Reflect, [[].concat, [], ['%s','%s']]).join('')" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p3_f506_closed():
+    """F506 CLOSED (wave-363 lane 1): higher-order apply.call dispatch now blocks."""
+    hit = _blocked("Function.prototype.apply.call(Reflect.apply, Reflect, [[].concat, [], ['%s','%s']]).join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
-def test_p3_f506_call_open():
-    """F506 OPEN: Function.prototype.call.call(Reflect.apply,...) misses."""
-    miss = _misses("Function.prototype.call.call(Reflect.apply, Reflect, [].concat, [], ['%s','%s']).join('')" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p3_f506_call_closed():
+    """F506 CLOSED (wave-363 lane 1): higher-order call.call dispatch now blocks."""
+    hit = _blocked("Function.prototype.call.call(Reflect.apply, Reflect, [].concat, [], ['%s','%s']).join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t

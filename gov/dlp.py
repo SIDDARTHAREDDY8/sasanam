@@ -4802,6 +4802,63 @@ def _js_parse_reflect_construct(text, i, depth, state):
     return arr, j + 1
 
 
+def _js_extend_concat_apply_args(text, j, elements, depth, state):
+    """Parse the `[` argsArray of a concat-application at text[j] (F469).
+
+    Shared by the direct `Reflect.apply(T, thisArg, argsArray)` form
+    and the F506 higher-order dispatch desugar -- both reduce to
+    thisArg.concat(...argsArray) (engine-identical, node v24.20.0
+    verified), so they share the exact element grammar. Extends
+    *elements* in place: each argsArray element is one concat
+    argument (array args extended one level, engine-exact). Parts are
+    charged per element on top of the parts the element sub-parsers
+    already charged (intentional double charge, F430 precedent: the
+    budget trips sooner, i.e. fails closed sooner -- do not "dedupe").
+    Returns the index just after `]`. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j + 1)  # past the `[`
+    if j < n and text[j] == "]":
+        return j + 1
+    while True:
+        if j < n and text[j] in "'\"":
+            frag, j = _js_parse_string(text, j)
+            elements.append(frag)
+        elif j < n and text[j] == "`":
+            frag, j = _js_parse_template(text, j, depth, state)
+            elements.append(frag)
+        elif j < n and text[j] == "[":
+            sub, j = _js_parse_array(text, j, depth, state)
+            if any(not isinstance(e, str) for e in sub.elements):
+                raise _JSExprFail("Reflect.apply arg non-string element")
+            elements.extend(sub.elements)
+        elif text.startswith("Array", j):
+            sub, j = _js_parse_array_constructor(text, j, state)
+            if not isinstance(sub, _JSArr):
+                raise _JSExprFail("Reflect.apply arg not an array")
+            if any(not isinstance(e, str) for e in sub.elements):
+                raise _JSExprFail("Reflect.apply arg non-string element")
+            elements.extend(sub.elements)
+        else:
+            raise _JSExprFail("Reflect.apply arg not decodable")
+        # Parts are charged per argsArray element here on top of the
+        # parts the element sub-parsers already charged (intentional
+        # double charge: the budget trips sooner, i.e. fails closed
+        # sooner -- do not "dedupe").
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("unterminated Reflect.apply args")
+        if text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            continue
+        if text[j] == "]":
+            return j + 1
+        raise _JSExprFail("bad Reflect.apply args")
+
+
 def _js_parse_reflect_apply_concat(text, i, depth, state):
     """Parse 'Reflect.apply(Array.prototype.concat, <thisArg>, <argsArray>)'
     at text[i] (F469).
@@ -4923,51 +4980,10 @@ def _js_parse_reflect_apply_concat(text, i, depth, state):
     j = _js_skip_ws(text, j + 1)
     if j >= n or text[j] != "[":
         raise _JSExprFail("Reflect.apply argsArray not an array")
-    j = _js_skip_ws(text, j + 1)
     # Desugar: thisArg.concat(...argsArray) -- each argsArray element is
     # one concat argument (array args extended one level, engine-exact).
     elements = list(recv.elements)
-    if j < n and text[j] == "]":
-        j += 1
-    else:
-        while True:
-            if j < n and text[j] in "'\"":
-                frag, j = _js_parse_string(text, j)
-                elements.append(frag)
-            elif j < n and text[j] == "`":
-                frag, j = _js_parse_template(text, j, depth, state)
-                elements.append(frag)
-            elif j < n and text[j] == "[":
-                sub, j = _js_parse_array(text, j, depth, state)
-                if any(not isinstance(e, str) for e in sub.elements):
-                    raise _JSExprFail("Reflect.apply arg non-string element")
-                elements.extend(sub.elements)
-            elif text.startswith("Array", j):
-                sub, j = _js_parse_array_constructor(text, j, state)
-                if not isinstance(sub, _JSArr):
-                    raise _JSExprFail("Reflect.apply arg not an array")
-                if any(not isinstance(e, str) for e in sub.elements):
-                    raise _JSExprFail("Reflect.apply arg non-string element")
-                elements.extend(sub.elements)
-            else:
-                raise _JSExprFail("Reflect.apply arg not decodable")
-            # Parts are charged per argsArray element here on top of the
-            # parts the element sub-parsers already charged (intentional
-            # double charge: the budget trips sooner, i.e. fails closed
-            # sooner -- do not "dedupe").
-            state["parts"] += 1
-            if state["parts"] > _JS_EXPR_MAX_PARTS:
-                raise _JSExprFail("too many parts")
-            j = _js_skip_ws(text, j)
-            if j >= n:
-                raise _JSExprFail("unterminated Reflect.apply args")
-            if text[j] == ",":
-                j = _js_skip_ws(text, j + 1)
-                continue
-            if text[j] == "]":
-                j += 1
-                break
-            raise _JSExprFail("bad Reflect.apply args")
+    j = _js_extend_concat_apply_args(text, j, elements, depth, state)
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ")":
         # A third argument changes the call arity -- fails closed.
@@ -6570,7 +6586,15 @@ def _js_parse_function_dispatch(text, i, depth, state):
         method, k = _js_parse_dispatch_target_ref(
             text, _js_skip_ws(text, paren + 1), depth, state)
     except _JSExprFail:
-        return None
+        # F506: Reflect.apply reached through higher-order dispatch --
+        # Function.prototype.call/apply invoked through .call/.apply
+        # with the target Reflect.apply (e.g.
+        # Function.prototype.apply.call(Reflect.apply, Reflect, [T,
+        # thisArg, argsList])). The desugared triple routes through
+        # the F469/F504 target and argument classes (engine-exact,
+        # node v24.20.0 verified).
+        return _js_parse_f506_dispatch(text, i, inner, outer, paren,
+                                       depth, state)
     k = _js_skip_ws(text, k)
     if k >= n or text[k] != ",":
         raise _JSExprFail("bad double dispatch")
@@ -6606,6 +6630,218 @@ def _js_parse_function_dispatch(text, i, depth, state):
         recv, margs = args[0], list(args[1].elements)
     val = _js_apply_method_values(method, recv, margs, state)
     return _js_parse_postfix(text, j + 1, val, depth, state)
+
+
+def _js_parse_f506_target(text, j, depth, state):
+    """Parse the F506 double-dispatch target `Reflect.apply` at text[j].
+
+    The member name is `apply` only: the dot form, the F490 `?.` form
+    (Reflect is provably non-null so `?.` is engine-identical to `.`),
+    or the F504 literal/template/folded/nested-bracket member-key
+    forms (engine-identical, node v24.20.0 verified). `Reflect.get`,
+    `Reflect.construct`, and any other member are NOT modeled on this
+    path -- they fail closed (the F468 construct dispatch has no
+    higher-order indirection finding; F491's computed-key get stays
+    fail-closed). Returns the index just after the member name, or
+    None when text[j] is not a Reflect.apply reference (pure
+    lookahead -- the caller falls through to the normal primary
+    path). Never evals.
+    """
+    n = len(text)
+    if j > 0 and text[j - 1] in _JS_IDENT_CONT:
+        # Engine-exact: `xReflect.apply` is member access on `xReflect`
+        # in node, never the Reflect global (F469 precedent).
+        return None
+    if not text.startswith("Reflect", j):
+        return None
+    k = j + len("Reflect")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        return None  # Reflectx
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == "?" and k + 1 < n and text[k + 1] == ".":
+        # F490: Reflect?.apply -- `?.` adjacent (engine SyntaxError
+        # otherwise); Reflect is provably non-null so ?. === .
+        k += 1
+    if k < n and text[k] == "[":
+        try:
+            name, k = _js_parse_reflect_member_key(text, k, depth, state)
+        except _JSExprFail:
+            return None
+        if name != "apply":
+            return None
+        return k
+    if k >= n or text[k] != ".":
+        return None
+    k = _js_skip_ws(text, k + 1)
+    if not text.startswith("apply", k):
+        return None
+    k2 = k + len("apply")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        return None  # applyx
+    return k2
+
+
+def _js_parse_f506_triple(text, j, depth, state):
+    """Parse the F506 `T, thisArg, argsList` triple at text[j].
+
+    T is the concat-application target -- exactly the F469/F504
+    target classes (`[].concat`, or the bare `Array.prototype.concat`
+    chain with F455-class ws-tolerant dots); thisArg is an array
+    literal or Array-constructor form with all-string elements
+    (F446/F454 -- exactly the direct form's classes; `new Array`
+    fails closed, consistent with F468); argsList is the `[`
+    argsArray parsed by the shared F469 element grammar
+    (_js_extend_concat_apply_args). Returns (elements, next_index)
+    where elements is the desugared thisArg.concat(...argsList)
+    element list. Raises _JSExprFail on any mismatch -- the triple is
+    only attempted after the F506 dispatch head committed, so a
+    mismatch is fail-closed (rejected, never mis-decoded). Never
+    evals.
+    """
+    n = len(text)
+    if j < n and text[j] == "[":
+        # F504: `[].concat` -- the empty-array-literal receiver
+        # (node: [].concat === Array.prototype.concat, v24.20.0).
+        # Non-empty receivers fail closed (documented scope boundary).
+        k = _js_skip_ws(text, j + 1)
+        if k >= n or text[k] != "]":
+            raise _JSExprFail("F506 non-empty-array target")
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ".":
+            raise _JSExprFail("F506 target without member")
+        k = _js_skip_ws(text, k + 1)
+        if not text.startswith("concat", k):
+            raise _JSExprFail("F506 non-concat target")
+        k2 = k + len("concat")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            raise _JSExprFail("F506 concatx is not concat")
+        j = k2
+    elif text.startswith("Array", j):
+        # F469: the bare Array.prototype.concat chain.
+        k = j + len("Array")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F506 Arrayx is not Array")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ".":
+            raise _JSExprFail("F506 target without dot")
+        k = _js_skip_ws(text, k + 1)
+        if not text.startswith("prototype", k):
+            raise _JSExprFail("F506 non-prototype target")
+        k2 = k + len("prototype")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            raise _JSExprFail("F506 prototypex")
+        k = _js_skip_ws(text, k2)
+        if k >= n or text[k] != ".":
+            raise _JSExprFail("F506 target without member dot")
+        k = _js_skip_ws(text, k + 1)
+        if not text.startswith("concat", k):
+            raise _JSExprFail("F506 non-concat target")
+        k2 = k + len("concat")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            raise _JSExprFail("F506 concatx is not concat")
+        j = k2
+    else:
+        raise _JSExprFail("F506 non-concat target")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F506 target without thisArg")
+    j = _js_skip_ws(text, j + 1)
+    # thisArg: array literal or Array constructor call forms --
+    # exactly the direct form's classes.
+    if j < n and text[j] == "[":
+        recv, j = _js_parse_array(text, j, depth, state)
+    elif text.startswith("Array", j):
+        recv, j = _js_parse_array_constructor(text, j, state)
+    else:
+        raise _JSExprFail("F506 thisArg not an array")
+    if not isinstance(recv, _JSArr):
+        raise _JSExprFail("F506 thisArg not an array")
+    if any(not isinstance(e, str) for e in recv.elements):
+        raise _JSExprFail("F506 thisArg non-string element")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F506 thisArg without argsList")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F506 argsList not an array")
+    elements = list(recv.elements)
+    j = _js_extend_concat_apply_args(text, j, elements, depth, state)
+    return elements, j
+
+
+def _js_parse_f506_dispatch(text, i, inner, outer, paren, depth, state):
+    """Parse the F506 higher-order dispatch at text[i] (F506).
+
+    Shapes: `Function.prototype.call/apply` invoked through
+    `.call/.apply` with the target `Reflect.apply` --
+    `Function.prototype.apply.call(Reflect.apply, Reflect, [T,
+    thisArg, argsList])`, `Function.prototype.call.call(Reflect.apply,
+    Reflect, T, thisArg, argsList)`, and the two `.apply`-outer
+    equivalents (arguments arriving as an array). Node-verified
+    (v24.20.0): every combination is exactly `Reflect.apply(T,
+    thisArg, argsList)` -- the inner/outer pair only changes how the
+    three arguments arrive (text list vs single array). The triple is
+    parsed by _js_parse_f506_triple (the F469/F504 target and
+    argument classes, engine-identical); the result desugars through
+    the same thisArg.concat(...argsList) element model as the direct
+    form.
+
+    The receiver R must be the literal `Reflect` namespace -- the
+    engine ignores Reflect.apply's this-value, so only the namespace
+    is modeled (anything else fails closed, conservative). `.bind`
+    as the outer dispatch is not modeled (falls through, fail
+    closed). A deeper `.call.call.call` chain is not modeled
+    (documented residual -- the committed head is one double
+    dispatch). Returns (value, next_index) with the postfix chain
+    applied, or None when text[i] is not this shape (the caller
+    falls through). Never evals.
+    """
+    n = len(text)
+    if outer not in ("call", "apply"):
+        return None
+    j = _js_skip_ws(text, paren + 1)
+    tj = _js_parse_f506_target(text, j, depth, state)
+    if tj is None:
+        return None
+    j = _js_skip_ws(text, tj)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F506 dispatch without target arg")
+    j = _js_skip_ws(text, j + 1)
+    if outer == "apply":
+        # The arguments arrive as one array: [R, ...].
+        if j >= n or text[j] != "[":
+            raise _JSExprFail("F506 outer apply needs an array")
+        j = _js_skip_ws(text, j + 1)
+    if not text.startswith("Reflect", j):
+        raise _JSExprFail("F506 non-Reflect receiver")
+    k = j + len("Reflect")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("F506 Reflectx is not Reflect")
+    j = _js_skip_ws(text, k)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F506 receiver without args")
+    j = _js_skip_ws(text, j + 1)
+    if inner == "apply":
+        # F.apply(R, [T, thisArg, argsList]) -- one array argument.
+        if j >= n or text[j] != "[":
+            raise _JSExprFail("F506 inner apply needs an array")
+        j = _js_skip_ws(text, j + 1)
+    elements, j = _js_parse_f506_triple(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if inner == "apply":
+        if j >= n or text[j] != "]":
+            raise _JSExprFail("F506 bad inner apply array")
+        j = _js_skip_ws(text, j + 1)
+    if outer == "apply":
+        if j >= n or text[j] != "]":
+            raise _JSExprFail("F506 bad outer apply array")
+        j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != ")":
+        # A fourth argument changes the call arity -- fails closed.
+        raise _JSExprFail("F506 extra args")
+    j += 1
+    state["ops"] += 1  # the higher-order dispatch is obfuscation-shaped
+    return _js_parse_postfix(text, j, _JSArr(elements), depth, state)
 
 
 def _js_parse_opt_member_ref(text, j, value):
