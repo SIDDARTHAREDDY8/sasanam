@@ -218,14 +218,13 @@ COMPOSITIONS = [
      "new WeakRef({c:'ab'}).deref().c+'cd'", False),
 ]
 
-FOOTER_OPEN = (  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+FOOTER_OPEN = (  # Wave-369 lane 5: F552/F557/F565 CLOSED; F547-F551, F553-F556, F558-F564, F566-F569 OPEN (next F570)
                "F547", "F548", "F549", "F550",
-               "F551", "F552", "F553", "F554",
-               "F555", "F556", "F557", "F558",
-               "F559", "F560", "F561", "F562",
-               "F563", "F564", "F565", "F566",
-               "F567", "F568", "F569"
-               )  # Wave-368 lane 2 local
+               "F551", "F553", "F554", "F555",
+               "F556", "F558", "F559", "F560",
+               "F561", "F562", "F563", "F564",
+               "F566", "F567", "F568", "F569"
+               )  # Wave-369 lane 5 local
 FOOTER_NEXT = "F570"  # Wave-368 lane 2 local  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
 
 

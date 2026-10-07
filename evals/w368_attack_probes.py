@@ -163,8 +163,8 @@ def test_b0_footer_state():
     """Control: footer shows F547-F569 open, next F570 (wave-368 merge)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F570**" in text  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
-          and "Open findings: F547, F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566, F567, F568, F569." in text)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+    ok = ("Next free finding: **F570**" in text  # Wave-369 lane 5: F552/F557/F565 CLOSED (next F570)
+          and "Open findings: F547, F548, F549, F550, F551, F553, F554, F555, F556, F558, F559, F560, F561, F562, F563, F564, F566, F567, F568, F569." in text)  # Wave-369 lane 5: F552/F557/F565 CLOSED (next F570)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -500,10 +500,10 @@ def test_p2_f551_open():
 
 
 @_t
-def test_p2_f552_open():
-    """F552 OPEN (this round): Symbol-keyed member reads still miss."""
-    ms = _misses("({[Symbol.for('c')]:'%s'})[Symbol.for('c')]+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f552_closed():
+    """F552 CLOSED (wave-369 lane 5): Symbol-keyed member reads now block."""
+    hit = _blocked("({[Symbol.for('c')]:'%s'})[Symbol.for('c')]+'%s'" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
@@ -535,10 +535,10 @@ def test_p2_f556_open():
 
 
 @_t
-def test_p2_f557_open():
-    """F557 OPEN (this round): object spread copies still miss."""
-    ms = _misses("({...{c:'%s'}}).c+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f557_closed():
+    """F557 CLOSED (wave-369 lane 5): object spread copies now block."""
+    hit = _blocked("({...{c:'%s'}}).c+'%s'" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
@@ -591,10 +591,10 @@ def test_p2_f564_open():
 
 
 @_t
-def test_p2_f565_open():
-    """F565 OPEN (this round): Object.fromEntries laundering still misses."""
-    ms = _misses("Object.fromEntries([['c','%s']]).c+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f565_closed():
+    """F565 CLOSED (wave-369 lane 5): Object.fromEntries laundering now blocks."""
+    hit = _blocked("Object.fromEntries([['c','%s']]).c+'%s'" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t

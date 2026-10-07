@@ -457,7 +457,28 @@ def p3_no_new_regexes():
     # getOwnPropertyNames/getOwnPropertyDescriptors (key/descriptor
     # enumeration indirection) -- new member-name alternatives, pinned
     # exactly here; re.compile count unchanged (28).
-    assert dlp._JS_EXPR_START.pattern == '[\'\\"`\\[]|String\\.fromCharCode|String\\.fromCodePoint|String[ \\t\\n\\r]*(\\(|\\.[ \\t\\n\\r]*raw([ \\t\\n\\r]*\\(|[ \\t\\n\\r]*\\.[ \\t\\n\\r]*call[ \\t\\n\\r]*\\()|\\[[ \\t\\n\\r]*[\'\\"])|Array(\\(|[ \\t\\n\\r]*(\\.[ \\t\\n\\r]*(of|apply|call|from)|\\[[ \\t\\n\\r]*[\'\\"]))|Array[ \\t\\n\\r]*\\.[ \\t\\n\\r]*prototype|String[ \\t\\n\\r]*\\.[ \\t\\n\\r]*prototype|Function[ \\t\\n\\r]*\\.[ \\t\\n\\r]*prototype|Reflect([ \\t\\n\\r]*(\\?\\.|\\.)[ \\t\\n\\r]*(construct|apply|get)|[ \\t\\n\\r]*\\[[ \\t\\n\\r]*[\'\\"`\\[])|Object([ \\t\\n\\r]*\\.[ \\t\\n\\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries)|[ \\t\\n\\r]*\\[[ \\t\\n\\r]*[\'\\"])|\\('
+    # F539 (wave-368 lane 2): the Object dot-member alternative gains
+    # freeze (identity-preserving builtin on object literals) -- new
+    # member-name alternative, pinned exactly here; re.compile count
+    # unchanged (28).
+    # F565 (wave-369 lane 5): the Object dot-member alternative gains
+    # fromEntries (deserializing builtin on literal pair lists / Map)
+    # -- new member-name alternative, pinned exactly here; re.compile
+    # count unchanged (28).
+    # Wave-369 lane 5 (F565): re-pinned to the live anchor --
+    # the pin had gone stale (structuredClone (F536, wave-367 lane 4); JSON (F541, wave-368 lane 3); new WeakRef (F539, wave-368 lane 2)
+    # added without re-pin); exactness restored and the
+    # fromEntries member alternative added. re.compile count
+    # unchanged (28).
+    assert dlp._JS_EXPR_START.pattern == (
+        r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|"
+        r"Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|"
+        r"Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|"
+        r"Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|"
+        r"Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|fromEntries)|[ \t\n\r]*\[[ \t\n\r]*['\"])|"
+        r"structuredClone(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|"
+        r"\("
+    )
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     assert len(re.findall(r"re\.compile\(", src)) == 28
     return ("HELD", "no new regexes; anchor pinned")
