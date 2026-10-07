@@ -102,7 +102,7 @@ sys.path.insert(0, REPO_ROOT)
 import gov.dlp as dlp  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-354: F471 closed; no new decision codes
-FOOTER_OPEN = "F506, F507, F508, F509, F510, F511"  # Wave-362 lane 2: F504 CLOSED locally (merge finalizes tree-wide)  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-355 lanes 1+2: F473, F474 CLOSED; open none / next F475 (merge intermediate)  # Wave-354 lane 3: F471 CLOSED (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-354 lane 3: F471 CLOSED locally (merge finalizes tree-wide); F469/F470/F472 stay OPEN  # Wave-355 lane 3: F475 filed + CLOSED  # Wave-355 lane 3: F475 FILED + CLOSED (merge intermediate)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 lane 1: F476 CLOSED  # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480)  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)
+FOOTER_OPEN = "F506, F507, F508, F509"  # Wave-362 lane 2: F504 CLOSED locally (merge finalizes tree-wide)  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-355 lanes 1+2: F473, F474 CLOSED; open none / next F475 (merge intermediate)  # Wave-354 lane 3: F471 CLOSED (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-354 lane 3: F471 CLOSED locally (merge finalizes tree-wide); F469/F470/F472 stay OPEN  # Wave-355 lane 3: F475 filed + CLOSED  # Wave-355 lane 3: F475 FILED + CLOSED (merge intermediate)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 lane 1: F476 CLOSED  # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480)  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 lane 4: F510+F511 CLOSED (lane-local)
 FOOTER_NEXT = "F513"  # Wave-355 lanes 1+2: F473, F474 CLOSED; open none / next F475 (merge intermediate)  # Wave-354 lane 3: F471 CLOSED (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-354 lane 3: F471 CLOSED locally (merge finalizes tree-wide); F469/F470/F472 stay OPEN  # Wave-355 lane 3: F475 filed + CLOSED  # Wave-355 lane 3: F475 FILED + CLOSED (merge intermediate)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: next F480  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: next F496  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)
 
 # Fragments built by concatenation: the write path redacts credential literals.
@@ -318,7 +318,8 @@ def p3_pin_anchor_char_class_only():
     line = src[i:src.find("\n", i)]
     j = line.find("Object(")
     assert j > 0, "Object anchor alternative missing"
-    alt = line[j:j + 110]
+    alt = line[j:j + 120]  # F510 (wave-363 lane 4): widened for the
+    # `values` member-name alternative.
     # F480 (wave-358 lane 1): the Object alternative gained the
     # bracket-string member form; still character-class-only (the
     # F468 precedent) -- no nested quantifiers.
@@ -330,8 +331,12 @@ def p3_pin_anchor_char_class_only():
     # getOwnPropertyDescriptor (descriptor indirection) -- a new
     # member-name alternative, pinned exactly here; the rest of the
     # alternative is unchanged (still no nested quantifiers).
+    # F510 (wave-363 lane 4): the Object dot-member alternative gains
+    # values (value-enumeration indirection) -- a new member-name
+    # alternative, pinned exactly here; the rest of the alternative
+    # is unchanged (still no nested quantifiers).
     return alt.startswith(
-        "Object([ \\t\\n\\r]*\\.[ \\t\\n\\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor)|"
+        "Object([ \\t\\n\\r]*\\.[ \\t\\n\\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|values)|"
         "[ \\t\\n\\r]*\\[[ \\t\\n\\r]*['\\\"])")
 
 

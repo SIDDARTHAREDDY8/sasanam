@@ -122,12 +122,12 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F506-F509 closed (wave-363 lanes 1+2+3),
-    F510/F511 open, next F513 (lane-local; merge finalizes)."""
+    """Control: footer shows no open findings after F506-F511 closures
+    (wave-363 lanes 1-4), next F513 (merge finalizes)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F513**" in text
-          and "**Open findings: F510, F511.**" in text)
+          and "**Open findings: none.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -298,24 +298,26 @@ def test_p3_f509_variants_open():
 
 
 @_t
-def test_p3_f510_open():
-    """F510 OPEN: Object.values indirection misses."""
-    ms = [
-        _misses("Object.values({0:'%s',1:'%s'}).join('')" % (_A, _B)),
-        _misses("Object.values(Object.freeze({0:'%s',1:'%s'})).join('')" % (_A, _B)),
-        _misses("Object.values(Object.seal({0:'%s',1:'%s'})).join('')" % (_A, _B)),
+def test_p3_f510_closed():
+    """F510 CLOSED (wave-363 lane 4): Object.values indirection now blocks."""
+    hs = [
+        _blocked("Object.values({0:'%s',1:'%s'}).join('')" % (_A, _B)),
+        _blocked("Object.values(Object.freeze({0:'%s',1:'%s'})).join('')" % (_A, _B)),
+        _blocked("Object.values(Object.seal({0:'%s',1:'%s'})).join('')" % (_A, _B)),
+        _blocked("Object.values(Object.freeze(Object.entries({0:'%s',1:'%s'}).reduce((o,[k,v])=>(o[k]=v,o),{}))).join('')" % (_A, _B)),
     ]
-    return ("HELD" if all(ms) else "BREAK", "miss=%s" % ms)
+    return ("HELD" if all(hs) else "BREAK", "hit=%s (want block)" % hs)
 
 
 @_t
-def test_p3_f511_open():
-    """F511 OPEN: splice.call dispatch misses."""
-    ms = [
-        _misses("Array.prototype.splice.call(['%s','%s'],0,2).join('')" % (_A, _B)),
-        _misses("Array.prototype.splice.call({length:2,0:'%s',1:'%s'},0,2).join('')" % (_A, _B)),
+def test_p3_f511_closed():
+    """F511 CLOSED (wave-363 lane 4): splice.call/.apply dispatch now blocks."""
+    hs = [
+        _blocked("Array.prototype.splice.call(['%s','%s'],0,2).join('')" % (_A, _B)),
+        _blocked("Array.prototype.splice.call({length:2,0:'%s',1:'%s'},0,2).join('')" % (_A, _B)),
+        _blocked("Array.prototype.splice.apply(['%s','%s'],[0,2]).join('')" % (_A, _B)),
     ]
-    return ("HELD" if all(ms) else "BREAK", "miss=%s" % ms)
+    return ("HELD" if all(hs) else "BREAK", "hit=%s (want block)" % hs)
 
 
 # --------------------------------------- documented boundaries

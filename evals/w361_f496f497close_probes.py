@@ -129,7 +129,7 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-361 lane 1: F496, F497 closed; no new decision codes
-FOOTER_OPEN = "F506, F507, F508, F509, F510, F511"  # Wave-361 lane 1: F496, F497 CLOSED locally (merge finalizes tree-wide)  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)
+FOOTER_OPEN = "F506, F507, F508, F509"  # Wave-361 lane 1: F496, F497 CLOSED locally (merge finalizes tree-wide)  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 lane 4: F510+F511 CLOSED (lane-local)
 FOOTER_NEXT = "F513"  # next free after F502  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)
 
 # Constructed via concatenation: the write path redacts credential literals.
@@ -374,6 +374,7 @@ def p2_neighbors_intact():
         "[...'%s',...'%s'].join('')" % (_A, _B),  # F499 CLOSED (wave-361 lane 2; merge maintenance)
         "Array.prototype.join.call(Object.freeze({length:2,0:'%s',1:'%s'}), '')" % (_A, _B),  # F502 CLOSED (wave-361 lane 3; merge maintenance)
         "const a='%s'; const b='%s'; a+b" % (_A, _B),  # F501 CLOSED (wave-361 lane 3; merge maintenance)
+        "Array.prototype.concat.call(Object.seal([]), '%s','%s').join('')" % (_A, _B),  # F503 CLOSED (wave-362 lane 1; merge maintenance)
     ]
     for payload in closed:
         v, _ = _verdict(payload, True)
@@ -382,7 +383,6 @@ def p2_neighbors_intact():
     # Open findings must still miss.
     open_shapes = [
         "String.fromCharCode(...['%s','%s'].map(c=>c.charCodeAt(0)))" % (_A, _B),  # F500-adjacent (must miss: non-literal map)
-        "Array.prototype.concat.call(Object.seal([]), '%s','%s').join('')" % (_A, _B),  # F503 (seal-wrapped receiver)
     ]
     for payload in open_shapes:
         v, _ = _verdict(payload, False)
