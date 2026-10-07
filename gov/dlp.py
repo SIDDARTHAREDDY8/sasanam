@@ -5966,9 +5966,16 @@ def _js_parse_arguments_iife_recv(text, i, depth, state):
     return _JSArr(args), j
 
 
-def _js_peek_freeze_head(text, i):
-    """Peek `Object.freeze(` / `Object['freeze'](` at text[i] (F502);
-    True/False, never raises."""
+# Object integrity-level wrappers that return their argument unchanged (the
+# same object reference -- node v24.20.0): a wrapped dispatch receiver is
+# engine-identical to the inner receiver (F502/F503).
+_JS_INTEGRITY_WRAPPERS = ("freeze", "seal", "preventExtensions")
+
+
+def _js_peek_integrity_wrap_head(text, i):
+    """Peek `Object.<w>(` / `Object['<w>'](` at text[i] for an integrity
+    wrapper w in _JS_INTEGRITY_WRAPPERS (F502/F503); True/False, never
+    raises."""
     n = len(text)
     j = _js_skip_ws(text, i)
     if not text.startswith("Object", j):
@@ -5979,21 +5986,27 @@ def _js_peek_freeze_head(text, i):
     k = _js_skip_ws(text, k)
     if k < n and text[k] == ".":
         k = _js_skip_ws(text, k + 1)
-        if not text.startswith("freeze", k):
-            return False
-        k += 6
-        if k < n and text[k] in _JS_IDENT_CONT:
+        for w in _JS_INTEGRITY_WRAPPERS:
+            if text.startswith(w, k):
+                k2 = k + len(w)
+                if k2 < n and text[k2] in _JS_IDENT_CONT:
+                    continue  # e.g. sealx -- not a wrapper name
+                k = k2
+                break
+        else:
             return False
     elif k < n and text[k] == "[":
-        # Object['freeze'] / Object["freeze"] (F480 bracket convention).
+        # Object['<w>'] / Object["<w>"] (F480 bracket convention).
         k2 = _js_skip_ws(text, k + 1)
         if k2 >= n or text[k2] not in "'\"":
             return False
         q = text[k2]
-        if not text.startswith("freeze", k2 + 1):
-            return False
-        k3 = k2 + 7
-        if k3 >= n or text[k3] != q:
+        k3 = k2 + 1
+        for w in _JS_INTEGRITY_WRAPPERS:
+            if text.startswith(w, k3) and k3 + len(w) < n and text[k3 + len(w)] == q:
+                k3 = k3 + len(w)
+                break
+        else:
             return False
         k = _js_skip_ws(text, k3 + 1)
         if k >= n or text[k] != "]":
@@ -6005,46 +6018,51 @@ def _js_peek_freeze_head(text, i):
     return k < n and text[k] == "("
 
 
-def _js_parse_freeze_recv(text, i, depth, state):
-    """Parse `Object.freeze(INNER)` / `Object['freeze'](INNER)` at text[i]
-    (F502).
+def _js_parse_integrity_wrap_recv(text, i, depth, state):
+    """Parse `Object.<w>(INNER)` / `Object['<w>'](INNER)` at text[i] for an
+    integrity wrapper w in _JS_INTEGRITY_WRAPPERS (F502/F503).
 
-    Object.freeze returns its argument unchanged (the same object
-    reference -- node v24.20.0), so a frozen receiver is engine-identical
+    Every wrapper returns its argument unchanged (the same object
+    reference -- node v24.20.0), so a wrapped receiver is engine-identical
     to the inner receiver: INNER is parsed by _js_parse_dispatch_receiver
     itself, which fails closed on any unmodeled inner shape. The
     bracket-string member form is engine-identical to the dot form
     (F480 convention, node-verified). Exactly one argument; anything
-    else (extra args, missing close paren) fails closed. Object.seal /
-    Object.preventExtensions are NOT modeled -- the peek only matches
-    `freeze` (documented F502 boundary).
+    else (extra args, missing close paren) fails closed.
     Returns (value, next_index). Never evals.
     """
     if depth >= _JS_EXPR_MAX_DEPTH:
-        raise _JSExprFail("freeze nesting too deep")
+        raise _JSExprFail("integrity wrapper nesting too deep")
     n = len(text)
     j = _js_skip_ws(text, i)
     if not text.startswith("Object", j):
-        raise _JSExprFail("not Object.freeze")
+        raise _JSExprFail("not an integrity wrapper")
     j = _js_skip_ws(text, j + 6)
     if j < n and text[j] == ".":
         j = _js_skip_ws(text, j + 1)
-        if not text.startswith("freeze", j):
-            raise _JSExprFail("not Object.freeze")
-        j = _js_skip_ws(text, j + 6)
+        for w in _JS_INTEGRITY_WRAPPERS:
+            if text.startswith(w, j):
+                j2 = j + len(w)
+                if j2 < n and text[j2] in _JS_IDENT_CONT:
+                    continue
+                j = j2
+                break
+        else:
+            raise _JSExprFail("not an integrity wrapper")
+        j = _js_skip_ws(text, j)
     elif j < n and text[j] == "[":
         _mname, j = _js_parse_bracket_member(text, j)
-        if _mname != "freeze":
-            raise _JSExprFail("Object bracket member not freeze")
+        if _mname not in _JS_INTEGRITY_WRAPPERS:
+            raise _JSExprFail("Object bracket member not an integrity wrapper")
     else:
-        raise _JSExprFail("not Object.freeze")
+        raise _JSExprFail("not an integrity wrapper")
     j = _js_expect(text, j, "(")
     j = _js_skip_ws(text, j)
     recv, j = _js_parse_dispatch_receiver(text, j, depth + 1, state)
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ")":
-        raise _JSExprFail("freeze with extra args")
-    state["ops"] += 1  # the freeze wrapper is obfuscation-shaped
+        raise _JSExprFail("integrity wrapper with extra args")
+    state["ops"] += 1  # the wrapper is obfuscation-shaped
     return recv, j + 1
 
 
@@ -6059,8 +6077,9 @@ def _js_parse_dispatch_receiver(text, i, depth, state):
       closed);
     - `(function(){return arguments})(args...)` (F489; the arguments
       exotic object as a _JSArr of the passed values);
-    - `Object.freeze(INNER)` (F502; freeze is the identity on the
-      receiver value, so INNER is parsed by this same grammar);
+    - `Object.<w>(INNER)` for an integrity wrapper w in
+      _JS_INTEGRITY_WRAPPERS (F502/F503; each wrapper is the identity on
+      the receiver value, so INNER is parsed by this same grammar);
     - otherwise the additive grammar (arrays, strings).
     The head peeks commit the parse: a malformed exotic receiver fails
     closed here (the additive grammar cannot parse these heads anyway).
@@ -6074,8 +6093,8 @@ def _js_parse_dispatch_receiver(text, i, depth, state):
         return _js_parse_proxy_recv(text, _ri, depth, state)
     if _js_peek_arguments_iife_head(text, _ri):
         return _js_parse_arguments_iife_recv(text, _ri, depth, state)
-    if _js_peek_freeze_head(text, _ri):
-        return _js_parse_freeze_recv(text, _ri, depth, state)
+    if _js_peek_integrity_wrap_head(text, _ri):
+        return _js_parse_integrity_wrap_recv(text, _ri, depth, state)
     return _js_parse_additive(text, _ri, depth, state)
 
 

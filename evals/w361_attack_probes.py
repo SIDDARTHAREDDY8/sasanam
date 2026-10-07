@@ -22,11 +22,12 @@ New findings filed (all LOW, OPEN, red-first verified on base a8fe67a2):
 
 Known-open pins (each probe returns HELD when the miss reproduces; a literal
 BREAK verdict means the pin failed or a NEW break appeared):
-F496-F502 (rounds 28 + re-file), F503-F505 (this round).
+F496-F502 (rounds 28 + re-file), F504-F505 (round 29; F503 CLOSED
+wave-362 lane 1).
 
 Closed pins (must BLOCK / fail-closed, else BREAK): F473, F475, F476, F477,
 F478, F479, F480, F481, F482, F483, F484, F485, F486, F487, F488, F489, F490,
-F491, F492, F493, F494, F495 (spot).
+F491, F492, F493, F494, F495, F503 (spot; wave-362 lane 1).
 
 Rides-with-documented-scope (validated, NOT filed):
 - String.fromCharCode.call/.apply(String, ...) -- F500 family (fromCharCode
@@ -182,13 +183,6 @@ def test_p1_f502_closed():
 # ------------------------------------------------- open pins (this round)
 
 @_t
-def test_p2_f503_open():
-    """F503 OPEN: seal/preventExtensions receivers still miss."""
-    p = "Array.prototype.concat.call(Object.seal(['%s','%s']), []).join('')" % (_A, _B)
-    return ("HELD" if _misses(p) else "BREAK", "F503 pin")
-
-
-@_t
 def test_p2_f504_open():
     """F504 OPEN: non-dot Reflect.apply still misses."""
     p = "Reflect['apply']([].concat, [], ['%s','%s']).join('')" % (_A, _B)
@@ -251,6 +245,13 @@ def test_p3_closed_f495():
     """F495 closed: const method binding blocks."""
     p = "const {concat} = Array.prototype; concat.call([], '%s','%s').join('')" % (_A, _B)
     return ("HELD" if _blocked(p) else "BREAK", "F495 spot")
+
+
+@_t
+def test_p3_closed_f503():
+    """F503 closed (wave-362 lane 1): seal/preventExtensions receivers block."""
+    p = "Array.prototype.concat.call(Object.seal(['%s','%s']), []).join('')" % (_A, _B)
+    return ("HELD" if _blocked(p) else "BREAK", "F503 spot")
 
 
 # ------------------------------------------------- green check (depth-1)

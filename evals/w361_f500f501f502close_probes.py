@@ -57,12 +57,17 @@ Closure design (gov/dlp.py):
     raising IndexError when a bound token sat at the very end of the
     remainder (fail-LOUD, not fail-closed). Now rest-bounded.
   F502:
-  * `_js_peek_freeze_head` / `_js_parse_freeze_recv`: `Object.freeze(`
-    (and the F480-convention bracket form `Object['freeze'](`) peeks
-    commit the parse; the single inner argument is parsed by
-    `_js_parse_dispatch_receiver` itself (freeze is the identity on
-    the receiver value, node-verified). Extra args, non-modeled
-    inners, and Object.seal/preventExtensions fail closed.
+  * `_js_peek_freeze_head` / `_js_parse_freeze_recv` (generalized by
+    wave-362 lane 1 into `_js_peek_integrity_wrap_head` /
+    `_js_parse_integrity_wrap_recv` over
+    `_JS_INTEGRITY_WRAPPERS = ("freeze", "seal", "preventExtensions")`,
+    F503): `Object.freeze(` (and the F480-convention bracket form
+    `Object['freeze'](`) peeks commit the parse; the single inner
+    argument is parsed by `_js_parse_dispatch_receiver` itself (freeze
+    is the identity on the receiver value, node-verified). Extra args,
+    non-modeled inners fail closed. Object.seal / preventExtensions
+    receivers are modeled by F503 (wave-362 lane 1), no longer
+    fail-closed.
 
 Fail-closed boundaries (documented):
   F500: spread of non-arrays; `String.fromCharCode.call/apply` with
@@ -71,8 +76,9 @@ Fail-closed boundaries (documented):
     declarators; non-leading bindings; template literals;
     method+value mixed leading statements (both rewrites decline);
     destructuring/defaults; `with` statements (dynamic scoping).
-  F502: Object.seal / Object.preventExtensions; freeze with extra
-    args; freeze nesting beyond _JS_EXPR_MAX_DEPTH.
+  F502: freeze with extra args; freeze nesting beyond
+    _JS_EXPR_MAX_DEPTH. (Object.seal / Object.preventExtensions moved
+    to F503, wave-362 lane 1.)
 
 Standalone: green checks ON by default; honors GOV_SKIP_GREEN.
 """
@@ -251,9 +257,6 @@ def p2_f501_bounds():
 
 def p2_f502_bounds():
     cases = [
-        # Object.seal / preventExtensions are not modeled
-        "Array.prototype.join.call(Object.seal(['%s','%s']), '')" % (_A1, _A2),
-        "Array.prototype.join.call(Object.preventExtensions(['%s','%s']), '')" % (_A1, _A2),
         # extra arguments to freeze
         "Array.prototype.join.call(Object.freeze(['%s'], 1), '')" % _A1,
         # non-modeled inner receiver
@@ -264,8 +267,17 @@ def p2_f502_bounds():
         "Array.prototype.join.call(Object.freeze(['ab','cd']), '')",
     ]
     bad = [c for c in cases if _verdict(c, False)[0] == "BREAK"]
+    # F503 (wave-362 lane 1): seal/preventExtensions receivers are now
+    # modeled, not fail-closed -- they must block.
+    now_modeled = [
+        "Array.prototype.join.call(Object.seal(['%s','%s']), '')" % (_A1, _A2),
+        "Array.prototype.join.call(Object.preventExtensions(['%s','%s']), '')" % (_A1, _A2),
+    ]
+    bad += [c for c in now_modeled if _verdict(c, True)[0] == "BREAK"]
     return ("HELD" if not bad else "BREAK",
-            "%d/%d F502 bounds fail closed" % (len(cases) - len(bad), len(cases)))
+            "%d/%d F502 bounds fail closed, F503 seal/preventExtensions block"
+            % (len(cases) + len(now_modeled) - len(bad),
+               len(cases) + len(now_modeled)))
 
 
 # ------------------------------------------------------- P3: node-exactness
