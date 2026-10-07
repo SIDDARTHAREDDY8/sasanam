@@ -136,13 +136,13 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F531, F533-F536 open, next F537 (wave-366 merge:
-    F526-F530 CLOSED lanes 1-3; F532 CLOSED at merge (honest F527 generalization);
-    F531, F533-F536 OPEN attack round 34)."""
+    """Control: footer shows F531, F534-F536 open, next F537 (wave-367 lane 2:
+    F533 CLOSED; merge finalizes)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F537**" in text
-          and "**Open findings: F533, F534, F535, F536.**" in text)  # Wave-367 lane 1: F531 CLOSED; open F533-F536 (next F537)
+    ok = ("Next free finding: **F537**" in text
+          and "**Open findings: F534, F535, F536.**" in text)  # Wave-367 merge: F531 CLOSED (lane 1), F533 CLOSED (lane 2); open F534-F536 (next F537)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -341,10 +341,10 @@ def test_p2_f532_closed():
 
 @_t
 def test_p2_f533_open():
-    """F533 OPEN (this round): for-of on aliased arguments still misses."""
+    """F533 CLOSED (wave-367 lane 2): for-of on aliased arguments now blocks."""
     ms = _misses("(function(){var a=arguments;var s='';for(var x of a){s+=x;}return s;})('%s','%s')"
                  % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 @_t

@@ -9562,6 +9562,205 @@ def _js_parse_f529_forin_accum(text, j, alias):
     return j
 
 
+def _js_parse_f533_forof_accum(text, j, alias):
+    """Parse `var|let S='';for(var|let|const X of A){S+=X;}return S;`
+    at text[j] (F533), where A is the arguments alias.
+
+    The for-of value-iteration idiom over the aliased `arguments`
+    object: the loop braces are optional (engine-identical, node
+    v24.20.0 verified). for-of over the arguments exotic object
+    yields the argument VALUES in ascending index order (the
+    exotic's Symbol.iterator is ArrayValues; `length`/`callee` are
+    non-enumerable), so the accumulator is engine-identical to the
+    argument join. The accumulator declaration accepts var/let
+    (node-identical; a const accumulator would throw at runtime),
+    and the loop variable accepts var/let/const (node-identical).
+    Guards mirror _js_parse_f529_forin_accum: the accumulator must
+    start as the empty string, the loop variable must not shadow
+    the accumulator or the alias, the loop must iterate the alias,
+    and the loop body must read exactly `S+=X` (trailing `;`
+    required, matching the F529 exact-shape discipline). Returns
+    next_index (trailing `;` after the return is optional; nothing
+    may follow). Never evals.
+    """
+    n = len(text)
+    m = _js_match_kw(text, j, "var")
+    if m is None:
+        m = _js_match_kw(text, j, "let")
+    if m is None:
+        raise _JSExprFail("F533 forof accum not var/let")
+    j = _js_skip_ws(text, m)
+    acc, j = _js_parse_ident(text, j)
+    if acc == alias:
+        raise _JSExprFail("F533 forof acc shadows alias")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "=")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail("F533 forof accum not a string")
+    q0 = j
+    _, j = _js_parse_string(text, j)
+    if text[q0:j] != "''" and text[q0:j] != '""':
+        raise _JSExprFail("F533 forof accum not empty")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "for")
+    if m is None:
+        raise _JSExprFail("F533 forof no for")
+    j = _js_skip_ws(text, m)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "var")
+    if m is None:
+        m = _js_match_kw(text, j, "let")
+    if m is None:
+        m = _js_match_kw(text, j, "const")
+    if m is None:
+        raise _JSExprFail("F533 forof loopvar not var/let/const")
+    j = _js_skip_ws(text, m)
+    loopvar, j = _js_parse_ident(text, j)
+    if loopvar == acc or loopvar == alias:
+        raise _JSExprFail("F533 forof loopvar shadows")
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "of")
+    if m is None:
+        raise _JSExprFail("F533 forof no of")
+    j = _js_skip_ws(text, m)
+    a2, j = _js_parse_ident(text, j)
+    if a2 != alias:
+        raise _JSExprFail("F533 forof iterates another object")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    braced = False
+    if j < n and text[j] == "{":
+        braced = True
+        j = _js_skip_ws(text, j + 1)
+    acc2, j = _js_parse_ident(text, j)
+    if acc2 != acc:
+        raise _JSExprFail("F533 forof accum mismatch")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("+=", j):
+        raise _JSExprFail("F533 forof body not +=")
+    j = _js_skip_ws(text, j + 2)
+    v2, j = _js_parse_ident(text, j)
+    if v2 != loopvar:
+        raise _JSExprFail("F533 forof body reads another ident")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    j = _js_skip_ws(text, j)
+    if braced:
+        j = _js_expect(text, j, "}")
+        j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "return")
+    if m is None:
+        raise _JSExprFail("F533 forof no return")
+    j = _js_skip_ws(text, m)
+    acc3, j = _js_parse_ident(text, j)
+    if acc3 != acc:
+        raise _JSExprFail("F533 forof returns another ident")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ";":
+        j += 1
+    if _js_skip_ws(text, j) != len(text):
+        raise _JSExprFail("F533 forof trailing statements")
+    return j
+
+
+def _js_parse_args_forof_iife(text, i, depth, state):
+    """Parse `(function(){DECL a=arguments; BODY})(lit, ...)` (F533).
+
+    Desugars for-of value iteration over a one-hop alias of the
+    `arguments` exotic object: `var|let s='';for(var|let|const x of
+    a){s+=x;}return s;` (the loop braces are optional). Node-exact
+    desugar (v24.20.0): for-of over the arguments object yields the
+    argument VALUES in ascending index order, so the accumulator is
+    engine-identical to the argument join. DECL is var/const/let
+    (all three bind identically here, node verified). Call args are
+    string literals (the F509/F516 arg grammar). Returns
+    (value, next_index), or None when the head does not match or a
+    guard fails (the caller falls through to the F529/F516 paths).
+    Bounded by the part/depth budgets; the IIFE wrapper charges one
+    op (obfuscation-shaped). Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a source other than bare `arguments` (Array.from/Object.values
+      aliases, rest params, destructuring are their own findings'
+      scope), an alias rebound anywhere (the exact-shape grammar has
+      no room for reassignment), enumerating bare `arguments`
+      (not the alias; documented residual, F529 precedent), a
+      non-empty accumulator initializer, a `const` accumulator, an
+      undeclared loop variable, a destructuring loop target, a loop
+      body other than `s+=x`, and any other body shape.
+    """
+    if not _js_peek_arguments_iife_head(text, i):
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, i)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j) + len("function")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        _kw, m = _js_match_decl_kw(stmts, sj)
+        if m is None:
+            raise _JSExprFail("F533 decl not var/const/let")
+        sj = _js_skip_ws(stmts, m)
+        alias, sj = _js_parse_ident(stmts, sj)
+        if alias == "arguments":
+            raise _JSExprFail("F533 alias named arguments")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "=")
+        m = _js_match_kw(stmts, _js_skip_ws(stmts, sj), "arguments")
+        if m is None:
+            raise _JSExprFail("F533 source not arguments")
+        sj = _js_skip_ws(stmts, m)
+        sj = _js_expect(stmts, sj, ";")
+        rest = stmts[sj:]
+        _js_parse_f533_forof_accum(rest, _js_skip_ws(rest, 0), alias)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        args = []
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ")":
+            j += 1
+        else:
+            while True:
+                j = _js_skip_ws(text, j)
+                if j >= n or text[j] not in "'\"":
+                    raise _JSExprFail("F533 arg not string literal")
+                aval, j = _js_parse_string(text, j)
+                args.append(aval)
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                j = _js_skip_ws(text, j)
+                if j >= n:
+                    raise _JSExprFail("unterminated iife call")
+                if text[j] == ",":
+                    j = _js_skip_ws(text, j + 1)
+                    continue
+                if text[j] == ")":
+                    j += 1
+                    break
+                raise _JSExprFail("bad iife call")
+        val = "".join(args)
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_args_enumerated_iife(text, i, depth, state):
     """Parse `(function(){DECL a=arguments; BODY})(lit, ...)` (F529).
 
@@ -12693,6 +12892,17 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f509 = _js_parse_args_binding_iife(text, i, depth, state)
         if _f509 is not None:
             val, i = _f509
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F533: (function(){DECL a=arguments;
+        #   var|let s='';for(var|let|const x of a){s+=x;}return s;})(lit, ...)
+        #   -- for-of VALUE iteration over the arguments alias
+        #   (F529 x for-of). Tried before F529: the exact for-of
+        #   grammar is disjoint from F529's (F529's body branches
+        #   reject `of` chargeless at the in/of keyword), and None
+        #   falls through to F529 like F509.
+        _f533 = _js_parse_args_forof_iife(text, i, depth, state)
+        if _f533 is not None:
+            val, i = _f533
             return _js_parse_postfix(text, i, val, depth, state)
         # F529: (function(){DECL a=arguments;
         #   return Object.keys(a).map(i=>a[i])POSTFIX;})(lit, ...) or
