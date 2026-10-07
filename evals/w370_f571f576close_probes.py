@@ -59,7 +59,7 @@ def _quiet(payload):
 def p0_pin_footer():
     assert TAXONOMY_PIN == 2140, "pin moved"
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F583**" in text
+    ok = ("Next free finding: **F597**" in text
           and "Open findings: F570, F572, F573, F574, F575, F577, F578, "
                "F579, F580, F581, F582." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)

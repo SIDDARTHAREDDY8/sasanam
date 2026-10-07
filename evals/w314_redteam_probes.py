@@ -1169,7 +1169,7 @@ def _p_footer_state():
     last = footers[-1]
     # Wave-336 lane 1: footer-state probe repaired -- the F412-era
     # assertion rotted through several merges; assert the live footer.
-    if "Open findings: F570, F571, F572, F573, F574, F575, F576, F577, F578, F579, F580, F581, F582." not in last:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+    if "Open findings: F582, F583, F584, F585, F586, F587, F588, F589, F590, F591, F592, F593, F594, F595, F596." not in last:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
         raise _Break("footer-state: open findings present: %s" % last[:80])
     if FOOTER_NEXT not in last:
         raise _Break("footer-state: next is not %s: %s" %

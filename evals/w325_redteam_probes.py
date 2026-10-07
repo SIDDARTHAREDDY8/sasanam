@@ -946,7 +946,7 @@ def _p6b():
     text = open(os.path.join(REPO, "evals/FINDINGS.md")).read()
     import re
     # The file carries one footer line per wave; the LAST one is current.
-    # Footer form: "Next free finding: **F537**. **Open findings: F531, F533, F534, F535, F536.**"  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN (next F489)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-366 merge: F526-F530 CLOSED (lanes 1-3); F532 CLOSED at merge (honest F527 generalization, F514 precedent); F531, F533-F536 OPEN (next F537)
+    # Footer form: "Next free finding: **F597**. **Open findings: F582, F583, F584, F585, F586, F587, F588, F589, F590, F591, F592, F593, F594, F595, F596.**"  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN (next F489)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-366 merge: F526-F530 CLOSED (lanes 1-3); F532 CLOSED at merge (honest F527 generalization, F514 precedent); F531, F533-F536 OPEN (next F537)
     opens = re.findall(r"\*\*Open findings:\s*([^*]+?)\.\*\*", text)
     nexts = re.findall(r"Next free finding:\s*\*\*([^*]+?)\*\*", text)
     open_line = opens[-1].strip() if opens else ""
