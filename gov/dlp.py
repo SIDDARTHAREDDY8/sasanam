@@ -2557,23 +2557,77 @@ def _js_parse_raw_template_arg(text, j, state):
     return segs, j + 1
 
 
+def _js_parse_raw_substitutions(text, j, state):
+    """Parse zero or more `, 'lit'` substitution args for `String.raw`
+    (F551).
+
+    Returns (subs, next_index) positioned at the first unconsumed char
+    (the closing paren when well-formed). Each substitution must be a
+    string literal -- template, additive, numeric, and non-literal
+    args fail closed (the engine ToString-coerces substitutions, which
+    the static decoder cannot model -- documented scope boundary:
+    rejected, never mis-decoded). A trailing comma fails closed, the
+    same as the F454/F446 literal-list grammar. The parts budget is
+    charged per substitution, so substitution runs cannot buy
+    unbounded work. Never evals.
+    """
+    n = len(text)
+    subs = []
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ",":
+            return subs, j
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("String.raw substitution not a literal")
+        sub, j = _js_parse_string(text, j)
+        state["parts"] += 1  # the substitution is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        subs.append(sub)
+
+
+def _js_interleave_raw_substitutions(segs, subs):
+    """Node-exact String.raw raw/substitution interleave (F551).
+
+    Engine semantics (node v24.20.0 verified): raw[0] + sub[0] +
+    raw[1] + sub[1] + ... + raw[n-1] -- a substitution is appended
+    only while a following raw segment exists AND the substitution is
+    present. Missing substitutions contribute nothing (never the
+    string "undefined"), extra substitutions are dropped, and the
+    last substitution has no following segment so it is always
+    dropped.
+    """
+    parts = []
+    for k, seg in enumerate(segs):
+        parts.append(seg)
+        if k < len(segs) - 1 and k < len(subs):
+            parts.append(subs[k])
+    return "".join(parts)
+
+
 def _js_parse_string_raw(text, i, depth, state):
     """Parse `String.raw({raw:[...]})` / `String.raw.call(R, {raw:[...]})`
-    at text[i] (F493).
+    at text[i] (F493, substitutions F551).
 
-    The call form of String.raw: with a single `{raw:[...]}` argument
-    and no substitutions the engine concatenates the raw segments
-    (node v24.20.0 verified: `String.raw({raw:['f1','f2']})` ===
-    'f1f2'). The `.call` dispatch's thisArg is parsed and discarded
-    (the engine ignores it); `.apply`/`.bind` and any substitution
-    arguments fail closed (documented scope boundary -- the engine
-    interleaves substitutions, which is not modeled). The tag form
-    `` String.raw`...` `` is excluded by the caller (_js_parse_primary
-    never routes a backtick here); it keeps its F463/F457 handling --
-    the tag form is the coded-refusal control and must keep its
-    existing behavior.
+    The call form of String.raw. The template object `{raw:[...]}`
+    parses exactly as in F493 (string-literal-only raw segments --
+    node-verified: the engine uses the already-cooked array element
+    values verbatim, so the cooked literal grammar is node-exact).
+    The `.call` dispatch's thisArg is parsed and discarded (the engine
+    ignores it); `.apply`/`.bind` fail closed.
 
-    Returns (joined_segments, next_index); the caller applies the
+    F551: optional substitution arguments interleave node-exactly
+    (raw[0] + sub[0] + raw[1] + ... + raw[n-1], missing subs skipped,
+    extra subs dropped). Only string-literal substitutions are
+    modeled; non-literal substitutions fail closed (documented).
+
+    The tag form `` String.raw`...` `` is excluded by the caller
+    (_js_parse_primary never routes a backtick here); it keeps its
+    F463/F457 handling -- the tag form is the coded-refusal control
+    and must keep its existing behavior.
+
+    Returns (interleaved_string, next_index); the caller applies the
     postfix chain and the ops charge. Never evals.
     """
     n = len(text)
@@ -2599,26 +2653,40 @@ def _js_parse_string_raw(text, i, depth, state):
         if dname != "call":
             raise _JSExprFail("String.raw apply/bind not modeled")
         p = _js_skip_ws(text, paren + 1)
-        _, p = _js_parse_ignored_value(text, p, depth, state)
+        # The .call thisArg is parsed and discarded (the engine
+        # ignores it for String.raw). `_js_parse_ignored_value`
+        # covers markers and additive values; a bare identifier
+        # thisArg (`String.raw.call(String, ...)`, the F551 filed
+        # shape) is not an additive value, so it is skipped as a
+        # plain identifier -- node-verified, the engine ignores any
+        # thisArg here. Anything else fails closed.
+        try:
+            _, p = _js_parse_ignored_value(text, p, depth, state)
+        except _JSExprFail:
+            _, p = _js_parse_ident(text, p)
         p = _js_skip_ws(text, p)
         if p >= n or text[p] != ",":
             raise _JSExprFail("String.raw.call without template arg")
         segs, p = _js_parse_raw_template_arg(text, p + 1, state)
+        subs, p = _js_parse_raw_substitutions(text, p, state)
         p = _js_skip_ws(text, p)
         if p >= n or text[p] != ")":
             raise _JSExprFail("String.raw.call unterminated")
-        if len("".join(segs)) > _MAX_DECODE_BYTES:
+        result = _js_interleave_raw_substitutions(segs, subs)
+        if len(result) > _MAX_DECODE_BYTES:
             raise _JSExprFail("String.raw too long")
-        return "".join(segs), p + 1
+        return result, p + 1
     if j >= n or text[j] != "(":
         raise _JSExprFail("String.raw without paren")
     segs, j = _js_parse_raw_template_arg(text, j + 1, state)
+    subs, j = _js_parse_raw_substitutions(text, j, state)
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ")":
         raise _JSExprFail("String.raw unterminated")
-    if len("".join(segs)) > _MAX_DECODE_BYTES:
+    result = _js_interleave_raw_substitutions(segs, subs)
+    if len(result) > _MAX_DECODE_BYTES:
         raise _JSExprFail("String.raw too long")
-    return "".join(segs), j + 1
+    return result, j + 1
 
 
 def _js_parse_string_ctor(text, i, depth, state):
@@ -6080,7 +6148,8 @@ def _js_parse_reflect_apply_fn(text, i, depth, state):
 
 
 def _js_parse_f531_spread_bound_args(text, j, state):
-    """Parse `...['lit', ...]` as the bound-arg list at text[j] (F531).
+    """Parse `...['lit', ...]` / `...'lit'` as the bound-arg list at text[j]
+    (F531 / F559).
 
     text[j] is the first dot of the `...` spread. Node-exact desugar
     (v24.20.0): in `[].concat.bind(BINDTHIS, ...['f1', 'f2'])` the
@@ -6092,8 +6161,13 @@ def _js_parse_f531_spread_bound_args(text, j, state):
     itself), so the desugar is faithful to the direct form. The array
     is never evaluated.
 
+    F559: a string literal spread (`... 'f1'`) expands to the string's
+    characters as the bound args (node-verified); the empty string
+    binds nothing. Parts charged per character (F452 lesson).
+
     Bounds (all fail closed -- rejected, never mis-decoded):
-    - the spread source must be an array literal; any other source
+    - the spread source must be an array literal (F531) or a string
+      literal (F559 -- expanded to its characters); any other source
       (`...x`, `...{'0':'f1'}`, template/tagged forms) fails closed.
     - the spread must be the SOLE and FINAL bound arg: the caller has
       just seen `,` after BINDTHIS, and this function consumes `)` --
@@ -6109,9 +6183,28 @@ def _js_parse_f531_spread_bound_args(text, j, state):
     if state["parts"] > _JS_EXPR_MAX_PARTS:
         raise _JSExprFail("too many parts")
     j = _js_skip_ws(text, j + 3)
-    if j >= n or text[j] != "[":
-        raise _JSExprFail("F531 spread source not an array literal")
-    elements, j = _js_parse_string_literal_list(text, j + 1, state, "]")
+    if j >= n:
+        raise _JSExprFail("F531 spread without source")
+    if text[j] == "[":
+        elements, j = _js_parse_string_literal_list(text, j + 1, state,
+                                                     "]")
+    elif text[j] in "'\"":
+        # F559: string-literal spread -- the engine expands the string
+        # to its characters, which become the bound args
+        # (node v24.20.0: [].concat.bind([],...'f1') binds 'f','1';
+        # the empty string binds nothing). Backtick template sources
+        # fail closed in _js_parse_string. The parts budget is charged
+        # per character (F452 lesson): a huge literal cannot buy
+        # unbounded downstream work -- the F531 array path charges
+        # per element the same way.
+        frag, j = _js_parse_string(text, j)
+        state["parts"] += len(frag)
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        elements = list(frag)
+    else:
+        raise _JSExprFail("F559 spread source not an array/string "
+                          "literal")
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ")":
         raise _JSExprFail("F531 spread not the final bound arg")
@@ -6146,10 +6239,13 @@ def _js_parse_f521_bound_target(text, j, depth, state):
       fails closed.
     - every bound ARG must be a string literal (F454 grammar);
       numeric, template, and additive args fail closed. The one
-      exception is F531: a single spread of a literal array as the SOLE
-      bound arg (`.bind(BINDTHIS, ...['f1'])`), modeled node-exactly by
-      `_js_parse_f531_spread_bound_args` (wave-367 lane 1); multiple
-      spreads, mid-list spreads, literal+spread mixes, and non-literal
+      exception is the spread form: a single spread of a literal
+      array as the SOLE bound arg (`.bind(BINDTHIS, ...['f1'])`),
+      modeled node-exactly by `_js_parse_f531_spread_bound_args`
+      (wave-367 lane 1), extended by F559 (wave-369 lane 3) to a
+      single spread of a string literal whose characters become the
+      bound args (`.bind(BINDTHIS, ...'f1')`); multiple spreads,
+      mid-list spreads, literal+spread mixes, and non-literal
       spread sources all fail closed.
     - a third `.bind` on the two-hop chain (three-hop chain) fails
       closed structurally -- the triple caller expects `,` after the
@@ -10306,7 +10402,7 @@ _F478_DISPATCH_NAMES = ("call", "apply", "bind")
 _JS_POSTFIX_METHOD_NAMES = (
     "concat", "repeat", "join", "reduce", "reduceRight", "map", "filter",
     "fill", "reverse", "toString", "slice", "flat", "splice", "replace",
-    "padStart", "padEnd", "at", "toReversed", "with",
+    "padStart", "padEnd", "at", "toReversed", "with", "split",
 )
 # F547: "at" is the direct element-read form (ARR.at(INTLIT));
 # F561: "toReversed"/"with" are the ES2023 copy-on-write array methods
@@ -10514,6 +10610,8 @@ def _js_peek_dispatch_call(text, k):
     verified).
     """
     n = len(text)
+    if k >= n:
+        return None
     if text[k] == "?":
         if k + 1 >= n or text[k + 1] != ".":
             return None
@@ -14856,7 +14954,8 @@ def _js_apply_method(text, j, name, value, depth, state):
     """Apply .concat(...) / .repeat(...) / .join(...) / .reduce(...) /
     .reduceRight(...) / .map(...) / .filter(...) / .fill(...) /
     .reverse(...) / .toString() / .slice(...) / .flat() / .splice(0,2) /
-    .replace(...) / .padStart(...) / .padEnd(...) with text[j] == '('.
+    .replace(...) / .padStart(...) / .padEnd(...) / .split(...)
+    with text[j] == '('.
 
 
     .join/.reduce/.reduceRight/.map/.filter/.fill/.reverse require an
@@ -15311,6 +15410,42 @@ def _js_apply_method_at(text, i, name, value, depth, state):
             raise _JSExprFail("replace too long")
         state["ops"] += 1
         return result, i + 1
+    if name == "split":
+        # F564: 'f1,f2'.split(',') -- String.prototype.split with a
+        # string-literal separator, returning the node-exact segment
+        # list as a _JSArr so the chain can continue into .join().
+        # Node-exact (v24.20.0): the empty separator splits into
+        # characters; the optional numeric-literal limit truncates the
+        # result (ToUint32 is the identity on the non-negative ints
+        # _js_parse_number produces); the no-arg form returns [value].
+        # Regex and non-literal separators, and non-literal limits,
+        # fail closed (documented scope boundary: rejected, never
+        # mis-decoded).
+        if not isinstance(value, str):
+            raise _JSExprFail("split on non-string")
+        i = _js_skip_ws(text, i)
+        if i < len(text) and text[i] == ")":
+            state["ops"] += 1
+            return _JSArr([value]), i + 1
+        if i >= len(text) or text[i] not in "'\"":
+            raise _JSExprFail("split separator not a literal")
+        sep, i = _js_parse_string(text, i)
+        i = _js_skip_ws(text, i)
+        limit = None
+        if i < len(text) and text[i] == ",":
+            limit, i = _js_parse_number(text, _js_skip_ws(text, i + 1))
+            i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("bad split")
+        i += 1
+        if sep == "":
+            elements = list(value)
+        else:
+            elements = value.split(sep)
+        if limit is not None:
+            elements = elements[:limit]
+        state["ops"] += 1
+        return _JSArr(elements), i
     if name in ("padStart", "padEnd"):
         # F465: '89abcdef'.padStart(21,'xoxb-012345678') -- bounded
         # left/right padding with a literal numeric target length and
@@ -15620,7 +15755,8 @@ def _js_parse_postfix(text, i, value, depth, state):
     """Consume chained .concat(...) / .repeat(...) / .join(...) /
     .reduce(...) / .reduceRight(...) / .map(...) / .filter(...) /
     .fill(...) / .reverse() / .toString() / .slice(...) / .flat() /
-    .splice(0,2) / .replace(...) / .padStart(...) / .padEnd(...) on *value*."""
+    .splice(0,2) / .replace(...) / .padStart(...) / .padEnd(...) /
+    .split(...) on *value*."""
 
     while True:
         j = _js_skip_ws(text, i)
