@@ -144,11 +144,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F572-F575, F578-F582 open, next F583 (wave-370 merge: lanes 1+2)."""
+    """Control: footer shows F581, F582 open, next F583 (wave-370 merge)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F583**" in text  # Wave-370 merge: F570/F571/F576/F577 CLOSED
-          and "Open findings: F575, F581, F582." in text)  # Wave-370 merge: F570/F571/F576/F577 CLOSED
+    ok = ("Next free finding: **F583**" in text  # Wave-370 merge: F570-F580 CLOSED
+          and "Open findings: F581, F582." in text)  # Wave-370 merge: F581/F582 OPEN
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -562,10 +562,10 @@ def test_p2_f574_closed():
     return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_p2_f575_open():
-    """F575 OPEN: String.raw non-array raw object still misses."""
-    ms = _misses("String.raw({raw:{0:'%s',1:'%s',length:2}})" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p1_f575_closed():
+    """F575 CLOSED (wave-370 lane 6): String.raw array-like raw object now blocks."""
+    hit = _blocked("String.raw({raw:{0:'%s',1:'%s',length:2}})" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_p2_f576_open():
