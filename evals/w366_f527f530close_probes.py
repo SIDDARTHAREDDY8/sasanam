@@ -339,9 +339,9 @@ def p3_perf_bound():
 
 
 # ------------------------------------------------- P4: pin and footer
-# Lane-local footer (wave-367 lane 1): F526-F532 CLOSED (F531 closed
-# here); F533-F536 remain OPEN; the merge finalizes tree-wide.
-FOOTER_OPEN = ("F533", "F534", "F535", "F536")
+# Merge footer (wave-367): F531/F533/F534 CLOSED in lanes 1-3;
+# F535, F536 remain OPEN; merge finalizes tree-wide.
+FOOTER_OPEN = ("F535", "F536")
 FOOTER_NEXT = "F537"
 
 
@@ -366,20 +366,21 @@ def p4_pin_and_footer():
         nxt, open_s = m.group(1), m.group(2)
         open_got = tuple(s.strip() for s in open_s.split(","))
         if nxt != FOOTER_NEXT or open_got != FOOTER_OPEN:
-            # Merged footer: F526-F530 CLOSED, F532 CLOSED at merge (honest
-            # F527 generalization); F531 CLOSED wave-367 lane 1; open
-            # F533-F536; next F537.
+            # Wave-367 merge: F526-F534 CLOSED (F531/F533/F534 in lanes 1-3),
+            # F532 CLOSED at wave-366 merge; open F535, F536; next F537.
             # A footer regression BREAKs.
             ok = False
             notes.append("lane-local footer: next=%s open=%s "
                          "(want next=%s open=%s)" % (
                              nxt, open_got, FOOTER_NEXT, FOOTER_OPEN))
-    for fid in ("F526", "F527", "F528", "F529", "F530", "F531", "F532"):
-        if not re.search(r"\(%s .*CLOSED" % fid, text):
+    for fid in ("F526", "F527", "F528", "F529", "F530", "F531", "F532", "F533", "F534"):
+        # Wave-367 merge: lanes 1-3 closed F531/F533/F534 (lane 3's stale
+        # F526/F528/F529-OPEN assertion corrected at the wave-367 lane-3 merge).
+        if not re.search(r"\\(%s .*CLOSED" % fid, text):
             ok = False
             notes.append("%s not marked CLOSED" % fid)
-    for fid in ("F533", "F534", "F535", "F536"):
-        if not re.search(r"\(%s .*OPEN" % fid, text):
+    for fid in ("F535", "F536"):
+        if not re.search(r"\\(%s .*OPEN" % fid, text):
             ok = False
             notes.append("%s not OPEN" % fid)
     return ("HELD" if ok else "BREAK",

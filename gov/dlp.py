@@ -6382,7 +6382,9 @@ def _js_parse_reflect_call(text, i, depth, state):
     # F519 function-valued-target path; a `[].concat.bind(` /
     # `Array.prototype.concat.bind(` head is the F521 bound-target
     # path; a `[].join.bind(` / `Array.prototype.join.bind(` head is
-    # the F530 bound-join-target path. The callees re-parse from i
+    # the F530 bound-join-target path; a `[].slice.bind(` /
+    # `Array.prototype.slice.bind(` head is the F534 bound-slice-target
+    # path. The callees re-parse from i
     # (defense-in-depth); a mis-route here always fails closed inside
     # the callee.
     # F513: Reflect.apply.bind(Reflect)(T, thisArg, argsList) -- the
@@ -6403,6 +6405,8 @@ def _js_parse_reflect_call(text, i, depth, state):
         return _js_parse_reflect_apply_bound(text, i, depth, state)
     if _ptarget == "boundjoin":
         return _js_parse_reflect_apply_bound_join(text, i, depth, state)
+    if _ptarget == "boundslice":
+        return _js_parse_reflect_apply_bound_slice(text, i, depth, state)
     if _ptarget == "fn":
         return _js_parse_reflect_apply_fn(text, i, depth, state)
     return _js_parse_reflect_apply_ctor(text, i, depth, state)
@@ -6466,13 +6470,31 @@ def _js_parse_f513_reflect_bind(text, paren, depth, state):
             # (it rejects at the non-concat member check before any
             # value parse), so the fallback is clean. Returns the
             # joined string, not an element list.
-            joined, k = _js_parse_f530_bound_join_triple(text, k, depth,
-                                                         state)
-            k = _js_skip_ws(text, k)
-            if k >= n or text[k] != ")":
-                raise _JSExprFail("F513 bind call arity")
-            state["ops"] += 1  # the bind indirection is obfuscation-shaped
-            return joined, k + 1
+            try:
+                joined, k = _js_parse_f530_bound_join_triple(text, k, depth,
+                                                             state)
+                k = _js_skip_ws(text, k)
+                if k >= n or text[k] != ")":
+                    raise _JSExprFail("F513 bind call arity")
+                state["ops"] += 1  # the bind indirection is obfuscation-shaped
+                return joined, k + 1
+            except _JSExprFail:
+                # F534: the triple's target is a .bind-bound SLICE
+                # function (e.g. `[].slice.bind(['f1','f2'], 0, 2)`)
+                # -- outside the F530 join-only target class (the
+                # F530 raise commits nothing on slice input -- it
+                # rejects at the non-join member check before any
+                # value parse), so try the F534 bound-slice triple
+                # (fails closed on mismatch). Returns a _JSArr (slice
+                # yields an array), not an element list.
+                elements, k = _js_parse_f534_bound_slice_triple(text, k,
+                                                                 depth,
+                                                                 state)
+                k = _js_skip_ws(text, k)
+                if k >= n or text[k] != ")":
+                    raise _JSExprFail("F513 bind call arity")
+                state["ops"] += 1  # the bind indirection is obfuscation-shaped
+                return _JSArr(elements), k + 1
     k = _js_skip_ws(text, k)
     if k >= n or text[k] != ")":
         raise _JSExprFail("F513 bind call arity")
@@ -6515,14 +6537,29 @@ def _js_parse_f521_call_dispatch(text, paren, depth, state):
         # the F521 concat-only target class (the F521 raise commits
         # nothing on join input), so try the F530 bound-join triple.
         # Returns the joined string, not an element list.
-        joined, j = _js_parse_f530_bound_join_triple(text,
-                                                     _js_skip_ws(text, j + 1),
-                                                     depth, state)
-        j = _js_skip_ws(text, j)
-        if j >= n or text[j] != ")":
-            raise _JSExprFail("F521 call dispatch arity")
-        state["ops"] += 1  # the call indirection is obfuscation-shaped
-        return joined, j + 1
+        try:
+            joined, j = _js_parse_f530_bound_join_triple(text,
+                                                         _js_skip_ws(text, j + 1),
+                                                         depth, state)
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != ")":
+                raise _JSExprFail("F521 call dispatch arity")
+            state["ops"] += 1  # the call indirection is obfuscation-shaped
+            return joined, j + 1
+        except _JSExprFail:
+            # F534: the target is a .bind-bound SLICE function --
+            # outside the F530 join-only target class (the F530 raise
+            # commits nothing on slice input -- it rejects at the
+            # non-join member check before any value parse), so try
+            # the F534 bound-slice triple. Returns a _JSArr (slice
+            # yields an array), not an element list.
+            elements, j = _js_parse_f534_bound_slice_triple(
+                text, _js_skip_ws(text, j + 1), depth, state)
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != ")":
+                raise _JSExprFail("F521 call dispatch arity")
+            state["ops"] += 1  # the call indirection is obfuscation-shaped
+            return _JSArr(elements), j + 1
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ")":
         raise _JSExprFail("F521 call dispatch arity")
@@ -6714,6 +6751,206 @@ def _js_parse_reflect_apply_bound_join(text, i, depth, state):
     return joined, j + 1
 
 
+def _js_parse_f534_bound_slice_target(text, j, depth, state):
+    """Parse a `.bind`-bound slice function value at text[j] (F534).
+
+    Node-exact desugar (v24.20.0): `[].slice.bind(BINDTHIS, START,
+    END)` (or `Array.prototype.slice.bind(BINDTHIS, START, END)` --
+    node: `[].slice === Array.prototype.slice`) is the slice function
+    with its this-value fixed to BINDTHIS and start/end pre-bound;
+    invoking it with call-args C is exactly `BINDTHIS.slice(START,
+    END)` -- the engine ignores every slice argument after the first
+    two, and both are already bound, so C is irrelevant (node v24.20.0
+    verified). Returns (sliced_elements, next_index) where next_index
+    is just after the bind call's closing paren. Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - the bound function must be a slice reference (`[].slice` or
+      `Array.prototype.slice`, ws-tolerant, ident-boundary-checked);
+      `.bind` on any other function fails closed -- this is the filed
+      F534 scope (slice-family bound targets only; join is F530,
+      concat is F521, a different builtin per the F500/F505
+      precedent).
+    - the `.bind` member is the dot form, the F490 `?.` form, or the
+      F482 bracket-string form (all engine-identical, node v24.20.0
+      verified); the inner `slice` member is dot-only (F506
+      precedent).
+    - BINDTHIS is an array literal or Array-constructor form with
+      all-string elements (the F506 thisArg classes); anything else
+      fails closed. Non-string elements fail closed (documented --
+      never credential-shaped).
+    - exactly TWO bound args, both non-negative integer literals
+      (decimal or 0x, the _js_parse_number grammar); the result is
+      clamped node-exactly (min(bound, len) per index; start > end
+      yields [], node v24.20.0 verified). Negative literals fail
+      closed -- the engine counts negative indices from the end and
+      the decoder never re-implements direction (documented scope
+      boundary). Zero bound args (start/end-via-argsList), extra
+      bound args, and non-literal start/end fail closed (documented
+      -- the decoder never guesses the bounds).
+    """
+    n = len(text)
+    if j < n and text[j] == "[":
+        # F504-class receiver: `[].slice`.
+        k = _js_skip_ws(text, j + 1)
+        if k >= n or text[k] != "]":
+            raise _JSExprFail("F534 bound target non-empty receiver")
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ".":
+            raise _JSExprFail("F534 bound target without member dot")
+        k = _js_skip_ws(text, k + 1)
+        if not text.startswith("slice", k):
+            raise _JSExprFail("F534 bound target non-slice")
+        k2 = k + len("slice")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            raise _JSExprFail("F534 slicex is not slice")
+        j = k2
+    elif text.startswith("Array", j):
+        # F469-class receiver: `Array.prototype.slice`.
+        k = j + len("Array")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F534 Arrayx is not Array")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ".":
+            raise _JSExprFail("F534 Array without dot")
+        k = _js_skip_ws(text, k + 1)
+        if not text.startswith("prototype", k):
+            raise _JSExprFail("F534 Array non-prototype")
+        k2 = k + len("prototype")
+        if k2 >= n or text[k2] in _JS_IDENT_CONT:
+            raise _JSExprFail("F534 prototypex")
+        k = _js_skip_ws(text, k2)
+        if k >= n or text[k] != ".":
+            raise _JSExprFail("F534 Array prototype without member dot")
+        k = _js_skip_ws(text, k + 1)
+        if not text.startswith("slice", k):
+            raise _JSExprFail("F534 Array non-slice")
+        k2 = k + len("slice")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            raise _JSExprFail("F534 slicex is not slice")
+        j = k2
+    else:
+        raise _JSExprFail("F534 bound target not a slice reference")
+    j = _js_skip_ws(text, j)
+    _bd = _js_peek_dispatch_call(text, j)
+    if _bd is None or _bd[0] != "bind":
+        raise _JSExprFail("F534 target not .bind-bound")
+    k = _js_skip_ws(text, _bd[1] + 1)
+    # BINDTHIS: array literal or Array-constructor, all-string
+    # elements (the F506 thisArg classes, engine-identical).
+    if k < n and text[k] == "[":
+        bind_this, k = _js_parse_array(text, k, depth, state)
+    elif text.startswith("Array", k):
+        bind_this, k = _js_parse_array_constructor(text, k, state)
+    else:
+        raise _JSExprFail("F534 bind this not an array")
+    if not isinstance(bind_this, _JSArr):
+        raise _JSExprFail("F534 bind this not an array")
+    if any(not isinstance(e, str) for e in bind_this.elements):
+        raise _JSExprFail("F534 bind this non-string element")
+    elements = list(bind_this.elements)
+    # The bounds: exactly two non-negative integer-literal args
+    # (_js_parse_number admits no sign, so a `-` never parses).
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ",":
+        raise _JSExprFail("F534 bind without start")
+    start, k = _js_parse_number(text, _js_skip_ws(text, k + 1))
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ",":
+        raise _JSExprFail("F534 bind without end")
+    end, k = _js_parse_number(text, _js_skip_ws(text, k + 1))
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("F534 bind with extra args")
+    # Node-exact clamp (v24.20.0): each bound is clamped to
+    # [0, len]; start > end yields [].
+    ln = len(elements)
+    return elements[min(start, ln):min(end, ln)], k + 1
+
+
+def _js_parse_f534_bound_slice_triple(text, j, depth, state):
+    """Parse the F534 `BOUND, thisArg, argsList` triple at text[j].
+
+    BOUND is the `.bind`-bound slice function value
+    (_js_parse_f534_bound_slice_target); thisArg is parsed and
+    discarded -- the bound function's this is fixed by `.bind`, so
+    Reflect.apply's thisArg is ignored by the engine (node v24.20.0
+    verified, F483 precedent); argsList is a string-literal-only list
+    (the F519 grammar) parsed and DISCARDED -- the engine ignores
+    every slice argument after the two bound ones, so call-args are
+    irrelevant (node v24.20.0 verified). Returns (sliced_elements,
+    next_index) where next_index is just after argsList (the caller
+    checks the closing paren -- the _js_parse_f506_triple contract).
+    Never evals.
+    """
+    n = len(text)
+    sliced, j = _js_parse_f534_bound_slice_target(text, j, depth,
+                                                  state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F534 bound target without thisArg")
+    j = _js_skip_ws(text, j + 1)
+    _, j = _js_parse_ignored_value(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F534 thisArg without argsList")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F534 argsList not an array")
+    _, j = _js_parse_string_literal_list(text, j + 1, state, "]")
+    return sliced, j
+
+
+def _js_parse_reflect_apply_bound_slice(text, i, depth, state):
+    """Parse 'Reflect.apply(BOUNDSLICE, thisArg, argsArray)' at text[i]
+    (F534).
+
+    Node-exact desugar (v24.20.0): Reflect.apply invokes the
+    `.bind`-bound slice function with thisArg and the argsArray
+    elements as arguments; the bound this-value and the pre-bound
+    start/end win and the engine ignores further slice arguments, so
+    the result is BINDTHIS.slice(START, END) -- an array. Unlike
+    F530's join bound target (which yields a string), slice returns
+    the array, so the value is a _JSArr and the caller's postfix
+    chain applies (e.g. `.join('')` assembles the credential). The
+    member name accepts the dot form and the F504 bracket-string
+    forms (routed here by _js_parse_reflect_call, which already
+    verified the name; re-verified defense-in-depth). Returns
+    (value, next_index) without the postfix chain (the caller applies
+    it). Never evals.
+    """
+    n = len(text)
+    j = i + len("Reflect")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        raise _JSExprFail("Reflectx is not Reflect")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        _mname, j = _js_parse_reflect_member_key(text, j, depth, state)
+        if _mname != "apply":
+            raise _JSExprFail("Reflect bracket member not apply")
+    else:
+        if j >= n or text[j] != ".":
+            raise _JSExprFail("Reflect without dot")
+        j = _js_skip_ws(text, j + 1)
+        if not text.startswith("apply", j):
+            raise _JSExprFail("Reflect without apply")
+        k = j + len("apply")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("applyx is not apply")
+        j = k
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("Reflect.apply without paren")
+    sliced, j = _js_parse_f534_bound_slice_triple(text,
+                                                  _js_skip_ws(text, j + 1),
+                                                  depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("F534 with extra args")
+    state["ops"] += 1  # the bound-target dispatch is obfuscation-shaped
+    return _JSArr(sliced), j + 1
+
+
 def _js_peek_reflect_apply_target(text, j):
     """Peek the Reflect.apply target at the '(' following the member name.
 
@@ -6727,6 +6964,8 @@ def _js_peek_reflect_apply_target(text, j):
     `Array.prototype.concat.bind(` (the F521 .bind-bound target path),
     and "boundjoin" when it is `[].join.bind(` or
     `Array.prototype.join.bind(` (the F530 .bind-bound join-target
+    path), and "boundslice" when it is `[].slice.bind(` or
+    `Array.prototype.slice.bind(` (the F534 .bind-bound slice-target
     path). Routing peek only -- the callees re-parse from the call
     start and fail closed on anything unexpected. Raises _JSExprFail
     when
@@ -6782,6 +7021,17 @@ def _js_peek_reflect_apply_target(text, j):
                             _bd = _js_peek_dispatch_call(text, kk)
                             if _bd is not None and _bd[0] == "bind":
                                 return "boundjoin"
+                if text.startswith("slice", k):
+                    k2 = k + len("slice")
+                    if k2 >= n or text[k2] not in _JS_IDENT_CONT:
+                        # F534: `[].slice.bind(...)` -- a .bind-bound
+                        # slice target (pure lookahead; the callee
+                        # re-parses and fails closed on mismatch).
+                        kk = _js_skip_ws(text, k2)
+                        if kk < n and text[kk] in (".", "?", "["):
+                            _bd = _js_peek_dispatch_call(text, kk)
+                            if _bd is not None and _bd[0] == "bind":
+                                return "boundslice"
         raise _JSExprFail("Reflect.apply non-Array target")
     if not text.startswith("Array", j):
         raise _JSExprFail("Reflect.apply non-Array target")
@@ -6819,6 +7069,17 @@ def _js_peek_reflect_apply_target(text, j):
                                 _bd = _js_peek_dispatch_call(text, kk)
                                 if _bd is not None and _bd[0] == "bind":
                                     return "boundjoin"
+                    if text.startswith("slice", m):
+                        m2 = m + len("slice")
+                        if m2 >= n or text[m2] not in _JS_IDENT_CONT:
+                            # F534: `Array.prototype.slice.bind(...)`
+                            # -- pure lookahead; the callee re-parses
+                            # and fails closed on mismatch.
+                            kk = _js_skip_ws(text, m2)
+                            if kk < n and text[kk] in (".", "?", "["):
+                                _bd = _js_peek_dispatch_call(text, kk)
+                                if _bd is not None and _bd[0] == "bind":
+                                    return "boundslice"
         return "concat"
     return "ctor"
 
