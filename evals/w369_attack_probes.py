@@ -50,13 +50,15 @@ Junk-quiet controls pass. No injection attempts this round.
 
 Known-open pins (each probe returns HELD when the miss reproduces; a literal
 BREAK verdict means the pin failed or a NEW break appeared):
-F547-F569 (rounds 36 + wave-368 merge, scope reconfirmed), F570-F581 (this round).
+F547-F569 (rounds 36 + wave-368 merge, scope reconfirmed), F570, F572-F575,
+F577-F581 (this round; F571/F576 closed wave-370 lane 2).
 
 Closed pins (must BLOCK, else BREAK): F496, F503, F504, F505, F512 (spot),
 F506, F513, F514, F515, F516, F517, F518, F519, F520 (wave-364, regression),
 F521, F522, F523, F524, F525 (wave-365, regression), F526, F527, F528, F529,
 F530, F531, F532, F533, F534, F535, F536 (wave-366/367, regression),
-F537, F538, F539, F540, F541, F542, F543, F544, F545, F546 (wave-368, regression).
+F537, F538, F539, F540, F541, F542, F543, F544, F545, F546 (wave-368, regression),
+F571, F576 (wave-370 lane 2).
 
 Rides-with-documented-scope (validated, NOT filed):
 - Symbol.for registry-keyed reads -- F552 (open); same mechanism.
@@ -142,11 +144,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F571-F576, F578-F582 open, next F583 (wave-370 lane 1)."""
+    """Control: footer shows F572-F575, F578-F582 open, next F583 (wave-370 merge: lanes 1+2)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F583**" in text  # Wave-370 lane 1: F570, F577 CLOSED
-          and "Open findings: F571, F572, F573, F574, F575, F576, F578, F579, F580, F581, F582." in text)  # Wave-370 lane 1: F570, F577 CLOSED
+    ok = ("Next free finding: **F583**" in text  # Wave-370 merge: F570/F571/F576/F577 CLOSED
+          and "Open findings: F572, F573, F574, F575, F578, F579, F580, F581, F582." in text)  # Wave-370 merge: F570/F571/F576/F577 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -537,9 +539,9 @@ def test_p2_f570_closed():
 
 @_t
 def test_p2_f571_open():
-    """F571 OPEN: JSON.stringify round-trip laundering still misses."""
-    ms = _misses("JSON.parse(JSON.stringify({c:'%s'})).c+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    """F571 CLOSED (wave-370 lane 2): JSON.stringify round-trip now blocks coded."""
+    hit = _blocked("JSON.parse(JSON.stringify({c:'%s'})).c+'%s'" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "blocked=%s" % hit)
 
 @_t
 def test_p2_f572_open():
@@ -567,9 +569,9 @@ def test_p2_f575_open():
 
 @_t
 def test_p2_f576_open():
-    """F576 OPEN: URL/URLSearchParams laundering still misses."""
-    ms = _misses("new URLSearchParams('a=%s').get('a')+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    """F576 CLOSED (wave-370 lane 2): URL/URLSearchParams laundering now blocks coded."""
+    hit = _blocked("new URLSearchParams('a=%s').get('a')+'%s'" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "blocked=%s" % hit)
 
 @_t
 def test_p2_f577_closed():
