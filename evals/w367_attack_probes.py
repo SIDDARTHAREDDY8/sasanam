@@ -153,11 +153,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F537-F546 open, next F547 (wave-367 merge)."""
+    """Control: footer shows F541/F544 closed lane-locally (wave-368 lane 3)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F547**" in text
-          and "Open findings: F537, F538, F539, F540, F541, F542, F543, F544, F545, F546." in text)
+    ok = ("Next free finding: **F548**" in text
+          and "Open findings: F537, F538, F539, F540, F542, F543, F545, F546, F547." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -413,10 +413,10 @@ def test_p2_f540_open():
 
 
 @_t
-def test_p2_f541_open():
-    """F541 OPEN (this round): JSON.parse laundering still misses."""
-    ms = _misses("JSON.parse('{\"x\":[\"%s\",\"%s\"]}').x.join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f541_closed():
+    """F541 CLOSED (wave-368 lane 3): JSON.parse laundering now blocks."""
+    hit = _blocked("JSON.parse('{\"x\":[\"%s\",\"%s\"]}').x.join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
@@ -436,10 +436,10 @@ def test_p2_f543_open():
 
 
 @_t
-def test_p2_f544_open():
-    """F544 OPEN (this round): spread in apply args array still misses."""
-    ms = _misses("Reflect.apply(function(a,b){return a+b;}, null, [...['%s','%s']])" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f544_closed():
+    """F544 CLOSED (wave-368 lane 3): spread in apply args array now blocks."""
+    hit = _blocked("Reflect.apply(function(a,b){return a+b;}, null, [...['%s','%s']])" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
