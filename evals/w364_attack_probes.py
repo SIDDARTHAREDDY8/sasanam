@@ -129,12 +129,12 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F523, F524, F526 open, next F527 (wave-365 merge:
-    lanes 1-2: F521, F522, F525 CLOSED; F523, F524 pending lane 3)."""
+    """Control: footer shows F526 open, next F527 (wave-365 merge:
+    lanes 1-3: F521-F525 CLOSED)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F527**" in text
-          and "**Open findings: F523, F524, F526.**" in text)  # Wave-365 merge lanes 1-2
+          and "**Open findings: F526.**" in text)  # Wave-365 merge lanes 1-3
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -314,17 +314,28 @@ def test_p2_f522_closed():
 
 
 @_t
-def test_p2_f523_open():
-    """F523 OPEN (this round): triple-nested bracket key still misses."""
+def test_p2_f523_closed():
+    """F523 CLOSED (wave-365 lane 3): triple-nested bracket key now
+    blocks (coded refusal -- wave-306 class: the probe that
+    demonstrated the BREAK now asserts the refusal)."""
     ms = _misses("'%s'[[[['concat'][0]]][0]]('%s')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    ms2 = _misses("String('%s')[[[['concat'][0]]][0]](String('%s'))"
+                  % (_A, _B))
+    return ("HELD" if not ms and not ms2 else "BREAK",
+            "miss=%s miss2=%s" % (ms, ms2))
 
 
 @_t
-def test_p2_f524_open():
-    """F524 OPEN (this round): destructured arguments still misses."""
-    ms = _misses("(function(){const [a,b]=arguments;return a+b})('%s','%s')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f524_closed():
+    """F524 CLOSED (wave-365 lane 3): destructured arguments now
+    block (coded refusal -- wave-306 class: the probe that
+    demonstrated the BREAK now asserts the refusal)."""
+    ms = _misses("(function(){const [a,b]=arguments;return a+b})('%s','%s')"
+                 % (_A, _B))
+    ms2 = _misses("(function(){var [x,y]=arguments;return x+y})('%s','%s')"
+                  % (_A, _B))
+    return ("HELD" if not ms and not ms2 else "BREAK",
+            "miss=%s miss2=%s" % (ms, ms2))
 
 
 @_t
