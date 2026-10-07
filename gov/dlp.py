@@ -5019,6 +5019,145 @@ def _js_parse_ctor_apply(text, i, state):
     return _JSArr(elements), j
 
 
+def _js_match_entries_values_member(text, m):
+    """Match `entries` / `values` at text[m] (F581 helper).
+
+    Returns (member_name, next_index) with the ident-boundary guard
+    (entriesx is not entries); raises _JSExprFail on no match. Shared
+    by the dot and F490 `?.` member forms so the two spellings cannot
+    drift. Never evals.
+    """
+    n = len(text)
+    for _name in ("entries", "values"):
+        if text.startswith(_name, m):
+            _m2 = m + len(_name)
+            if _m2 < n and text[_m2] in _JS_IDENT_CONT:
+                raise _JSExprFail("F581 %sx is not %s" % (_name, _name))
+            return _name, _m2
+    raise _JSExprFail("F581 member not entries/values")
+
+
+def _js_parse_reflect_apply_enumb(text, i, depth, state):
+    """Parse 'Reflect.apply(Object.entries|values, thisArg, [X])' (F581).
+
+    Node-exact desugar (v24.20.0): Reflect.apply(F, thisArg,
+    argsList) is F.call(thisArg, ...argsList); Object.entries and
+    Object.values ignore their this-value (node-verified), so with a
+    single-element argsList this is exactly Object.entries(X) /
+    Object.values(X). X parses via _js_parse_primary and must be a
+    _JSArr of all-string elements (the filed shape is the F581
+    alias-return IIFE, i.e. the arguments exotic; a plain
+    string-literal array is engine-identical -- the entries of an
+    array-like are the [index-string, value] pairs in ascending
+    index order, the values are the elements themselves, node
+    v24.20.0). The member accepts the dot form, the F490 `?.` form,
+    and the F480 bracket-string form (all engine-identical, node
+    verified). Returns (_JSArr, next_index); the caller applies the
+    postfix chain. Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a target other than Object.entries/Object.values (the callee
+      re-parses from i; a peek mis-route fails closed here);
+    - an argsArray that is not exactly one element;
+    - an element that is not a _JSArr of all-string elements
+      (numeric elements would need ToString coercion -- the decoder
+      never guesses; documented);
+    - thisArg is parsed and discarded via _js_parse_ignored_value
+      (F519 precedent -- the builtins ignore it, node-verified).
+    """
+    n = len(text)
+    j = i + len("Reflect")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        raise _JSExprFail("Reflectx is not Reflect")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "?" and j + 1 < n and text[j + 1] == ".":
+        # F490: Reflect?.apply -- `?.` adjacent (engine SyntaxError
+        # otherwise, node v24.20.0 verified); Reflect is provably
+        # non-null so ?. === . (same normalization as the ctor path).
+        j += 1
+    if j < n and text[j] == "[":
+        _mname, j = _js_parse_reflect_member_key(text, j, depth, state)
+        if _mname != "apply":
+            raise _JSExprFail("Reflect bracket member not apply")
+    else:
+        if j >= n or text[j] != ".":
+            raise _JSExprFail("Reflect without dot")
+        j = _js_skip_ws(text, j + 1)
+        if not text.startswith("apply", j):
+            raise _JSExprFail("Reflect without apply")
+        k = j + len("apply")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("applyx is not apply")
+        j = _js_skip_ws(text, k)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("Reflect.apply without paren")
+    j = _js_skip_ws(text, j + 1)
+    # Target: Object.entries / Object.values (re-parsed from here;
+    # the peek is lookahead only).
+    if not text.startswith("Object", j):
+        raise _JSExprFail("F581 target not Object")
+    k = j + len("Object")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("F581 Objectx is not Object")
+    k = _js_skip_ws(text, k)
+    member = None
+    if k < n and text[k] == ".":
+        member, k = _js_match_entries_values_member(text,
+                                                    _js_skip_ws(text,
+                                                                k + 1))
+    elif k + 1 < n and text[k] == "?" and text[k + 1] == ".":
+        # F490: Object?.entries -- `?.` adjacent (engine SyntaxError
+        # otherwise); Object is provably non-null so ?. === .
+        member, k = _js_match_entries_values_member(text,
+                                                    _js_skip_ws(text,
+                                                                k + 2))
+    elif k < n and text[k] == "[":
+        _bm, k = _js_parse_bracket_member(text, k)
+        if _bm not in ("entries", "values"):
+            raise _JSExprFail("F581 target not entries/values")
+        member = _bm
+    else:
+        raise _JSExprFail("F581 target without member")
+    j = _js_skip_ws(text, k)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F581 target without thisArg")
+    j = _js_skip_ws(text, j + 1)
+    _, j = _js_parse_ignored_value(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F581 thisArg without argsArray")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F581 argsArray not an array")
+    j = _js_skip_ws(text, j + 1)
+    elem, j = _js_parse_primary(text, j, depth, state)
+    if not isinstance(elem, _JSArr):
+        raise _JSExprFail("F581 argsArray element not an array")
+    if any(type(_e) is not str for _e in elem.elements):
+        raise _JSExprFail("F581 argsArray element not all-string")
+    state["parts"] += 1  # the apply dispatch is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "]":
+        raise _JSExprFail("F581 argsArray not a single element")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("F581 with extra args")
+    elements = list(elem.elements)
+    if member == "entries":
+        # The entries of an array-like are the [index-string, value]
+        # pairs in ascending index order (node v24.20.0) -- the
+        # arguments exotic and the plain array agree element-for-
+        # element, so the desugar is faithful for both.
+        value = _JSArr([_JSArr([str(_idx), _el])
+                        for _idx, _el in enumerate(elements)])
+    else:
+        value = _JSArr(list(elements))
+    state["ops"] += 1  # the apply dispatch is obfuscation-shaped
+    return value, j + 1
+
+
 def _js_parse_reflect_apply_ctor(text, i, depth, state):
     """Parse 'Reflect.apply(Array, Array, [...])' /
     "Reflect['apply'](Array, Array, [...])" at text[i] (F480);
@@ -7026,7 +7165,8 @@ def _js_parse_reflect_call(text, i, depth, state):
     # `Array.prototype.find.bind(` head is the F555 bound-find-target
     # path; a `(FN).bind(` head is the F556 bound-arrow-target path;
     # a `new Proxy(` head is the F542 Proxy apply-trap target
-    # path. The callees re-parse from i
+    # path; an `Object.entries` / `Object.values` head is the F581
+    # enumeration-builtin dispatch path. The callees re-parse from i
     # (defense-in-depth); a mis-route here always fails closed inside
     # the callee.
     # F513: Reflect.apply.bind(Reflect)(T, thisArg, argsList) -- the
@@ -7063,6 +7203,8 @@ def _js_parse_reflect_call(text, i, depth, state):
         return _js_parse_reflect_apply_bound_arrow(text, i, depth, state)
     if _ptarget == "proxyapply":
         return _js_parse_reflect_apply_proxy(text, i, depth, state)
+    if _ptarget == "enumbapply":
+        return _js_parse_reflect_apply_enumb(text, i, depth, state)
     if _ptarget == "fn":
         return _js_parse_reflect_apply_fn(text, i, depth, state)
     return _js_parse_reflect_apply_ctor(text, i, depth, state)
@@ -9658,7 +9800,9 @@ def _js_peek_reflect_apply_target(text, j):
     .bind-bound find-target path), "boundarrow" when it is
     `(FN).bind(` (the F556 .bind-bound arrow/function-target path),
     and "proxyapply" when it is `new Proxy(` (the F542 Proxy
-    apply-trap target path). Routing peek only -- the callees
+    apply-trap target path), and "enumbapply" when it is
+    `Object.entries` / `Object.values` (the F581 enumeration-builtin
+    dispatch path). Routing peek only -- the callees
     re-parse from the call start and fail closed on anything
     unexpected. Raises _JSExprFail when
     the target is not Array-headed, an empty-array concat receiver,
@@ -9804,6 +9948,33 @@ def _js_peek_reflect_apply_target(text, j):
                 and text[k + 5] not in _JS_IDENT_CONT
                 and kk < n and text[kk] == "("):
             return "proxyapply"
+    if text.startswith("Object", j):
+        # F581: `Object.entries` / `Object.values` -- an enumeration
+        # builtin dispatched through Reflect.apply (pure lookahead;
+        # the callee re-parses and fails closed on mismatch).
+        # Anything else Object-headed falls through to the Array
+        # check, which fails closed as before.
+        k = j + len("Object")
+        if k >= n or text[k] not in _JS_IDENT_CONT:
+            k = _js_skip_ws(text, k)
+            _mm = None
+            if k < n and text[k] == ".":
+                _mm = _js_skip_ws(text, k + 1)
+            elif k + 1 < n and text[k] == "?" and text[k + 1] == ".":
+                _mm = _js_skip_ws(text, k + 2)
+            elif k < n and text[k] == "[":
+                try:
+                    _bm, _ = _js_parse_bracket_member(text, k)
+                except _JSExprFail:
+                    _bm = None
+                if _bm in ("entries", "values"):
+                    return "enumbapply"
+            if _mm is not None:
+                for _name in ("entries", "values"):
+                    if text.startswith(_name, _mm):
+                        _m2 = _mm + len(_name)
+                        if _m2 >= n or text[_m2] not in _JS_IDENT_CONT:
+                            return "enumbapply"
     if not text.startswith("Array", j):
         raise _JSExprFail("Reflect.apply non-Array target")
     k = j + len("Array")
@@ -14585,6 +14756,113 @@ def _js_parse_args_entries_values_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_args_alias_return_iife(text, i, depth, state):
+    """Parse `(function(){DECL a=arguments;return a;})(lit, ...)` (F581).
+
+    Desugars the arguments-alias return: the IIFE returns the
+    `arguments` exotic object itself, which the decoder models as the
+    call-site argument array (element-identical for string-literal
+    args, node v24.20.0 -- `Object.entries`/`Object.values` of the
+    exotic are the index pairs / values in ascending index order,
+    exactly as on the plain array). DECL is var/const/let (all three
+    bind identically here, node verified); call args are string
+    literals (the F509/F516 arg grammar). Returns (_JSArr,
+    next_index), or None when the head does not match or a guard
+    fails (the caller falls through to the F516 path). Bounded by
+    the part/depth budgets; the IIFE wrapper charges one op
+    (obfuscation-shaped). Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a source other than bare `arguments`, an alias rebound
+      anywhere (the exact-shape grammar has no room for
+      reassignment), a body other than exactly `return <alias>;`
+      (the bare-alias additive body `return a[0]+a[1];` is F546's,
+      not this; the `return arguments;` form is F489's), non-literal
+      call args, and any other body shape.
+    """
+    if not _js_peek_arguments_iife_head(text, i):
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, i)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j) + len("function")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        # F560: skip a leading directive prologue
+        # ('use strict'; ...) before matching the binding
+        # declaration (node-exact: directives are inert
+        # string-literal statements at body start; anything
+        # else fails closed as before).
+        stmts = stmts[_js_skip_directive_prologue(stmts, state):]
+        sj = _js_skip_ws(stmts, 0)
+        _kw, m = _js_match_decl_kw(stmts, sj)
+        if m is None:
+            raise _JSExprFail("F581 decl not var/const/let")
+        sj = _js_skip_ws(stmts, m)
+        alias, sj = _js_parse_ident(stmts, sj)
+        if alias == "arguments":
+            raise _JSExprFail("F581 alias named arguments")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "=")
+        m = _js_match_kw(stmts, _js_skip_ws(stmts, sj), "arguments")
+        if m is None:
+            raise _JSExprFail("F581 source not arguments")
+        sj = _js_skip_ws(stmts, m)
+        sj = _js_expect(stmts, sj, ";")
+        rest = stmts[sj:]
+        rj = _js_skip_ws(rest, 0)
+        rk = _js_match_kw(rest, rj, "return")
+        if rk is None:
+            raise _JSExprFail("F581 body not return")
+        rj = _js_skip_ws(rest, rk)
+        ralias, rj = _js_parse_ident(rest, rj)
+        if ralias != alias:
+            raise _JSExprFail("F581 returns another ident")
+        rj = _js_skip_ws(rest, rj)
+        rj = _js_expect(rest, rj, ";")
+        if _js_skip_ws(rest, rj) != len(rest):
+            raise _JSExprFail("F581 trailing statements")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        args = []
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ")":
+            j += 1
+        else:
+            while True:
+                j = _js_skip_ws(text, j)
+                if j >= n or text[j] not in "'\"":
+                    raise _JSExprFail("F581 arg not string literal")
+                aval, j = _js_parse_string(text, j)
+                args.append(aval)
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                j = _js_skip_ws(text, j)
+                if j >= n:
+                    raise _JSExprFail("unterminated iife call")
+                if text[j] == ",":
+                    j = _js_skip_ws(text, j + 1)
+                    continue
+                if text[j] == ")":
+                    j += 1
+                    break
+                raise _JSExprFail("bad iife call")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return _JSArr(list(args)), j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_args_enumerated_iife(text, i, depth, state):
     """Parse `(function(){DECL a=arguments; BODY})(lit, ...)` (F529).
 
@@ -18310,6 +18588,15 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f529 = _js_parse_args_enumerated_iife(text, i, depth, state)
         if _f529 is not None:
             val, i = _f529
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F581: (function(){DECL a=arguments;return a;})(lit, ...) --
+        # the arguments-alias return (the Reflect.apply-dispatch
+        # element). Tried before F516: the exact `return <alias>;`
+        # body is disjoint from F516's additive bodies (verified --
+        # F516 fails closed on it), and None falls through to F516.
+        _f581 = _js_parse_args_alias_return_iife(text, i, depth, state)
+        if _f581 is not None:
+            val, i = _f581
             return _js_parse_postfix(text, i, val, depth, state)
         # F516: (function(){var A=SRC;return BODY})(lit, ...) or
         # (function(...A){return BODY})(lit, ...) -- arguments

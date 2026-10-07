@@ -142,11 +142,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F547-F581 open, next F582 (wave-369 lane 8)."""
+    """Control: footer shows F570-F580+F582 open, next F583 (wave-370 lane 7: F581 closed)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F583**" in text  # Wave-369 lane 8 (attack round 37): F547-F569 reconfirmed OPEN; F570-F581 filed OPEN (next F582)
-          and "Open findings: F570, F571, F572, F573, F574, F575, F576, F577, F578, F579, F580, F581, F582." in text)  # Wave-369 lane 8 (attack round 37): F547-F569 reconfirmed OPEN; F570-F581 filed OPEN (next F582)
+    ok = ("Next free finding: **F583**" in text  # Wave-369 lane 8 (attack round 37): F547-F569 reconfirmed OPEN; F570-F581 filed OPEN (next F582); wave-370 lane 7: F581 CLOSED
+          and "Open findings: F570, F571, F572, F573, F574, F575, F576, F577, F578, F579, F580, F582." in text)  # Wave-369 lane 8 (attack round 37): F547-F569 reconfirmed OPEN; F570-F581 filed OPEN (next F582); wave-370 lane 7: F581 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -595,10 +595,11 @@ def test_p2_f580_open():
     return ("HELD" if ms else "BREAK", "miss=%s" % ms)
 
 @_t
-def test_p2_f581_open():
-    """F581 OPEN: Reflect.apply-dispatch entries/values on aliased args still miss."""
+def test_p2_f581_closed():
+    """F581 CLOSED (wave-370 lane 7): Reflect.apply-dispatch entries/values
+    on aliased args now blocks coded."""
     ms = _misses("Reflect.apply(Object.values,null,[(function(){var a=arguments;return a;})('%s','%s')]).join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 # ------------------------------------------------- boundaries
