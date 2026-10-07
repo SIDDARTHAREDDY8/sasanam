@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""Red-first for F526: Reflect.apply with .bind-bound JOIN targets.
+"""Red-first for F526: Reflect.apply with two-hop .bind-chained function targets.
 
-F521 models Reflect.apply with .bind-bound CONCAT targets, but the
-bound function can be any builtin -- `[].join.bind(['f1','f2'], '')`
-is a bound join whose invocation returns the joined credential
-directly (a string, not an array). The F521 parser fails closed on
-non-concat receivers by design (documented scope), so all three
-dispatch variants node-evaluate (v24.20.0) to the exact credential
-while the decoder produces zero variants. Distinct from F521
-(concat-family bound targets -- different builtin, different value
-shape: join returns a string). Prints BREAK when a payload MISSES
-(open tree), HELD when blocked.
+F521 models Reflect.apply with a single-.bind-bound target
+([].concat.bind([], 'f1')). A target produced by a CHAIN of two .bind
+calls is a different target-production mechanism: the bound thisArg and
+the pre-bound args accumulate across hops, and the F521 single-bind
+model does not compose. All three shapes node-evaluate (v24.20.0) to
+the exact credential while the decoder produces zero variants.
+Distinct from F521 (single bind) and F513 (bind on the dispatch, not
+the target). Prints BREAK when a payload MISSES (open tree), HELD when
+blocked.
 """
 import os
 import sys
@@ -25,19 +24,24 @@ A1 = "xoxb-" + "0123"
 A2 = "456789" + "abcdef"
 
 SHAPES = [
-    ("join-bound-direct",
-     "Reflect.apply([].join.bind(['%s','%s'], ''), null, [])" % (A1, A2), True),
-    ("join-bound-call-indirect",
-     "Reflect.apply.call(Reflect, [].join.bind(['%s','%s'], ''), null, [])" % (A1, A2), True),
-    ("join-bound-bind-indirect",
-     "Reflect.apply.bind(Reflect)([].join.bind(['%s','%s'], ''), null, [])" % (A1, A2), True),
+    ("twohop-bind-direct",
+     "Reflect.apply([].concat.bind([],'%(A1)s').bind([]), null, ['%(A2)s']).join('')"
+     % {"A1": A1, "A2": A2}, True),
+    ("twohop-bind-split-args",
+     "Reflect.apply([].concat.bind([],'%(A1)s').bind([],'%(A2)s'), null, []).join('')"
+     % {"A1": A1, "A2": A2}, True),
+    ("twohop-bind-call-indirect",
+     "Reflect.apply.call(Reflect, [].concat.bind([],'%(A1)s').bind([]), [], ['%(A2)s']).join('')"
+     % {"A1": A1, "A2": A2}, True),
 ]
 
 CONTROLS = [
-    ("f521-concat-bound-held",  # F521 CLOSED (wave-365 lane 1)
-     "Reflect.apply([].concat.bind([], '%s'), null, ['%s']).join('')" % (A1, A2), True),
+    ("f521-single-bind-open",  # F521 OPEN (filed wave-364 lane 5) -- still misses
+     "Reflect.apply([].concat.bind([], '%s'), null, ['%s']).join('')" % (A1, A2), False),
+    ("f469-concat-target-held",  # F469 CLOSED
+     "Reflect.apply(Array.prototype.concat,[],[['%s'],['%s']]).join('')" % (A1, A2), True),
     ("junk-quiet",
-     "Reflect.apply([].join.bind(['ab','cd'], ''), null, [])", False),
+     "Reflect.apply([].concat.bind([],'ab').bind([]), null, ['cd']).join('')", False),
 ]
 
 
