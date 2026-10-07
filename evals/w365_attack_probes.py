@@ -132,12 +132,12 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F528/F529 open, next F531 (wave-366 lanes 1+2:
-    F526/F527/F530 CLOSED; F528/F529 OPEN pending lane 3; F531-F536 pending attack lane)."""
+    """Control: footer shows no open findings, next F531 (wave-366 lanes 1+2+3:
+    F526-F530 CLOSED; F531-F536 pending attack lane)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F531**" in text
-          and "**Open findings: F528, F529.**" in text)  # Wave-366 lanes 1+2 merged: F526, F527, F530 CLOSED; open F528, F529 (next F531)
+          and "**Open findings: none.**" in text)  # Wave-366 lanes 1+2+3 merged: F526-F530 CLOSED; open none (next F531)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -305,17 +305,17 @@ def test_p2_f530_closed():
 
 @_t
 def test_p2_f528_open():
-    """F528 OPEN (this round): complex IIFE target still misses."""
+    """F528 CLOSED (wave-366 lane 3): complex IIFE target now blocks."""
     ms = _misses("Reflect.apply((() => ((() => (a,b)=>a+b))())(), null, ['%s','%s'])" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 @_t
 def test_p2_f529_open():
-    """F529 OPEN (this round): alias enumerated via keys still misses."""
+    """F529 CLOSED (wave-366 lane 3): alias enumerated via keys now blocks."""
     ms = _misses("(function(){const a=arguments;return Object.keys(a).map(i=>a[i]).join('');})('%s','%s')"
                  % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 # ------------------------------------------------- boundaries

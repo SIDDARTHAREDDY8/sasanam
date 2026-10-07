@@ -5499,34 +5499,82 @@ def _js_parse_fn_additive_body(text, j, params, state):
         return idx, j
 
 
-def _js_parse_iife_fn_target(text, j, depth, state):
-    """Parse an IIFE-evaluated function target `(IIFE)()` at text[j]
-    (F522).
+def _js_match_decl_kw(text, j):
+    """Match a `var`/`const`/`let` keyword at text[j] (F528/F529).
 
-    Returns (params, body_operands, next_index) -- the same triple as
-    _js_parse_fn_target, for the function value the IIFE evaluates
-    to. Node-exact desugar (v24.20.0): `(() => FN)()` and
-    `(function(){return FN})()` evaluate to FN itself (the IIFE is
-    immediately invoked with zero arguments and returns FN
-    unchanged), so a Reflect.apply target in this shape is
-    engine-identical to the literal-FN target F519 models.
+    Returns (keyword, next_index) with next_index just after the
+    keyword, or (None, j) when no declaration keyword matches.
+    The three keywords bind identically in the modeled positions
+    (node v24.20.0 verified). Never evals.
+    """
+    for kw in ("var", "const", "let"):
+        m = _js_match_kw(text, j, kw)
+        if m is not None:
+            return kw, m
+    return None, j
 
-    The IIFE must be exactly:
-    - `(() => FN)`: an arrow with an EMPTY parameter list whose body
-      is a literal arrow `(p1,p2)=>BODY` or function expression
-      `function(p1,p2){return BODY}` (parsed by _js_parse_fn_target);
-    - `(function(){return FN})`: a function expression with an EMPTY
-      parameter list, optional name, optional trailing `;`, whose
-      body is exactly `return FN;` with FN as above;
-    followed by the immediate zero-argument invocation `()`.
+
+def _js_parse_iife_block_body(text, j, depth, state):
+    """Parse `{ var|const|let f = FN; return f; }` at text[j] (F528).
+
+    Returns (fn_params, body_operands, next_index) with next_index just
+    after the closing brace -- the same triple as _js_parse_fn_target,
+    for the function value the block evaluates to. Node-exact desugar
+    (v24.20.0): the block declares exactly one binding initialized to
+    the literal function value FN (a literal arrow or function
+    expression, parsed by _js_parse_fn_target) and returns that
+    binding, so the block evaluates to FN itself.
 
     Bounds (all fail closed -- rejected, never mis-decoded):
-    - non-empty IIFE params, invocation with arguments, nested IIFEs
-      (the FN parse accepts only a literal arrow/fn-expr, so a
-      deeper IIFE fails there), IIFEs returning non-functions,
-      async/generator IIFEs (the `async`/`function*` heads fail the
-      subform parses), `new`-invoked or method-style IIFEs, and any
-      other IIFE shape.
+    - more than the two statements, a declaration keyword other than
+      var/const/let, a non-FN initializer, returning a different
+      ident than the declared one, or any other block shape.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "{")
+    j = _js_skip_ws(text, j)
+    _kw, m = _js_match_decl_kw(text, j)
+    if m is None:
+        raise _JSExprFail("F528 block not a var decl")
+    j = _js_skip_ws(text, m)
+    fname, j = _js_parse_ident(text, j)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "=")
+    fn_params, body, j = _js_parse_fn_target(
+        text, _js_skip_ws(text, j), depth, state)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    rk = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if rk is None:
+        raise _JSExprFail("F528 block without return")
+    rname, j = _js_parse_ident(text, _js_skip_ws(text, rk))
+    if rname != fname:
+        raise _JSExprFail("F528 block returns another ident")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ";":
+        j = _js_skip_ws(text, j + 1)
+    j = _js_expect(text, j, "}")
+    state["ops"] += 1  # the intermediate binding is obfuscation-shaped
+    return fn_params, body, j
+
+
+def _js_parse_iife_fn_inner(text, j, depth, state, _iife_ext_ok):
+    """Parse `(IIFE)` (the IIFE without its invocation) at text[j].
+
+    Returns (params, body_operands, next_index) with next_index just
+    after the IIFE's closing paren -- the same triple as
+    _js_parse_fn_target, for the function value the IIFE evaluates to.
+    With _iife_ext_ok false this is exactly the F522 grammar; with true it
+    additionally accepts the F528 forms:
+    - a NESTED IIFE `((F522-IIFE))()` as the arrow body -- exactly one
+      nesting level around the strict F522 shape (the nested attempt
+      recurses with _iife_ext_ok=False, so deeper nesting fails closed);
+    - a BLOCK body `{ var|const|let f = FN; return f; }` on the arrow
+      form and on the function-expression form.
+    Node-exact desugars (v24.20.0): the nested IIFE evaluates its
+    inner F522 IIFE to FN, so the outer evaluates to FN; the block
+    body binds FN to one name and returns it, so it evaluates to FN.
     Never evals.
     """
     n = len(text)
@@ -5549,6 +5597,16 @@ def _js_parse_iife_fn_target(text, j, depth, state):
         j = _js_skip_ws(text, j)
         if j >= n or text[j] != "{":
             raise _JSExprFail("F522 IIFE without brace")
+        if _iife_ext_ok:
+            j2 = _js_skip_ws(text, j + 1)
+            is_decl = any(_js_match_kw(text, j2, kw) is not None
+                          for kw in ("var", "const", "let"))
+            if is_decl:
+                # F528: (function(){ var|const|let f = FN; return f; }).
+                fn_params, body, j = _js_parse_iife_block_body(
+                    text, j, depth, state)
+                j = _js_expect(text, _js_skip_ws(text, j), ")")
+                return fn_params, body, j
         j = _js_skip_ws(text, j + 1)
         rk = _js_match_kw(text, j, "return")
         if rk is None:
@@ -5560,17 +5618,92 @@ def _js_parse_iife_fn_target(text, j, depth, state):
             j = _js_skip_ws(text, j + 1)
         j = _js_expect(text, j, "}")
     else:
-        # Arrow IIFE: (() => FN).
+        # Arrow IIFE.
         iife_params, j = _js_parse_fn_params(text, j)
         if iife_params:
             raise _JSExprFail("F522 IIFE with params")
         j = _js_skip_ws(text, j)
         if not text.startswith("=>", j):
             raise _JSExprFail("F522 IIFE arrow without =>")
-        fn_params, body, j = _js_parse_fn_target(
-            text, _js_skip_ws(text, j + 2), depth, state)
-    # Close the IIFE paren, then the immediate zero-arg invocation.
+        j = _js_skip_ws(text, j + 2)
+        if _iife_ext_ok and j < n and text[j] == "{":
+            # F528: (() => { var|const|let f = FN; return f; }).
+            fn_params, body, j = _js_parse_iife_block_body(
+                text, j, depth, state)
+        elif _iife_ext_ok and j < n and text[j] == "(":
+            # F528: one nesting level of parens around the F522 shape,
+            # two placements (both node-exact, v24.20.0):
+            #   (a) (() => ((F522-IIFE))()) -- parens around the
+            #       uninvoked IIFE, invocation outside (filed shape);
+            #   (b) (() => ((F522-IIFE)())) -- parens around the
+            #       invoked IIFE.
+            # The nested attempts parse the strict F522 shape
+            # (_iife_ext_ok=False); on any mismatch they fall back to the
+            # plain FN parse so previously-decoded inputs are
+            # unaffected.
+            try:
+                k = j + 1
+                fn_params, body, k = _js_parse_iife_fn_inner(
+                    text, k, depth, state, False)
+                k = _js_expect(text, _js_skip_ws(text, k), ")")
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, "(")
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, ")")
+                state["ops"] += 1  # the nested layer is obfuscation-shaped
+                j = k
+            except _JSExprFail:
+                try:
+                    k = j + 1
+                    fn_params, body, k = _js_parse_iife_fn_target(
+                        text, k, depth, state, False)
+                    k = _js_expect(text, _js_skip_ws(text, k), ")")
+                    state["ops"] += 1  # the paren layer is obfuscation-shaped
+                    j = k
+                except _JSExprFail:
+                    fn_params, body, j = _js_parse_fn_target(
+                        text, j, depth, state)
+        else:
+            fn_params, body, j = _js_parse_fn_target(
+                text, j, depth, state)
+    # Close the IIFE paren (the invocation is parsed by the caller).
     j = _js_expect(text, _js_skip_ws(text, j), ")")
+    return fn_params, body, j
+
+
+def _js_parse_iife_fn_target(text, j, depth, state, _iife_ext_ok=True):
+    """Parse an IIFE-evaluated function target `(IIFE)()` at text[j]
+    (F522, F528).
+
+    Returns (params, body_operands, next_index) -- the same triple as
+    _js_parse_fn_target, for the function value the IIFE evaluates
+    to. Node-exact desugars (v24.20.0): `(() => FN)()` and
+    `(function(){return FN})()` evaluate to FN itself (F522); the F528
+    extensions -- a nested IIFE `(() => ((F522-IIFE))())()` or
+    `(() => ((F522-IIFE)()))()` (one paren level around the F522
+    shape, either placement) and a
+    block body `{ var|const|let f = FN; return f; }` on either IIFE
+    form -- likewise evaluate to FN itself (the IIFE is immediately
+    invoked with zero arguments and returns FN unchanged), so a
+    Reflect.apply target in any of these shapes is engine-identical
+    to the literal-FN target F519 models.
+
+    The IIFE must be exactly one of the documented shapes, followed
+    by the immediate zero-argument invocation `()`.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - non-empty IIFE params, invocation with arguments, nested IIFEs
+      beyond the single F528 level (the nested attempt parses the
+      strict F522 inner, so a deeper IIFE fails there), IIFEs
+      returning non-functions, block bodies with more than the two
+      modeled statements or returning another ident, async/generator
+      IIFEs (the `async`/`function*` heads fail the subform parses),
+      `new`-invoked or method-style IIFEs, and any other IIFE shape.
+    Never evals.
+    """
+    fn_params, body, j = _js_parse_iife_fn_inner(
+        text, j, depth, state, _iife_ext_ok)
+    # The immediate zero-arg invocation.
     j = _js_skip_ws(text, j)
     j = _js_expect(text, j, "(")
     j = _js_skip_ws(text, j)
@@ -9153,6 +9286,363 @@ def _js_parse_args_laundered_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f529_keys_head(text, j, alias):
+    """Parse `Object.keys(a)` / `Object['keys'](a)` at text[j] (F529).
+
+    The call argument must be exactly the arguments alias *alias*
+    (a bare ident); anything else fails closed. Returns the index just
+    after the call's closing paren. Mirrors the member grammar of
+    _js_parse_object_keys (dot and F480 bracket-string forms, both
+    node-verified engine-identical). Never evals.
+    """
+    n = len(text)
+    if not text.startswith("Object", j):
+        raise _JSExprFail("F529 not Object.keys")
+    k = j + len("Object")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("F529 Objectx")
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == "[":
+        _mname, k = _js_parse_bracket_member(text, k)
+        if _mname != "keys":
+            raise _JSExprFail("F529 not keys member")
+    elif k < n and text[k] == ".":
+        k = _js_skip_ws(text, k + 1)
+        m = _js_match_kw(text, k, "keys")
+        if m is None:
+            raise _JSExprFail("F529 not keys member")
+        k = m
+    else:
+        raise _JSExprFail("F529 keys without member")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, "(")
+    a2, k = _js_parse_ident(text, _js_skip_ws(text, k))
+    if a2 != alias:
+        raise _JSExprFail("F529 keys of another ident")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, ")")
+    return k
+
+
+def _js_parse_alias_index_return(text, j, alias, p):
+    """Parse `return a[p];}` at text[j] (F529 block-bodied callback).
+
+    *alias* is the arguments alias, *p* the callback's parameter name.
+    Returns the index just after the closing brace. Never evals.
+    """
+    rk = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if rk is None:
+        raise _JSExprFail("F529 map callback not return")
+    k = _js_skip_ws(text, rk)
+    a2, k = _js_parse_ident(text, k)
+    if a2 != alias:
+        raise _JSExprFail("F529 map callback other ident")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, "[")
+    p2, k = _js_parse_ident(text, _js_skip_ws(text, k))
+    if p2 != p:
+        raise _JSExprFail("F529 map callback other index")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, "]")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, ";")
+    k = _js_expect(text, _js_skip_ws(text, k), "}")
+    return k
+
+
+def _js_parse_alias_index_callback(text, j, alias):
+    """Parse a `.map` callback projecting `a[p]` at text[j] (F529).
+
+    Recognized (node-verified, v24.20.0): `p=>a[p]`, `(p)=>a[p]`,
+    `p=>{return a[p];}`, `function(p){return a[p];}` -- the F517
+    entries-projection callback discipline, but the projection indexes
+    the arguments alias by the callback's own parameter instead of a
+    literal element. The parameter must not shadow the alias (else the
+    engine binds the projection differently -- fail closed). Anything
+    else fails closed. Returns next_index. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if text.startswith("function", j):
+        k = j + len("function")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F529 bad map callback")
+        k = _js_expect(text, k, "(")
+        p, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        if p == alias:
+            raise _JSExprFail("F529 map param shadows alias")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "{")
+        return _js_parse_alias_index_return(text, k, alias, p)
+    if j < n and text[j] == "(":
+        p, k = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        if p == alias:
+            raise _JSExprFail("F529 map param shadows alias")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        j = k
+    else:
+        p, j = _js_parse_ident(text, j)
+        if p == alias:
+            raise _JSExprFail("F529 map param shadows alias")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F529 map callback without =>")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        return _js_parse_alias_index_return(text, j + 1, alias, p)
+    a2, k = _js_parse_ident(text, j)
+    if a2 != alias:
+        raise _JSExprFail("F529 map callback other ident")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, "[")
+    p2, k = _js_parse_ident(text, _js_skip_ws(text, k))
+    if p2 != p:
+        raise _JSExprFail("F529 map callback other index")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, "]")
+    return k
+
+
+def _js_parse_f529_forin_accum(text, j, alias):
+    """Parse `var S='';for(var K in A){S+=A[K];}return S;` at text[j]
+    (F529), where A is the arguments alias.
+
+    The F517 for-in accumulation idiom over the aliased `arguments`
+    object: the braces around the loop body are optional
+    (engine-identical, node v24.20.0 verified). for-in over the
+    arguments exotic object yields the integer indices in ascending
+    order (`length`/`callee` are non-enumerable), so the accumulator
+    is engine-identical to the argument join. Guards mirror
+    _js_split_forin_accum: the accumulator must start as the empty
+    string, the key must not shadow the accumulator or alias, and the
+    loop must read exactly `A[K]`. Returns next_index (trailing `;`
+    after the return is optional; nothing may follow). Never evals.
+    """
+    n = len(text)
+    m = _js_match_kw(text, j, "var")
+    if m is None:
+        raise _JSExprFail("F529 forin accum not var")
+    j = _js_skip_ws(text, m)
+    acc, j = _js_parse_ident(text, j)
+    if acc == alias:
+        raise _JSExprFail("F529 forin acc shadows alias")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "=")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail("F529 forin accum not a string")
+    q0 = j
+    _, j = _js_parse_string(text, j)
+    if text[q0:j] != "''" and text[q0:j] != '"\""':
+        raise _JSExprFail("F529 forin accum not empty")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "for")
+    if m is None:
+        raise _JSExprFail("F529 forin no for")
+    j = _js_skip_ws(text, m)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "var")
+    if m is None:
+        raise _JSExprFail("F529 forin key not var")
+    j = _js_skip_ws(text, m)
+    keyvar, j = _js_parse_ident(text, j)
+    if keyvar == acc or keyvar == alias:
+        raise _JSExprFail("F529 forin key shadows")
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "in")
+    if m is None:
+        raise _JSExprFail("F529 forin no in")
+    j = _js_skip_ws(text, m)
+    a2, j = _js_parse_ident(text, j)
+    if a2 != alias:
+        raise _JSExprFail("F529 forin iterates another object")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    braced = False
+    if j < n and text[j] == "{":
+        braced = True
+        j = _js_skip_ws(text, j + 1)
+    acc2, j = _js_parse_ident(text, j)
+    if acc2 != acc:
+        raise _JSExprFail("F529 forin accum mismatch")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("+=", j):
+        raise _JSExprFail("F529 forin body not +=")
+    j = _js_skip_ws(text, j + 2)
+    a3, j = _js_parse_ident(text, j)
+    if a3 != alias:
+        raise _JSExprFail("F529 forin body reads another object")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "[")
+    key2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if key2 != keyvar:
+        raise _JSExprFail("F529 forin body indexes another key")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "]")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    j = _js_skip_ws(text, j)
+    if braced:
+        j = _js_expect(text, j, "}")
+        j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "return")
+    if m is None:
+        raise _JSExprFail("F529 forin no return")
+    j = _js_skip_ws(text, m)
+    acc3, j = _js_parse_ident(text, j)
+    if acc3 != acc:
+        raise _JSExprFail("F529 forin returns another ident")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ";":
+        j += 1
+    if _js_skip_ws(text, j) != len(text):
+        raise _JSExprFail("F529 forin trailing statements")
+    return j
+
+
+def _js_parse_args_enumerated_iife(text, i, depth, state):
+    """Parse `(function(){DECL a=arguments; BODY})(lit, ...)` (F529).
+
+    Desugars the arguments-alias enumeration composition: a one-hop
+    alias of the `arguments` exotic object (`var`/`const`/`let` -- all
+    three bind identically here, node v24.20.0 verified) enumerated
+    back into the call-site argument values via either
+    - `return Object.keys(a).map(CB)POSTFIX;` where CB is one of
+      `p=>a[p]`, `(p)=>a[p]`, `p=>{return a[p];}`,
+      `function(p){return a[p];}` (the F517 callback discipline with
+      the alias indexed by its own parameter); or
+    - `var s='';for(var K in a){s+=a[K];}return s;` (the F517 for-in
+      idiom over the alias; loop braces optional).
+    Node-exact desugars (v24.20.0): `Object.keys` on the arguments
+    object is the index list `['0',...]` in ascending order
+    (`length`/`callee` are non-enumerable), so the map rebuilds the
+    argument array and the POSTFIX parses over it via the normal
+    postfix grammar; for-in yields the same ascending indices, so the
+    accumulator is the argument join. Call args are string literals
+    (the F509/F516 arg grammar). Returns (value, next_index), or None
+    when the head does not match or a guard fails (the caller falls
+    through to the F516/F517 paths). Bounded by the part/depth
+    budgets; the IIFE wrapper charges one op (obfuscation-shaped).
+    Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a source other than bare `arguments` (Array.from/Object.values
+      aliases, rest params, destructuring are their own findings'
+      scope), an alias rebound anywhere (the exact-shape grammar has
+      no room for reassignment), non-identity map projections,
+      a callback parameter shadowing the alias, bare `arguments`
+      (not the alias) as the enumeration source, non-literal call
+      args, and any other body shape.
+    """
+    if not _js_peek_arguments_iife_head(text, i):
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, i)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j) + len("function")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        _kw, m = _js_match_decl_kw(stmts, sj)
+        if m is None:
+            raise _JSExprFail("F529 decl not var/const/let")
+        sj = _js_skip_ws(stmts, m)
+        alias, sj = _js_parse_ident(stmts, sj)
+        if alias == "arguments":
+            raise _JSExprFail("F529 alias named arguments")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "=")
+        m = _js_match_kw(stmts, _js_skip_ws(stmts, sj), "arguments")
+        if m is None:
+            raise _JSExprFail("F529 source not arguments")
+        sj = _js_skip_ws(stmts, m)
+        sj = _js_expect(stmts, sj, ";")
+        rest = stmts[sj:]
+        rj = _js_skip_ws(rest, 0)
+        if _js_match_kw(rest, rj, "return") is not None:
+            form = "keys"
+        elif _js_match_kw(rest, rj, "var") is not None:
+            form = "forin"
+        else:
+            raise _JSExprFail("F529 body not modeled")
+        postfix_text = None
+        if form == "keys":
+            rk = _js_match_kw(rest, rj, "return")
+            q = _js_parse_f529_keys_head(
+                rest, _js_skip_ws(rest, rk), alias)
+            q = _js_skip_ws(rest, q)
+            q = _js_expect(rest, q, ".")
+            m = _js_match_kw(rest, _js_skip_ws(rest, q), "map")
+            if m is None:
+                raise _JSExprFail("F529 not a map")
+            q = _js_expect(rest, _js_skip_ws(rest, m), "(")
+            q = _js_parse_alias_index_callback(rest, q, alias)
+            q = _js_skip_ws(rest, q)
+            q = _js_expect(rest, q, ")")
+            be = len(rest)
+            while be > q and rest[be - 1] in " \t\n\r":
+                be -= 1
+            if be > q and rest[be - 1] == ";":
+                be -= 1
+            postfix_text = rest[q:be]
+        else:
+            _js_parse_f529_forin_accum(rest, rj, alias)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        args = []
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ")":
+            j += 1
+        else:
+            while True:
+                j = _js_skip_ws(text, j)
+                if j >= n or text[j] not in "'\"":
+                    raise _JSExprFail("F529 arg not string literal")
+                aval, j = _js_parse_string(text, j)
+                args.append(aval)
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                j = _js_skip_ws(text, j)
+                if j >= n:
+                    raise _JSExprFail("unterminated iife call")
+                if text[j] == ",":
+                    j = _js_skip_ws(text, j + 1)
+                    continue
+                if text[j] == ")":
+                    j += 1
+                    break
+                raise _JSExprFail("bad iife call")
+        values = _JSArr(list(args))
+        if form == "keys":
+            val, k = _js_parse_postfix(
+                postfix_text, 0, values, depth, state)
+            if _js_skip_ws(postfix_text, k) != len(postfix_text):
+                raise _JSExprFail("F529 postfix trailing junk")
+        else:
+            val = "".join(args)
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
 def _js_span_balanced_braces(text, i):
     """Return the index just past the `}` matching text[i] == '{' (F517).
 
@@ -12148,6 +12638,18 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f509 = _js_parse_args_binding_iife(text, i, depth, state)
         if _f509 is not None:
             val, i = _f509
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F529: (function(){DECL a=arguments;
+        #   return Object.keys(a).map(i=>a[i])POSTFIX;})(lit, ...) or
+        #   (function(){DECL a=arguments;
+        #   var s='';for(var i in a){s+=a[i];}return s;})(lit, ...) --
+        #   arguments-alias enumeration composition (F516 x F517).
+        #   Tried before F516: the exact composition grammar is
+        #   disjoint from F516's (F516 fails closed on `a[i]`), and
+        #   None falls through to F516 like F509.
+        _f529 = _js_parse_args_enumerated_iife(text, i, depth, state)
+        if _f529 is not None:
+            val, i = _f529
             return _js_parse_postfix(text, i, val, depth, state)
         # F516: (function(){var A=SRC;return BODY})(lit, ...) or
         # (function(...A){return BODY})(lit, ...) -- arguments
