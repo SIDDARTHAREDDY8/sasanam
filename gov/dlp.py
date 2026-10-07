@@ -2108,7 +2108,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor)|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|values)|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
 # F455: the Array.of factory anchor tolerates whitespace around the dot
 # ([ \t\n\r]*, exactly the _js_skip_ws class the parser skips), so
 # `Array .of(...)` / `Array\t.of(...)` / `Array\n.of(...)` /
@@ -5367,15 +5367,367 @@ def _js_parse_object_assign_args(text, k, depth, state):
     return _JSArr(list(src.elements)), j + 1
 
 
+def _js_is_integer_index_key(key):
+    """True when *key* (a str) is an engine integer-index key (F510).
+
+    Node-verified (v24.20.0): the engine treats a property key as an
+    integer index iff ToString(ToUint32(key)) === key -- the canonical
+    decimal forms "0".."4294967294" with no leading zeros. "01",
+    "4294967295", and non-digit strings are ordinary string keys
+    (insertion-ordered). Never evals.
+    """
+    if not key or len(key) > 10:
+        return False
+    if key[0] == "0":
+        return len(key) == 1
+    if not all("0" <= c <= "9" for c in key):
+        return False
+    return int(key) <= 4294967294
+
+
+def _js_order_object_values(order, int_poss, str_poss):
+    """Order parsed object-literal values engine-exactly (F510).
+
+    *order* holds one value per first-insertion position; *int_poss*
+    holds (int_key, position) pairs and *str_poss* holds positions of
+    string keys. The engine enumerates integer-index keys ascending
+    numerically first, then string keys in insertion order
+    (node v24.20.0 verified).
+    """
+    int_poss = sorted(int_poss, key=lambda t: t[0])
+    return ([order[pos] for _, pos in int_poss]
+            + [order[pos] for pos in str_poss])
+
+
+def _js_parse_object_literal_values(text, i, depth, state):
+    """Parse `{k0:v0, k1:v1, ...}` at text[i] (text[i] == '{') (F510).
+
+    Returns (ordered_values, next_index): the Object.values result --
+    values in engine-exact enumeration order (integer-index keys
+    ascending numerically first, then string keys in insertion
+    order; a duplicate key keeps its first-insertion position with
+    the later value; node v24.20.0 verified).
+
+    Keys: string literals, decimal integer literals (no leading
+    zeros -- `01` would be an octal literal in the engine, so it
+    fails closed rather than mis-decode), or identifiers (all become
+    their string form). Values: string literals only -- numbers,
+    booleans, null, nested objects/arrays, and template literals
+    fail closed (documented boundary; the filed shapes use
+    string-literal fragments). Getters, setters, methods, spread,
+    computed keys, and `__proto__` fail closed -- a
+    prototype-poisoned or method-carrying literal is never
+    mis-decoded. Each property charges the F430 parts budget. Never
+    evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i + 1)
+    order = []      # value per first-insertion position
+    int_poss = []   # (int_key, position) pairs
+    str_poss = []   # positions of string keys, insertion-ordered
+    seen = {}       # key -> first-insertion position
+    if j < n and text[j] == "}":
+        return [], j + 1
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("unterminated object literal")
+        c = text[j]
+        if c in "'\"":
+            key, j = _js_parse_string(text, j)
+        elif c in _ASCII_DIGITS:
+            k = j + 1
+            while k < n and text[k] in _ASCII_DIGITS:
+                k += 1
+            key = text[j:k]
+            if len(key) > 1 and key[0] == "0":
+                # `01` is an octal literal in the engine (Annex B) --
+                # fail closed rather than misread the key.
+                raise _JSExprFail("octal-looking object key")
+            j = k
+        elif c in _JS_IDENT_START:
+            key, j = _js_parse_ident(text, j)
+        else:
+            # computed keys ([k]:), spread (...x), methods, getters
+            raise _JSExprFail("object literal key not a literal")
+        if key == "__proto__":
+            raise _JSExprFail("__proto__ key fails closed")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ":":
+            raise _JSExprFail("object literal needs colon")
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("object literal value not a string")
+        val, j = _js_parse_string(text, j)
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        if key in seen:
+            order[seen[key]] = val
+        else:
+            seen[key] = len(order)
+            order.append(val)
+            if _js_is_integer_index_key(key):
+                int_poss.append((int(key), seen[key]))
+            else:
+                str_poss.append(seen[key])
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "}":
+                return _js_order_object_values(order, int_poss,
+                                               str_poss), j + 1
+            continue
+        if j < n and text[j] == "}":
+            return _js_order_object_values(order, int_poss,
+                                           str_poss), j + 1
+        raise _JSExprFail("bad object literal")
+
+
+def _js_parse_entries_reduce_values(text, i, depth, state):
+    """Parse `Object.entries(OBJLIT).reduce((A,[B,C])=>(A[B]=C,A),{})`
+    at text[i] (F510).
+
+    The filed nested shape rebuilds the literal through
+    entries+reduce: Object.entries returns [[k,v],...] in the same
+    enumeration order Object.values uses, and the exact callback
+    shape `(A,[B,C])=>(A[B]=C,A)` with a `{}` init re-inserts every
+    pair into a fresh object -- the reconstructed object is
+    order-identical to the literal (node v24.20.0 verified,
+    including renamed params). So the result is the literal's
+    ordered values, parsed by _js_parse_object_literal_values.
+
+    The callback is matched structurally: exactly two params (an
+    identifier A and a 2-element array destructuring [B,C] of
+    identifiers), and a body that is exactly the comma expression
+    `A[B]=C,A` (ws-tolerant, optional outer parens). Any other
+    callback (block bodies, extra statements, different arity or
+    shapes) fails closed -- the reduce is never evaluated. Returns
+    (ordered_values, next_index). Never evals.
+    """
+    n = len(text)
+    j = i + len("Object")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        raise _JSExprFail("Objectx is not Object")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("not Object.entries")
+    j = _js_skip_ws(text, j + 1)
+    m = _js_match_kw(text, j, "entries")
+    if m is None:
+        raise _JSExprFail("not Object.entries")
+    j = _js_skip_ws(text, m)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("entries without paren")
+    vals, j = _js_parse_object_literal_values(
+        text, _js_skip_ws(text, j + 1), depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("entries unterminated")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("entries without reduce")
+    j = _js_skip_ws(text, j + 1)
+    m = _js_match_kw(text, j, "reduce")
+    if m is None:
+        raise _JSExprFail("not reduce")
+    j = _js_skip_ws(text, m)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("reduce without paren")
+    j = _js_skip_ws(text, j + 1)
+    # Params: (A,[B,C])
+    j = _js_expect(text, j, "(")
+    a, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    j = _js_expect(text, j, ",")
+    j = _js_expect(text, j, "[")
+    b, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    j = _js_expect(text, j, ",")
+    c, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    j = _js_expect(text, j, "]")
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("reduce callback not an arrow")
+    j = _js_skip_ws(text, j + 2)
+    # Body: (A[B]=C,A) -- optional outer parens, ws-tolerant.
+    paren = False
+    if j < n and text[j] == "(":
+        paren = True
+        j = _js_skip_ws(text, j + 1)
+    m = _js_match_kw(text, j, a)
+    if m is None:
+        raise _JSExprFail("rebuild body not A[B]=C,A")
+    j = _js_expect(text, m, "[")
+    m = _js_match_kw(text, _js_skip_ws(text, j), b)
+    if m is None:
+        raise _JSExprFail("rebuild body not A[B]=C,A")
+    j = _js_expect(text, m, "]")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "=":
+        raise _JSExprFail("rebuild body not A[B]=C,A")
+    if j + 1 < n and text[j + 1] in "=>":
+        # `==`, `===`, `=>` -- not the plain assignment the idiom needs.
+        raise _JSExprFail("rebuild body not A[B]=C,A")
+    j = _js_skip_ws(text, j + 1)
+    m = _js_match_kw(text, j, c)
+    if m is None:
+        raise _JSExprFail("rebuild body not A[B]=C,A")
+    j = _js_expect(text, m, ",")
+    m = _js_match_kw(text, _js_skip_ws(text, j), a)
+    if m is None:
+        raise _JSExprFail("rebuild body not A[B]=C,A")
+    j = _js_skip_ws(text, m)
+    if paren:
+        j = _js_expect(text, j, ")")
+    # Init: ,{})
+    j = _js_expect(text, j, ",")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "{":
+        raise _JSExprFail("reduce init not {}")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "}":
+        raise _JSExprFail("reduce init not empty")
+    j = _js_expect(text, j + 1, ")")
+    state["ops"] += 1  # the rebuild idiom is obfuscation-shaped
+    return vals, j
+
+
+def _js_parse_values_wrapper(text, i, depth, state):
+    """Parse `Object.<w>(INNER)` / `Object['<w>'](INNER)` as an
+    Object.values source (F510).
+
+    The F502/F503 wrappers are the identity on the receiver value,
+    so INNER is a values source parsed by _js_parse_values_source
+    itself (not the dispatch-receiver grammar -- a plain object
+    literal is not a dispatch receiver). Exactly one argument;
+    anything else fails closed. Returns (ordered_values,
+    next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    j = _js_skip_ws(text, j + len("Object"))
+    if j < n and text[j] == ".":
+        j = _js_skip_ws(text, j + 1)
+        for w in _JS_INTEGRITY_WRAPPERS:
+            if text.startswith(w, j):
+                k = j + len(w)
+                if k < n and text[k] in _JS_IDENT_CONT:
+                    continue  # e.g. sealx -- not a wrapper name
+                j = k
+                break
+        else:
+            raise _JSExprFail("not an integrity wrapper")
+    elif j < n and text[j] == "[":
+        _mname, j = _js_parse_bracket_member(text, j)
+        if _mname not in _JS_INTEGRITY_WRAPPERS:
+            raise _JSExprFail("not an integrity wrapper")
+    else:
+        raise _JSExprFail("not an integrity wrapper")
+    j = _js_expect(text, j, "(")
+    vals, j = _js_parse_values_source(text, j, depth + 1, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("integrity wrapper with extra args")
+    state["ops"] += 1  # the wrapper is obfuscation-shaped
+    return vals, j + 1
+
+
+def _js_parse_values_source(text, i, depth, state):
+    """Parse the OBJ of `Object.values(OBJ)` at text[i] (F510).
+
+    Source classes (node-verified, v24.20.0):
+    - an integrity wrapper `Object.<w>(INNER)` / `Object['<w>'](INNER)`
+      for w in _JS_INTEGRITY_WRAPPERS (F502/F503 -- each wrapper is
+      the identity, so INNER is parsed by this same grammar);
+    - the entries-reduce rebuild idiom
+      `Object.entries(OBJLIT).reduce((A,[B,C])=>(A[B]=C,A),{})`;
+    - a plain object literal `{...}`.
+    Anything else fails closed. Returns (ordered_values,
+    next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("values source too deep")
+    if _js_peek_integrity_wrap_head(text, j):
+        return _js_parse_values_wrapper(text, j, depth, state)
+    if text.startswith("Object", j):
+        k = j + len("Object")
+        if not (k < n and text[k] in _JS_IDENT_CONT):
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ".":
+                k2 = _js_match_kw(text, _js_skip_ws(text, k + 1),
+                                  "entries")
+                if k2 is not None:
+                    return _js_parse_entries_reduce_values(
+                        text, j, depth, state)
+        raise _JSExprFail("Object.values source not modeled")
+    if j < n and text[j] == "{":
+        return _js_parse_object_literal_values(text, j, depth, state)
+    raise _JSExprFail("Object.values source not modeled")
+
+
+def _js_parse_object_values(text, i, depth, state):
+    """Parse `Object.values(OBJ)` / `Object['values'](OBJ)` at text[i]
+    (F510).
+
+    Desugars the value-enumeration indirection: Object.values on a
+    modeled source is engine-identical to the ordered value list
+    (node v24.20.0 verified), so the parse continues via
+    _js_parse_postfix over the _JSArr of values (`.join('')` chains
+    as usual). Returns (value, next_index), or None when text[i] is
+    not an Object.values shape (the caller falls through to the
+    gopd/ctor/assign paths). Once the `values` member commits the
+    parse, malformed shapes fail closed via _JSExprFail. Never evals.
+    """
+    n = len(text)
+    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+        return None
+    if not text.startswith("Object", i):
+        return None
+    j = i + len("Object")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        return None  # Objectx -- fall through
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        # F480: Object['values'] -- bracket-string member access,
+        # engine-identical to the dot form (node v24.20.0 verified).
+        _mname, j = _js_parse_bracket_member(text, j)
+        if _mname != "values":
+            return None  # not values -- fall through (assign path)
+    elif j < n and text[j] == ".":
+        j = _js_skip_ws(text, j + 1)
+        m = _js_match_kw(text, j, "values")
+        if m is None:
+            return None  # not values -- fall through
+        j = m
+    else:
+        return None
+    # The `values` member commits the parse.
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("Object.values without paren")
+    vals, j = _js_parse_values_source(text, j + 1, depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("Object.values with extra args")
+    state["ops"] += 1  # the call itself is obfuscation-shaped
+    return _js_parse_postfix(text, j + 1, _JSArr(vals), depth, state)
+
+
 # F478: (receiver-kind, method) pairs the indirect-invocation dispatch may
 # target. The pairing is validated because the engine resolves the target
 # first: `Array.prototype.replace` is undefined, so
 # `Array.prototype.replace.call('a,b', /,/g, '')` throws TypeError in node
 # (v24.20.0) -- desugaring it as String.replace would mis-decode. Only
 # the filed methods are modeled; anything else ends the chain (F461
-# principle) or fails closed. No new regexes; never evals.
+# principle) or fails closed. F511: splice joins the array table -- the
+# direct form was already modeled (F466, literal (0,2) only) and the
+# dispatch desugar routes through the same (0,2)-only rule. No new
+# regexes; never evals.
 _F478_ARRAY_METHODS = frozenset({
-    "concat", "join", "slice", "reduce", "reduceRight", "map", "filter",
+    "concat", "join", "slice", "splice", "reduce", "reduceRight", "map",
+    "filter",
 })
 _F478_STRING_METHODS = frozenset({
     "concat", "replace",
@@ -5737,6 +6089,31 @@ def _js_apply_method_values(method, recv, args, state):
         elements = _js_filter_spec_apply(args[0][1], recv.elements)
         state["ops"] += 1
         return _JSArr(elements)
+    if method == "splice":
+        # F511 mirrored over values: the direct form's literal (0,2)
+        # pair (F466 scope note) -- the filed .apply shapes use
+        # exactly (0,2); every other arg shape fails closed, exactly
+        # as the direct form does. The bound grammar mirrors the
+        # slice value branch (int or _JSNumStr digits).
+        if not isinstance(recv, _JSArr):
+            raise _JSExprFail("splice on non-array")
+        if len(args) != 2:
+            raise _JSExprFail("splice takes two args")
+        nums = []
+        for a in args:
+            if isinstance(a, int) and not isinstance(a, bool):
+                nums.append(a)
+            elif isinstance(a, _JSNumStr):
+                s = str(a)
+                if not s or not all("0" <= c <= "9" for c in s):
+                    raise _JSExprFail("splice non-literal bound")
+                nums.append(int(s))
+            else:
+                raise _JSExprFail("splice non-literal bound")
+        if tuple(nums) != (0, 2):
+            raise _JSExprFail("splice args unsupported")
+        state["ops"] += 1
+        return _JSArr(recv.elements[0:2])
     # method == "replace": the direct grammar needs a literal-comma
     # regex, which cannot arrive as a dispatch value -- fail closed
     # (documented residual; the .call text form covers replace).
@@ -8618,6 +8995,13 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         state["ops"] += 1  # the Reflect call is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("Object", i):
+        # F510: Object.values(OBJ) / Object['values'](OBJ) -- value
+        # enumeration indirection. None falls through to the
+        # assign/getter paths below (which fail closed on `.values`
+        # as before).
+        _ov = _js_parse_object_values(text, i, depth, state)
+        if _ov is not None:
+            return _ov
         # F480: Object['assign'](...) -- bracket-string member access,
         # engine-identical to the dot form (node v24.20.0 verified).
         # Only 'assign' is modeled; any other bracket member fails
