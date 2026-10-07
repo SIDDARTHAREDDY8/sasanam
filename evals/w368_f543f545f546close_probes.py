@@ -354,7 +354,7 @@ def p6_pin_and_footer():
         text = fh.read()
     footer_ok = ("F543 CLOSED" in text and "F545 CLOSED" in text
                  and "F546 CLOSED" in text
-                 and "Next free finding: **F570**" in text)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+                 and "Next free finding: **F583**" in text)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
     detail = "pin=%s codes=%d; footer-closed=%s" % (
         TAXONOMY_PIN, n, footer_ok)
     return ("HELD", detail) if (pin_ok and footer_ok) \

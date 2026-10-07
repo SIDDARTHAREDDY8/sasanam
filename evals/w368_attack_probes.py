@@ -160,8 +160,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows no open findings, next F570 (wave-369 merge: lanes 1-7 CLOSED; maintenance finalizes)."""
-    ok = ("Next free finding: **F570**" in text)  # Wave-369 merge: lanes 1-7 (F547-F569) CLOSED; maintenance finalizes open set
+    """Control: footer shows open F570-F582, next F583 (wave-369 merge: lanes 1-7 CLOSED; F570-F582 OPEN)."""
+    path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
+    text = open(path).read()
+    ok = ("Next free finding: **F583**" in text  # Wave-369 merge: lanes 1-7 (F547-F569) CLOSED; F570-F582 OPEN (next F583)
+          and "**Open findings: F570, F571, F572, F573, F574, F575, F576, F577, F578, F579, F580, F581, F582.**" in text)  # Wave-369 merge: F570-F582 OPEN
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -490,10 +493,10 @@ def test_p2_f550_open():
 
 
 @_t
-def test_p2_f551_open():
-    """F551 OPEN (this round): String.raw with substitutions still misses."""
-    ms = _misses("String.raw({raw:['','','']},'%s','%s')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f551_closed():
+    """F551 CLOSED (wave-369): String.raw with substitutions now blocks."""
+    hit = _blocked("String.raw({raw:['','','']},'%s','%s')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
@@ -547,17 +550,17 @@ def test_p2_f558_open():
 
 
 @_t
-def test_p2_f559_open():
-    """F559 OPEN (this round): string-literal spread in bind args still misses."""
-    ms = _misses("Reflect.apply([].concat.bind([],...'%s'),null,['%s']).join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f559_closed():
+    """F559 CLOSED (wave-369): string-literal spread in bind args now blocks."""
+    hit = _blocked("Reflect.apply([].concat.bind([],...'%s'),null,['%s']).join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_p2_f560_open():
-    """F560 OPEN (this round): directive prologue still defeats IIFE models."""
-    ms = _misses("(function(){'use strict';var a=arguments;return a[0]+a[1];})('%s','%s')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f560_closed():
+    """F560 CLOSED (wave-369): directive prologue in IIFE dispatch now blocks."""
+    hit = _blocked("(function(){'use strict';var a=arguments;return a[0]+a[1];})('%s','%s')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
@@ -568,24 +571,24 @@ def test_p2_f561_closed():
 
 
 @_t
-def test_p2_f562_open():
-    """F562 OPEN (this round): Object.groupBy laundering still misses."""
-    ms = _misses("Object.groupBy(['%s','%s'],function(){return 'k';}).k.join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f562_closed():
+    """F562 CLOSED (wave-369): Object.groupBy laundering now blocks."""
+    hit = _blocked("Object.groupBy(['%s','%s'],function(){return 'k';}).k.join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_p2_f563_open():
-    """F563 OPEN (this round): Map.get on literal maps still misses."""
-    ms = _misses("new Map([['c','%s']]).get('c')+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f563_closed():
+    """F563 CLOSED (wave-369): Map.get on literal maps now blocks."""
+    hit = _blocked("new Map([['c','%s']]).get('c')+'%s'" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_p2_f564_open():
-    """F564 OPEN (this round): String.split laundering still misses."""
-    ms = _misses("'%s,%s'.split(',').join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f564_closed():
+    """F564 CLOSED (wave-369): String.split laundering now blocks."""
+    hit = _blocked("'%s,%s'.split(',').join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t

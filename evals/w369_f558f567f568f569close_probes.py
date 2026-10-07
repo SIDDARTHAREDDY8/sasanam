@@ -345,9 +345,9 @@ def p6_pin_and_footer():
     pin_ok = (TAXONOMY_PIN == 2140 and n == 2140)
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as fh:
         text = fh.read()
-    footer_ok = ("F558 CLOSED" in text and "F567 CLOSED" in text
-                 and "F568 CLOSED" in text and "F569 CLOSED" in text
-                 and "Next free finding: **F570**" in text)
+    footer_ok = ("CLOSED 2026-10-07 wave-369 lane 7" in text
+                 and text.count("CLOSED 2026-10-07 wave-369 lane 7") >= 4
+                 and "Next free finding: **F583**" in text)
     detail = "pin=%s codes=%d; footer-closed=%s" % (
         TAXONOMY_PIN, n, footer_ok)
     return ("HELD", detail) if (pin_ok and footer_ok) \

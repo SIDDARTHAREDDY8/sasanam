@@ -219,9 +219,12 @@ COMPOSITIONS = [
 ]
 
 FOOTER_OPEN = (  # Wave-369 merge: F547-F557,F560,F562,F563,F565 CLOSED (lanes 1-6); open F558/F567-F569
-               "F558", "F567", "F568", "F569"
+               "F570", "F571", "F572", "F573",
+               "F574", "F575", "F576", "F577",
+               "F578", "F579", "F580", "F581",
+               "F582"
                )  # Wave-369 merge
-FOOTER_NEXT = "F570"  # Wave-369 merge  # Wave-369 merge: F547-F557,F560,F562,F563,F565 CLOSED (lanes 1-6); next F570
+FOOTER_NEXT = "F583"  # Wave-369 merge  # Wave-369 merge: F547-F557,F560,F562,F563,F565 CLOSED (lanes 1-6); next F570
 
 
 def p1_f539_filed_held():
@@ -314,7 +317,7 @@ def p8_pin_and_footer():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     if text.count("CLOSED 2026-10-07 wave-368 lane 2") < 2:
         return ("BREAK", "F539/F540 CLOSED entries missing")
-    if ("**Open findings: %s.**" % ",".join(FOOTER_OPEN)) not in text:  # Wave-369 merge: F547-F556 CLOSED (lanes 1-4)
+    if ("**Open findings: %s.**" % ", ".join(FOOTER_OPEN)) not in text:  # Wave-369 merge: F547-F569 CLOSED; F570-F582 OPEN (next F583)
         return ("BREAK", "lane-local footer wrong")
     if "Next free finding: **%s**" % FOOTER_NEXT not in text:
         return ("BREAK", "next-free footer wrong")

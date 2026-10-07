@@ -529,11 +529,14 @@ def p9_compositions():
     ]
     bad = [s for s in held if _verdict(s, True)[0] == "BREAK"]
     # Siblings' OPEN findings must still MISS (no accidental closes):
-    # F557 object spread, F559 string spread, F560 (whatever round-37
-    # filed) -- pin the ones adjacent to this lane's machinery.
+    # F574 flat depth>1 / flatMap (attack round 37) -- pin the ones
+    # adjacent to this lane's machinery.
     open_quiet = [
-        # F559: string-literal spread in .bind args (char expansion)
-        "Reflect.apply([].concat.bind([],...'%(A1)s'),null,['%(A2)s']).join('')"
+        # F574: flat at depth>1 still misses
+        "[[['%(A1)s']],[['%(A2)s']]].flat(2).join('')"
+        % {"A1": _A1, "A2": _A2},
+        # F574: flatMap identity still misses
+        "['%(A1)s','%(A2)s'].flatMap(x=>[x]).join('')"
         % {"A1": _A1, "A2": _A2},
     ]
     bad += [s for s in open_quiet if _verdict(s, False)[0] == "BREAK"]
@@ -607,8 +610,8 @@ def p11_pin_footer():
     assert guac_graph.TAXONOMY_PIN == 2140, \
         "guac_graph.TAXONOMY_PIN=%r want 2140" % (guac_graph.TAXONOMY_PIN,)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F571**" in text  # Wave-369 lane 4: F553-F556 CLOSED, F570 filed; F547-F552, F557-F570 OPEN (next F571)
-          and "**Open findings: F547, F548, F549, F550, F551, F552, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566, F567, F568, F569, F570.**" in text  # Wave-369 lane 4: F553-F556 CLOSED, F570 filed; F547-F552, F557-F570 OPEN (next F571)
+    ok = ("Next free finding: **F583**" in text  # Wave-369 lane 4: F553-F556 CLOSED, F570 filed (renumbered F582 at merge, wave-272 rule); Wave-369 merge: F547-F569 CLOSED; F570-F582 OPEN (next F583)
+          and "**Open findings: F570, F571, F572, F573, F574, F575, F576, F577, F578, F579, F580, F581, F582.**" in text  # Wave-369 lane 4: F553-F556 CLOSED, F570 filed (renumbered F582 at merge, wave-272 rule); Wave-369 merge: F547-F569 CLOSED; F570-F582 OPEN (next F583)
           and "**Status: CLOSED 2026-10-07 wave-369 lane 4.**" in text)
     return ("HELD" if ok else "BREAK",
             "pin=%s footer=%s" % (TAXONOMY_PIN, ok))

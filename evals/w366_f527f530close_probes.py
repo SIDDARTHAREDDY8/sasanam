@@ -341,8 +341,13 @@ def p3_perf_bound():
 # ------------------------------------------------- P4: pin and footer
 # Merge footer (wave-367): F531/F533/F534 CLOSED in lanes 1-3;
 # F535, F536 remain OPEN; merge finalizes tree-wide.
-FOOTER_OPEN = ("F547", "F548", "F549", "F550", "F551", "F552", "F553", "F554", "F555", "F556", "F557", "F558", "F559", "F560", "F561", "F562", "F563", "F564", "F565", "F566", "F567", "F568", "F569")  # Wave-367 merge; wave-368 lane 1: F537/F538/F542 CLOSED
-FOOTER_NEXT = "F570"  # Wave-367 merge  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+FOOTER_OPEN = (
+               "F570", "F571", "F572", "F573",
+               "F574", "F575", "F576", "F577",
+               "F578", "F579", "F580", "F581",
+               "F582"
+               )  # Wave-367 merge; wave-368 lane 1: F537/F538/F542 CLOSED
+FOOTER_NEXT = "F583"    # Wave-369 merge: F547-F569 CLOSED; F570-F582 OPEN (next F583) # Wave-367 merge  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
 
 
 def p4_pin_and_footer():

@@ -345,14 +345,12 @@ COMPOSITIONS = [
 ]
 
 FOOTER_OPEN = (  # Wave-369 lane 2 local: F548/F549/F550 CLOSED (merge finalizes)
-               "F547",
-               "F551", "F552", "F553", "F554",
-               "F555", "F556", "F557", "F558",
-               "F559", "F560", "F561", "F562",
-               "F563", "F564", "F565", "F566",
-               "F567", "F568", "F569"
+               "F570", "F571", "F572", "F573",
+               "F574", "F575", "F576", "F577",
+               "F578", "F579", "F580", "F581",
+               "F582"
                )
-FOOTER_NEXT = "F570"  # Wave-369 lane 2 local
+FOOTER_NEXT = "F583"    # Wave-369 merge: F547-F569 CLOSED; F570-F582 OPEN (next F583) # Wave-369 lane 2 local
 
 
 def p1_f548_filed_held():

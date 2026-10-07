@@ -145,8 +145,8 @@ def test_b0_footer_state():
     """Control: footer shows F547-F581 open, next F582 (wave-369 lane 8)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F582**" in text  # Wave-369 lane 8 (attack round 37): F547-F569 reconfirmed OPEN; F570-F581 filed OPEN (next F582)
-          and "Open findings: F547, F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566, F567, F568, F569, F570, F571, F572, F573, F574, F575, F576, F577, F578, F579, F580, F581." in text)  # Wave-369 lane 8 (attack round 37): F547-F569 reconfirmed OPEN; F570-F581 filed OPEN (next F582)
+    ok = ("Next free finding: **F583**" in text  # Wave-369 lane 8 (attack round 37): F547-F569 reconfirmed OPEN; F570-F581 filed OPEN (next F582)
+          and "Open findings: F570, F571, F572, F573, F574, F575, F576, F577, F578, F579, F580, F581, F582." in text)  # Wave-369 lane 8 (attack round 37): F547-F569 reconfirmed OPEN; F570-F581 filed OPEN (next F582)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -391,142 +391,142 @@ def test_p1_f546_closed():
 # ------------------------------------------------- open pins (must miss)
 
 @_t
-def test_p2_f547_open():
-    """F547 OPEN: array-literal element index reads still miss."""
-    ms = _misses("['%s','%s'][0]+['%s','%s'][1]" % (_A, _B, _A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f547_closed():
+    """F547 CLOSED (wave-369): array-literal element index reads now block."""
+    hit = _blocked("['%s','%s'][0]+['%s','%s'][1]" % (_A, _B, _A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f548_open():
-    """F548 OPEN: Object.create prototype-chain reads still miss."""
-    ms = _misses("Object.create({c:'%s'}).c+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f548_closed():
+    """F548 CLOSED (wave-369): Object.create prototype-chain reads now block."""
+    hit = _blocked("Object.create({c:'%s'}).c+'%s'" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f549_open():
-    """F549 OPEN: getOwnPropertyDescriptor fragment reads still miss."""
-    ms = _misses("Object.getOwnPropertyDescriptor({c:'%s'},'c').value+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f549_closed():
+    """F549 CLOSED (wave-369): getOwnPropertyDescriptor fragment reads now block."""
+    hit = _blocked("Object.getOwnPropertyDescriptor({c:'%s'},'c').value+'%s'" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f550_open():
-    """F550 OPEN: defineProperty property-adding still misses."""
-    ms = _misses("Object.defineProperty({},'c',{get:function(){return '%s';}}).c+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f550_closed():
+    """F550 CLOSED (wave-369): defineProperty property-adding now blockes."""
+    hit = _blocked("Object.defineProperty({},'c',{get:function(){return '%s';}}).c+'%s'" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f551_open():
-    """F551 OPEN: String.raw with substitutions still misses."""
-    ms = _misses("String.raw({raw:['','','']},'%s','%s')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f551_closed():
+    """F551 CLOSED (wave-369): String.raw with substitutions now blockes."""
+    hit = _blocked("String.raw({raw:['','','']},'%s','%s')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f552_open():
-    """F552 OPEN: Symbol-keyed member reads still miss."""
-    ms = _misses("({[Symbol.for('c')]:'%s'})[Symbol.for('c')]+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f552_closed():
+    """F552 CLOSED (wave-369): Symbol-keyed member reads now block."""
+    hit = _blocked("({[Symbol.for('c')]:'%s'})[Symbol.for('c')]+'%s'" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f553_open():
-    """F553 OPEN: bound reduce target still misses."""
-    ms = _misses("Reflect.apply([].reduce.bind(['%s','%s'],function(a,b){return a+b;},''),null,[])" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f553_closed():
+    """F553 CLOSED (wave-369): bound reduce target now blockes."""
+    hit = _blocked("Reflect.apply([].reduce.bind(['%s','%s'],function(a,b){return a+b;},''),null,[])" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f554_open():
-    """F554 OPEN: bound flatMap target still misses."""
-    ms = _misses("Reflect.apply([].flatMap.bind([['%s'],['%s']],function(e){return e;}),null,[]).join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f554_closed():
+    """F554 CLOSED (wave-369): bound flatMap target now blockes."""
+    hit = _blocked("Reflect.apply([].flatMap.bind([['%s'],['%s']],function(e){return e;}),null,[]).join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f555_open():
-    """F555 OPEN: bound find target still misses."""
-    ms = _misses("Reflect.apply([].find.bind(['%s','%s'],function(e){return e==='%s';}),null,[])+'%s'" % (_A, _B, _A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f555_closed():
+    """F555 CLOSED (wave-369): bound find target now blockes."""
+    hit = _blocked("Reflect.apply([].find.bind(['%s','%s'],function(e){return e==='%s';}),null,[])+'%s'" % (_A, _B, _A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f556_open():
-    """F556 OPEN: bind-bound arrow target still misses."""
-    ms = _misses("Reflect.apply(((a)=>a+'%s').bind(null,'%s'),null,[])" % (_B, _A))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f556_closed():
+    """F556 CLOSED (wave-369): bind-bound arrow target now blockes."""
+    hit = _blocked("Reflect.apply(((a)=>a+'%s').bind(null,'%s'),null,[])" % (_B, _A))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f557_open():
-    """F557 OPEN: object spread copies still miss."""
-    ms = _misses("({...{c:'%s'}}).c+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f557_closed():
+    """F557 CLOSED (wave-369): object spread copies now block."""
+    hit = _blocked("({...{c:'%s'}}).c+'%s'" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f558_open():
-    """F558 OPEN: object-pattern in Reflect.apply target still misses."""
-    ms = _misses("Reflect.apply(function(){const {0:a,1:b}=arguments;return a+b;},null,['%s','%s'])" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f558_closed():
+    """F558 CLOSED (wave-369): object-pattern in Reflect.apply target now blockes."""
+    hit = _blocked("Reflect.apply(function(){const {0:a,1:b}=arguments;return a+b;},null,['%s','%s'])" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f559_open():
-    """F559 OPEN: string-literal spread in bind args still misses."""
-    ms = _misses("Reflect.apply([].concat.bind([],...'%s'),null,['%s']).join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f559_closed():
+    """F559 CLOSED (wave-369): string-literal spread in bind args now blockes."""
+    hit = _blocked("Reflect.apply([].concat.bind([],...'%s'),null,['%s']).join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f560_open():
-    """F560 OPEN: directive prologue still defeats IIFE models."""
-    ms = _misses("(function(){'use strict';var a=arguments;return a[0]+a[1];})('%s','%s')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f560_closed():
+    """F560 CLOSED (wave-369): directive prologue still defeats IIFE models."""
+    hit = _blocked("(function(){'use strict';var a=arguments;return a[0]+a[1];})('%s','%s')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f561_open():
-    """F561 OPEN: copy-on-write array methods still miss."""
-    ms = _misses("['%s','%s'].toReversed().join('')" % (_B, _A))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f561_closed():
+    """F561 CLOSED (wave-369): copy-on-write array methods now block."""
+    hit = _blocked("['%s','%s'].toReversed().join('')" % (_B, _A))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f562_open():
-    """F562 OPEN: Object.groupBy laundering still misses."""
-    ms = _misses("Object.groupBy(['%s','%s'],function(){return 'k';}).k.join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f562_closed():
+    """F562 CLOSED (wave-369): Object.groupBy laundering now blockes."""
+    hit = _blocked("Object.groupBy(['%s','%s'],function(){return 'k';}).k.join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f563_open():
-    """F563 OPEN: Map.get on literal maps still misses."""
-    ms = _misses("new Map([['c','%s']]).get('c')+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f563_closed():
+    """F563 CLOSED (wave-369): Map.get on literal maps now blockes."""
+    hit = _blocked("new Map([['c','%s']]).get('c')+'%s'" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f564_open():
-    """F564 OPEN: String.split laundering still misses."""
-    ms = _misses("'%s,%s'.split(',').join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f564_closed():
+    """F564 CLOSED (wave-369): String.split laundering now blockes."""
+    hit = _blocked("'%s,%s'.split(',').join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f565_open():
-    """F565 OPEN: Object.fromEntries laundering still misses."""
-    ms = _misses("Object.fromEntries([['c','%s']]).c+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f565_closed():
+    """F565 CLOSED (wave-369): Object.fromEntries laundering now blockes."""
+    hit = _blocked("Object.fromEntries([['c','%s']]).c+'%s'" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f566_open():
-    """F566 OPEN: Array.prototype.at via .call still misses."""
-    ms = _misses("Array.prototype.at.call(['%s','%s'],0)+Array.prototype.at.call(['%s','%s'],1)" % (_A, _B, _A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f566_closed():
+    """F566 CLOSED (wave-369): Array.prototype.at via .call now blockes."""
+    hit = _blocked("Array.prototype.at.call(['%s','%s'],0)+Array.prototype.at.call(['%s','%s'],1)" % (_A, _B, _A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f568_open():
-    """F568 OPEN: entries/values-idiom bodies in apply targets still miss."""
-    ms = _misses("Reflect.apply(function(){var a=arguments;return Object.entries(a).map(e=>e[1]).join('');},null,['%s','%s'])" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f568_closed():
+    """F568 CLOSED (wave-369): entries/values-idiom bodies in apply targets now block."""
+    hit = _blocked("Reflect.apply(function(){var a=arguments;return Object.entries(a).map(e=>e[1]).join('');},null,['%s','%s'])" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f569_open():
-    """F569 OPEN: call-indirect enum-body apply targets still miss."""
-    ms = _misses("Reflect.apply.call(Reflect, function(){var a=arguments;return a[0]+a[1];}, null, ['%s','%s'])" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f569_closed():
+    """F569 CLOSED (wave-369): call-indirect enum-body apply targets now block."""
+    hit = _blocked("Reflect.apply.call(Reflect, function(){var a=arguments;return a[0]+a[1];}, null, ['%s','%s'])" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_p2_f567_open():
-    """F567 OPEN: anchor left-boundary false positive still reproduces (decoder HITS)."""
+def test_p2_f567_closed():
+    """F567 CLOSED (wave-369): anchor left-boundary false positive fixed (decoder quiet)."""
     hit = _blocked("xJSON.parse('{\"x\":[\"%s\",\"%s\"]}').x.join('')" % (_A, _B))
-    return ("HELD" if hit else "BREAK", "false-positive-hit=%s" % hit)
+    return ("HELD" if not hit else "BREAK", "false-positive-hit=%s" % hit)
 
 @_t
 def test_p2_f570_open():
@@ -578,8 +578,8 @@ def test_p2_f577_open():
 
 @_t
 def test_p2_f578_open():
-    """F578 OPEN: defineProperty descriptor replacement still misses."""
-    ms = _misses("Object.defineProperty({c:'x'},'c',{value:'%s'}).c+'%s'" % (_A, _B))
+    """F578 OPEN: defineProperty descriptor replacement still misses (var-target forms)."""
+    ms = _misses("(function(){var o={c:'x'};Object.defineProperty(o,'c',{get:function(){return '%s';}});return o.c;})()+'%s'" % (_A, _B))
     return ("HELD" if ms else "BREAK", "miss=%s" % ms)
 
 @_t

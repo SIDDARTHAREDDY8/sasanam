@@ -413,7 +413,7 @@ def _p11():
     # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531) (applies to assertion below)
     # Wave-366 merge: F526-F530 CLOSED (lanes 1-3); F532 CLOSED at merge (honest F527 generalization); F531, F533-F536 OPEN (next F537)
     # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
-    assert "Next free finding: **F570**. **Open findings: F547, F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566, F567, F568, F569.**" in text, \
+    assert "Next free finding: **F583**. **Open findings: F570, F571, F572, F573, F574, F575, F576, F577, F578, F579, F580, F581, F582.**" in text, \
         "footer mismatch"
     _held("P11-footer-state", "open F444, F445 / next F446")
 

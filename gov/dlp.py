@@ -7370,6 +7370,10 @@ def _js_parse_f521_call_dispatch(text, paren, depth, state):
                 raise _JSExprFail("F521 call dispatch arity")
         except _JSExprFail:
             continue
+        state["ops"] += 1  # the call indirection is obfuscation-shaped
+        if _kind == "arr":
+            return _JSArr(_val), _nj + 1
+        return _val, _nj + 1
     # F544 (wave-368 lane 3): the target is a plain
     # F519-class function value (arrow or function-expr
     # with an additive body over declared params), not a
