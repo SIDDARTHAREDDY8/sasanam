@@ -129,11 +129,12 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F513-F525 open, next F526 (wave-364 lane 5)."""
+    """Control: footer shows F522-F526 open, next F527 (wave-365 lane 1:
+    F521 CLOSED locally, F526 filed OPEN; merge finalizes tree-wide)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F526**" in text
-          and "**Open findings: F521, F522, F523, F524, F525.**" in text)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+    ok = ("Next free finding: **F527**" in text
+          and "**Open findings: F522, F523, F524, F525, F526.**" in text)  # Wave-365 lane 1: F521 CLOSED; F522-F526 OPEN (next F527)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -296,10 +297,11 @@ def test_p2_f520_closed():
 
 
 @_t
-def test_p2_f521_open():
-    """F521 OPEN (this round): .bind-bound Reflect.apply target still misses."""
-    ms = _misses("Reflect.apply([].concat.bind([], '%s'), null, ['%s']).join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f521_closed():
+    """F521 CLOSED (wave-365 lane 1): .bind-bound Reflect.apply target now
+    blocks (coded refusal -- wave-306 class)."""
+    hit = _blocked("Reflect.apply([].concat.bind([], '%s'), null, ['%s']).join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
@@ -327,6 +329,14 @@ def test_p2_f524_open():
 def test_p2_f525_open():
     """F525 OPEN (this round): getOwnPropertyNames/Descriptors still misses."""
     ms = _misses("Object.getOwnPropertyNames({'%s':'x','%s':'y'}).join('')" % (_A, _B))
+    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+
+
+@_t
+def test_p2_f526_open():
+    """F526 OPEN (wave-365 lane 1, spec-review follow-up): .bind-bound
+    JOIN target still misses."""
+    ms = _misses("Reflect.apply([].join.bind(['%s','%s'], ''), null, [])" % (_A, _B))
     return ("HELD" if ms else "BREAK", "miss=%s" % ms)
 
 
