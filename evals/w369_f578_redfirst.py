@@ -29,9 +29,11 @@ SHAPES = [
 ]
 
 CONTROLS = [
-    ('f550-open-still-misses',
+    # F550 CLOSED in wave-369 lane 2: defineProperty-adding now
+    # blocks coded (this control was written when F550 was OPEN).
+    ('f550-closed-blocks',
      "Object.defineProperty({},'c',{value:'%(A1)s'}).c+'%(A2)s'"
-     % {"A1": A1, "A2": A2}, False),
+     % {"A1": A1, "A2": A2}, True),
     ('junk-quiet',
      "Object.defineProperty({c:'x'},'c',{value:'zz'}).c+'yy'"
      % {"A1": A1, "A2": A2}, False),

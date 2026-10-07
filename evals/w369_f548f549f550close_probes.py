@@ -344,10 +344,10 @@ COMPOSITIONS = [
      "Object.defineProperty({},'c',{value:'ab'}).c+'cd'", False),
 ]
 
-FOOTER_OPEN = (  # Wave-369 lane 2 local: F548/F549/F550 CLOSED (merge finalizes)
-               "F570", "F571", "F572", "F573",
+FOOTER_OPEN = (  # Wave-369 lane 2 local: F548/F549/F550 CLOSED (merge finalizes); wave-370 lane 4: F573/F578 CLOSED
+               "F570", "F571", "F572",
                "F574", "F575", "F576", "F577",
-               "F578", "F579", "F580", "F581",
+               "F579", "F580", "F581",
                "F582"
                )
 FOOTER_NEXT = "F583"    # Wave-369 merge: F547-F569 CLOSED; F570-F582 OPEN (next F583) # Wave-369 lane 2 local
