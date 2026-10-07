@@ -144,11 +144,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F581, F582 open, next F583 (wave-370 merge)."""
+    """Control: footer shows F582 open, next F583 (wave-370 merge)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F583**" in text  # Wave-370 merge: F570-F580 CLOSED
-          and "Open findings: F581, F582." in text)  # Wave-370 merge: F581/F582 OPEN
+    ok = ("Next free finding: **F583**" in text  # Wave-370 merge: F570-F581 CLOSED
+          and "Open findings: F582." in text)  # Wave-370 merge: F582 OPEN
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -598,10 +598,11 @@ def test_p2_f580_closed():
     return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_p2_f581_open():
-    """F581 OPEN: Reflect.apply-dispatch entries/values on aliased args still miss."""
+def test_p2_f581_closed():
+    """F581 CLOSED (wave-370 lane 7): Reflect.apply-dispatch entries/values
+    on aliased args now blocks coded."""
     ms = _misses("Reflect.apply(Object.values,null,[(function(){var a=arguments;return a;})('%s','%s')]).join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 # ------------------------------------------------- boundaries
