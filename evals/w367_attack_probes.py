@@ -153,11 +153,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F537-F546 open, next F547 (wave-367 merge)."""
+    """Control: footer shows F539-F546 open (minus F537/F538/F542), next F547 (wave-368 lane 1)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F547**" in text
-          and "Open findings: F537, F538, F539, F540, F541, F542, F543, F544, F545, F546." in text)
+          and "Open findings: F539, F540, F541, F543, F544, F545, F546." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -383,19 +383,19 @@ def test_p2_f536_open():
 
 
 @_t
-def test_p2_f537_open():
-    """F537 OPEN (this round): bound filter target still misses."""
+def test_p2_f537_closed():
+    """F537 CLOSED (wave-368 lane 1): bound filter target now blocks."""
     ms = _misses("Reflect.apply([].filter.bind(['%s','%s','zz'], function(e){return e.length>2;}), null, []).join('')"
                  % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t
-def test_p2_f538_open():
-    """F538 OPEN (this round): bound map target still misses."""
+def test_p2_f538_closed():
+    """F538 CLOSED (wave-368 lane 1): bound map target now blocks."""
     ms = _misses("Reflect.apply([].map.bind(['%s','%s'], function(e){return e;}), null, []).join('')"
                  % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t
@@ -420,11 +420,11 @@ def test_p2_f541_open():
 
 
 @_t
-def test_p2_f542_open():
-    """F542 OPEN (this round): Proxy apply-trap target still misses."""
+def test_p2_f542_closed():
+    """F542 CLOSED (wave-368 lane 1): Proxy apply-trap target now blocks."""
     ms = _misses("Reflect.apply(new Proxy(function(a,b){return a+b;},{apply:function(t,th,args){return Reflect.apply(t,th,args);}}), null, ['%s','%s'])"
                  % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t
