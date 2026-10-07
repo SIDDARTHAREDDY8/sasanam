@@ -445,7 +445,10 @@ def p3_no_new_regexes():
     # repr() literal -- equality with the live value is the pin).
     # Wave-360 merge: union of lane-1 (optional-chaining), lane-2
     # (Reflect.get / getOwnPropertyDescriptor / String.raw) widenings.
-    assert dlp._JS_EXPR_START.pattern == '[\'\\"`\\[]|String\\.fromCharCode|String[ \\t\\n\\r]*(\\(|\\.[ \\t\\n\\r]*raw([ \\t\\n\\r]*\\(|[ \\t\\n\\r]*\\.[ \\t\\n\\r]*call[ \\t\\n\\r]*\\()|\\[[ \\t\\n\\r]*[\'\\"])|Array(\\(|[ \\t\\n\\r]*(\\.[ \\t\\n\\r]*(of|apply|call)|\\[[ \\t\\n\\r]*[\'\\"]))|Array[ \\t\\n\\r]*\\.[ \\t\\n\\r]*prototype|String[ \\t\\n\\r]*\\.[ \\t\\n\\r]*prototype|Function[ \\t\\n\\r]*\\.[ \\t\\n\\r]*prototype|Reflect([ \\t\\n\\r]*(\\?\\.|\\.)[ \\t\\n\\r]*(construct|apply|get)|[ \\t\\n\\r]*\\[[ \\t\\n\\r]*[\'\\"])|Object([ \\t\\n\\r]*\\.[ \\t\\n\\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor)|[ \\t\\n\\r]*\\[[ \\t\\n\\r]*[\'\\"])|\\('
+    # F505 (wave-362 lane 3): String.fromCodePoint alternative
+    # added to the pinned repr (literal-alternation only -- the
+    # same F468 precedent); re.compile count unchanged (28).
+    assert dlp._JS_EXPR_START.pattern == '[\'\\"`\\[]|String\\.fromCharCode|String\\.fromCodePoint|String[ \\t\\n\\r]*(\\(|\\.[ \\t\\n\\r]*raw([ \\t\\n\\r]*\\(|[ \\t\\n\\r]*\\.[ \\t\\n\\r]*call[ \\t\\n\\r]*\\()|\\[[ \\t\\n\\r]*[\'\\"])|Array(\\(|[ \\t\\n\\r]*(\\.[ \\t\\n\\r]*(of|apply|call)|\\[[ \\t\\n\\r]*[\'\\"]))|Array[ \\t\\n\\r]*\\.[ \\t\\n\\r]*prototype|String[ \\t\\n\\r]*\\.[ \\t\\n\\r]*prototype|Function[ \\t\\n\\r]*\\.[ \\t\\n\\r]*prototype|Reflect([ \\t\\n\\r]*(\\?\\.|\\.)[ \\t\\n\\r]*(construct|apply|get)|[ \\t\\n\\r]*\\[[ \\t\\n\\r]*[\'\\"])|Object([ \\t\\n\\r]*\\.[ \\t\\n\\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor)|[ \\t\\n\\r]*\\[[ \\t\\n\\r]*[\'\\"])|\\('
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     assert len(re.findall(r"re\.compile\(", src)) == 28
     return ("HELD", "no new regexes; anchor pinned")

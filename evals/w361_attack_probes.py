@@ -182,6 +182,13 @@ def test_p1_f502_closed():
 # ------------------------------------------------- open pins (this round)
 
 @_t
+def test_p1_f505_closed():
+    """F505 CLOSED (wave-362 lane 3): fromCodePoint spread now blocks."""
+    p = "String.fromCodePoint(...[%s])" % CODES
+    return ("HELD" if _blocked(p) else "BREAK", "F505 pin")
+
+
+@_t
 def test_p2_f503_open():
     """F503 OPEN: seal/preventExtensions receivers still miss."""
     p = "Array.prototype.concat.call(Object.seal(['%s','%s']), []).join('')" % (_A, _B)
@@ -193,13 +200,6 @@ def test_p2_f504_open():
     """F504 OPEN: non-dot Reflect.apply still misses."""
     p = "Reflect['apply']([].concat, [], ['%s','%s']).join('')" % (_A, _B)
     return ("HELD" if _misses(p) else "BREAK", "F504 pin")
-
-
-@_t
-def test_p2_f505_open():
-    """F505 OPEN: fromCodePoint spread still misses."""
-    p = "String.fromCodePoint(...[%s])" % CODES
-    return ("HELD" if _misses(p) else "BREAK", "F505 pin")
 
 
 # ------------------------------------------------- closed pins (spot)

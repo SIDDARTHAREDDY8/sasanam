@@ -2089,7 +2089,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor)|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor)|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
 # F455: the Array.of factory anchor tolerates whitespace around the dot
 # ([ \t\n\r]*, exactly the _js_skip_ws class the parser skips), so
 # `Array .of(...)` / `Array\t.of(...)` / `Array\n.of(...)` /
@@ -2648,6 +2648,20 @@ def _js_parse_coerced_string_arg(text, i, depth, state, label):
 def _js_parse_fromcharcode(text, i):
     """Parse String.fromCharCode(n, ...) at text[i]; returns (value, idx)."""
     return _js_parse_fromcharcode_args(text, i + len("String.fromCharCode"))
+
+
+def _js_parse_fromcodepoint(text, i):
+    """Parse String.fromCodePoint(n, ...) at text[i] (F505);
+    returns (value, idx).
+
+    Shares the F458/F500 arg-list parser with fromCharCode: the
+    integer-literal grammar's RangeError classes (cap 0x10FFFF, no
+    negatives, no floats/exponents) are node-identical for
+    fromCodePoint (v24.20.0), and _safe_chr is node-exact for
+    0..0x10FFFF except lone surrogates, which fail closed. Spread
+    array-literal operands decode engine-exactly. Never evals.
+    """
+    return _js_parse_fromcharcode_args(text, i + len("String.fromCodePoint"))
 
 
 def _js_parse_fromcharcode_spread_inner(text, i):
@@ -8257,6 +8271,27 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                 state["ops"] += 1  # the dispatch is obfuscation-shaped
                 return _js_parse_postfix(text, i, val, depth, state)
         val, i = _js_parse_fromcharcode(text, i)
+        state["ops"] += 1  # the call itself is obfuscation-shaped
+        return _js_parse_postfix(text, i, val, depth, state)
+    if text.startswith("String.fromCodePoint", i):
+        # F505: String.fromCodePoint(...) -- direct call form only.
+        # fromCodePoint is a DIFFERENT builtin from fromCharCode
+        # (Unicode code-point semantics: astral planes decode to the
+        # full char, node-verified v24.20.0), but the F458
+        # integer-literal grammar already matches fromCodePoint's
+        # RangeError classes exactly (cap 0x10FFFF, no negatives,
+        # no floats/exponents), and _safe_chr is node-exact for
+        # 0..0x10FFFF except lone surrogates -- which fail closed
+        # (they can never match an ASCII credential). So the
+        # fromCharCode arg-list parser (F458/F500, spread allowed)
+        # decodes fromCodePoint engine-exactly on the modeled class.
+        # .call/.apply dispatch on fromCodePoint is NOT routed to
+        # _js_parse_fcc_dispatch: it fails closed here (documented
+        # F505 boundary, matching F500's dispatch-spread boundary).
+        _k = _js_skip_ws(text, i + len("String.fromCodePoint"))
+        if _k < len(text) and text[_k] == ".":
+            raise _JSExprFail("fromCodePoint dispatch not modeled")
+        val, i = _js_parse_fromcodepoint(text, i)
         state["ops"] += 1  # the call itself is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("String", i):
