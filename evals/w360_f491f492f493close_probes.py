@@ -143,7 +143,7 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-360 lane 2: F491/F492/F493 closed; no new decision codes
-FOOTER_OPEN = "F496, F497, F498, F499, F500, F501, F502"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-360 lane 2: F491/F492/F493 CLOSED locally (merge finalizes tree-wide)
+FOOTER_OPEN = "F496, F497, F498, F499"  # Wave-361 lane 3: F500, F501, F502 CLOSED locally (merge finalizes tree-wide)  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-360 lane 2: F491/F492/F493 CLOSED locally (merge finalizes tree-wide)
 FOOTER_NEXT = "F503"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)
 
 _A = "xoxb-0123"
@@ -461,10 +461,9 @@ def p4_pin_and_footer():
     assert len(TAXONOMY) == 2135
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     assert "Next free finding: **F503**" in text
-    # Wave-361 lane 1: F496, F497 CLOSED locally (merge finalizes tree-wide;
-    # was: open F496-F502).
-    assert "**Open findings: F498, F499, F500, F501, F502.**" in text
-    return ("HELD", "pin=2135 footer open F498-F502 next F503 (wave-361 lane 1)")
+    # Wave-361 merge: F496-F502 all CLOSED (lanes 1-3 merged; merge finalizes tree-wide).
+    assert "**Open findings: (none).**" in text
+    return ("HELD", "pin=2135 footer open none next F503 (wave-361 merge)")
 
 
 PROBES = [

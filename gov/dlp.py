@@ -2650,25 +2650,50 @@ def _js_parse_fromcharcode(text, i):
     return _js_parse_fromcharcode_args(text, i + len("String.fromCharCode"))
 
 
-def _js_parse_fromcharcode_args_inner(text, i, closer):
+def _js_parse_fromcharcode_spread_inner(text, i):
+    """Parse `[n, n, ...]` at text[i] (F500); returns (value, idx_after_bracket).
+
+    The array-literal operand of a fromCharCode spread: integer-literal
+    codepoints in the F458 grammar, `]`-terminated. Never evals.
+    """
+    i = _js_skip_ws(text, i)
+    if i >= len(text) or text[i] != "[":
+        raise _JSExprFail("fromCharCode spread needs array")
+    return _js_parse_fromcharcode_args_inner(text, i + 1, "]")
+
+
+def _js_parse_fromcharcode_args_inner(text, i, closer, allow_spread=False):
     """Parse `n (, n)* <closer>` -- the F458 fromCharCode codepoint-list
     grammar (F458 / F480 / F486); returns (value, idx).
 
     The *closer* is ')' for the direct call form and ']' for the
     .apply([...]) dispatch form (F486). The F458 integer-literal
-    grammar is unchanged. Never evals.
+    grammar is unchanged. When *allow_spread* (F500, direct call form
+    only), an argument may also be a spread array-literal operand
+    `...[n, n, ...]`, so mixed literal+spread lists
+    (`String.fromCharCode(120, ...[111])`) decode engine-exactly;
+    the .call/.apply dispatch forms keep allow_spread=False (spread
+    fails closed there, documented F500 boundary). The
+    _JS_EXPR_MAX_CODEPOINTS cap counts decoded codepoints. Never evals.
     """
     out = []
+    total = 0
     i = _js_skip_ws(text, i)
     if i < len(text) and text[i] == closer:
         return "", i + 1
     while True:
-        val, i = _js_parse_fcc_number(text, i)  # F458: engine spellings
-        ch = _safe_chr(val)
-        if ch is None:
-            raise _JSExprFail("bad codepoint")
-        out.append(ch)
-        if len(out) > _JS_EXPR_MAX_CODEPOINTS:
+        if allow_spread and text.startswith("...", i):
+            val, i = _js_parse_fromcharcode_spread_inner(text, i + 3)
+            out.append(val)
+            total += len(val)
+        else:
+            val, i = _js_parse_fcc_number(text, i)  # F458: engine spellings
+            ch = _safe_chr(val)
+            if ch is None:
+                raise _JSExprFail("bad codepoint")
+            out.append(ch)
+            total += 1
+        if total > _JS_EXPR_MAX_CODEPOINTS:
             raise _JSExprFail("too many codepoints")
         i = _js_skip_ws(text, i)
         if i < len(text) and text[i] == ",":
@@ -2686,11 +2711,16 @@ def _js_parse_fromcharcode_args(text, j):
     Shared by the dot form (`String.fromCharCode(...)`) and the
     bracket-string member form (`String['fromCharCode'](...)`, F480 --
     node-identical). The F458 integer-literal grammar is unchanged.
+    F500: arguments may be literal codepoints or spread array-literal
+    operands (`...[n, n, ...]`), in any mixture; the .call/.apply
+    dispatch forms keep the literal-only grammar (spread fails closed
+    there, documented F500 boundary).
     """
     i = _js_skip_ws(text, j)
     if i >= len(text) or text[i] != "(":
         raise _JSExprFail("fromCharCode without paren")
-    return _js_parse_fromcharcode_args_inner(text, i + 1, ")")
+    return _js_parse_fromcharcode_args_inner(text, i + 1, ")",
+                                             allow_spread=True)
 
 
 def _js_parse_dispatch_thisarg(text, i, depth, state):
@@ -5936,6 +5966,88 @@ def _js_parse_arguments_iife_recv(text, i, depth, state):
     return _JSArr(args), j
 
 
+def _js_peek_freeze_head(text, i):
+    """Peek `Object.freeze(` / `Object['freeze'](` at text[i] (F502);
+    True/False, never raises."""
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if not text.startswith("Object", j):
+        return False
+    k = j + 6
+    if k < n and text[k] in _JS_IDENT_CONT:
+        return False
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ".":
+        k = _js_skip_ws(text, k + 1)
+        if not text.startswith("freeze", k):
+            return False
+        k += 6
+        if k < n and text[k] in _JS_IDENT_CONT:
+            return False
+    elif k < n and text[k] == "[":
+        # Object['freeze'] / Object["freeze"] (F480 bracket convention).
+        k2 = _js_skip_ws(text, k + 1)
+        if k2 >= n or text[k2] not in "'\"":
+            return False
+        q = text[k2]
+        if not text.startswith("freeze", k2 + 1):
+            return False
+        k3 = k2 + 7
+        if k3 >= n or text[k3] != q:
+            return False
+        k = _js_skip_ws(text, k3 + 1)
+        if k >= n or text[k] != "]":
+            return False
+        k += 1
+    else:
+        return False
+    k = _js_skip_ws(text, k)
+    return k < n and text[k] == "("
+
+
+def _js_parse_freeze_recv(text, i, depth, state):
+    """Parse `Object.freeze(INNER)` / `Object['freeze'](INNER)` at text[i]
+    (F502).
+
+    Object.freeze returns its argument unchanged (the same object
+    reference -- node v24.20.0), so a frozen receiver is engine-identical
+    to the inner receiver: INNER is parsed by _js_parse_dispatch_receiver
+    itself, which fails closed on any unmodeled inner shape. The
+    bracket-string member form is engine-identical to the dot form
+    (F480 convention, node-verified). Exactly one argument; anything
+    else (extra args, missing close paren) fails closed. Object.seal /
+    Object.preventExtensions are NOT modeled -- the peek only matches
+    `freeze` (documented F502 boundary).
+    Returns (value, next_index). Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("freeze nesting too deep")
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if not text.startswith("Object", j):
+        raise _JSExprFail("not Object.freeze")
+    j = _js_skip_ws(text, j + 6)
+    if j < n and text[j] == ".":
+        j = _js_skip_ws(text, j + 1)
+        if not text.startswith("freeze", j):
+            raise _JSExprFail("not Object.freeze")
+        j = _js_skip_ws(text, j + 6)
+    elif j < n and text[j] == "[":
+        _mname, j = _js_parse_bracket_member(text, j)
+        if _mname != "freeze":
+            raise _JSExprFail("Object bracket member not freeze")
+    else:
+        raise _JSExprFail("not Object.freeze")
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    recv, j = _js_parse_dispatch_receiver(text, j, depth + 1, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("freeze with extra args")
+    state["ops"] += 1  # the freeze wrapper is obfuscation-shaped
+    return recv, j + 1
+
+
 def _js_parse_dispatch_receiver(text, i, depth, state):
     """Parse the receiver of a .call/.apply/.bind dispatch (F478/F487/F489).
 
@@ -5947,6 +6059,8 @@ def _js_parse_dispatch_receiver(text, i, depth, state):
       closed);
     - `(function(){return arguments})(args...)` (F489; the arguments
       exotic object as a _JSArr of the passed values);
+    - `Object.freeze(INNER)` (F502; freeze is the identity on the
+      receiver value, so INNER is parsed by this same grammar);
     - otherwise the additive grammar (arrays, strings).
     The head peeks commit the parse: a malformed exotic receiver fails
     closed here (the additive grammar cannot parse these heads anyway).
@@ -5960,6 +6074,8 @@ def _js_parse_dispatch_receiver(text, i, depth, state):
         return _js_parse_proxy_recv(text, _ri, depth, state)
     if _js_peek_arguments_iife_head(text, _ri):
         return _js_parse_arguments_iife_recv(text, _ri, depth, state)
+    if _js_peek_freeze_head(text, _ri):
+        return _js_parse_freeze_recv(text, _ri, depth, state)
     return _js_parse_additive(text, _ri, depth, state)
 
 
@@ -8518,7 +8634,9 @@ def _js_remainder_rebinds(rest, toks, bound):
 
     Detects function/catch parameter lists, named-function bindings,
     for-loop groups, nested const/let/var declarators (incl.
-    destructuring), and arrow-function parameters. Anything
+    destructuring), `with` statements (F501: a `with` block dynamically
+    scopes every identifier use inside it, so any substitution there
+    would be node-wrong), and arrow-function parameters. Anything
     unparseable (unbalanced brackets, backtick, unknown arrow-param
     shape) returns True -- fail closed. Over-collection inside
     param/for groups is deliberate: it can only abort, never wrongly
@@ -8571,6 +8689,18 @@ def _js_remainder_rebinds(rest, toks, bound):
                     if nt in bound:
                         return True
                     break
+        elif tname == "with":
+            # `with(obj){...}` dynamically scopes identifier resolution
+            # inside the block: a bound name used there may resolve to
+            # the with-object's property instead of the binding, so any
+            # substitution would be node-wrong (F501). A `with` not
+            # preceded by `.`/`$`/word char is the statement -- `with`
+            # is a reserved word, so a bare token can only be the
+            # statement (a property named `with`, e.g. `x.with`, is
+            # preceded by `.` and left alone).
+            if ts == 0 or not (rest[ts - 1] in _JS_IDENT_CONT or
+                               rest[ts - 1] in ".$"):
+                return True
     for eq in arrow_eqs:
         j = eq - 1
         while j >= 0 and rest[j] in " \t\n\r":
@@ -8689,13 +8819,18 @@ def _js_resolve_local_bindings(text):
     # aborts the rewrite: substituting there would be node-wrong.
     if _js_remainder_rebinds(rest, toks, names):
         return None
-    # Index tokens by position for neighbor checks.
+    # Index tokens by position for neighbor checks. NOTE (F501 lane):
+    # the scans below index `rest`, so the bound is len(rest) -- the
+    # earlier `n = len(text)` would walk past the end of `rest` and
+    # raise IndexError when a bound token sits at the very end of the
+    # remainder (fixed here; was a crash, not fail-closed).
+    _rn = len(rest)
     for idx, (tname, ts, te) in enumerate(toks):
         if tname in names:
             # Reassignment of a bound name aborts: `=`, `+=`, ...,
             # `++`/`--` (prefix or postfix).
             j = te
-            while j < n and rest[j] in " \t\n\r":
+            while j < _rn and rest[j] in " \t\n\r":
                 j += 1
             nxt2 = rest[j:j + 2]
             nxt1 = rest[j:j + 1]
@@ -8720,9 +8855,9 @@ def _js_resolve_local_bindings(text):
                        rest[ts - 1] in ".$"):
             continue
         j = te
-        while j < n and rest[j] in " \t\n\r":
+        while j < _rn and rest[j] in " \t\n\r":
             j += 1
-        if j >= n or rest[j] not in "(.":
+        if j >= _rn or rest[j] not in "(.":
             continue
         out.append(rest[pos:ts])
         out.append(binding[1])
@@ -8730,6 +8865,141 @@ def _js_resolve_local_bindings(text):
     out.append(rest[pos:])
     # Leading whitespace is an artifact of dropping the binding
     # statement; strip it so the rewritten text anchors cleanly.
+    return "".join(out).lstrip(" \t\n\r")
+
+
+def _js_resolve_value_bindings(text):
+    """Rewrite leading string-value bindings (F501).
+
+    Matches one or more leading `const`/`let`/`var` statements binding
+    identifiers to string literals only --
+      const a='f1', b='f2';
+      let a='f1'; let b='f2';
+      var a='f1'; var b='f2';
+    -- then substitutes every non-property, non-string, non-comment use
+    of the bound identifiers in the remainder with their quoted
+    literal, so additive `a+b` decodes exactly like `'f1'+'f2'`
+    (node-verified, v24.20.0).
+
+    Unlike F495 (method bindings), `var` is allowed here: with
+    string-literal initializers and no reassignment anywhere in the
+    remainder, hoisting cannot change any value. Unlike F495, multiple
+    binding statements are consumed (the filed `let-two`/`var-two`/
+    `const-two` shapes declare across two statements); the loop stops
+    -- without consuming -- at the first statement that is not a pure
+    value-binding statement.
+
+    Fail-safe: any reassignment (`=`, `+=`, `++`, `--`, ...) or
+    rebinding (function/catch/arrow parameters, for-loop declarators,
+    nested const/let/var declarations, duplicate bound names) of a
+    bound name anywhere in the remainder aborts the whole rewrite
+    (returns None) -- the F495 detectors are reused verbatim.
+    Non-literal initializers, destructuring, defaults, template
+    literals (backtick), and missing initializers all decline; a
+    statement that fails to parse as a pure binding statement is
+    rewound without consuming it, and any bindings it partially
+    collected are dropped, so the remainder is always scanned with
+    exactly the bindings of fully-parsed statements.
+    Substitution never touches string literals or comments
+    (_js_ident_tokens) and never rewrites property names (a bound name
+    preceded by `.`/`$`/word char is left alone -- `x.a` keeps its
+    key). Returns the rewritten text, or None. Never evals.
+    """
+    n = len(text)
+    i = _js_skip_ws(text, 0)
+    bindings = []  # (name, literal_source_text)
+    while True:
+        i = _js_skip_ws(text, i)
+        stmt_start = i
+        for kw in ("const", "let", "var"):
+            k = i + len(kw)
+            if text.startswith(kw, i) and (
+                    k >= n or text[k] not in _JS_IDENT_CONT):
+                i = k
+                break
+        else:
+            i = stmt_start
+            break
+        stmt_n = len(bindings)
+        try:
+            while True:
+                i = _js_skip_ws(text, i)
+                name, i = _js_parse_ident(text, i)
+                i = _js_skip_ws(text, i)
+                if i >= n or text[i] != "=" or text[i + 1:i + 2] in (
+                        "=", ">"):
+                    raise _JSExprFail("binding without initializer")
+                i = _js_skip_ws(text, i + 1)
+                if i >= n or text[i] not in "'\"":
+                    raise _JSExprFail("binding value not a string")
+                _val, lend = _js_parse_string(text, i)
+                bindings.append((name, text[i:lend]))
+                i = lend
+                i = _js_skip_ws(text, i)
+                if i < n and text[i] == ",":
+                    i += 1
+                    continue
+                if i < n and text[i] == ";":
+                    i += 1
+                    break
+                raise _JSExprFail("binding statement not closed")
+        except _JSExprFail:
+            # Not a pure value-binding statement: rewind to its start,
+            # drop any bindings it partially collected, and stop
+            # consuming statements (the remainder is still scanned for
+            # the bindings collected so far).
+            del bindings[stmt_n:]
+            i = stmt_start
+            break
+    if not bindings:
+        return None
+    names = [b[0] for b in bindings]
+    if len(set(names)) != len(names):
+        # Duplicate declarator: later wins in the engine; declining is
+        # the fail-closed choice.
+        return None
+    rest = text[i:]
+    try:
+        toks = _js_ident_tokens(rest)
+    except _JSExprFail:
+        return None
+    bound = set(names)
+    # Rebinding anywhere in the remainder aborts (F495 detector).
+    if _js_remainder_rebinds(rest, toks, bound):
+        return None
+    _rn = len(rest)
+    # Reassignment of a bound name aborts (F495 scan, rest-bounded).
+    for tname, ts, te in toks:
+        if tname in bound:
+            j = te
+            while j < _rn and rest[j] in " \t\n\r":
+                j += 1
+            nxt2 = rest[j:j + 2]
+            nxt1 = rest[j:j + 1]
+            if nxt1 == "=" and nxt2 not in ("==", "=>"):
+                return None
+            if nxt2 in ("+=", "-=", "*=", "/=", "%=", "++", "--"):
+                return None
+            p = ts - 1
+            while p >= 0 and rest[p] in " \t\n\r":
+                p -= 1
+            if p >= 1 and rest[p - 1:p + 1] in ("++", "--"):
+                return None
+    # Substitute every value-position use: not preceded by a word
+    # char, `$`, or `.` (property names are never rewritten).
+    out = []
+    pos = 0
+    for tname, ts, te in toks:
+        binding = next((b for b in bindings if b[0] == tname), None)
+        if binding is None:
+            continue
+        if ts > 0 and (rest[ts - 1] in _JS_IDENT_CONT or
+                       rest[ts - 1] in ".$"):
+            continue
+        out.append(rest[pos:ts])
+        out.append(binding[1])
+        pos = te
+    out.append(rest[pos:])
     return "".join(out).lstrip(" \t\n\r")
 
 
@@ -8996,6 +9266,17 @@ def _decode_layer(text):
     # pre-existing variant order is preserved exactly (F441).
     if _bound_text is not None:
         decoded = _try_js_expr_decode_all(_bound_text)
+        if decoded is not None:
+            _add(decoded)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F501: resolve leading string-value bindings (if any) the same
+    # way -- the rewritten text turns `a+b` into `'f1'+'f2'` so the
+    # whole-text scan decodes it. Ordered after the F495 variant to
+    # preserve the pre-existing variant order exactly (F441).
+    _value_text = _js_resolve_value_bindings(text)
+    if _value_text is not None:
+        decoded = _try_js_expr_decode_all(_value_text)
         if decoded is not None:
             _add(decoded)
             if len(variants) >= _MAX_CANDIDATES:
