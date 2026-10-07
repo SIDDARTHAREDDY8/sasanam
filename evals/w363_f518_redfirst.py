@@ -1,14 +1,27 @@
 #!/usr/bin/env python3
-"""Red-first for F518: Array.prototype mutating methods through .call
-dispatch.
+"""Red-first for F518: Array.prototype.reverse through .call dispatch.
 
-F511 models splice.call/.apply dispatch, but the other mutating methods
-are unmodeled: Array.prototype.push.call and .unshift.call mutate a local
-array (the credential assembles in the mutated array), and
-Array.prototype.reverse.call returns the reversed array itself. All
-three shapes node-evaluate (v24.20.0) to the exact credential while the
-decoder produces zero variants. Prints BREAK when a payload MISSES
-(open tree), HELD when blocked.
+F511 models splice.call/.apply dispatch. F518 (narrowed 2026-10-07,
+wave-364 lane 4) covers the reverse-call shape: Array.prototype.reverse
+returns the reversed array itself (node v24.20.0), so
+Array.prototype.reverse.call([...]).join('') is closable without
+dataflow -- and is now modeled (reverse joins _F478_ARRAY_METHODS, the
+.call path routes through the existing _js_apply_method_at reverse
+branch, the .apply/.bind value path is mirrored in
+_js_apply_method_values). Prints BREAK when a payload MISSES (open
+tree), HELD when blocked.
+
+Scope note: the push/unshift .call shapes from the original filing are
+NOT part of F518's closed scope. They require dataflow tracking (alias
+resolution + mutation tracking: `var a=[...]; push.call(a,...);
+a.join('')` assembles the credential in the mutated binding, exactly
+like the direct form `var a=[...]; a.push(...); a.join('')` which this
+battery already documents as a decoder design boundary). The dispatch
+mechanism for push/unshift is deliberately not added -- node returns
+the new length (a number), not the array, so modeling the call could
+never flag the shapes; the dataflow requirement is a documented,
+accepted decoder boundary (F306/F308 precedent). The push/unshift
+probes below pin the boundary (expected miss), not a finding.
 """
 import os
 import sys
@@ -22,11 +35,8 @@ from gov.dlp import find_credential  # noqa: E402
 A1 = "xoxb-" + "0123"
 A2 = "456789" + "abcdef"
 
+# F518's closed scope: the reverse-call dispatch shape.
 SHAPES = [
-    ("push-call",
-     "var a=['%s'];Array.prototype.push.call(a,'%s');a.join('')" % (A1, A2), True),
-    ("unshift-call",
-     "var a=['%s'];Array.prototype.unshift.call(a,'%s');a.join('')" % (A2, A1), True),
     ("reverse-call",
      "Array.prototype.reverse.call(['%s','%s']).join('')" % (A2, A1), True),
 ]
@@ -34,6 +44,13 @@ SHAPES = [
 CONTROLS = [
     ("f511-splice-call-closed",  # F511 CLOSED wave-363 lane 4 (merge; wave-306)
      "Array.prototype.splice.call(['%s','%s'],0,2).join('')" % (A1, A2), True),
+    # Documented boundary (not filed): push/unshift .call on an aliased
+    # local var needs dataflow tracking (same boundary as the direct
+    # form below). Expected miss; pinned so a future change is loud.
+    ("push-call-dataflow-miss",
+     "var a=['%s'];Array.prototype.push.call(a,'%s');a.join('')" % (A1, A2), False),
+    ("unshift-call-dataflow-miss",
+     "var a=['%s'];Array.prototype.unshift.call(a,'%s');a.join('')" % (A2, A1), False),
     # NOTE: even DIRECT push on a local var misses (no dataflow tracking) --
     # that is a documented decoder boundary, not F518's dispatch scope.
     ("push-direct-dataflow-miss",

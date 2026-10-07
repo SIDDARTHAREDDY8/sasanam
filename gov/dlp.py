@@ -3649,6 +3649,12 @@ def _js_parse_array_of(text, i, state):
         # function / array-like / Set sources). Anything else still
         # fails closed ("Array not of").
         if text.startswith("from", k):
+            # F520: fromAsync first -- it starts with "from".
+            if text.startswith("fromAsync", k):
+                _fe = k + len("fromAsync")
+                if _fe < n and text[_fe] in _JS_IDENT_CONT:
+                    raise _JSExprFail("Array.fromAsyncx is not fromAsync")
+                return _js_parse_array_from_async(text, _fe, state)
             _fe = k + len("from")
             if _fe < n and text[_fe] in _JS_IDENT_CONT:
                 raise _JSExprFail("Array.fromx is not from")
@@ -3728,6 +3734,137 @@ def _js_parse_array_from(text, j, state):
     if j >= n or text[j] != ")":
         raise _JSExprFail("from without close paren")
     return arr, j + 1
+
+
+def _js_parse_array_from_async(text, j, state):
+    """Parse 'Array.fromAsync(src[, mapFn]).then(cb)' at text[j] (F520).
+
+    *j* is just past the 'fromAsync' member name (dot or bracket-string
+    form). The source grammar is exactly _js_parse_array_from's (array
+    literal / array-like / new Set, optional identity mapper) --
+    node-verified (v24.20.0): Array.fromAsync resolves to the element
+    list (SameValueZero dedup for Sets), and `.then(a=>a.join(''))`
+    runs the callback on the resolved array, so the whole shape
+    desugars to the resolved elements joined with ''.
+
+    The returned Promise is not a decodable value; the `.then` must be
+    present (a bare Array.fromAsync(...) fails closed, as does
+    `.catch`/`.finally` directly on fromAsync(...) without `.then`).
+    The callback must be a single-param arrow (`a=>`, `(a)=>`,
+    `a=>{return ...;}`) or `function(a){return ...;}` whose body is
+    exactly `<param>.join('')` -- the join separator must be the empty
+    string literal (single or double quotes). After `.then(cb)` the
+    postfix ends at the unmodeled step: a chained `.catch`/`.finally`
+    leaves the decoded join value standing, engine-exact on fulfilled
+    promises (node: the modeled source class cannot reject, so catch /
+    finally pass the value through). Extra .then args, non-empty
+    separators, and non-join callbacks fail closed. Never evals.
+    """
+    n = len(text)
+    arr, j = _js_parse_array_from(text, j, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("fromAsync without then")
+    j = _js_skip_ws(text, j + 1)
+    if not text.startswith("then", j):
+        raise _JSExprFail("fromAsync without then")
+    k = j + len("then")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("thenx is not then")
+    j = _js_skip_ws(text, k)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("then without paren")
+    j = _js_skip_ws(text, j + 1)
+    # Callback head: arrow or function, single param.
+    if text.startswith("function", j):
+        k = j + len("function")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("bad then callback")
+        j = _js_skip_ws(text, k)
+        if j >= n or text[j] != "(":
+            raise _JSExprFail("bad then callback")
+        param, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ")":
+            raise _JSExprFail("bad then callback")
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != "{":
+            raise _JSExprFail("bad then callback")
+        j = _js_skip_ws(text, j + 1)
+        if not text.startswith("return", j):
+            raise _JSExprFail("bad then callback")
+        k = j + len("return")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("bad then callback")
+        j = _js_skip_ws(text, k)
+        func_body = True
+    else:
+        j0 = _js_skip_ws(text, j)
+        if j0 < n and text[j0] == "(":
+            param, j = _js_parse_ident(text, _js_skip_ws(text, j0 + 1))
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != ")":
+                raise _JSExprFail("bad then callback")
+            j = _js_skip_ws(text, j + 1)
+        else:
+            param, j = _js_parse_ident(text, j0)
+            j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail("bad then callback")
+        j = _js_skip_ws(text, j + 2)
+        func_body = False
+        if j < n and text[j] == "{":
+            # Block-body arrow: `a=>{return a.join('');}`
+            j = _js_skip_ws(text, j + 1)
+            if not text.startswith("return", j):
+                raise _JSExprFail("bad then callback")
+            k = j + len("return")
+            if k < n and text[k] in _JS_IDENT_CONT:
+                raise _JSExprFail("bad then callback")
+            j = _js_skip_ws(text, k)
+            func_body = True
+    # Body must be `<param>.join('')`.
+    q, j = _js_parse_ident(text, j)
+    if q != param:
+        raise _JSExprFail("then callback not a join")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("then callback not a join")
+    j = _js_skip_ws(text, j + 1)
+    if not text.startswith("join", j):
+        raise _JSExprFail("then callback not a join")
+    k = j + len("join")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("joinx is not join")
+    j = _js_skip_ws(text, k)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("then callback not a join")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail("then join separator not empty")
+    qq = text[j]
+    if j + 1 >= n or text[j + 1] != qq:
+        raise _JSExprFail("then join separator not empty")
+    j = _js_skip_ws(text, j + 2)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("then callback not a join")
+    j = _js_skip_ws(text, j + 1)
+    if func_body:
+        if j < n and text[j] == ";":
+            j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != "}":
+            raise _JSExprFail("bad then callback")
+        j = _js_skip_ws(text, j + 1)
+    # End of .then(: exactly one arg, then close paren.
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("then with extra args")
+    j += 1
+    # Desugar: the resolved array joined with ''.
+    result = "".join(_js_join_element(e) for e in arr.elements)
+    if len(result) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("fromAsync join too long")
+    state["ops"] += 1  # the fromAsync.then dispatch is obfuscation-shaped
+    return result, j
 
 
 def _js_parse_bracket_member(text, j):
@@ -4347,6 +4484,11 @@ def _js_parse_array_bracket_dispatch(text, i, state):
         # from factory, engine-identical to the dot form (F480
         # precedent).
         return _js_parse_array_from(text, j, state)
+    if name == "fromAsync":
+        # F520: Array['fromAsync'](...) -- bracket-string member form
+        # of the async factory, engine-identical to the dot form (F480
+        # precedent).
+        return _js_parse_array_from_async(text, j, state)
     raise _JSExprFail("Array bracket member not modeled")
 
 
@@ -5810,11 +5952,13 @@ def _js_parse_object_values(text, i, depth, state):
 # the filed methods are modeled; anything else ends the chain (F461
 # principle) or fails closed. F511: splice joins the array table -- the
 # direct form was already modeled (F466, literal (0,2) only) and the
-# dispatch desugar routes through the same (0,2)-only rule. No new
-# regexes; never evals.
+# dispatch desugar routes through the same (0,2)-only rule. F518:
+# reverse joins the array table -- the direct form was already modeled
+# (F461, no-arg only) and the dispatch desugar routes through the same
+# no-arg rule. No new regexes; never evals.
 _F478_ARRAY_METHODS = frozenset({
-    "concat", "join", "slice", "splice", "reduce", "reduceRight", "map",
-    "filter",
+    "concat", "join", "slice", "splice", "reverse", "reduce", "reduceRight",
+    "map", "filter",
 })
 _F478_STRING_METHODS = frozenset({
     "concat", "replace",
@@ -6211,6 +6355,18 @@ def _js_apply_method_values(method, recv, args, state):
             raise _JSExprFail("splice args unsupported")
         state["ops"] += 1
         return _JSArr(recv.elements[0:2])
+    if method == "reverse":
+        # F518 mirrored over values: the direct form's no-arg reversal
+        # (F461) -- the filed .apply shapes use no args; any args fail
+        # closed, exactly as the direct form does. Node returns the
+        # same (reversed) array reference; the decoder returns the
+        # reversed element list, engine-exact.
+        if not isinstance(recv, _JSArr):
+            raise _JSExprFail("reverse on non-array")
+        if args:
+            raise _JSExprFail("reverse takes no args")
+        state["ops"] += 1
+        return _JSArr(list(recv.elements)[::-1])
     # method == "replace": the direct grammar needs a literal-comma
     # regex, which cannot arrive as a dispatch value -- fail closed
     # (documented residual; the .call text form covers replace).

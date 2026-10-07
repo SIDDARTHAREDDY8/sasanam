@@ -120,12 +120,12 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F506-F511 + F513-F520 open, next F521
-    (wave-363 lane 5; F512 was closed by the wave-362 merge)."""
+    """Control: footer shows F518/F520 closed, F513-F517/F519 open, next
+    F521 (wave-364 lane 4; F512 was closed by the wave-362 merge)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F521**" in text
-          and "**Open findings: F513, F514, F515, F516, F517, F518, F519, F520.**" in text)
+          and "**Open findings: F513, F514, F515, F516, F517, F519.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -271,7 +271,9 @@ def test_p2_f517_open():
 
 @_t
 def test_p2_f518_open():
-    """F518 OPEN (this round): mutating-method .call still misses."""
+    """F518 CLOSED (narrowed, wave-364 lane 4): the reverse-call shape
+    blocks; the push-call shape is a documented dataflow boundary
+    (still misses, pinned)."""
     ms = _misses("var a=['%s'];Array.prototype.push.call(a,'%s');a.join('')" % (_A, _B))
     return ("HELD" if ms else "BREAK", "miss=%s" % ms)
 
@@ -285,9 +287,9 @@ def test_p2_f519_open():
 
 @_t
 def test_p2_f520_open():
-    """F520 OPEN (this round): Array.fromAsync still misses."""
-    ms = _misses("Array.fromAsync(['%s','%s']).then(a=>a.join(''))" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    """F520 CLOSED (wave-364 lane 4): Array.fromAsync.then now blocks."""
+    hit = _blocked("Array.fromAsync(['%s','%s']).then(a=>a.join(''))" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- boundaries
