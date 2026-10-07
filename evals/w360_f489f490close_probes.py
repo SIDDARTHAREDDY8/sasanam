@@ -191,15 +191,19 @@ def p2_f489_bounds():
         "Array.prototype.join.call((function(x){return arguments})('" + _A1 + "','" + _A2 + "'), '')",
         # IIFE returning something else
         "Array.prototype.join.call((function(){return args})('" + _A1 + "','" + _A2 + "'), '')",
-        # Object.freeze: NOT closed in this lane (verified MISS on base;
-        # the wave-359 "rides with F487" claim is overstated -- see P2
-        # freeze note and the lane REPORT.md). Asserted as a miss so the
-        # gap stays visible until it gets its own finding number.
-        "Array.prototype.join.call(Object.freeze({length:2,0:'" + _A1 + "',1:'" + _A2 + "}), '')",
     ]
     bad = [c for c in cases if _verdict(c, False)[0] == "BREAK"]
     return ("HELD" if not bad else "BREAK",
             "%d/%d F489 bounds fail closed" % (len(cases) - len(bad), len(cases)))
+
+
+def p1_f502_closed_shape():
+    # F502 (filed at the wave-360 merge from this lane's verified MISS,
+    # closed wave-361 lane 3): the freeze-wrapped receiver now blocks.
+    c = ("Array.prototype.join.call(Object.freeze({length:2,0:'" + _A1
+         + "',1:'" + _A2 + "'}), '')")
+    v, note = _verdict(c, True)
+    return (v, "F502 filed shape blocks" if v == "HELD" else note)
 
 
 def p2_f490_bounds():
@@ -290,6 +294,7 @@ def p4_pin_and_footer():
 PROBES = [
     ("p1-f489-filed-shapes", p1_f489_filed_shapes),
     ("p1-f490-filed-shapes", p1_f490_filed_shapes),
+    ("p1-f502-closed-shape", p1_f502_closed_shape),
     ("p1-compositions", p1_compositions),
     ("p2-f489-bounds", p2_f489_bounds),
     ("p2-f490-bounds", p2_f490_bounds),

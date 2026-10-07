@@ -114,11 +114,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F496-F502 open, next F503 (wave-360 merge)."""
+    """Control: footer shows F496-F499 open, next F503 (wave-361 lane 3:
+    F500/F501/F502 CLOSED locally; merge finalizes tree-wide)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F503**" in text
-          and "**Open findings: F496, F497, F498, F499, F500, F501, F502.**" in text)
+          and "**Open findings: F496, F497, F498, F499.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -222,17 +223,17 @@ def test_b3_f499_string_spread_open():
 
 
 @_t
-def test_b3_f500_fromcharcode_spread_open():
-    """F500 pinned OPEN: fromCharCode spread args still miss."""
+def test_b3_f500_fromcharcode_spread_closed():
+    """F500 CLOSED (wave-361 lane 3): fromCharCode spread args now block."""
     hit = _blocked("String.fromCharCode(...[120, 111, 120, 98, 45, 48, 49, 50, 51]) + '" + _B + "'")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
-def test_b3_f501_value_binding_open():
-    """F501 pinned OPEN: fragment value bindings still miss."""
+def test_b3_f501_value_binding_closed():
+    """F501 CLOSED (wave-361 lane 3): fragment value bindings now block."""
     hit = _blocked("let a='" + _A + "', b='" + _B + "'; a,b; a+b")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 # ------------------------------------------------- green check (depth-1)

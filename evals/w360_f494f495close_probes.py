@@ -119,7 +119,7 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-360 lane 3: F494, F495 closed; no new decision codes
-FOOTER_OPEN = "F496, F497, F498, F499, F500, F501, F502"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-360 lane 3: F494, F495 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN
+FOOTER_OPEN = "F496, F497, F498, F499"  # Wave-361 lane 3: F500, F501, F502 CLOSED locally (merge finalizes tree-wide)  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-360 lane 3: F494, F495 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN
 FOOTER_NEXT = "F503"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-359 merge: next F496
 
 # Constructed via concatenation: the write path redacts credential literals.
