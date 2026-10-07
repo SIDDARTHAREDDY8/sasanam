@@ -129,12 +129,12 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F526 open, next F527 (wave-365 merge:
-    lanes 1-3: F521-F525 CLOSED)."""
+    """Control: footer shows F526/F528/F529 open, next F531 (wave-366
+    lane 2: F527/F530 CLOSED)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F531**" in text  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
-          and "**Open findings: F526, F527, F528, F529, F530.**" in text)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+    ok = ("Next free finding: **F531**" in text  # Wave-366 lane 2: F527/F530 CLOSED; F526/F528/F529 OPEN (next F531)
+          and "**Open findings: F526, F528, F529.**" in text)  # Wave-366 lane 2: F527/F530 CLOSED; F526/F528/F529 OPEN (next F531)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -348,11 +348,12 @@ def test_p2_f525_closed():
 
 
 @_t
-def test_p2_f526_open():
-    """F526 OPEN (wave-365 lane 1, spec-review follow-up): .bind-bound
-    JOIN target still misses."""
-    ms = _misses("Reflect.apply([].join.bind(['%s','%s'], ''), null, [])" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f530_closed():
+    """F530 CLOSED (wave-366 lane 2; filed as F526 by wave-365 lane 1,
+    renumbered at wave-365 merge per wave-272 rule): .bind-bound JOIN
+    target now blocks."""
+    hit = _blocked("Reflect.apply([].join.bind(['%s','%s'], ''), null, [])" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- boundaries

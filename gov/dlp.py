@@ -4181,6 +4181,90 @@ def _js_parse_triple_nested_bracket_key(text, j, depth, state):
     return name, _js_skip_ws(text, j + 1)
 
 
+def _js_parse_quad_nested_bracket_key(text, j, depth, state):
+    """Fold `[[[[['concat'][0]]][0]][0]]` at text[j] == '[' (member open)
+    (F527).
+
+    A member-open bracket whose key is the F523 triple-nested key
+    re-wrapped once more and indexed again: with
+    T = the triple key `[[['concat'][0]]][0]` (engine-identical to the
+    array `[['concat']]`), the quad key is `[[T]][0]` -- `[T]` is the
+    single-element array `[[['concat']]]`, and `[[T]][0]` is the array
+    `[['concat']]` (node v24.20.0 verified) -- whose ToPropertyKey is
+    `'concat'`, so `'f1'[[[[['concat'][0]]][0]][0]]` is
+    engine-identical to `'f1'['concat']`. Returns (folded_name,
+    idx_after_rbracket). A fifth nesting, a non-literal index, an
+    index other than 0 (each wrapped array has exactly one element;
+    `[1]` is `undefined`, whose ToPropertyKey is a different key), or
+    a malformed structure fails closed (documented scope boundary --
+    the decoder never guesses a key). The extra wrap layer charges one
+    part. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("quad-nested key not quad-array")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("quad-nested key not quad-array")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("quad-nested key not quad-array")
+    j = _js_skip_ws(text, j + 1)
+    # Inner element: the F504 indexed-key fold E (`['concat'][0]`).
+    name, j = _js_parse_indexed_key_array(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "]":
+        raise _JSExprFail("unterminated quad-nested inner array")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "]":
+        raise _JSExprFail("unterminated quad-nested middle array")
+    j = _js_skip_ws(text, j + 1)
+    # First index: `[[[E]]][0]` (the F523 triple-key shape).
+    j = _js_parse_quad_nested_index(text, j, "first")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "]":
+        raise _JSExprFail("unterminated quad-nested wrap close")
+    j = _js_skip_ws(text, j + 1)
+    # Second index: `[[T]][0]` where T is the triple key.
+    j = _js_parse_quad_nested_index(text, j, "second")
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many key parts")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "]":
+        raise _JSExprFail("unterminated quad-nested member key")
+    return name, _js_skip_ws(text, j + 1)
+
+
+def _js_parse_quad_nested_index(text, j, which):
+    """Parse `[<literal 0>]` at text[j] (F527 helper).
+
+    The two index applications in the quadruple-nested key must both
+    be the literal integer 0 (each wrapped array has exactly one
+    element). Returns the index just after the index's `]`. A
+    non-literal or non-zero index fails closed. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("quad-nested %s index without open" % which)
+    j = _js_skip_ws(text, j + 1)
+    k = j
+    while k < n and text[k].isdigit():
+        k += 1
+    if k == j:
+        raise _JSExprFail("quad-nested %s index not a literal" % which)
+    if k - j > _JS_EXPR_MAX_INT_DIGITS:
+        raise _JSExprFail("quad-nested %s index too long" % which)
+    if int(text[j:k]) != 0:
+        raise _JSExprFail("quad-nested %s index out of range" % which)
+    j = _js_skip_ws(text, k)
+    if j >= n or text[j] != "]":
+        raise _JSExprFail("unterminated quad-nested %s index" % which)
+    return _js_skip_ws(text, j + 1)
+
+
 def _js_parse_reflect_member_key(text, j, depth, state):
     """Parse a Reflect member key in literal/template/folded/nested-bracket
     form (F504). Returns (name, j_after). Each form is engine-identical to
@@ -6072,8 +6156,10 @@ def _js_parse_reflect_call(text, i, depth, state):
     # F480 constructor-dispatch path; a `(`/`function` head is the
     # F519 function-valued-target path; a `[].concat.bind(` /
     # `Array.prototype.concat.bind(` head is the F521 bound-target
-    # path. The callees re-parse from i (defense-in-depth); a
-    # mis-route here always fails closed inside the callee.
+    # path; a `[].join.bind(` / `Array.prototype.join.bind(` head is
+    # the F530 bound-join-target path. The callees re-parse from i
+    # (defense-in-depth); a mis-route here always fails closed inside
+    # the callee.
     # F513: Reflect.apply.bind(Reflect)(T, thisArg, argsList) -- the
     # bound form. F521: Reflect.apply.call(Reflect, BOUND, thisArg,
     # argsList) -- the call-indirect form. The dispatch-call peek is
@@ -6090,6 +6176,8 @@ def _js_parse_reflect_call(text, i, depth, state):
         return _js_parse_reflect_apply_concat(text, i, depth, state)
     if _ptarget == "bound":
         return _js_parse_reflect_apply_bound(text, i, depth, state)
+    if _ptarget == "boundjoin":
+        return _js_parse_reflect_apply_bound_join(text, i, depth, state)
     if _ptarget == "fn":
         return _js_parse_reflect_apply_fn(text, i, depth, state)
     return _js_parse_reflect_apply_ctor(text, i, depth, state)
@@ -6114,9 +6202,10 @@ def _js_parse_f513_reflect_bind(text, paren, depth, state):
     no longer applies; whether the engine throws or evaluates depends
     on the resulting arity -- conservative either way); a bound
     function with no immediate `(` call (not a decodable value, F483
-    precedent). Returns (_JSArr, next_index) without the postfix chain
-    (the caller applies it, same as _js_parse_reflect_apply_concat).
-    Never evals.
+    precedent). Returns (value, next_index) without the postfix chain
+    (the caller applies it, same as _js_parse_reflect_apply_concat):
+    _JSArr for the F506/F521 concat paths, plain str for the F530
+    bound-join path (join returns a string directly). Never evals.
     """
     n = len(text)
     k = _js_skip_ws(text, paren + 1)
@@ -6140,7 +6229,25 @@ def _js_parse_f513_reflect_bind(text, paren, depth, state):
         # target classes, so the F506 triple cannot parse it; try the
         # F521 bound-target triple (fails closed on mismatch). The
         # F506 raise commits nothing, so the fallback is clean.
-        elements, k = _js_parse_f521_bound_triple(text, k, depth, state)
+        try:
+            elements, k = _js_parse_f521_bound_triple(text, k, depth,
+                                                      state)
+        except _JSExprFail:
+            # F530: the triple's target is a .bind-bound JOIN function
+            # (e.g. `[].join.bind(['f1','f2'], '')`) -- outside the
+            # F521 concat-only target class, so the F521 triple cannot
+            # parse it; try the F530 bound-join triple (fails closed on
+            # mismatch). The F521 raise commits nothing on join input
+            # (it rejects at the non-concat member check before any
+            # value parse), so the fallback is clean. Returns the
+            # joined string, not an element list.
+            joined, k = _js_parse_f530_bound_join_triple(text, k, depth,
+                                                         state)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ")":
+                raise _JSExprFail("F513 bind call arity")
+            state["ops"] += 1  # the bind indirection is obfuscation-shaped
+            return joined, k + 1
     k = _js_skip_ws(text, k)
     if k >= n or text[k] != ")":
         raise _JSExprFail("F513 bind call arity")
@@ -6158,10 +6265,11 @@ def _js_parse_f521_call_dispatch(text, paren, depth, state):
     receiver (ignored by the engine, so only the literal `Reflect`
     namespace is modeled; anything else fails closed, conservative)
     and (T, thisArg, argsList) as the arguments. The target must be
-    the F521 `.bind`-bound concat class; any other target fails closed
-    here -- call-indirection with unbound targets is a documented
-    residual, not filed. Returns (value, next_index) without the
-    postfix chain (the caller applies it). Never evals.
+    the F521 `.bind`-bound concat class or the F530 `.bind`-bound join
+    class; any other target fails closed here -- call-indirection with
+    unbound targets is a documented residual, not filed. Returns
+    (value, next_index) without the postfix chain (the caller applies
+    it). Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, paren + 1)
@@ -6173,13 +6281,212 @@ def _js_parse_f521_call_dispatch(text, paren, depth, state):
     j = _js_skip_ws(text, k)
     if j >= n or text[j] != ",":
         raise _JSExprFail("F521 call dispatch without target")
-    elements, j = _js_parse_f521_bound_triple(text, _js_skip_ws(text, j + 1),
-                                              depth, state)
+    try:
+        elements, j = _js_parse_f521_bound_triple(text,
+                                                   _js_skip_ws(text, j + 1),
+                                                   depth, state)
+    except _JSExprFail:
+        # F530: the target is a .bind-bound JOIN function -- outside
+        # the F521 concat-only target class (the F521 raise commits
+        # nothing on join input), so try the F530 bound-join triple.
+        # Returns the joined string, not an element list.
+        joined, j = _js_parse_f530_bound_join_triple(text,
+                                                     _js_skip_ws(text, j + 1),
+                                                     depth, state)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ")":
+            raise _JSExprFail("F521 call dispatch arity")
+        state["ops"] += 1  # the call indirection is obfuscation-shaped
+        return joined, j + 1
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ")":
         raise _JSExprFail("F521 call dispatch arity")
     state["ops"] += 1  # the call indirection is obfuscation-shaped
     return _JSArr(elements), j + 1
+
+
+def _js_parse_f530_bound_join_target(text, j, depth, state):
+    """Parse a `.bind`-bound join function value at text[j] (F530).
+
+    Node-exact desugar (v24.20.0): `[].join.bind(BINDTHIS, SEP)` (or
+    `Array.prototype.join.bind(BINDTHIS, SEP)` -- node: `[].join ===`
+    `Array.prototype.join`) is the join function with its this-value
+    fixed to BINDTHIS and the separator pre-bound; invoking it with
+    call-args C is exactly `BINDTHIS.join(SEP)` -- the engine ignores
+    every join argument after the first, and the first is already bound,
+    so C is irrelevant (node v24.20.0 verified). Returns
+    (bind_this_elements, separator, next_index) where next_index is
+    just after the bind call's closing paren. Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - the bound function must be a join reference (`[].join` or
+      `Array.prototype.join`, ws-tolerant, ident-boundary-checked);
+      `.bind` on any other function fails closed -- this is the filed
+      F530 scope (join-family bound targets only; concat-family is
+      F521, a different builtin per the F500/F505 precedent).
+    - the `.bind` member is the dot form, the F490 `?.` form, or the
+      F482 bracket-string form (all engine-identical, node v24.20.0
+      verified); the inner `join` member is dot-only (F506 precedent).
+    - BINDTHIS is an array literal or Array-constructor form with
+      all-string elements (the F506 thisArg classes); anything else
+      fails closed. Numeric elements decode node-exactly via the
+      F475 _JSNumStr machinery (consistent with F521's isinstance
+      check and `_js_apply_method_values`' join) -- they are not a
+      fail-closed boundary, just never credential-shaped.
+    - exactly ONE bound arg, the separator, must be a string literal
+      (F454 grammar); zero bound args (separator-via-argsList), extra
+      bound args, and non-literal separators fail closed (documented
+      scope boundary -- the decoder never guesses the separator).
+    """
+    n = len(text)
+    if j < n and text[j] == "[":
+        # F504-class receiver: `[].join`.
+        k = _js_skip_ws(text, j + 1)
+        if k >= n or text[k] != "]":
+            raise _JSExprFail("F530 bound target non-empty receiver")
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ".":
+            raise _JSExprFail("F530 bound target without member dot")
+        k = _js_skip_ws(text, k + 1)
+        if not text.startswith("join", k):
+            raise _JSExprFail("F530 bound target non-join")
+        k2 = k + len("join")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            raise _JSExprFail("F530 joinx is not join")
+        j = k2
+    elif text.startswith("Array", j):
+        # F469-class receiver: `Array.prototype.join`.
+        k = j + len("Array")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F530 Arrayx is not Array")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ".":
+            raise _JSExprFail("F530 Array without dot")
+        k = _js_skip_ws(text, k + 1)
+        if not text.startswith("prototype", k):
+            raise _JSExprFail("F530 Array non-prototype")
+        k2 = k + len("prototype")
+        if k2 >= n or text[k2] in _JS_IDENT_CONT:
+            raise _JSExprFail("F530 prototypex")
+        k = _js_skip_ws(text, k2)
+        if k >= n or text[k] != ".":
+            raise _JSExprFail("F530 Array prototype without member dot")
+        k = _js_skip_ws(text, k + 1)
+        if not text.startswith("join", k):
+            raise _JSExprFail("F530 Array non-join")
+        k2 = k + len("join")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            raise _JSExprFail("F530 joinx is not join")
+        j = k2
+    else:
+        raise _JSExprFail("F530 bound target not a join reference")
+    j = _js_skip_ws(text, j)
+    _bd = _js_peek_dispatch_call(text, j)
+    if _bd is None or _bd[0] != "bind":
+        raise _JSExprFail("F530 target not .bind-bound")
+    k = _js_skip_ws(text, _bd[1] + 1)
+    # BINDTHIS: array literal or Array-constructor, all-string
+    # elements (the F506 thisArg classes, engine-identical).
+    if k < n and text[k] == "[":
+        bind_this, k = _js_parse_array(text, k, depth, state)
+    elif text.startswith("Array", k):
+        bind_this, k = _js_parse_array_constructor(text, k, state)
+    else:
+        raise _JSExprFail("F530 bind this not an array")
+    if not isinstance(bind_this, _JSArr):
+        raise _JSExprFail("F530 bind this not an array")
+    if any(not isinstance(e, str) for e in bind_this.elements):
+        raise _JSExprFail("F530 bind this non-string element")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ",":
+        raise _JSExprFail("F530 bind without separator")
+    # The separator: exactly one string-literal bound arg.
+    sep, k = _js_parse_string(text, _js_skip_ws(text, k + 1))
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("F530 bind with extra args")
+    return list(bind_this.elements), sep, k + 1
+
+
+def _js_parse_f530_bound_join_triple(text, j, depth, state):
+    """Parse the F530 `BOUND, thisArg, argsList` triple at text[j].
+
+    BOUND is the `.bind`-bound join function value
+    (_js_parse_f530_bound_join_target); thisArg is parsed and
+    discarded -- the bound function's this is fixed by `.bind`, so
+    Reflect.apply's thisArg is ignored by the engine (node v24.20.0
+    verified, F483 precedent); argsList is a string-literal-only list
+    (the F519 grammar) parsed and DISCARDED -- the engine ignores
+    every join argument after the bound separator, so call-args are
+    irrelevant (node v24.20.0 verified). Returns (joined_string,
+    next_index) where joined_string is the separator-joined credential
+    and next_index is just after argsList (the caller checks the
+    closing paren -- the _js_parse_f506_triple contract). Never evals.
+    """
+    n = len(text)
+    bind_this, sep, j = _js_parse_f530_bound_join_target(text, j,
+                                                         depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F530 bound target without thisArg")
+    j = _js_skip_ws(text, j + 1)
+    _, j = _js_parse_ignored_value(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F530 thisArg without argsList")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F530 argsList not an array")
+    _, j = _js_parse_string_literal_list(text, j + 1, state, "]")
+    return sep.join(bind_this), j
+
+
+def _js_parse_reflect_apply_bound_join(text, i, depth, state):
+    """Parse 'Reflect.apply(BOUNDJOIN, thisArg, argsArray)' at text[i]
+    (F530).
+
+    Node-exact desugar (v24.20.0): Reflect.apply invokes the
+    `.bind`-bound join function with thisArg and the argsArray
+    elements as arguments; the bound this-value and the pre-bound
+    separator win and the engine ignores further join arguments, so
+    the result is the separator-joined string BINDTHIS.join(SEP) --
+    unlike F521's concat bound target (which yields an array), join
+    returns the string directly. The member name accepts the dot form
+    and the F504 bracket-string forms (routed here by
+    _js_parse_reflect_call, which already verified the name;
+    re-verified defense-in-depth). Returns (value, next_index)
+    without the postfix chain (the caller applies it). Never evals.
+    """
+    n = len(text)
+    j = i + len("Reflect")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        raise _JSExprFail("Reflectx is not Reflect")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        _mname, j = _js_parse_reflect_member_key(text, j, depth, state)
+        if _mname != "apply":
+            raise _JSExprFail("Reflect bracket member not apply")
+    else:
+        if j >= n or text[j] != ".":
+            raise _JSExprFail("Reflect without dot")
+        j = _js_skip_ws(text, j + 1)
+        if not text.startswith("apply", j):
+            raise _JSExprFail("Reflect without apply")
+        k = j + len("apply")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("applyx is not apply")
+        j = k
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("Reflect.apply without paren")
+    joined, j = _js_parse_f530_bound_join_triple(text,
+                                                 _js_skip_ws(text, j + 1),
+                                                 depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("F530 with extra args")
+    state["ops"] += 1  # the bound-target dispatch is obfuscation-shaped
+    return joined, j + 1
 
 
 def _js_peek_reflect_apply_target(text, j):
@@ -6192,9 +6499,12 @@ def _js_peek_reflect_apply_target(text, j):
     constructor (the F480 dispatch path), and "fn" when it is a `(`
     or `function` head (the F519 function-valued-target path), and
     "bound" when it is `[].concat.bind(` or
-    `Array.prototype.concat.bind(` (the F521 .bind-bound target path).
-    Routing peek only -- the callees re-parse from the call start
-    and fail closed on anything unexpected. Raises _JSExprFail when
+    `Array.prototype.concat.bind(` (the F521 .bind-bound target path),
+    and "boundjoin" when it is `[].join.bind(` or
+    `Array.prototype.join.bind(` (the F530 .bind-bound join-target
+    path). Routing peek only -- the callees re-parse from the call
+    start and fail closed on anything unexpected. Raises _JSExprFail
+    when
     the target is not Array-headed, an empty-array concat receiver,
     or a function head.
     """
@@ -6236,6 +6546,17 @@ def _js_peek_reflect_apply_target(text, j):
                             if _bd is not None and _bd[0] == "bind":
                                 return "bound"
                         return "concat"
+                if text.startswith("join", k):
+                    k2 = k + len("join")
+                    if k2 >= n or text[k2] not in _JS_IDENT_CONT:
+                        # F530: `[].join.bind(...)` -- a .bind-bound
+                        # join target (pure lookahead; the callee
+                        # re-parses and fails closed on mismatch).
+                        kk = _js_skip_ws(text, k2)
+                        if kk < n and text[kk] in (".", "?", "["):
+                            _bd = _js_peek_dispatch_call(text, kk)
+                            if _bd is not None and _bd[0] == "bind":
+                                return "boundjoin"
         raise _JSExprFail("Reflect.apply non-Array target")
     if not text.startswith("Array", j):
         raise _JSExprFail("Reflect.apply non-Array target")
@@ -6262,6 +6583,17 @@ def _js_peek_reflect_apply_target(text, j):
                                 _bd = _js_peek_dispatch_call(text, kk)
                                 if _bd is not None and _bd[0] == "bind":
                                     return "bound"
+                    if text.startswith("join", m):
+                        m2 = m + len("join")
+                        if m2 >= n or text[m2] not in _JS_IDENT_CONT:
+                            # F530: `Array.prototype.join.bind(...)` --
+                            # pure lookahead; the callee re-parses and
+                            # fails closed on mismatch.
+                            kk = _js_skip_ws(text, m2)
+                            if kk < n and text[kk] in (".", "?", "["):
+                                _bd = _js_peek_dispatch_call(text, kk)
+                                if _bd is not None and _bd[0] == "bind":
+                                    return "boundjoin"
         return "concat"
     return "ctor"
 
@@ -11471,12 +11803,21 @@ def _js_parse_postfix(text, i, value, depth, state):
             # chargeless on the F514/F504 shapes (its w2 `[` check
             # rejects before any indexed-fold parse), while the
             # reverse order would charge the F514 sub-parse twice on
-            # triple input. Each shape therefore charges exactly its
-            # documented parts. A non-literal key or an unmodeled
-            # method name ends the chain (F461 principle); the call
-            # itself routes to _js_apply_method / _js_apply_tag_method
-            # exactly like the dot form, so all fail-closed classes
-            # are identical. Never evals.
+            # triple input. Quadruple-nested keys
+            # (`[[[[['concat'][0]]][0]][0]]`) fold via
+            # _js_parse_quad_nested_bracket_key (F527), tried BEFORE
+            # the triple form for the same reason: the quad parser
+            # rejects triple input chargeless (its inner
+            # _js_parse_indexed_key_array entry check expects `[`
+            # but finds the quote), while the triple parser rejects
+            # quad input chargeless (its inner indexed-key parse
+            # hits a nested array where a string literal is
+            # required). Each shape therefore charges exactly its
+            # documented parts. A non-literal key
+            # or an unmodeled method name ends the chain (F461
+            # principle); the call itself routes to _js_apply_method
+            # / _js_apply_tag_method exactly like the dot form, so
+            # all fail-closed classes are identical. Never evals.
             try:
                 _bname, _bm = _js_parse_bracket_member(text, j)
             except _JSExprFail:
@@ -11490,14 +11831,20 @@ def _js_parse_postfix(text, i, value, depth, state):
                     except _JSExprFail:
                         try:
                             _bname, _bm = (
-                                _js_parse_triple_nested_bracket_key(
+                                _js_parse_quad_nested_bracket_key(
                                     text, j, depth, state))
                         except _JSExprFail:
                             try:
-                                _bname, _bm = _js_parse_array_wrapped_key(
-                                    text, j, depth, state)
+                                _bname, _bm = (
+                                    _js_parse_triple_nested_bracket_key(
+                                        text, j, depth, state))
                             except _JSExprFail:
-                                return value, i
+                                try:
+                                    _bname, _bm = (
+                                        _js_parse_array_wrapped_key(
+                                            text, j, depth, state))
+                                except _JSExprFail:
+                                    return value, i
             if _bname in _JS_POSTFIX_METHOD_NAMES:
                 _bk = _js_skip_ws(text, _bm)
                 if _bk < len(text) and text[_bk] == "(":

@@ -132,12 +132,12 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F526-F530 open, next F531 (wave-365 merge:
-    F521-F525 CLOSED lanes 1-3; F526-F529 OPEN attack round 33; F530 OPEN lane 1 renumbered)."""
+    """Control: footer shows F526/F528/F529 open, next F531 (wave-366
+    lane 2: F527/F530 CLOSED; F526/F528/F529 OPEN)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F531**" in text
-          and "**Open findings: F526, F527, F528, F529, F530.**" in text)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 OPEN (next F531)
+          and "**Open findings: F526, F528, F529.**" in text)  # Wave-366 lane 2: F527/F530 CLOSED; F526/F528/F529 OPEN (next F531)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -290,10 +290,17 @@ def test_p2_f526_open():
 
 
 @_t
-def test_p2_f527_open():
-    """F527 OPEN (this round): quadruple-nested bracket key still misses."""
-    ms = _misses("'%s'[[[[['concat'][0]]][0]][0]]('%s')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f527_closed():
+    """F527 CLOSED (wave-366 lane 2): quadruple-nested bracket key now blocks."""
+    hit = _blocked("'%s'[[[[['concat'][0]]][0]][0]]('%s')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_p2_f530_closed():
+    """F530 CLOSED (wave-366 lane 2): .bind-bound join target now blocks."""
+    hit = _blocked("Reflect.apply([].join.bind(['%s','%s'], ''), null, [])" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
