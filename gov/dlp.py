@@ -2108,7 +2108,11 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries)|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|\(")
+# F536: the structuredClone anchor carries its own ident-boundary
+# lookahead so `structuredClonex(` never anchors (no wasted F512
+# total-attempt budget); the primary branch re-checks the boundary
+# defensively.
 # F455: the Array.of factory anchor tolerates whitespace around the dot
 # ([ \t\n\r]*, exactly the _js_skip_ws class the parser skips), so
 # `Array .of(...)` / `Array\t.of(...)` / `Array\n.of(...)` /
@@ -7307,6 +7311,327 @@ def _js_parse_object_literal_values(text, i, depth, state):
     _, vals, j = _js_parse_object_literal_keys_values(text, i, depth,
                                                       state)
     return vals, j
+
+
+class _JSObj:
+    """Statically-resolved object literal (F535/F536).
+
+    props maps key -> str (string value) or _JSObj (nested object).
+    A resolved object only ever flows through _js_parse_postfix
+    member reads; any other use fails closed (it never reaches the
+    additive, so it can never be mis-decoded as a string).
+    """
+    __slots__ = ("props",)
+
+    def __init__(self, props):
+        self.props = props
+
+
+def _js_f535_deepcopy(props):
+    """Rebuild a resolved property map as fresh nested structures
+    (F536): the structuredClone deep-copy identity. Strings are
+    immutable; nested _JSObj values are rebuilt so the clone shares
+    no structure with the source -- a later mutation of the clone
+    cannot alias the original (node-verified semantics)."""
+    out = {}
+    for k, v in props.items():
+        out[k] = (_JSObj(_js_f535_deepcopy(v.props))
+                  if isinstance(v, _JSObj) else v)
+    return out
+
+
+def _js_parse_f535_value(text, i, depth, state):
+    """Parse one F535 object-literal value at text[i] (F535/F536).
+
+    Returns (str | _JSObj, next_index). Values: string literals,
+    canonical decimal integers (the literal text is already the
+    engine's decimal repr -- `042`/`0x10`/`1e3` are engine-different
+    and fail closed), or nested object literals (depth-bounded).
+    Arrays, template literals, booleans, null, and non-canonical
+    numbers fail closed (documented boundary). Never evals.
+    """
+    n = len(text)
+    if i >= n:
+        raise _JSExprFail("missing object value")
+    c = text[i]
+    if c in "'\"":
+        return _js_parse_string(text, i)
+    if c == "-" or c in _ASCII_DIGITS:
+        k = i + 1 if c == "-" else i
+        m = k
+        while m < n and text[m] in _ASCII_DIGITS:
+            m += 1
+        if m == k:
+            raise _JSExprFail("bad number value")
+        if m - i > 16:
+            raise _JSExprFail("number too big")
+        lit = text[i:m]
+        if str(int(lit)) != lit:
+            # `042` is 34 in the engine (legacy octal), `0x10` is 16
+            # -- non-canonical forms fail closed, never mis-decoded.
+            raise _JSExprFail("non-canonical number")
+        return lit, m
+    if c == "{":
+        props, j = _js_parse_f535_object(text, i, depth + 1, state)
+        return _JSObj(props), j
+    raise _JSExprFail("object value not a literal")
+
+
+def _js_parse_f535_object(text, i, depth, state):
+    """Parse `{k0:v0, ...}` at text[i] (text[i] == '{') (F535/F536).
+
+    Returns (props, next_index): props maps key -> str | _JSObj.
+    Keys: string literals, decimal integer literals, or identifiers
+    (`__proto__` fails closed). Values: see _js_parse_f535_value.
+    Getters `get name(){return VAL;}` resolve to VAL (the engine
+    invokes the getter on read; the static model evaluates the
+    return expression -- `this`-dependent bodies fail closed because
+    the value grammar has no `this`). Setters, methods, spread
+    elements, and computed keys fail closed (documented boundary).
+    Duplicate keys: the later value wins (engine-exact). Each
+    property charges the F430 parts budget. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    props = {}
+    j = _js_skip_ws(text, i + 1)
+    if j < n and text[j] == "}":
+        return props, j + 1
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("unterminated object literal")
+        c = text[j]
+        if c in "'\"":
+            key, j = _js_parse_string(text, j)
+        elif c in _ASCII_DIGITS:
+            k = j + 1
+            while k < n and text[k] in _ASCII_DIGITS:
+                k += 1
+            key = text[j:k]
+            j = k
+        elif c in _JS_IDENT_START:
+            key, j = _js_parse_ident(text, j)
+        else:
+            # computed keys ([k]:), spread (...x), methods fail closed
+            raise _JSExprFail("object literal key not a literal")
+        if key == "__proto__":
+            raise _JSExprFail("__proto__ key fails closed")
+        k = _js_skip_ws(text, j)
+        if key == "get" and k < n and text[k] not in ":(":
+            # Getter head: `get name(){return VAL;}`. A `get` followed
+            # by ':' is a data property named "get"; a `get` followed
+            # by '(' is a method -- both handled below (the method
+            # fails closed at the colon check).
+            gname, gk = _js_parse_f535_getter_head(text, k)
+            gk = _js_skip_ws(text, gk)
+            if gk >= n or text[gk] != "{":
+                raise _JSExprFail("getter needs a body")
+            gk = _js_skip_ws(text, gk + 1)
+            if not (text.startswith("return", gk)
+                    and (gk + 6 >= n
+                         or text[gk + 6] not in _JS_IDENT_CONT)):
+                raise _JSExprFail("getter body not a return")
+            gk = _js_skip_ws(text, gk + 6)
+            gval, gk = _js_parse_f535_getter_value(text, gk, depth + 1,
+                                                   state)
+            gk = _js_skip_ws(text, gk)
+            if gk < n and text[gk] == ";":
+                gk = _js_skip_ws(text, gk + 1)
+            if gk >= n or text[gk] != "}":
+                raise _JSExprFail("bad getter body")
+            j = _js_skip_ws(text, gk + 1)
+            props[gname] = gval
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        else:
+            if key == "set" and not (k < n and text[k] == ":"):
+                # `set name(v){...}` -- setters fail closed; a data
+                # property literally named "set" (`{set:'f1'}`) is
+                # still modeled (colon check below).
+                raise _JSExprFail("setters fail closed")
+            if k >= n or text[k] != ":":
+                raise _JSExprFail("object literal needs colon")
+            val, j = _js_parse_f535_value(text, _js_skip_ws(text, k + 1),
+                                          depth, state)
+            props[key] = val
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "}":
+                return props, j + 1
+            continue
+        if j < n and text[j] == "}":
+            return props, j + 1
+        raise _JSExprFail("bad object literal")
+
+
+def _js_parse_f535_getter_value(text, i, depth, state):
+    """Parse a getter's return expression at text[i] (F535).
+
+    The engine evaluates the getter body as a plain expression, so
+    the static model parses it with the additive grammar (string
+    concatenation, nested member reads, nested getters, ...).
+    Results that are not strings or resolved objects (bare arrays,
+    method references) fail closed -- they cannot be returned
+    node-exactly here. Never evals.
+    """
+    val, j = _js_parse_additive(text, i, depth, state)
+    if isinstance(val, _JSMethodRef):
+        raise _JSExprFail("method ref in getter")
+    if isinstance(val, _JSArr):
+        raise _JSExprFail("array in getter")
+    if not isinstance(val, (str, _JSObj)):
+        raise _JSExprFail("getter value not a string")
+    return val, j
+
+
+def _js_parse_f535_getter_head(text, i):
+    """Parse `name()` at text[i] in a getter head (F535).
+
+    Returns (name, next_index_after_rparen). The getter takes no
+    arguments -- any parameter fails closed (the invocation would
+    receive none, but the static model stays conservative; node
+    v24.20.0 verified: a zero-arg getter's read invokes the body
+    with no arguments). Never evals.
+    """
+    n = len(text)
+    c = text[i] if i < n else ""
+    if c in "'\"":
+        name, j = _js_parse_string(text, i)
+    elif c in _JS_IDENT_START:
+        name, j = _js_parse_ident(text, i)
+    else:
+        raise _JSExprFail("bad getter head")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("getter head not a getter")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("getter takes no args")
+    return name, j + 1
+
+
+def _js_parse_f535_proxy(text, j, depth, state):
+    """Parse `new Proxy(TARGET, {get:(P1,P2)=>P1[P2]})` at text[j]
+    (F535). Returns (props, next_index).
+
+    Only the direct-passthrough get-trap is modeled: the trap body
+    must be exactly `P1[P2]` with the arrow's own parameter names, so
+    the read resolves to TARGET's property node-exactly (the engine
+    invokes TARGET's own getter, if any, during `P1[P2]` -- the
+    resolved map already holds the getter's value). Any other trap
+    shape (method-form handlers, non-passthrough bodies,
+    extra handler keys) fails closed (documented boundary). The
+    target is an F535 object literal (data properties, getters,
+    nested objects). Never evals.
+    """
+    n = len(text)
+    if not (text.startswith("new", j)
+            and (j + 3 >= n or text[j + 3] not in _JS_IDENT_CONT)):
+        raise _JSExprFail("not a new-expression")
+    k = _js_skip_ws(text, j + 3)
+    if not (text.startswith("Proxy", k)
+            and (k + 5 >= n or text[k + 5] not in _JS_IDENT_CONT)):
+        raise _JSExprFail("not a Proxy construction")
+    k = _js_skip_ws(text, k + 5)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("Proxy needs a call")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "{":
+        raise _JSExprFail("Proxy target not an object")
+    props, k = _js_parse_f535_object(text, k, depth, state)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ",":
+        raise _JSExprFail("Proxy needs a handler")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "{":
+        raise _JSExprFail("Proxy handler not an object")
+    k = _js_skip_ws(text, k + 1)
+    hname, k = _js_parse_ident(text, k)
+    if hname != "get":
+        raise _JSExprFail("only the get trap is modeled")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ":":
+        raise _JSExprFail("handler get not an arrow")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("handler get not an arrow")
+    p1, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ",":
+        raise _JSExprFail("bad trap params")
+    p2, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("bad trap params")
+    k = _js_skip_ws(text, k + 1)
+    if not text.startswith("=>", k):
+        raise _JSExprFail("handler get not an arrow")
+    k = _js_skip_ws(text, k + 2)
+    q1, k = _js_parse_ident(text, k)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "[":
+        raise _JSExprFail("trap body not a passthrough")
+    q2, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "]":
+        raise _JSExprFail("trap body not a passthrough")
+    if q1 != p1 or q2 != p2:
+        raise _JSExprFail("trap body not a passthrough")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "}":
+        raise _JSExprFail("bad handler")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("unbalanced Proxy call")
+    return props, k + 1
+
+
+def _js_parse_f535_member_read(text, i, depth, state):
+    """Parse `(OBJ).member` / `(new Proxy(T,H)).member` at text[i]
+    == '(' (F535).
+
+    Returns (_JSObj, next_index_after_close_paren), or None when
+    text[i] is not this shape (the caller falls through to the
+    parenthesized-additive path, which fails closed on '{' / 'new'
+    as before). The member itself is resolved by the _JSObj branch
+    of _js_parse_postfix, so chains like `({x:{c:'f1'}}).x.c`
+    resolve. Never evals.
+    """
+    n = len(text)
+    # Grouping parens only: a `(` that opens a call's argument list
+    # (preceded by an identifier char, `)`, or `]`) is not a
+    # parenthesized object literal -- decoding it would misread
+    # `fn({c:'f1'}).c` (the `.c` reads the CALL's unknown result) as
+    # `({c:'f1'}).c`. Doubly-grouped `(({...})).c` also returns None
+    # here (the inner close-paren is not a member read) -- documented
+    # out of scope, fails closed as before.
+    if i > 0 and (text[i - 1] in _JS_IDENT_CONT
+                  or text[i - 1] in (")", "]")):
+        return None
+    j = _js_skip_ws(text, i + 1)
+    if j >= n:
+        return None
+    if text[j] == "{":
+        props, k = _js_parse_f535_object(text, j, depth, state)
+    elif text.startswith("new", j) and (j + 3 >= n
+                                        or text[j + 3] not in
+                                        _JS_IDENT_CONT):
+        props, k = _js_parse_f535_proxy(text, j, depth, state)
+    else:
+        return None
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        return None
+    state["ops"] += 1  # the object/Proxy construction is
+                       # obfuscation-shaped
+    return _JSObj(props), k + 1
 
 
 def _js_parse_entries_reduce_keys_values(text, i, depth, state):
@@ -12788,6 +13113,32 @@ def _js_parse_postfix(text, i, value, depth, state):
         j = _js_skip_ws(text, i)
         if j >= len(text):
             return value, i
+        # F535/F536: member reads on a statically-resolved object
+        # literal (or a structuredClone / Proxy-passthrough result).
+        # Dot and string-literal bracket reads resolve against the
+        # parsed properties; a missing key, a non-literal member, or
+        # any other step fails closed -- the _JSObj never escapes the
+        # postfix chain as a value (the additive cannot consume it).
+        if isinstance(value, _JSObj):
+            if text[j] == ".":
+                _mk = _js_skip_ws(text, j + 1)
+                try:
+                    _mname, _mk = _js_parse_ident(text, _mk)
+                except _JSExprFail:
+                    raise _JSExprFail("object dot member not an ident")
+            elif text[j] == "[":
+                try:
+                    _mname, _mk = _js_parse_bracket_member(text, j)
+                except _JSExprFail:
+                    raise _JSExprFail("object bracket member not a "
+                                      "literal")
+            else:
+                raise _JSExprFail("object literal needs a member read")
+            if _mname not in value.props:
+                raise _JSExprFail("missing object key")
+            state["ops"] += 1  # the member read is obfuscation-shaped
+            value, i = value.props[_mname], _mk
+            continue
         # F490: a step on a method reference -- dispatch it
         # (./?./bracket call/apply/bind) or apply the factory `(args)`.
         # None returns the bare reference; upstream fails closed via
@@ -13191,6 +13542,14 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f517 is not None:
             val, i = _f517
             return _js_parse_postfix(text, i, val, depth, state)
+        # F535: (OBJ_LITERAL).member / (new Proxy(T, H)).member --
+        # statically-resolved member reads on object literals. None
+        # falls through to the parenthesized-additive path (which
+        # fails closed on '{' / 'new' as before).
+        _f535 = _js_parse_f535_member_read(text, i, depth, state)
+        if _f535 is not None:
+            val, i = _f535
+            return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
         val, i = _js_parse_additive(text, i + 1, depth + 1, state,
@@ -13268,6 +13627,31 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         val, i = _js_parse_array_constructor(text, i, state)
         state["ops"] += 1  # an Array(N)/Array.of construction is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
+    if text.startswith("structuredClone", i):
+        # F536: structuredClone(OBJ) -- deep-copy of a JSON-literal
+        # object graph. The result is a fresh _JSObj (see
+        # _js_f535_deepcopy: no aliasing with the source) that the
+        # F535 member-read model resolves against. Only object-literal
+        # args (data properties, getters, nested objects) -- every
+        # other arg class fails closed (documented boundary). The
+        # ident-boundary check keeps structuredClonex failing closed.
+        _sk = i + len("structuredClone")
+        if _sk < len(text) and text[_sk] in _JS_IDENT_CONT:
+            raise _JSExprFail("structuredClonex is not structuredClone")
+        _sk = _js_skip_ws(text, _sk)
+        if _sk >= len(text) or text[_sk] != "(":
+            raise _JSExprFail("structuredClone needs a call")
+        _sk = _js_skip_ws(text, _sk + 1)
+        if _sk >= len(text) or text[_sk] != "{":
+            raise _JSExprFail("structuredClone arg not an object")
+        _sprops, _sk = _js_parse_f535_object(text, _sk, depth, state)
+        _sk = _js_skip_ws(text, _sk)
+        if _sk >= len(text) or text[_sk] != ")":
+            raise _JSExprFail("unbalanced structuredClone")
+        state["ops"] += 1  # the clone call is obfuscation-shaped
+        return _js_parse_postfix(text, _sk + 1,
+                                 _JSObj(_js_f535_deepcopy(_sprops)),
+                                 depth, state)
     if text.startswith("Reflect", i):
         # F468: Reflect.construct(Array, <argsArray>) reflection-API
         # factory -- desugars to the fragment list. F469:
@@ -13981,6 +14365,9 @@ def _try_js_expr_decode(text, start):
         return None
     if isinstance(val, _JSArr):
         return None  # F434: bare unjoined array is not obfuscation-shaped
+    if isinstance(val, _JSObj):
+        return None  # F535: bare unread object literal is not
+                     # obfuscation-shaped
     decoded = _ascii_printable_or_none(val)
     if decoded is None or decoded == text[start:end]:
         return None
