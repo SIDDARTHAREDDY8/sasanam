@@ -2702,7 +2702,9 @@ def _js_parse_dispatch_thisarg(text, i, depth, state):
     (v24.20.0): Array.of.call([], ...), Array.of.call(null, ...),
     Array.of.call('x', ...) and String.fromCharCode.apply(null, ...)
     are all engine-identical to the direct form. The parse accepts the
-    built-in constructor reference ([].constructor / Array), the
+    built-in constructor reference ([].constructor / Array, plus the
+    F497 non-empty array-literal receiver ['lit',...].constructor --
+    engine-identical to Array, value discarded anyway), the
     null/undefined/true/false keywords, or any additive value; anything
     else fails closed. Returns (None, next_index) -- the value is
     intentionally discarded. Never evals.
@@ -2714,6 +2716,19 @@ def _js_parse_dispatch_thisarg(text, i, depth, state):
         return None, k
     except _JSExprFail:
         pass
+    if _js_is_nonempty_ctor_recv(text, j):
+        # F497: ['lit',...].constructor -- the receiver elements are
+        # string literals only (validated, part-budget charged); the
+        # reference is engine-identical to Array.
+        k = _js_skip_ws(text, j + 1)
+        _, k = _js_parse_string_literal_list(text, k, state, "]")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ".":
+            k2 = _js_skip_ws(text, k + 1)
+            if text.startswith("constructor", k2):
+                k3 = k2 + len("constructor")
+                if k3 >= n or text[k3] not in _JS_IDENT_CONT:
+                    return None, k3
     marker, k = _js_parse_marker_kw(text, j)
     if marker is not None:
         return None, k
@@ -3630,12 +3645,205 @@ def _js_fold_bracket_key(text, j, depth, state):
     return name, _js_skip_ws(text, j + 1)
 
 
+# Node v24.20.0-verified own-property key lists (string keys only; the
+# engine's lists also carry symbols, which can never === a string
+# literal, so they are irrelevant to the filed predicate class).
+# Used by the F496 ownKeys-selection parser to decide engine-exactly
+# whether the selected name is really an own key of the enumeration
+# source: `Reflect.ownKeys(SRC).filter(k=>k==='NAME')[0]` is NAME iff
+# NAME is an own key of SRC, else undefined (and TARGET[undefined] is
+# undefined, so any call throws -- not a decodable shape).
+_F496_ARRAY_PROTO_KEYS = frozenset((
+    "length", "constructor", "at", "concat", "copyWithin", "fill",
+    "find", "findIndex", "findLast", "findLastIndex", "lastIndexOf",
+    "pop", "push", "reverse", "shift", "unshift", "slice", "sort",
+    "splice", "includes", "indexOf", "join", "keys", "entries",
+    "values", "forEach", "filter", "flat", "flatMap", "map", "every",
+    "some", "reduce", "reduceRight", "toReversed", "toSorted",
+    "toSpliced", "with", "toLocaleString", "toString",
+))
+_F496_STRING_PROTO_KEYS = frozenset((
+    "length", "constructor", "anchor", "at", "big", "blink", "bold",
+    "charAt", "charCodeAt", "codePointAt", "concat", "endsWith",
+    "fontcolor", "fontsize", "fixed", "includes", "indexOf",
+    "isWellFormed", "italics", "lastIndexOf", "link", "localeCompare",
+    "match", "matchAll", "normalize", "padEnd", "padStart", "repeat",
+    "replace", "replaceAll", "search", "slice", "small", "split",
+    "strike", "sub", "substr", "substring", "sup", "startsWith",
+    "toString", "toWellFormed", "trim", "trimStart", "trimLeft",
+    "trimEnd", "trimRight", "toLocaleLowerCase", "toLocaleUpperCase",
+    "toLowerCase", "toUpperCase", "valueOf",
+))
+_F496_ARRAY_CTOR_KEYS = frozenset((
+    "length", "name", "prototype", "isArray", "from", "fromAsync", "of",
+))
+
+
+def _js_parse_ownkeys_bracket_key(text, j, state):
+    """Parse `[Reflect.ownKeys(SRC).filter(k=>k==='NAME')[0]]` /
+    `[Reflect.ownKeys(SRC).filter(k=>k==='NAME')]` (1-element result
+    coerces via ToPropertyKey) /
+    `[Reflect.ownKeys(SRC).find(k=>k==='NAME')]` at text[j] == '[' (F496).
+
+    Returns (selected_name, idx_after_rbracket), whitespace-tolerant.
+    The selection is engine-identical to the string NAME when NAME is
+    an own key of SRC (node v24.20.0 verified: the filter/find yields
+    exactly NAME, and `[0]` on the 1-element filter result is NAME),
+    and undefined otherwise -- the membership check against the
+    node-verified key lists makes the desugar engine-exact, so the
+    caller can treat the result exactly like a literal/computed member
+    key and reuse its existing method-table validation (faithful by
+    construction, no F481-class composition gap).
+
+    Only the filed predicate class is modeled: a single arrow
+    function (`k` or `(k)`) whose body is `k === 'NAME'` / `k == 'NAME'`
+    (operand order either way, string literal only). SRC is one of the
+    modeled enumeration sources (Array.prototype / String.prototype /
+    Array / [].constructor, via _js_parse_reflect_get_target); anything
+    else fails closed. Non-literal comparators, extra filter/find
+    arguments, non-zero indices, and `Object.getOwnPropertyNames`
+    fail closed (documented scope boundary: rejected, never
+    mis-decoded). Never evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, j + 1)
+    # Reflect.ownKeys( -- dot form only (filed); the bracket form is
+    # F498 territory for `construct` and unfiled for `ownKeys`.
+    if not text.startswith("Reflect", k):
+        raise _JSExprFail("not a Reflect.ownKeys selection")
+    k += len("Reflect")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("Reflectx is not Reflect")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ".":
+        raise _JSExprFail("ownKeys member not dotted")
+    k = _js_skip_ws(text, k + 1)
+    if not text.startswith("ownKeys", k):
+        raise _JSExprFail("not ownKeys")
+    k2 = k + len("ownKeys")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        raise _JSExprFail("ownKeysx is not ownKeys")
+    k = _js_skip_ws(text, k2)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("ownKeys without paren")
+    k = _js_skip_ws(text, k + 1)
+    (kind, tname), k = _js_parse_reflect_get_target(text, k)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("ownKeys unterminated")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != ".":
+        raise _JSExprFail("no select call after ownKeys")
+    k = _js_skip_ws(text, k + 1)
+    if text.startswith("filter", k):
+        sel, k = "filter", k + len("filter")
+    elif text.startswith("find", k):
+        sel, k = "find", k + len("find")
+    else:
+        raise _JSExprFail("select not filter/find")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("filterx/findx is not filter/find")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("select without paren")
+    k = _js_skip_ws(text, k + 1)
+    # Arrow parameter: `k` or `(k)`.
+    if k < n and text[k] == "(":
+        k = _js_skip_ws(text, k + 1)
+        param, k = _js_parse_ident(text, k)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ")":
+            raise _JSExprFail("bad arrow params")
+        k = _js_skip_ws(text, k + 1)
+    else:
+        param, k = _js_parse_ident(text, k)
+        k = _js_skip_ws(text, k)
+    if not text.startswith("=>", k):
+        raise _JSExprFail("select predicate not an arrow")
+    k = _js_skip_ws(text, k + 2)
+    # Body: `param === 'NAME'` / `'NAME' === param` (== allowed).
+    if k < n and text[k] in "'\"":
+        name, k = _js_parse_string(text, k)
+        k = _js_skip_ws(text, k)
+        if text.startswith("===", k):
+            k += 3
+        elif text.startswith("==", k):
+            k += 2
+        else:
+            raise _JSExprFail("predicate not an equality")
+        k = _js_skip_ws(text, k)
+        pname, k = _js_parse_ident(text, k)
+        if pname != param:
+            raise _JSExprFail("predicate compares the wrong name")
+    elif k < n and text[k] in _JS_IDENT_START:
+        pname, k = _js_parse_ident(text, k)
+        if pname != param:
+            raise _JSExprFail("predicate compares the wrong name")
+        k = _js_skip_ws(text, k)
+        if text.startswith("===", k):
+            k += 3
+        elif text.startswith("==", k):
+            k += 2
+        else:
+            raise _JSExprFail("predicate not an equality")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] not in "'\"":
+            raise _JSExprFail("predicate key not a literal")
+        name, k = _js_parse_string(text, k)
+    else:
+        raise _JSExprFail("predicate body not modeled")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("unterminated select call")
+    k = _js_skip_ws(text, k + 1)
+    if sel == "filter":
+        if k < n and text[k] == "[":
+            # [0] -- the filter result is a 1-element array engine-exactly.
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] != "0":
+                raise _JSExprFail("filter select index not 0")
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] != "]":
+                raise _JSExprFail("unterminated [0]")
+            k = _js_skip_ws(text, k + 1)
+        elif k < n and text[k] == "]":
+            # No index: the 1-element filter result coerces to NAME via
+            # ToPropertyKey (Array.prototype[['concat']] is
+            # Array.prototype['concat'], node v24.20.0 verified). Falls
+            # through to the closing-bracket check below.
+            pass
+        else:
+            raise _JSExprFail("filter select without [0]")
+    if k >= n or text[k] != "]":
+        raise _JSExprFail("unterminated ownKeys bracket")
+    k = _js_skip_ws(text, k + 1)
+    if kind == "ctor":
+        ok = name in _F496_ARRAY_CTOR_KEYS
+    elif tname == "array":
+        ok = name in _F496_ARRAY_PROTO_KEYS
+    else:
+        ok = name in _F496_STRING_PROTO_KEYS
+    if not ok:
+        # Engine-exact: the selection is undefined (NAME is not an own
+        # key of SRC), so TARGET[undefined] is undefined and any call
+        # throws in node -- not a decodable shape. Fail closed, never
+        # mis-decoded.
+        raise _JSExprFail("ownKeys name not an own key of SRC")
+    state["ops"] += 1  # the indirection is obfuscation-shaped
+    return name, k
+
+
 def _js_parse_ctor_factory(text, i, state):
     """Parse '[].constructor.<member>(...)' / '[].constructor[<member>](...)'
     at text[i] (F476 / F480).
 
     Desugars the constructor-property factory path to the fragment list:
-    `[].constructor` is engine-identical to `Array`, and `['of']` is
+    `[].constructor` is engine-identical to `Array`
+    (node v24.20.0 verified), and the same holds for any non-empty
+    array-literal receiver with string-literal elements (F497):
+    `['x'].constructor` is engine-identical to `Array` (any array
+    literal's [[Prototype]] is Array.prototype, whose `constructor` is
+    Array). The receiver elements are discarded. `['of']` is
     engine-identical to `.of` (node v24.20.0 verified). The argument
     list reuses the F446/F484 factory grammar (_js_parse_of_args):
     string literals, nested array literals, and '...'-spreads of array
@@ -3657,9 +3865,10 @@ def _js_parse_ctor_factory(text, i, state):
     ident-boundary-checked (`[].constructor.ofx`, `[].constructor['ofx']`
     fail closed); computed member access with non-literal keys
     (`[].constructor[x]`) and `Array.prototype.constructor` chains fail
-    closed; only the exact `[]` receiver is modeled (`.constructor` on
-    any other receiver -- including non-empty array literals, which are
-    engine-valid -- fails closed as a documented residual); whitespace
+    closed; the receiver is exactly an array literal -- empty (`[]`,
+    F476) or non-empty with string-literal elements (F497); numeric,
+    nested, template, or spread receivers fail closed (documented scope
+    boundary: rejected, never mis-decoded); whitespace
     is tolerated between every token of the factory call itself, exactly
     as the engine allows (the following method chain follows the
     decoder's existing postfix whitespace rules -- no space before the
@@ -3670,13 +3879,20 @@ def _js_parse_ctor_factory(text, i, state):
     n = len(text)
     if state.get("in_array"):
         raise _JSExprFail("Array inside array literal")
-    # [].constructor.<member> -- exact empty-array receiver.
+    # [].constructor.<member> -- exact empty-array receiver (F476);
+    # ['lit',...].constructor.<member> -- non-empty array-literal
+    # receiver (F497). _js_parse_string_literal_list validates the
+    # elements (string literals only, part-budget charged) and the
+    # caller routes here only after the quote-aware
+    # _js_is_nonempty_ctor_recv peek matched '].constructor'.
     j = _js_skip_ws(text, i + 1)
-    if j >= n or text[j] != "]":
-        raise _JSExprFail("not an empty-array receiver")
-    j = _js_skip_ws(text, j + 1)
+    if j < n and text[j] == "]":
+        j = _js_skip_ws(text, j + 1)
+    else:
+        _, j = _js_parse_string_literal_list(text, j, state, "]")
+        j = _js_skip_ws(text, j)
     if j >= n or text[j] != ".":
-        raise _JSExprFail("no dot after []")
+        raise _JSExprFail("no dot after receiver")
     j = _js_skip_ws(text, j + 1)
     if not text.startswith("constructor", j):
         raise _JSExprFail("not constructor")
@@ -3695,8 +3911,13 @@ def _js_parse_ctor_factory(text, i, state):
         return _JSArr(elements), j
     if j < n and text[j] == "[":
         # [].constructor['of'] / [].constructor['apply'] -- bracket-string
-        # member on the constructor property.
-        name, j = _js_parse_bracket_member(text, j)
+        # member on the constructor property. F496: an ownKeys
+        # filter/find selection resolves to its engine-exact key and
+        # routes identically.
+        try:
+            name, j = _js_parse_bracket_member(text, j)
+        except _JSExprFail:
+            name, j = _js_parse_ownkeys_bracket_key(text, j, state)
     elif j < n and text[j] == "?":
         # F490: [].constructor?.of -- `?.` adjacent (engine SyntaxError
         # otherwise, node v24.20.0 verified); [].constructor is
@@ -4123,6 +4344,61 @@ def _js_is_ctor_recv(text, i):
         return False
     j += len("constructor")
     return j >= n or text[j] not in _JS_IDENT_CONT
+
+
+def _js_is_nonempty_ctor_recv(text, i):
+    """Cheap text-level peek: does text[i] start a
+    '[<array-literal>].constructor' shape with a NON-EMPTY receiver (F497)?
+
+    Quote-aware scan for the receiver's matching ']' (nested '['
+    tracked, string/template literals skipped so a ']' inside a
+    literal cannot terminate the scan early), then '.' 'constructor'
+    (ident-boundary) exactly. Malformed receivers return False (the
+    caller falls through to the normal array-literal path, which fails
+    closed on them). Disjoint from _js_is_ctor_recv (empty receiver),
+    the F471 spread-copy '[' (never followed by a string literal that
+    closes before '.constructor'... the scan requires the literal
+    '.constructor' after the match), and ordinary array literals
+    (`['x'].join('')` has no '.constructor' after the bracket).
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i + 1)
+    if j >= n or text[j] == "]":
+        return False  # empty receiver -- _js_is_ctor_recv territory
+    depth = 0
+    k = j
+    while k < n:
+        c = text[k]
+        if c in "'\"`":
+            q = c
+            k += 1
+            while k < n and text[k] != q:
+                if text[k] == "\\":
+                    k += 1
+                k += 1
+            if k >= n:
+                return False
+            k += 1
+        elif c == "[":
+            depth += 1
+            k += 1
+        elif c == "]":
+            if depth == 0:
+                break
+            depth -= 1
+            k += 1
+        else:
+            k += 1
+    if k >= n or text[k] != "]":
+        return False
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != ".":
+        return False
+    k = _js_skip_ws(text, k + 1)
+    if not text.startswith("constructor", k):
+        return False
+    k += len("constructor")
+    return k >= n or text[k] not in _JS_IDENT_CONT
 
 
 def _js_parse_array_constructor(text, i, state):
@@ -5730,14 +6006,21 @@ def _js_parse_prototype_dispatch(text, i, depth, state):
         # fails closed on `.prototype`); a literal naming no modeled
         # method falls through as well. F492: a computed key
         # (`['con'+'cat']`, `` [`con${'cat'}`] ``) is constant-folded
-        # to its engine-exact value and routed identically.
+        # to its engine-exact value and routed identically. F496: a
+        # Reflect.ownKeys filter/find selection
+        # (`[Reflect.ownKeys(Array.prototype).filter(k=>k==='concat')[0]]`)
+        # resolves to its engine-exact key and routes identically.
         try:
             method, k = _js_parse_bracket_member(text, j)
         except _JSExprFail:
             try:
                 method, k = _js_fold_bracket_key(text, j, depth, state)
             except _JSExprFail:
-                return None
+                try:
+                    method, k = _js_parse_ownkeys_bracket_key(text, j,
+                                                             state)
+                except _JSExprFail:
+                    return None
     elif j < n and text[j] == ".":
         j = _js_skip_ws(text, j + 1)
         if j >= n or text[j] not in _JS_IDENT_START:
@@ -7857,6 +8140,17 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             # [].concat (F473: no 'constructor' after the dot).
             # F488: [].constructor('f1','f2') direct call is handled
             # inside _js_parse_ctor_factory.
+            val, i = _js_parse_ctor_factory(text, i, state)
+            state["ops"] += 1  # the factory call is obfuscation-shaped
+            return _js_parse_postfix(text, i, val, depth, state)
+        if _js_is_nonempty_ctor_recv(text, i):
+            # F497: ['x'].constructor.of(...) -- non-empty array-literal
+            # receiver; engine-identical to the empty-receiver factory
+            # (any array literal's .constructor is Array, node v24.20.0
+            # verified). Disjoint from ordinary array literals (no
+            # '.constructor' after the bracket) and from the F471
+            # spread-copy (its receiver never parses as a string-literal
+            # list -- fails closed inside _js_parse_ctor_factory).
             val, i = _js_parse_ctor_factory(text, i, state)
             state["ops"] += 1  # the factory call is obfuscation-shaped
             return _js_parse_postfix(text, i, val, depth, state)

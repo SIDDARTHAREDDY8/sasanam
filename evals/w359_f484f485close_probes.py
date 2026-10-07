@@ -85,7 +85,7 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-359 lane 2: F484+F485 closed; no new decision codes
-FOOTER_OPEN = "F496, F497, F498, F499, F500, F501, F502"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-359 lane 2: F484, F485 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN
+FOOTER_OPEN = "F498, F499, F500, F501, F502"  # Wave-361 lane 1: F496, F497 CLOSED locally (merge finalizes tree-wide)  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-359 lane 2: F484, F485 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN
 FOOTER_NEXT = "F503"  # Wave-359 lane 2: F484, F485 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: next F496
 
 # Constructed via concatenation: the write path redacts credential literals.
@@ -343,12 +343,15 @@ def p3_no_new_regexes():
     # Wave-360 lane 2 (F491/F493): Reflect -> (construct|apply|get),
     # Object gains getOwnPropertyDescriptor, String gains .raw( /
     # .raw.call( (literal-alternation only); re.compile count unchanged.
+    # Wave-361 lane 1 finisher: F490's optional-chaining normalization adds
+    # the (\?\.\|\.) alternative to the Reflect anchor (still
+    # literal-alternation only); re.compile count still 28.
     assert dlp._JS_EXPR_START.pattern == (
         r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])"
         r"|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"])"
         r")|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Function[ \t\n\r]*\.[ \t\n\r]*prototype|"
-        r"Reflect([ \t\n\r]*\.[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"])"
+        r"Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"])"
         r"|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor)|[ \t\n\r]*\[[ \t\n\r]*['\"])"
         r"|\("
     )

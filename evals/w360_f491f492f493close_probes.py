@@ -347,22 +347,22 @@ def p2_f493_boundaries():
 
 def p2_open_findings_intact():
     # Wave-360 merge: F490 (lane 1) and F494 (lane 3) are now CLOSED --
-    # their shapes must block. F496/F499 stay OPEN: their shapes miss.
+    # their shapes must block. F496 CLOSED (wave-361); F499 stays OPEN.
     closed_shapes = [
         "Array.prototype.concat?.call([], '%s','%s').join('')" % (_A, _B),  # F490 CLOSED
         "[...new Set(['%s','%s'])].join('')" % (_A, _B),  # F494 CLOSED
+        "Array.prototype[Reflect.ownKeys(Array.prototype).filter(k=>k==='concat')[0]].call([], '%s','%s').join('')" % (_A, _B),  # F496 CLOSED
     ]
     bad = [s for s in closed_shapes if not _blocked(s)]
     if bad:
         return ("BREAK", "closed finding missed: %s" % bad)
     open_shapes = [
-        "Array.prototype[Reflect.ownKeys(Array.prototype).filter(k=>k==='concat')[0]].call([], '%s','%s').join('')" % (_A, _B),  # F496 OPEN
         "[...'%s', ...'%s'].join('')" % (_A, _B),  # F499 OPEN
     ]
     bad = [s for s in open_shapes if _blocked(s)]
     if bad:
         return ("BREAK", "open finding decoded: %s" % bad)
-    return ("HELD", "F490/F494 closed; open findings F496/F499 intact")
+    return ("HELD", "F490/F494/F496 closed; open finding F499 intact")
 
 
 def p2_neighbors_intact():
@@ -460,8 +460,10 @@ def p4_pin_and_footer():
     assert len(TAXONOMY) == 2135
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     assert "Next free finding: **F503**" in text
-    assert "**Open findings: F496, F497, F498, F499, F500, F501, F502.**" in text
-    return ("HELD", "pin=2135 footer open F496-F502 next F503 (wave-360 merge)")
+    # Wave-361 lane 1: F496, F497 CLOSED locally (merge finalizes tree-wide;
+    # was: open F496-F502).
+    assert "**Open findings: F498, F499, F500, F501, F502.**" in text
+    return ("HELD", "pin=2135 footer open F498-F502 next F503 (wave-361 lane 1)")
 
 
 PROBES = [
