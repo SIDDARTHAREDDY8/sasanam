@@ -18,8 +18,8 @@ New findings filed (all LOW, OPEN, red-first verified on base 734adfc3):
   (''['concat']; F482 covered prototype methods) -- 2 shapes.
 - F508: Array.from with a mapping function or non-literal source (mapper /
   array-like / Set source; plain Array.from([...]) is modeled) -- 3 shapes.
-- F509: the bare arguments exotic object as a dispatch receiver (F489
-  closed the IIFE pattern only) -- 5 shapes.
+- F509: CLOSED wave-363 lane 3 (call-site argument binding desugar;
+  was: the bare arguments exotic object as a dispatch receiver) -- 5 shapes.
 - F510: Object.values indirection on plain/frozen/sealed/nested objects
   (different builtin from F508's Array.from, per the F500/F505 precedent)
   -- 4 shapes.
@@ -122,12 +122,12 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F506+F507+F508 closed (wave-363 lanes 1+2),
-    F509/F510/F511 open, next F513 (lane-local; merge finalizes)."""
+    """Control: footer shows F506-F509 closed (wave-363 lanes 1+2+3),
+    F510/F511 open, next F513 (lane-local; merge finalizes)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F513**" in text
-          and "**Open findings: F509, F510, F511.**" in text)
+          and "**Open findings: F510, F511.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -280,21 +280,21 @@ def test_p3_f508_sources_closed():
 
 @_t
 def test_p3_f509_open():
-    """F509 OPEN: bare arguments as dispatch receiver misses."""
-    miss = _misses("(function(){return Array.prototype.join.call(arguments, '')})('%s','%s')" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F509 CLOSED (wave-363 lane 3): bare-arguments join now blocks."""
+    hit = not _misses("(function(){return Array.prototype.join.call(arguments, '')})('%s','%s')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
 def test_p3_f509_variants_open():
-    """F509 OPEN: bare-arguments slice/index/spread/reduce miss."""
-    ms = [
-        _misses("(function(){return Array.prototype.slice.call(arguments, 0).join('')})('%s','%s')" % (_A, _B)),
-        _misses("(function(){return arguments[0]+arguments[1]})('%s','%s')" % (_A, _B)),
-        _misses("(function(){return [].concat(...arguments).join('')})('%s','%s')" % (_A, _B)),
-        _misses("(function(){return Array.prototype.reduce.call(arguments,(a,b)=>a+b)})('%s','%s')" % (_A, _B)),
+    """F509 CLOSED (wave-363 lane 3): bare-arguments slice/index/spread/reduce block."""
+    hs = [
+        not _misses("(function(){return Array.prototype.slice.call(arguments, 0).join('')})('%s','%s')" % (_A, _B)),
+        not _misses("(function(){return arguments[0]+arguments[1]})('%s','%s')" % (_A, _B)),
+        not _misses("(function(){return [].concat(...arguments).join('')})('%s','%s')" % (_A, _B)),
+        not _misses("(function(){return Array.prototype.reduce.call(arguments,(a,b)=>a+b)})('%s','%s')" % (_A, _B)),
     ]
-    return ("HELD" if all(ms) else "BREAK", "miss=%s" % ms)
+    return ("HELD" if all(hs) else "BREAK", "hit=%s" % hs)
 
 
 @_t
