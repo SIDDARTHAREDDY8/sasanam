@@ -74,8 +74,8 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-359 lane 1: F482, F483 closed; no new decision codes
-FOOTER_OPEN = "F526, F527, F528, F529, F530"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-359 lane 1: F482, F483 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 lane 4: F510+F511 CLOSED (lane-local)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
-FOOTER_NEXT = "F531"  # Wave-359 lane 1: F482, F483 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: next F496  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+FOOTER_OPEN = "F537, F538, F539, F540, F541, F542, F543, F544, F545, F546"  # Wave-367 merge: F537-F546 open (next F547)  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-359 lane 1: F482, F483 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 lane 4: F510+F511 CLOSED (lane-local)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+FOOTER_NEXT = "F547"  # Wave-367 merge: next F547  # Wave-359 lane 1: F482, F483 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: next F496  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
 
 # Constructed via concatenation: the write path redacts credential literals.
 A1 = "xoxb-" + "0123"
@@ -337,6 +337,8 @@ def p3_no_new_regexes():
     # getOwnPropertyNames/getOwnPropertyDescriptors (key/descriptor
     # enumeration indirection) -- new member-name alternatives, pinned
     # exactly here; re.compile count unchanged (28).
+    # Wave-367 lane 4 (F536): structuredClone alternative added to the anchor
+    # (ident-boundary-checked; literal-alternation only); re.compile count unchanged.
     assert dlp._JS_EXPR_START.pattern == (
         r"['\"`\[]|"
         r"String\.fromCharCode|"
@@ -348,6 +350,7 @@ def p3_no_new_regexes():
         r"Function[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|"
         r"Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries)|[ \t\n\r]*\[[ \t\n\r]*['\"])|"
+        r"structuredClone(?![_$A-Za-z0-9])|"
         r"\("
     )
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
