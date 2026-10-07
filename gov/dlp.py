@@ -2557,16 +2557,19 @@ def _js_stringify_coercible(arg, label):
 
 
 def _js_parse_raw_template_arg(text, j, state):
-    """Parse `{raw:[...]}` at text[j] for `String.raw` (F493).
+    """Parse `{raw:[...]}` / `{raw:{0:'lit',...,length:N}}` at text[j]
+    for `String.raw` (F493 / F575).
 
-    The template object must have exactly one key, `raw`, whose value
-    is an array literal of string literals (the
-    _js_parse_string_literal_list grammar -- numeric, nested,
-    marker, additive, or template segments fail closed, the same
-    fail-closed classes as the F454/F446 factories). With no
-    substitutions the engine concatenates the raw segments, so the
-    decoded value is the plain join. Returns (segments, idx_after_}).
-    Never evals.
+    The template object must have exactly one key, `raw`. The raw value
+    is either an array literal of string literals (F493 -- the
+    _js_parse_string_literal_list grammar; numeric, nested, marker,
+    additive, or template segments fail closed, the same fail-closed
+    classes as the F454/F446 factories) or an array-like object literal
+    (F575 -- parsed by _js_parse_raw_arraylike: integer/string/numeric
+    keys with later-wins, string-literal values, canonical-int length).
+    With no substitutions the engine concatenates the raw segments, so
+    the decoded value is the plain join. Returns (segments,
+    idx_after_}). Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, j)
@@ -2582,13 +2585,115 @@ def _js_parse_raw_template_arg(text, j, state):
     if j >= n or text[j] != ":":
         raise _JSExprFail("String.raw raw without colon")
     j = _js_skip_ws(text, j + 1)
-    if j >= n or text[j] != "[":
+    if j < n and text[j] == "[":
+        segs, j = _js_parse_string_literal_list(text, j + 1, state, "]")
+    elif j < n and text[j] == "{":
+        # F575: array-like raw object -- String.raw reads it via
+        # LengthOfArrayLike + indexed Gets (node-exact).
+        segs, j = _js_parse_raw_arraylike(text, j, state)
+    else:
         raise _JSExprFail("String.raw raw not an array")
-    segs, j = _js_parse_string_literal_list(text, j + 1, state, "]")
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != "}":
         raise _JSExprFail("String.raw object not closed")
     return segs, j + 1
+
+
+def _js_parse_raw_arraylike(text, j, state):
+    """Parse `{0:'lit',1:'lit',length:2}` at text[j] for `String.raw` (F575).
+
+    Node-exact within the modeled literal grammar (v24.20.0): String.raw's
+    spec reads ToObject(Get(template,
+    "raw")), then LengthOfArrayLike (ToLength(Get(raw, "length"))), then
+    ToString(Get(raw, k)) for k in 0..length-1. Keys are identifiers,
+    string literals, or numeric literals (later-wins, engine-identical);
+    only canonical decimal index strings are ever read -- a quoted
+    non-canonical key (e.g. '00') is a distinct string key the loop never
+    observes (node-verified), while an unquoted numeric key canonicalizes
+    via ToString(number) (e.g. 00 -> '0', node-verified). A missing index
+    contributes the literal string "undefined" (ToString(undefined),
+    node-verified); a missing length is ToLength(undefined) == 0
+    (node-verified: String.raw({raw:{0:'f1'}}) === ''). Values must be
+    string literals and a present length a canonical decimal-int literal
+    (no leading zeros, no sign) -- anything else fails closed (documented
+    scope boundary; the close-when permits coded refusal). The parts
+    budget is charged per materialized segment (F452 lesson); lengths
+    above 4096 fail closed outright. Returns (segments, idx_after_}).
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j + 1)  # consume '{'
+    vals = {}
+    length = 0
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "}":
+            j += 1
+            break
+        if j < n and text[j] in "'\"":
+            key, j = _js_parse_string(text, j)
+        elif j < n and text[j] in _JS_IDENT_START:
+            key, j = _js_parse_ident(text, j)
+        elif j < n and text[j].isdigit():
+            m = j
+            while m < n and text[m].isdigit():
+                m += 1
+            if m - j > 4:
+                # Numeric keys longer than 4 digits fail closed: runs this
+                # long denote indices >= 10000 (never read by the index
+                # loop, length <= 4096), but leading-zero forms (00001 ->
+                # '1') would canonicalize to an observable key and
+                # ToString(number) goes exponential past 1e21 -- the only
+                # exactly-modelable class is the short canonicalizable
+                # one (documented scope boundary). This also keeps int()
+                # off unbounded attacker digit runs (ValueError would
+                # escape fail-closed).
+                raise _JSExprFail("F575 raw array-like long numeric key")
+            key = str(int(text[j:m]))  # ToString(number), exact below 10000
+            j = m
+        else:
+            raise _JSExprFail("F575 raw array-like bad key")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ":":
+            raise _JSExprFail("F575 raw array-like without colon")
+        j = _js_skip_ws(text, j + 1)
+        if key == "length":
+            m = j
+            while m < n and text[m].isdigit():
+                m += 1
+            digits = text[j:m]
+            if (not digits or (len(digits) > 1 and digits[0] == "0")
+                    or (m < n and text[m] in _JS_IDENT_CONT)):
+                raise _JSExprFail("F575 raw array-like bad length")
+            if len(digits) > 4:
+                # Longer than 4 digits always exceeds the 4096 cap; check
+                # before int() so unbounded attacker digit runs cannot
+                # raise ValueError past fail-closed.
+                raise _JSExprFail("F575 raw array-like length too large")
+            length = int(digits)
+            if length > 4096:
+                raise _JSExprFail("F575 raw array-like length too large")
+            j = m
+        else:
+            if j >= n or text[j] not in "'\"":
+                raise _JSExprFail("F575 raw array-like non-literal value")
+            val, j = _js_parse_string(text, j)
+            vals[key] = val
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j += 1
+            continue
+        if j < n and text[j] == "}":
+            j += 1
+            break
+        raise _JSExprFail("F575 raw array-like bad separator")
+    segs = []
+    for k in range(length):
+        segs.append(vals.get(str(k), "undefined"))
+        state["parts"] += 1  # each materialized segment is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+    return segs, j
 
 
 def _js_parse_raw_substitutions(text, j, state):
@@ -2642,7 +2747,8 @@ def _js_interleave_raw_substitutions(segs, subs):
 
 def _js_parse_string_raw(text, i, depth, state):
     """Parse `String.raw({raw:[...]})` / `String.raw.call(R, {raw:[...]})`
-    at text[i] (F493, substitutions F551).
+    (and the F575 array-like-raw-object variants) at text[i]
+    (F493, substitutions F551, array-like raw F575).
 
     The call form of String.raw. The template object `{raw:[...]}`
     parses exactly as in F493 (string-literal-only raw segments --
@@ -6307,6 +6413,20 @@ def _js_apply_destructure_body_result(names, keys, body_expr, elements,
     return val
 
 
+def _js_f582_truncate_arity(elements, params, label):
+    """Node-exact arity for F519-class additive targets (F582, v24.20.0).
+
+    The engine fills params positionally and IGNORES extras; fewer args
+    than params fail closed (node coerces missing params to undefined --
+    conservative). Body operands are pure param indices, so extras can
+    never enter the result. Returns elements truncated to the parameter
+    count. Never evals.
+    """
+    if len(elements) < len(params):
+        raise _JSExprFail(label)
+    return elements[:len(params)]
+
+
 def _js_parse_reflect_apply_fn(text, i, depth, state):
     """Parse 'Reflect.apply(FN, thisArg, argsArray)' at text[i] (F519).
 
@@ -6334,8 +6454,9 @@ def _js_parse_reflect_apply_fn(text, i, depth, state):
     - argsArray must be a string-literal-only list
       (_js_parse_string_literal_list), or a single spread of one
       (F544, `[...['f1','f2']]` -- node-exact, engine-identical to
-      the literal form); arity must match the parameter count (node
-      coerces missing params to undefined -- conservative
+      the literal form); extras beyond the parameter count are dropped
+      engine-identically (F582); fewer args than params fail closed
+      (node coerces missing params to undefined -- conservative
       fail-closed, documented).
     Returns (result_string, next_index) without the postfix chain
     (the caller applies it). Never evals.
@@ -6428,8 +6549,8 @@ def _js_parse_reflect_apply_fn(text, i, depth, state):
         result = _js_apply_destructure_body_result(
             _dest[0], _dest[1], _dest[2], elements, depth, state)
     else:
-        if len(elements) != len(params):
-            raise _JSExprFail("F519 arity mismatch")
+        elements = _js_f582_truncate_arity(
+            elements, params, "F519 fewer args than params")
         result = "".join(elements[idx] for idx in body)
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ")":
@@ -7454,8 +7575,9 @@ def _js_parse_f521_call_dispatch(text, paren, depth, state):
                 _c_dest[0], _c_dest[1], _c_dest[2],
                 elements, depth, state)
         else:
-            if len(elements) != len(params):
-                raise _JSExprFail("F544 call dispatch arity mismatch")
+            # F582: engine-identical to the direct F519 form.
+            elements = _js_f582_truncate_arity(
+                elements, params, "F544 call dispatch fewer args")
             result = "".join(elements[idx] for idx in body)
         _tj = _js_skip_ws(text, _tj)
         if _tj >= n or text[_tj] != ")":
@@ -9578,8 +9700,9 @@ def _js_parse_f542_proxy_apply_triple(text, j, depth, state):
     if k >= n or text[k] != "[":
         raise _JSExprFail("F542 argsList not an array")
     elements, k = _js_parse_string_literal_list(text, k + 1, state, "]")
-    if len(elements) != len(params):
-        raise _JSExprFail("F542 arity mismatch")
+    # F582: engine-identical to the direct F519 form.
+    elements = _js_f582_truncate_arity(
+        elements, params, "F542 fewer args than params")
     result = "".join(elements[idx] for idx in body)
     return result, k
 
