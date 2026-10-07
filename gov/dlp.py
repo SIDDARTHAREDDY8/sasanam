@@ -2108,11 +2108,17 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|\(")
 # F536: the structuredClone anchor carries its own ident-boundary
 # lookahead so `structuredClonex(` never anchors (no wasted F512
 # total-attempt budget); the primary branch re-checks the boundary
 # defensively.
+# F539: `Object.freeze` joins the Object member anchor class (same
+# ws-tolerant class as `assign`), so `Object .freeze(...)` reaches
+# _js_parse_f539_object_identity. The `new WeakRef` anchor carries
+# the same ident-boundary lookahead as structuredClone, so
+# `new WeakRefx(` never anchors; the primary branch re-checks both
+# keywords defensively via _js_match_kw.
 # F455: the Array.of factory anchor tolerates whitespace around the dot
 # ([ \t\n\r]*, exactly the _js_skip_ws class the parser skips), so
 # `Array .of(...)` / `Array\t.of(...)` / `Array\n.of(...)` /
@@ -6246,7 +6252,16 @@ def _js_parse_reflect_get(text, i, depth, state):
     if j >= n or text[j] != "(":
         raise _JSExprFail("Reflect.get without paren")
     j = _js_skip_ws(text, j + 1)
-    (kind, tname), j = _js_parse_reflect_get_target(text, j)
+    try:
+        (kind, tname), j = _js_parse_reflect_get_target(text, j)
+    except _JSExprFail:
+        # F540: `Reflect.get(OBJLIT, KEY)` -- object-literal target
+        # desugared to the F535 member read. The `{` commits the
+        # parse; anything else re-raises (fails closed as before).
+        if j >= n or text[j] != "{":
+            raise
+        return _js_parse_f540_reflect_get_object(text, j, depth,
+                                                 state)
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ",":
         raise _JSExprFail("Reflect.get without key")
@@ -8587,6 +8602,195 @@ def _js_parse_f535_member_read(text, i, depth, state):
     state["ops"] += 1  # the object/Proxy construction is
                        # obfuscation-shaped
     return _JSObj(props), k + 1
+
+
+def _js_parse_f539_object_identity(text, i, depth, state):
+    """Parse `Object.assign({}, OBJLIT, ...)` / `Object.freeze(OBJLIT)`
+    at text[i] (F539).
+
+    Identity-preserving builtins on parsed object literals: node
+    (v24.20.0) returns the assign TARGET and the freeze ARGUMENT, so
+    the decoded value is a _JSObj whose props are resolved exactly
+    like the F535 literal read -- member reads on the result route
+    through the _JSObj branch of _js_parse_postfix.
+
+    - `Object.assign(TGT, SRC, ...)`: TGT must be the EMPTY object
+      literal `{}` (ws-tolerant); every SRC must be an object literal
+      (parsed by _js_parse_f535_object). The merged props are the
+      sources' props in order, later sources winning (node-exact --
+      Object.assign reads each source's [[Get]], so a source getter
+      becomes a data prop with its return value, matching the F535
+      getter resolution; integer-like keys order before string keys
+      per engine rules -- the merge dict preserves insertion order
+      for distinct keys and overwrites in place for dupes, which is
+      engine-exact for the member reads this decoder resolves).
+      A non-empty TGT fails closed: the engine's [[Set]] on a
+      getter-only target accessor throws TypeError (node v24.20.0
+      verified), so a later-wins merge would mis-decode a shape the
+      engine rejects -- fail closed (documented residual).
+    - `Object.freeze(OBJLIT)`: exactly one argument, an object
+      literal; the engine returns the argument unchanged
+      (node-exact, freeze is identity on the value).
+    - Dot form only; `Object['assign']` / `Object['freeze']` fall
+      through (the F480 bracket block fails closed on non-`[]`
+      targets as before; freeze has no bracket form here --
+      documented residual).
+
+    Returns (_JSObj, next_index), or None when text[i] is not an
+    identity-builtin head (the caller falls through to the F471
+    array-copy factory, which fails closed on non-`[]` targets as
+    before). Once the member commits the parse, malformed shapes
+    fail closed via _JSExprFail. Never evals.
+    """
+    n = len(text)
+    j = i + len("Object")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        return None
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        return None
+    j = _js_skip_ws(text, j + 1)
+    is_assign = text.startswith("assign", j)
+    is_freeze = text.startswith("freeze", j)
+    if not (is_assign or is_freeze):
+        return None
+    k = j + (len("assign") if is_assign else len("freeze"))
+    if k < n and text[k] in _JS_IDENT_CONT:
+        return None
+    # The member commits the parse: malformed shapes fail closed.
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("identity builtin without paren")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "{":
+        if is_assign:
+            # Not an object target: fall through to the F471
+            # array-copy factory (`Object.assign([], <src>)`), which
+            # owns the non-`{` target shapes.
+            return None
+        raise _JSExprFail("freeze arg not an object")
+    first, k = _js_parse_f535_object(text, k, depth, state)
+    if is_freeze:
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ")":
+            raise _JSExprFail("freeze takes one argument")
+        return _JSObj(first), k + 1
+    # Object.assign: the target must be the EMPTY literal.
+    if first:
+        raise _JSExprFail("assign target not empty")
+    merged = {}
+    k = _js_skip_ws(text, k)
+    while True:
+        if k >= n:
+            raise _JSExprFail("assign unterminated")
+        if text[k] == ")":
+            return _JSObj(merged), k + 1
+        if text[k] != ",":
+            raise _JSExprFail("assign needs commas")
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "{":
+            raise _JSExprFail("assign source not an object")
+        sprops, k = _js_parse_f535_object(text, k, depth, state)
+        merged.update(sprops)
+        k = _js_skip_ws(text, k)
+
+
+def _js_parse_f539_weakref(text, i, depth, state):
+    """Parse `new WeakRef(OBJLIT).deref()` at text[i] (F539).
+
+    The engine's WeakRef.deref() returns the referent unchanged
+    (node v24.20.0), so the decoded value is the parsed object
+    literal's _JSObj -- member reads on it route through the _JSObj
+    branch of _js_parse_postfix. The target must be an object
+    literal (parsed by _js_parse_f535_object); deref takes no
+    arguments.
+
+    Returns (_JSObj, next_index), or None when text[i] is not a
+    `new WeakRef` head (the caller falls through, failing closed on
+    `new` as before). Once the `WeakRef` head commits the parse,
+    malformed shapes fail closed via _JSExprFail. Never evals.
+    """
+    n = len(text)
+    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+        return None
+    j = _js_match_kw(text, i, "new")
+    if j is None:
+        return None
+    j = _js_skip_ws(text, j)
+    j2 = _js_match_kw(text, j, "WeakRef")
+    if j2 is None:
+        return None
+    # The WeakRef head commits the parse: malformed shapes fail
+    # closed.
+    j = _js_skip_ws(text, j2)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("WeakRef without paren")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "{":
+        raise _JSExprFail("WeakRef target not an object literal")
+    props, j = _js_parse_f535_object(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("WeakRef without close paren")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("WeakRef needs .deref()")
+    j = _js_skip_ws(text, j + 1)
+    j2 = _js_match_kw(text, j, "deref")
+    if j2 is None:
+        raise _JSExprFail("WeakRef member not deref")
+    j = _js_skip_ws(text, j2)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("deref without paren")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("deref takes no arguments")
+    return _JSObj(props), j + 1
+
+
+def _js_parse_f540_reflect_get_object(text, j, depth, state):
+    """Parse the `(OBJLIT, KEY)` tail of `Reflect.get` at text[j] == '{'
+    (F540).
+
+    Desugars the Reflect builtin to the F535 member read: the target
+    is an object literal (parsed by _js_parse_f535_object) and KEY is
+    a string literal or `['literal']` (via _js_parse_bracket_member).
+    Data properties resolve to their parsed value; getters were
+    already evaluated at object-parse time (F535), matching the
+    engine's getter invocation (node v24.20.0 verified). A missing
+    key, a non-literal key, a method/setter (already failed closed
+    at object parse), or any extra argument fails closed
+    (documented boundary -- the method-retrieval shape
+    `Reflect.get([],'concat')` is a documented residual: the
+    resolved function reference is not a decodable value).
+
+    Returns (value, next_index) with the postfix chain applied.
+    Malformed shapes fail closed via _JSExprFail. Never evals.
+    """
+    n = len(text)
+    # The object-literal target commits the parse: malformed shapes
+    # fail closed.
+    props, j = _js_parse_f535_object(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("Reflect.get without key")
+    j = _js_skip_ws(text, j + 1)
+    if j < n and text[j] == "[":
+        key, j = _js_parse_bracket_member(text, j)
+    elif j < n and text[j] in "'\"":
+        key, j = _js_parse_string(text, j)
+    else:
+        raise _JSExprFail("Reflect.get key not a literal")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("Reflect.get unterminated")
+    if key not in props:
+        raise _JSExprFail("Reflect.get missing key")
+    state["ops"] += 1  # the Reflect.get indirection is
+                       # obfuscation-shaped
+    # Reflect.get returns the property's own reference (no copy),
+    # so the resolved value flows through postfix unchanged.
+    return _js_parse_postfix(text, j + 1, props[key], depth, state)
 
 
 def _js_parse_entries_reduce_keys_values(text, i, depth, state):
@@ -14623,6 +14827,15 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         val, i = _js_parse_reflect_call(text, i, depth, state)
         state["ops"] += 1  # the Reflect call is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
+    # F539: new WeakRef(OBJLIT).deref() -- identity-preserving
+    # reference indirection. None falls through (fails closed on
+    # `new` as before).
+    _wr = _js_parse_f539_weakref(text, i, depth, state)
+    if _wr is not None:
+        val, i = _wr
+        state["ops"] += 1  # the WeakRef indirection is
+                           # obfuscation-shaped
+        return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("Object", i):
         # F525: Object.values(Object.getOwnPropertyDescriptors(OBJ))
         # .map(D=>D.value) -- descriptor-value enumeration
@@ -14695,6 +14908,15 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                          depth, state)
             # callee without a call paren -- fall through (fails
             # closed: not a decodable shape)
+        # F539: Object.assign({}, OBJLIT, ...) / Object.freeze(OBJLIT)
+        # -- identity-preserving builtins on parsed object literals.
+        # None falls through to the F471 array-copy factory (which
+        # fails closed on non-`[]` targets as before).
+        _f539 = _js_parse_f539_object_identity(text, i, depth, state)
+        if _f539 is not None:
+            val, i = _f539
+            state["ops"] += 1  # the builtin call is obfuscation-shaped
+            return _js_parse_postfix(text, i, val, depth, state)
         # F471: Object.assign([], <src>) array-copy factory --
         # desugars to the source's element list. startswith alone
         # admits Objectx, which the parser then fails closed

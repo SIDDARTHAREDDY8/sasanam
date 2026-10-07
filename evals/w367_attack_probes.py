@@ -153,11 +153,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F539-F546 open (minus F537/F538/F542), next F547 (wave-368 lane 1)."""
+    """Control: footer shows F541/F543-F546 open, next F547 (wave-368 merge: lanes 1+2)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F547**" in text
-          and "Open findings: F539, F540, F541, F543, F544, F545, F546." in text)
+          and "Open findings: F541, F543, F544, F545, F546." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -399,17 +399,18 @@ def test_p2_f538_closed():
 
 
 @_t
-def test_p2_f539_open():
-    """F539 OPEN (this round): property read on builtin results still misses."""
+def test_p2_f539_closed():
+    """F539 CLOSED (wave-368 lane 2): property reads on identity-preserving
+    builtin results now block."""
     ms = _misses("Object.assign({}, {c:'%s'}).c+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 @_t
-def test_p2_f540_open():
-    """F540 OPEN (this round): Reflect.get on literals still misses."""
+def test_p2_f540_closed():
+    """F540 CLOSED (wave-368 lane 2): Reflect.get on literals now blocks."""
     ms = _misses("Reflect.get({c:'%s'}, 'c')+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 @_t
