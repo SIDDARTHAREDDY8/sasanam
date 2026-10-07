@@ -1377,7 +1377,7 @@ def P5c():
     if "Open findings: F526, F527, F528, F529, F530." not in last:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
         _break(pid, "last line lacks 'Open findings: F526, F527, F528, F529, F530.': %r" % (last[:120],))  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
         return
-    if "Next free finding: **F531**" not in last:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+    if "Next free finding: **F537**" not in last:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
         _break(pid, "last line lacks next-F436: %r" % (last[:120],))
         return
     if not any(l.startswith("## F423 ") for l in lines):

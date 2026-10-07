@@ -293,7 +293,7 @@ def p6_pin_and_footer():
         return ("BREAK", "F517 CLOSED entry missing")
     if "Open findings: F526, F527, F530." not in text:  # Wave-366 lane 3: F528, F529 CLOSED locally (merge finalizes); was: Wave-365 merge F521-F525 CLOSED, F526-F530 OPEN (next F531)
         return ("BREAK", "lane-local footer wrong")
-    if "Next free finding: **F531**" not in text:  # Wave-365 merge: F521-F525 CLOSED; F526-F530 OPEN (next F531)
+    if "Next free finding: **F537**" not in text:  # Wave-365 merge: F521-F525 CLOSED; F526-F530 OPEN (next F531)
         return ("BREAK", "next-free footer wrong")
     return ("HELD", "pin 2135; 28 re.compile; F516/F517 CLOSED; footer F513,F514,F515,F518,F519,F520/next F521")
 

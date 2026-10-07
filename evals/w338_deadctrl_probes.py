@@ -183,7 +183,7 @@ def p3_footer():
         return "ERROR", "P3", "FINDINGS.md unreadable"
     lines = text.splitlines()
     last = ([ln for ln in lines if "Next free finding:" in ln] or [""])[-1]  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531) (footer is not the last line; entries follow)
-    if "Next free finding: **F531**" not in last:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+    if "Next free finding: **F537**" not in last:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
         return "BREAK", "P3", "footer next-free is not F521"
     if not re.search(r"\*\*Open findings: F526, F527, F528, F529, F530\.\*\*", last):  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
         return "BREAK", "P3", "footer open findings is not F513-F520"

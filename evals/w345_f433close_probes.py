@@ -256,7 +256,7 @@ def p7_pin_and_footer():
     codes = sorted(TAXONOMY)
     ok_pin = len(codes) == TAXONOMY_PIN == 2135
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok_footer = ("Next free finding: **F531**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+    ok_footer = ("Next free finding: **F537**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
                  and "Open findings: F526, F527, F528, F529, F530." in text  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
                  and "(F433 filed 2026-10-05, wave-344 lane 4" in text
                  and "LOW, CLOSED 2026-10-05 wave-345 lane 2" in text)

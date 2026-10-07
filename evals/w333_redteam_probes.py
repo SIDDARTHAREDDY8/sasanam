@@ -601,12 +601,12 @@ def _p6b():
                 encoding="utf-8").read()
     # Raw-literal assertions (wave-331 lesson): the footer must read
     # correctly as literal text, not only via constants.
-    if "Next free finding: **F531**." not in text:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+    if "Next free finding: **F537**." not in text:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
         return _break("P6b-footer-open-f433-f434-f435-next-f436",
-                      "raw literal 'Next free finding: **F531**.' absent")  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
-    if "**Open findings: F526, F527, F528, F529, F530.**" not in text:  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+                      "raw literal 'Next free finding: **F537**.' absent")  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+    if "**Open findings: F531, F533, F534, F535, F536.**" not in text:  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-366 merge: F526-F530 CLOSED (lanes 1-3); F532 CLOSED at merge (honest F527 generalization, F514 precedent); F531, F533-F536 OPEN (next F537)
         return _break("P6b-footer-open-f433-f434-f435-next-f436",
-                      "raw literal '**Open findings: F526, F527, F528, F529, F530.**' absent")  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+                      "raw literal '**Open findings: F531, F533, F534, F535, F536.**' absent")  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-366 merge: F526-F530 CLOSED (lanes 1-3); F532 CLOSED at merge (honest F527 generalization, F514 precedent); F531, F533-F536 OPEN (next F537)
     ms = re.findall(r"Next free finding: \*\*(F\d+)\*\*\. "
                     r"\*\*Open findings: ([^*]+)\.\*\*", text)
     if not ms:

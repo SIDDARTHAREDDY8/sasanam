@@ -136,13 +136,13 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F526-F536 open, next F537 (wave-365 merge:
-    F521-F525 CLOSED lanes 1-3; F526-F530 OPEN: F526-F529 attack round 33,
-    F530 lane 1 renumbered; F531-F536 OPEN attack round 34)."""
+    """Control: footer shows F531, F533-F536 open, next F537 (wave-366 merge:
+    F526-F530 CLOSED lanes 1-3; F532 CLOSED at merge (honest F527 generalization);
+    F531, F533-F536 OPEN attack round 34)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F537**" in text
-          and "**Open findings: F526, F527, F528, F529, F530, F531, F532, F533, F534, F535, F536.**" in text)  # Wave-366 lane 4: F531-F536 OPEN (next F537)
+          and "**Open findings: F531, F533, F534, F535, F536.**" in text)  # Wave-366 merge: F531, F533-F536 OPEN (next F537)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -287,40 +287,40 @@ def test_p1_f512_closed():
 # ------------------------------------------------- open pins (must miss)
 
 @_t
-def test_p2_f526_open():
-    """F526 OPEN (round 33): two-hop .bind-chained target still misses."""
+def test_p2_f526_closed():
+    """F526 CLOSED (wave-366 lane 1): two-hop .bind-chained target now blocks."""
     ms = _misses("Reflect.apply([].concat.bind([],'%(A1)s').bind([]), null, ['%(A2)s']).join('')"
                  % {"A1": _A, "A2": _B})
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 @_t
-def test_p2_f527_open():
-    """F527 OPEN (round 33): quadruple-nested bracket key still misses."""
+def test_p2_f527_closed():
+    """F527 CLOSED (wave-366 lane 2): quadruple-nested bracket key now blocks."""
     ms = _misses("'%s'[[[[['concat'][0]]][0]][0]]('%s')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 @_t
-def test_p2_f528_open():
-    """F528 OPEN (round 33): complex IIFE target still misses."""
+def test_p2_f528_closed():
+    """F528 CLOSED (wave-366 lane 3): complex IIFE target now blocks."""
     ms = _misses("Reflect.apply((() => ((() => (a,b)=>a+b))())(), null, ['%s','%s'])" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 @_t
-def test_p2_f529_open():
-    """F529 OPEN (round 33): alias enumerated via keys still misses."""
+def test_p2_f529_closed():
+    """F529 CLOSED (wave-366 lane 3): alias enumerated via keys now blocks."""
     ms = _misses("(function(){const a=arguments;return Object.keys(a).map(i=>a[i]).join('');})('%s','%s')"
                  % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 @_t
-def test_p2_f530_open():
-    """F530 OPEN (round 33): bound join target still misses."""
+def test_p2_f530_closed():
+    """F530 CLOSED (wave-366 lane 2): bound join target now blocks."""
     ms = _misses("Reflect.apply([].join.bind(['%s','%s'], ''), null, [])" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 @_t
@@ -332,10 +332,11 @@ def test_p2_f531_open():
 
 
 @_t
-def test_p2_f532_open():
-    """F532 OPEN (this round): quad-nested key on array receiver still misses."""
+def test_p2_f532_closed():
+    """F532 CLOSED (wave-366 merge): quad-nested key on array receiver now blocks
+    (honest F527 generalization, F514 precedent)."""
     ms = _misses("['%s'][[[[['concat'][0]]][0]][0]]('%s').join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 @_t

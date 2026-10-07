@@ -186,11 +186,13 @@ def p1_compositions():
         # F526 two-hop bind stays OPEN (miss)
         ("Reflect.apply([].concat.bind([],'%(a)s').bind([]), null, ['%(b)s'])"
          % {"a": _A1, "b": _A2}, False),
-        # F528 complex IIFE target stays OPEN (miss)
+        # Parenthesized-arrow IIFE target: out of F522/F528 scope (not a nested
+        # IIFE nor a block body); honestly OPEN (miss) -- candidate for a future
+        # finding, not silently asserted.
         ("Reflect.apply((()=>((a,b)=>a+b))(), null, ['%s','%s'])" % (_A1, _A2), False),
-        # F529 aliased-arguments enumeration stays OPEN (miss)
+        # F529 aliased-arguments enumeration CLOSED wave-366 lane 3
         ("(function(){var a=arguments;return Object.keys(a).map(i=>a[i]).join('')})('%s','%s')"
-         % (_A1, _A2), False),
+         % (_A1, _A2), True),
     ]
     bad = ["%s want=%s" % (p[:48], w)
            for p, w in pairs if _verdict(p, w)[0] == "BREAK"]
@@ -339,8 +341,8 @@ def p3_perf_bound():
 # ------------------------------------------------- P4: pin and footer
 # Lane-local footer: F527/F530 CLOSED in this lane; F526/F528/F529
 # remain OPEN; the merge finalizes tree-wide.
-FOOTER_OPEN = ("F526", "F528", "F529")
-FOOTER_NEXT = "F531"
+FOOTER_OPEN = ("F531", "F533", "F534", "F535", "F536")
+FOOTER_NEXT = "F537"
 
 
 def p4_pin_and_footer():
@@ -364,9 +366,9 @@ def p4_pin_and_footer():
         nxt, open_s = m.group(1), m.group(2)
         open_got = tuple(s.strip() for s in open_s.split(","))
         if nxt != FOOTER_NEXT or open_got != FOOTER_OPEN:
-            # Lane-local footer: F527/F530 closed here, F526/F528/F529
-            # open; the merge finalizes tree-wide. This is a hard pin
-            # (wave-366 lane 2 review): a footer regression BREAKs.
+            # Merged footer: F526-F530 CLOSED, F532 CLOSED at merge (honest
+            # F527 generalization); open F531, F533-F536; next F537.
+            # A footer regression BREAKs.
             ok = False
             notes.append("lane-local footer: next=%s open=%s "
                          "(want next=%s open=%s)" % (

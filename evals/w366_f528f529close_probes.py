@@ -318,12 +318,12 @@ def p6_pin_and_footer():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     if text.count("CLOSED 2026-10-07 wave-366 lane 3") < 2:
         return ("BREAK", "F528/F529 CLOSED entries missing")
-    if "Open findings: F526, F527, F530." not in text:
-        return ("BREAK", "lane-local footer wrong")
-    if "Next free finding: **F531**" not in text:
+    if "Open findings: F531, F533, F534, F535, F536." not in text:
+        return ("BREAK", "merged footer wrong")
+    if "Next free finding: **F537**" not in text:
         return ("BREAK", "next-free footer wrong")
     return ("HELD", "pin 2135; 28 re.compile; F528/F529 CLOSED; "
-            "footer F526,F527,F530/next F531")
+            "footer F531,F533-F536/next F537")
 
 
 def p7_f528_variants_held():

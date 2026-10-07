@@ -161,18 +161,19 @@ def p3_compositions():
         # F506 Function.prototype.call indirection still blocks
         ("Function.prototype.apply.call(Reflect.apply, Reflect, [[].concat, [], ['%(A1)s','%(A2)s']]).join('')"
          % {"A1": _A1, "A2": _A2}, True),
-        # F530 (bound join) still OPEN
+        # F530 (bound join) CLOSED wave-366 lane 2
         ("Reflect.apply([].join.bind(['%(A1)s','%(A2)s'], ''), null, [])"
-         % {"A1": _A1, "A2": _A2}, False),
-        # F527 (quadruple-nested) still OPEN
+         % {"A1": _A1, "A2": _A2}, True),
+        # F527 (quadruple-nested) CLOSED wave-366 lane 2
         ("'%(A1)s'[[[[['concat'][0]]][0]][0]]('%(A2)s')"
-         % {"A1": _A1, "A2": _A2}, False),
-        # F528 (complex IIFE target) still OPEN
-        ("Reflect.apply((() => ((a,b) => a + b))(), [], ['%(A1)s','%(A2)s']).join('')"
-         % {"A1": _A1, "A2": _A2}, False),
-        # F529 (alias enumerated) still OPEN
+         % {"A1": _A1, "A2": _A2}, True),
+        # F528 (complex IIFE target) CLOSED wave-366 lane 3 (nested IIFE filed shape;
+        # no .join: Reflect.apply returns the string directly)
+        ("Reflect.apply((() => ((() => (a,b)=>a+b))())(), [], ['%(A1)s','%(A2)s'])"
+         % {"A1": _A1, "A2": _A2}, True),
+        # F529 (alias enumerated) CLOSED wave-366 lane 3
         ("(function(){const a=arguments;return Object.keys(a).map(i=>a[i]).join('');})('%(A1)s','%(A2)s')"
-         % {"A1": _A1, "A2": _A2}, False),
+         % {"A1": _A1, "A2": _A2}, True),
         # F522 (IIFE target) CLOSED and unaffected by this diff; the
         # .join('') variant is a node TypeError (no credential exists),
         # so it misses honestly (wave-365 lane-2 closure edge)
@@ -191,8 +192,8 @@ def p4_pin_and_footer():
     assert guac_graph.TAXONOMY_PIN == 2135, \
         "guac_graph.TAXONOMY_PIN=%r want 2135" % (guac_graph.TAXONOMY_PIN,)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F531**" in text
-          and "**Open findings: F527, F528, F529, F530.**" in text)
+    ok = ("Next free finding: **F537**" in text
+          and "**Open findings: F531, F533, F534, F535, F536.**" in text)
     return ("HELD" if ok else "BREAK",
             "pin=%s footer=%s" % (TAXONOMY_PIN, ok))
 

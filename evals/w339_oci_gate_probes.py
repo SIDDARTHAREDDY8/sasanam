@@ -226,7 +226,7 @@ def _p9():
     assert literals == sorted(literals), "taxonomy not sorted"
     assert "oci-registry-onboarding-refused" in DC.TAXONOMY
     text = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
-    assert "Next free finding: **F531**" in text, "footer next free"  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+    assert "Next free finding: **F537**" in text, "footer next free"  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
     assert "Open findings: F526, F527, F528, F529, F530." in text, "footer open findings"  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
     assert FOOTER_OPEN == ("F526", "F527", "F528", "F529", "F530") and FOOTER_NEXT == "F531"  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
     _held("P9-pin-taxonomy",

@@ -32,8 +32,8 @@ SHAPES = [
 ]
 
 CONTROLS = [
-    ("f530-bound-join-open",  # F530 OPEN -- still misses
-     "Reflect.apply([].join.bind(['%s','%s'], ''), null, [])" % (A1, A2), False),
+    ("f530-bound-join-closed",  # F530 CLOSED wave-366 lane 2 -- now blocks
+     "Reflect.apply([].join.bind(['%s','%s'], ''), null, [])" % (A1, A2), True),
     ("direct-slice-held",
      "['%s','%s'].slice(0,2).join('')" % (A1, A2), True),
     ("junk-quiet",

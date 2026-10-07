@@ -317,7 +317,7 @@ def p3():
     if "Next free finding: **%s**." % FOOTER_NEXT not in text:
         _break(pid, "footer next-free mismatch")
         return
-    if "**Open findings: F526, F527, F528, F529, F530.**" not in text:  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+    if "**Open findings: F531, F533, F534, F535, F536.**" not in text:  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-366 merge: F526-F530 CLOSED (lanes 1-3); F532 CLOSED at merge (honest F527 generalization, F514 precedent); F531, F533-F536 OPEN (next F537)
         _break(pid, "footer open-findings mismatch (want open F426)")
         return
     if "## F423 " not in text:

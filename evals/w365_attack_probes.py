@@ -136,7 +136,7 @@ def test_b0_footer_state():
     F526-F530 CLOSED; F531-F536 pending attack lane)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F531**" in text
+    ok = ("Next free finding: **F537**" in text
           and "**Open findings: none.**" in text)  # Wave-366 lanes 1+2+3 merged: F526-F530 CLOSED; open none (next F531)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 

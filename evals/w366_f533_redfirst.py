@@ -31,8 +31,8 @@ SHAPES = [
 ]
 
 CONTROLS = [
-    ("f529-keys-open",  # F529 OPEN -- still misses
-     "(function(){const a=arguments;return Object.keys(a).map(i=>a[i]).join('');})('%s','%s')" % (A1, A2), False),
+    ("f529-keys-closed",  # F529 CLOSED wave-366 lane 3 -- now blocks
+     "(function(){const a=arguments;return Object.keys(a).map(i=>a[i]).join('');})('%s','%s')" % (A1, A2), True),
     ("f516-alias-closed",  # F516 CLOSED -- now blocks coded
      "(function(){var a=arguments;return a[0]+a[1]})('%s','%s')" % (A1, A2), True),
     ("junk-quiet",
