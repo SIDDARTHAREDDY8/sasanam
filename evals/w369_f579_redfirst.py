@@ -26,9 +26,9 @@ SHAPES = [
 ]
 
 CONTROLS = [
-    ('f549-open-still-misses',
+    ('f549-closed-now-blocks',  # wave-370 merge: control flipped (wave-305 class)
      "Object.getOwnPropertyDescriptor({c:'%(A1)s'},'c').value+'%(A2)s'"
-     % {"A1": A1, "A2": A2}, False),
+     % {"A1": A1, "A2": A2}, True),
     ('junk-quiet',
      "({c:'zz'})[Reflect.ownKeys({c:'zz'})[0]]+'yy'"
      % {"A1": A1, "A2": A2}, False),

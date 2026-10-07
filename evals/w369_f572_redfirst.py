@@ -26,9 +26,9 @@ SHAPES = [
 ]
 
 CONTROLS = [
-    ('f563-open-still-misses',
+    ('f563-closed-now-blocks',  # wave-370 merge: control flipped (wave-305 class)
      "new Map([['c','%(A1)s']]).get('c')+'%(A2)s'"
-     % {"A1": A1, "A2": A2}, False),
+     % {"A1": A1, "A2": A2}, True),
     ('junk-quiet',
      "(function(){var k={};return new WeakMap().set(k,'zz').get(k);})()+'yy'"
      % {"A1": A1, "A2": A2}, False),
