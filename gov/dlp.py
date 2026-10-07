@@ -2108,7 +2108,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|values|keys|entries)|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries)|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
 # F455: the Array.of factory anchor tolerates whitespace around the dot
 # ([ \t\n\r]*, exactly the _js_skip_ws class the parser skips), so
 # `Array .of(...)` / `Array\t.of(...)` / `Array\n.of(...)` /
@@ -5336,6 +5336,86 @@ def _js_parse_fn_additive_body(text, j, params, state):
         return idx, j
 
 
+def _js_parse_iife_fn_target(text, j, depth, state):
+    """Parse an IIFE-evaluated function target `(IIFE)()` at text[j]
+    (F522).
+
+    Returns (params, body_operands, next_index) -- the same triple as
+    _js_parse_fn_target, for the function value the IIFE evaluates
+    to. Node-exact desugar (v24.20.0): `(() => FN)()` and
+    `(function(){return FN})()` evaluate to FN itself (the IIFE is
+    immediately invoked with zero arguments and returns FN
+    unchanged), so a Reflect.apply target in this shape is
+    engine-identical to the literal-FN target F519 models.
+
+    The IIFE must be exactly:
+    - `(() => FN)`: an arrow with an EMPTY parameter list whose body
+      is a literal arrow `(p1,p2)=>BODY` or function expression
+      `function(p1,p2){return BODY}` (parsed by _js_parse_fn_target);
+    - `(function(){return FN})`: a function expression with an EMPTY
+      parameter list, optional name, optional trailing `;`, whose
+      body is exactly `return FN;` with FN as above;
+    followed by the immediate zero-argument invocation `()`.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - non-empty IIFE params, invocation with arguments, nested IIFEs
+      (the FN parse accepts only a literal arrow/fn-expr, so a
+      deeper IIFE fails there), IIFEs returning non-functions,
+      async/generator IIFEs (the `async`/`function*` heads fail the
+      subform parses), `new`-invoked or method-style IIFEs, and any
+      other IIFE shape.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    if text.startswith("function", j):
+        k = j + len("function")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F522 functionx IIFE")
+        if k < n and text[k] == "*":
+            raise _JSExprFail("F522 generator IIFE")
+        j = _js_skip_ws(text, k)
+        if j < n and text[j] in _JS_IDENT_START:
+            # Optional name (engine-exact; ignored).
+            _, j = _js_parse_ident(text, j)
+            j = _js_skip_ws(text, j)
+        iife_params, j = _js_parse_fn_params(text, j)
+        if iife_params:
+            raise _JSExprFail("F522 IIFE with params")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "{":
+            raise _JSExprFail("F522 IIFE without brace")
+        j = _js_skip_ws(text, j + 1)
+        rk = _js_match_kw(text, j, "return")
+        if rk is None:
+            raise _JSExprFail("F522 IIFE without return")
+        fn_params, body, j = _js_parse_fn_target(
+            text, _js_skip_ws(text, rk), depth, state)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ";":
+            j = _js_skip_ws(text, j + 1)
+        j = _js_expect(text, j, "}")
+    else:
+        # Arrow IIFE: (() => FN).
+        iife_params, j = _js_parse_fn_params(text, j)
+        if iife_params:
+            raise _JSExprFail("F522 IIFE with params")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail("F522 IIFE arrow without =>")
+        fn_params, body, j = _js_parse_fn_target(
+            text, _js_skip_ws(text, j + 2), depth, state)
+    # Close the IIFE paren, then the immediate zero-arg invocation.
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    state["ops"] += 1  # the IIFE layer is obfuscation-shaped
+    return fn_params, body, j
+
+
 def _js_parse_fn_target(text, j, depth, state):
     """Parse `(p1, p2) => BODY` or `function(p1, p2){return BODY}` at
     text[j] (F519).
@@ -5436,7 +5516,15 @@ def _js_parse_reflect_apply_fn(text, i, depth, state):
     if j >= n or text[j] != "(":
         raise _JSExprFail("Reflect.apply without paren")
     j = _js_skip_ws(text, j + 1)
-    params, body, j = _js_parse_fn_target(text, j, depth, state)
+    try:
+        params, body, j = _js_parse_iife_fn_target(text, j, depth, state)
+    except _JSExprFail:
+        # Not an IIFE-evaluated target (F522) -- fall through to the
+        # literal arrow/fn-expr target (F519). The IIFE parse only
+        # succeeds where the literal parse fails (it requires the
+        # trailing `()` invocation), so no previously-decoded input
+        # changes behavior.
+        params, body, j = _js_parse_fn_target(text, j, depth, state)
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ",":
         raise _JSExprFail("F519 target without thisArg")
@@ -6622,6 +6710,65 @@ def _js_parse_object_keys(text, i, depth, state):
     return _js_parse_postfix(text, j + 1, _JSArr(keys), depth, state)
 
 
+def _js_parse_object_gopn(text, i, depth, state):
+    """Parse `Object.getOwnPropertyNames(OBJ)` /
+    `Object['getOwnPropertyNames'](OBJ)` at text[i] (F525).
+
+    Desugars the key-enumeration indirection: getOwnPropertyNames on
+    a modeled source is engine-identical to the ordered key list
+    (integer indices ascending first, then string keys in insertion
+    order -- the same permutation Object.keys uses; node v24.20.0
+    verified), so the parse continues via _js_parse_postfix over
+    the _JSArr of keys (`.join('')` chains as usual). Sources are the
+    F510/F517 enumeration-source classes (plain literal, integrity
+    wrappers, entries-reduce rebuild), all of whose own properties
+    are enumerable -- on that domain getOwnPropertyNames and
+    Object.keys coincide (the non-enumerable distinction the two
+    builtins have in the engine cannot arise; node-verified).
+    Returns (value, next_index), or None when text[i] is not a
+    getOwnPropertyNames shape (the caller falls through to the
+    entries/assign paths). Once the member commits the parse,
+    malformed shapes fail closed via _JSExprFail.
+    `Object.getOwnPropertySymbols` is unmodeled (out-of-filed-scope,
+    documented boundary). Never evals.
+    """
+    n = len(text)
+    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+        return None
+    if not text.startswith("Object", i):
+        return None
+    j = i + len("Object")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        return None  # Objectx -- fall through
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        # F480: Object['getOwnPropertyNames'] -- bracket-string member
+        # access, engine-identical to the dot form (node v24.20.0
+        # verified).
+        _mname, j = _js_parse_bracket_member(text, j)
+        if _mname != "getOwnPropertyNames":
+            return None  # not getOwnPropertyNames -- fall through
+    elif j < n and text[j] == ".":
+        j = _js_skip_ws(text, j + 1)
+        m = _js_match_kw(text, j, "getOwnPropertyNames")
+        if m is None:
+            return None  # not getOwnPropertyNames -- fall through
+        j = m
+    else:
+        return None
+    # The member commits the parse.
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("getOwnPropertyNames without paren")
+    keys, _, j = _js_parse_enumeration_source(text, j + 1, depth,
+                                              state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("getOwnPropertyNames with extra args")
+    state["ops"] += 1  # the call itself is obfuscation-shaped
+    return _js_parse_postfix(text, j + 1, _JSArr(keys), depth, state)
+
+
 def _js_parse_projection_return(text, i, p):
     """Parse `return P[N];` at text[i] (F517 entries projection).
 
@@ -6762,6 +6909,215 @@ def _js_parse_object_entries(text, i, depth, state):
     state["ops"] += 1  # the entries+map idiom is obfuscation-shaped
     return _js_parse_postfix(text, j, _JSArr(vals if kind == "vals"
                                             else keys), depth, state)
+
+
+    state["ops"] += 1  # the entries+map idiom is obfuscation-shaped
+    return _js_parse_postfix(text, j, _JSArr(vals if kind == "vals"
+                                            else keys), depth, state)
+
+
+def _js_parse_descriptor_value_projection(text, i):
+    """Parse a descriptor-value `.map` callback at text[i] (F525).
+
+    Returns ("vals", next_index). Recognized (node-verified,
+    v24.20.0): `d=>d.value`, `(d)=>d.value`, `d=>{return d.value;}`,
+    `function(d){return d.value;}`. The callback must project its
+    single descriptor parameter's `.value` member -- data-descriptor
+    value access. Anything else (`.writable`, `.get`, bare `d`,
+    other idents, other members, `d['value']`) fails closed -- the
+    engine keeps descriptor objects, which the decoder does not
+    model beyond this projection (the F517 entries discipline).
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if text.startswith("function", j):
+        k = j + len("function")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("bad descriptor projection")
+        k = _js_expect(text, k, "(")
+        p, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        k = _js_expect(text, k, ")")
+        k = _js_expect(text, k, "{")
+        k = _js_skip_ws(text, k)
+        rk = _js_match_kw(text, k, "return")
+        if rk is None:
+            raise _JSExprFail("bad descriptor projection")
+        q, k = _js_parse_ident(text, _js_skip_ws(text, rk))
+        if q != p:
+            raise _JSExprFail("bad descriptor projection")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ".":
+            raise _JSExprFail("bad descriptor projection")
+        m = _js_match_kw(text, _js_skip_ws(text, k + 1), "value")
+        if m is None:
+            raise _JSExprFail("bad descriptor projection")
+        k = _js_skip_ws(text, m)
+        k = _js_expect(text, k, ";")
+        k = _js_expect(text, _js_skip_ws(text, k), "}")
+        return "vals", k
+    if j < n and text[j] == "(":
+        p, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        j = _js_expect(text, j, ")")
+    else:
+        p, j = _js_parse_ident(text, j)
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("bad descriptor projection")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        # Block body: {return d.value;} -- single return, no other
+        # statements (the F448 discipline).
+        j = _js_expect(text, j, "{")
+        j = _js_skip_ws(text, j)
+        rk = _js_match_kw(text, j, "return")
+        if rk is None:
+            raise _JSExprFail("bad descriptor projection")
+        q, j = _js_parse_ident(text, _js_skip_ws(text, rk))
+        if q != p:
+            raise _JSExprFail("bad descriptor projection")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ".":
+            raise _JSExprFail("bad descriptor projection")
+        m = _js_match_kw(text, _js_skip_ws(text, j + 1), "value")
+        if m is None:
+            raise _JSExprFail("bad descriptor projection")
+        j = _js_expect(text, _js_skip_ws(text, m), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        return "vals", j
+    q, j = _js_parse_ident(text, j)
+    if q != p:
+        raise _JSExprFail("bad descriptor projection")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("bad descriptor projection")
+    m = _js_match_kw(text, _js_skip_ws(text, j + 1), "value")
+    if m is None:
+        raise _JSExprFail("bad descriptor projection")
+    return "vals", m
+
+
+def _js_parse_gopds_call(text, j, depth, state):
+    """Parse `Object.getOwnPropertyDescriptors(OBJ)` at the `Object`
+    head (text[j] == 'O') (F525).
+
+    The dot form and the F480 bracket-string form are both accepted
+    (engine-identical, node v24.20.0 verified). Returns (ordered_keys,
+    ordered_values, next_index) of the literal's own properties via
+    _js_parse_enumeration_source -- the modeled sources are plain
+    data-descriptor literals (getters/setters/methods fail closed in
+    the literal parser), so every descriptor's `.value` is exactly
+    the literal value, node-exact. Raises _JSExprFail when text[j]
+    is not a getOwnPropertyDescriptors call (the caller treats that
+    as fall-through, not as a commit). Never evals.
+    """
+    n = len(text)
+    if not text.startswith("Object", j):
+        raise _JSExprFail("not getOwnPropertyDescriptors")
+    k = j + len("Object")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("Objectx is not Object")
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == "[":
+        _mname, k = _js_parse_bracket_member(text, k)
+        if _mname != "getOwnPropertyDescriptors":
+            raise _JSExprFail("not getOwnPropertyDescriptors")
+    elif k < n and text[k] == ".":
+        k = _js_skip_ws(text, k + 1)
+        m = _js_match_kw(text, k, "getOwnPropertyDescriptors")
+        if m is None:
+            raise _JSExprFail("not getOwnPropertyDescriptors")
+        k = m
+    else:
+        raise _JSExprFail("not getOwnPropertyDescriptors")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("getOwnPropertyDescriptors without paren")
+    keys, vals, k = _js_parse_enumeration_source(text, k + 1, depth,
+                                                state)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("getOwnPropertyDescriptors with extra args")
+    return keys, vals, k + 1
+
+
+def _js_parse_object_gopds_values(text, i, depth, state):
+    """Parse `Object.values(Object.getOwnPropertyDescriptors(OBJ))` /
+    `Object['values'](Object['getOwnPropertyDescriptors'](OBJ))`
+    followed by the mandatory `.map(D=>D.value)` at text[i] (F525).
+
+    Desugars the descriptor-value enumeration indirection: on a
+    modeled source, `Object.getOwnPropertyDescriptors` yields one
+    data descriptor per own property in enumeration order, so
+    `Object.values(...)` is the descriptor array in that order and
+    `.map(d=>d.value)` projects each descriptor's value -- the
+    result is engine-identical to the literal's ordered value list
+    (node v24.20.0 verified). The parse continues via
+    _js_parse_postfix over the _JSArr of values (`.join('')` chains
+    as usual). The `.map` projection is mandatory -- a bare
+    `Object.values(Object.getOwnPropertyDescriptors(OBJ))` yields an
+    array of descriptor objects the decoder does not model, so it
+    fails closed rather than mis-decoding (the F517 entries
+    discipline). Returns (value, next_index), or None when text[i]
+    is not this chain (the caller falls through to the plain
+    Object.values path). Once the descriptors member commits the
+    parse, malformed shapes fail closed via _JSExprFail. Never evals.
+    """
+    n = len(text)
+    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+        return None
+    if not text.startswith("Object", i):
+        return None
+    j = i + len("Object")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        return None  # Objectx -- fall through
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        # F480: Object['values'] -- bracket-string member access,
+        # engine-identical to the dot form (node v24.20.0 verified).
+        _mname, j = _js_parse_bracket_member(text, j)
+        if _mname != "values":
+            return None  # not values -- fall through
+    elif j < n and text[j] == ".":
+        j = _js_skip_ws(text, j + 1)
+        m = _js_match_kw(text, j, "values")
+        if m is None:
+            return None  # not values -- fall through
+        j = m
+    else:
+        return None
+    # The `values` member commits the parse.
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("Object.values without paren")
+    j = _js_skip_ws(text, j + 1)
+    try:
+        _, vals, k = _js_parse_gopds_call(text, j, depth, state)
+    except _JSExprFail:
+        # Not the descriptors chain -- fall through to the plain
+        # Object.values path (F510). The descriptors member never
+        # committed, so nothing was mis-parsed.
+        return None
+    j = _js_skip_ws(text, k)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("Object.values with extra args")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("descriptors without map projection")
+    j = _js_skip_ws(text, j + 1)
+    m = _js_match_kw(text, j, "map")
+    if m is None:
+        raise _JSExprFail("descriptors without map projection")
+    j = _js_skip_ws(text, m)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("map projection without paren")
+    _kind, j = _js_parse_descriptor_value_projection(text, j + 1)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("map projection unterminated")
+    j += 1
+    state["ops"] += 1  # the descriptors+map idiom is obfuscation-shaped
+    return _js_parse_postfix(text, j, _JSArr(vals), depth, state)
 
 
 # F478: (receiver-kind, method) pairs the indirect-invocation dispatch may
@@ -11285,19 +11641,35 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         state["ops"] += 1  # the Reflect call is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("Object", i):
+        # F525: Object.values(Object.getOwnPropertyDescriptors(OBJ))
+        # .map(D=>D.value) -- descriptor-value enumeration
+        # indirection. Tried before the plain values path: it matches
+        # the `Object.values(` prefix, and the plain path would commit
+        # and fail closed on the descriptors argument. None falls
+        # through to the plain values path.
+        _gd = _js_parse_object_gopds_values(text, i, depth, state)
+        if _gd is not None:
+            return _gd
         # F510: Object.values(OBJ) / Object['values'](OBJ) -- value
         # enumeration indirection. None falls through to the
-        # assign/getter paths below (which fail closed on `.values`
+        # keys/getter paths below (which fail closed on `.values`
         # as before).
         _ov = _js_parse_object_values(text, i, depth, state)
         if _ov is not None:
             return _ov
         # F517: Object.keys(OBJ) / Object['keys'](OBJ) -- key
         # enumeration indirection. None falls through to the
-        # entries/assign paths below.
+        # gopn/entries paths below.
         _ok = _js_parse_object_keys(text, i, depth, state)
         if _ok is not None:
             return _ok
+        # F525: Object.getOwnPropertyNames(OBJ) /
+        # Object['getOwnPropertyNames'](OBJ) -- key enumeration
+        # indirection. None falls through to the entries/assign paths
+        # below.
+        _gn = _js_parse_object_gopn(text, i, depth, state)
+        if _gn is not None:
+            return _gn
         # F517: Object.entries(OBJ).map(P=>P[0|1]) -- entries
         # indirection with a mandatory projection. None falls through
         # to the assign/getter paths below.

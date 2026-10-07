@@ -335,8 +335,12 @@ def p3_pin_anchor_char_class_only():
     # values (value-enumeration indirection) -- a new member-name
     # alternative, pinned exactly here; the rest of the alternative
     # is unchanged (still no nested quantifiers).
+    # F525 (wave-365 lane 2): the Object dot-member alternative gains
+    # getOwnPropertyNames/getOwnPropertyDescriptors (key/descriptor
+    # enumeration indirection) -- new member-name alternatives, pinned
+    # exactly here; re.compile count unchanged (28).
     return alt.startswith(
-        "Object([ \\t\\n\\r]*\\.[ \\t\\n\\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|values|keys|entries)|"
+        "Object([ \\t\\n\\r]*\\.[ \\t\\n\\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries)|"
         "[ \\t\\n\\r]*\\[[ \\t\\n\\r]*['\\\"])")
 
 

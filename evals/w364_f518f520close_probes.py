@@ -232,7 +232,7 @@ def p6_pin_and_footer():
         if f not in text:
             return ("BREAK", "%s entry missing" % f)
     # Lane-local footer: F518, F520 CLOSED; open F513-F517, F519; next F521.
-    if "Open findings: F521, F522, F523, F524, F525." not in text:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+    if "Open findings: F521, F523, F524." not in text:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526); Wave-365 lane 2: F522, F525 CLOSED
         return ("BREAK", "footer open-list not lane-local")
     if "Next free finding: **F526**" not in text:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
         return ("BREAK", "footer next-free not F521")

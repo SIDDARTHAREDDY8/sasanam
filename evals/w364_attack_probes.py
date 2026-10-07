@@ -129,12 +129,12 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F522-F526 open, next F527 (wave-365 lane 1:
-    F521 CLOSED locally, F526 filed OPEN; merge finalizes tree-wide)."""
+    """Control: footer shows F523, F524, F526 open, next F527 (wave-365 merge:
+    lanes 1-2: F521, F522, F525 CLOSED; F523, F524 pending lane 3)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F527**" in text
-          and "**Open findings: F522, F523, F524, F525, F526.**" in text)  # Wave-365 lane 1: F521 CLOSED; F522-F526 OPEN (next F527)
+          and "**Open findings: F523, F524, F526.**" in text)  # Wave-365 merge lanes 1-2
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -305,10 +305,12 @@ def test_p2_f521_closed():
 
 
 @_t
-def test_p2_f522_open():
-    """F522 OPEN (this round): IIFE-evaluated target still misses."""
-    ms = _misses("Reflect.apply((() => (a,b)=>a+b)(), null, ['%s','%s'])" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f522_closed():
+    """F522 CLOSED (wave-365 lane 2): IIFE-evaluated Reflect.apply target
+    now blocks (coded refusal -- wave-306 class)."""
+    hit = _blocked("Reflect.apply((() => (a,b)=>a+b)(), null, ['%s','%s'])" % (_A, _B))
+    hit2 = _blocked("Reflect.apply((function(){return (a,b)=>a+b})(), null, ['%s','%s'])" % (_A, _B))
+    return ("HELD" if hit and hit2 else "BREAK", "hit=%s hit2=%s" % (hit, hit2))
 
 
 @_t
@@ -326,10 +328,12 @@ def test_p2_f524_open():
 
 
 @_t
-def test_p2_f525_open():
-    """F525 OPEN (this round): getOwnPropertyNames/Descriptors still misses."""
-    ms = _misses("Object.getOwnPropertyNames({'%s':'x','%s':'y'}).join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f525_closed():
+    """F525 CLOSED (wave-365 lane 2): getOwnPropertyNames/Descriptors
+    enumeration now blocks (coded refusal -- wave-306 class)."""
+    hit = _blocked("Object.getOwnPropertyNames({'%s':'x','%s':'y'}).join('')" % (_A, _B))
+    hit2 = _blocked("Object.values(Object.getOwnPropertyDescriptors({0:'%s',1:'%s'})).map(d=>d.value).join('')" % (_A, _B))
+    return ("HELD" if hit and hit2 else "BREAK", "hit=%s hit2=%s" % (hit, hit2))
 
 
 @_t
