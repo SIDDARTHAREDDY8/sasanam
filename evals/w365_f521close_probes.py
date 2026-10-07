@@ -136,14 +136,15 @@ def p1_combos_and_variants():
 def p1_compositions():
     # F506 call/apply indirection still blocks; F513 bind indirection
     # still blocks; F519 literal targets still block; F504 nested keys
-    # intact; F522 (IIFE targets) and F523 (triple-nested) stay OPEN.
+    # intact; F523 (triple-nested) now blocks (lane 3); F522 IIFE-target
+    # .join('') variant is a node TypeError (no credential), still misses honestly.
     cases = [
         ("Function.prototype.apply.call(Reflect.apply, Reflect, [[].concat, [], ['%s','%s']]).join('')" % (_A1, _A2), True),
         ("Reflect.apply.bind(Reflect)([].concat, [], ['%s','%s']).join('')" % (_A1, _A2), True),
         ("Reflect.apply((a,b)=>a+b, null, ['%s','%s'])" % (_A1, _A2), True),  # F519 desugars to a string (no .join)
         ("Reflect[['apply'][0]]([].concat, [], ['%s','%s']).join('')" % (_A1, _A2), True),
         ("Reflect.apply((() => (a,b)=>a+b)(), null, ['%s','%s']).join('')" % (_A1, _A2), False),  # F522 OPEN
-        ("'%s'[[[['concat'][0]]][0]]('%s')" % (_A1, _A2), False),  # F523 OPEN
+        ("'%s'[[[['concat'][0]]][0]]('%s')" % (_A1, _A2), True),  # F523 CLOSED (wave-365 lane 3)
         ("Reflect.apply.call(Reflect, Array.prototype.concat, [], [['%s'],['%s']]).join('')" % (_A1, _A2), False),  # F521 residual: unbound target via call
     ]
     bad = [c for c, want in cases if _verdict(c, want)[0] == "BREAK"]

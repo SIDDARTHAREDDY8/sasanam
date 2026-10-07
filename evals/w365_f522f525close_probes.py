@@ -154,7 +154,8 @@ def p1_f525_variants():
 
 
 def p1_compositions():
-    # Previously-closed behavior unchanged; still-open findings untouched.
+    # Previously-closed behavior unchanged; sibling wave-365 closures
+    # (F521/F523/F524) now block (merge).
     held = [
         # F519 literal targets (independence).
         "Reflect.apply((a,b)=>a+b, null, ['%s','%s'])" % (_A1, _A2),
@@ -170,14 +171,14 @@ def p1_compositions():
         "(function(){return '%s'+'%s'})()" % (_A1, _A2),
         # F496 Reflect.ownKeys dispatch (independence).
         "Array.prototype[Reflect.ownKeys(Array.prototype).filter(k=>k==='concat')[0]].call([], '%s','%s').join('')" % (_A1, _A2),
+        # F521 .bind-bound targets (CLOSED wave-365 lane 1).
+        "Reflect.apply([].concat.bind([], '%s'), null, ['%s']).join('')" % (_A1, _A2),
+        # F523 triple-nested bracket keys (CLOSED wave-365 lane 3).
+        "'%s'[[[['concat'][0]]][0]]('%s')" % (_A1, _A2),
+        # F524 destructured arguments (CLOSED wave-365 lane 3).
+        "(function(){const [a,b]=arguments;return a+b})('%s','%s')" % (_A1, _A2),
     ]
     open_misses = [
-        # F521 still OPEN (.bind-bound function targets).
-        "Reflect.apply([].concat.bind([], '%s'), null, ['%s']).join('')" % (_A1, _A2),
-        # F523 still OPEN (triple-nested bracket keys).
-        "'%s'[[[['concat'][0]]][0]]('%s')" % (_A1, _A2),
-        # F524 still OPEN (destructured arguments).
-        "(function(){const [a,b]=arguments;return a+b})('%s','%s')" % (_A1, _A2),
     ]
     bad = [s for s in held if not _blocked(s)]
     bad += [s for s in open_misses if not _misses(s)]
