@@ -328,10 +328,10 @@ def P2b():
                 encoding="utf-8").read()
     lines = text.splitlines()
     last = lines[-1] if lines else ""
-    if "Next free finding: **F503**" not in last:
+    if "Next free finding: **F506**" not in last:
         _break(pid, "footer does not read next F429")
         return
-    if "Open findings: F496, F497, F498, F499, F500, F501, F502." not in last:
+    if "Open findings: F503, F504, F505." not in last:
         _break(pid, "footer does not read open F428: %r" % (last[:120],))
         return
     import re as _re

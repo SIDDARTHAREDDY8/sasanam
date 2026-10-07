@@ -65,8 +65,8 @@ def _h(cond, ok_note, bad_note):
 
 # ------------------------------------------------- P0 footer state
 
-FOOTER_OPEN = "F496, F497, F498, F499, F500, F501, F502"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)
-FOOTER_NEXT = "F503"
+FOOTER_OPEN = "F503, F504, F505"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)
+FOOTER_NEXT = "F506"
 
 
 @_t

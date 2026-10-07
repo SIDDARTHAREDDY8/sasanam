@@ -67,7 +67,7 @@ Probes:
       shape (subprocess); no new re.compile calls (28); F441
       _decode_layer ordering untouched.
   P4  pin + footer (F498/F499 CLOSED locally; open F496, F497, F500,
-      F501, F502 / next F503).
+      F501, F502 / next F506).
 
 Green check (depth-1): adjacent DLP batteries with GOV_SKIP_GREEN=1
 in the child env.
@@ -88,8 +88,8 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-361 lane 2: F498/F499 closed; no new decision codes
-FOOTER_OPEN = "F496, F497, F500, F501, F502"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-361 lane 2: F498/F499 CLOSED locally (merge finalizes tree-wide)
-FOOTER_NEXT = "F503"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)
+FOOTER_OPEN = "F503, F504, F505"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-361 lane 2: F498/F499 CLOSED locally (merge finalizes tree-wide)
+FOOTER_NEXT = "F506"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)
 
 _A = "xoxb-0123"
 _B = "456789abcdef"
@@ -318,8 +318,8 @@ def p4_pin_and_footer():
     assert TAXONOMY_PIN == 2135
     assert len(TAXONOMY) == 2135
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    assert "Next free finding: **F503**" in text
-    assert "**Open findings: F496, F497, F498, F499, F500, F501, F502.**" in text
+    assert "Next free finding: **F506**" in text
+    assert "**Open findings: F503, F504, F505.**" in text
     return ("HELD", "pin=2135 footer open F496-F502 next F503 (wave-360 merge)")
 
 

@@ -129,8 +129,8 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-361 lane 1: F496, F497 closed; no new decision codes
-FOOTER_OPEN = "F498, F499, F500, F501, F502"  # Wave-361 lane 1: F496, F497 CLOSED locally (merge finalizes tree-wide)
-FOOTER_NEXT = "F503"  # next free after F502
+FOOTER_OPEN = "F503, F504, F505"  # Wave-361 lane 1: F496, F497 CLOSED locally (merge finalizes tree-wide)
+FOOTER_NEXT = "F506"  # next free after F502
 
 # Constructed via concatenation: the write path redacts credential literals.
 # Split to match the red-first batteries: neither fragment alone is

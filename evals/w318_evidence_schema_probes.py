@@ -271,8 +271,8 @@ def p_footer_state():
         text = fh.read()
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
     m_open = re.findall(r"Open findings: ([^.]*)\.", text)
-    ok = (m_next and m_next[-1] == "F503"
-          and m_open and m_open[-1].strip() == "F496, F497, F498, F499, F500, F501, F502")
+    ok = (m_next and m_next[-1] == "F506"
+          and m_open and m_open[-1].strip() == "F503, F504, F505")
     _record("footer-state", "HELD" if ok else "BREAK",
             "open F412 / next F413" if ok else "footer drift")
 

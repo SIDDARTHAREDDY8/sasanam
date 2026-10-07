@@ -121,7 +121,7 @@ Probes:
       new regexes (re.compile count + anchor alternatives);
       F430 budgets; F441 ordering.
   P4  pin + footer (F491/F492/F493 CLOSED locally; open F489, F490,
-      F494, F495 / next F503).
+      F494, F495 / next F506).
 """
 
 import os
@@ -143,8 +143,8 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-360 lane 2: F491/F492/F493 closed; no new decision codes
-FOOTER_OPEN = "F496, F497, F498, F499"  # Wave-361 lane 3: F500, F501, F502 CLOSED locally (merge finalizes tree-wide)  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-360 lane 2: F491/F492/F493 CLOSED locally (merge finalizes tree-wide)
-FOOTER_NEXT = "F503"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)
+FOOTER_OPEN = "F503, F504, F505"  # Wave-361 lane 3: F500, F501, F502 CLOSED locally (merge finalizes tree-wide)  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-360 lane 2: F491/F492/F493 CLOSED locally (merge finalizes tree-wide)
+FOOTER_NEXT = "F506"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)
 
 _A = "xoxb-0123"
 _B = "456789abcdef"
@@ -460,9 +460,9 @@ def p4_pin_and_footer():
     assert TAXONOMY_PIN == 2135
     assert len(TAXONOMY) == 2135
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    assert "Next free finding: **F503**" in text
+    assert "Next free finding: **F506**" in text
     # Wave-361 merge: F496-F502 all CLOSED (lanes 1-3 merged; merge finalizes tree-wide).
-    assert "**Open findings: (none).**" in text
+    assert "**Open findings: F503, F504, F505.**" in text
     return ("HELD", "pin=2135 footer open none next F503 (wave-361 merge)")
 
 

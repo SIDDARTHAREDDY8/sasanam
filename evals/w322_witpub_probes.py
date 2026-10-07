@@ -503,7 +503,7 @@ def _p15b():
     # states and must not match.
     opens = re.findall(r"Open findings: ([A-Za-z0-9, ]*)\.", text)
     nexts = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-    if opens and nexts and opens[-1] == "F496, F497, F498, F499, F500, F501, F502" and nexts[-1] == "F503":
+    if opens and nexts and opens[-1] == "F503, F504, F505" and nexts[-1] == "F506":
         _held("P15-footer-state", "open F444, F445 / next F446")
     else:
         _break("P15-footer-state", "footer=%r next=%r"

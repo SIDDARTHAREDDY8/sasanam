@@ -265,8 +265,8 @@ def test_footer_state():
     with open(path, encoding="utf-8") as f:
         lines = f.read().splitlines()
     last = lines[-1] if lines else ""
-    ok = ("Next free finding: **F503**" in last
-          and "Open findings: F496, F497, F498, F499, F500, F501, F502." in last)
+    ok = ("Next free finding: **F506**" in last
+          and "Open findings: F503, F504, F505." in last)
     return ("HELD" if ok else "BREAK",
             "footer last line: %r" % (last[:120],))
 

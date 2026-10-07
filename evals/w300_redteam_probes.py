@@ -126,8 +126,8 @@ class BaseStateTest(unittest.TestCase):
                 # Wave-303 lane 4 re-pin: F384 CLOSED by this lane.
 # Wave-304 lane A re-pin: F385 CLOSED; lane footer open F386 / next free F387.
         # Wave-303 merge re-pin: open F385,F386 / next free F387.
-        ok = (m_open and m_open[-1].strip() == "F496, F497, F498, F499, F500, F501, F502"
-              and m_next and m_next[-1] == "F503")
+        ok = (m_open and m_open[-1].strip() == "F503, F504, F505"
+              and m_next and m_next[-1] == "F506")
         self.assertTrue(_expect_held(
             "footer-state", ok,
             "open=%r next=%r" % (

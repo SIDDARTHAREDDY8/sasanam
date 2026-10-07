@@ -119,8 +119,8 @@ def test_b0_footer_state():
     (wave-361 merge: lanes 1-3 merged; attack lane finalizes tree-wide)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F503**" in text
-          and "**Open findings: (none).**" in text)
+    ok = ("Next free finding: **F506**" in text
+          and "**Open findings: F503, F504, F505.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

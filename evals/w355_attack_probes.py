@@ -117,8 +117,8 @@ def test_b0_footer_state():
     F480, F481 CLOSED; F482-F488 filed OPEN)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F503**" in text  # Wave-357 merge: F480 filed
-          and "**Open findings: F496, F497, F498, F499, F500, F501, F502.**" in text)  # Wave-357 merge: F478, F479 CLOSED
+    ok = ("Next free finding: **F506**" in text  # Wave-357 merge: F480 filed
+          and "**Open findings: F503, F504, F505.**" in text)  # Wave-357 merge: F478, F479 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

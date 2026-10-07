@@ -281,7 +281,7 @@ def _green_check():
             except (IndexError, ValueError):
                 pass
     # The w360 battery's footer pin is stale by design: this lane filed
-    # F503-F505, so its expected footer (open F496-F502 / next F503) no
+    # F503-F505, so its expected footer (open F496-F502 / next F506) no
     # longer matches. Merge-time repoint (wave-305/306 class). Tolerated.
     real_break -= footer_break
     ok = real_break == 0
