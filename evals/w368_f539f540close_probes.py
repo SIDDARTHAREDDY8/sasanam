@@ -222,10 +222,10 @@ FOOTER_OPEN = (  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed
                "F547", "F548", "F549", "F550",
                "F551", "F552", "F553", "F554",
                "F555", "F556", "F557", "F558",
-               "F559", "F560", "F561", "F562",
-               "F563", "F564", "F565", "F566",
+               "F559", "F561",
+               "F564", "F565", "F566",
                "F567", "F568", "F569"
-               )  # Wave-368 lane 2 local
+               )  # Wave-368 lane 2 local; Wave-369 lane 6 local: F560/F562/F563 CLOSED
 FOOTER_NEXT = "F570"  # Wave-368 lane 2 local  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
 
 

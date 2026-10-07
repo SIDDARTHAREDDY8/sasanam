@@ -2109,7 +2109,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|groupBy)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|Map[ \t\n\r]*\.[ \t\n\r]*groupBy(?![_$A-Za-z0-9])|new[ \t\n\r]+Map(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|\(")
 # F536: the structuredClone anchor carries its own ident-boundary
 # lookahead so `structuredClonex(` never anchors (no wasted F512
 # total-attempt budget); the primary branch re-checks the boundary
@@ -8572,6 +8572,23 @@ class _JSObj:
         self.props = props
 
 
+class _JSMap:
+    """Statically-resolved Map (F562/F563).
+
+    entries maps ("s", key) / ("n", key) -> value, preserving
+    insertion order with later-wins on duplicate keys (node-exact
+    SameValueZero: '1' and 1 are DISTINCT keys in a Map). Values
+    are str, _JSArr, or _JSObj. A resolved map only flows through
+    the _JSMap branch of _js_parse_postfix (.get); any
+    other use fails closed (it never reaches the additive, so it
+    can never be mis-decoded as a string).
+    """
+    __slots__ = ("entries",)
+
+    def __init__(self, entries):
+        self.entries = entries
+
+
 def _js_f535_deepcopy(props):
     """Rebuild a resolved property map as fresh nested structures
     (F536): the structuredClone deep-copy identity. Strings are
@@ -11303,6 +11320,46 @@ def _js_split_destructure_var_decl(stmts):
     return names, list(range(len(names))), body_expr
 
 
+def _js_skip_directive_prologue(stmts, state):
+    """Skip a leading directive prologue in *stmts* (F560).
+
+    Returns the index just past the run of directive statements at
+    the start of an IIFE body text: `'...';` / `"...";` expression
+    statements (a string literal terminated by `;`, or by a line
+    terminator via ASI -- node treats `'use strict'\\n` as a
+    directive, v24.20.0 verified). Only ' and " literals count: a
+    backtick statement is not a directive in the engine (and is
+    inert anyway -- it is not skipped here, fail closed). Two
+    adjacent strings with no terminator are a syntax error in the
+    engine -- the skip stops (fail closed). The skip ends at the
+    first non-directive statement, so directives mid-body are never
+    skipped (fail closed, documented). Each skipped directive
+    charges one part (F452 discipline: fail-closed matches consume
+    scan budget). Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, 0)
+    while j < n and stmts[j] in "'\"":
+        try:
+            _, k = _js_parse_string(stmts, j)
+        except _JSExprFail:
+            return j
+        k2 = _js_skip_ws(stmts, k)
+        if k2 < n and stmts[k2] == ";":
+            j = _js_skip_ws(stmts, k2 + 1)
+        elif (any(c in "\n\r\u2028\u2029" for c in stmts[k:k2])
+              or (k2 < n and stmts[k2] in "\u2028\u2029")):
+            # ASI: a line terminator between the string literal and
+            # the next token terminates the directive statement.
+            j = k2
+        else:
+            return j
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many directives")
+    return j
+
+
 def _js_parse_args_laundered_iife(text, i, depth, state):
     """Parse `(function(){var A=SRC;return BODY})(lit, ...)` or
     `(function(...A){return BODY})(lit, ...)` at text[i] (F516).
@@ -11353,6 +11410,12 @@ def _js_parse_args_laundered_iife(text, i, depth, state):
         j = _js_expect(text, brace, "{")
         inner_start, inner_end, j = _js_span_braced(text, brace)
         stmts = text[inner_start:inner_end]
+        # F560: skip a leading directive prologue
+        # ('use strict'; ...) before matching the binding
+        # declaration (node-exact: directives are inert
+        # string-literal statements at body start; anything
+        # else fails closed as before).
+        stmts = stmts[_js_skip_directive_prologue(stmts, state):]
         member_ok = alias is not None  # rest param: a real Array
         if alias is None:
             try:
@@ -11789,6 +11852,12 @@ def _js_parse_args_forof_iife(text, i, depth, state):
         j = _js_expect(text, brace, "{")
         inner_start, inner_end, j = _js_span_braced(text, brace)
         stmts = text[inner_start:inner_end]
+        # F560: skip a leading directive prologue
+        # ('use strict'; ...) before matching the binding
+        # declaration (node-exact: directives are inert
+        # string-literal statements at body start; anything
+        # else fails closed as before).
+        stmts = stmts[_js_skip_directive_prologue(stmts, state):]
         sj = _js_skip_ws(stmts, 0)
         _kw, m = _js_match_decl_kw(stmts, sj)
         if m is None:
@@ -12089,6 +12158,12 @@ def _js_parse_args_entries_values_iife(text, i, depth, state):
         j = _js_expect(text, brace, "{")
         inner_start, inner_end, j = _js_span_braced(text, brace)
         stmts = text[inner_start:inner_end]
+        # F560: skip a leading directive prologue
+        # ('use strict'; ...) before matching the binding
+        # declaration (node-exact: directives are inert
+        # string-literal statements at body start; anything
+        # else fails closed as before).
+        stmts = stmts[_js_skip_directive_prologue(stmts, state):]
         sj = _js_skip_ws(stmts, 0)
         _kw, m = _js_match_decl_kw(stmts, sj)
         if m is None:
@@ -12229,6 +12304,12 @@ def _js_parse_args_enumerated_iife(text, i, depth, state):
         j = _js_expect(text, brace, "{")
         inner_start, inner_end, j = _js_span_braced(text, brace)
         stmts = text[inner_start:inner_end]
+        # F560: skip a leading directive prologue
+        # ('use strict'; ...) before matching the binding
+        # declaration (node-exact: directives are inert
+        # string-literal statements at body start; anything
+        # else fails closed as before).
+        stmts = stmts[_js_skip_directive_prologue(stmts, state):]
         sj = _js_skip_ws(stmts, 0)
         _kw, m = _js_match_decl_kw(stmts, sj)
         if m is None:
@@ -12514,6 +12595,227 @@ def _js_parse_forin_accum_iife(text, i, depth, state):
         return val, j
     except _JSExprFail:
         return None
+
+
+def _js_parse_f562_params(text, j):
+    """Parse 0-3 identifier params at text[j] (F562).
+
+    Returns (params, next_index); the caller expects `)` or `=>`
+    after. Never evals.
+    """
+    params = []
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ")":
+        return params, j
+    while True:
+        p, j = _js_parse_ident(text, j)
+        params.append(p)
+        if len(params) > 3:
+            raise _JSExprFail("groupBy too many params")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            continue
+        return params, j
+
+
+def _js_parse_f562_result_expr(text, j, params):
+    """Parse a groupBy callback result expression at text[j] (F562).
+
+    Returns ("identity", None, next) when the expression is the
+    callback's first parameter, or ("literal", key, next) when it
+    is a string literal. Anything else fails closed. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        val, j = _js_parse_string(text, j)
+        return "literal", val, j
+    name, j = _js_parse_ident(text, j)
+    if params and name == params[0]:
+        return "identity", None, j
+    raise _JSExprFail("groupBy callback not identity/literal")
+
+
+def _js_parse_f562_return_body(text, j, params):
+    """Parse `{ return EXPR; }` of a groupBy callback (F562).
+
+    text[j] is just after `{`. Returns ((kind, payload),
+    next_index_after_}). Never evals.
+    """
+    n = len(text)
+    rk = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if rk is None:
+        raise _JSExprFail("groupBy callback not a return")
+    kind, payload, rj = _js_parse_f562_result_expr(text, rk, params)
+    rj = _js_skip_ws(text, rj)
+    if rj < n and text[rj] == ";":
+        rj += 1
+    rj = _js_expect(text, rj, "}")
+    return (kind, payload), rj
+
+
+def _js_parse_f562_groupby_callback(text, j, state):
+    """Parse a groupBy callback at text[j] (F562).
+
+    Recognized (node-verified, v24.20.0): `x=>x`, `(x)=>x`,
+    `x=>{return x;}`, `(x)=>{return x;}`, `function(x){return x;}`
+    (identity -- the callback returns its first parameter), and
+    `()=>\'k\'`, `(x)=>\'k\'`, `x=>{return \'k\';}`,
+    `function(){return \'k\';}` (literal -- the callback returns
+    a string literal regardless of parameters). 0-3 identifier
+    params, ws-tolerant. Returns (kind, payload, next_index) where
+    kind is "identity" (payload None) or "literal" (payload the key
+    string). Anything else fails closed (documented boundary).
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "function")
+    if m is not None:
+        j = _js_skip_ws(text, m)
+        j = _js_expect(text, j, "(")
+        params, j = _js_parse_f562_params(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "{")
+        (kind, payload), j = _js_parse_f562_return_body(text, j,
+                                                        params)
+    else:
+        if j < n and text[j] == "(":
+            params, j = _js_parse_f562_params(text, j + 1)
+            j = _js_expect(text, j, ")")
+        else:
+            p, j = _js_parse_ident(text, j)
+            params = [p]
+        j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail("groupBy callback without =>")
+        j = _js_skip_ws(text, j + 2)
+        if j < n and text[j] == "{":
+            (kind, payload), j = _js_parse_f562_return_body(
+                text, j + 1, params)
+        else:
+            kind, payload, j = _js_parse_f562_result_expr(text, j,
+                                                         params)
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return kind, payload, j
+
+
+def _js_parse_f562_groupby(text, i, depth, state, recv):
+    """Parse `Object.groupBy(LITARR, CB)` / `Map.groupBy(LITARR, CB)` (F562).
+
+    Desugars the ES2024 grouping builtins node-exactly (v24.20.0):
+    each element of the literal array is grouped under
+    ToPropertyKey(CB(element, index, array)); the callback is the
+    F562 identity-or-literal class (parsed by
+    _js_parse_f562_groupby_callback). Elements must be plain string
+    literals -- numeric, nested, or marker elements fail closed
+    (documented boundary). Object.groupBy returns a null-prototype
+    object of arrays (modeled as a _JSObj of _JSArr -- member reads
+    route through the _JSObj postfix branch); Map.groupBy returns
+    a Map of key -> array (modeled as a _JSMap -- .get resolves
+    through the _JSMap postfix branch). Elements were parts-charged
+    at the array parse. Returns (value, next_index), or None when
+    text[i] is not a groupBy head (the caller falls through). Once
+    the `groupBy` member commits the parse, malformed shapes fail
+    closed via _JSExprFail. Never evals.
+    """
+    n = len(text)
+    j = i + len(recv)
+    if j < n and text[j] in _JS_IDENT_CONT:
+        return None  # e.g. Objectx / Mapx -- not the builtin
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        return None
+    j = _js_skip_ws(text, j + 1)
+    m = _js_match_kw(text, j, "groupBy")
+    if m is None:
+        return None
+    # The groupBy member commits the parse: malformed shapes fail
+    # closed.
+    j = _js_expect(text, m, "(")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("groupBy arg not an array literal")
+    arr, j = _js_parse_array(text, j, depth, state)
+    elems = []
+    for e in arr.elements:
+        if not isinstance(e, str) or isinstance(e, _JSNumStr):
+            raise _JSExprFail("groupBy element not a string literal")
+        elems.append(e)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ",")
+    kind, payload, j = _js_parse_f562_groupby_callback(text, j, state)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    groups = {}
+    order = []
+    for e in elems:
+        key = e if kind == "identity" else payload
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(e)
+    if recv == "Object":
+        return _JSObj({k: _JSArr(groups[k]) for k in order}), j
+    return _JSMap({("s", k): _JSArr(groups[k]) for k in order}), j
+
+
+def _js_parse_f563_map(text, i, depth, state):
+    """Parse `new Map(LITENTRIES)` at text[i] (F563).
+
+    Desugars literal map construction node-exactly (v24.20.0):
+    LITENTRIES is `[K, V], ...` pairs; keys are string literals or
+    canonical numeric literals (a Map keeps 1 and '1' as DISTINCT
+    keys -- SameValueZero -- so the entry dict is keyed ("s", key)
+    / ("n", key)); values are string literals. Later entries win
+    on duplicate keys (node-exact). The value is a _JSMap;
+    `.get('lit')` resolves through the _JSMap postfix branch (a
+    missing key fails closed -- the decoder never decodes
+    `undefined`). `new Map()` is the empty map. Non-literal
+    entries fail closed (documented boundary). Returns (_JSMap,
+    next_index), or None when text[i] is not a `new Map` head (the
+    caller falls through, failing closed on `new` as before).
+    Never evals.
+    """
+    n = len(text)
+    j = _js_match_kw(text, i, "new")
+    if j is None:
+        return None
+    j = _js_match_kw(text, _js_skip_ws(text, j), "Map")
+    if j is None:
+        return None
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        return None  # `new Map` without call -- not a value here
+    j = _js_skip_ws(text, j + 1)
+    entries = {}
+    if j < n and text[j] == ")":
+        return _JSMap(entries), j + 1
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("Map arg not an array literal")
+    outer, j = _js_parse_array(text, j, depth, state)
+    for p in outer.elements:
+        if not isinstance(p, _JSArr) or len(p.elements) != 2:
+            raise _JSExprFail("Map entry not a [k,v] pair")
+        k, v = p.elements
+        if isinstance(k, str) and not isinstance(k, _JSNumStr):
+            kid = ("s", k)
+        elif isinstance(k, _JSNumStr):
+            kid = ("n", str(k))
+        else:
+            raise _JSExprFail("Map key not a literal")
+        if not isinstance(v, str) or isinstance(v, _JSNumStr):
+            raise _JSExprFail("Map value not a string literal")
+        entries[kid] = v  # later wins, node-exact
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    return _JSMap(entries), j
+
 
 
 # Object integrity-level wrappers that return their argument unchanged (the
@@ -14974,6 +15276,52 @@ def _js_parse_postfix(text, i, value, depth, state):
             state["ops"] += 1  # the member read is obfuscation-shaped
             value, i = value.props[_mname], _mk
             continue
+        # F562/F563: `.get('lit')` on a statically-resolved Map.
+        # get resolves the literal key (a missing key fails closed --
+        # the decoder never decodes `undefined`). Any other member
+        # fails closed (`.values()` returns a Map Iterator in the
+        # engine, not an array -- modeling it would mis-decode;
+        # the F494 spread path handles `[...new Map(...).values()]`
+        # directly, unchanged).
+        if isinstance(value, _JSMap):
+            if text[j] == ".":
+                _mk = _js_skip_ws(text, j + 1)
+                try:
+                    _mname, _mk = _js_parse_ident(text, _mk)
+                except _JSExprFail:
+                    raise _JSExprFail("map dot member not an ident")
+            elif text[j] == "[":
+                try:
+                    _mname, _mk = _js_parse_bracket_member(text, j)
+                except _JSExprFail:
+                    raise _JSExprFail("map bracket member not a literal")
+            else:
+                raise _JSExprFail("map needs .get")
+            if _mname == "get":
+                _gk = _js_skip_ws(text, _mk)
+                if _gk >= len(text) or text[_gk] != "(":
+                    raise _JSExprFail("map get without paren")
+                _gk = _js_skip_ws(text, _gk + 1)
+                if _gk < len(text) and text[_gk] in "'\"":
+                    _gkey, _gk = _js_parse_string(text, _gk)
+                    _kid = ("s", _gkey)
+                else:
+                    _g0 = _gk
+                    while _gk < len(text) and text[_gk] in _ASCII_DIGITS:
+                        _gk += 1
+                    if _gk == _g0 or (_gk < len(text)
+                                     and text[_gk] in _JS_IDENT_CONT):
+                        raise _JSExprFail("map get key not a literal")
+                    _kid = ("n", text[_g0:_gk])
+                _gk = _js_skip_ws(text, _gk)
+                if _gk >= len(text) or text[_gk] != ")":
+                    raise _JSExprFail("map get unterminated")
+                if _kid not in value.entries:
+                    raise _JSExprFail("map get missing key")
+                state["ops"] += 1  # the get is obfuscation-shaped
+                value, i = value.entries[_kid], _gk + 1
+                continue
+            raise _JSExprFail("map member not modeled")
         # F490: a step on a method reference -- dispatch it
         # (./?./bracket call/apply/bind) or apply the factory `(args)`.
         # None returns the bare reference; upstream fails closed via
@@ -15628,6 +15976,13 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         state["ops"] += 1  # the WeakRef indirection is
                            # obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
+    # F563: new Map(LITENTRIES) -- literal map construction. None
+    # falls through (fails closed on `new` as before).
+    _f563 = _js_parse_f563_map(text, i, depth, state)
+    if _f563 is not None:
+        val, i = _f563
+        state["ops"] += 1  # the Map construction is obfuscation-shaped
+        return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("Object", i):
         # F525: Object.values(Object.getOwnPropertyDescriptors(OBJ))
         # .map(D=>D.value) -- descriptor-value enumeration
@@ -15700,6 +16055,14 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                          depth, state)
             # callee without a call paren -- fall through (fails
             # closed: not a decodable shape)
+        # F562: Object.groupBy(LITARR, CB) -- grouping builtin;
+        # the result is a null-prototype object of arrays, modeled as
+        # a _JSObj of _JSArr. None falls through.
+        _f562 = _js_parse_f562_groupby(text, i, depth, state, "Object")
+        if _f562 is not None:
+            val, i = _f562
+            state["ops"] += 1  # the groupBy call is obfuscation-shaped
+            return _js_parse_postfix(text, i, val, depth, state)
         # F539: Object.assign({}, OBJLIT, ...) / Object.freeze(OBJLIT)
         # -- identity-preserving builtins on parsed object literals.
         # None falls through to the F471 array-copy factory (which
@@ -15716,6 +16079,16 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         val, i = _js_parse_object_assign(text, i, depth, state)
         state["ops"] += 1  # the assign call is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
+    if text.startswith("Map", i):
+        # F562: Map.groupBy(LITARR, CB) -- grouping builtin; the
+        # result is a Map of key -> array, modeled as a _JSMap.
+        # None falls through (Mapx fails closed via the
+        # ident-boundary check inside).
+        _f562m = _js_parse_f562_groupby(text, i, depth, state, "Map")
+        if _f562m is not None:
+            val, i = _f562m
+            state["ops"] += 1  # the groupBy call is obfuscation-shaped
+            return _js_parse_postfix(text, i, val, depth, state)
     if c in _ASCII_DIGITS:
         n = len(text)
         if text.startswith(("0x", "0X"), i):
