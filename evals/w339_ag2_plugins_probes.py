@@ -505,8 +505,9 @@ def run_p3_probes():
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
-    if "Open findings: F521, F522, F523, F524, F525." in text \
-            and "Next free finding: **F526**" in text:  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+    # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531) (applies to assertion below)
+    if "Open findings: F526, F527, F528, F529, F530." in text \
+            and "Next free finding: **F531**" in text:  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
         _held("P3b", "footer open none / next F430")
     else:
         _break("P3b", "footer text mismatch")

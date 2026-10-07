@@ -892,30 +892,30 @@ def _p8():
 # P9: regressions -- footer, pin
 # ---------------------------------------------------------------------------
 
-@probe("P9-footer-open-F429-next-F430")
+@probe("P9-footer-open-F526-F530-next-F531")
 def _p9_footer():
     import re as _re
     try:
         text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                     encoding="utf-8").read()
     except Exception as exc:  # noqa: BLE001
-        return _error("P9-footer-open-F429-next-F430", "%r" % (exc,))
+        return _error("P9-footer-open-F526-F530-next-F531", "%r" % (exc,))
     m = list(_re.finditer(
         r"Next free finding: \*\*F(\d+)\*\*\. \*\*Open findings: ([^*]*)\*\*",
         text))
     if not m:
-        return _error("P9-footer-open-f433-f434-f435-next-f436",
+        return _error("P9-footer-open-f526-f530-next-f531",
                       "no footer line found")
     last = m[-1]
     nxt, opens = last.group(1), last.group(2)
-    if nxt != "436" or opens.strip().lower().rstrip(".") != "f433, f434, f435":
-        return _break("P9-footer-open-f433-f434-f435-next-f436",
-                      "footer pins next=%s open=%s (want 430 / F429)"
+    if nxt != "531" or opens.strip().lower().rstrip(".") != "f526, f527, f528, f529, f530":  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+        return _break("P9-footer-open-f526-f530-next-f531",
+                      "footer pins next=%s open=%s (want 531 / F526-F530)"
                       % (nxt, opens))
     if "## F407" not in text:
-        return _break("P9-footer-open-f433-f434-f435-next-f436",
+        return _break("P9-footer-open-f526-f530-next-f531",
                       "F407 entry missing from FINDINGS.md")
-    return _held("P9-footer-open-f433-f434-f435-next-f436",
+    return _held("P9-footer-open-f526-f530-next-f531",
                  "footer pins open F521, F522, F523, F524, F525 / next F526")  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
 
 

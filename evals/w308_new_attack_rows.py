@@ -547,10 +547,10 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    want_open = "F521, F522, F523, F524, F525"  # wave-316: F398/F399/F400 OPEN (wave-315  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+    want_open = "F526, F527, F528, F529, F530"  # wave-316: F398/F399/F400 OPEN (wave-315  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
     # Wave-342 lane 6: repointed to open F429 / next F430 (footer-state probe audit).
     # merge footer); F393-F397 all CLOSED.
-    if nxt != 526 or open_s != want_open:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+    if nxt != 531 or open_s != want_open:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next 430 open 'F429')"
                        % (nxt, open_s))

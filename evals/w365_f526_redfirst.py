@@ -36,8 +36,8 @@ SHAPES = [
 ]
 
 CONTROLS = [
-    ("f521-single-bind-open",  # F521 OPEN (filed wave-364 lane 5) -- still misses
-     "Reflect.apply([].concat.bind([], '%s'), null, ['%s']).join('')" % (A1, A2), False),
+    ("f521-single-bind-closed",  # F521 CLOSED (wave-365 lane 1) -- now blocks coded
+     "Reflect.apply([].concat.bind([], '%s'), null, ['%s']).join('')" % (A1, A2), True),
     ("f469-concat-target-held",  # F469 CLOSED
      "Reflect.apply(Array.prototype.concat,[],[['%s'],['%s']]).join('')" % (A1, A2), True),
     ("junk-quiet",

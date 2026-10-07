@@ -141,7 +141,7 @@ def p0():
         _held("P0a", "taxonomy 2135/2135/0 sorted-unique literals")
     footer = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                   encoding="utf-8").read()
-    want = "Next free finding: **F526**. **Open findings: F506, F507, F508, F509, F510, F511.**"  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+    want = "Next free finding: **F531**. **Open findings: F526, F527, F528, F529, F530.**"  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
     if want in footer:
         _held("P0b", "footer open F444, F445 / next F446")
     else:

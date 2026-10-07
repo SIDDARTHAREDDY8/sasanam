@@ -311,8 +311,8 @@ def p_footer_state():
     m_open = re.findall(r"Open findings: ([^.]*)", text)
     # Footer lines repeat through history; the LAST one is current.
     # Wave-359 merge: F482-F488 CLOSED; F489-F495 OPEN; next F496.
-    ok = (m_next and m_next[-1] == "F526"  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
-          and m_open and m_open[-1].strip() == "F521, F522, F523, F524, F525")  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+    ok = (m_next and m_next[-1] == "F531"  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+          and m_open and m_open[-1].strip() == "F526, F527, F528, F529, F530")  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
     _record("footer-state", "HELD" if ok else "BREAK",
             "open F412 / next F413" if ok else "footer drift")
 

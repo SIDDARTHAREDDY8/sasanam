@@ -449,8 +449,8 @@ def p20():
         return ("ERROR", "footer line unparseable")
     nxt = int(m.group(1))
     open_s = opens.group(1).strip()
-    if nxt == 526 and open_s == "F521, F522, F523, F524, F525":  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
-        return _held("footer pins open F521, F522, F523, F524, F525 / next F526")  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+    if nxt == 531 and open_s == "F526, F527, F528, F529, F530":  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+        return _held("footer pins open F526, F527, F528, F529, F530 / next F531")  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
     return _break("footer is F%d / %s" % (nxt, open_s))
 
 

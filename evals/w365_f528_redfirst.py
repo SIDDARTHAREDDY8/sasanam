@@ -33,8 +33,8 @@ SHAPES = [
 ]
 
 CONTROLS = [
-    ("f522-expr-iife-open",  # F522 OPEN (filed wave-364 lane 5) -- still misses
-     "Reflect.apply((() => (a,b)=>a+b)(), null, ['%s','%s'])" % (A1, A2), False),
+    ("f522-expr-iife-closed",  # F522 CLOSED (wave-365 lane 2) -- now blocks coded
+     "Reflect.apply((() => (a,b)=>a+b)(), null, ['%s','%s'])" % (A1, A2), True),
     ("f519-literal-target-held",  # F519 CLOSED wave-364 lane 1
      "Reflect.apply((a,b)=>a+b, null, ['%s','%s'])" % (A1, A2), True),
     ("junk-quiet",

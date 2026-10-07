@@ -799,9 +799,9 @@ def _p4b():
         text = fh.read()
     lines = [ln for ln in text.split("\n") if "Next free finding:" in ln]
     line = lines[-1] if lines else ""
-    ok = ("**F430**" in line and "Open findings: F521, F522, F523, F524, F525." in line)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+    ok = ("**F531**" in line and "Open findings: F526, F527, F528, F529, F530." in line)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
     if ok:
-        return _held("P4-footer-state", "open F436 / next F437")
+        return _held("P4-footer-state", "open F526-F530 / next F531")
     return _break("P4-footer-state", "footer line: %r" % (line[:120],))
 
 

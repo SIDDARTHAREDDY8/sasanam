@@ -442,8 +442,8 @@ def footer_state():
     # This lane files no findings. Footer lines repeat through history;
     # the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F526**" in text  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
-          and "**Open findings: F521, F522, F523, F524, F525.**" in text)  # Wave-360 merge: F489-F495 CLOSED; F496-F502 OPEN; next F503.; Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+    ok = ("Next free finding: **F531**" in text  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+          and "**Open findings: F526, F527, F528, F529, F530.**" in text)  # Wave-360 merge: F489-F495 CLOSED; F496-F502 OPEN; next F503.; Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
     if ok:
         _record("footer-state", "HELD", "footer: open F436 / next F437")
     else:

@@ -182,12 +182,12 @@ def p3_footer():
     except OSError:
         return "ERROR", "P3", "FINDINGS.md unreadable"
     lines = text.splitlines()
-    last = lines[-1] if lines else ""
-    if "Next free finding: **F526**" not in last:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+    last = ([ln for ln in lines if "Next free finding:" in ln] or [""])[-1]  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531) (footer is not the last line; entries follow)
+    if "Next free finding: **F531**" not in last:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
         return "BREAK", "P3", "footer next-free is not F521"
-    if not re.search(r"\*\*Open findings: F521, F522, F523, F524, F525\.\*\*", last):  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+    if not re.search(r"\*\*Open findings: F526, F527, F528, F529, F530\.\*\*", last):  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
         return "BREAK", "P3", "footer open findings is not F513-F520"
-    return "HELD", "P3", "footer open F513-F520 / next F521"
+    return "HELD", "P3", "footer open F526-F530 / next F531"
 
 
 def p4_orphan_module_fails():

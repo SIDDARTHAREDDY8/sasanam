@@ -655,7 +655,8 @@ def _p18():
                 encoding="utf-8").read()
     # Wave-336 lane 1: repaired stale F412/F413-era assertion.
     # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
-    assert "Next free finding: **F526**. **Open findings: F506, F507, F508, F509, F510, F511.**" in text, \
+    # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531) (applies to assertion below)
+    assert "Next free finding: **F531**. **Open findings: F526, F527, F528, F529, F530.**" in text, \
         "footer mismatch"
     _held("P18-footer-state", "open F444, F445 / next F446")
 

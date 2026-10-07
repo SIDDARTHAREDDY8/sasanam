@@ -97,9 +97,9 @@ def test_p0_pin_taxonomy():
 def test_p1_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     with open(path) as f:
-        last = "".join(f.readlines()[-3:])
-    ok = ("Next free finding: **F526**" in last  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
-          and "Open findings: F521, F522, F523, F524, F525." in last)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+        last = ([ln for ln in f.read().splitlines() if "Next free finding:" in ln] or [""])[-1]  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531) (footer is not the last line; entries follow)
+    ok = ("Next free finding: **F531**" in last  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+          and "Open findings: F526, F527, F528, F529, F530." in last)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
     return ("HELD" if ok else "BREAK",
             "footer must read open F436 / next F437")
 

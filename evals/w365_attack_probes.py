@@ -132,11 +132,12 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F521-F529 open, next F530 (wave-365 lane 5)."""
+    """Control: footer shows F526-F530 open, next F531 (wave-365 merge:
+    F521-F525 CLOSED lanes 1-3; F526-F529 OPEN attack round 33; F530 OPEN lane 1 renumbered)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F530**" in text
-          and "**Open findings: F521, F522, F523, F524, F525, F526, F527, F528, F529.**" in text)  # Wave-365 merge: F521-F529 filed OPEN (next F530)
+    ok = ("Next free finding: **F531**" in text
+          and "**Open findings: F526, F527, F528, F529, F530.**" in text)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 OPEN (next F531)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -246,38 +247,38 @@ def test_p1_f512_closed():
 # ------------------------------------------------- open pins (must miss)
 
 @_t
-def test_p2_f521_open():
-    """F521 OPEN (round 32): .bind-bound target still misses."""
-    ms = _misses("Reflect.apply([].concat.bind([], '%s'), null, ['%s']).join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f521_closed():
+    """F521 CLOSED (wave-365 lane 1): .bind-bound target now blocks coded."""
+    hit = _blocked("Reflect.apply([].concat.bind([], '%s'), null, ['%s']).join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_p2_f522_open():
-    """F522 OPEN (round 32): IIFE-evaluated target still misses."""
-    ms = _misses("Reflect.apply((() => (a,b)=>a+b)(), null, ['%s','%s'])" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f522_closed():
+    """F522 CLOSED (wave-365 lane 2): IIFE-evaluated target now blocks coded."""
+    hit = _blocked("Reflect.apply((() => (a,b)=>a+b)(), null, ['%s','%s'])" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_p2_f523_open():
-    """F523 OPEN (round 32): triple-nested bracket key still misses."""
-    ms = _misses("'%s'[[[['concat'][0]]][0]]('%s')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f523_closed():
+    """F523 CLOSED (wave-365 lane 3): triple-nested bracket key now blocks coded."""
+    hit = _blocked("'%s'[[[['concat'][0]]][0]]('%s')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_p2_f524_open():
-    """F524 OPEN (round 32): destructured arguments still misses."""
-    ms = _misses("(function(){const [a,b]=arguments;return a+b})('%s','%s')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f524_closed():
+    """F524 CLOSED (wave-365 lane 3): destructured arguments now block coded."""
+    hit = _blocked("(function(){const [a,b]=arguments;return a+b})('%s','%s')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_p2_f525_open():
-    """F525 OPEN (round 32): getOwnPropertyNames still misses."""
-    ms = _misses("Object.getOwnPropertyNames({'%s':'x','%s':'y'}).join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f525_closed():
+    """F525 CLOSED (wave-365 lane 2): getOwnPropertyNames now blocks coded."""
+    hit = _blocked("Object.getOwnPropertyNames({'%s':'x','%s':'y'}).join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t

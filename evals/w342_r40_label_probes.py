@@ -380,11 +380,11 @@ def test_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     with open(path, encoding="utf-8") as f:
         lines = f.read().splitlines()
-    last = lines[-1] if lines else ""
-    ok = ("Next free finding: **F526**" in last  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
-          and "Open findings: F521, F522, F523, F524, F525." in last)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+    footer = ([ln for ln in lines if "Next free finding:" in ln] or [""])[-1]  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531) (footer is not the last line; entries follow)
+    ok = ("Next free finding: **F531**" in footer  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+          and "Open findings: F526, F527, F528, F529, F530." in footer)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
     return ("HELD" if ok else "BREAK",
-            "footer: %r" % last[:80])
+            "footer: %r" % footer[:80])
 
 
 TESTS = [test_m1_combine_never_ascends,

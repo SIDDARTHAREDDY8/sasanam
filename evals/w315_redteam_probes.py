@@ -911,7 +911,7 @@ def _pin():
 
 
 
-@probe("footer-open-f433-f434-f435-next-f436")
+@probe("footer-open-f526-f530-next-f531")
 def _footer():
     path = os.path.join(REPO, "evals", "FINDINGS.md")
     text = open(path).read()
@@ -920,16 +920,16 @@ def _footer():
         r"Next free finding: \*\*(F\d+)\*\*\. \*\*Open findings: ([^*]*)\*\*",
         text)
     if not feet:
-        return _error("footer-open-f433-f434-f435-next-f436",
+        return _error("footer-open-f526-f530-next-f531",
                       "no footer parsed")
     num, opens = feet[-1]
     opens = opens.strip().lower().rstrip(".")
-    if num != "F437" or opens != "f436":
-        return _break("footer-open-f433-f434-f435-next-f436",
-                      "footer is %%s / %%s, want F437 / F436"
+    if num != "F531" or opens != "f526, f527, f528, f529, f530":  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+        return _break("footer-open-f526-f530-next-f531",
+                      "footer is %s / %s, want F531 / F526-F530"
                       % (num, opens))
-    return _held("footer-open-f433-f434-f435-next-f436",
-                 "footer: open F436 / next F437")
+    return _held("footer-open-f526-f530-next-f531",
+                 "footer: open F526-F530 / next F531")
 
 
 # ---------------------------------------------------------------------------

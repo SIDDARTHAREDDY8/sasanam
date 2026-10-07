@@ -31,8 +31,8 @@ SHAPES = [
 ]
 
 CONTROLS = [
-    ("f523-triple-open",  # F523 OPEN (filed wave-364 lane 5) -- still misses
-     "'%s'[[[['concat'][0]]][0]]('%s')" % (A1, A2), False),
+    ("f523-triple-closed",  # F523 CLOSED (wave-365 lane 3) -- now blocks coded
+     "'%s'[[[['concat'][0]]][0]]('%s')" % (A1, A2), True),
     ("f507-single-bracket-held",  # F507 CLOSED
      "'%s'['concat']('%s')" % (A1, A2), True),
     ("junk-quiet",
