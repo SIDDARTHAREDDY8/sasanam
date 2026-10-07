@@ -132,7 +132,7 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-359 lane 3: F486/F487/F488 closed; no new decision codes
-FOOTER_OPEN = "F496, F497, F498, F499, F500, F501, F502"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-360 lane 3: F494, F495 CLOSED locally (merge finalizes tree-wide)  # Wave-359 lane 3: F486/F487/F488 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN  # Wave-359 lane 3: F486/F487/F488 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN
+FOOTER_OPEN = "F498, F499, F500, F501, F502"  # Wave-361 lane 1: F496, F497 CLOSED locally (merge finalizes tree-wide)  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-360 lane 3: F494, F495 CLOSED locally (merge finalizes tree-wide)  # Wave-359 lane 3: F486/F487/F488 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN  # Wave-359 lane 3: F486/F487/F488 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN
 FOOTER_NEXT = "F503"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-359 merge: next F496
 
 # Constructed via concatenation: the write path redacts credential literals.
@@ -423,8 +423,8 @@ def p4_pin_and_footer():
     assert len(TAXONOMY) == 2135
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     assert "Next free finding: **F503**" in text
-    assert "**Open findings: F496, F497, F498, F499, F500, F501, F502.**" in text
-    return ("HELD", "pin=2135 footer open F496-F502 next F503 (wave-360 merge)")
+    assert "**Open findings: F498, F499, F500, F501, F502.**" in text  # Wave-361 lane 1: F496, F497 CLOSED locally (merge finalizes tree-wide)
+    return ("HELD", "pin=2135 footer open F498-F502 next F503 (wave-361 lane 1 local)")
 
 
 PROBES = [

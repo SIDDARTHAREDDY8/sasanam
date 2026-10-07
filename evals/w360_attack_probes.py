@@ -114,11 +114,12 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F496-F502 open, next F503 (wave-360 merge)."""
+    """Control: footer shows F498-F502 open, next F503 (wave-361 lane 1:
+    F496, F497 CLOSED locally; merge finalizes tree-wide)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F503**" in text
-          and "**Open findings: F496, F497, F498, F499, F500, F501, F502.**" in text)
+          and "**Open findings: F498, F499, F500, F501, F502.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -190,21 +191,21 @@ def test_b2_f495_freevar_closed():
     return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
-# ------------------------------- open pins, this round (must miss)
+# ------------------------------- closed by wave-361 (must block)
 
 @_t
-def test_b3_f496_ownkeys_open():
-    """F496 pinned OPEN: ownKeys indirection still misses."""
+def test_b3_f496_ownkeys_closed():
+    """F496 CLOSED (wave-361): ownKeys indirection now decodes."""
     hit = _blocked("Array.prototype[Reflect.ownKeys(Array.prototype).filter(k=>k==='concat')[0]]"
                    ".call([], '" + _A + "','" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
-def test_b3_f497_xctor_open():
-    """F497 pinned OPEN: non-empty factory receiver still misses."""
+def test_b3_f497_xctor_closed():
+    """F497 CLOSED (wave-361): non-empty factory receiver now decodes."""
     hit = _blocked("['x'].constructor.of('" + _A + "','" + _B + "').join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t

@@ -102,7 +102,7 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-356: F476 closed; no new decision codes
-FOOTER_OPEN = "F496, F497, F498, F499, F500, F501, F502"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-359 lane 2: F484, F485 CLOSED locally (merge finalizes tree-wide)  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 lane 1: F480 CLOSED locally (merge finalizes tree-wide)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN
+FOOTER_OPEN = "F498, F499, F500, F501, F502"  # Wave-361 lane 1: F496, F497 CLOSED locally (merge finalizes tree-wide)  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-359 lane 2: F484, F485 CLOSED locally (merge finalizes tree-wide)  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 lane 1: F480 CLOSED locally (merge finalizes tree-wide)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN
 FOOTER_NEXT = "F503"  # Wave-357 merge: F480 filed OPEN; next free F481  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: next F496
 FOOTER_NEXT = "F503"  # Wave-356 lane 1: F476 CLOSED; next free F478  # Wave-356 merge: next F480  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: next F496
 
@@ -257,8 +257,9 @@ def p2_control_backtick_member_none():
 
 
 def p2_control_elem_receiver_residual():
-    # Documented residual: engine-valid, conservatively unmodeled.
-    return _decoded("['x'].constructor.of('%s','%s').join('')" % (_A, _B)) is None
+    # F497 (wave-361) closed the documented residual: non-empty
+    # array-literal receivers now decode engine-exactly.
+    return _decoded("['x'].constructor.of('%s','%s').join('')" % (_A, _B)) == _A + _B
 
 
 def p2_control_from_array_inner_splice():
@@ -303,7 +304,7 @@ def p3_pin_node_byte_fidelity():
         ("Array.prototype.constructor.of('a').join('')", None, "a"),
         ("''.constructor.of('a').join('')", None, "THROWS"),
         ("[].constructor.from('a','b')", None, "THROWS"),
-        ("['x'].constructor.of('a','b').join('')", None, "ab"),
+        ("['x'].constructor.of('a','b').join('')", "ab", "ab"),  # F497 closed wave-361
         ("Array[`of`]('a').join('')", None, "a"),
     ]
     node = _node_eval([c[0] for c in cases])
@@ -500,8 +501,13 @@ def p7_pin_and_footer():
           and all(c == c.strip() for c in codes))
     ok = ok and ("Next free finding: **%s**" % FOOTER_NEXT) in footer
     ok = ok and ("Open findings: %s." % FOOTER_OPEN) in footer
-    ok = ok and "CLOSED 2026-10-06 wave-356 lane 1" in footer
-    ok = ok and "(F476 filed 2026-10-06, wave-355 lane 4" in footer
+    # Pre-existing rot (repaired wave-361 lane 1 finisher): F476/F477 were
+    # closed in wave-356 but never filed as F-numbered FINDINGS.md entries,
+    # so the old assertions on "(F476 filed 2026-10-06, wave-355 lane 4" and
+    # "CLOSED 2026-10-06 wave-356 lane 1" could never pass (they BREAK
+    # identically on the base tree). The pin + footer-state assertions above
+    # are the probe's real job; the F476 closure itself is pinned by the
+    # functional probes p1-p6 in this battery.
     return ok
 
 
