@@ -160,11 +160,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F547-F569 open, next F570 (wave-368 merge)."""
+    """Control: footer shows F548-F560/F562-F565/F567-F569 open, next F570 (wave-369 lane 1)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F570**" in text  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
-          and "Open findings: F547, F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566, F567, F568, F569." in text)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+    ok = ("Next free finding: **F570**" in text  # Wave-369 lane 1: F547/F561/F566 CLOSED; next F570
+          and "Open findings: F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F562, F563, F564, F565, F567, F568, F569." in text)  # Wave-369 lane 1: F547/F561/F566 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -465,10 +465,10 @@ def test_p2_f546_open():
 
 
 @_t
-def test_p2_f547_open():
-    """F547 OPEN (this round): array-literal element index reads still miss."""
-    ms = _misses("['%s','%s'][0]+['%s','%s'][1]" % (_A, _B, _A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f547_closed():
+    """F547 CLOSED 2026-10-07 wave-369 lane 1: array index reads now blocked."""
+    hit = _blocked("['%s','%s'][0]+['%s','%s'][1]" % (_A, _B, _A, _B))
+    return ("HELD" if hit else "BREAK", "blocked=%s" % hit)
 
 
 @_t
@@ -563,10 +563,10 @@ def test_p2_f560_open():
 
 
 @_t
-def test_p2_f561_open():
-    """F561 OPEN (this round): copy-on-write array methods still miss."""
-    ms = _misses("['%s','%s'].toReversed().join('')" % (_B, _A))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f561_closed():
+    """F561 CLOSED 2026-10-07 wave-369 lane 1: copy-on-write methods now blocked."""
+    hit = _blocked("['%s','%s'].toReversed().join('')" % (_B, _A))
+    return ("HELD" if hit else "BREAK", "blocked=%s" % hit)
 
 
 @_t
@@ -598,10 +598,10 @@ def test_p2_f565_open():
 
 
 @_t
-def test_p2_f566_open():
-    """F566 OPEN (this round): Array.prototype.at via .call still misses."""
-    ms = _misses("Array.prototype.at.call(['%s','%s'],0)+Array.prototype.at.call(['%s','%s'],1)" % (_A, _B, _A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f566_closed():
+    """F566 CLOSED 2026-10-07 wave-369 lane 1: .at via .call now blocked."""
+    hit = _blocked("Array.prototype.at.call(['%s','%s'],0)+Array.prototype.at.call(['%s','%s'],1)" % (_A, _B, _A, _B))
+    return ("HELD" if hit else "BREAK", "blocked=%s" % hit)
 
 
 # ------------------------------------------------- boundaries

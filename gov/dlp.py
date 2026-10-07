@@ -9787,10 +9787,15 @@ def _js_parse_object_gopds_values(text, i, depth, state):
 # dispatch desugar routes through the same (0,2)-only rule. F518:
 # reverse joins the array table -- the direct form was already modeled
 # (F461, no-arg only) and the dispatch desugar routes through the same
-# no-arg rule. No new regexes; never evals.
+# no-arg rule. F566: at joins the array table -- the direct form
+# (F547: .at(INTLIT)) and the dispatch desugar
+# (`Array.prototype.at.call(LITARR, INTLIT)`) share the same
+# literal-integer rule, node-exact (negative counts from the end,
+# out-of-bounds is undefined and fails closed -- the static decoder
+# has no undefined value). No new regexes; never evals.
 _F478_ARRAY_METHODS = frozenset({
     "concat", "join", "slice", "splice", "reverse", "reduce", "reduceRight",
-    "map", "filter",
+    "map", "filter", "at",
 })
 _F478_STRING_METHODS = frozenset({
     "concat", "replace",
@@ -9805,8 +9810,12 @@ _F478_DISPATCH_NAMES = ("call", "apply", "bind")
 _JS_POSTFIX_METHOD_NAMES = (
     "concat", "repeat", "join", "reduce", "reduceRight", "map", "filter",
     "fill", "reverse", "toString", "slice", "flat", "splice", "replace",
-    "padStart", "padEnd",
+    "padStart", "padEnd", "at", "toReversed", "with",
 )
+# F547: "at" is the direct element-read form (ARR.at(INTLIT));
+# F561: "toReversed"/"with" are the ES2023 copy-on-write array methods
+# (direct form only -- dispatch through .call/.apply/.bind is
+# unmodeled and fails closed, a documented residual).
 # F483: the dispatch value-list callback grammar is fixed by the method
 # (never guessed) -- the map from dispatched method name to cb_kind.
 _F483_CB_KINDS = {"reduce": "reduce", "reduceRight": "reduce",
@@ -10199,6 +10208,37 @@ def _js_apply_method_values(method, recv, args, state):
             raise _JSExprFail("reverse takes no args")
         state["ops"] += 1
         return _JSArr(list(recv.elements)[::-1])
+    if method == "at":
+        # F566 mirrored over values: the direct form's literal-integer
+        # rule (F547 -- negative counts from the end, out-of-bounds is
+        # engine-undefined and fails closed). The bound grammar
+        # mirrors the slice value branch (int or _JSNumStr digits with
+        # an optional ASCII '-'). Exactly one argument; anything else
+        # fails closed, exactly as the direct form does.
+        if not isinstance(recv, _JSArr):
+            raise _JSExprFail("at on non-array")
+        if len(args) != 1:
+            raise _JSExprFail("at takes one arg")
+        a = args[0]
+        if isinstance(a, int) and not isinstance(a, bool):
+            idx = a
+        elif isinstance(a, _JSNumStr):
+            s = str(a)
+            neg = s.startswith("-")
+            digits = s[1:] if neg else s
+            if not digits or not all("0" <= c <= "9" for c in digits):
+                raise _JSExprFail("at non-literal index")
+            idx = -int(digits) if neg else int(digits)
+        else:
+            raise _JSExprFail("at non-literal index")
+        k = idx if idx >= 0 else len(recv.elements) + idx
+        if k < 0 or k >= len(recv.elements):
+            raise _JSExprFail("at out of bounds")
+        elem = recv.elements[k]
+        if isinstance(elem, (_JSNil, _JSBool)):
+            raise _JSExprFail("at over non-string element")
+        state["ops"] += 1
+        return elem
     # method == "replace": the direct grammar needs a literal-comma
     # regex, which cannot arrive as a dispatch value -- fail closed
     # (documented residual; the .call text form covers replace).
@@ -14652,6 +14692,83 @@ def _js_apply_method_at(text, i, name, value, depth, state):
             raise _JSExprFail("splice args unsupported")
         state["ops"] += 1
         return _JSArr(value.elements[0:2]), i + 1
+    if name == "at":
+        # F547: ARR.at(INTLIT) -- node-exact element read
+        # (v24.20.0): non-negative literal indices read the element;
+        # negative indices count back from the end (engine .at
+        # semantics -- bracket [-1] is a property read and does NOT
+        # do this, so only the .at form accepts the sign); a missing
+        # or non-literal index, extra args, and out-of-bounds reads
+        # fail closed (the engine returns undefined, which the static
+        # decoder has no value for). Non-string elements
+        # (_JSNil/_JSBool) fail closed -- member coercion differs from
+        # join; nested _JSArr elements pass through so chained reads
+        # ([['f1'],['f2']].at(0).at(0)) resolve. Checked BEFORE the
+        # "method on unjoined array" guard below (it legitimately
+        # reads an unjoined array).
+        if not isinstance(value, _JSArr):
+            raise _JSExprFail("at on non-array")
+        idx, i = _js_parse_slice_int(text, _js_skip_ws(text, i))
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("bad at args")
+        i += 1
+        k = idx if idx >= 0 else len(value.elements) + idx
+        if k < 0 or k >= len(value.elements):
+            raise _JSExprFail("at out of bounds")
+        elem = value.elements[k]
+        if isinstance(elem, (_JSNil, _JSBool)):
+            raise _JSExprFail("at over non-string element")
+        state["ops"] += 1  # the element read is obfuscation-shaped
+        return elem, i
+    if name == "toReversed":
+        # F561: ARR.toReversed() -- ES2023 copy-on-write reversal,
+        # node-exact (v24.20.0): a fresh array with the element order
+        # reversed (the receiver is NOT mutated); any arguments fail
+        # closed. Elements pass through as references, exactly as the
+        # engine does (nested _JSArr survive for later steps).
+        # Checked BEFORE the "method on unjoined array" guard below.
+        if not isinstance(value, _JSArr):
+            raise _JSExprFail("toReversed on non-array")
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("toReversed takes no args")
+        i += 1
+        state["ops"] += 1  # the copy-on-write is obfuscation-shaped
+        return _JSArr(list(value.elements)[::-1]), i
+    if name == "with":
+        # F561: ARR.with(IDX, VAL) -- ES2023 copy-on-write element
+        # replacement, node-exact (v24.20.0): IDX is a literal integer
+        # (negative counts back from the end, exactly like .at);
+        # out-of-range IDX throws RangeError in the engine, so it
+        # fails closed here; VAL must be a string (numbers arrive as
+        # _JSNumStr, which is a str -- the engine stringifies);
+        # _JSNil/_JSBool/nested-array VAL fails closed (join coercion
+        # differs). A fresh _JSArr is returned; the receiver is not
+        # mutated. Non-literal IDX, wrong arity, or a fractional IDX
+        # (unconsumed '.5') fails closed. Checked BEFORE the
+        # "method on unjoined array" guard below.
+        if not isinstance(value, _JSArr):
+            raise _JSExprFail("with on non-array")
+        idx, i = _js_parse_slice_int(text, _js_skip_ws(text, i))
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ",":
+            raise _JSExprFail("bad with args")
+        val, i = _js_parse_additive(text, _js_skip_ws(text, i + 1),
+                                    depth, state)
+        if not isinstance(val, str):
+            raise _JSExprFail("with non-string value")
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("bad with args")
+        i += 1
+        k = idx if idx >= 0 else len(value.elements) + idx
+        if k < 0 or k >= len(value.elements):
+            raise _JSExprFail("with index out of range")
+        elements = list(value.elements)
+        elements[k] = val
+        state["ops"] += 1  # the copy-on-write is obfuscation-shaped
+        return _JSArr(elements), i
     if name == "concat" and isinstance(value, _JSArr):
         # F473: array-receiver .concat -- engine-exact Array.prototype
         # .concat on a parsed string array, returning a fresh _JSArr so
@@ -14938,6 +15055,71 @@ def _js_apply_tag_method(text, j, name, value, depth, state):
     raise _JSExprFail("tag call unsupported")
 
 
+def _js_parse_indexed_array_read(text, j, value, state):
+    """Parse `[INTLIT]` / `['INTLIT']` element read on a _JSArr (F547).
+
+    text[j] == '['; returns (element, next_index): the engine-exact
+    element at the literal index (node v24.20.0). Only non-negative
+    literal indices -- a decimal or 0x integer literal (via
+    _js_parse_number, engine-exact: [0x1] === [1]), or a
+    canonical-digit string literal (['0']; ['00']/['01'] are property
+    reads, undefined in the engine, and fail closed here). Bracket
+    [-1] is a property read (undefined in the engine, NOT from-the-end
+    -- that is .at's semantics), so a sign fails closed here. Out-of-bounds reads are
+    engine-undefined and fail closed (the static decoder has no
+    undefined value). _JSNil/_JSBool elements fail closed (member
+    coercion differs from join); str (incl _JSNumStr) and nested
+    _JSArr elements pass through so chained reads
+    ([['f1'],['f2']][0][0]) resolve.
+
+    Returns None when text[j] is not this shape (pure lookahead --
+    the caller falls through to the method-name folds, so
+    [['concat'][0]] and ['concat'] shapes are unaffected). A
+    malformed index (digits but no closing bracket) fails closed via
+    _JSExprFail. Never evals.
+    """
+    n = len(text)
+    if not isinstance(value, _JSArr):
+        return None
+    k = _js_skip_ws(text, j + 1)
+    if k >= n:
+        return None
+    idx = None
+    if text[k] in "'\"":
+        q = text[k]
+        m = k + 1
+        while m < n and "0" <= text[m] <= "9":
+            m += 1
+        if m == k + 1 or m >= n or text[m] != q:
+            return None
+        _digits = text[k + 1:m]
+        idx = int(_digits)
+        if _digits != str(idx):
+            # Non-canonical digit strings (['00'], ['01']) are
+            # property reads, undefined in the engine (node
+            # v24.20.0) -- not the [0]/[1] element read.
+            return None
+        k = m + 1
+    elif "0" <= text[k] <= "9":
+        try:
+            idx, k = _js_parse_number(text, k)
+        except _JSExprFail:
+            return None
+    else:
+        return None
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "]":
+        raise _JSExprFail("array index bracket not closed")
+    k += 1
+    if idx >= len(value.elements):
+        raise _JSExprFail("array index out of bounds")
+    elem = value.elements[idx]
+    if isinstance(elem, (_JSNil, _JSBool)):
+        raise _JSExprFail("array index over non-string element")
+    state["ops"] += 1  # the element read is obfuscation-shaped
+    return elem, k
+
+
 def _js_parse_postfix(text, i, value, depth, state):
     """Consume chained .concat(...) / .repeat(...) / .join(...) /
     .reduce(...) / .reduceRight(...) / .map(...) / .filter(...) /
@@ -15046,6 +15228,17 @@ def _js_parse_postfix(text, i, value, depth, state):
             # principle); the call itself routes to _js_apply_method
             # / _js_apply_tag_method exactly like the dot form, so
             # all fail-closed classes are identical. Never evals.
+            # F547: element index reads on array-literal receivers
+            # (`['f1','f2'][0]`, `['f1','f2']['0]`) are tried BEFORE
+            # the method-name folds -- the shapes are disjoint
+            # (integer-literal vs method-name keys), so the folds are
+            # unaffected; a read returns the element and the postfix
+            # chain continues (nested reads chain).
+            _iread = _js_parse_indexed_array_read(text, j, value,
+                                                  state)
+            if _iread is not None:
+                value, i = _iread
+                continue
             try:
                 _bname, _bm = _js_parse_bracket_member(text, j)
             except _JSExprFail:
