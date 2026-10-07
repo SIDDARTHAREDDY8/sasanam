@@ -120,12 +120,12 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F514-F518 + F520 open, next F521
-    (wave-364 lane 1: F513, F519 CLOSED locally; merge finalizes)."""
+    """Control: footer shows F516, F517, F518, F520 open, next F521
+    (wave-364 merge: F513, F519 CLOSED lane 1; F514, F515 CLOSED lane 2; merge finalizes)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F521**" in text
-          and "**Open findings: F514, F515, F516, F517, F518, F520.**" in text)
+          and "**Open findings: F516, F517, F518, F520.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -231,13 +231,13 @@ def test_p2_f513_closed():
 
 
 @_t
-def test_p2_f514_open():
-    """F514 OPEN (this round, narrowed at wave-363 merge): the single-bracket
-    String-object shapes were honestly closed by lane 2's F507 generalization
-    (dot forms already decoded on the wave-362 base; node-identical). The
-    nested-bracket shape still misses."""
+def test_p2_f514_closed():
+    """F514 CLOSED (wave-364 lane 2): the nested-bracket shape on
+    String-object receivers now blocks (wave-306 maintenance). The
+    single-bracket shapes were already closed by accident at the
+    wave-363 merge (see test_p2_f514_partial_closed)."""
     ms = _misses("String('%s')[[['concat'][0]]](String('%s'))" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 @_t
@@ -252,10 +252,11 @@ def test_p2_f514_partial_closed():
 
 
 @_t
-def test_p2_f515_open():
-    """F515 OPEN (this round): idx-folded key on strlit still misses."""
+def test_p2_f515_closed():
+    """F515 CLOSED (wave-364 lane 2): idx-folded key on strlit now
+    blocks (wave-306 maintenance)."""
     ms = _misses("''[['concat'][0]]('%s','%s')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 @_t
