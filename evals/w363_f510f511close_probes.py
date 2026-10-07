@@ -17,7 +17,11 @@ array-like receivers (F487), but the splice method had no
 Closure (gov/dlp.py):
 - F510: new _js_parse_object_values / _js_parse_object_literal_values /
   _js_parse_entries_reduce_values / _js_parse_values_source /
-  _js_parse_values_wrapper. Object.values desugars to the engine-exact
+  _js_parse_values_wrapper (wave-364 lane 3 refactored the values-only
+  helpers into the keys+values enumeration family:
+  _js_parse_object_literal_keys_values, _js_parse_entries_reduce_keys_values,
+  _js_parse_enumeration_source, _js_parse_enumeration_wrapper -- F510 call
+  sites behavior-identical). Object.values desugars to the engine-exact
   ordered value list (integer-index keys ascending numerically first,
   then string keys in insertion order; duplicates later-wins at the
   first-insertion position; node v24.20.0 verified). Sources: plain

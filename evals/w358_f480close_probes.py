@@ -362,7 +362,7 @@ def p3_no_new_regexes():
         r"String[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Function[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|"
-        r"Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|values)|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
+        r"Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|values|keys|entries)|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
     for s in ["Array.apply(", "Array.call(", "Array['apply']",
               "String['fromCharCode']", "Object['assign']",
               "Object.getPrototypeOf",

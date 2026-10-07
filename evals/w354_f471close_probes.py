@@ -336,7 +336,7 @@ def p3_pin_anchor_char_class_only():
     # alternative, pinned exactly here; the rest of the alternative
     # is unchanged (still no nested quantifiers).
     return alt.startswith(
-        "Object([ \\t\\n\\r]*\\.[ \\t\\n\\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|values)|"
+        "Object([ \\t\\n\\r]*\\.[ \\t\\n\\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|values|keys|entries)|"
         "[ \\t\\n\\r]*\\[[ \\t\\n\\r]*['\\\"])")
 
 
