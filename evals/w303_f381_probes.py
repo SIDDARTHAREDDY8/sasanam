@@ -98,11 +98,11 @@ class BaseStateTest(unittest.TestCase):
         m_open = re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
         # Wave-316 merge footer: F398/F399/F400 CLOSED; F401/F402/F403 OPEN; next F404.
-        ok = (m_open and m_open[-1].strip() == "F506, F507, F508, F509, F510, F511"
-              and m_next and m_next[-1] == "F506")
+        ok = (m_open and m_open[-1].strip() == "F513, F514, F515, F516, F517, F518, F519, F520"  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521)
+              and m_next and m_next[-1] == "F521")  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521)
         self.assertTrue(_expect_held(
             "footer-state", ok,
-            "want open F429 / next free F430") == "HELD")
+            "want open F513, F514, F515, F516, F517, F518, F519, F520 / next free F521") == "HELD")
 
     def test_pin(self):
         with open(os.path.join(REPO, "gov", "decision_codes.py"),

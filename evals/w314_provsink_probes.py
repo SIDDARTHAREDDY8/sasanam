@@ -384,8 +384,8 @@ def footer_state():
     # Wave-323 lane 1: F407 CLOSED; F428 OPEN; next F429.
     # Footer lines repeat through history; the LAST one is current.
     m_open = re.findall(r"Open findings: ([^*]*)\.", text)
-    ok = ("Next free finding: **F506**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
-          and m_open and m_open[-1].strip() == "F506, F507, F508, F509, F510, F511")
+    ok = ("Next free finding: **F521**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
+          and m_open and m_open[-1].strip() == "F513, F514, F515, F516, F517, F518, F519, F520")  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521)
     _held("footer-state", ok,
           "footer: open F436 / next F437" if ok
           else "footer mismatch vs open F489, F490, F491, F492, F493, F494, F495 / next F506")

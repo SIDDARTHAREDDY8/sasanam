@@ -117,7 +117,7 @@ def p_footer_state():
                        "footer drift: next F%d open %r (want next F506 open 'F503, F504, F505')"
                        % (nxt, open_s))
     _record("footer-state", "HELD",
-            "footer pins open F436 / next F437")
+            "footer pins open F513, F514, F515, F516, F517, F518, F519, F520 / next F521")
 
 
 AT = 1_700_000_000

@@ -916,7 +916,7 @@ def _p9_footer():
         return _break("P9-footer-open-f433-f434-f435-next-f436",
                       "F407 entry missing from FINDINGS.md")
     return _held("P9-footer-open-f433-f434-f435-next-f436",
-                 "footer pins open F436 / next F437")
+                 "footer pins open F513, F514, F515, F516, F517, F518, F519, F520 / next F521")
 
 
 @probe("P9-pin-taxonomy-2135-sorted")

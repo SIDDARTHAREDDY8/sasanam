@@ -114,7 +114,7 @@ def p_footer_state():
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d (want F429), open '%s' "
                        "(want 'F429')" % (nxt, open_s))
-    _record("footer-state", "HELD", "footer pins open F489, F490, F491, F492, F493, F494, F495 / next F506")
+    _record("footer-state", "HELD", "footer pins open F513, F514, F515, F516, F517, F518, F519, F520 / next F521")
 
 
 def _seed(s):

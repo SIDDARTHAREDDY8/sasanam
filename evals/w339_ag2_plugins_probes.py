@@ -504,8 +504,8 @@ def run_p3_probes():
                % (len(lits), len(set(lits)), lits == sorted(lits)))
     text = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
-    if "Open findings: F503, F504, F505." in text \
-            and "Next free finding: **F506**" in text:  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
+    if "Open findings: F513, F514, F515, F516, F517, F518, F519, F520." in text \
+            and "Next free finding: **F521**" in text:  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
         _held("P3b", "footer open none / next F430")
     else:
         _break("P3b", "footer text mismatch")

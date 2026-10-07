@@ -93,8 +93,8 @@ def test_p2_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     with open(path) as f:
         last = "".join(f.readlines()[-3:])
-    ok = ("Next free finding: **F506**" in last
-          and "Open findings: F503, F504, F505." in last)
+    ok = ("Next free finding: **F521**" in last
+          and "Open findings: F513, F514, F515, F516, F517, F518, F519, F520." in last)
     return ("HELD" if ok else "BREAK",
             "footer must read open F429 / next F430")
 

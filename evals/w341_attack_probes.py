@@ -149,8 +149,8 @@ def test_i6_f428_open_pinned():
     ok = ("(F428 filed 2026-10-05, wave-341 lane C" in text
           and "CLOSED 2026-10-05 wave-342 lane 1" in text
           and "(F429 filed 2026-10-05, wave-342 lane 5" in text
-          and "Next free finding: **F506**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
-          and "Open findings: F503, F504, F505." in text)
+          and "Next free finding: **F521**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481)
+          and "Open findings: F513, F514, F515, F516, F517, F518, F519, F520." in text)
     return ("HELD" if ok else "BREAK", "F428 closed/F429 open=%s" % ok)
 
 

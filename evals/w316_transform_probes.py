@@ -450,7 +450,7 @@ def p20():
     nxt = int(m.group(1))
     open_s = opens.group(1).strip()
     if nxt == 506 and open_s == "F506, F507, F508, F509, F510, F511":
-        return _held("footer pins open F436 / next F437")
+        return _held("footer pins open F513, F514, F515, F516, F517, F518, F519, F520 / next F521")
     return _break("footer is F%d / %s" % (nxt, open_s))
 
 

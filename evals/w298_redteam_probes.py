@@ -157,8 +157,8 @@ class BaseStateTest(unittest.TestCase):
         text = open(path, encoding="utf-8").read()
         m_open = _re.findall(r"Open findings: ([A-Za-z0-9, ]*)", text)
         m_next = _re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
-        ok = (m_open and m_open[-1].strip() == "F506, F507, F508, F509, F510, F511"
-              and m_next and m_next[-1] == "F506")
+        ok = (m_open and m_open[-1].strip() == "F513, F514, F515, F516, F517, F518, F519, F520"  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521)
+              and m_next and m_next[-1] == "F521")  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521)
         self.assertTrue(_expect_held("footer-state", ok,
                                     "footer disagrees") == "HELD")
 

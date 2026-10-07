@@ -311,8 +311,8 @@ def p_footer_state():
     m_open = re.findall(r"Open findings: ([^.]*)", text)
     # Footer lines repeat through history; the LAST one is current.
     # Wave-359 merge: F482-F488 CLOSED; F489-F495 OPEN; next F496.
-    ok = (m_next and m_next[-1] == "F506"
-          and m_open and m_open[-1].strip() == "F506, F507, F508, F509, F510, F511")
+    ok = (m_next and m_next[-1] == "F521"  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521)
+          and m_open and m_open[-1].strip() == "F513, F514, F515, F516, F517, F518, F519, F520")  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521)
     _record("footer-state", "HELD" if ok else "BREAK",
             "open F412 / next F413" if ok else "footer drift")
 
