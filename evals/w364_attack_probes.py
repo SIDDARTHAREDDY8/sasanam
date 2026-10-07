@@ -129,11 +129,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F513-F525 open, next F526 (wave-364 lane 5)."""
+    """Control: footer shows F521, F523, F524 open, next F526 (wave-365 lane 2)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F526**" in text
-          and "**Open findings: F521, F522, F523, F524, F525.**" in text)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
+          and "**Open findings: F521, F523, F524.**" in text)  # Wave-365 lane 2: F522, F525 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -303,10 +303,12 @@ def test_p2_f521_open():
 
 
 @_t
-def test_p2_f522_open():
-    """F522 OPEN (this round): IIFE-evaluated target still misses."""
-    ms = _misses("Reflect.apply((() => (a,b)=>a+b)(), null, ['%s','%s'])" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f522_closed():
+    """F522 CLOSED (wave-365 lane 2): IIFE-evaluated Reflect.apply target
+    now blocks (coded refusal -- wave-306 class)."""
+    hit = _blocked("Reflect.apply((() => (a,b)=>a+b)(), null, ['%s','%s'])" % (_A, _B))
+    hit2 = _blocked("Reflect.apply((function(){return (a,b)=>a+b})(), null, ['%s','%s'])" % (_A, _B))
+    return ("HELD" if hit and hit2 else "BREAK", "hit=%s hit2=%s" % (hit, hit2))
 
 
 @_t
@@ -324,10 +326,12 @@ def test_p2_f524_open():
 
 
 @_t
-def test_p2_f525_open():
-    """F525 OPEN (this round): getOwnPropertyNames/Descriptors still misses."""
-    ms = _misses("Object.getOwnPropertyNames({'%s':'x','%s':'y'}).join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f525_closed():
+    """F525 CLOSED (wave-365 lane 2): getOwnPropertyNames/Descriptors
+    enumeration now blocks (coded refusal -- wave-306 class)."""
+    hit = _blocked("Object.getOwnPropertyNames({'%s':'x','%s':'y'}).join('')" % (_A, _B))
+    hit2 = _blocked("Object.values(Object.getOwnPropertyDescriptors({0:'%s',1:'%s'})).map(d=>d.value).join('')" % (_A, _B))
+    return ("HELD" if hit and hit2 else "BREAK", "hit=%s hit2=%s" % (hit, hit2))
 
 
 # ------------------------------------------------- boundaries

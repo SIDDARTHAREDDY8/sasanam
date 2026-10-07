@@ -187,6 +187,10 @@ def p3_no_new_regexes():
     # F508 (wave-363 lane 2): Array.from alternative added (literal-alternation only); re.compile count unchanged (28).
     # F510 (wave-363 lane 4): the Object alternative gains `values`
     # (literal-alternation only); re.compile count unchanged (28).
+    # F525 (wave-365 lane 2): the Object dot-member alternative gains
+    # getOwnPropertyNames/getOwnPropertyDescriptors (key/descriptor
+    # enumeration indirection) -- new member-name alternatives, pinned
+    # exactly here; re.compile count unchanged (28).
     assert dlp._JS_EXPR_START.pattern == (
         r"['\"`\[]|"
         r"String\.fromCharCode|"
@@ -197,7 +201,7 @@ def p3_no_new_regexes():
         r"String[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Function[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|"
-        r"Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|values|keys|entries)|[ \t\n\r]*\[[ \t\n\r]*['\"])|"
+        r"Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries)|[ \t\n\r]*\[[ \t\n\r]*['\"])|"
         r"\("
     )
     for s in ["Array.apply(", "Array.of.call", "Array.from(", "[].constructor.of.call",
