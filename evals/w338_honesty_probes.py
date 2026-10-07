@@ -31,7 +31,7 @@ R14 (Bernstein #5569 "no row claims coverage without a test"):
   P5  coverage checker runs, writes the generated table, and reports
       honestly: exit 1 with the gap list (gaps are the deliverable --
       NOT hand-closed this lane), exit 2 on a pin mismatch.
-P6  Pin/taxonomy honesty (2135/2135/0 sorted-unique, footer state).
+P6  Pin/taxonomy honesty (2140/2140/0 sorted-unique, footer state).
 P7  Green check (depth-1): tests/test_evidence_verify_offline as a
     child with GOV_SKIP_GREEN=1.
 
@@ -65,7 +65,7 @@ sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "tests"))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
-TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+TAXONOMY_PIN = 2140  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 FOOTER_OPEN = ("F547", "F548", "F549", "F550", "F551", "F552", "F553", "F554", "F555", "F556", "F557", "F558", "F559", "F560", "F561", "F562", "F563", "F564", "F565", "F566", "F567", "F568", "F569")  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
 
 FOOTER_NEXT = "F570"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: next F480  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: next F496  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
@@ -331,8 +331,8 @@ def _p5():
     assert os.path.isfile(md) and os.path.isfile(js), \
         "checker did not write the generated table"
     doc = json.load(open(js, encoding="utf-8"))
-    assert doc["pin"] == TAXONOMY_PIN == 2135, "table pin mismatch"
-    assert len(doc["codes"]) == 2135
+    assert doc["pin"] == TAXONOMY_PIN == 2140, "table pin mismatch"  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+    assert len(doc["codes"]) == 2140  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
     gaps = doc["gaps"]
     if proc.returncode == 1:
         assert gaps, "exit 1 must come with a gap list"
@@ -358,12 +358,13 @@ def _p6a():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
-    assert len(lits) == TAXONOMY_PIN == 2135, \
+    # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+    assert len(lits) == TAXONOMY_PIN == 2140, \
         "literal count %d != pin %d" % (len(lits), TAXONOMY_PIN)
     assert len(set(lits)) == TAXONOMY_PIN, "duplicate code literals"
     assert lits == sorted(lits), "literals not sorted"
     assert len(dc.TAXONOMY) == TAXONOMY_PIN
-    _held("P6a-taxonomy-pin", "2135/2135/0 sorted-unique literals")
+    _held("P6a-taxonomy-pin", "2140/2140/0 sorted-unique literals")
 
 
 @_probe("P6b-footer")

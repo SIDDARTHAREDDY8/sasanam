@@ -68,7 +68,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2135  # Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+TAXONOMY_PIN = 2140  # Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -346,7 +346,7 @@ def test_z0_f436_closed_with_final_footer():
 
 @_t
 def test_z1_taxonomy_pin():
-    """Taxonomy pin unchanged at 2135 (no new decision codes)."""
+    """Taxonomy pin now 2140 (+5 vendor-watch-*)."""
     ok = (len(TAXONOMY) == TAXONOMY_PIN
           and sorted(TAXONOMY) == list(TAXONOMY))
     return ("HELD" if ok else "BREAK",

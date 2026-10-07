@@ -51,7 +51,7 @@ D10-join-hole-tostring (node never recovers the credential).
 Conventions: module-level staging, depth-1 green check honoring
 GOV_SKIP_GREEN=1 (pid-suffixed TMPDIRs), fresh /var/tmp/g358-*
 TMPDIRs, no in-repo git in self-pins, concatenation-constructed
-credentials, pin 2135, $0-spend-by-construction.
+credentials, pin 2140, $0-spend-by-construction.
 """
 import os
 
@@ -68,7 +68,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2135  # no new decision codes this round
+TAXONOMY_PIN = 2140  # no new decision codes this round; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402

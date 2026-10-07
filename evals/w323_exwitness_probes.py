@@ -19,7 +19,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+TAXONOMY_PIN = 2140  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 
 _results = []
@@ -565,7 +565,7 @@ def _p5b():
 # P6: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P6-pin-taxonomy-2135-sorted")
+@probe("P6-pin-taxonomy-2140-sorted")
 
 
 def _p6a():
@@ -573,10 +573,10 @@ def _p6a():
     n = len(DC.TAXONOMY)
     codes = sorted(DC.TAXONOMY.keys())
     if n == TAXONOMY_PIN and list(DC.TAXONOMY.keys()) == codes:
-        _held("P6-pin-taxonomy-2135-sorted", "2135/2135/0 sorted")
+        _held("P6-pin-taxonomy-2140-sorted", "2140/2140/0 sorted")
     else:
-        _break("P6-pin-taxonomy-2135-sorted",
-               "want 2135/2121/00 sorted, got %d (sorted=%s)"
+        _break("P6-pin-taxonomy-2140-sorted",
+               "want 2140/2121/00 sorted, got %d (sorted=%s)"
 
 
                % (n, list(DC.TAXONOMY.keys()) == codes))

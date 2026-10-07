@@ -131,7 +131,7 @@ if REPO_ROOT not in sys.path:
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
-TAXONOMY_PIN = 2135  # Wave-359 lane 3: F486/F487/F488 closed; no new decision codes
+TAXONOMY_PIN = 2140  # Wave-359 lane 3: F486/F487/F488 closed; no new decision codes; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 FOOTER_OPEN = "F547, F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566, F567, F568, F569"  # Wave-361 lane 1: F496, F497 CLOSED locally (merge finalizes tree-wide)  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-360 lane 3: F494, F495 CLOSED locally (merge finalizes tree-wide)  # Wave-359 lane 3: F486/F487/F488 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN  # Wave-359 lane 3: F486/F487/F488 CLOSED locally (merge finalizes tree-wide)  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 lane 4: F510+F511 CLOSED (lane-local)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
 FOOTER_NEXT = "F570"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-359 merge: next F496  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
 
@@ -432,12 +432,12 @@ def p3_f441_ordering_untouched():
 
 # ------------------------------------------------------------ P4: pin+footer
 def p4_pin_and_footer():
-    assert TAXONOMY_PIN == 2135
-    assert len(TAXONOMY) == 2135
+    assert TAXONOMY_PIN == 2140  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+    assert len(TAXONOMY) == 2140  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     assert "Next free finding: **F570**" in text  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
     assert "**Open findings: F547, F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566, F567, F568, F569.**" in text  # Wave-361 lane 1: F496, F497 CLOSED locally (merge finalizes tree-wide); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-366 merge: F526-F530 CLOSED (lanes 1-3); F532 CLOSED at merge (honest F527 generalization, F514 precedent); F531, F533-F536 OPEN (next F537)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
-    return ("HELD", "pin=2135 footer open F503, F504, F505 next F506 (wave-361 merge)")
+    return ("HELD", "pin=2140 footer open F503, F504, F505 next F506 (wave-361 merge)")
 
 
 PROBES = [

@@ -48,7 +48,7 @@ sys.path.insert(0, REPO_ROOT)
 
 from gov import dlp  # noqa: E402
 
-TAXONOMY_PIN = 2135  # Wave-364 lane 4; pin stays 2135
+TAXONOMY_PIN = 2140  # Wave-364 lane 4; pin stays 2135; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 # Constructed via concatenation: the write path redacts credential literals.
 _A = "xoxb-" + "0123"
@@ -223,9 +223,9 @@ def p5_compositions():
 
 
 def p6_pin_and_footer():
-    """Pin stays 2135; F518/F520 closed in FINDINGS; lane-local footer;
+    """Pin stays 2140; F518/F520 closed in FINDINGS; lane-local footer;
     28 re.compile."""
-    if TAXONOMY_PIN != 2135:
+    if TAXONOMY_PIN != 2140:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
         return ("BREAK", "pin moved: %s" % TAXONOMY_PIN)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     for f in ("F518", "F520"):
@@ -241,7 +241,7 @@ def p6_pin_and_footer():
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     if len(re.findall(r"re\.compile\(", src)) != 28:
         return ("BREAK", "re.compile count moved")
-    return ("HELD", "pin 2135; F518/F520 closed; footer lane-local; 28 re.compile")
+    return ("HELD", "pin 2140; F518/F520 closed; footer lane-local; 28 re.compile")
 
 
 def _green_check():

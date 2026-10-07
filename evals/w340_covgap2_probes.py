@@ -32,7 +32,7 @@ seam and the coded refusal is asserted), never tautologies:
       unknown_delegatee_agent
   G14 agent cards: malformed-signature-entry
   G15 egress launcher: wall_proof_unreadable
-  P0  pin/taxonomy honesty (2135/2135/0 sorted-unique, footer state).
+  P0  pin/taxonomy honesty (2140/2140/0 sorted-unique, footer state).
   PZ  green check (depth-1): adjacent suites as children with
       GOV_SKIP_GREEN=1.
 
@@ -59,7 +59,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "tests"))
 
-TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+TAXONOMY_PIN = 2140  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 _results = []
 
@@ -850,9 +850,10 @@ def run_pin_footer_probes():
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
-    if len(lits) == TAXONOMY_PIN == 2135 and len(set(lits)) == 2135 \
+    # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+    if len(lits) == TAXONOMY_PIN == 2140 and len(set(lits)) == 2140 \
             and lits == sorted(lits):
-        _held("P0a", "taxonomy 2135/2135/0 sorted-unique literals")
+        _held("P0a", "taxonomy 2140/2140/0 sorted-unique literals")
     else:
         _break("P0a", "literals %d, unique %d, sorted=%s"
                % (len(lits), len(set(lits)), lits == sorted(lits)))

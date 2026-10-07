@@ -47,7 +47,7 @@ P4 (langgraph recipe): queued pauses via interrupt with the approval_id;
 P5 (F424/F425 live on this tree): NaN lock timeout escapes refresh()
   uncoded; -1 blocks forever under contention; raising clock escapes
   _check_tool_rate uncoded (no coded denial, no chained record).
-P6 (honesty + regressions): pin 2135/2135/0 sorted-unique on raw
+P6 (honesty + regressions): pin 2140/2140/0 sorted-unique on raw
   literals; footer open none / next F430 (F426 closed wave-338 lane 1);
   F423 NUL now refused coded (closed); F417 non-numeric port refused
   coded; F421 double-refresh exactly-one.
@@ -86,7 +86,7 @@ for _p in (REPO, os.path.join(REPO, "tests"), os.path.join(REPO, "evals")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+TAXONOMY_PIN = 2140  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 # ---------------------------------------------------------------------------
 # Import-time stand-ins: crewai / ag2 are not installed in the canonical
 # venv. Inject minimal fake modules so the PURE-PYTHON shim logic (the
@@ -1092,7 +1092,7 @@ def P5c():
 # ---------------------------------------------------------------------------
 
 def P6a():
-    """Pin 2106: taxonomy 2135/2135/0 sorted-unique on raw source
+    """Pin 2106: taxonomy 2140/2140/0 sorted-unique on raw source
     literals (wave-260 lesson); 6 wave-335 codes registered."""
     pid = "P6a-pin-2131-taxonomy"
     src = open(os.path.join(REPO, "gov", "decision_codes.py")).read()
@@ -1112,7 +1112,7 @@ def P6a():
         if c not in DC.TAXONOMY:
             _break(pid, "code %r not centrally registered" % (c,))
             return
-    _held(pid, "2135/2135/0 sorted-unique; 6 wave-335 codes registered")
+    _held(pid, "2140/2140/0 sorted-unique; 6 wave-335 codes registered")
 
 
 def P6b():

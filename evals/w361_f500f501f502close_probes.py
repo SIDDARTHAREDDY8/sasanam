@@ -99,7 +99,7 @@ from gov import dlp  # noqa: E402
 _A1 = "xoxb-" + "0123"
 _A2 = "456789" + "abcdef"
 
-TAXONOMY_PIN = 2135  # Wave-361 lane 3; pin stays 2135
+TAXONOMY_PIN = 2140  # Wave-361 lane 3; pin stays 2135; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 
 def _blocked(payload):
@@ -356,11 +356,11 @@ def p3_binding_crash_regression():
 
 # ------------------------------------------------------- P4: pin and footer
 def p4_pin_and_footer():
-    assert TAXONOMY_PIN == 2135, "pin moved"
+    assert TAXONOMY_PIN == 2140, "pin moved"  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     for f in ("F500", "F501", "F502"):
         assert f in text, "%s missing from FINDINGS.md" % f
-    return ("HELD", "pin=2135; F500/F501/F502 in FINDINGS.md (wave-361 lane 3)")
+    return ("HELD", "pin=2140; F500/F501/F502 in FINDINGS.md (wave-361 lane 3)")
 
 
 PROBES = [

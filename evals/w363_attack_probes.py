@@ -65,7 +65,7 @@ values shapes (F516), entries/keys/for-in (F517), push/unshift/reverse
 Conventions: module-level staging, depth-1 green check honoring
 GOV_SKIP_GREEN=1 (unique-suffixed TMPDIRs), fresh /var/tmp/g363-*
 TMPDIRs, no in-repo git in self-pins, concatenation-constructed
-credentials, pin 2135, $0-spend-by-construction.
+credentials, pin 2140, $0-spend-by-construction.
 """
 import os
 
@@ -83,7 +83,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2135  # no new decision codes this round
+TAXONOMY_PIN = 2140  # no new decision codes this round; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -113,8 +113,8 @@ def _misses(payload):
 
 @_t
 def test_p0_pin_taxonomy():
-    """Pin stays 2135; registry loads."""
-    ok = TAXONOMY_PIN == 2135 and len(TAXONOMY) > 0
+    """Pin stays 2140; registry loads."""
+    ok = TAXONOMY_PIN == 2140 and len(TAXONOMY) > 0  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
     return ("HELD" if ok else "BREAK", "pin=%s" % TAXONOMY_PIN)
 
 

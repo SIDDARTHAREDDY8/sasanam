@@ -51,7 +51,7 @@ Probes:
   P7  no-regression: adjacent closures still block (F437 reduce,
       F434 join, F437 map-absorbed, F441 bslash, F436 entity,
       F429 escape).
-  P8  pin + footer: taxonomy pin 2135 (no new decision codes),
+  P8  pin + footer: taxonomy pin 2140 (no new decision codes),
       footer open none / next F444, F443 CLOSED entry present.
   PZ  green check: adjacent DLP batteries green (depth-1).
 
@@ -72,7 +72,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2135  # Wave-348: F443 closed, no new decision codes; pin unchanged 2135
+TAXONOMY_PIN = 2140  # Wave-348: F443 closed, no new decision codes; pin unchanged 2135; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 FOOTER_OPEN = "F547, F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566, F567, F568, F569"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-352 merge (3/5): F454-F457 CLOSED; F458-F460 OPEN (next F461)  # wave-350 lane 3: F449+F450 CLOSED;  Wave-348: F443 CLOSED locally (merge finalizes tree-wide); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 lane 1: F444 CLOSED (open F445); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461)  # wave-352 lane 3: F457 CLOSED locally (merge finalizes tree-wide)  # wave-350 lane 3: F449+F450 CLOSED;  Wave-348: F443 CLOSED locally (merge finalizes tree-wide); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 lane 1: F444 CLOSED (open F445); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461); wave-352 lane 1: F454+F455 CLOSED locally  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480)  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
 
 
@@ -311,7 +311,7 @@ def p8_pin_and_footer():
     with open(footer_path, encoding="utf-8") as f:
         footer = f.read()
     codes = sorted(TAXONOMY)
-    ok = (len(codes) == TAXONOMY_PIN == 2135
+    ok = (len(codes) == TAXONOMY_PIN == 2140  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
           and codes == sorted(set(codes))
           and all(c == c.strip() for c in codes))
     ok = ok and ("Next free finding: **%s**" % FOOTER_NEXT) in footer

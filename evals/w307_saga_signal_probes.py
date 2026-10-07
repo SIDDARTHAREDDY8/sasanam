@@ -79,7 +79,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check  # noqa: E402  (wave-305 shared fail-closed green checks)
 import probe_lines  # noqa: E402  (canonical probe-line form)
 
-TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+TAXONOMY_PIN = 2140  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 
 FOREIGN_CODE = "workflow-composed-replay-foreign"

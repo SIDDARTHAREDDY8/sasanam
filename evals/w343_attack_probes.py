@@ -65,7 +65,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2135  # Wave-342 merge: pin 2131 (no new codes); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+TAXONOMY_PIN = 2140  # Wave-342 merge: pin 2131 (no new codes); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -282,9 +282,9 @@ def test_c3_sentinel_visible_in_nested_args():
 
 @_t
 def test_pin_taxonomy_2135():
-    """Taxonomy pin: 2135 codes, sorted, raw-literal unique."""
+    """Taxonomy pin: 2140 codes, sorted, raw-literal unique."""
     codes = sorted(TAXONOMY)
-    ok = (len(codes) == TAXONOMY_PIN == 2135
+    ok = (len(codes) == TAXONOMY_PIN == 2140  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
           and codes == sorted(set(codes))
           and all(c == c.strip() for c in codes))
     return ("HELD" if ok else "BREAK",

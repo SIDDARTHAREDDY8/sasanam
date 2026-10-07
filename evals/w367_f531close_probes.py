@@ -64,7 +64,7 @@ from gov import dlp  # noqa: E402
 _A1 = "xoxb-" + "0123"
 _A2 = "456789" + "abcdef"
 
-TAXONOMY_PIN = 2135  # Wave-367 lane 1; pin stays 2135
+TAXONOMY_PIN = 2140  # Wave-367 lane 1; pin stays 2135; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 
 def _blocked(payload):
@@ -192,10 +192,11 @@ def p3_compositions():
 
 # ------------------------------------------------------- P4: pin + footer
 def p4_pin_and_footer():
-    assert TAXONOMY_PIN == 2135, "pin moved"
+    assert TAXONOMY_PIN == 2140, "pin moved"  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
     from gov import guac_graph  # noqa: E402
-    assert guac_graph.TAXONOMY_PIN == 2135, \
-        "guac_graph.TAXONOMY_PIN=%r want 2135" % (guac_graph.TAXONOMY_PIN,)
+    # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+    assert guac_graph.TAXONOMY_PIN == 2140, \
+        "guac_graph.TAXONOMY_PIN=%r want 2140" % (guac_graph.TAXONOMY_PIN,)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("Next free finding: **F570**" in text  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
           and "**Open findings: F547, F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566, F567, F568, F569.**" in text)  # wave-368 merge lanes 1-4: F543/F545/F546 CLOSED  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)

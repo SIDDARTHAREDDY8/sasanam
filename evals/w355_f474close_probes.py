@@ -50,7 +50,7 @@ Probes:
       padStart, F466 slice, F467 null-cmp filter, F468 Reflect.construct,
       F470 match/ccmp filter, F471 spread-copy/Object.assign, F472
       repeat tagged); F473 attack filing pinned open as documented.
-  P7  pin + footer: taxonomy pin 2135 (no new decision codes),
+  P7  pin + footer: taxonomy pin 2140 (no new decision codes),
       footer open F473 / next F475, F474 CLOSED entry present.
   PZ  fuzz: 24 malformed adversarial inputs at the public seam --
       zero exceptions (the fail-closed scanner never raises).
@@ -78,7 +78,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
-TAXONOMY_PIN = 2135  # Wave-355: F474 closed; no new decision codes
+TAXONOMY_PIN = 2140  # Wave-355: F474 closed; no new decision codes; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 FOOTER_OPEN = "F547, F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566, F567, F568, F569"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-357 lane 2: F479 CLOSED locally; Wave-355 lane 2: F474 CLOSED (merge finalizes tree-wide); F473 is the wave-354 attack-lane filing (commit e6db7a26)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 lane 1: F476 CLOSED  # Wave-356 lane 2: F477 CLOSED  # Wave-356 merge: F476, F477 CLOSED  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 lane 4: F510+F511 CLOSED (lane-local)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
 FOOTER_NEXT = "F570"  # Wave-355 lane 2: F474 closed; next free F475  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: unchanged  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: next F496  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
 

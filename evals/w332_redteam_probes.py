@@ -49,7 +49,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+TAXONOMY_PIN = 2140  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 FOOTER_OPEN = "F547, F548, F549, F550, F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F561, F562, F563, F564, F565, F566, F567, F568, F569"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # F426-F427 CLOSED (wave-340 lane 1); F428 OPEN (wave-341 lane C).; F442 CLOSED 2026-10-05 wave-347 lane 6; wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480)  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
 
 
@@ -1034,7 +1034,7 @@ def _p4d():
                     r"EXPECTED_PIN)\s*=\s*(\d+)",
                     src, re.M):
                 count += 1
-                if int(m.group(2)) != 2135:
+                if int(m.group(2)) != 2140:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
                     bad.append("%s: %s = %s" % (rel, m.group(1),
                                                m.group(2)))
     if bad:
@@ -1049,21 +1049,22 @@ def _p4d():
 # P5: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P5a-pin-taxonomy-2135-sorted")
+@probe("P5a-pin-taxonomy-2140-sorted")
 def _p5a():
-    if TAXONOMY_PIN != 2135:
-        return _break("P5a-pin-taxonomy-2135-sorted",
-                      "TAXONOMY_PIN is %r, want 2135" % (TAXONOMY_PIN,))
+    if TAXONOMY_PIN != 2140:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+        return _break("P5a-pin-taxonomy-2140-sorted",
+                      "TAXONOMY_PIN is %r, want 2140" % (TAXONOMY_PIN,))
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     lits = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
-    if len(lits) != 2135 or len(set(lits)) != 2135 \
+    # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+    if len(lits) != 2140 or len(set(lits)) != 2140 \
             or lits != sorted(lits):
-        return _break("P5a-pin-taxonomy-2135-sorted",
-                      "want 2135/2135/0 sorted, got %d/%d/sorted=%s"
+        return _break("P5a-pin-taxonomy-2140-sorted",
+                      "want 2140/2140/0 sorted, got %d/%d/sorted=%s"
                       % (len(lits), len(set(lits)), lits == sorted(lits)))
-    return _held("P5a-pin-taxonomy-2135-sorted",
-                 "2135/2135/0 sorted unique on raw source literals")
+    return _held("P5a-pin-taxonomy-2140-sorted",
+                 "2140/2140/0 sorted unique on raw source literals")
 
 
 @probe("P5b-footer-open-f433-f434-f435-next-f436")

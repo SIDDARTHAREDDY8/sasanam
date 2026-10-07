@@ -8,7 +8,7 @@ P1 (R9): the non-separable hybrid rule is recorded in the
   ``gov/pq_envelope.py`` module docstring: both algorithms sign a value
   committing to the algorithm set, because side-by-side JSON hybrids
   are broken by field deletion. (Wave-339 prospectus carry-forward.)
-P2 (pin): TAXONOMY_PIN == 2135 and the registry holds 2127 codes.
+P2 (pin): TAXONOMY_PIN == 2140 and the registry holds 2127 codes.  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 Run standalone with green checks on, fresh TMPDIR.
 
@@ -24,7 +24,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
-TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+TAXONOMY_PIN = 2140  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 _R9_MARKERS = (
     "non-separable",
@@ -45,12 +45,12 @@ def p1_r9_docstring_rule():
 
 
 def p2_pin():
-    """TAXONOMY_PIN == 2135 and the registry holds 2127 codes."""
+    """TAXONOMY_PIN == 2140 and the registry holds 2127 codes."""  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
     from gov.decision_codes import TAXONOMY
-    if TAXONOMY_PIN != 2135:
-        return "BREAK", "P2", "TAXONOMY_PIN = %r, want 2135" % TAXONOMY_PIN
-    if len(TAXONOMY) != 2135:
-        return "BREAK", "P2", "registry has %d codes, want 2135" % len(TAXONOMY)
+    if TAXONOMY_PIN != 2140:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+        return "BREAK", "P2", "TAXONOMY_PIN = %r, want 2140" % TAXONOMY_PIN
+    if len(TAXONOMY) != 2140:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+        return "BREAK", "P2", "registry has %d codes, want 2140" % len(TAXONOMY)
     return "HELD", "P2", "pin 2131; registry 2127 codes"
 
 

@@ -288,11 +288,11 @@ def p_pin_taxonomy():
     import re
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == 2135 and len(set(lits)) == len(lits)
+    ok = (len(lits) == 2140 and len(set(lits)) == len(lits)  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
           and lits == sorted(lits)
-          and len(dc.TAXONOMY) == 2135)
-    return _held("pin-taxonomy-2135-sorted", ok,
-                 "2135/2135/0 sorted" if ok
+          and len(dc.TAXONOMY) == 2140)  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+    return _held("pin-taxonomy-2140-sorted", ok,
+                 "2140/2140/0 sorted" if ok
 
 
                  else "taxonomy drift: %d literals" % len(lits))
@@ -322,7 +322,7 @@ PROBES = [
     ("expired-between-queue-and-execution",
      p_expired_between_queue_and_execution),
     ("human-edited-args-break-scope", p_human_edited_args_break_scope),
-    ("pin-taxonomy-2135-sorted", p_pin_taxonomy),
+    ("pin-taxonomy-2140-sorted", p_pin_taxonomy),
 
 
     ("footer-state", p_footer_state),

@@ -33,7 +33,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+TAXONOMY_PIN = 2140  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 
 from gov import provenance_labels as PL
@@ -884,7 +884,7 @@ def _p4_gate_code():
 # pin + footer
 # ---------------------------------------------------------------------------
 
-@probe("pin-taxonomy-2135-sorted")
+@probe("pin-taxonomy-2140-sorted")
 
 
 def _pin():
@@ -897,16 +897,16 @@ def _pin():
     lits = _re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += _re.findall(r'"code":\s*"([^"]+)"', src)
     if len(lits) != TAXONOMY_PIN:
-        return _break("pin-taxonomy-2135-sorted",
+        return _break("pin-taxonomy-2140-sorted",
                       "taxonomy literals %d != pin %d"
                       % (len(lits), TAXONOMY_PIN))
     if len(set(lits)) != len(lits):
-        return _break("pin-taxonomy-2135-sorted",
+        return _break("pin-taxonomy-2140-sorted",
                       "duplicate code literals in source")
     if sorted(lits) != lits:
-        return _break("pin-taxonomy-2135-sorted", "literals not sorted")
-    return _held("pin-taxonomy-2135-sorted",
-                 "2135/2135/0 unique sorted on source literals")
+        return _break("pin-taxonomy-2140-sorted", "literals not sorted")
+    return _held("pin-taxonomy-2140-sorted",
+                 "2140/2140/0 unique sorted on source literals")
 
 
 

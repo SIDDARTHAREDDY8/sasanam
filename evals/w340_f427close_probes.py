@@ -60,7 +60,7 @@ from tests.keyfixture import provision_test_key  # noqa: E402
 provision_test_key()
 from tests.harness import make_run  # noqa: E402
 
-TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+TAXONOMY_PIN = 2140  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 _results = []
 
@@ -342,9 +342,9 @@ def P1k():
 # ---------------------------------------------------------------------------
 
 def P2a():
-    """Pin 2131: taxonomy 2135/2135/0 sorted-unique on raw literals
+    """Pin 2131: taxonomy 2140/2140/0 sorted-unique on raw literals
     (wave-260 lesson)."""
-    pid = "P2a-pin-taxonomy-2135-sorted"
+    pid = "P2a-pin-taxonomy-2140-sorted"
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     found = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
@@ -534,7 +534,7 @@ _PROBES = [
     ("P1i-r8v1-construction-lie-coded-refusal", P1i),
     ("P1j-r8v2-wrapper-delegate-coded-refusal", P1j),
     ("P1k-r8v3-attr-mutation-coded-refusal", P1k),
-    ("P2a-pin-taxonomy-2135-sorted", P2a),
+    ("P2a-pin-taxonomy-2140-sorted", P2a),
     ("P2b-footer-open-f433-f434-f435-next-f436", P2b),
     ("P3a-r34-approvals-scoped-to-owning-agent", P3a),
     ("P3b-r34-approval-sees-validated-arguments", P3b),

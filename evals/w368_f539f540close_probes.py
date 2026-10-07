@@ -72,7 +72,7 @@ sys.path.insert(0, REPO_ROOT)
 import gov.dlp as dlp  # noqa: E402
 from gov.dlp import _try_js_expr_decode, find_credential  # noqa: E402
 
-TAXONOMY_PIN = 2135  # Wave-368 lane 2; pin stays 2135
+TAXONOMY_PIN = 2140  # Wave-368 lane 2; pin stays 2135; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 # Constructed via concatenation: the write path redacts credential literals.
 _A1 = "xoxb-" + "0123"
@@ -309,9 +309,9 @@ def p7_perf_bound():
 
 
 def p8_pin_and_footer():
-    """Pin stays 2135; re.compile stays 28; F539/F540 CLOSED in
+    """Pin stays 2140; re.compile stays 28; F539/F540 CLOSED in
     FINDINGS; lane-local footer."""
-    if TAXONOMY_PIN != 2135:
+    if TAXONOMY_PIN != 2140:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
         return ("BREAK", "pin moved: %s" % TAXONOMY_PIN)
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     if len(re.findall(r"re\.compile\(", src)) != 28:
@@ -323,7 +323,7 @@ def p8_pin_and_footer():
         return ("BREAK", "lane-local footer wrong")
     if "Next free finding: **%s**" % FOOTER_NEXT not in text:
         return ("BREAK", "next-free footer wrong")
-    return ("HELD", "pin 2135; 28 re.compile; F539/F540 CLOSED; "
+    return ("HELD", "pin 2140; 28 re.compile; F539/F540 CLOSED; "
             "footer %s/next %s (wave-368 lane 2)"
             % (",".join(FOOTER_OPEN), FOOTER_NEXT))
 

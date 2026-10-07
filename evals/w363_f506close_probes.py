@@ -64,7 +64,7 @@ from gov import dlp  # noqa: E402
 _A1 = "xoxb-" + "0123"
 _A2 = "456789" + "abcdef"
 
-TAXONOMY_PIN = 2135  # Wave-363 lane 1; pin stays 2135
+TAXONOMY_PIN = 2140  # Wave-363 lane 1; pin stays 2135; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 
 def _blocked(payload):
@@ -202,10 +202,10 @@ def p3_no_new_regexes():
 
 # ------------------------------------------------------- P4: pin and footer
 def p4_pin_and_footer():
-    assert TAXONOMY_PIN == 2135, "pin moved"
+    assert TAXONOMY_PIN == 2140, "pin moved"  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     assert "F506" in text, "F506 missing from FINDINGS.md"
-    return ("HELD", "pin=2135; F506 in FINDINGS.md (wave-362 lane 5)")
+    return ("HELD", "pin=2140; F506 in FINDINGS.md (wave-362 lane 5)")
 
 
 PROBES = [

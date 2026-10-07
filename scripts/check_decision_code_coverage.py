@@ -2,7 +2,7 @@
 """Decision-code coverage table (wave-344 lane 3 (coverage round 6)).
 
 Bernstein #5569 ("no row claims coverage without a test"), ADAPT: the
-decision-code registry (gov/decision_codes.py, 2135 codes) is generated
+decision-code registry (gov/decision_codes.py, 2140 codes) is generated
 into a coverage table, and NO row may claim coverage without at least
 one test/eval probe asserting that code.
 
@@ -39,7 +39,7 @@ import re
 import sys
 import time
 
-COVERAGE_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes: single-use-refused, evidence-refused, key-identity-refused, spiffe-refused). Wave-343 lane 4: pin 2131 -> 2134 (+3 ownership-*). Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened).
+COVERAGE_PIN = 2140  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes: single-use-refused, evidence-refused, key-identity-refused, spiffe-refused). Wave-343 lane 4: pin 2131 -> 2134 (+3 ownership-*). Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened).; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 # A quoted token that could be a decision code: lowercase alnum runs
 # with dashes/dots/underscores, both quote styles.

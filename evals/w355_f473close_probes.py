@@ -55,7 +55,7 @@ Probes:
   P5  ReDoS: hostile inputs complete fast, zero exceptions.
   P6  no-regression: adjacent closures still block (F462, F468, F471,
       F434, F443, F463).
-  P7  pin (2135) and footer state.
+  P7  pin (2140) and footer state.
 """
 import os
 import re
@@ -75,7 +75,7 @@ A1 = "xoxb-" + "0123"
 A2 = "4567" + "89abcdef"
 CRED = A1 + A2
 
-TAXONOMY_PIN = 2135  # Wave-355: F473 closed; F475 filed; no new decision codes
+TAXONOMY_PIN = 2140  # Wave-355: F473 closed; F475 filed; no new decision codes; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 
 def _hit(payload):
@@ -205,7 +205,7 @@ def p6_noreg():
 def p7_pin_and_footer():
     import gov.decision_codes as dc
     codes = sorted(dc.TAXONOMY.keys())
-    ok = (len(codes) == TAXONOMY_PIN == 2135 and
+    ok = (len(codes) == TAXONOMY_PIN == 2140 and  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
           codes == sorted(set(codes)))
     t = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     # Multiple historical footers exist; the live one is the LAST match.

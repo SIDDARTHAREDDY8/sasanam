@@ -108,8 +108,8 @@ def _green_check():
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return "skipped (GOV_SKIP_GREEN=1)"
     from gov.decision_codes import TAXONOMY
-    assert len(TAXONOMY) == 2135, "taxonomy pin"
-    return "pin 2135 HELD"
+    assert len(TAXONOMY) == 2140, "taxonomy pin"  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+    return "pin 2140 HELD"
 
 
 def main():

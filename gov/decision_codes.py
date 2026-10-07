@@ -18945,6 +18945,58 @@ TAXONOMY = {
         "evidence_kinds_required": ['refusal', 'input'],
         "reverify_steps": ['recompute'],
     },
+    'vendor-artifact-new': {
+        "domain": 'vendor-watch',
+        "code": 'vendor-artifact-new',
+        "human": 'vendor-watch: a new artifact appeared in a watched source; '
+                 'it is not in the approved registry and its tools are denied '
+                 'until a human approves the baseline snapshot',
+        "severity": 'medium',
+        "evidence_kinds_required": ['detection-record', 'snapshot-registry'],
+        "reverify_steps": ['recompute-artifact-digest', 're-run-diff',
+                           'check-registry'],
+    },
+    'vendor-artifact-removed': {
+        "domain": 'vendor-watch',
+        "code": 'vendor-artifact-removed',
+        "human": 'vendor-watch: an approved artifact vanished from its '
+                 'source; calls to it fail closed until a human confirms '
+                 'the removal',
+        "severity": 'medium',
+        "evidence_kinds_required": ['detection-record', 'snapshot-registry'],
+        "reverify_steps": ['re-run-diff', 'check-registry'],
+    },
+    'vendor-hash-drift': {
+        "domain": 'vendor-watch',
+        "code": 'vendor-hash-drift',
+        "human": 'vendor-watch: artifact content hash changed with NO '
+                 'version bump (the silent-update case); tools denied '
+                 'until a human approves the new snapshot',
+        "severity": 'high',
+        "evidence_kinds_required": ['detection-record', 'snapshot-registry',
+                                    'signature'],
+        "reverify_steps": ['recompute-artifact-digest', 're-run-diff',
+                           'verify-detection-signature'],
+    },
+    'vendor-update-detected': {
+        "domain": 'vendor-watch',
+        "code": 'vendor-update-detected',
+        "human": 'vendor-watch: artifact version changed without approval; '
+                 'tools denied until a human approves the new snapshot',
+        "severity": 'medium',
+        "evidence_kinds_required": ['detection-record', 'snapshot-registry'],
+        "reverify_steps": ['recompute-artifact-digest', 're-run-diff',
+                           'check-registry'],
+    },
+    'vendor-update-unverifiable': {
+        "domain": 'vendor-watch',
+        "code": 'vendor-update-unverifiable',
+        "human": 'vendor-watch: an update (or the source itself) could not '
+                 'be verified; blindness fails closed and tools are denied',
+        "severity": 'high',
+        "evidence_kinds_required": ['detection-record'],
+        "reverify_steps": ['re-run-diff', 'inspect-source'],
+    },
     'verifier-input-malformed': {
         "domain": 'authority',
         "code": 'verifier-input-malformed',
@@ -20106,58 +20158,6 @@ TAXONOMY = {
         "severity": 'high',
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
-    },
-    'vendor-artifact-new': {
-        "domain": 'vendor-watch',
-        "code": 'vendor-artifact-new',
-        "human": 'vendor-watch: a new artifact appeared in a watched source; '
-                 'it is not in the approved registry and its tools are denied '
-                 'until a human approves the baseline snapshot',
-        "severity": 'medium',
-        "evidence_kinds_required": ['detection-record', 'snapshot-registry'],
-        "reverify_steps": ['recompute-artifact-digest', 're-run-diff',
-                           'check-registry'],
-    },
-    'vendor-artifact-removed': {
-        "domain": 'vendor-watch',
-        "code": 'vendor-artifact-removed',
-        "human": 'vendor-watch: an approved artifact vanished from its '
-                 'source; calls to it fail closed until a human confirms '
-                 'the removal',
-        "severity": 'medium',
-        "evidence_kinds_required": ['detection-record', 'snapshot-registry'],
-        "reverify_steps": ['re-run-diff', 'check-registry'],
-    },
-    'vendor-hash-drift': {
-        "domain": 'vendor-watch',
-        "code": 'vendor-hash-drift',
-        "human": 'vendor-watch: artifact content hash changed with NO '
-                 'version bump (the silent-update case); tools denied '
-                 'until a human approves the new snapshot',
-        "severity": 'high',
-        "evidence_kinds_required": ['detection-record', 'snapshot-registry',
-                                    'signature'],
-        "reverify_steps": ['recompute-artifact-digest', 're-run-diff',
-                           'verify-detection-signature'],
-    },
-    'vendor-update-detected': {
-        "domain": 'vendor-watch',
-        "code": 'vendor-update-detected',
-        "human": 'vendor-watch: artifact version changed without approval; '
-                 'tools denied until a human approves the new snapshot',
-        "severity": 'medium',
-        "evidence_kinds_required": ['detection-record', 'snapshot-registry'],
-        "reverify_steps": ['recompute-artifact-digest', 're-run-diff',
-                           'check-registry'],
-    },
-    'vendor-update-unverifiable': {
-        "domain": 'vendor-watch',
-        "code": 'vendor-update-unverifiable',
-        "human": 'vendor-watch: an update (or the source itself) could not '
-                 'be verified; blindness fails closed and tools are denied',
-        "severity": 'high',
-        "evidence_kinds_required": ['detection-record'],
-        "reverify_steps": ['re-run-diff', 'inspect-source'],
     },
 }
 

@@ -20,7 +20,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+TAXONOMY_PIN = 2140  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 
 _results = []
@@ -476,7 +476,7 @@ def _p14():
 # P15: regressions -- pin taxonomy + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P15-pin-taxonomy-2135-sorted")
+@probe("P15-pin-taxonomy-2140-sorted")
 
 
 def _p15():
@@ -484,12 +484,12 @@ def _p15():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2135#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+    ok = (len(lits) == TAXONOMY_PIN == 2140#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        _held("P15-pin-taxonomy-2135-sorted", "2135/2135/0 sorted")
+        _held("P15-pin-taxonomy-2140-sorted", "2140/2140/0 sorted")
     else:
-        _break("P15-pin-taxonomy-2135-sorted",
+        _break("P15-pin-taxonomy-2140-sorted",
 
 
                "got %d literals" % (len(lits),))

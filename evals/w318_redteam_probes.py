@@ -36,7 +36,7 @@ P7 (2): F403 re-probe on the CLOSED tree -- the 3-file standalone
 P8 (2): decision_bom level-3 fallback divergence risk -- an unknown
     ladder mode in the standalone path refuses (stricter, never
     looser); the pin test fails loudly on drift, never silently.
-P9 (3): regressions -- footer, pin taxonomy 2135/2135/0 sorted, the
+P9 (3): regressions -- footer, pin taxonomy 2140/2140/0 sorted, the
 
 
     wave-317 producer USER/TOOL grading pin.
@@ -865,7 +865,7 @@ def _p9_footer():
                  "footer pins open F521, F522, F523, F524, F525 / next F526")  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
 
 
-@probe("P9-pin-taxonomy-2135-sorted")
+@probe("P9-pin-taxonomy-2140-sorted")
 
 
 def _p9_pin():
@@ -875,14 +875,14 @@ def _p9_pin():
                                             "decision_codes.py"),
                                encoding="utf-8").read())
     except Exception as exc:  # noqa: BLE001
-        return _error("P9-pin-taxonomy-2135-sorted", "%r" % (exc,))
-    if len(lits) != 2135 or len(set(lits)) != 2135:
-        return _break("P9-pin-taxonomy-2135-sorted",
-                      "got %d literals / %d unique (want 2135/2135)"
+        return _error("P9-pin-taxonomy-2140-sorted", "%r" % (exc,))
+    if len(lits) != 2140 or len(set(lits)) != 2140:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+        return _break("P9-pin-taxonomy-2140-sorted",
+                      "got %d literals / %d unique (want 2140/2140)"
                       % (len(lits), len(set(lits))))
     if lits != sorted(lits):
-        return _break("P9-pin-taxonomy-2135-sorted", "literals not sorted")
-    return _held("P9-pin-taxonomy-2135-sorted", "2135/2135/0 sorted")
+        return _break("P9-pin-taxonomy-2140-sorted", "literals not sorted")
+    return _held("P9-pin-taxonomy-2140-sorted", "2140/2140/0 sorted")
 
 
 

@@ -33,7 +33,7 @@ P8 (red-capable): the estimator agrees with
   (single source of truth after the move).
 P9 (red-capable): persisted cache format is versioned JSON keyed by
   64-hex digests; atomic write leaves no .tmp behind.
-P10 (pin): TAXONOMY_PIN == 2135 and the registry holds 2127 codes.
+P10 (pin): TAXONOMY_PIN == 2140 and the registry holds 2127 codes.  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 Verdicts: HELD = behavior matches the pin; BREAK = genuine defect;
 ERROR = probe/harness problem. No findings manufactured.
@@ -68,7 +68,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+TAXONOMY_PIN = 2140  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 _EXPECTED_BREAKS = set()  # never {} (wave-331 lesson); breaks documented above
 
@@ -321,16 +321,16 @@ def p9_persisted_format():
 
 
 def p10_pin():
-    """TAXONOMY_PIN == 2135 and the registry holds 2127 codes."""
+    """TAXONOMY_PIN == 2140 and the registry holds 2127 codes."""  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
     try:
         sys.path.insert(0, os.path.join(REPO_ROOT))
         from gov.decision_codes import TAXONOMY
     except Exception:
         return "ERROR", "P10", traceback.format_exc(limit=3)
-    if TAXONOMY_PIN != 2135:
-        return "BREAK", "P10", "TAXONOMY_PIN = %r, want 2135" % TAXONOMY_PIN
-    if len(TAXONOMY) != 2135:
-        return "BREAK", "P10", "registry has %d codes, want 2135" % len(TAXONOMY)
+    if TAXONOMY_PIN != 2140:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+        return "BREAK", "P10", "TAXONOMY_PIN = %r, want 2140" % TAXONOMY_PIN
+    if len(TAXONOMY) != 2140:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+        return "BREAK", "P10", "registry has %d codes, want 2140" % len(TAXONOMY)
     return "HELD", "P10", "pin 2131; registry 2127 codes"
 
 

@@ -57,7 +57,7 @@ class CodesRegisteredTest(unittest.TestCase):
                              code)
 
     def test_taxonomy_pin(self):
-        self.assertEqual(len(dc.TAXONOMY), 2135)  # Wave-342 lane 6: pin 2134 -> 2127 (-4 family-fallback base-class codes).; Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+        self.assertEqual(len(dc.TAXONOMY), 2140)  # Wave-342 lane 6: pin 2134 -> 2127 (-4 family-fallback base-class codes).; Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 
 class UrlShapeTest(unittest.TestCase):

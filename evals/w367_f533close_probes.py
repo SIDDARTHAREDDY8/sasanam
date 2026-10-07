@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) + "/..")
 from gov.dlp import find_credential  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TAXONOMY_PIN = 2135  # Wave-367 lane 2; pin stays 2135
+TAXONOMY_PIN = 2140  # Wave-367 lane 2; pin stays 2135; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 # Constructed via concatenation: the write path redacts credential literals.
 _A1 = "xoxb-" + "0123"
@@ -227,9 +227,9 @@ def p5_compositions():
 
 
 def p6_pin_and_footer():
-    """Pin stays 2135; no new regexes; F533 CLOSED in FINDINGS;
+    """Pin stays 2140; no new regexes; F533 CLOSED in FINDINGS;
     lane-local footer."""
-    if TAXONOMY_PIN != 2135:
+    if TAXONOMY_PIN != 2140:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
         return ("BREAK", "pin moved: %s" % TAXONOMY_PIN)
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     if len(re.findall(r"re\.compile\(", src)) != 28:
@@ -241,7 +241,7 @@ def p6_pin_and_footer():
         return ("BREAK", "merged footer wrong")
     if "Next free finding: **F570**" not in text:  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
         return ("BREAK", "next-free footer wrong")
-    return ("HELD", "pin 2135; 28 re.compile; F533 CLOSED; "
+    return ("HELD", "pin 2140; 28 re.compile; F533 CLOSED; "
             "footer F537-F542,F544/next F547 (wave-368 lane 4)")
 
 

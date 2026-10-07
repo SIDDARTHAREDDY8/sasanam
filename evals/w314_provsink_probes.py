@@ -75,7 +75,7 @@ import probe_lines  # noqa: E402  (canonical probe-line emission)
 from gov import provenance_labels as PL  # noqa: E402
 from gov import provenance_sink as PS  # noqa: E402
 
-TAXONOMY_PIN = 2135  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+TAXONOMY_PIN = 2140  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
 
 _results = []
@@ -370,10 +370,10 @@ def pin_taxonomy():
                       "provenance-sink-redacted",
                       "provenance-sink-refused",
                       "provenance-sink-unknown-tool")]
-    ok = (len(keys) == TAXONOMY_PIN == 2135 and len(mine) == 9#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
+    ok = (len(keys) == TAXONOMY_PIN == 2140 and len(mine) == 9#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
           and keys == sorted(keys) and len(set(keys)) == len(keys))
     _held("pin-taxonomy", ok,
-          "taxonomy 2135/2135/0 sorted, 9 wave-314 codes present"
+          "taxonomy 2140/2140/0 sorted, 9 wave-314 codes present"
 
 
           if ok else "taxonomy pin mismatch")

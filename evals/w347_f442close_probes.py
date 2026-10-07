@@ -32,7 +32,7 @@ registered decision code `policy-delta-mode-weakened`:
       PolicyEngine verdict deny -> allow (the genuine-weakening leg of
       the red-first), and warn likewise.
   P9  determinism: same delta twice -> byte-identical report + digest.
-  P10 pin 2135, raw-literal taxonomy uniqueness, central registration
+  P10 pin 2140, raw-literal taxonomy uniqueness, central registration
       of policy-delta-mode-weakened, footer open F437-F441 / next F442.
 
 $0 spend. No network. Scratch files live under /var/tmp only.
@@ -66,8 +66,8 @@ FOOTER_OPEN = "F547, F548, F549, F550, F551, F552, F553, F554, F555, F556, F557,
 FOOTER_NEXT = "F570"  # wave-347 merge: F437-F442 CLOSED, F443 OPEN (next F444); wave-348 merge: F443 CLOSED, F444/F445 OPEN (next F446); wave-349 merge: F444+F445 CLOSED, F446-F450 filed OPEN (next F451)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: next F480  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: next F496  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
 
 
-TAXONOMY_PIN = 2135  # Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)
-EXPECTED_PIN_MSG = "2135/2135/0 sorted"
+TAXONOMY_PIN = 2140  # Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+EXPECTED_PIN_MSG = "2140/2140/0 sorted"
 
 
 def _check(name, cond, detail=""):
@@ -253,7 +253,7 @@ def p9_determinism():
 
 # -------------------------------------------------------------------------- P10
 def p10_pin_footer_registration():
-    """Pin 2135, raw-literal taxonomy uniqueness, central registration
+    """Pin 2140, raw-literal taxonomy uniqueness, central registration
     of the new code, footer open F437-F441 / next F442."""
     codes = sorted(_dc.TAXONOMY)
     ok = (len(codes) == TAXONOMY_PIN
@@ -272,7 +272,7 @@ def p10_pin_footer_registration():
     footer = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ok and ("Next free finding: **%s**" % FOOTER_NEXT) in footer
     ok = ok and ("Open findings: %s." % FOOTER_OPEN) in footer
-    return _check("p10: pin 2135, footer F437-F441/next F442", ok,
+    return _check("p10: pin 2140, footer F437-F441/next F442", ok,
                   footer[-60:])
 
 
