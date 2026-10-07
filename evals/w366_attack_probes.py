@@ -136,13 +136,13 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F531, F533-F536 open, next F537 (wave-366 merge:
-    F526-F530 CLOSED lanes 1-3; F532 CLOSED at merge (honest F527 generalization);
-    F531, F533-F536 OPEN attack round 34)."""
+    """Control: footer shows F531, F533, F535, F536 open, next F537
+    (wave-367 lane 3: F534 CLOSED -- bound-slice targets; F531,
+    F533, F535, F536 still OPEN from attack round 34)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F537**" in text
-          and "**Open findings: F531, F533, F534, F535, F536.**" in text)  # Wave-366 merge: F531, F533-F536 OPEN (next F537)
+          and "**Open findings: F531, F533, F535, F536.**" in text)  # Wave-367 lane 3: F534 CLOSED (next F537)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -349,9 +349,11 @@ def test_p2_f533_open():
 
 @_t
 def test_p2_f534_open():
-    """F534 OPEN (this round): bound slice target still misses."""
-    ms = _misses("Reflect.apply([].slice.bind(['%s','%s'], 0, 2), null, []).join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    """F534 CLOSED (wave-367 lane 3): bound slice target now blocks
+    (wave-306 class: probe flipped from BREAK-demonstration to coded
+    refusal assertion)."""
+    hit = _blocked("Reflect.apply([].slice.bind(['%s','%s'], 0, 2), null, []).join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t

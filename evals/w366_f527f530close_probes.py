@@ -339,9 +339,10 @@ def p3_perf_bound():
 
 
 # ------------------------------------------------- P4: pin and footer
-# Lane-local footer: F527/F530 CLOSED in this lane; F526/F528/F529
-# remain OPEN; the merge finalizes tree-wide.
-FOOTER_OPEN = ("F531", "F533", "F534", "F535", "F536")
+# Lane-local footer (wave-367 lane 3 repoint): F527/F530 CLOSED in
+# this lane's origin; F534 CLOSED here; F531, F533, F535, F536 remain
+# OPEN; the merge finalizes tree-wide.
+FOOTER_OPEN = ("F531", "F533", "F535", "F536")
 FOOTER_NEXT = "F537"
 
 
@@ -373,14 +374,13 @@ def p4_pin_and_footer():
             notes.append("lane-local footer: next=%s open=%s "
                          "(want next=%s open=%s)" % (
                              nxt, open_got, FOOTER_NEXT, FOOTER_OPEN))
-    for fid in ("F527", "F530"):
+    for fid in ("F526", "F527", "F528", "F529", "F530"):
+        # Wave-367 lane 3 correction: F526/F528/F529 were closed by
+        # wave-366 lanes 1/3 (not open); the probe's OPEN assertion
+        # was stale from the wave-366 merge.
         if not re.search(r"\(%s .*CLOSED" % fid, text):
             ok = False
             notes.append("%s not marked CLOSED" % fid)
-    for fid in ("F526", "F528", "F529"):
-        if not re.search(r"\(%s .*OPEN" % fid, text):
-            ok = False
-            notes.append("%s not OPEN" % fid)
     return ("HELD" if ok else "BREAK",
             "pin/footer %s%s" % ("ok" if ok else "MISMATCH",
                                  "" if not notes else ": " + "; ".join(notes)))
