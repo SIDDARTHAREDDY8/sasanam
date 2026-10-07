@@ -193,7 +193,7 @@ def p4_pin_and_footer():
         "guac_graph.TAXONOMY_PIN=%r want 2135" % (guac_graph.TAXONOMY_PIN,)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("Next free finding: **F537**" in text
-          and "**Open findings: F531, F533, F534, F535, F536.**" in text)
+          and "**Open findings: F533, F534, F535, F536.**" in text)
     return ("HELD" if ok else "BREAK",
             "pin=%s footer=%s" % (TAXONOMY_PIN, ok))
 

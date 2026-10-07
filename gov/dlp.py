@@ -5843,6 +5843,45 @@ def _js_parse_reflect_apply_fn(text, i, depth, state):
     return result, j + 1
 
 
+def _js_parse_f531_spread_bound_args(text, j, state):
+    """Parse `...['lit', ...]` as the bound-arg list at text[j] (F531).
+
+    text[j] is the first dot of the `...` spread. Node-exact desugar
+    (v24.20.0): in `[].concat.bind(BINDTHIS, ...['f1', 'f2'])` the
+    spread expands into bind's argument list, so the spread array's
+    elements ARE the bound args -- an empty spread is exactly no bound
+    args. The array is parsed with the same bounded string-literal-only
+    grammar as literal bound args (`_js_parse_string_literal_list`;
+    parts-budget charged per element, plus one part for the spread
+    itself), so the desugar is faithful to the direct form. The array
+    is never evaluated.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - the spread source must be an array literal; any other source
+      (`...x`, `...{'0':'f1'}`, template/tagged forms) fails closed.
+    - the spread must be the SOLE and FINAL bound arg: the caller has
+      just seen `,` after BINDTHIS, and this function consumes `)` --
+      multiple spreads, mid-list spreads, and literal+spread mixes
+      fail closed (node accepts them; the lane rejects rather than
+      mis-decodes -- documented scope boundary).
+    Returns (elements, idx_after_close_paren). Never evals.
+    """
+    n = len(text)
+    if not text.startswith("...", j):
+        raise _JSExprFail("F531 spread without ellipsis")
+    state["parts"] += 1  # the spread is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    j = _js_skip_ws(text, j + 3)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F531 spread source not an array literal")
+    elements, j = _js_parse_string_literal_list(text, j + 1, state, "]")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("F531 spread not the final bound arg")
+    return elements, j + 1
+
+
 def _js_parse_f521_bound_target(text, j, depth, state):
     """Parse a `.bind`-bound concat function value at text[j] (F521).
 
@@ -5870,7 +5909,12 @@ def _js_parse_f521_bound_target(text, j, depth, state):
       all-string elements (the F506 thisArg classes); anything else
       fails closed.
     - every bound ARG must be a string literal (F454 grammar);
-      numeric, template, and additive args fail closed.
+      numeric, template, and additive args fail closed. The one
+      exception is F531: a single spread of a literal array as the SOLE
+      bound arg (`.bind(BINDTHIS, ...['f1'])`), modeled node-exactly by
+      `_js_parse_f531_spread_bound_args` (wave-367 lane 1); multiple
+      spreads, mid-list spreads, literal+spread mixes, and non-literal
+      spread sources all fail closed.
     - a third `.bind` on the two-hop chain (three-hop chain) fails
       closed structurally -- the triple caller expects `,` after the
       bound target (documented residual).
@@ -5940,7 +5984,18 @@ def _js_parse_f521_bound_target(text, j, depth, state):
     else:
         if k >= n or text[k] != ",":
             raise _JSExprFail("F521 bind without args")
-        bound_args, k = _js_parse_string_literal_list(text, k + 1, state, ")")
+        k = _js_skip_ws(text, k + 1)
+        # F531: a single spread of a literal array as the bound-arg
+        # list, e.g. `[].concat.bind([], ...['f1'])`. The spread must
+        # be the sole and final bound arg (parsed by
+        # _js_parse_f531_spread_bound_args); anything else falls back
+        # to the literal-arg grammar below.
+        if k < n and text.startswith("...", k):
+            bound_args, k = _js_parse_f531_spread_bound_args(text, k,
+                                                             state)
+        else:
+            bound_args, k = _js_parse_string_literal_list(text, k, state,
+                                                          ")")
     # F526: exactly one additional `.bind` hop (a two-hop chain), e.g.
     # `[].concat.bind([],'f1').bind([])`. Node-exact (v24.20.0):
     # B2 = B1.bind(BINDTHIS2, ...ARGS2) where B1 is itself

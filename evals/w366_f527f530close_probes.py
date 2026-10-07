@@ -339,9 +339,9 @@ def p3_perf_bound():
 
 
 # ------------------------------------------------- P4: pin and footer
-# Lane-local footer: F527/F530 CLOSED in this lane; F526/F528/F529
-# remain OPEN; the merge finalizes tree-wide.
-FOOTER_OPEN = ("F531", "F533", "F534", "F535", "F536")
+# Lane-local footer (wave-367 lane 1): F526-F532 CLOSED (F531 closed
+# here); F533-F536 remain OPEN; the merge finalizes tree-wide.
+FOOTER_OPEN = ("F533", "F534", "F535", "F536")
 FOOTER_NEXT = "F537"
 
 
@@ -367,17 +367,18 @@ def p4_pin_and_footer():
         open_got = tuple(s.strip() for s in open_s.split(","))
         if nxt != FOOTER_NEXT or open_got != FOOTER_OPEN:
             # Merged footer: F526-F530 CLOSED, F532 CLOSED at merge (honest
-            # F527 generalization); open F531, F533-F536; next F537.
+            # F527 generalization); F531 CLOSED wave-367 lane 1; open
+            # F533-F536; next F537.
             # A footer regression BREAKs.
             ok = False
             notes.append("lane-local footer: next=%s open=%s "
                          "(want next=%s open=%s)" % (
                              nxt, open_got, FOOTER_NEXT, FOOTER_OPEN))
-    for fid in ("F527", "F530"):
+    for fid in ("F526", "F527", "F528", "F529", "F530", "F531", "F532"):
         if not re.search(r"\(%s .*CLOSED" % fid, text):
             ok = False
             notes.append("%s not marked CLOSED" % fid)
-    for fid in ("F526", "F528", "F529"):
+    for fid in ("F533", "F534", "F535", "F536"):
         if not re.search(r"\(%s .*OPEN" % fid, text):
             ok = False
             notes.append("%s not OPEN" % fid)

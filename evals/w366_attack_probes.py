@@ -142,7 +142,7 @@ def test_b0_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F537**" in text
-          and "**Open findings: F531, F533, F534, F535, F536.**" in text)  # Wave-366 merge: F531, F533-F536 OPEN (next F537)
+          and "**Open findings: F533, F534, F535, F536.**" in text)  # Wave-367 lane 1: F531 CLOSED; open F533-F536 (next F537)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -324,11 +324,11 @@ def test_p2_f530_closed():
 
 
 @_t
-def test_p2_f531_open():
-    """F531 OPEN (this round): spread bound args still miss."""
+def test_p2_f531_closed():
+    """F531 CLOSED (wave-367 lane 1): spread bound args now block."""
     ms = _misses("Reflect.apply([].concat.bind([], ...['%(A1)s']), null, ['%(A2)s']).join('')"
                  % {"A1": _A, "A2": _B})
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 @_t
