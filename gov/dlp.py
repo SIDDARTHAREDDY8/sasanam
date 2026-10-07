@@ -6129,6 +6129,10 @@ def _js_parse_fn_enum_body_target(text, j, depth, state):
       destructuring loop targets, non-empty accumulator
       initializers, `const` accumulators, loop bodies other than
       the exact idioms, and any other body shape.
+    - a leading directive prologue (`"use strict";` / `'use
+      strict';`, `;`- or ASI-terminated) is SKIPPED node-exactly
+      (F570): the engine treats it as inert, so the decl match
+      starts after it. Directives mid-body are never skipped.
     """
     n = len(text)
     if not text.startswith("function", j):
@@ -6151,7 +6155,13 @@ def _js_parse_fn_enum_body_target(text, j, depth, state):
         raise _JSExprFail("F546 target without brace")
     inner_start, inner_end, j = _js_span_braced(text, j)
     stmts = text[inner_start:inner_end]
-    sj = _js_skip_ws(stmts, 0)
+    # F570: a directive prologue ("use strict"; ...) may lead the
+    # body -- the engine treats it as inert, so the skip is
+    # node-exact; with no directives this is exactly
+    # _js_skip_ws(stmts, 0) (the helper starts there), so the
+    # no-prologue behavior is unchanged. Each skipped directive
+    # charges one part inside the helper (F452 discipline).
+    sj = _js_skip_ws(stmts, _js_skip_directive_prologue(stmts, state))
     _kw, m = _js_match_decl_kw(stmts, sj)
     if m is None:
         raise _JSExprFail("F546 decl not var/const/let")
@@ -6247,7 +6257,13 @@ def _js_parse_fn_destructure_body_target(text, j, depth, state):
         raise _JSExprFail("F558 target without brace")
     inner_start, inner_end, j = _js_span_braced(text, j)
     stmts = text[inner_start:inner_end]
-    names, keys, body_expr = _js_split_destructure_var_decl(stmts)
+    # Directive prologues are inert in the engine (F570 mechanism,
+    # generalized here per the F560 precedent): skip before the
+    # destructure declaration. With no directives this is exactly
+    # _js_skip_ws(stmts, 0); each skipped directive charges one part
+    # inside the helper (F452 discipline).
+    sj = _js_skip_ws(stmts, _js_skip_directive_prologue(stmts, state))
+    names, keys, body_expr = _js_split_destructure_var_decl(stmts[sj:])
     state["parts"] += 1  # the destructure body is obfuscation-shaped
     if state["parts"] > _JS_EXPR_MAX_PARTS:
         raise _JSExprFail("too many parts")
@@ -13350,6 +13366,181 @@ def _js_bind_destructure_arguments(body_expr, arg_texts, names, keys):
     return rewritten
 
 
+def _js_parse_f577_arrow_rest_iife(text, i, depth, state):
+    """Parse `((...A)=>BODY)(lit, ...)` or
+    `((...A)=>BODY).call(T, lit, ...)` at text[i] (F577).
+
+    An arrow IIFE binding call-site arguments through a rest
+    parameter: `((...a)=>a[0]+a[1])('f1','f2')` and the `.call`
+    dispatch form `((...a)=>a[0]+a[1]).call(null,'f1','f2')` (F511
+    precedent: `.call` dispatch is its own class). Node-exact
+    desugar (v24.20.0): the rest parameter IS the arguments array,
+    so the body is rewritten by `_js_bind_iife_arguments` with
+    `member_ok=True` (exactly the F516 rest-param binding) and the
+    rewritten text is parsed by the normal additive grammar at
+    depth+1 -- every downstream decoder, bound, and fail-closed
+    rule applies unchanged. The body is an expression or a
+    single-`return` block body (F448 precedent: engine-identical).
+    Returns (value, next_index), or None when the head does not
+    match (the caller falls through to the parenthesized-additive
+    path, which fails closed on `(` + `(` as before). Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - the parameter list must be EXACTLY one rest parameter:
+      named leading params (`(a,...r)`) fail closed (documented
+      residual -- a distinct binding production).
+    - a rest name of `arguments` fails closed (it would shadow the
+      exotic object with array semantics -- conservative,
+      documented).
+    - `this`, `arguments`, `super` in the body fail closed: an
+      arrow's `this`/`arguments`/`super` are lexically bound by the
+      enclosing (unknown) scope, so the decoder cannot resolve
+      them -- a miss, never a mis-decode. The `.call` thisArg is
+      parsed and discarded (node v24.20.0: the engine ignores any
+      thisArg for an arrow -- the result is identical for every
+      thisArg, so the discard is engine-exact); only
+      ignored-value/identifier thisArgs are modeled -- object
+      literals and other forms fail closed (documented).
+    - call args are string literals only (the F509 arg grammar);
+      non-literals fail closed.
+    """
+    n = len(text)
+    if i >= n or text[i] != "(":
+        return None
+    try:
+        j = _js_skip_ws(text, i + 1)
+        if j >= n or text[j] != "(":
+            raise _JSExprFail("F577 not an arrow iife")
+        j = _js_skip_ws(text, j + 1)
+        if j + 3 > n or not text.startswith("...", j):
+            raise _JSExprFail("F577 params not rest-only")
+        j = _js_skip_ws(text, j + 3)
+        name, j = _js_parse_ident(text, j)
+        if name == "arguments":
+            raise _JSExprFail("F577 rest named arguments")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ")":
+            raise _JSExprFail("F577 bad params")
+        j = _js_skip_ws(text, j + 1)
+        if not text.startswith("=>", j):
+            raise _JSExprFail("F577 arrow without =>")
+        j = _js_skip_ws(text, j + 2)
+        if j < n and text[j] == "{":
+            # Single-return block body (F448 precedent).
+            inner_start, inner_end, j = _js_span_braced(text, j)
+            rk = _js_match_kw(text, _js_skip_ws(text, inner_start),
+                              "return")
+            if rk is None:
+                raise _JSExprFail("F577 block without return")
+            rk = _js_skip_ws(text, rk)
+            be = inner_end
+            while be > rk and text[be - 1] in " \t\n\r":
+                be -= 1
+            if be > rk and text[be - 1] == ";":
+                be -= 1
+            body_expr = text[rk:be]
+        else:
+            # Expression body: scan to the `)` closing the outer
+            # group opened at text[i] (strings honored, backticks
+            # and slashes fail closed -- same discipline as
+            # _js_span_braced).
+            k = j
+            d = 0
+            while k < n:
+                c = text[k]
+                if c in "'\"":
+                    k = _js_skip_quoted(text, k)
+                    continue
+                if c == "`":
+                    raise _JSExprFail("template in f577 body")
+                if c == "/":
+                    raise _JSExprFail("slash in f577 body")
+                if c == "(":
+                    d += 1
+                elif c == ")":
+                    if d == 0:
+                        break
+                    d -= 1
+                k += 1
+            if k >= n:
+                raise _JSExprFail("F577 body unterminated")
+            body_expr = text[j:k]
+            j = k
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ")":
+            raise _JSExprFail("F577 group not closed")
+        j = _js_skip_ws(text, j + 1)
+        # The invocation: direct `(lit, ...)` or
+        # `.call(T, lit, ...)` (F511 precedent).
+        if j < n and text[j] == ".":
+            k = j + 1
+            if k + 4 > n or not text.startswith("call", k) or \
+                    (k + 4 < n and text[k + 4] in _JS_IDENT_CONT):
+                raise _JSExprFail("F577 not call dispatch")
+            k = _js_skip_ws(text, k + 4)
+            if k >= n or text[k] != "(":
+                raise _JSExprFail("F577 call without paren")
+            k = _js_skip_ws(text, k + 1)
+            # The .call thisArg: the engine ignores it for arrows
+            # (lexical this) -- parsed and discarded node-exactly.
+            try:
+                _, k = _js_parse_ignored_value(text, k, depth, state)
+            except _JSExprFail:
+                _, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ",":
+                raise _JSExprFail("F577 call without args")
+            k = _js_skip_ws(text, k + 1)
+        elif j < n and text[j] == "(":
+            k = _js_skip_ws(text, j + 1)
+        else:
+            raise _JSExprFail("F577 not invoked")
+        args = []
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ")":
+            k += 1
+        else:
+            while True:
+                k = _js_skip_ws(text, k)
+                if k >= n or text[k] not in "'\"":
+                    raise _JSExprFail("F577 arg not string literal")
+                a0 = k
+                _, k = _js_parse_string(text, k)
+                args.append(text[a0:k])
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                k = _js_skip_ws(text, k)
+                if k >= n:
+                    raise _JSExprFail("unterminated f577 call")
+                if text[k] == ",":
+                    k = _js_skip_ws(text, k + 1)
+                    continue
+                if text[k] == ")":
+                    k += 1
+                    break
+                raise _JSExprFail("bad f577 call")
+        # Lexically-scoped names the static decoder cannot resolve
+        # fail closed (miss, never mis-decode).
+        segs = _js_split_code_strings(body_expr)
+        code = "".join(s for is_code, s in segs if is_code)
+        for kw in ("this", "arguments", "super"):
+            if _js_code_find_idents(code, kw):
+                raise _JSExprFail("F577 body references " + kw)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        rewritten = _js_bind_iife_arguments(body_expr, args, name,
+                                            member_ok=True)
+        val, k2 = _js_parse_additive(rewritten, 0, depth + 1, state)
+        k2 = _js_skip_ws(rewritten, k2)
+        if k2 != len(rewritten):
+            raise _JSExprFail("F577 body trailing junk")
+        state["ops"] += 1  # the arrow-iife wrapper is obfuscation-shaped
+        return val, k
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_args_binding_iife(text, i, depth, state):
     """Parse `(function(){return BODY})(lit, ...)` at text[i] (F509).
 
@@ -18343,6 +18534,15 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f556 = _js_parse_f556_bound_arrow_call(text, i, depth, state)
         if _f556 is not None:
             val, i = _f556
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F577: ((...A)=>BODY)(lit, ...) / ((...A)=>BODY).call(T, lit,
+        # ...) -- arrow-IIFE rest-parameter bindings. None falls
+        # through to the parenthesized-additive path (which fails
+        # closed on the `(` + `(` head as before); the shape is
+        # disjoint from every entry above (none starts `((...`).
+        _f577 = _js_parse_f577_arrow_rest_iife(text, i, depth, state)
+        if _f577 is not None:
+            val, i = _f577
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")

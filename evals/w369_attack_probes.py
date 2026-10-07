@@ -142,11 +142,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F547-F581 open, next F582 (wave-369 lane 8)."""
+    """Control: footer shows F571-F576, F578-F582 open, next F583 (wave-370 lane 1)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F583**" in text  # Wave-369 lane 8 (attack round 37): F547-F569 reconfirmed OPEN; F570-F581 filed OPEN (next F582)
-          and "Open findings: F570, F571, F572, F573, F574, F575, F576, F577, F578, F579, F580, F581, F582." in text)  # Wave-369 lane 8 (attack round 37): F547-F569 reconfirmed OPEN; F570-F581 filed OPEN (next F582)
+    ok = ("Next free finding: **F583**" in text  # Wave-370 lane 1: F570, F577 CLOSED
+          and "Open findings: F571, F572, F573, F574, F575, F576, F578, F579, F580, F581, F582." in text)  # Wave-370 lane 1: F570, F577 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -529,10 +529,11 @@ def test_p2_f567_closed():
     return ("HELD" if not hit else "BREAK", "false-positive-hit=%s" % hit)
 
 @_t
-def test_p2_f570_open():
-    """F570 OPEN: directive prologue in direct Reflect.apply target still misses."""
-    ms = _misses("Reflect.apply(function(){\"use strict\";var a=arguments;return a[0]+a[1];},null,['%s','%s'])" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f570_closed():
+    """F570 CLOSED (wave-370): directive prologue in direct
+    Reflect.apply target now blocks coded."""
+    hit = _blocked("Reflect.apply(function(){\"use strict\";var a=arguments;return a[0]+a[1];},null,['%s','%s'])" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_p2_f571_open():
@@ -571,10 +572,10 @@ def test_p2_f576_open():
     return ("HELD" if ms else "BREAK", "miss=%s" % ms)
 
 @_t
-def test_p2_f577_open():
-    """F577 OPEN: arrow-IIFE rest bindings still miss."""
-    ms = _misses("((...a)=>a[0]+a[1])('%s','%s')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f577_closed():
+    """F577 CLOSED (wave-370): arrow-IIFE rest bindings now block coded."""
+    hit = _blocked("((...a)=>a[0]+a[1])('%s','%s')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_p2_f578_open():
