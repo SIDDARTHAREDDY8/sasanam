@@ -120,12 +120,12 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F506-F511 + F513-F520 open, next F521
-    (wave-363 lane 5; F512 was closed by the wave-362 merge)."""
+    """Control: footer shows F514-F518 + F520 open, next F521
+    (wave-364 lane 1: F513, F519 CLOSED locally; merge finalizes)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F521**" in text
-          and "**Open findings: F513, F514, F515, F516, F517, F518, F519, F520.**" in text)
+          and "**Open findings: F514, F515, F516, F517, F518, F520.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -221,10 +221,13 @@ def test_p2_f511_closed():
 
 
 @_t
-def test_p2_f513_open():
-    """F513 OPEN (this round): Reflect.apply via .bind still misses."""
-    ms = _misses("Reflect.apply.bind(Reflect)([].concat, [], ['%s','%s']).join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f513_closed():
+    """F513 CLOSED (wave-364 lane 1): Reflect.apply via .bind now blocks
+    (coded refusal -- wave-306 class: the probe that demonstrated the
+    BREAK now asserts the refusal)."""
+    hit = _blocked("Reflect.apply.bind(Reflect)([].concat, [], ['%s','%s']).join('')" % (_A, _B))
+    hit2 = _blocked("Function.prototype.bind.call(Reflect.apply, Reflect)([].concat, [], ['%s','%s']).join('')" % (_A, _B))
+    return ("HELD" if hit and hit2 else "BREAK", "hit=%s hit2=%s" % (hit, hit2))
 
 
 @_t
@@ -277,10 +280,12 @@ def test_p2_f518_open():
 
 
 @_t
-def test_p2_f519_open():
-    """F519 OPEN (this round): arrow-target Reflect.apply still misses."""
-    ms = _misses("Reflect.apply((a,b)=>a+b, null, ['%s','%s'])" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f519_closed():
+    """F519 CLOSED (wave-364 lane 1): function-valued-target
+    Reflect.apply now blocks (coded refusal -- wave-306 class)."""
+    hit = _blocked("Reflect.apply((a,b)=>a+b, null, ['%s','%s'])" % (_A, _B))
+    hit2 = _blocked("Reflect.apply(function(a,b){return a+b}, null, ['%s','%s'])" % (_A, _B))
+    return ("HELD" if hit and hit2 else "BREAK", "hit=%s hit2=%s" % (hit, hit2))
 
 
 @_t

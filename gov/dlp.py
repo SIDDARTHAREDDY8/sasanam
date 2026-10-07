@@ -5062,6 +5062,190 @@ def _js_parse_reflect_apply_concat(text, i, depth, state):
     return _JSArr(elements), j + 1
 
 
+def _js_parse_fn_params(text, j):
+    """Parse `(p1, p2, ...)` at text[j] (F519); returns (params, next).
+
+    Each parameter must be an ASCII identifier; duplicates fail
+    closed (conservative: node v24.20.0 raises SyntaxError for arrow
+    duplicates and gives last-wins for sloppy function duplicates --
+    outside the filed scope either way). Never evals.
+    """
+    n = len(text)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("F519 params without paren")
+    j = _js_skip_ws(text, j + 1)
+    params = []
+    if j < n and text[j] == ")":
+        return params, j + 1
+    while True:
+        if j >= n or text[j] not in _JS_IDENT_START:
+            raise _JSExprFail("F519 bad param")
+        name, j = _js_parse_ident(text, j)
+        if name in params:
+            raise _JSExprFail("F519 duplicate param")
+        params.append(name)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            continue
+        if j < n and text[j] == ")":
+            return params, j + 1
+        raise _JSExprFail("F519 bad param list")
+
+
+def _js_parse_fn_additive_body(text, j, params, state):
+    """Parse `operand (+ operand)*` at text[j] (F519).
+
+    Every operand must be a declared parameter name (whitespace
+    tolerated); anything else (literals, member access, calls, `this`,
+    nested functions, parenthesized sub-expressions) fails closed --
+    the engine would evaluate arbitrary code, which the static
+    decoder cannot. Returns (operand_indices, next_index) where each
+    index is into *params*. Never evals.
+    """
+    n = len(text)
+    idx = []
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in _JS_IDENT_START:
+            raise _JSExprFail("F519 body operand not a param")
+        name, j = _js_parse_ident(text, j)
+        if name not in params:
+            raise _JSExprFail("F519 body references undeclared name")
+        idx.append(params.index(name))
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "+":
+            j += 1
+            continue
+        return idx, j
+
+
+def _js_parse_fn_target(text, j, depth, state):
+    """Parse `(p1, p2) => BODY` or `function(p1, p2){return BODY}` at
+    text[j] (F519).
+
+    Returns (params, body_operands, next_index). The arrow form
+    requires the parenthesized parameter list (a bare `p => BODY`
+    fails closed, documented); the function form allows an optional
+    name and an optional trailing `;` (both engine-exact, node
+    v24.20.0). `function*` (generator) and `async` fail closed -- the
+    target peek never routes them here. Never evals.
+    """
+    n = len(text)
+    if j < n and text[j] == "(":
+        params, j = _js_parse_fn_params(text, j)
+        j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail("F519 arrow without =>")
+        body, j = _js_parse_fn_additive_body(text, j + 2, params, state)
+        return params, body, j
+    if text.startswith("function", j):
+        k = j + len("function")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F519 functionx")
+        if k < n and text[k] == "*":
+            raise _JSExprFail("F519 generator target")
+        j = _js_skip_ws(text, k)
+        if j < n and text[j] in _JS_IDENT_START:
+            # Optional name (engine-exact; ignored).
+            _, j = _js_parse_ident(text, j)
+            j = _js_skip_ws(text, j)
+        params, j = _js_parse_fn_params(text, j)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "{":
+            raise _JSExprFail("F519 function without brace")
+        j = _js_skip_ws(text, j + 1)
+        if not text.startswith("return", j):
+            raise _JSExprFail("F519 function without return")
+        k = j + len("return")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F519 returnx")
+        body, j = _js_parse_fn_additive_body(text, k, params, state)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ";":
+            j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != "}":
+            raise _JSExprFail("F519 function without close brace")
+        return params, body, j + 1
+    raise _JSExprFail("F519 target not a function")
+
+
+def _js_parse_reflect_apply_fn(text, i, depth, state):
+    """Parse 'Reflect.apply(FN, thisArg, argsArray)' at text[i] (F519).
+
+    Node-exact desugar (v24.20.0): Reflect.apply invokes FN with
+    thisArg and the argsArray elements as arguments. FN is a
+    statically-known function value -- an arrow `(p1, p2) => BODY` or
+    a function expression `function(p1, p2){return BODY}` -- whose
+    body is exactly an additive chain over its declared parameters;
+    with an all-string argsArray of matching arity the result is the
+    parameter-ordered concatenation (the `+` operands are all
+    strings, so no coercion surprises). The member name accepts the
+    dot form and the F504 bracket-string forms (routed here by
+    _js_parse_reflect_call, which already verified the name;
+    re-verified defense-in-depth).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - thisArg is parsed and discarded: the modeled bodies reference
+      only their parameters, so `this` is unobservable
+      (node-verified) -- the parse keeps the grammar honest (F483
+      precedent).
+    - argsArray must be a string-literal-only list
+      (_js_parse_string_literal_list); arity must match the parameter
+      count (node coerces missing params to undefined -- conservative
+      fail-closed, documented).
+    Returns (result_string, next_index) without the postfix chain
+    (the caller applies it). Never evals.
+    """
+    n = len(text)
+    j = i + len("Reflect")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        raise _JSExprFail("Reflectx is not Reflect")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        _mname, j = _js_parse_reflect_member_key(text, j, depth, state)
+        if _mname != "apply":
+            raise _JSExprFail("Reflect bracket member not apply")
+    else:
+        if j >= n or text[j] != ".":
+            raise _JSExprFail("Reflect without dot")
+        j = _js_skip_ws(text, j + 1)
+        if not text.startswith("apply", j):
+            raise _JSExprFail("Reflect without apply")
+        k = j + len("apply")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("applyx is not apply")
+        j = k
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("Reflect.apply without paren")
+    j = _js_skip_ws(text, j + 1)
+    params, body, j = _js_parse_fn_target(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F519 target without thisArg")
+    j = _js_skip_ws(text, j + 1)
+    _, j = _js_parse_ignored_value(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F519 thisArg without argsArray")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F519 argsArray not an array")
+    elements, j = _js_parse_string_literal_list(text, j + 1, state, "]")
+    if len(elements) != len(params):
+        raise _JSExprFail("F519 arity mismatch")
+    result = "".join(elements[idx] for idx in body)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("F519 with extra args")
+    state["ops"] += 1  # the function-valued dispatch is obfuscation-shaped
+    return result, j + 1
+
+
 def _js_parse_reflect_get_target(text, j):
     """Parse the TARGET of `Reflect.get(TARGET, KEY)` (F491).
 
@@ -5329,12 +5513,68 @@ def _js_parse_reflect_call(text, i, depth, state):
     # Member is 'apply' (dot or bracket form): the TARGET selects the
     # desugar. Peek past the target's head: Array.prototype... is the
     # F469 concat-application path; the bare Array constructor is the
-    # F480 constructor-dispatch path. The callees re-parse from i
+    # F480 constructor-dispatch path; a `(`/`function` head is the
+    # F519 function-valued-target path. The callees re-parse from i
     # (defense-in-depth); a mis-route here always fails closed inside
     # the callee.
-    if _js_peek_reflect_apply_target(text, j) == "concat":
+    # F513: Reflect.apply.bind(Reflect)(T, thisArg, argsList) -- the
+    # bound form. The dispatch-call peek is pure lookahead (dot,
+    # ?., or bracket-string member per F482/F490): anything but
+    # `.bind(` falls through to the target peek below.
+    _bpeek = _js_peek_dispatch_call(text, j)
+    if _bpeek is not None and _bpeek[0] == "bind":
+        return _js_parse_f513_reflect_bind(text, _bpeek[1], depth, state)
+    _ptarget = _js_peek_reflect_apply_target(text, j)
+    if _ptarget == "concat":
         return _js_parse_reflect_apply_concat(text, i, depth, state)
+    if _ptarget == "fn":
+        return _js_parse_reflect_apply_fn(text, i, depth, state)
     return _js_parse_reflect_apply_ctor(text, i, depth, state)
+
+
+def _js_parse_f513_reflect_bind(text, paren, depth, state):
+    """Parse `Reflect.apply.bind(Reflect)(T, thisArg, argsList)` at the
+    `.bind(` paren (F513).
+
+    *paren* is the index of the `(` opening the bind call. Node-exact
+    desugar (v24.20.0): `Reflect.apply.bind(Reflect)` is a bound callable whose
+    invocation with `(T, thisArg, argsList)` is exactly
+    `Reflect.apply(T, thisArg, argsList)` -- the engine ignores
+    Reflect.apply's this-value, so only the literal `Reflect`
+    namespace is modeled as the bind receiver (anything else fails
+    closed, conservative). The triple is parsed by _js_parse_f506_triple
+    (the F469/F504 target and argument classes, engine-identical).
+
+    Bounds (all fail closed -- rejected, never mis-decoded): bind with
+    bound arguments (`Reflect.apply.bind(Reflect, X)` -- the bound args
+    shift the triple's argument positions, so the static triple grammar
+    no longer applies; whether the engine throws or evaluates depends
+    on the resulting arity -- conservative either way); a bound
+    function with no immediate `(` call (not a decodable value, F483
+    precedent). Returns (_JSArr, next_index) without the postfix chain
+    (the caller applies it, same as _js_parse_reflect_apply_concat).
+    Never evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, paren + 1)
+    if not text.startswith("Reflect", k):
+        raise _JSExprFail("F513 bind receiver not Reflect")
+    k2 = k + len("Reflect")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        raise _JSExprFail("F513 Reflectx is not Reflect")
+    k = _js_skip_ws(text, k2)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("F513 bind with bound args")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("F513 bind without immediate call")
+    k = _js_skip_ws(text, k + 1)
+    elements, k = _js_parse_f506_triple(text, k, depth, state)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("F513 bind call arity")
+    state["ops"] += 1  # the bind indirection is obfuscation-shaped
+    return _JSArr(elements), k + 1
 
 
 def _js_peek_reflect_apply_target(text, j):
@@ -5343,17 +5583,30 @@ def _js_peek_reflect_apply_target(text, j):
     Returns "concat" when the target head is `Array.` (the F469
     `Array.prototype.concat` path) or `[].concat` (the F504
     empty-array-receiver path, engine-identical: [].concat ===
-    Array.prototype.concat) and "ctor" when it is the bare `Array`
-    constructor (the F480 dispatch path). Routing peek only -- the
-    callees re-parse from the call start and fail closed on anything
-    unexpected. Raises _JSExprFail when the target is not Array-headed
-    or an empty-array concat receiver.
+    Array.prototype.concat), "ctor" when it is the bare `Array`
+    constructor (the F480 dispatch path), and "fn" when it is a `(`
+    or `function` head (the F519 function-valued-target path).
+    Routing peek only -- the callees re-parse from the call start
+    and fail closed on anything unexpected. Raises _JSExprFail when
+    the target is not Array-headed, an empty-array concat receiver,
+    or a function head.
     """
     n = len(text)
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != "(":
         raise _JSExprFail("Reflect.apply without paren")
     j = _js_skip_ws(text, j + 1)
+    if j < n and text[j] == "(":
+        # F519: arrow-function target `(p1, p2) => BODY`. The callee
+        # validates the exact shape; anything else fails closed there.
+        return "fn"
+    if text.startswith("function", j):
+        k = j + len("function")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("Reflect.apply functionx target")
+        # F519: function-expression target. `function*` (generator)
+        # fails closed in the callee.
+        return "fn"
     if j < n and text[j] == "[":
         # F504: `[].concat` target -- the empty-array-literal receiver.
         # Node: [].concat === Array.prototype.concat (v24.20.0), so
@@ -7450,7 +7703,7 @@ def _js_parse_function_dispatch(text, i, depth, state):
         inner, j = text[m:e], e
     else:
         return None
-    if inner not in ("call", "apply"):
+    if inner not in ("call", "apply", "bind"):
         return None
     j = _js_skip_ws(text, j)
     if j >= n or text[j] not in (".", "["):
@@ -7459,6 +7712,13 @@ def _js_parse_function_dispatch(text, i, depth, state):
     if peek is None:
         return None
     outer, paren = peek
+    if inner == "bind":
+        # F513: Function.prototype.bind.call/apply(Reflect.apply,
+        # Reflect) -- the bound form. A non-Reflect.apply target is
+        # not a decodable shape: None falls through to the normal
+        # primary path (which fails closed on `.prototype`).
+        return _js_parse_f513_bind_dispatch(text, i, outer, paren,
+                                            depth, state)
     try:
         method, k = _js_parse_dispatch_target_ref(
             text, _js_skip_ws(text, paren + 1), depth, state)
@@ -7719,6 +7979,70 @@ def _js_parse_f506_dispatch(text, i, inner, outer, paren, depth, state):
     j += 1
     state["ops"] += 1  # the higher-order dispatch is obfuscation-shaped
     return _js_parse_postfix(text, j, _JSArr(elements), depth, state)
+
+
+def _js_parse_f513_bind_dispatch(text, i, outer, paren, depth, state):
+    """Parse `Function.prototype.bind.call/apply(Reflect.apply, Reflect)`
+    at text[i] (F513).
+
+    *outer* is the dispatch member (`call` or `apply` -- `.bind` as the
+    outer dispatch yields a bound function with no invocation, not a
+    decodable shape); *paren* is the `(` opening the bind call.
+    Node-exact desugar (v24.20.0): `Function.prototype.bind.call(
+    Reflect.apply, Reflect)` is `Reflect.apply.bind(Reflect)` -- a
+    bound callable whose immediate invocation with `(T, thisArg,
+    argsList)` is exactly `Reflect.apply(T, thisArg, argsList)` (the
+    engine ignores Reflect.apply's this-value). With outer `apply`
+    the bind arguments arrive as one array (`bind.apply(Reflect.apply,
+    [Reflect])`). The triple is parsed by _js_parse_f506_triple (the
+    F469/F504 target and argument classes, engine-identical).
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-Reflect.apply target (pure lookahead -- the caller falls
+    through); a non-Reflect bind receiver (conservative); bound
+    arguments beyond the receiver (they shift the triple's argument
+    positions, so the static triple grammar no longer applies --
+    conservative); a bound function with no immediate `(` call (not a
+    decodable value, F483 precedent). Returns (value,
+    next_index) with the postfix chain applied. Never evals.
+    """
+    n = len(text)
+    if outer not in ("call", "apply"):
+        return None
+    j = _js_skip_ws(text, paren + 1)
+    tj = _js_parse_f506_target(text, j, depth, state)
+    if tj is None:
+        return None
+    j = _js_skip_ws(text, tj)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F513 bind dispatch without receiver arg")
+    j = _js_skip_ws(text, j + 1)
+    if outer == "apply":
+        if j >= n or text[j] != "[":
+            raise _JSExprFail("F513 bind outer apply needs an array")
+        j = _js_skip_ws(text, j + 1)
+    if not text.startswith("Reflect", j):
+        raise _JSExprFail("F513 bind receiver not Reflect")
+    k = j + len("Reflect")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("F513 Reflectx is not Reflect")
+    j = _js_skip_ws(text, k)
+    if outer == "apply":
+        if j >= n or text[j] != "]":
+            raise _JSExprFail("F513 bind outer apply array not closed")
+        j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("F513 bind dispatch with bound args")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("F513 bind without immediate call")
+    j = _js_skip_ws(text, j + 1)
+    elements, j = _js_parse_f506_triple(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("F513 bind call arity")
+    state["ops"] += 1  # the bind indirection is obfuscation-shaped
+    return _js_parse_postfix(text, j + 1, _JSArr(elements), depth, state)
 
 
 def _js_parse_opt_member_ref(text, j, value):
