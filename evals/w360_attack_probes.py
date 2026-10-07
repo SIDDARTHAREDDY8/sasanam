@@ -210,16 +210,16 @@ def test_b3_f497_xctor_closed():
 
 @_t
 def test_b3_f498_bracket_construct_open():
-    """F498 pinned OPEN: Reflect['construct'] still misses."""
+    """F498 CLOSED (wave-361 lane 2): Reflect['construct'] now blocks."""
     hit = _blocked("Reflect['construct'](Array, ['" + _A + "','" + _B + "']).join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t
 def test_b3_f499_string_spread_open():
-    """F499 pinned OPEN: string-literal spread still misses."""
+    """F499 CLOSED (wave-361 lane 2): string-literal spread now blocks."""
     hit = _blocked("[...'" + _A + "', ...'" + _B + "'].join('')")
-    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
 
 
 @_t

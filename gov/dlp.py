@@ -3165,8 +3165,12 @@ def _js_parse_spread_copy(text, i, depth, state):
     Bounded scope: the spread must be the ONLY element -- mixed forms
     ([...X, 'y']) fail closed; nested spread copies ([...[...X]]) fail
     closed via the in_spread_copy guard; spread of a non-array
-    ([...'ab'], [...'ab'.length]) fails closed -- the iterable-spread
-    of strings is node-real but out of scope (documented candidate).
+    ([...'ab'.length]) fails closed. (F499) Spread of a STRING literal
+    is modeled engine-exactly: the engine iterates the string's code
+    points, so [...'ab'] is element-identical to ['a','b'] (node
+    v24.20.0 verified; Python's str iteration is the same code-point
+    iteration). Multiple string spreads may chain ([...'a', ...'b']);
+    any other element in the chain fails closed.
     (F494) spread of the non-literal iterables `new Set([...])`,
     `new Map([[k,v],...]).values()`, and immediately-invoked
     fixed-yield generators `(function*(){yield 'lit';...})()` desugars
@@ -3174,8 +3178,9 @@ def _js_parse_spread_copy(text, i, depth, state):
     later-wins keys, ordered yields); anything outside those bounded
     classes fails closed. No new parts are charged: every element was
     parts-charged at source parse (same convention as F461's
-    reversal). Whitespace after '...' is tolerated (punctuator +
-    _js_skip_ws, node-verified). Never evals.
+    reversal), except the F499 string-spread chars, which are
+    parts-charged one per char. Whitespace after '...' is tolerated
+    (punctuator + _js_skip_ws, node-verified). Never evals.
     """
     n = len(text)
     if state.get("in_spread_copy"):
@@ -3210,12 +3215,62 @@ def _js_parse_spread_copy(text, i, depth, state):
             src, j = _js_parse_primary(text, j + 3, depth, state)
     finally:
         state["in_spread_copy"] = False
+    if isinstance(src, str) and not isinstance(src, _JSNumStr):
+        # F499: spread of a string value iterates its characters
+        # (node v24.20.0 verified). _JSNumStr is excluded: the engine
+        # throws TypeError on [...42], so a numeric source fails
+        # closed; every other plain-str primary is a genuine string
+        # value in the engine, and spreading it is always the
+        # char-iteration modeled here.
+        return _js_parse_string_spread_rest(text, j, src, depth, state)
     if not isinstance(src, _JSArr):
         raise _JSExprFail("spread of non-array")
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != "]":
         raise _JSExprFail("spread copy not closed")
     return _JSArr(list(src.elements)), j + 1
+
+
+def _js_parse_string_spread_rest(text, j, first, depth, state):
+    """Finish '[...<str>, ...<str>, ...]' after the first string source (F499).
+
+    text[j] is just past the first string source; `first` is its value.
+    Each character of every string source becomes one array element
+    (parts-charged one per char). Sources are comma-separated and each
+    must be '...'-prefixed and parse via _js_parse_primary to a genuine
+    string value (plain str, never _JSNumStr -- the engine throws on
+    non-iterables). Mixed shapes ([...'a', 'b'], [...['a'], ...'b'])
+    fail closed -- documented scope boundary: only chained
+    string-literal spreads are modeled. The in_spread_copy guard is
+    held across the chain so nested spreads fail closed. Never evals.
+    """
+    n = len(text)
+    elems = []
+    src = first
+    state["in_spread_copy"] = True
+    try:
+        while True:
+            for ch in src:
+                elems.append(ch)
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != ",":
+                break
+            jj = _js_skip_ws(text, j + 1)
+            if not text.startswith("...", jj):
+                raise _JSExprFail("mixed spread copy")
+            src, j = _js_parse_primary(text, jj + 3, depth, state)
+            if not (isinstance(src, str) and
+                    not isinstance(src, _JSNumStr)):
+                raise _JSExprFail("mixed spread copy")
+    finally:
+        state["in_spread_copy"] = False
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "]":
+        raise _JSExprFail("spread copy not closed")
+    return _JSArr(elems), j + 1
 
 
 def _js_parse_array(text, i, depth, state):
@@ -4526,6 +4581,15 @@ def _js_parse_reflect_construct(text, i, depth, state):
     fails closed -- documented scope boundary: rejected, never
     mis-decoded.
 
+    (F498) The bracket-string member form `Reflect['construct']` /
+    `Reflect["construct"]` is modeled identically to the dot form
+    (node v24.20.0 verified): literal keys via _js_parse_bracket_member,
+    constant-folded keys via _js_fold_bracket_key (F492); any other
+    member fails closed. In the bracket form the target may also be
+    `[].constructor` (engine-identical to Array, via the shared F480
+    _js_parse_array_ctor_ref); the dot form keeps the bare-Array-only
+    target scope above.
+
     The result only survives when consumed by .join() etc. through
     _js_parse_postfix; a bare Reflect.construct(...) with no call
     decodes to nothing (not obfuscation-shaped, same as bare
@@ -4539,22 +4603,43 @@ def _js_parse_reflect_construct(text, i, depth, state):
     if j < n and text[j] in _JS_IDENT_CONT:
         raise _JSExprFail("Reflectx is not Reflect")
     j = _js_skip_ws(text, j)
-    if j >= n or text[j] != ".":
-        raise _JSExprFail("Reflect without dot")
-    j = _js_skip_ws(text, j + 1)
-    if not text.startswith("construct", j):
-        raise _JSExprFail("Reflect without construct")
-    k = j + len("construct")
-    if k < n and text[k] in _JS_IDENT_CONT:
-        raise _JSExprFail("constructx is not construct")
-    j = _js_skip_ws(text, k)
+    if j < n and text[j] == "[":
+        # F498: Reflect['construct'] -- bracket-string member access,
+        # node-identical to the dot form (node v24.20.0 verified).
+        # Literal keys via _js_parse_bracket_member; constant-folded
+        # keys via _js_fold_bracket_key (F492); any other member fails
+        # closed. The target may be the bare Array identifier or
+        # [].constructor (engine-identical, via the shared F480
+        # _js_parse_array_ctor_ref); the dot form keeps F468's
+        # bare-Array-only target scope.
+        try:
+            _mname, j = _js_parse_bracket_member(text, j)
+        except _JSExprFail:
+            _mname, j = _js_fold_bracket_key(text, j, depth, state)
+        if _mname != "construct":
+            raise _JSExprFail("Reflect bracket member not construct")
+        is_bracket = True
+    else:
+        if j >= n or text[j] != ".":
+            raise _JSExprFail("Reflect without dot")
+        j = _js_skip_ws(text, j + 1)
+        if not text.startswith("construct", j):
+            raise _JSExprFail("Reflect without construct")
+        k = j + len("construct")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("constructx is not construct")
+        j = _js_skip_ws(text, k)
+        is_bracket = False
     if j >= n or text[j] != "(":
         raise _JSExprFail("Reflect.construct without paren")
     j = _js_skip_ws(text, j + 1)
-    # Target: exactly the bare Array identifier.
-    tgt, j = _js_parse_ident(text, j)
-    if tgt != "Array":
-        raise _JSExprFail("Reflect.construct non-Array target")
+    if is_bracket:
+        j = _js_parse_array_ctor_ref(text, j)
+    else:
+        # Target: exactly the bare Array identifier (F468 scope).
+        tgt, j = _js_parse_ident(text, j)
+        if tgt != "Array":
+            raise _JSExprFail("Reflect.construct non-Array target")
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ",":
         raise _JSExprFail("Reflect.construct without args")
@@ -4954,10 +5039,17 @@ def _js_parse_reflect_call(text, i, depth, state):
         j += 1
     if j < n and text[j] == "[":
         # F480: Reflect['apply'](...) -- bracket-string member access,
-        # node-identical to the dot form. Only 'apply' is modeled in
-        # bracket form; Reflect['construct'] fails closed (documented
-        # scope boundary -- rejected, never mis-decoded).
-        _mname, j = _js_parse_bracket_member(text, j)
+        # node-identical to the dot form. F498: Reflect['construct']
+        # is modeled identically to the dot form (F468): literal keys
+        # via _js_parse_bracket_member, constant-folded keys via
+        # _js_fold_bracket_key (F492); any other member fails closed
+        # (documented scope boundary -- rejected, never mis-decoded).
+        try:
+            _mname, j = _js_parse_bracket_member(text, j)
+        except _JSExprFail:
+            _mname, j = _js_fold_bracket_key(text, j, depth, state)
+        if _mname == "construct":
+            return _js_parse_reflect_construct(text, i, depth, state)
         if _mname != "apply":
             raise _JSExprFail("Reflect bracket member not modeled")
     else:

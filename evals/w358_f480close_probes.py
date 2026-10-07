@@ -257,7 +257,6 @@ def p2_member_boundaries():
         "Object['assignx']([], ['ab','cd']).join('')",
         "Object['assign'](['x'], ['ab','cd']).join('')",   # non-empty target
         "Object['assign']([], ['ab'], ['cd']).join('')",   # 2nd source
-        "Reflect['construct'](Array, ['ab','cd']).join('')",  # bracket construct
         "Reflect['apply'](String, String, ['ab','cd']).join('')",  # non-Array
         # bracket concat-target: unmodeled composition, fail closed (residual)
         "Reflect['apply'](Array.prototype.concat, [], [['ab'],['cd']]).join('')",
@@ -265,7 +264,10 @@ def p2_member_boundaries():
     for payload in shapes:
         if _decoded(payload) == "abcd":
             return ("BREAK", "boundary over-decodes: %s" % payload[:60])
-    return ("HELD", "%d/%d member boundaries fail closed" % (len(shapes), len(shapes)))
+    # (F498, wave-361) bracket construct is now CLOSED: it decodes.
+    if _decoded("Reflect['construct'](Array, ['ab','cd']).join('')") != "abcd":
+        return ("BREAK", "F498 bracket construct regressed")
+    return ("HELD", "%d/%d member boundaries fail closed; F498 closed" % (len(shapes), len(shapes)))
 
 
 def p2_junk_quiet():
