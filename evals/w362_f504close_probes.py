@@ -56,7 +56,7 @@ A2 = "456789" + "abcdef"
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TAXONOMY_PIN = 2135
 FOOTER_OPEN = "F513, F514, F515, F516, F517, F518, F519, F520"  # F504 CLOSED locally (merge finalizes tree-wide)  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 lane 1: F506 CLOSED; lane 2: F507+F508 CLOSED  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521)
-FOOTER_OPEN = "F513, F514, F515, F516, F517, F518, F519, F520"  # F504 CLOSED locally (merge finalizes tree-wide)  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 lane 4: F510+F511 CLOSED (lane-local)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521)
+FOOTER_OPEN = "F513, F516, F517, F518, F519, F520"  # F504 CLOSED locally (merge finalizes tree-wide)  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 lane 4: F510+F511 CLOSED (lane-local)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521)  # Wave-364 lane 2: F514, F515 CLOSED (lane-local)
 FOOTER_NEXT = "F521"  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521)
 
 

@@ -3832,30 +3832,48 @@ def _js_fold_bracket_key(text, j, depth, state):
     return name, _js_skip_ws(text, j + 1)
 
 
-def _js_parse_nested_bracket_key(text, j, depth, state):
-    """Fold `[[<lit>, ...]][<idx>]` at text[j] == '[' (F504).
+def _js_parse_indexed_key_array(text, j, depth, state):
+    """Parse `[<lit>, ...][<idx>]` with text[j] == '[' (array open).
 
-    Parses a string-literal array literal wrapped in a second bracket
-    pair and indexed by a literal non-negative integer:
-    `[['apply'][0]]` is engine-identical to `['apply']` (node
-    v24.20.0 verified), so `Reflect[['apply'][0]]` is engine-identical
-    to `Reflect['apply']`. Returns (element, idx_after_rbracket). A
-    non-literal element, a non-literal or out-of-range index, an
-    empty array, or a malformed bracket structure fails closed
-    (documented scope boundary -- the decoder never guesses a key).
-    Each element is charged to the part budget. Never evals.
+    F504 core, shared with the F514 array-wrapped key: a string-literal
+    array literal indexed by a literal non-negative integer is
+    engine-identical to the selected element (node v24.20.0 verified).
+    Returns (elems[idx], idx_after_index_close). A non-literal element,
+    a non-literal or out-of-range index, an empty array, or a malformed
+    bracket structure fails closed (documented scope boundary -- the
+    decoder never guesses a key). Each element is charged to the part
+    budget. Never evals.
     """
     n = len(text)
-    j = _js_skip_ws(text, j + 1)
     if j >= n or text[j] != "[":
-        raise _JSExprFail("nested key not an array")
+        raise _JSExprFail("indexed key not an array")
     j = _js_skip_ws(text, j + 1)
     elems = []
     while True:
         j = _js_skip_ws(text, j)
-        if j >= n or text[j] not in "'\"":
-            raise _JSExprFail("key array element not a string literal")
-        lit, j = _js_parse_string(text, j)
+        if j >= n:
+            raise _JSExprFail("unterminated key array")
+        elem_start = j
+        lit_val = None
+        if text[j] in "'\"":
+            lit_val, lit_end = _js_parse_string(text, j)
+            lit_end = _js_skip_ws(text, lit_end)
+            if lit_end < n and text[lit_end] in ",]":
+                lit, j = lit_val, lit_end
+            else:
+                # A literal not terminated by `,`/`]` (e.g. `'con'`
+                # followed by `+`) is not a plain element -- rewind
+                # and try the fold below.
+                lit_val = None
+        if lit_val is None:
+            # F514: folded inner elements ('con'+'cat',
+            # `con${'cat'}`) compose with the F492 folder --
+            # engine-identical to the literal element (node v24.20.0
+            # verified). Anything else fails closed.
+            try:
+                lit, j = _js_fold_key_expr(text, elem_start, depth, state)
+            except _JSExprFail:
+                raise _JSExprFail("key array element not a string literal")
         elems.append(lit)
         state["parts"] += 1
         if state["parts"] > _JS_EXPR_MAX_PARTS:
@@ -3872,8 +3890,8 @@ def _js_parse_nested_bracket_key(text, j, depth, state):
         raise _JSExprFail("bad key array")
     if not elems:
         raise _JSExprFail("empty key array")
-    # Shape: `[[...][idx]]` -- the inner array's `]` is already
-    # consumed; next comes the index bracket, then the outer `]`.
+    # Shape: `[...][idx]` -- the array's `]` is already consumed; next
+    # comes the index bracket.
     if j >= n or text[j] != "[":
         raise _JSExprFail("key array without index")
     j = _js_skip_ws(text, j + 1)
@@ -3886,12 +3904,65 @@ def _js_parse_nested_bracket_key(text, j, depth, state):
     j = _js_skip_ws(text, k)
     if j >= n or text[j] != "]":
         raise _JSExprFail("unterminated key index")
-    j = _js_skip_ws(text, j + 1)
-    if j >= n or text[j] != "]":
-        raise _JSExprFail("unterminated nested key")
     if idx >= len(elems):
         raise _JSExprFail("key index out of range")
     return elems[idx], _js_skip_ws(text, j + 1)
+
+
+def _js_parse_nested_bracket_key(text, j, depth, state):
+    """Fold `[[<lit>, ...]][<idx>]` at text[j] == '[' (member open) (F504).
+
+    Parses a string-literal array literal wrapped in a second bracket
+    pair and indexed by a literal non-negative integer:
+    `[['apply'][0]]` is engine-identical to `['apply']` (node
+    v24.20.0 verified), so `Reflect[['apply'][0]]` is engine-identical
+    to `Reflect['apply']`. Returns (element, idx_after_rbracket). A
+    non-literal element, a non-literal or out-of-range index, an
+    empty array, or a malformed bracket structure fails closed
+    (documented scope boundary -- the decoder never guesses a key).
+    Each element is charged to the part budget. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j + 1)
+    name, j = _js_parse_indexed_key_array(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "]":
+        raise _JSExprFail("unterminated nested key")
+    return name, _js_skip_ws(text, j + 1)
+
+
+def _js_parse_array_wrapped_key(text, j, depth, state):
+    """Fold `[[[<lit>, ...][<idx>]]]` at text[j] == '[' (member open)
+    (F514).
+
+    A single-element array literal whose element is an F504 indexed-key
+    fold: `[[['concat'][0]]]` is engine-identical to `['concat']`
+    (node v24.20.0 verified) -- ToPropertyKey of a single-string array
+    is the string itself, so `String('f1')[[['concat'][0]]]` is
+    engine-identical to `String('f1')['concat']`. Returns (folded_name,
+    idx_after_rbracket). A multi-element wrapper array, a malformed
+    structure, or a missing member close fails closed (documented
+    scope boundary -- the decoder never guesses a key). The wrapper
+    layer charges one part. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("array-wrapped key not an array")
+    # The wrapper array's single element is itself an F504 indexed-key
+    # fold (`['concat'][0]`): parse it at the inner array open.
+    j = _js_skip_ws(text, j + 1)
+    name, j = _js_parse_indexed_key_array(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "]":
+        raise _JSExprFail("unterminated array-wrapped key")
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many key parts")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "]":
+        raise _JSExprFail("unterminated member key")
+    return name, _js_skip_ws(text, j + 1)
 
 
 def _js_parse_reflect_member_key(text, j, depth, state):
@@ -9400,10 +9471,18 @@ def _js_parse_postfix(text, i, value, depth, state):
             # tag-call names) after the key is the direct-call form.
             # Literal keys parse via _js_parse_bracket_member;
             # computed keys constant-fold via _js_fold_bracket_key
-            # (F492). A non-literal key or an unmodeled method name
-            # ends the chain (F461 principle); the call itself routes
-            # to _js_apply_method / _js_apply_tag_method exactly like
-            # the dot form, so all fail-closed classes are identical.
+            # (F492); nested-bracket keys (`[['concat'][0]]`) fold via
+            # _js_parse_nested_bracket_key (F504 on the Reflect path,
+            # F515 on string receivers here); array-wrapped keys
+            # (`[[['concat'][0]]]`) fold via _js_parse_array_wrapped_key
+            # (F514 on String-object receivers -- engine-identical to
+            # the literal member name regardless of receiver class, the
+            # fold is ToPropertyKey, node v24.20.0 verified). A
+            # non-literal key or an unmodeled method name ends the chain
+            # (F461 principle); the call itself routes to
+            # _js_apply_method / _js_apply_tag_method exactly like the
+            # dot form, so all fail-closed classes are identical.
+            # Never evals.
             try:
                 _bname, _bm = _js_parse_bracket_member(text, j)
             except _JSExprFail:
@@ -9411,7 +9490,15 @@ def _js_parse_postfix(text, i, value, depth, state):
                     _bname, _bm = _js_fold_bracket_key(text, j, depth,
                                                        state)
                 except _JSExprFail:
-                    return value, i
+                    try:
+                        _bname, _bm = _js_parse_nested_bracket_key(
+                            text, j, depth, state)
+                    except _JSExprFail:
+                        try:
+                            _bname, _bm = _js_parse_array_wrapped_key(
+                                text, j, depth, state)
+                        except _JSExprFail:
+                            return value, i
             if _bname in _JS_POSTFIX_METHOD_NAMES:
                 _bk = _js_skip_ws(text, _bm)
                 if _bk < len(text) and text[_bk] == "(":
