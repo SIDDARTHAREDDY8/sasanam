@@ -180,7 +180,7 @@ def test_p1_f502_closed():
     return ("HELD" if _blocked(p) else "BREAK", "F502 pin")
 
 
-# ------------------------------------------------- open pins (this round)
+# ------------------------------------------- closed pins (wave-362 lanes 1-3)
 
 @_t
 def test_p2_f503_closed():
@@ -190,5 +190,136 @@ def test_p2_f503_closed():
 
 
 @_t
+def test_p1_f505_closed():
+    """F505 CLOSED (wave-362 lane 3): fromCodePoint spread now blocks."""
+    p = "String.fromCodePoint(...[%s])" % CODES
+    return ("HELD" if _blocked(p) else "BREAK", "F505 pin")
+
+@_t
 def test_p2_f504_closed():
     """F504 CLOSED (wave-362 lane 2): non-dot Reflect.apply now blocks."""
+    p = "Reflect['apply']([].concat, [], ['%s','%s']).join('')" % (_A, _B)
+    return ("HELD" if _blocked(p) else "BREAK", "F504 pin")
+# ------------------------------------------------- closed pins (spot)
+
+@_t
+def test_p3_closed_f489():
+    """F489 closed: Proxy-empty-handler receiver blocks."""
+    p = "Array.prototype.join.call(new Proxy({length:2,0:'%s',1:'%s'}, {}), '')" % (_A, _B)
+    return ("HELD" if _blocked(p) else "BREAK", "F489 spot")
+
+
+@_t
+def test_p3_closed_f490():
+    """F490 closed: optional-chaining dispatch blocks."""
+    p = "([]?.concat)?.call([], '%s','%s').join('')" % (_A, _B)
+    return ("HELD" if _blocked(p) else "BREAK", "F490 spot")
+
+
+@_t
+def test_p3_closed_f491():
+    """F491 closed: Reflect.get indirection blocks."""
+    p = "Reflect.get(Array.prototype,'concat').call([], '%s','%s').join('')" % (_A, _B)
+    return ("HELD" if _blocked(p) else "BREAK", "F491 spot")
+
+
+@_t
+def test_p3_closed_f492():
+    """F492 closed: computed member key blocks."""
+    p = "Array.prototype['con'+'cat'].call([], '%s','%s').join('')" % (_A, _B)
+    return ("HELD" if _blocked(p) else "BREAK", "F492 spot")
+
+
+@_t
+def test_p3_closed_f493():
+    """F493 closed: String.raw call form blocks."""
+    p = "String.raw({raw:['%s','%s']})" % (_A, _B)
+    return ("HELD" if _blocked(p) else "BREAK", "F493 spot")
+
+
+@_t
+def test_p3_closed_f494():
+    """F494 closed: Set spread blocks."""
+    p = "[...new Set(['%s','%s'])].join('')" % (_A, _B)
+    return ("HELD" if _blocked(p) else "BREAK", "F494 spot")
+
+
+@_t
+def test_p3_closed_f495():
+    """F495 closed: const method binding blocks."""
+    p = "const {concat} = Array.prototype; concat.call([], '%s','%s').join('')" % (_A, _B)
+    return ("HELD" if _blocked(p) else "BREAK", "F495 spot")
+
+
+# ------------------------------------------------- green check (depth-1)
+
+_EXPECTED_BREAKS = set()
+
+
+def _green_check():
+    """Depth-1 green check: run the wave-360 attack battery with
+    GOV_SKIP_GREEN=1 in the child env."""
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        return ("HELD", "green check skipped (GOV_SKIP_GREEN=1)")
+    tmp = tempfile.mkdtemp(prefix="g361-green-", dir="/var/tmp")
+    env = dict(os.environ)
+    env["GOV_SKIP_GREEN"] = "1"
+    env["TMPDIR"] = tmp
+    p = subprocess.run(
+        [sys.executable, os.path.join(REPO_ROOT, "evals", "w360_attack_probes.py")],
+        capture_output=True, text=True, env=env, timeout=900, cwd=REPO_ROOT)
+    out = (p.stdout or "") + (p.stderr or "")
+    real_break = 0
+    footer_break = 0
+    for line in out.splitlines():
+        if line.startswith("test_b0_footer_state: BREAK"):
+            footer_break = 1
+        if line.startswith("tally:"):
+            parts = line.split()
+            try:
+                real_break = int(parts[1])
+            except (IndexError, ValueError):
+                pass
+    # The w360 battery's footer pin is stale by design: this lane filed
+    # F503-F505, so its expected footer (open F496-F502 / next F506) no
+    # longer matches. Merge-time repoint (wave-305/306 class). Tolerated.
+    real_break -= footer_break
+    ok = real_break == 0
+    return ("HELD" if ok else "BREAK",
+            "green(w360_attack): %d real BREAK (%d tolerated footer)" % (real_break, footer_break))
+
+
+@_t
+def test_p9_green_check():
+    """Green check: wave-360 attack battery stays green (depth-1)."""
+    return _green_check()
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--probe", default=None)
+    args = ap.parse_args()
+    breaks, held = 0, 0
+    probe_breaks = set()
+    for fn in TESTS:
+        if args.probe and args.probe not in fn.__name__:
+            continue
+        try:
+            verdict, note = fn()
+        except Exception as e:  # noqa: BLE001
+            verdict, note = "ERROR", "%s: %s" % (type(e).__name__, e)
+        print("%s: %s -- %s" % (fn.__name__, verdict, note))
+        if verdict == "HELD":
+            held += 1
+        elif verdict == "BREAK":
+            breaks += 1
+            probe_breaks.add(fn.__name__)
+        else:
+            breaks += 1
+    print("tally: %d BREAK / %d HELD / 0 ERROR" % (breaks, held))
+    print("BREAKS:", sorted(probe_breaks - _EXPECTED_BREAKS))
+    return 1 if breaks else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

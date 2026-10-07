@@ -327,10 +327,21 @@ def p3_no_new_regexes():
     # backtick and nested-bracket (literal-alternation only);
     # re.compile count unchanged. (Pin repaired: it had drifted from
     # the shipped pattern before this lane.)
+    # F505 (wave-362 lane 3): String.fromCodePoint alternative
+    # added (literal-alternation only -- the same F468
+    # precedent); re.compile count unchanged (28).
     assert dlp._JS_EXPR_START.pattern == (
-        (
-        r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor)|[ \t\n\r]*\[[ \t\n\r]*['\"])|\("
-    )
+        r"['\"`\[]|"
+        r"String\.fromCharCode|"
+        r"String\.fromCodePoint|"
+        r"String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|"
+        r"Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"]))|"
+        r"Array[ \t\n\r]*\.[ \t\n\r]*prototype|"
+        r"String[ \t\n\r]*\.[ \t\n\r]*prototype|"
+        r"Function[ \t\n\r]*\.[ \t\n\r]*prototype|"
+        r"Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|"
+        r"Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor)|[ \t\n\r]*\[[ \t\n\r]*['\"])|"
+        r"\("
     )
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     assert len(re.findall(r"re\.compile\(", src)) == 28

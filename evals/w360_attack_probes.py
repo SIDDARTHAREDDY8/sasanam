@@ -114,9 +114,197 @@ def test_b0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F503+F504 closed (wave-362 lanes 1+2), open
-    F505, next F506 (lane-local; the wave-362 merge repoints tree-wide)."""
+    """Control: footer shows F503+F504+F505 closed (wave-362 lanes 1+2+3),
+    open none, next F506 (lane-local; the wave-362 merge repoints tree-wide)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F506**" in text
-          and "**Open findings: F505.**" in text)
+          and "**Open findings: none.**" in text)
+    return ("HELD" if ok else "BREAK", "footer=%s" % ok)
+
+
+# --------------------------------- closed pins (must block, else BREAK)
+
+@_t
+def test_b1_f482_bracket_dispatch_closed():
+    """F482 pinned CLOSED (wave-359 merge): bracket dispatch."""
+    hit = _blocked("Array.prototype['concat'].call([], '" + _A + "','" + _B + "').join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_b1_f483_apply_nonconcat_closed():
+    """F483 pinned CLOSED (wave-359 merge): .apply on non-concat methods."""
+    hit = _blocked("Array.prototype.join.apply(['" + _A + "','" + _B + "'], [''])")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_b1_f484_factory_nested_closed():
+    """F484 pinned CLOSED (wave-359 merge): factory nested-array args."""
+    hit = _blocked("[].constructor.of(['" + _A + "','" + _B + "']).join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_b1_f486_static_call_closed():
+    """F486 pinned CLOSED (wave-359 merge): Array.of.call dispatch."""
+    hit = _blocked("Array.of.call(Array, '" + _A + "','" + _B + "').join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_b1_f488_paren_ctor_closed():
+    """F488 pinned CLOSED (wave-359 merge): parenthesized ctor callee."""
+    hit = _blocked("([].constructor)('" + _A + "','" + _B + "').join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+# ------------------------------- open pins, prior rounds (must miss)
+
+@_t
+def test_b2_f489_proxy_open():
+    """F489 pinned OPEN: Proxy get-trap receiver still misses."""
+    hit = _blocked("Array.prototype.join.call(new Proxy({length:2}, "
+                   "{get:(t,p)=>p==='length'?2:({0:'" + _A + "',1:'" + _B + "'})[p]}), '')")
+    return ("HELD" if not hit else "BREAK", "hit=%s (want miss)" % hit)
+
+
+@_t
+def test_b2_f490_optchain_closed():
+    """F490 CLOSED (wave-360 merge, lane 1)."""
+    hit = _blocked("Array.prototype.concat?.call([], '" + _A + "','" + _B + "').join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
+
+
+@_t
+def test_b2_f491_reflect_get_closed():
+    """F491 CLOSED (wave-360 merge, lane 2)."""
+    hit = _blocked("Reflect.get(Array.prototype,'concat').call([], '" + _A + "','" + _B + "').join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
+
+
+@_t
+def test_b2_f495_freevar_closed():
+    """F495 CLOSED (wave-360 merge, lane 3)."""
+    hit = _blocked("const {concat} = Array.prototype; concat.call([], '" + _A + "','" + _B + "').join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
+
+
+# ------------------------------- closed by wave-361 (must block)
+
+@_t
+def test_b3_f496_ownkeys_closed():
+    """F496 CLOSED (wave-361): ownKeys indirection now decodes."""
+    hit = _blocked("Array.prototype[Reflect.ownKeys(Array.prototype).filter(k=>k==='concat')[0]]"
+                   ".call([], '" + _A + "','" + _B + "').join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
+
+
+@_t
+def test_b3_f497_xctor_closed():
+    """F497 CLOSED (wave-361): non-empty factory receiver now decodes."""
+    hit = _blocked("['x'].constructor.of('" + _A + "','" + _B + "').join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
+
+
+@_t
+def test_b3_f498_bracket_construct_open():
+    """F498 CLOSED (wave-361 lane 2): Reflect['construct'] now blocks."""
+    hit = _blocked("Reflect['construct'](Array, ['" + _A + "','" + _B + "']).join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
+
+
+@_t
+def test_b3_f499_string_spread_open():
+    """F499 CLOSED (wave-361 lane 2): string-literal spread now blocks."""
+    hit = _blocked("[...'" + _A + "', ...'" + _B + "'].join('')")
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
+
+
+@_t
+def test_b3_f500_fromcharcode_spread_closed():
+    """F500 CLOSED (wave-361 lane 3): fromCharCode spread args now block."""
+    hit = _blocked("String.fromCharCode(...[120, 111, 120, 98, 45, 48, 49, 50, 51]) + '" + _B + "'")
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
+
+
+@_t
+def test_b3_f501_value_binding_closed():
+    """F501 CLOSED (wave-361 lane 3): fragment value bindings now block."""
+    hit = _blocked("let a='" + _A + "', b='" + _B + "'; a,b; a+b")
+    return ("HELD" if hit else "BREAK", "hit=%s (want block)" % hit)
+
+
+# ------------------------------------------------- green check (depth-1)
+
+_EXPECTED_BREAKS = set()
+
+
+def _green_check():
+    """Depth-1 green check: run the wave-359 attack battery with
+    GOV_SKIP_GREEN=1 in the child env."""
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        return ("HELD", "green check skipped (GOV_SKIP_GREEN=1)")
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix="g360-green-", dir="/var/tmp")
+    env = dict(os.environ)
+    env["GOV_SKIP_GREEN"] = "1"
+    env["TMPDIR"] = tmp
+    p = subprocess.run(
+        [sys.executable, os.path.join(REPO_ROOT, "evals", "w359_attack_probes.py")],
+        capture_output=True, text=True, timeout=600, env=env,
+        cwd=REPO_ROOT)
+    out = (p.stdout + p.stderr)
+    # Child prints "BREAKS: [...]": tolerate per-probe, never per-line,
+    # so a real break co-occurring with the tolerated stale footer break
+    # cannot be masked.
+    breaks = set()
+    for line in out.splitlines():
+        if line.startswith("BREAKS:"):
+            try:
+                breaks = set(eval(line.split("BREAKS:", 1)[1].strip()))
+            except Exception:  # noqa: BLE001
+                pass
+    allowed = {"test_b0_footer_state"}  # designed stale footer pin
+    tolerated = breaks & allowed
+    real = breaks - allowed
+    return (("HELD" if not real else "BREAK"),
+            "green(w359_attack): %d real BREAK (%d tolerated footer)"
+            % (len(real), len(tolerated)))
+
+
+@_t
+def test_p9_green_check():
+    """Green check: wave-359 attack battery stays green (depth-1)."""
+    return _green_check()
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--probe", default=None)
+    args = ap.parse_args()
+    breaks, held = 0, 0
+    probe_breaks = set()
+    for fn in TESTS:
+        if args.probe and args.probe not in fn.__name__:
+            continue
+        try:
+            verdict, note = fn()
+        except Exception as e:  # noqa: BLE001
+            verdict, note = "ERROR", "%s: %s" % (type(e).__name__, e)
+        print("%s: %s -- %s" % (fn.__name__, verdict, note))
+        if verdict == "HELD":
+            held += 1
+        elif verdict == "BREAK":
+            breaks += 1
+            probe_breaks.add(fn.__name__)
+        else:
+            breaks += 1
+    print("tally: %d BREAK / %d HELD / 0 ERROR" % (breaks, held))
+    print("BREAKS:", sorted(probe_breaks - _EXPECTED_BREAKS))
+    return 1 if breaks else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
