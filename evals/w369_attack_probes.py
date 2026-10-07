@@ -544,10 +544,10 @@ def test_p2_f571_open():
     return ("HELD" if hit else "BREAK", "blocked=%s" % hit)
 
 @_t
-def test_p2_f572_open():
-    """F572 OPEN: WeakMap.get reads still miss."""
-    ms = _misses("(function(){var k={};return new WeakMap().set(k,'%s').get(k);})()+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f572_closed():
+    """F572 CLOSED (wave-370): WeakMap.get reads now block coded."""
+    hit = _blocked("(function(){var k={};return new WeakMap().set(k,'%s').get(k);})()+'%s'" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_p2_f573_open():
@@ -586,10 +586,10 @@ def test_p2_f578_open():
     return ("HELD" if ms else "BREAK", "miss=%s" % ms)
 
 @_t
-def test_p2_f579_open():
-    """F579 OPEN: Reflect.ownKeys terminal reads still miss."""
-    ms = _misses("({c:'%s',d:'%s'})[Reflect.ownKeys({c:'%s',d:'%s'})[0]]+({c:'%s',d:'%s'})[Reflect.ownKeys({c:'%s',d:'%s'})[1]]" % (_A, _B, _A, _B, _A, _B, _A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f579_closed():
+    """F579 CLOSED (wave-370): Reflect.ownKeys terminal reads now block coded."""
+    hit = _blocked("({c:'%s',d:'%s'})[Reflect.ownKeys({c:'%s',d:'%s'})[0]]+({c:'%s',d:'%s'})[Reflect.ownKeys({c:'%s',d:'%s'})[1]]" % (_A, _B, _A, _B, _A, _B, _A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_p2_f580_open():

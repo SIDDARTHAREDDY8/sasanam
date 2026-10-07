@@ -4055,6 +4055,106 @@ def _js_parse_f552_symbol_for(text, j):
     return key, _js_skip_ws(text, k3 + 1)
 
 
+def _js_ownkeys_order(props):
+    """Engine-exact Reflect.ownKeys order for F535-parsed props (F579).
+
+    The engine orders own keys: integer indices (canonical decimal
+    strings in 0..2**32-2) ascending numerically first, then other
+    string keys in insertion order, then symbol keys in insertion
+    order (node v24.20.0). props is the insertion-ordered dict from
+    _js_parse_f535_object (keys are str or ("symbol", name) tuples).
+    This is the same engine rule as _js_order_object_keys (F517),
+    re-expressed for the F535 props dict (which the F517 key_order
+    bookkeeping cannot consume directly); symbol keys are appended
+    after strings per the engine's ownKeys order. Non-canonical
+    digit strings (e.g. "01") are treated as plain string keys --
+    the F535 parser stores key text verbatim, so the model follows
+    the stored text, which is engine-exact (node v24.20.0:
+    Reflect.ownKeys({'01':'x','1':'y',b:'z'}) -> ["1","01","b"]). Never evals.
+    """
+    int_keys = []
+    str_keys = []
+    sym_keys = []
+    for k in props:
+        if isinstance(k, tuple):
+            sym_keys.append(k)
+            continue
+        if _js_is_integer_index_key(k):
+            int_keys.append(k)
+            continue
+        str_keys.append(k)
+    int_keys.sort(key=int)
+    return int_keys + str_keys + sym_keys
+
+
+def _js_parse_f579_ownkeys_key(text, j, depth, state):
+    """Parse `[Reflect.ownKeys(OBJLIT)[INTLIT]]` at text[j] == '[' (F579).
+
+    Resolves the terminal index read on the engine-exact ownKeys key
+    list to a plain string key: `Reflect.ownKeys({c:'f1',d:'f2'})[0]`
+    is exactly 'c' (node v24.20.0). The caller uses the result exactly
+    like a literal bracket key. Only the dot form on the Reflect
+    namespace, only object literals parsed by _js_parse_f535_object,
+    only a canonical non-negative integer terminal index; a symbol
+    key at the index, an out-of-bounds index, or any other shape
+    fails closed (the decoder never decodes `undefined`). The F496
+    predicate-dispatch form (filter/find on prototypes) is a
+    different shape on a different path and is unaffected. Never
+    evals.
+
+    Returns (key_string, idx_after_rbracket). Malformed shapes fail
+    closed via _JSExprFail.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, j + 1)
+    k2 = _js_match_kw(text, k, "Reflect")
+    if k2 is None:
+        raise _JSExprFail("not a Reflect.ownKeys key")
+    k2 = _js_skip_ws(text, k2)
+    if k2 >= n or text[k2] != ".":
+        raise _JSExprFail("Reflect.ownKeys needs dot")
+    k3 = _js_match_kw(text, _js_skip_ws(text, k2 + 1), "ownKeys")
+    if k3 is None:
+        raise _JSExprFail("Reflect member not ownKeys")
+    k3 = _js_skip_ws(text, k3)
+    if k3 >= n or text[k3] != "(":
+        raise _JSExprFail("ownKeys without paren")
+    k3 = _js_skip_ws(text, k3 + 1)
+    if k3 >= n or text[k3] != "{":
+        raise _JSExprFail("ownKeys arg not an object literal")
+    props, k3 = _js_parse_f535_object(text, k3, depth, state)
+    k3 = _js_skip_ws(text, k3)
+    if k3 >= n or text[k3] != ")":
+        raise _JSExprFail("ownKeys unterminated")
+    k3 = _js_skip_ws(text, k3 + 1)
+    if k3 >= n or text[k3] != "[":
+        raise _JSExprFail("ownKeys without terminal index")
+    k3 = _js_skip_ws(text, k3 + 1)
+    m = k3
+    while m < n and text[m] in _ASCII_DIGITS:
+        m += 1
+    if m == k3:
+        raise _JSExprFail("ownKeys index not an integer")
+    digits = text[k3:m]
+    if len(digits) > 10 or str(int(digits)) != digits:
+        raise _JSExprFail("ownKeys index non-canonical")
+    idx = int(digits)
+    k3 = _js_skip_ws(text, m)
+    if k3 >= n or text[k3] != "]":
+        raise _JSExprFail("ownKeys index unterminated")
+    k3 = _js_skip_ws(text, k3 + 1)
+    if k3 >= n or text[k3] != "]":
+        raise _JSExprFail("ownKeys key bracket unterminated")
+    keys = _js_ownkeys_order(props)
+    if idx >= len(keys):
+        raise _JSExprFail("ownKeys index out of bounds")
+    key = keys[idx]
+    if not isinstance(key, str):
+        raise _JSExprFail("ownKeys resolved to a symbol key")
+    state["ops"] += 1  # the key indirection is obfuscation-shaped
+    return key, _js_skip_ws(text, k3 + 1)
+
+
 def _js_fold_key_expr(text, k, depth, state):
     """Fold a computed member-key expression to its string value (F492).
 
@@ -10261,6 +10361,24 @@ class _JSURL:
 
     def __init__(self, query):
         self.query = query
+class _JSWeakMap:
+    """Statically-resolved WeakMap (F572).
+
+    entries maps object-identity uid -> value (str). Keys are
+    var-bound object literals; identity is by binding: each
+    `var NAME = {...}` mints a fresh uid, and every reference to
+    NAME denotes the same object (node-exact -- the F572 body
+    grammar admits only var declarations and a single return, so
+    no reassignment can intervene; a second `var NAME = {...}`
+    rebinds NAME to a NEW uid, also engine-exact). Values are
+    string literals. A resolved WeakMap only exists inside the
+    F572 IIFE parse; it never escapes into the additive (it can
+    never be mis-decoded as a string).
+    """
+    __slots__ = ("entries",)
+
+    def __init__(self, entries):
+        self.entries = entries
 
 
 def _js_f535_deepcopy(props):
@@ -13914,6 +14032,255 @@ def _js_skip_directive_prologue(stmts, state):
         if state["parts"] > _JS_EXPR_MAX_PARTS:
             raise _JSExprFail("too many directives")
     return j
+
+
+def _js_parse_f572_weakmap_new(text, j, depth, state, env):
+    """Parse `new WeakMap(...)` at text[j] (F572).
+
+    env maps var name -> ("obj", uid) for object bindings (the only
+    legal WeakMap keys here). Returns (_JSWeakMap, next_index). The
+    argument is empty (the empty map) or a pair-list
+    `[[K,'lit'],...]` where each K is an ident bound in env as an
+    object and each value is a string literal; later pairs win on
+    the same uid (node-exact: set overwrites). Inline literal keys,
+    non-string values, and malformed pairs fail closed -- the
+    engine keys WeakMaps by identity, so a static model can only
+    ever match binding identity, never structure. Never evals.
+    """
+    n = len(text)
+    k = _js_match_kw(text, j, "new")
+    if k is None:
+        raise _JSExprFail("not a new WeakMap")
+    k = _js_match_kw(text, _js_skip_ws(text, k), "WeakMap")
+    if k is None:
+        raise _JSExprFail("not a new WeakMap")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("WeakMap without paren")
+    k = _js_skip_ws(text, k + 1)
+    entries = {}
+    if k < n and text[k] == ")":
+        return _JSWeakMap(entries), k + 1
+    if k >= n or text[k] != "[":
+        raise _JSExprFail("WeakMap arg not a pair list")
+    k = _js_skip_ws(text, k + 1)
+    while True:
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "[":
+            raise _JSExprFail("WeakMap pair not a pair")
+        k = _js_skip_ws(text, k + 1)
+        kname, k = _js_parse_ident(text, k)
+        if env.get(kname, (None,))[0] != "obj":
+            raise _JSExprFail("WeakMap key not a bound object")
+        uid = env[kname][1]
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ",":
+            raise _JSExprFail("WeakMap pair without comma")
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] not in "'\"":
+            raise _JSExprFail("WeakMap value not a string literal")
+        val, k = _js_parse_string(text, k)
+        if not isinstance(val, str) or isinstance(val, _JSNumStr):
+            raise _JSExprFail("WeakMap value not a string")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "]":
+            raise _JSExprFail("WeakMap pair unterminated")
+        entries[uid] = val  # later wins, node-exact
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many WeakMap pairs")
+        k = _js_skip_ws(text, k + 1)
+        if k < n and text[k] == ",":
+            k = _js_skip_ws(text, k + 1)
+            continue
+        if k < n and text[k] == "]":
+            k = _js_skip_ws(text, k + 1)
+            break
+        raise _JSExprFail("WeakMap pair list malformed")
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("WeakMap unterminated")
+    return _JSWeakMap(entries), k + 1
+
+
+def _js_parse_f572_return_expr(text, j, depth, state, env):
+    """Parse the F572 IIFE return EXPR at text[j] (F572).
+
+    Mini-grammar: a bound name, `new WeakMap(...)`, and postfix
+    `.set(IDENT,'lit')` / `.get(IDENT)` chains on WeakMap values.
+    IDENT must name an object-bound var in env; set takes exactly
+    two args (key, string-literal value) and returns the map
+    (chainable, in-place -- node-exact: set mutates and returns the
+    map); get takes exactly one arg and resolves the entry (a
+    missing key fails closed -- the decoder never decodes
+    `undefined`). The final value must be a string; a WeakMap or
+    object result fails closed. Returns (value_str, next_index).
+    Never evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, j)
+    if text.startswith("new", k) and (k + 3 >= n
+                                      or text[k + 3] not in _JS_IDENT_CONT):
+        val, k = _js_parse_f572_weakmap_new(text, k, depth, state, env)
+    else:
+        name, k = _js_parse_ident(text, k)
+        binding = env.get(name)
+        if binding is None:
+            raise _JSExprFail("F572 return of unbound name")
+        if binding[0] == "obj":
+            raise _JSExprFail("F572 return of an object")
+        val = binding[1]
+    while True:
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ".":
+            break
+        k = _js_skip_ws(text, k + 1)
+        mname, k = _js_parse_ident(text, k)
+        if mname not in ("set", "get"):
+            raise _JSExprFail("F572 WeakMap member not set/get")
+        if not isinstance(val, _JSWeakMap):
+            raise _JSExprFail("F572 set/get on non-WeakMap")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "(":
+            raise _JSExprFail("F572 set/get without paren")
+        k = _js_skip_ws(text, k + 1)
+        kname, k = _js_parse_ident(text, k)
+        if env.get(kname, (None,))[0] != "obj":
+            raise _JSExprFail("F572 set/get key not a bound object")
+        uid = env[kname][1]
+        k = _js_skip_ws(text, k)
+        if mname == "set":
+            if k >= n or text[k] != ",":
+                raise _JSExprFail("F572 set without comma")
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] not in "'\"":
+                raise _JSExprFail("F572 set value not a string literal")
+            sval, k = _js_parse_string(text, k)
+            if not isinstance(sval, str) or isinstance(sval, _JSNumStr):
+                raise _JSExprFail("F572 set value not a string")
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ")":
+                raise _JSExprFail("F572 set unterminated")
+            val.entries[uid] = sval  # in-place: engine set mutates
+            state["ops"] += 1  # the set is obfuscation-shaped
+            k = k + 1
+            continue
+        if k >= n or text[k] != ")":
+            raise _JSExprFail("F572 get unterminated")
+        if uid not in val.entries:
+            raise _JSExprFail("F572 get missing key")
+        state["ops"] += 1  # the get is obfuscation-shaped
+        val, k = val.entries[uid], k + 1
+    if not isinstance(val, str) or isinstance(val, _JSNumStr):
+        raise _JSExprFail("F572 return not a string")
+    return val, k
+
+
+def _js_parse_f572_weakmap_iife(text, i, depth, state):
+    """Parse `(function(){DECL*;return EXPR;})()` at text[i] (F572).
+
+    WeakMap set/get threading through var-bound object identity,
+    node-exact (v24.20.0). The body is a sequence of `var|const|let`
+    declarations binding either object literals (`var k={...}`,
+    parsed by _js_parse_f535_object -- the value is irrelevant, only
+    the identity matters) or WeakMap constructions (`var
+    m=new WeakMap([[k,'lit'],...])`), followed by a single `return
+    EXPR;` parsed by _js_parse_f572_return_expr. Each object
+    binding mints a fresh identity uid; every reference to the
+    bound name denotes the same object, so entry keys are uids --
+    engine-exact because the body grammar admits no reassignment,
+    no closures, and no shadowing (a second `var k={...}` rebinds k
+    to a NEW uid, matching the engine's rebinding). The IIFE is
+    invoked with no arguments.
+
+    Inline literal keys (`new WeakMap([[{},'f1']]).get({})`) fail
+    closed: the engine keys WeakMaps by identity, so two
+    textually-identical literals are distinct objects (node:
+    undefined) -- decoding them would be a false positive, never a
+    miss. Returns (value, next_index), or None when the head does
+    not match or a guard fails (the caller falls through to the
+    fail-closed paths). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+    if k is None:
+        return None
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] in _JS_IDENT_START:
+        # Optional name (engine-exact; ignored).
+        try:
+            _, k = _js_parse_ident(text, k)
+        except _JSExprFail:
+            return None
+        k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        return None
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != ")":
+        return None  # params: the filed shapes take none
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "{":
+        return None
+    k = _js_skip_ws(text, k + 1)
+    env = {}
+    uid_next = [0]
+    try:
+        while True:
+            k = _js_skip_ws(text, k)
+            kk, nk = _js_match_decl_kw(text, k)
+            if kk is None:
+                break
+            k = _js_skip_ws(text, nk)
+            name, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "=":
+                return None
+            k = _js_skip_ws(text, k + 1)
+            if k < n and text[k] == "{":
+                _props, k = _js_parse_f535_object(text, k, depth, state)
+                uid_next[0] += 1
+                env[name] = ("obj", uid_next[0])
+            elif (text.startswith("new", k)
+                    and (k + 3 >= n
+                         or text[k + 3] not in _JS_IDENT_CONT)):
+                wmap, k = _js_parse_f572_weakmap_new(
+                    text, k, depth, state, env)
+                env[name] = ("weakmap", wmap)
+            else:
+                return None
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ";":
+                return None
+            k = _js_skip_ws(text, k + 1)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                return None
+        rk = _js_match_kw(text, k, "return")
+        if rk is None:
+            return None
+        val, k = _js_parse_f572_return_expr(
+            text, _js_skip_ws(text, rk), depth, state, env)
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ";":
+            k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "}":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # invocation args: the filed shapes take none
+        k = k + 1
+    except _JSExprFail:
+        return None
+    state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+    return val, k
 
 
 def _js_parse_args_laundered_iife(text, i, depth, state):
@@ -18092,15 +18459,23 @@ def _js_parse_postfix(text, i, value, depth, state):
                 except _JSExprFail:
                     # F552: `[Symbol.for('K')]` read on a symbol-keyed
                     # literal. Only attempted when the bracket opens
-                    # on the Symbol keyword; anything else keeps the
+                    # on the Symbol keyword; F579 below handles the
+                    # Reflect keyword; anything else keeps the
                     # original fail-closed error. Dot reads can never
                     # address symbol keys (node-exact).
                     k2 = _js_skip_ws(text, j + 1)
-                    if _js_match_kw(text, k2, "Symbol") is None:
+                    if _js_match_kw(text, k2, "Symbol") is not None:
+                        skey, _mk = _js_parse_f552_symbol_for(text, j)
+                        _mname = _js_symbol_key(skey)
+                    elif _js_match_kw(text, k2, "Reflect") is not None:
+                        # F579: `[Reflect.ownKeys(OBJLIT)[INTLIT]]`
+                        # computed key -- resolves to a plain string
+                        # key used exactly like a literal bracket key.
+                        _mname, _mk = _js_parse_f579_ownkeys_key(
+                            text, j, depth, state)
+                    else:
                         raise _JSExprFail("object bracket member not a "
                                           "literal")
-                    skey, _mk = _js_parse_f552_symbol_for(text, j)
-                    _mname = _js_symbol_key(skey)
             else:
                 raise _JSExprFail("object literal needs a member read")
             _mval = _jsobj_lookup(value, _mname)
@@ -18850,6 +19225,13 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f516 = _js_parse_args_laundered_iife(text, i, depth, state)
         if _f516 is not None:
             val, i = _f516
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F572: (function(){var k={};var m=new WeakMap([[k,'lit']]);
+        # return m.get(k);})() -- WeakMap set/get threading through
+        # var-bound object identity; None falls through like F516.
+        _f572 = _js_parse_f572_weakmap_iife(text, i, depth, state)
+        if _f572 is not None:
+            val, i = _f572
             return _js_parse_postfix(text, i, val, depth, state)
         # F517: (function(){var A='';var O={...};
         # for(var K in O)A+=O[K];return A})() -- for-in
