@@ -160,11 +160,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F551-F560/F562-F565/F567-F569 open, next F570 (wave-369 merge: lanes 1+2 CLOSED)."""
+    """Control: footer shows F557/F558/F560/F562/F563/F565/F567-F569 open, next F570 (wave-369 merge: lanes 1-4 CLOSED)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F570**" in text  # Wave-369 merge: lanes 1+2 (F547,F561,F566 / F548,F549,F550) CLOSED; next F570
-          and "Open findings: F551, F552, F553, F554, F555, F556, F557, F558, F559, F560, F562, F563, F564, F565, F567, F568, F569." in text)  # Wave-369 merge: lanes 1+2 CLOSED
+    ok = ("Next free finding: **F570**" in text  # Wave-369 merge: lanes 1-4 (F547-F556) CLOSED; next F570
+          and "**Open findings: F557, F558, F560, F562, F563, F565, F567, F568, F569.**" in text)  # Wave-369 merge: lanes 1-4 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -507,31 +507,31 @@ def test_p2_f552_open():
 
 
 @_t
-def test_p2_f553_open():
-    """F553 OPEN (this round): bound reduce target still misses."""
-    ms = _misses("Reflect.apply([].reduce.bind(['%s','%s'],function(a,b){return a+b;},''),null,[])" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f553_closed():
+    """F553 CLOSED 2026-10-07 wave-369 lane 4: bound reduce target now blocks."""
+    hit = _blocked("Reflect.apply([].reduce.bind(['%s','%s'],function(a,b){return a+b;},''),null,[])" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_p2_f554_open():
-    """F554 OPEN (this round): bound flatMap target still misses."""
-    ms = _misses("Reflect.apply([].flatMap.bind([['%s'],['%s']],function(e){return e;}),null,[]).join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f554_closed():
+    """F554 CLOSED 2026-10-07 wave-369 lane 4: bound flatMap target now blocks."""
+    hit = _blocked("Reflect.apply([].flatMap.bind([['%s'],['%s']],function(e){return e;}),null,[]).join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_p2_f555_open():
-    """F555 OPEN (this round): bound find target still misses."""
-    ms = _misses("Reflect.apply([].find.bind(['%s','%s'],function(e){return e==='%s';}),null,[])+'%s'" % (_A, _B, _A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f555_closed():
+    """F555 CLOSED 2026-10-07 wave-369 lane 4: bound find target now blocks."""
+    hit = _blocked("Reflect.apply([].find.bind(['%s','%s'],function(e){return e==='%s';}),null,[])+'%s'" % (_A, _B, _A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_p2_f556_open():
-    """F556 OPEN (this round): bind-bound arrow target still misses."""
-    ms = _misses("Reflect.apply(((a)=>a+'%s').bind(null,'%s'),null,[])" % (_B, _A))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+def test_p2_f556_closed():
+    """F556 CLOSED 2026-10-07 wave-369 lane 4: bind-bound arrow target now blocks."""
+    hit = _blocked("Reflect.apply(((a)=>a+'%s').bind(null,'%s'),null,[])" % (_B, _A))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
