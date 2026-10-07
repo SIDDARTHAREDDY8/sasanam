@@ -377,6 +377,9 @@ def p3_no_new_regexes():
     # alternative gains `getOwnPropertyDescriptor`, and the String
     # alternative gains `.raw(` / `.raw.call(` -- literal-alternation
     # only, pinned exactly; re.compile count unchanged.
+    # Wave-362 lane 2 (F504): the Reflect bracket-member class gains
+    # backtick and nested-bracket (literal-alternation only);
+    # re.compile count unchanged.
     assert dlp._JS_EXPR_START.pattern == (
         r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|"
         r"[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|"
@@ -385,7 +388,7 @@ def p3_no_new_regexes():
         r"String[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Function[ \t\n\r]*\.[ \t\n\r]*prototype|"
         r"Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|"
-        r"[ \t\n\r]*\[[ \t\n\r]*['\"])|"
+        r"[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|"
         r"Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor)|"
         r"[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
     for s in ["Array.apply(", "Array.of.call", "[].constructor.of.call",

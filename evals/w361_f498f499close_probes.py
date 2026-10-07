@@ -88,7 +88,7 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2135  # Wave-361 lane 2: F498/F499 closed; no new decision codes
-FOOTER_OPEN = "F503, F504, F505"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-361 lane 2: F498/F499 CLOSED locally (merge finalizes tree-wide)
+FOOTER_OPEN = "F503, F505"  # Wave-362 lane 2: F504 CLOSED locally (merge finalizes tree-wide)
 FOOTER_NEXT = "F506"  # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)
 
 _A = "xoxb-0123"
@@ -255,7 +255,8 @@ def p2_neighbors_hold():
 def p2_open_findings_still_open():
     # F496/F497 (lane 1) and F500/F501/F502 (lane 3) are CLOSED on the
     # merged tree -- their shapes must now block (wave-306 maintenance).
-    # F503/F504/F505 (attack round 29) stay BREAK-open.
+    # F504 is CLOSED by wave-362 lane 2 (this lane's tree).
+    # F503/F505 (attack round 29) stay BREAK-open.
     closed_shapes = [
         # F496: Reflect.ownKeys enumeration indirection
         "Array.prototype[Reflect.ownKeys(Array.prototype).filter(k=>k==='concat')[0]].call([], '%s','%s').join('')" % (_A, _B),
@@ -267,6 +268,11 @@ def p2_open_findings_still_open():
         "let a='%s', b='%s'; a,b; a+b" % (_A, _B),
         # F502: Object.freeze-wrapped array-like receiver
         "Array.prototype.join.call(Object.freeze({length:2,0:'%s',1:'%s'}), '')" % (_A, _B),
+        # F504: bracket/template/nested-bracket Reflect.apply (wave-362 lane 2)
+        "Reflect['apply']([].concat, [], ['%s','%s']).join('')" % (_A, _B),
+        "Reflect[`apply`]([].concat, [], ['%s','%s']).join('')" % (_A, _B),
+        "Reflect[['apply'][0]]([].concat, [], ['%s','%s']).join('')" % (_A, _B),
+        "Reflect.apply([].concat, [], ['%s','%s']).join('')" % (_A, _B),
     ]
     bad = [s for s in closed_shapes if not _blocked(s)]
     if bad:
@@ -274,15 +280,13 @@ def p2_open_findings_still_open():
     open_shapes = [
         # F503: Object.seal-wrapped array-like receiver
         "Array.prototype.concat.call(Object.seal(['%s','%s']), []).join('')" % (_A, _B),
-        # F504: bracket-form Reflect.apply
-        "Reflect['apply']([].concat, [], ['%s','%s']).join('')" % (_A, _B),
         # F505: String.fromCodePoint with spread args
         "String.fromCodePoint(...[120,111,120,98,45,48,49,50,51])",
     ]
     bad = [s for s in open_shapes if _blocked(s)]
     if bad:
         return ("BREAK", "open finding accidentally closed: %s" % bad)
-    return ("HELD", "F496/F497/F500/F501/F502 closed; F503/F504/F505 still open")
+    return ("HELD", "F496/F497/F500/F501/F502/F504 closed; F503/F505 still open")
 
 
 # ------------------------------------------------------------ P3: decoder pins
@@ -330,8 +334,8 @@ def p4_pin_and_footer():
     assert len(TAXONOMY) == 2135
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     assert "Next free finding: **F506**" in text
-    assert "**Open findings: F503, F504, F505.**" in text
-    return ("HELD", "pin=2135 footer open F496-F502 next F503 (wave-360 merge)")
+    assert "**Open findings: F503, F505.**" in text
+    return ("HELD", "pin=2135 footer open F503, F505 next F506 (wave-362 lane 2)")
 
 
 PROBES = [

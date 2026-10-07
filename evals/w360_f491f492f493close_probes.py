@@ -461,8 +461,8 @@ def p4_pin_and_footer():
     assert len(TAXONOMY) == 2135
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     assert "Next free finding: **F506**" in text
-    # Wave-361 merge: F496-F502 all CLOSED (lanes 1-3 merged; merge finalizes tree-wide).
-    assert "**Open findings: F503, F504, F505.**" in text
+    # Wave-362 lane 2: F504 CLOSED locally (merge finalizes tree-wide).
+    assert "**Open findings: F503, F505.**" in text
     return ("HELD", "pin=2135 footer open none next F503 (wave-361 merge)")
 
 

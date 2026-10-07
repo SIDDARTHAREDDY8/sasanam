@@ -2089,7 +2089,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor)|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor)|[ \t\n\r]*\[[ \t\n\r]*['\"])|\(")
 # F455: the Array.of factory anchor tolerates whitespace around the dot
 # ([ \t\n\r]*, exactly the _js_skip_ws class the parser skips), so
 # `Array .of(...)` / `Array\t.of(...)` / `Array\n.of(...)` /
@@ -2120,7 +2120,10 @@ _JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String[ \t\n\r]*(\(|
 # `String.raw(` and `String.raw.call(` (ws-tolerant, so
 # `String . raw (` / `String.raw . call (` reach _js_parse_string_raw);
 # the tag form `String.raw`...`` keeps anchoring via the backtick
-# character class. The added groups are alternations of character-class-bounded literals: matching stays
+# character class. F504: the Reflect bracket-member class gains
+# backtick and nested-bracket (so `Reflect[`apply`](` /
+# `Reflect[['apply'][0]](` reach _js_parse_reflect_call),
+# literal-alternation only. The added groups are alternations of character-class-bounded literals: matching stays
 # linear (no ReDoS surface).
 _JS_EXPR_MAX_PARTS = 64        # bound on '+' operands per expression
 _JS_EXPR_MAX_CODEPOINTS = 512  # bound on fromCharCode argument count
@@ -3730,6 +3733,85 @@ def _js_fold_bracket_key(text, j, depth, state):
     return name, _js_skip_ws(text, j + 1)
 
 
+def _js_parse_nested_bracket_key(text, j, depth, state):
+    """Fold `[[<lit>, ...]][<idx>]` at text[j] == '[' (F504).
+
+    Parses a string-literal array literal wrapped in a second bracket
+    pair and indexed by a literal non-negative integer:
+    `[['apply'][0]]` is engine-identical to `['apply']` (node
+    v24.20.0 verified), so `Reflect[['apply'][0]]` is engine-identical
+    to `Reflect['apply']`. Returns (element, idx_after_rbracket). A
+    non-literal element, a non-literal or out-of-range index, an
+    empty array, or a malformed bracket structure fails closed
+    (documented scope boundary -- the decoder never guesses a key).
+    Each element is charged to the part budget. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("nested key not an array")
+    j = _js_skip_ws(text, j + 1)
+    elems = []
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("key array element not a string literal")
+        lit, j = _js_parse_string(text, j)
+        elems.append(lit)
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many key parts")
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("unterminated key array")
+        if text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            continue
+        if text[j] == "]":
+            j = _js_skip_ws(text, j + 1)
+            break
+        raise _JSExprFail("bad key array")
+    if not elems:
+        raise _JSExprFail("empty key array")
+    # Shape: `[[...][idx]]` -- the inner array's `]` is already
+    # consumed; next comes the index bracket, then the outer `]`.
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("key array without index")
+    j = _js_skip_ws(text, j + 1)
+    k = j
+    while k < n and text[k].isdigit():
+        k += 1
+    if k == j:
+        raise _JSExprFail("key index not a literal")
+    idx = int(text[j:k])
+    j = _js_skip_ws(text, k)
+    if j >= n or text[j] != "]":
+        raise _JSExprFail("unterminated key index")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "]":
+        raise _JSExprFail("unterminated nested key")
+    if idx >= len(elems):
+        raise _JSExprFail("key index out of range")
+    return elems[idx], _js_skip_ws(text, j + 1)
+
+
+def _js_parse_reflect_member_key(text, j, depth, state):
+    """Parse a Reflect member key in literal/template/folded/nested-bracket
+    form (F504). Returns (name, j_after). Each form is engine-identical to
+    the literal member name (node v24.20.0 verified); any other form fails
+    closed (documented scope boundary -- the decoder never guesses a key).
+    """
+    try:
+        return _js_parse_bracket_member(text, j)
+    except _JSExprFail:
+        pass
+    try:
+        return _js_fold_bracket_key(text, j, depth, state)
+    except _JSExprFail:
+        pass
+    return _js_parse_nested_bracket_key(text, j, depth, state)
+
+
 # Node v24.20.0-verified own-property key lists (string keys only; the
 # engine's lists also carry symbols, which can never === a string
 # literal, so they are irrelevant to the filed predicate class).
@@ -4335,8 +4417,10 @@ def _js_parse_reflect_apply_ctor(text, i, depth, state):
         # F480: Reflect['apply'](...) -- the bracket form is routed here
         # by _js_parse_reflect_call, which already verified the member
         # name; re-verify (defense-in-depth: the dispatch cannot
-        # mis-route).
-        _mname, j = _js_parse_bracket_member(text, j)
+        # mis-route). F504: template and nested-bracket member forms
+        # are engine-identical to the literal form (node v24.20.0
+        # verified), so the same fallback chain applies here.
+        _mname, j = _js_parse_reflect_member_key(text, j, depth, state)
         if _mname != "apply":
             raise _JSExprFail("Reflect bracket member not apply")
     else:
@@ -4642,10 +4726,7 @@ def _js_parse_reflect_construct(text, i, depth, state):
         # [].constructor (engine-identical, via the shared F480
         # _js_parse_array_ctor_ref); the dot form keeps F468's
         # bare-Array-only target scope.
-        try:
-            _mname, j = _js_parse_bracket_member(text, j)
-        except _JSExprFail:
-            _mname, j = _js_fold_bracket_key(text, j, depth, state)
+        _mname, j = _js_parse_reflect_member_key(text, j, depth, state)
         if _mname != "construct":
             raise _JSExprFail("Reflect bracket member not construct")
         is_bracket = True
@@ -4706,9 +4787,12 @@ def _js_parse_reflect_apply_concat(text, i, depth, state):
     Bounds (all fail closed -- documented scope boundary: rejected,
     never mis-decoded):
     - Target: exactly the bare chain Array.prototype.concat
-      (ws-tolerant dots, F455-class). Any other target (Math.max,
-      Array.prototype.push, user functions, member expressions like
-      [].concat, a bare `concat` ident) fails closed.
+      (ws-tolerant dots, F455-class), or the F504 `[].concat` form
+      (empty-array-literal receiver, ws-tolerant): node-evaluated,
+      [].concat === Array.prototype.concat (v24.20.0), so the desugar
+      is engine-identical. Any other target (Math.max,
+      Array.prototype.push, user functions, non-empty-array receivers
+      like `['x'].concat`, a bare `concat` ident) fails closed.
     - thisArg: a string-literal array literal (via _js_parse_array) or
       the F446/F454 Array constructor call forms (via
       _js_parse_array_constructor); `new Array(...)` as thisArg fails
@@ -4734,30 +4818,57 @@ def _js_parse_reflect_apply_concat(text, i, depth, state):
     if j < n and text[j] in _JS_IDENT_CONT:
         raise _JSExprFail("Reflectx is not Reflect")
     j = _js_skip_ws(text, j)
-    if j >= n or text[j] != ".":
-        raise _JSExprFail("Reflect without dot")
-    j = _js_skip_ws(text, j + 1)
-    if not text.startswith("apply", j):
-        raise _JSExprFail("Reflect without apply")
-    k = j + len("apply")
-    if k < n and text[k] in _JS_IDENT_CONT:
-        raise _JSExprFail("applyx is not apply")
-    j = _js_skip_ws(text, k)
+    if j < n and text[j] == "[":
+        # F504: Reflect['apply'] / Reflect[`apply`] /
+        # Reflect[['apply'][0]] -- the non-dot member forms are routed
+        # here by _js_parse_reflect_call, which already verified the
+        # member name; re-verify (defense-in-depth: the dispatch cannot
+        # mis-route). All three are engine-identical to the dot form
+        # (node v24.20.0 verified).
+        _mname, j = _js_parse_reflect_member_key(text, j, depth, state)
+        if _mname != "apply":
+            raise _JSExprFail("Reflect bracket member not apply")
+    else:
+        if j >= n or text[j] != ".":
+            raise _JSExprFail("Reflect without dot")
+        j = _js_skip_ws(text, j + 1)
+        if not text.startswith("apply", j):
+            raise _JSExprFail("Reflect without apply")
+        k = j + len("apply")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("applyx is not apply")
+        j = _js_skip_ws(text, k)
     if j >= n or text[j] != "(":
         raise _JSExprFail("Reflect.apply without paren")
     j = _js_skip_ws(text, j + 1)
-    # Target: exactly the bare chain Array.prototype.concat.
-    ident, j = _js_parse_ident(text, j)
-    if ident != "Array":
-        raise _JSExprFail("Reflect.apply non-Array target")
-    for name in ("prototype", "concat"):
-        j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        # F504: `[].concat` -- the empty-array-literal receiver.
+        # Node: [].concat === Array.prototype.concat (v24.20.0), so
+        # the concat-application desugar below is engine-identical.
+        # Non-empty receivers fail closed (documented scope boundary).
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != "]":
+            raise _JSExprFail("Reflect.apply non-empty-array target")
+        j = _js_skip_ws(text, j + 1)
         if j >= n or text[j] != ".":
             raise _JSExprFail("Reflect.apply target without dot")
         j = _js_skip_ws(text, j + 1)
         ident, j = _js_parse_ident(text, j)
-        if ident != name:
+        if ident != "concat":
             raise _JSExprFail("Reflect.apply non-concat target")
+    else:
+        # Target: exactly the bare chain Array.prototype.concat.
+        ident, j = _js_parse_ident(text, j)
+        if ident != "Array":
+            raise _JSExprFail("Reflect.apply non-Array target")
+        for name in ("prototype", "concat"):
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != ".":
+                raise _JSExprFail("Reflect.apply target without dot")
+            j = _js_skip_ws(text, j + 1)
+            ident, j = _js_parse_ident(text, j)
+            if ident != name:
+                raise _JSExprFail("Reflect.apply non-concat target")
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ",":
         raise _JSExprFail("Reflect.apply without thisArg")
@@ -5072,12 +5183,13 @@ def _js_parse_reflect_call(text, i, depth, state):
         # node-identical to the dot form. F498: Reflect['construct']
         # is modeled identically to the dot form (F468): literal keys
         # via _js_parse_bracket_member, constant-folded keys via
-        # _js_fold_bracket_key (F492); any other member fails closed
-        # (documented scope boundary -- rejected, never mis-decoded).
-        try:
-            _mname, j = _js_parse_bracket_member(text, j)
-        except _JSExprFail:
-            _mname, j = _js_fold_bracket_key(text, j, depth, state)
+        # _js_fold_bracket_key (F492); F504: template keys fold through
+        # _js_fold_bracket_key and nested-bracket keys (`[['apply'][0]]`)
+        # through _js_parse_nested_bracket_key -- all engine-identical
+        # to the literal form (node v24.20.0 verified). Any other
+        # member fails closed (documented scope boundary -- rejected,
+        # never mis-decoded).
+        _mname, j = _js_parse_reflect_member_key(text, j, depth, state)
         if _mname == "construct":
             return _js_parse_reflect_construct(text, i, depth, state)
         if _mname != "apply":
@@ -5109,16 +5221,34 @@ def _js_peek_reflect_apply_target(text, j):
     """Peek the Reflect.apply target at the '(' following the member name.
 
     Returns "concat" when the target head is `Array.` (the F469
-    `Array.prototype.concat` path) and "ctor" when it is the bare `Array`
+    `Array.prototype.concat` path) or `[].concat` (the F504
+    empty-array-receiver path, engine-identical: [].concat ===
+    Array.prototype.concat) and "ctor" when it is the bare `Array`
     constructor (the F480 dispatch path). Routing peek only -- the
     callees re-parse from the call start and fail closed on anything
-    unexpected. Raises _JSExprFail when the target is not Array-headed.
+    unexpected. Raises _JSExprFail when the target is not Array-headed
+    or an empty-array concat receiver.
     """
     n = len(text)
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != "(":
         raise _JSExprFail("Reflect.apply without paren")
     j = _js_skip_ws(text, j + 1)
+    if j < n and text[j] == "[":
+        # F504: `[].concat` target -- the empty-array-literal receiver.
+        # Node: [].concat === Array.prototype.concat (v24.20.0), so
+        # this is the F469 concat-application path. Non-empty
+        # receivers fail closed (documented scope boundary).
+        k = _js_skip_ws(text, j + 1)
+        if k < n and text[k] == "]":
+            k = _js_skip_ws(text, k + 1)
+            if k < n and text[k] == ".":
+                k = _js_skip_ws(text, k + 1)
+                if text.startswith("concat", k):
+                    k2 = k + len("concat")
+                    if k2 >= n or text[k2] not in _JS_IDENT_CONT:
+                        return "concat"
+        raise _JSExprFail("Reflect.apply non-Array target")
     if not text.startswith("Array", j):
         raise _JSExprFail("Reflect.apply non-Array target")
     k = j + len("Array")

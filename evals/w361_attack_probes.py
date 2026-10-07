@@ -189,10 +189,10 @@ def test_p2_f503_open():
 
 
 @_t
-def test_p2_f504_open():
-    """F504 OPEN: non-dot Reflect.apply still misses."""
+def test_p2_f504_closed():
+    """F504 CLOSED (wave-362 lane 2): non-dot Reflect.apply now blocks."""
     p = "Reflect['apply']([].concat, [], ['%s','%s']).join('')" % (_A, _B)
-    return ("HELD" if _misses(p) else "BREAK", "F504 pin")
+    return ("HELD" if _blocked(p) else "BREAK", "F504 pin")
 
 
 @_t
