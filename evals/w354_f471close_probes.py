@@ -43,13 +43,15 @@ _decode_layer ordering untouched.
 
 Fail-closed direction (all node-verified, documented scope
 boundaries): Object.assign(['x'],X) recovers the credential in node
-but fails closed (non-empty target); [...'ab'] recovers 'ab' in node
-but fails closed (iterable-spread of strings is out of scope --
-documented candidate); [...[...X]] and [...X,'y'] recover the
-credential in node but fail closed (nested/mixed spreads out of
-scope); Object.assign(X) with no source decodes only via the inner
-array literal, not the factory. Array.from(X) was BLOCKED already
-(wave-351 dead proposal, re-confirmed wave-353 round 21) -- no action.
+but fails closed (non-empty target); (F499, wave-361) [...'ab'] now
+decodes engine-exactly to ['a','b'] -- the remaining string-spread
+boundaries are non-iterable sources ([...42] throws in node),
+mixed chains ([...'a','b']), and nested spreads; [...[...X]] and
+[...X,'y'] recover the credential in node but fail closed
+(nested/mixed spreads out of scope); Object.assign(X) with no source
+decodes only via the inner array literal, not the factory. Array.from(X)
+was BLOCKED already (wave-351 dead proposal, re-confirmed wave-353
+round 21) -- no action.
 
 $0 SPEND BY CONSTRUCTION: canned payloads only, no model calls. Do NOT
 add ModelDriver/SpendLedger usage here.
@@ -216,8 +218,12 @@ def p2_control_assign_nonarray_source_quiet():
 
 
 def p2_control_spread_string_quiet():
-    # Node-verified: [...'ab'] -> ['a','b']; iterable-spread of strings
-    # is out of scope (documented candidate), fails closed.
+    # Node-verified: [...'ab'] -> ['a','b']. (F499, wave-361) Spread of
+    # a string literal is now MODELED -- but this control uses junk
+    # 'QZ99', which decodes to 'QZ99' (not the credential) and stays
+    # quiet. The fail-closed boundary that remains: non-iterable
+    # sources ([...42] throws in the engine), mixed chains, and
+    # nested spreads.
     return not _blocked("[...'QZ" + "99'].join('')")
 
 
@@ -282,7 +288,6 @@ def p3_pin_failclosed_no_variant():
         "Object.assign(['x'],['%s','%s']).join('')" % (_A, _B),
         "Object.assign([],['%s'],['%s']).join('')" % (_A, _B),
         "Object.assign([],{}).join('')",
-        "[...'QZ99'].join('')",
         "[...[...['%s','%s']]].join('')" % (_A, _B),
         "[...['%s'],'%s'].join('')" % (_A, _B),
         "Objectx.assign([],['%s','%s']).join('')" % (_A, _B),
@@ -290,6 +295,12 @@ def p3_pin_failclosed_no_variant():
         "[...].join('')",
         "Object.assign().join('')",
     ]
+    # (F499, wave-361) [...'QZ99'] now decodes engine-exactly to the
+    # junk variant 'QZ99' -- it stays credential-quiet instead of
+    # producing no variant.
+    v = dlp._try_js_expr_decode_all("[...'QZ99'].join('')")
+    if v is None or "QZ99" not in v or (_A + _B) in v:
+        return False
     return all(dlp._try_js_expr_decode_all(p) is None for p in shapes)
 
 
@@ -315,8 +326,12 @@ def p3_pin_anchor_char_class_only():
     # getPrototypeOf (constructor callee via the prototype chain) --
     # a new member-name alternative, pinned exactly here; the rest of
     # the alternative is unchanged (still no nested quantifiers).
+    # F491 (wave-360 lane 2): the Object dot-member alternative gains
+    # getOwnPropertyDescriptor (descriptor indirection) -- a new
+    # member-name alternative, pinned exactly here; the rest of the
+    # alternative is unchanged (still no nested quantifiers).
     return alt.startswith(
-        "Object([ \\t\\n\\r]*\\.[ \\t\\n\\r]*(assign|getPrototypeOf)|"
+        "Object([ \\t\\n\\r]*\\.[ \\t\\n\\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor)|"
         "[ \\t\\n\\r]*\\[[ \\t\\n\\r]*['\\\"])")
 
 

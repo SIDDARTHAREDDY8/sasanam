@@ -347,22 +347,23 @@ def p2_f493_boundaries():
 
 def p2_open_findings_intact():
     # Wave-360 merge: F490 (lane 1) and F494 (lane 3) are now CLOSED --
-    # their shapes must block. F496/F499 stay OPEN: their shapes miss.
+    # their shapes must block. Wave-361 lane 2: F499 is now CLOSED --
+    # its shape must block. F496 stays OPEN: its shape misses.
     closed_shapes = [
         "Array.prototype.concat?.call([], '%s','%s').join('')" % (_A, _B),  # F490 CLOSED
         "[...new Set(['%s','%s'])].join('')" % (_A, _B),  # F494 CLOSED
+        "[...'%s', ...'%s'].join('')" % (_A, _B),  # F499 CLOSED (wave-361 lane 2)
     ]
     bad = [s for s in closed_shapes if not _blocked(s)]
     if bad:
         return ("BREAK", "closed finding missed: %s" % bad)
     open_shapes = [
         "Array.prototype[Reflect.ownKeys(Array.prototype).filter(k=>k==='concat')[0]].call([], '%s','%s').join('')" % (_A, _B),  # F496 OPEN
-        "[...'%s', ...'%s'].join('')" % (_A, _B),  # F499 OPEN
     ]
     bad = [s for s in open_shapes if _blocked(s)]
     if bad:
         return ("BREAK", "open finding decoded: %s" % bad)
-    return ("HELD", "F490/F494 closed; open findings F496/F499 intact")
+    return ("HELD", "F490/F494/F499 closed; open finding F496 intact")
 
 
 def p2_neighbors_intact():
