@@ -191,18 +191,18 @@ def p3_compositions():
         # direct-slice control still blocks (F534 finding's control)
         ("['%(A1)s','%(A2)s'].slice(0,2).join('')"
          % {"A1": _A1, "A2": _A2}, True),
-        # F531 (spread bound args) OPEN -- must still miss
+        # F531 (spread bound args) CLOSED wave-367 lane 1 -- merge update
         ("Reflect.apply([].concat.bind([], ...['%(A1)s']), null, ['%(A2)s']).join('')"
-         % {"A1": _A1, "A2": _A2}, False),
-        # F533 (for-of alias enumeration) OPEN -- must still miss
+         % {"A1": _A1, "A2": _A2}, True),
+        # F533 (for-of alias enumeration) CLOSED wave-367 lane 2 -- merge update
         ("(function(){var a=arguments;var s='';for(var x of a){s+=x;}return s;})('%(A1)s','%(A2)s')"
-         % {"A1": _A1, "A2": _A2}, False),
-        # F535 (literal member access) OPEN -- must still miss
+         % {"A1": _A1, "A2": _A2}, True),
+        # F535 (literal member access) CLOSED wave-367 lane 4 -- merge update
         ("({c:'%(A1)s'}).c+'%(A2)s'"
-         % {"A1": _A1, "A2": _A2}, False),
-        # F536 (structuredClone) OPEN -- must still miss
+         % {"A1": _A1, "A2": _A2}, True),
+        # F536 (structuredClone) CLOSED wave-367 lane 4 -- merge update
         ("structuredClone({c:'%(A1)s'}).c+'%(A2)s'"
-         % {"A1": _A1, "A2": _A2}, False),
+         % {"A1": _A1, "A2": _A2}, True),
         # F513 bind-indirection (bind on the dispatch) still blocks
         ("Reflect.apply.bind(Reflect)(Array.prototype.concat, [], [['%(A1)s'],['%(A2)s']]).join('')"
          % {"A1": _A1, "A2": _A2}, True),
@@ -258,8 +258,8 @@ def p5_pin_and_footer():
     assert guac_graph.TAXONOMY_PIN == 2135, \
         "guac_graph.TAXONOMY_PIN=%r want 2135" % (guac_graph.TAXONOMY_PIN,)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F537**" in text
-          and "**Open findings: F531, F533, F535, F536.**" in text)
+    ok = ("Next free finding: **F547**" in text
+          and "**Open findings: F537, F538, F539, F540, F541, F542, F543, F544, F545, F546.**" in text)  # Wave-367 merge: F537-F546 open, next F547
     return ("HELD" if ok else "BREAK",
             "pin=%s footer=%s" % (TAXONOMY_PIN, ok))
 

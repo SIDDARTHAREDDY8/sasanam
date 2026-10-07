@@ -46,9 +46,12 @@ Rides-with-documented-scope (validated, NOT filed):
 - Reflect.apply((() => { var f=(a,b)=>a+b; var g=f; return g; })(), ...)
   and Reflect.apply((() => ((a,b)=>{return a+b;}))(), ...) -- F528's
   complex-IIFE scope. Verified BREAK on base.
-- (function(){const [a,,b]=arguments;...}), const [a='z',b]=arguments,
-  const {0:a,1:b}=arguments -- F524's documented fail-closed destructuring
-  scope (holes/defaults/object-patterns). Correctly miss; NOT filed.
+- (function(){const [a,,b]=arguments;...}), const [a='z',b]=arguments
+  -- F524's documented fail-closed destructuring scope (holes/defaults).
+  Correctly miss; NOT filed.
+- const {0:a,1:b}=arguments -- filed as F545 (wave-367 attack round 35):
+  F524's grammar covers array patterns only (verified empirically); object
+  patterns are a distinct mechanism. NOT F524 scope.
 - [...{[Symbol.iterator]:function*(){yield 'f1';yield 'f2';}}].join('')
   (user-defined iterable spread) -- F494's documented "user-defined
   iterables fail closed" scope. Correctly misses; NOT filed.
@@ -140,8 +143,8 @@ def test_b0_footer_state():
     (wave-367 merge: F531/F533/F534 CLOSED in lanes 1-3)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F537**" in text
-          and "**Open findings: F535, F536.**" in text)  # Wave-367 merge: F531/F533/F534 CLOSED; open F535, F536 (next F537)
+    ok = ("Next free finding: **F547**" in text
+          and "**Open findings: F537, F538, F539, F540, F541, F542, F543, F544, F545, F546.**" in text)  # Wave-367 merge: F537-F546 open, next F547
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -357,16 +360,16 @@ def test_p2_f534_open():
 
 @_t
 def test_p2_f535_open():
-    """F535 OPEN (this round): member access on object literal still misses."""
+    """F535 CLOSED (wave-367 lane 4): member access on object literal now blocks."""
     ms = _misses("({c:'%s'}).c+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t
 def test_p2_f536_open():
-    """F536 OPEN (this round): structuredClone laundering still misses."""
+    """F536 CLOSED (wave-367 lane 4): structuredClone laundering now blocks."""
     ms = _misses("structuredClone({c:'%s'}).c+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 # ------------------------------------------------- boundaries

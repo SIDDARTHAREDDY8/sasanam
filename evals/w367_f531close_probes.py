@@ -176,12 +176,12 @@ def p3_compositions():
         # F532 (quad bracket on array receivers) CLOSED at wave-366 merge
         ("['%(A1)s'][[[[['concat'][0]]][0]][0]]('%(A2)s').join('')"
          % {"A1": _A1, "A2": _A2}, True),
-        # F534 (bound slice) OPEN -- sibling wave-367 lane; my diff must
-        # NOT accidentally close it. Merge reconciles if it closes.
+        # F534 (bound slice) CLOSED wave-367 lane 3 -- merge update
         ("Reflect.apply([].slice.bind(['%(A1)s','%(A2)s'], 0, 2), null, []).join('')"
-         % {"A1": _A1, "A2": _A2}, False),
-        # F533 (for-of alias enumeration) OPEN -- sibling wave-367 lane;
-        # enumeration machinery is disjoint from bind-arg grammar.
+         % {"A1": _A1, "A2": _A2}, True),
+        # F519xF533 composition: for-of over arguments-alias inside a function-valued
+        # Reflect.apply target -- filed as F546 at the wave-367 merge (honest
+        # merge-time filing). Must still MISS.
         ("Reflect.apply(function(){var a=arguments;var s='';for(var x of a){s+=x;}return s;}, null, ['%(A1)s','%(A2)s'])"
          % {"A1": _A1, "A2": _A2}, False),
     ]
@@ -197,8 +197,8 @@ def p4_pin_and_footer():
     assert guac_graph.TAXONOMY_PIN == 2135, \
         "guac_graph.TAXONOMY_PIN=%r want 2135" % (guac_graph.TAXONOMY_PIN,)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F537**" in text
-          and "**Open findings: F533, F534, F535, F536.**" in text)
+    ok = ("Next free finding: **F547**" in text
+          and "**Open findings: F537, F538, F539, F540, F541, F542, F543, F544, F545, F546.**" in text)  # Wave-367 merge: F537-F546 open, next F547
     return ("HELD" if ok else "BREAK",
             "pin=%s footer=%s" % (TAXONOMY_PIN, ok))
 

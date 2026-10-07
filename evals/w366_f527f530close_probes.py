@@ -341,8 +341,8 @@ def p3_perf_bound():
 # ------------------------------------------------- P4: pin and footer
 # Merge footer (wave-367): F531/F533/F534 CLOSED in lanes 1-3;
 # F535, F536 remain OPEN; merge finalizes tree-wide.
-FOOTER_OPEN = ("F535", "F536")
-FOOTER_NEXT = "F537"
+FOOTER_OPEN = ("F537", "F538", "F539", "F540", "F541", "F542", "F543", "F544", "F545", "F546")  # Wave-367 merge
+FOOTER_NEXT = "F547"  # Wave-367 merge
 
 
 def p4_pin_and_footer():
@@ -376,11 +376,11 @@ def p4_pin_and_footer():
     for fid in ("F526", "F527", "F528", "F529", "F530", "F531", "F532", "F533", "F534"):
         # Wave-367 merge: lanes 1-3 closed F531/F533/F534 (lane 3's stale
         # F526/F528/F529-OPEN assertion corrected at the wave-367 lane-3 merge).
-        if not re.search(r"\\(%s .*CLOSED" % fid, text):
+        if not re.search(r"\(%s .*CLOSED" % fid, text):
             ok = False
             notes.append("%s not marked CLOSED" % fid)
     for fid in ("F535", "F536"):
-        if not re.search(r"\\(%s .*OPEN" % fid, text):
+        if not re.search(r"\(%s .*OPEN" % fid, text):
             ok = False
             notes.append("%s not OPEN" % fid)
     return ("HELD" if ok else "BREAK",

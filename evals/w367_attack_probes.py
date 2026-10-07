@@ -153,11 +153,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F531, F533-F536, F537-F545 open, next F546."""
+    """Control: footer shows F537-F546 open, next F547 (wave-367 merge)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F546**" in text
-          and "Open findings: F531, F533, F534, F535, F536, F537, F538, F539, F540, F541, F542, F543, F544, F545." in text)
+    ok = ("Next free finding: **F547**" in text
+          and "Open findings: F537, F538, F539, F540, F541, F542, F543, F544, F545, F546." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -347,39 +347,39 @@ def test_p1_f512_closed():
 
 @_t
 def test_p2_f531_open():
-    """F531 OPEN (round 34): spread bound args still miss."""
+    """F531 CLOSED (wave-367 lane 1): spread bound args now block."""
     ms = _misses("Reflect.apply([].concat.bind([], ...['%(A1)s']), null, ['%(A2)s']).join('')"
                  % {"A1": _A, "A2": _B})
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t
 def test_p2_f533_open():
-    """F533 OPEN (round 34): for-of on aliased arguments still misses."""
+    """F533 CLOSED (wave-367 lane 2): for-of on aliased arguments now blocks."""
     ms = _misses("(function(){var a=arguments;var s='';for(var x of a){s+=x;}return s;})('%s','%s')"
                  % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t
 def test_p2_f534_open():
-    """F534 OPEN (round 34): bound slice target still misses."""
+    """F534 CLOSED (wave-367 lane 3): bound slice target now blocks."""
     ms = _misses("Reflect.apply([].slice.bind(['%s','%s'], 0, 2), null, []).join('')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t
 def test_p2_f535_open():
-    """F535 OPEN (round 34): member access on object literal still misses."""
+    """F535 CLOSED (wave-367 lane 4): member access on object literal now blocks."""
     ms = _misses("({c:'%s'}).c+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t
 def test_p2_f536_open():
-    """F536 OPEN (round 34): structuredClone laundering still misses."""
+    """F536 CLOSED (wave-367 lane 4): structuredClone laundering now blocks."""
     ms = _misses("structuredClone({c:'%s'}).c+'%s'" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "blocked=%s" % (not ms))
 
 
 @_t

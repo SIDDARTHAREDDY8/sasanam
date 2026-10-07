@@ -327,12 +327,12 @@ def p9_pin_and_footer():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     if text.count("CLOSED 2026-10-07 wave-367 lane 4") < 2:
         return ("BREAK", "F535/F536 CLOSED entries missing")
-    if "Open findings: F531, F533, F534." not in text:
+    if "**Open findings: F537, F538, F539, F540, F541, F542, F543, F544, F545, F546.**" not in text:
         return ("BREAK", "lane-local footer wrong")
-    if "Next free finding: **F537**" not in text:
+    if "Next free finding: **F547**" not in text:
         return ("BREAK", "next-free footer wrong")
     return ("HELD", "pin 2135; 28 re.compile; F535/F536 CLOSED; "
-            "footer F531,F533,F534/next F537")
+            "footer F537-F545/next F546 (wave-367 merge)")
 
 
 def _green_check():
