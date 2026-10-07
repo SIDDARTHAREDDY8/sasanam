@@ -153,11 +153,12 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F537-F546 open, next F547 (wave-367 merge)."""
+    """Control: footer shows F537-F542,F544 open, next F547
+    (wave-368 lane 4)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F547**" in text
-          and "Open findings: F537, F538, F539, F540, F541, F542, F543, F544, F545, F546." in text)
+          and "Open findings: F537, F538, F539, F540, F541, F542, F544." in text)  # Wave-368 lane 4: F543, F545, F546 CLOSED locally (merge finalizes tree-wide)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -428,11 +429,12 @@ def test_p2_f542_open():
 
 
 @_t
-def test_p2_f543_open():
-    """F543 OPEN (this round): enumeration builtins on aliased args still miss."""
+def test_p2_f543_closed():
+    """F543 CLOSED (wave-368 lane 4): enumeration builtins on aliased
+    args now block (coded refusal)."""
     ms = _misses("(function(){var a=arguments;return Object.entries(a).map(function(e){return e[1];}).join('');})('%s','%s')"
                  % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 @_t
@@ -443,10 +445,11 @@ def test_p2_f544_open():
 
 
 @_t
-def test_p2_f545_open():
-    """F545 OPEN (this round): object-pattern destructuring still misses."""
+def test_p2_f545_closed():
+    """F545 CLOSED (wave-368 lane 4): object-pattern destructuring now
+    blocks (coded refusal)."""
     ms = _misses("(function(){const {0:a,1:b}=arguments;return a+b;})('%s','%s')" % (_A, _B))
-    return ("HELD" if ms else "BREAK", "miss=%s" % ms)
+    return ("HELD" if not ms else "BREAK", "miss=%s" % ms)
 
 
 # ------------------------------------------------- boundaries
