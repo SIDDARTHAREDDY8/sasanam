@@ -38,8 +38,12 @@ malicious server can inject instructions into them, shadow trusted
 tool names, or rug-pull a description after approval. Accordingly
 :meth:`GovernedMCPClient.list_tools` is mediated, not a passthrough --
 every entry is shape-checked, scanned for instruction-like content
-(:func:`scan_tool_description`), and pinned by a canonical
-``name + description + inputSchema`` hash (:func:`metadata_hash`).
+(:func:`scan_tool_spec` -- SafeKeep-style flattening: the WHOLE spec,
+``name + description + inputSchema``, is flattened to canonical flat
+text first, because schema-formatted specs suppress the refusal
+signal), pinned by a canonical ``name + description + inputSchema``
+hash (:func:`metadata_hash`) AND by a flat-form pin covering exactly
+the scanned text (:func:`spec_flat_pin`).
 :meth:`GovernedMCPClient.call_tool` re-validates the listing
 immediately before dispatch so a swap between listing and call raises
 :class:`MetadataChangedError` instead of executing. All listing
@@ -85,6 +89,7 @@ from .core import AdapterError, GovernedBinding
 
 import asyncio
 import hashlib
+import hmac
 import inspect
 import json
 import re
@@ -686,6 +691,288 @@ def scan_tool_description(tool_name, description):
     return None
 
 
+# ---------------------------------------------------------------------------
+# SafeKeep-style tool-spec flattening (steal).
+#
+# PATTERN LINEAGE: SafeKeep / flattened tool specs (research 2026-10-08) --
+# schema-formatted tool specs suppress refusal signals (~10x
+# amplification of injection success); deterministically flattening the
+# spec before the content scan cuts success to ~2.5%. This is a
+# clean-room stdlib-only reimplementation of the *mechanism*
+# (deterministic canonical flattening + pinning); no upstream code is
+# vendored.
+#
+# Why flattening matters here: ``scan_tool_description`` runs on the
+# top-level description string only. Instruction content embedded in
+# schema-formatted structure -- nested ``inputSchema`` ``description`` /
+# ``title`` / ``enum`` leaves, property names, or anchor words
+# separated by >40 chars of JSON structure (defeating the prose regex
+# windows) -- never reaches the scanner. Flattening extracts EVERY
+# textual atom of the spec into one canonical flat text and scans
+# that, restoring the refusal signal on the schema surface.
+#
+# Honest boundary (documented, not hidden): flattening normalizes the
+# DECLARED spec (name + description + inputSchema). It cannot see
+# whether the server honors the declared schema at call time
+# (actual-vs-claimed enforcement is post-v1, same boundary as
+# gov/tool_schemas.py). Non-JSON-shaped specs (bytes, sets, custom
+# objects, cyclic graphs, non-string dict keys, over-deep / over-wide
+# documents) fail closed -- they are refused, never silently skipped.
+# ---------------------------------------------------------------------------
+
+#: Flattening bounds (bounded documents only; exceed -> fail closed).
+_SPEC_FLAT_MAX_DEPTH = 32
+_SPEC_FLAT_MAX_LEAVES = 4096
+_SPEC_FLAT_MAX_LEAF_CHARS = 65536
+
+#: JSON-shaped scalar types the flattener renders. Anything else
+#: (bytes, set, custom objects, ...) fails closed.
+_SPEC_FLAT_SCALARS = (str, int, float, bool, type(None))
+
+
+def _spec_json_nesting_ok(text):
+    """Cheap pre-check: max bracket nesting depth of a JSON candidate.
+
+    The C JSON scanner recurses per nesting level; inputs like
+    ``[[[[...`` 30k deep would risk C-stack overflow at parse time.
+    Strings nesting deeper than this bound are left as opaque
+    string atoms (still scanned) instead of being parsed.
+    """
+    depth = highest = 0
+    in_str = False
+    esc = False
+    for ch in text:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "[{":
+            depth += 1
+            if depth > highest:
+                highest = depth
+                if highest > 64:
+                    return False
+        elif ch in "]}":
+            depth -= 1
+            if depth < 0:
+                return False
+    return True
+
+
+def _spec_flat_walk(tool_name, value, path, depth, _active, pairs):
+    """Append ``(path, atom)`` pairs for every textual atom under value.
+
+    String leaves that themselves parse as JSON documents are
+    descended into (structural camouflage inside a description is
+    still structure): their atoms are extracted at ``path``-rooted
+    subpaths instead of emitting the raw JSON blob as one atom.
+    """
+    if len(pairs) >= _SPEC_FLAT_MAX_LEAVES:
+        raise MetadataPoisoningError(tool_name, "spec_too_many_leaves")
+    if depth > _SPEC_FLAT_MAX_DEPTH:
+        raise MetadataPoisoningError(tool_name, "spec_too_deep")
+    if isinstance(value, dict):
+        if id(value) in _active:
+            raise MetadataPoisoningError(tool_name, "spec_cyclic")
+        _active.add(id(value))
+        try:
+            for key in sorted(value.keys()):
+                if not isinstance(key, str):
+                    raise MetadataPoisoningError(
+                        tool_name, "spec_non_string_key")
+                # The key name is content: it is emitted as its own
+                # atom so hostile key names are scanned even when the
+                # subtree holds no string leaves.
+                pairs.append(("%s.%s" % (path, key), key))
+                _spec_flat_walk(tool_name, value[key],
+                                "%s.%s" % (path, key),
+                                depth + 1, _active, pairs)
+        finally:
+            _active.discard(id(value))
+        return
+    if isinstance(value, (list, tuple)):
+        if id(value) in _active:
+            raise MetadataPoisoningError(tool_name, "spec_cyclic")
+        _active.add(id(value))
+        try:
+            for i, item in enumerate(value):
+                _spec_flat_walk(tool_name, item, "%s[%d]" % (path, i),
+                                depth + 1, _active, pairs)
+        finally:
+            _active.discard(id(value))
+        return
+    if not isinstance(value, _SPEC_FLAT_SCALARS):
+        raise MetadataPoisoningError(tool_name, "spec_not_json_shaped")
+    if isinstance(value, str):
+        if len(value) > _SPEC_FLAT_MAX_LEAF_CHARS:
+            raise MetadataPoisoningError(tool_name, "spec_leaf_too_long")
+        stripped = value.strip()
+        # A string leaf that IS a JSON document (schema-formatted
+        # text inside a description) is descended into: its atoms
+        # are extracted instead of scanning the raw blob, so JSON
+        # structure cannot pad the prose regex windows.
+        if (len(stripped) >= 2
+                and stripped[0] in "[{"
+                and _spec_json_nesting_ok(stripped)):
+            try:
+                parsed = json.loads(stripped)
+            except Exception:
+                parsed = None
+            if isinstance(parsed, (dict, list)):
+                _spec_flat_walk(tool_name, parsed, path, depth + 1,
+                                _active, pairs)
+                return
+        pairs.append((path, value))
+        return
+    # Canonical scalar rendering (true/false/null/numbers).
+    pairs.append((path, json.dumps(value, sort_keys=True,
+                                   separators=(",", ":"))))
+
+
+def _spec_flat_pairs(name, description, schema):
+    """Ordered ``(path, atom)`` pairs for a spec; fail closed."""
+    if not isinstance(name, str):
+        entry = name
+        name = _entry_name(entry)
+        description = _entry_description(entry)
+        schema = _entry_schema(entry)
+    tool = name if isinstance(name, str) and name else "<unknown>"
+    if not isinstance(name, str) or not name:
+        raise MetadataPoisoningError(tool, "spec_bad_name")
+    pairs = [("tool", name)]
+    if description is None:
+        pass
+    elif isinstance(description, str):
+        _spec_flat_walk(tool, description, "description", 0, set(),
+                         pairs)
+    else:
+        # Same reason string as scan_tool_description: one taxonomy.
+        raise MetadataPoisoningError(name, "non_string_description")
+    if schema is not None:
+        _spec_flat_walk(tool, schema, "inputSchema", 0, set(), pairs)
+    return tool, pairs
+
+
+def flatten_tool_spec(name, description=None, schema=None):
+    """Deterministic canonical flat text of a tool spec.
+
+    Extracts every textual atom of ``name`` + ``description`` +
+    ``inputSchema`` into newline-joined ``path: atom`` lines: sorted
+    dict keys (key names are content and get their own line),
+    indexed list positions, canonical scalar rendering. Structural
+    JSON-schema tokens (braces, ``"type": "object"`` wrappers) are
+    not emitted as text -- only the content strings are -- so the
+    scan sees the bare instruction content without the trusted-shape
+    camouflage.
+
+    Either ``flatten_tool_spec(name, description, schema)`` or
+    ``flatten_tool_spec(entry)`` where ``entry`` is a listing entry
+    (dict or tool object), mirroring :func:`metadata_hash`.
+
+    Raises :class:`MetadataPoisoningError` (fail closed) on malformed
+    specs: bad name, non-string description, non-JSON-shaped values,
+    non-string dict keys, cycles, or bound violations.
+    """
+    _tool, pairs = _spec_flat_pairs(name, description, schema)
+    return "\n".join("%s: %s" % (path, atom) for path, atom in pairs)
+
+
+def scan_tool_spec(name, description=None, schema=None):
+    """Content-scan a whole tool spec for instruction-like content.
+
+    Flattens the spec with :func:`flatten_tool_spec`, then runs the
+    P2 :func:`scan_tool_description` patterns over the bare atoms
+    joined by single spaces -- path prefixes and newlines removed.
+    This closes cross-leaf splitting (an attacker spreading
+    ``ignore`` / ``previous instructions`` across two property
+    descriptions) and strips every structural token out of the prose
+    regex windows. A single pass: the path-prefixed ``path: atom``
+    view adds no detectable content beyond the atoms (paths are
+    structural tokens like ``inputSchema``/``properties``), and one
+    pass halves the F102 stem-normalization cost (the known hot spot
+    -- see p7).
+
+    Split anchors that filler-padding pushes past even the collapsed
+    proximity windows (e.g. ``"q"*30`` between the two halves) are
+    closed by the order-independent co-occurrence rule below
+    (F102 precedent).
+
+    Returns ``None`` when clean. Raises
+    :class:`MetadataPoisoningError` (fail closed) on the first
+    matching pattern, exactly like :func:`scan_tool_description`.
+    """
+    tool, pairs = _spec_flat_pairs(name, description, schema)
+    collapsed = " ".join(atom for _, atom in pairs)
+    scan_tool_description(tool, collapsed)
+    # Split-anchor close: order-independent co-occurrence anywhere in
+    # the flat spec (F102 precedent). The prose regex windows above are
+    # bounded (.{0,40}); an attacker pads leaves with filler (e.g.
+    # "q"*30 inside a JSON blob in the description) so the two anchor
+    # halves never sit inside one window. The instruction-override
+    # pair is too high-signal to leave that gap: (ignore|disregard)
+    # co-occurring with (previous )?(instructions|rules|guidance|
+    # orders|directives) anywhere in the spec flags, even across
+    # leaves. No new re.compile: inline re.search only.
+    #
+    # Honest FP tradeoff (fail-closed direction): a benign spec that
+    # happens to contain BOTH an ignore/disregard token and an
+    # instruction-family noun in different leaves (e.g. "ignore empty
+    # results" + "see the usage instructions") refuses. The refusal
+    # is the conservative direction for untrusted server metadata,
+    # and the F109 deployer allowlist remains the override path for
+    # such specs.
+    if (re.search(r"\b(ignore|disregard)\b", collapsed, re.IGNORECASE)
+            and re.search(
+                r"\b(previous\s+)?(instructions?|rules?|guidance|orders?|"
+                r"directives?)\b", collapsed, re.IGNORECASE)):
+        raise MetadataPoisoningError(tool, "instruction_override_split")
+    return None
+
+
+def spec_flat_pin(name, description=None, schema=None):
+    """Hex digest pinning a tool spec's canonical FLAT form.
+
+    The pin covers the ``path: atom`` flat text -- a superset of the
+    collapsed atoms text :func:`scan_tool_spec` examines -- so a
+    substitution between registration (scan time) and evaluation
+    (use time) cannot smuggle unscanned content past the pin: any
+    byte-level change to any scanned atom (or its structural path)
+    changes the digest.
+    Accepts the same ``(name, description, schema)`` / ``(entry)``
+    calling convention as :func:`metadata_hash`.
+    """
+    if not isinstance(name, str):
+        entry = name
+        name = _entry_name(entry)
+        description = _entry_description(entry)
+        schema = _entry_schema(entry)
+    return hashlib.sha256(
+        flatten_tool_spec(name, description, schema).encode("utf-8")
+    ).hexdigest()
+
+
+def verify_spec_flat_pin(name, description=None, schema=None,
+                            expected_pin=None):
+    """Recompute the flat pin and compare; fail closed on mismatch.
+
+    Returns the observed pin when it matches ``expected_pin``.
+    Raises :class:`MetadataChangedError` (fail closed) on any
+    mismatch -- the spec presented at use time is not the spec that
+    was scanned and pinned at registration time.
+    """
+    observed = spec_flat_pin(name, description, schema)
+    if not isinstance(expected_pin, str) or not hmac.compare_digest(
+            observed.encode("utf-8"), expected_pin.encode("utf-8")):
+        raise MetadataChangedError(name, expected_pin, observed)
+    return observed
+
+
 def _entry_name(entry):
     if isinstance(entry, dict):
         return entry.get("name")
@@ -866,6 +1153,10 @@ class GovernedMCPClient:
         # last fully-validated listing. Replaced atomically only after
         # a complete listing scans clean (no partial pin state).
         self._metadata_pins = {}
+        # SafeKeep steal: pinned FLAT-FORM hashes, {tool_name: hex
+        # digest}, covering exactly the text the content scan
+        # examined. Same atomic-swap discipline as _metadata_pins.
+        self._spec_flat_pins = {}
         # K-012: bind-time provenance. The deployer pins are the
         # allowlist: the live listing must match them exactly.
         self._server_id = server_id
@@ -1344,6 +1635,7 @@ class GovernedMCPClient:
             raise
         seen = set()
         new_pins = {}
+        new_flat_pins = {}
         for entry in entries:
             name = _entry_name(entry)
             if not isinstance(name, str) or not name:
@@ -1395,6 +1687,12 @@ class GovernedMCPClient:
                     raise
             entry_hash = metadata_hash(name, description,
                                        _entry_schema(entry))
+            # SafeKeep steal: the flat pin covers exactly the text the
+            # content scan examined. It rides alongside the raw
+            # metadata_hash pin (deployer-pin and allowlist contracts
+            # are unchanged) with its own rug-pull comparison below.
+            entry_flat_pin = spec_flat_pin(name, description,
+                                           _entry_schema(entry))
             if entry_hash in self._description_allowlist:
                 # F109: deployer allowlisted this EXACT metadata. The
                 # allowlist entry is a deliberate, audited, reversible
@@ -1406,9 +1704,13 @@ class GovernedMCPClient:
                                     {"tool": name,
                                      "metadata_hash": entry_hash})
                 new_pins[name] = entry_hash
+                new_flat_pins[name] = entry_flat_pin
                 continue
             try:
-                scan_tool_description(name, description)
+                # SafeKeep steal: scan the FLATTENED spec, not just the
+                # top-level description -- schema-formatted specs
+                # suppress the refusal signal otherwise.
+                scan_tool_spec(name, description, _entry_schema(entry))
             except MetadataPoisoningError as exc:
                 try:
                     self._audit_listing(
@@ -1419,6 +1721,7 @@ class GovernedMCPClient:
                     pass
                 raise
             new_pins[name] = entry_hash
+            new_flat_pins[name] = entry_flat_pin
         # Rug-pull detection against the previous pins BEFORE swapping
         # state: any change fails closed, pins untouched.
         for name, old_hash in self._metadata_pins.items():
@@ -1432,13 +1735,31 @@ class GovernedMCPClient:
                 except Exception:
                     pass
                 raise MetadataChangedError(name, old_hash, new_hash)
+        # SafeKeep steal: the flat pin gets its own rug-pull
+        # comparison -- a change to any scanned atom (including
+        # schema-nested content the raw hash also covers) fails
+        # closed here with the flat-form digests in the audit trail.
+        for name, old_flat in self._spec_flat_pins.items():
+            new_flat = new_flat_pins.get(name)
+            if new_flat is not None and new_flat != old_flat:
+                try:
+                    self._audit_listing(
+                        "mcp_metadata_changed",
+                        {"tool": name, "expected_hash": old_flat,
+                         "observed_hash": new_flat,
+                         "pin_form": "spec_flat"})
+                except Exception:
+                    pass
+                raise MetadataChangedError(name, old_flat, new_flat)
         # Commit: the whole listing validated clean. Atomic swap -- no
         # partial pin state is ever visible.
         self._metadata_pins = new_pins
+        self._spec_flat_pins = new_flat_pins
         # Fail-closed audit of the accepted listing.
         self._audit_listing("mcp_list_tools",
                             {"tool_count": len(new_pins),
                              "pins": dict(new_pins),
+                             "spec_flat_pins": dict(new_flat_pins),
                              "server_id": self._server_id,
                              "tool_count_anomaly":
                                  churn["tool_count_anomaly"]})
