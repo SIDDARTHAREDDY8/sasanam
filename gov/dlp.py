@@ -13475,6 +13475,137 @@ def _js_parse_f630_json_enumeration_source(text, j, depth, state):
     return keys, vals, k + 1
 
 
+def _js_parse_f649_sclone_object(text, j, depth, state):
+    """Parse `structuredClone({LITOBJ})` at text[j] (F649).
+
+    Shared core for the F649 structuredClone enumeration paths.
+    Mirrors the F536 dispatch grammar exactly (v24.20.0): the
+    ident-boundary check, the call paren, and the
+    `_js_parse_f535_object` object-literal argument (data
+    properties, getters evaluated at clone time, nested objects --
+    the F536 deep-copy identity). Every other argument class
+    (Maps, parenthesized news, non-literals) fails closed here
+    (documented residual -- F536's own inline member-read path
+    keeps covering those). Returns (_JSObj, next_index). The clone
+    call charges one op (obfuscation-shaped). Never evals.
+    """
+    n = len(text)
+    k = j + len("structuredClone")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("structuredClonex is not structuredClone")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("structuredClone needs a call")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "{":
+        raise _JSExprFail("F649 sclone arg not an object literal")
+    _sprops, k = _js_parse_f535_object(text, k, depth, state)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("unbalanced structuredClone")
+    state["ops"] += 1  # the clone call is obfuscation-shaped
+    return _JSObj(_sprops), k + 1
+
+
+def _js_parse_f649_sclone_enumeration_source(text, j, depth, state,
+                                             _keys_only=False):
+    """Parse `structuredClone({LITOBJ})` as an enumeration source (F649).
+
+    F536 (CLOSED) models structuredClone deep-copies with INLINE
+    direct member reads, but member reads through a var-bound
+    intermediate and Object.values()/entries() over structuredClone
+    sources escape: the source is a call, not a literal, so neither
+    F536's member-read path nor F612's literal-only enumeration
+    grammar reaches it. Node-exact desugar (v24.20.0): the object
+    literal argument is parsed by the F536 production
+    (`_js_parse_f649_sclone_object` -- getters evaluated at clone
+    time, later-wins on duplicate keys, `__proto__` fails closed);
+    the resulting _JSObj's props are then enumerated
+    engine-exactly (`_js_order_jsobj_keys_values`). Symbol-registry
+    keys are filtered before ordering (the engine never enumerates
+    symbol keys -- node-exact).
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-literal argument class; non-string values in the cloned
+    object (the F583 keys-only fallback is not offered -- F630
+    precedent). Returns (ordered_keys, ordered_values,
+    next_index). Never evals.
+    """
+    _obj, j = _js_parse_f649_sclone_object(text, j, depth, state)
+    _obj = _JSObj({k: v for k, v in _obj.props.items()
+                   if isinstance(k, str)})
+    keys, vals = _js_order_jsobj_keys_values(_obj)
+    return keys, vals, j
+
+
+def _js_parse_f650_spread_enumeration_source(text, j, depth, state,
+                                             _keys_only=False):
+    """Parse `{...{LIT},...{LIT}}` as an enumeration source (F650).
+
+    F510 (CLOSED) models inline plain-literal enumeration sources
+    and F612 (CLOSED) var-bound plain-literal sources, but an
+    object literal assembled with spread has no modeled path: the
+    F510 literal parser fails closed on `...`. Node-exact desugar
+    (v24.20.0): each spread operand is a plain object literal
+    parsed by `_js_parse_f535_object` (spread's own-operand spread
+    via F557 stays node-exact inside operands); operands merge
+    later-wins with first-insertion position kept (plain dict
+    update -- the engine's CreateDataPropertyOnObject semantics,
+    verified); integer-index keys enumerate ascending numerically
+    first, then string keys in insertion order
+    (`_js_order_jsobj_keys_values`). Symbol-registry keys are
+    filtered before ordering (the engine never enumerates symbol
+    keys -- node-exact).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a non-literal spread operand (idents, calls, arrays);
+    - a plain `k:v` entry mixed into a spread literal (tight
+      scope -- the filed shapes are spread-only);
+    - non-string values anywhere (the F583 keys-only fallback is
+      not offered -- F630 precedent);
+    - a spread with zero operands (`{...}` is a SyntaxError in the
+      engine).
+    Returns (ordered_keys, ordered_values, next_index). Each
+    spread element charges the parts budget. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("enumeration source too deep")
+    j = _js_skip_ws(text, j + 1)
+    props = {}
+    if j < n and text[j] == "}":
+        raise _JSExprFail("empty object not a spread source")
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("unterminated spread object literal")
+        if not text.startswith("...", j):
+            raise _JSExprFail("F650 spread source needs ... operands")
+        oj = _js_skip_ws(text, j + 3)
+        if oj >= n or text[oj] != "{":
+            raise _JSExprFail("F650 spread operand not an object literal")
+        _sprops, oj = _js_parse_f535_object(text, oj, depth + 1, state)
+        props.update(_sprops)
+        state["parts"] += 1  # the spread element is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, oj)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "}":
+                _obj = _JSObj({k: v for k, v in props.items()
+                               if isinstance(k, str)})
+                keys, vals = _js_order_jsobj_keys_values(_obj)
+                return keys, vals, j + 1
+            continue
+        if j < n and text[j] == "}":
+            _obj = _JSObj({k: v for k, v in props.items()
+                           if isinstance(k, str)})
+            keys, vals = _js_order_jsobj_keys_values(_obj)
+            return keys, vals, j + 1
+        raise _JSExprFail("bad spread object literal")
+
+
 def _js_parse_enumeration_source(text, i, depth, state,
                                  _keys_only=False):
     """Parse the OBJ of `Object.{values,keys,entries}(OBJ)` (F510/F517).
@@ -13491,6 +13622,12 @@ def _js_parse_enumeration_source(text, i, depth, state,
     - `JSON.parse('LITERAL')` (F630 -- the F541 deserializing
       builtin on a string-literal argument; its _JSObj result
       enumerates engine-exactly);
+    - `structuredClone({LITOBJ})` (F649 -- the F536 deep-copy
+      identity on an object-literal argument; its _JSObj result
+      enumerates engine-exactly);
+    - a spread-assembled object literal `{...{LIT},...{LIT}}`
+      (F650 -- each spread operand is a plain object literal;
+      later-wins, first-insertion position kept, engine-exact);
     - a plain object literal `{...}`.
     Anything else fails closed. Returns (ordered_keys,
     ordered_values, next_index). The F583 `_keys_only` flag applies
@@ -13538,7 +13675,21 @@ def _js_parse_enumeration_source(text, i, depth, state,
         # tail below.
         return _js_parse_f630_json_enumeration_source(text, j, depth,
                                                       state)
+    if text.startswith("structuredClone", j):
+        # F649: structuredClone({LITOBJ}) as an enumeration source.
+        # Ident-boundary discipline lives inside the callee; a
+        # non-literal argument fails closed there (the Map branch
+        # stays F536's inline path only).
+        return _js_parse_f649_sclone_enumeration_source(text, j, depth,
+                                                        state)
     if j < n and text[j] == "{":
+        # F650: spread-assembled sources route to the spread parser
+        # (disjoint: the plain-literal parser fails closed on
+        # `...`, so no previously-decoded input changes behavior).
+        _sp = _js_skip_ws(text, j + 1)
+        if text.startswith("...", _sp):
+            return _js_parse_f650_spread_enumeration_source(text, j,
+                                                            depth, state)
         return _js_parse_object_literal_keys_values(text, j, depth,
                                                     state,
                                                     _keys_only=_keys_only)
@@ -23644,6 +23795,122 @@ def _js_parse_f610_params_setget_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f649_varbound_members_iife(text, i, depth, state):
+    """Parse `(function(){DECL o=structuredClone({LIT});
+    return o.M(+o.M)*;})()` at text[i] (F649).
+
+    F536 (CLOSED) models member reads on an INLINE structuredClone
+    call, but a var-bound intermediate escapes the receiver model:
+    `(function(){var o=structuredClone({a:'f1',b:'f2'});
+    return o.a+o.b;})()` node-evaluates to the exact credential
+    while the decoder produces zero variants. Node-exact desugar
+    (v24.20.0): the var binds the F649 sclone source
+    (`_js_parse_f649_sclone_object` -- the F536 deep-copy
+    identity, getters evaluated at clone time); each `o.M` /
+    `o['M']` term (dot-ident or bracket-string member, F510 head
+    discipline) resolves against the cloned props via
+    `_jsobj_lookup`; the `+`-joined sum is the decoded value.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, reassignment of the var, multi-decl
+      (`var o=..., p=...`), non-empty call args;
+    - a binding source outside the F649 sclone grammar (Maps,
+      non-literals -- F536's inline path keeps those);
+    - a member read that misses or is non-string (unbound name,
+      computed member, missing key, non-string value -- the F510
+      string-only discipline);
+    - any postfix after the additive (tight scope -- the filed
+      shape returns the sum directly).
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F649 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            raise _JSExprFail("F649 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        _obj, sj = _js_parse_f649_sclone_object(text, sj, depth, state)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F649 no return")
+        sj = _js_skip_ws(text, m)
+        # `o.M(+o.M)*` -- dot-ident or bracket-string members on
+        # the bare bound ident, F510 head discipline.
+        parts = []
+        while True:
+            sj = _js_skip_ws(text, sj)
+            _rname, sj = _js_parse_ident(text, sj)
+            if _rname != oname:
+                raise _JSExprFail("F649 return not over bound ident")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == ".":
+                sj = _js_skip_ws(text, sj + 1)
+                _mem, sj = _js_parse_ident(text, sj)
+            elif sj < n and text[sj] == "[":
+                _mem, sj = _js_parse_bracket_member(text, sj)
+            else:
+                raise _JSExprFail("F649 member not dot/bracket")
+            _val = _jsobj_lookup(_obj, _mem)
+            if not isinstance(_val, str):
+                raise _JSExprFail("F649 member not a string")
+            parts.append(_val)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F649 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return "".join(parts), j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f612_values_varbound_iife(text, i, depth, state):
     """Parse `(function(){DECL o=ENUMSRC;return Object.values(o)<postfix>;})()`
     / `(function(){DECL o=ENUMSRC;return
@@ -31685,6 +31952,19 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                    state)
         if _f612 is not None:
             val, i = _f612
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F649: (function(){DECL o=structuredClone({LIT});
+        #   return o.M(+o.M)*;})() -- member reads through a
+        #   var-bound structuredClone intermediate. Tried after
+        #   F612: F612 fails closed on every shape this accepts
+        #   (its terminal is Object.values/entries, not o.M reads)
+        #   and this fails closed on every shape F612 accepts (no
+        #   structuredClone binding), so no previously-decoded input
+        #   changes behavior.
+        _f649m = _js_parse_f649_varbound_members_iife(text, i, depth,
+                                                      state)
+        if _f649m is not None:
+            val, i = _f649m
             return _js_parse_postfix(text, i, val, depth, state)
         # F621: (function(){DECL t=<empty>;Object.assign(t,SRC,...);
         #   return Object.values(t)<postfix>; /
