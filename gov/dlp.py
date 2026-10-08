@@ -3785,22 +3785,29 @@ def _js_parse_f659_yield_star_array(text, i, state):
 
 
 def _js_parse_f6xx_fixed_yield_body(text, j, state,
-                                   _allow_trailing_return):
-    """Parse a fixed-yield generator `{...}` body (F494/F619/F659).
+                                   _allow_trailing_return,
+                                   _gen_env=None):
+    """Parse a fixed-yield generator `{...}` body (F494/F619/F659/F677).
 
     Shared body grammar: *j* is just past the opening `{`. The body
     is a bare sequence of `yield '<literal>';` statements
     (ws-tolerant, optional parens around the literal, ASI-tolerant
     before `}`) plus F659 `yield* ['LIT',...];` delegation
     statements over literal string arrays (each element yielded in
-    order, node-exact v24.20.0). When _allow_trailing_return, a
-    trailing `return` (with or without a literal) is skipped
-    node-exactly (it never contributes to the spread -- the F494
-    expression form); otherwise any `return` fails closed (the F619
-    statement form). Parameters, non-literal yields, loops, or any
-    other statement fail closed. Parts are charged per yield
-    (F452). Returns (yields, next_index) just past the closing `}`.
-    Never evals.
+    order, node-exact v24.20.0). F677 adds `yield* IDENT();`
+    delegation over a generator declared earlier in the same
+    statement IIFE: when _gen_env is not None and IDENT is bound in
+    it (declaration-before-use; forward/self references fail
+    closed), the callee's concrete yield list is spliced in order
+    (node-exact v24.20.0 -- `yield* h()` yields h()'s yields; the
+    splice is by value, so delegation chains cannot recurse at
+    parse time). When _allow_trailing_return, a trailing `return`
+    (with or without a literal) is skipped node-exactly (it never
+    contributes to the spread -- the F494 expression form);
+    otherwise any `return` fails closed (the F619 statement form).
+    Parameters, non-literal yields, loops, or any other statement
+    fail closed. Parts are charged per yield (F452). Returns
+    (yields, next_index) just past the closing `}`. Never evals.
     """
     n = len(text)
     yields = []
@@ -3834,20 +3841,44 @@ def _js_parse_f6xx_fixed_yield_body(text, j, state,
         if j < n and text[j] == "*":
             # F659: `yield* ['LIT',...];` -- delegation over a literal
             # array desugars to the array's elements in order
-            # (node-exact, v24.20.0). Only inputs the old grammars
-            # failed closed are accepted here, so no previously
-            # decoded input changes behavior.
-            _ysa, j = _js_parse_f659_yield_star_array(
-                text, j + 1, state)
-            for _yv in _ysa:
-                yields.append(_yv)
-                state["parts"] += 1
-                if state["parts"] > _JS_EXPR_MAX_PARTS:
-                    raise _JSExprFail("too many parts")
-            j = _js_skip_ws(text, j)
-            if j < n and text[j] == ";":
-                j += 1
-            continue
+            # (node-exact, v24.20.0). F677: `yield* IDENT();` --
+            # delegation over a generator declared earlier in the
+            # same statement IIFE (splice the callee's concrete
+            # yields, node-exact v24.20.0). Only inputs the old
+            # grammars failed closed are accepted here, so no
+            # previously decoded input changes behavior.
+            _ys = _js_skip_ws(text, j + 1)
+            if _ys < n and text[_ys] in "[(":
+                _ysa, j = _js_parse_f659_yield_star_array(
+                    text, j + 1, state)
+                for _yv in _ysa:
+                    yields.append(_yv)
+                    state["parts"] += 1
+                    if state["parts"] > _JS_EXPR_MAX_PARTS:
+                        raise _JSExprFail("too many parts")
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == ";":
+                    j += 1
+                continue
+            if (_gen_env is not None and _ys < n
+                    and text[_ys] in _JS_IDENT_START):
+                _dn, _dk = _js_parse_ident(text, _ys)
+                _dk = _js_skip_ws(text, _dk)
+                if (_dk < n and text[_dk] == "(" and _dn in _gen_env):
+                    _dk = _js_skip_ws(text, _dk + 1)
+                    if _dk < n and text[_dk] == ")":
+                        _dk = _js_skip_ws(text, _dk + 1)
+                        if _dk < n and text[_dk] == ";":
+                            _dk += 1
+                        for _yv in _gen_env[_dn]:
+                            yields.append(_yv)
+                            state["parts"] += 1
+                            if (state["parts"] >
+                                    _JS_EXPR_MAX_PARTS):
+                                raise _JSExprFail("too many parts")
+                        j = _dk
+                        continue
+            raise _JSExprFail("yield* of non-literal")
         if j < n and text[j] == "(":
             j = _js_skip_ws(text, j + 1)
             paren = True
@@ -20010,8 +20041,8 @@ def _js_call_empty_parens(stmts, k):
     return k
 
 
-def _js_parse_f619_generator_decl(stmts, sj, state):
-    """Parse `function* NAME(){yield 'LIT';...}` at stmts[sj] (F619).
+def _js_parse_f619_generator_decl(stmts, sj, state, _gen_env=None):
+    """Parse `function* NAME(){yield 'LIT';...}` at stmts[sj] (F619/F677).
 
     Two node-exact forms (v24.20.0): the named generator
     declaration `function* NAME(){...}`, and the F659 var-bound
@@ -20023,7 +20054,9 @@ def _js_parse_f619_generator_decl(stmts, sj, state):
     optional parens around the literal, ASI-tolerant before `}`) --
     the F494 fixed-yield discipline -- plus F659
     `yield* ['LIT',...];` delegation statements over literal string
-    arrays (each element yielded in order, node-exact v24.20.0).
+    arrays (each element yielded in order, node-exact v24.20.0),
+    plus F677 `yield* IDENT();` delegation over generators already
+    bound in _gen_env (None for the legacy single-decl callers).
     Parameters, non-literal yields, `return`, loops, or any other
     statement fail closed. Returns (name, yields,
     next_index) just past the declaration's closing brace (past the
@@ -20069,7 +20102,8 @@ def _js_parse_f619_generator_decl(stmts, sj, state):
         k = _js_expect(stmts, k, ")")
         k = _js_expect(stmts, k, "{")
         yields, k = _js_parse_f6xx_fixed_yield_body(
-            stmts, k, state, _allow_trailing_return=False)
+            stmts, k, state, _allow_trailing_return=False,
+            _gen_env=_gen_env)
         k = _js_skip_ws(stmts, k)
         if grouped:
             k = _js_expect(stmts, k, ")")
@@ -20091,7 +20125,8 @@ def _js_parse_f619_generator_decl(stmts, sj, state):
     k = _js_expect(stmts, k, ")")
     k = _js_expect(stmts, k, "{")
     yields, k = _js_parse_f6xx_fixed_yield_body(
-        stmts, k, state, _allow_trailing_return=False)
+        stmts, k, state, _allow_trailing_return=False,
+        _gen_env=_gen_env)
     return name, yields, k
 
 
@@ -20124,16 +20159,19 @@ def _js_parse_f619_join_tail(stmts, k, yields, state):
     return sep.join(yields), k
 
 
-def _js_parse_f619_consume_tail(stmts, sj, name, yields, state):
-    """Parse the F619 consumption tail at stmts[sj] (F619).
+def _js_parse_f619_consume_tail(stmts, sj, gen_env, state):
+    """Parse the F619 consumption tail at stmts[sj] (F619/F677).
 
     Three node-exact forms (v24.20.0):
       `return [...NAME()].join('SEP');`
       `return Array.from(NAME()).join('SEP');`
       `var|let S='';for(var|let|const X of NAME())S+=X;return S;`
     The generator must be CALLED (`NAME()`) -- a bare NAME
-    reference is not iterable and the engine throws. Returns
-    (assembled_string, next_index). Never evals.
+    reference is not iterable and the engine throws. NAME is
+    resolved in gen_env (F677: the tail may consume any generator
+    declared earlier in the same IIFE, not just a single one --
+    the wave-379 single-decl behavior is the one-entry case).
+    Returns (assembled_string, next_index). Never evals.
     """
     n = len(stmts)
     k = _js_match_kw(stmts, sj, "return")
@@ -20147,8 +20185,9 @@ def _js_parse_f619_consume_tail(stmts, sj, name, yields, state):
                 raise _JSExprFail("F619 tail not a spread")
             k = _js_skip_ws(stmts, k + 3)
             _cn, k = _js_parse_ident(stmts, k)
-            if _cn != name:
-                raise _JSExprFail("F619 spread of other generator")
+            if _cn not in gen_env:
+                raise _JSExprFail("F619 spread of unknown generator")
+            yields = gen_env[_cn]
             k = _js_call_empty_parens(stmts, k)
             k = _js_skip_ws(stmts, k)
             k = _js_expect(stmts, k, "]")
@@ -20166,8 +20205,9 @@ def _js_parse_f619_consume_tail(stmts, sj, name, yields, state):
             _ak = _js_skip_ws(stmts, _ak)
             _ak = _js_expect(stmts, _ak, "(")
             _cn, _ak = _js_parse_ident(stmts, _js_skip_ws(stmts, _ak))
-            if _cn != name:
-                raise _JSExprFail("F619 Array.from of other")
+            if _cn not in gen_env:
+                raise _JSExprFail("F619 Array.from of unknown")
+            yields = gen_env[_cn]
             _ak = _js_call_empty_parens(stmts, _ak)
             _ak = _js_skip_ws(stmts, _ak)
             _ak = _js_expect(stmts, _ak, ")")
@@ -20197,8 +20237,9 @@ def _js_parse_f619_consume_tail(stmts, sj, name, yields, state):
         raise _JSExprFail("F619 not for-of")
     k = _js_skip_ws(stmts, _ofk)
     _cn, k = _js_parse_ident(stmts, k)
-    if _cn != name:
-        raise _JSExprFail("F619 for-of over other generator")
+    if _cn not in gen_env:
+        raise _JSExprFail("F619 for-of over unknown generator")
+    yields = gen_env[_cn]
     k = _js_call_empty_parens(stmts, k)
     k = _js_skip_ws(stmts, k)
     k = _js_expect(stmts, k, ")")
@@ -20505,25 +20546,42 @@ def _js_parse_f668_tag_iife(text, i, depth, state):
     return val, k
 
 
+def _js_try_f619_generator_decl(stmts, sj, state, gen_env):
+    """Try _js_parse_f619_generator_decl; None on no-match (F677).
+
+    Never raises; speculative parse for the multi-decl loop. Never
+    evals.
+    """
+    try:
+        return _js_parse_f619_generator_decl(stmts, sj, state, gen_env)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f619_generator_iife(text, i, depth, state):
-    """Parse `(function(){function* NAME(){yield 'LIT';...}<TAIL>})()` (F619).
+    """Parse `(function(){function* NAME(){yield 'LIT';...}<TAIL>})()` (F619/F677).
 
     Node-exact desugar (v24.20.0): the generator's yields happen in
     order; spreading, for-of, or Array.from over the INVOKED
     generator collects them into an array in yield order, and the
     tail assembles the credential. The generator body follows the
     F494 fixed-yield discipline (literal yields only, plus F659
-    `yield*` delegation over literal string arrays; parameters,
-    non-literal yields, `return`, loops, or any other statement fail
-    closed). The three consumption tails are
+    `yield*` delegation over literal string arrays and F677
+    `yield* IDENT();` delegation over generators declared earlier
+    in the same IIFE; parameters, non-literal yields, `return`,
+    loops, or any other statement fail closed). F677: one or more
+    consecutive generator declarations are parsed (later
+    declarations may delegate to earlier ones; duplicate names are
+    last-wins, node-exact). The three consumption tails are
     `return [...NAME()].join('SEP');`,
     `return Array.from(NAME()).join('SEP');`, and the for-of
     accumulation `var|let S='';for(var|let|const X of
-    NAME())S+=X;return S;`. The generator must be CALLED -- a bare
-    NAME reference is not iterable (the engine throws). Returns
-    (value, next_index), or None when the head does not match or a
-    guard fails. Bounded by the part/depth budgets; the wrapper
-    charges one op (obfuscation-shaped). Never evals.
+    NAME())S+=X;return S;` -- NAME may be any declared generator.
+    The generator must be CALLED -- a bare NAME reference is not
+    iterable (the engine throws). Returns (value, next_index), or
+    None when the head does not match or a guard fails. Bounded by
+    the part/depth budgets; the wrapper charges one op
+    (obfuscation-shaped). Never evals.
     """
     j = _js_parse_f6xx_iife_head(text, i)
     if j is None:
@@ -20533,12 +20591,20 @@ def _js_parse_f619_generator_iife(text, i, depth, state):
         inner_start, inner_end, j = _js_span_braced(text, brace)
         stmts = text[inner_start:inner_end]
         sj = _js_skip_ws(stmts, 0)
-        name, yields, sj = _js_parse_f619_generator_decl(stmts, sj,
-                                                         state)
-        sj = _js_skip_ws(stmts, sj)
+        gen_env = {}
+        while True:
+            _gd = _js_try_f619_generator_decl(stmts, sj, state,
+                                              gen_env)
+            if _gd is None:
+                break
+            _gn, _gy, sj = _gd
+            gen_env[_gn] = _gy
+            sj = _js_skip_ws(stmts, sj)
+        if not gen_env:
+            raise _JSExprFail("F619 no generator decl")
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
-        val, _ = _js_parse_f619_consume_tail(stmts, sj, name, yields,
+        val, _ = _js_parse_f619_consume_tail(stmts, sj, gen_env,
                                              state)
         return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
     except _JSExprFail:
@@ -20947,8 +21013,8 @@ def _js_parse_f640_accum_decl(stmts, j):
     return name, kind, j
 
 
-def _js_parse_f640_sync_source(stmts, k, depth, state):
-    """Parse a sync-iterable fragment source at stmts[k] (F640).
+def _js_parse_f640_sync_source(stmts, k, depth, state, ai_env=None):
+    """Parse a sync-iterable fragment source at stmts[k] (F640/F677).
 
     Node-exact (v24.20.0): `for await...of` over a sync iterable
     consumes it in iteration order (arrays in index order;
@@ -20956,6 +21022,17 @@ def _js_parse_f640_sync_source(stmts, k, depth, state):
       - `['LIT', ...]` -- array literal of string literals only
         (non-literal elements fail closed; backticks never reach
         here -- `_js_span_braced` rejects them in the IIFE body).
+      - `[Promise.resolve('LIT'), ...]` -- F677, for-await-only
+        (gated on ai_env is not None): for-await awaits each
+        promise; a literal resolve fulfills with the literal
+        (the F618 discipline, node-exact v24.20.0). Under sync
+        for-of the engine yields the promise objects themselves,
+        so the sync path refuses this coded.
+      - a var-bound custom `[Symbol.asyncIterator]` object -- F677:
+        when ai_env is provided (name -> statically-resolved
+        awaited sequence), an ident receiver bound in ai_env
+        resolves to its sequence (node-exact: for-await calls
+        `O[Symbol.asyncIterator]()` as a method, so `this` is O).
       - `new Map([[...]]).values()` -- strict F563 map, string
         values only; values in insertion order (later duplicate
         keys win, node-exact via the F563 entries dict).
@@ -20969,7 +21046,21 @@ def _js_parse_f640_sync_source(stmts, k, depth, state):
     """
     n = len(stmts)
     k = _js_skip_ws(stmts, k)
+    if ai_env:
+        _ik = k
+        if _ik < n and stmts[_ik] in _JS_IDENT_START:
+            _inm, _ik2 = _js_parse_ident(stmts, _ik)
+            if _inm in ai_env:
+                return ai_env[_inm], _ik2
     if k < n and stmts[k] == "[":
+        _pk = _js_skip_ws(stmts, k + 1)
+        if (ai_env is not None and _pk < n
+                and _js_match_kw(stmts, _pk, "Promise") is not None):
+            # F677 for-await-only: under sync for-of the engine
+            # yields the promise objects themselves
+            # ("[object Promise]"), so the sync path (ai_env None)
+            # must not decode this (node-exact, v24.20.0).
+            return _js_parse_f677_promise_array(stmts, k, state)
         _arr, k = _js_parse_string_literal_array(stmts, k, state)
         els = []
         for _e in _arr.elements:
@@ -21016,8 +21107,18 @@ def _js_parse_f640_forawait_iife(text, i, depth, state):
     decoder cannot await, so the deterministic accumulation is
     modeled statically (F618 precedent): for-await over a sync
     iterable visits every element in iteration order, so the
-    result is the ordered join. The loop body is `{S+=X;}` or the
-    bare `S+=X;` (both node-exact); the push twin's join takes an
+    result is the ordered join. F677 generalizations (disclosed;
+    only previously-fail-closed inputs are newly accepted):
+      - SRC may be `[Promise.resolve('LIT'),...]` -- for-await
+        awaits each promise (the F618 literal-resolve discipline).
+      - SRC may be a var-bound custom `[Symbol.asyncIterator]`
+        object declared in the statement prefix
+        (`var|let|const O={vals:['LIT',...],[Symbol.asyncIterator]:
+        async function*(){yield this.vals[i];...}};`) -- the
+        awaited sequence is the async generator's statically
+        resolved yield list (node-exact: the method call binds
+        `this` to O).
+    The loop body is `{S+=X;}` or the bare `S+=X;` (both node-exact); the push twin's join takes an
     optional string-literal separator (missing arg is the
     engine's comma default). Disjoint from F631 (tried first;
     F631 requires the `async function* NAME()` declaration and a
@@ -21041,6 +21142,20 @@ def _js_parse_f640_forawait_iife(text, i, depth, state):
         inner_start, inner_end, j = _js_span_braced(text, brace)
         stmts = text[inner_start:inner_end]
         sj = _js_skip_ws(stmts, 0)
+        # F677: zero or more var-bound custom [Symbol.asyncIterator]
+        # objects declared before the accumulator. The old grammar
+        # failed closed here (the accum decl rejects `{`), so no
+        # previously-decoded input changes behavior.
+        ai_env = {}
+        while True:
+            _ao = _js_try_f677_asynciter_obj(stmts, sj, state)
+            if _ao is None:
+                break
+            _an, _aels, sj = _ao
+            if _an in ai_env:
+                raise _JSExprFail("F677 duplicate asynciter name")
+            ai_env[_an] = _aels
+            sj = _js_skip_ws(stmts, sj)
         acc, kind, sj = _js_parse_f640_accum_decl(stmts, sj)
         sj = _js_skip_ws(stmts, sj)
         _fk = _js_match_kw(stmts, sj, "for")
@@ -21078,7 +21193,7 @@ def _js_parse_f640_forawait_iife(text, i, depth, state):
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
         elements, sj = _js_parse_f640_sync_source(stmts, sj, depth + 1,
-                                                  state)
+                                                  state, ai_env)
         sj = _js_skip_ws(stmts, sj)
         sj = _js_expect(stmts, sj, ")")
         sj = _js_skip_ws(stmts, sj)
@@ -21152,6 +21267,169 @@ def _js_parse_f640_forawait_iife(text, i, depth, state):
             raise _JSExprFail("F640 tail trailing junk")
         state["ops"] += 1  # the accumulation is obfuscation-shaped
         return _js_parse_f6xx_iife_tail(text, j, depth, state, value)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f677_promise_array(stmts, k, state):
+    """Parse `[Promise.resolve('LIT'),...]` at stmts[k] (F677).
+
+    Node-exact (v24.20.0): each `Promise.resolve('LIT')` fulfills
+    with the literal itself (the F618 discipline), so `for await`
+    over the array visits the literals in order. The array must be
+    non-empty; every element must be a single-string-literal
+    `Promise.resolve` call (extra args, non-literal args, or any
+    other Promise static fail closed). Parts are charged per
+    element (F452). Returns (elements, next_index) just past the
+    closing `]`. Never evals.
+    """
+    n = len(stmts)
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, "[")
+    k = _js_skip_ws(stmts, k)
+    if k < n and stmts[k] == "]":
+        raise _JSExprFail("F677 empty promise array")
+    elements = []
+    while True:
+        _ev, k = _js_parse_f618_promise_resolve(stmts, k, state)
+        elements.append(_ev)
+        k = _js_skip_ws(stmts, k)
+        if k >= n:
+            raise _JSExprFail("F677 unterminated promise array")
+        if stmts[k] == ",":
+            k = _js_skip_ws(stmts, k + 1)
+            continue
+        if stmts[k] == "]":
+            return elements, k + 1
+        raise _JSExprFail("F677 bad promise array")
+
+
+def _js_parse_f677_asynciter_obj(stmts, j, state):
+    """Parse a var-bound custom `[Symbol.asyncIterator]` object decl (F677).
+
+    `var|let|const NAME={vals:['LIT',...],[Symbol.asyncIterator]:async function*(){yield this.vals[i];...}};`
+
+    Node-exact (v24.20.0): `for await (x of NAME)` calls
+    `NAME[Symbol.asyncIterator]()` as a method, so `this` inside
+    the async generator is NAME itself and `this.vals[i]` reads
+    the i-th fragment. The awaited sequence is the async
+    generator's yield list in order (each yield must be
+    `this.vals[<int>]` with the index in range; `yield 'LIT'`,
+    named generators, extra properties, or any other body
+    statement fail closed). Returns (name, elements, next_index)
+    just past the `;`. Never evals.
+    """
+    n = len(stmts)
+    _dk = (_js_match_kw(stmts, j, "var")
+           or _js_match_kw(stmts, j, "let")
+           or _js_match_kw(stmts, j, "const"))
+    if _dk is None:
+        raise _JSExprFail("F677 asynciter decl not var/let/const")
+    k = _js_skip_ws(stmts, _dk)
+    name, k = _js_parse_ident(stmts, k)
+    if name == "arguments":
+        raise _JSExprFail("F677 asynciter binds arguments")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, "=")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, "{")
+    k = _js_skip_ws(stmts, k)
+    _vk = _js_match_kw(stmts, k, "vals")
+    if _vk is None:
+        raise _JSExprFail("F677 asynciter not vals-first")
+    k = _js_skip_ws(stmts, _vk)
+    k = _js_expect(stmts, k, ":")
+    k = _js_skip_ws(stmts, k)
+    _arr, k = _js_parse_string_literal_array(stmts, k, state)
+    vals = []
+    for _e in _arr.elements:
+        if not isinstance(_e, str) or isinstance(_e, _JSNumStr):
+            raise _JSExprFail("F677 asynciter vals not strings")
+        vals.append(str(_e))
+    if not vals:
+        raise _JSExprFail("F677 asynciter vals empty")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ",")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, "[")
+    k = _js_skip_ws(stmts, k)
+    _sk = _js_match_kw(stmts, k, "Symbol")
+    if _sk is None:
+        raise _JSExprFail("F677 asynciter not Symbol")
+    k = _js_skip_ws(stmts, _sk)
+    k = _js_expect(stmts, k, ".")
+    _an, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+    if _an != "asyncIterator":
+        raise _JSExprFail("F677 asynciter not asyncIterator")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, "]")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ":")
+    k = _js_skip_ws(stmts, k)
+    _ak = _js_match_kw(stmts, k, "async")
+    if _ak is None:
+        raise _JSExprFail("F677 asynciter not async")
+    k = _js_skip_ws(stmts, _ak)
+    _fk = _js_match_kw(stmts, k, "function")
+    if _fk is None:
+        raise _JSExprFail("F677 asynciter not function")
+    k = _js_skip_ws(stmts, _fk)
+    if k >= n or stmts[k] != "*":
+        raise _JSExprFail("F677 asynciter not a generator")
+    k = _js_skip_ws(stmts, k + 1)
+    k = _js_expect(stmts, k, "(")
+    k = _js_expect(stmts, k, ")")
+    k = _js_expect(stmts, k, "{")
+    elements = []
+    while True:
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == "}":
+            k += 1
+            break
+        _yk = _js_match_kw(stmts, k, "yield")
+        if _yk is None:
+            raise _JSExprFail("F677 asynciter body not yields")
+        k = _js_skip_ws(stmts, _yk)
+        _tk = _js_match_kw(stmts, k, "this")
+        if _tk is None:
+            raise _JSExprFail("F677 asynciter yield not this.vals")
+        k = _js_skip_ws(stmts, _tk)
+        k = _js_expect(stmts, k, ".")
+        _vn, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+        if _vn != "vals":
+            raise _JSExprFail("F677 asynciter yield not vals")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "[")
+        k = _js_skip_ws(stmts, k)
+        _idx, k = _js_parse_number(stmts, k)
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "]")
+        if _idx >= len(vals):
+            raise _JSExprFail("F677 asynciter index out of range")
+        elements.append(vals[_idx])
+        state["parts"] += 1  # F452: charge per yielded fragment
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == ";":
+            k += 1
+    if not elements:
+        raise _JSExprFail("F677 asynciter yields nothing")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, "}")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ";")
+    return name, elements, k
+
+
+def _js_try_f677_asynciter_obj(stmts, j, state):
+    """Try _js_parse_f677_asynciter_obj; None on no-match (F677).
+
+    Never raises; speculative parse for the F640 prefix-decl loop.
+    Never evals.
+    """
+    try:
+        return _js_parse_f677_asynciter_obj(stmts, j, state)
     except _JSExprFail:
         return None
 
@@ -25538,6 +25816,544 @@ def _js_parse_f656_bound_next_value_iife(text, i, depth, state):
         if not isinstance(val, str):
             raise _JSExprFail("F656 tail not a string")
         state["ops"] += 1  # the next-value read is obfuscation-shaped
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f677_maniter_value(stmts, k, iname, state):
+    """Parse the F677 manual-iterator value expression.
+
+    `'LIT'` or `this.I===M?'L1':'L2'` (the counter-conditional
+    fragment selector, node-exact v24.20.0). Returns ((kind, ...),
+    next_index); kind is "lit" or "cond". Never evals.
+    """
+    del state
+    n = len(stmts)
+    k = _js_skip_ws(stmts, k)
+    if k < n and stmts[k] in "'\"":
+        _v, k = _js_parse_string(stmts, k)
+        return ("lit", _v), k
+    _tk = _js_match_kw(stmts, k, "this")
+    if _tk is None:
+        raise _JSExprFail("F677 maniter value not literal/cond")
+    k = _js_skip_ws(stmts, _tk)
+    k = _js_expect(stmts, k, ".")
+    _inm, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+    if _inm != iname:
+        raise _JSExprFail("F677 maniter value wrong counter")
+    k = _js_skip_ws(stmts, k)
+    if not stmts.startswith("===", k):
+        raise _JSExprFail("F677 maniter value not ===")
+    k = _js_skip_ws(stmts, k + 3)
+    _m, k = _js_parse_number(stmts, k)
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, "?")
+    k = _js_skip_ws(stmts, k)
+    if k >= n or stmts[k] not in "'\"":
+        raise _JSExprFail("F677 maniter cond branch not literal")
+    _l1, k = _js_parse_string(stmts, k)
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ":")
+    k = _js_skip_ws(stmts, k)
+    if k >= n or stmts[k] not in "'\"":
+        raise _JSExprFail("F677 maniter cond branch not literal")
+    _l2, k = _js_parse_string(stmts, k)
+    return ("cond", _m, _l1, _l2), k
+
+
+def _js_parse_f677_manual_iterator_iife(text, i, depth, state):
+    """Parse the F677 manual-iterator statement IIFE.
+
+    `(function(){var|let|const O={I:INT0,next:function(){this.I++;return this.I<=K?{value:V,done:false}:{done:true};}};var|let S='';SEQ return S;})()`
+    where SEQ is one or more `var|let|const R=O.next();S+=R.value;`
+    (`R` declared once, then bare `R=O.next();` re-uses).
+
+    Node-exact desugar (v24.20.0): each `O.next()` increments the
+    counter and returns `{value, done:false}` while the counter is
+    within the bound (the value is the literal or the
+    counter-conditional selector); the decoder simulates the
+    counter and accumulates `R.value` per call. A call past the
+    bound would deliver `undefined` in the engine -- the decoder
+    refuses it coded (fail closed, never mis-decoded). Bounded:
+    at most 16 calls, F452 parts charged per call. Returns
+    (value, next_index), or None when the head does not match or a
+    guard fails. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        _dk = (_js_match_kw(stmts, sj, "var")
+               or _js_match_kw(stmts, sj, "let")
+               or _js_match_kw(stmts, sj, "const"))
+        if _dk is None:
+            raise _JSExprFail("F677 maniter decl not var/let/const")
+        sj = _js_skip_ws(stmts, _dk)
+        oname, sj = _js_parse_ident(stmts, sj)
+        if oname == "arguments":
+            raise _JSExprFail("F677 maniter binds arguments")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "=")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "{")
+        sj = _js_skip_ws(stmts, sj)
+        iname, sj = _js_parse_ident(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ":")
+        sj = _js_skip_ws(stmts, sj)
+        _i0, sj = _js_parse_number(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ",")
+        sj = _js_skip_ws(stmts, sj)
+        _nk = _js_match_kw(stmts, sj, "next")
+        if _nk is None:
+            raise _JSExprFail("F677 maniter not next")
+        sj = _js_skip_ws(stmts, _nk)
+        sj = _js_expect(stmts, sj, ":")
+        sj = _js_skip_ws(stmts, sj)
+        _fk = _js_match_kw(stmts, sj, "function")
+        if _fk is None:
+            raise _JSExprFail("F677 maniter next not function")
+        sj = _js_skip_ws(stmts, _fk)
+        sj = _js_expect(stmts, sj, "(")
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_expect(stmts, sj, "{")
+        sj = _js_skip_ws(stmts, sj)
+        _tk = _js_match_kw(stmts, sj, "this")
+        if _tk is None:
+            raise _JSExprFail("F677 maniter no this-inc")
+        sj = _js_skip_ws(stmts, _tk)
+        sj = _js_expect(stmts, sj, ".")
+        _cm, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+        if _cm != iname:
+            raise _JSExprFail("F677 maniter wrong counter")
+        sj = _js_skip_ws(stmts, sj)
+        if not stmts.startswith("++", sj):
+            raise _JSExprFail("F677 maniter not ++")
+        sj = _js_skip_ws(stmts, sj + 2)
+        sj = _js_expect(stmts, sj, ";")
+        sj = _js_skip_ws(stmts, sj)
+        _rk = _js_match_kw(stmts, sj, "return")
+        if _rk is None:
+            raise _JSExprFail("F677 maniter no return")
+        sj = _js_skip_ws(stmts, _rk)
+        _tk = _js_match_kw(stmts, sj, "this")
+        if _tk is None:
+            raise _JSExprFail("F677 maniter guard not this")
+        sj = _js_skip_ws(stmts, _tk)
+        sj = _js_expect(stmts, sj, ".")
+        _gm, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+        if _gm != iname:
+            raise _JSExprFail("F677 maniter guard wrong counter")
+        sj = _js_skip_ws(stmts, sj)
+        if not stmts.startswith("<=", sj):
+            raise _JSExprFail("F677 maniter guard not <=")
+        sj = _js_skip_ws(stmts, sj + 2)
+        _kk, sj = _js_parse_number(stmts, sj)
+        if _kk < 1:
+            raise _JSExprFail("F677 maniter bound < 1")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "?")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "{")
+        sj = _js_skip_ws(stmts, sj)
+        _vk = _js_match_kw(stmts, sj, "value")
+        if _vk is None:
+            raise _JSExprFail("F677 maniter no value key")
+        sj = _js_skip_ws(stmts, _vk)
+        sj = _js_expect(stmts, sj, ":")
+        (_vkind, *_vrest), sj = _js_parse_f677_maniter_value(
+            stmts, sj, iname, state)
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ",")
+        sj = _js_skip_ws(stmts, sj)
+        _dk2 = _js_match_kw(stmts, sj, "done")
+        if _dk2 is None:
+            raise _JSExprFail("F677 maniter no done key")
+        sj = _js_skip_ws(stmts, _dk2)
+        sj = _js_expect(stmts, sj, ":")
+        sj = _js_skip_ws(stmts, sj)
+        _fk2 = _js_match_kw(stmts, sj, "false")
+        if _fk2 is None:
+            raise _JSExprFail("F677 maniter done not false")
+        sj = _js_skip_ws(stmts, _fk2)
+        sj = _js_expect(stmts, sj, "}")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ":")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "{")
+        sj = _js_skip_ws(stmts, sj)
+        _dk3 = _js_match_kw(stmts, sj, "done")
+        if _dk3 is None:
+            raise _JSExprFail("F677 maniter no done key 2")
+        sj = _js_skip_ws(stmts, _dk3)
+        sj = _js_expect(stmts, sj, ":")
+        sj = _js_skip_ws(stmts, sj)
+        _tk2 = _js_match_kw(stmts, sj, "true")
+        if _tk2 is None:
+            raise _JSExprFail("F677 maniter done not true")
+        sj = _js_skip_ws(stmts, _tk2)
+        sj = _js_expect(stmts, sj, "}")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "}")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "}")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, _js_skip_ws(stmts, sj))
+        sj = _js_skip_ws(stmts, sj)
+        # The call sequence: `var|let|const R=O.next();S+=R.value;`
+        # once, then zero or more bare `R=O.next();S+=R.value;`.
+        rname = None
+        rkind_is_var = False
+        counter = _i0
+        acc_val = ""
+        ncalls = 0
+        while True:
+            _rk = _js_skip_ws(stmts, sj)
+            _rdk = (_js_match_kw(stmts, _rk, "var")
+                    or _js_match_kw(stmts, _rk, "let")
+                    or _js_match_kw(stmts, _rk, "const"))
+            if _rdk is not None:
+                _rkw = stmts[_rk:_rdk]
+                _rk = _js_skip_ws(stmts, _rdk)
+                _rn, _rk = _js_parse_ident(stmts, _rk)
+                if _rn in ("arguments", oname, acc, iname):
+                    raise _JSExprFail("F677 maniter bad result name")
+                if rname is None:
+                    rname = _rn
+                    rkind_is_var = (_rkw == "var")
+                elif not (_rn == rname and rkind_is_var
+                          and _rkw == "var"):
+                    # Only a `var` re-declaration of the same name
+                    # is engine-legal (let/const redeclare throws).
+                    raise _JSExprFail("F677 maniter redeclared")
+            else:
+                _rn, _rk = _js_parse_ident(stmts, _rk)
+                if _rn != rname:
+                    break  # end of the call sequence
+            _rk = _js_skip_ws(stmts, _rk)
+            _rk = _js_expect(stmts, _rk, "=")
+            _rk = _js_skip_ws(stmts, _rk)
+            _on, _rk = _js_parse_ident(stmts, _rk)
+            if _on != oname:
+                raise _JSExprFail("F677 maniter call of other")
+            _rk = _js_skip_ws(stmts, _rk)
+            _rk = _js_expect(stmts, _rk, ".")
+            _nm, _rk = _js_parse_ident(stmts, _js_skip_ws(stmts, _rk))
+            if _nm != "next":
+                raise _JSExprFail("F677 maniter not next()")
+            _rk = _js_call_empty_parens(stmts, _rk)
+            _rk = _js_skip_ws(stmts, _rk)
+            _rk = _js_expect(stmts, _rk, ";")
+            _rk = _js_skip_ws(stmts, _rk)
+            _an, _rk = _js_parse_ident(stmts, _rk)
+            if _an != acc:
+                raise _JSExprFail("F677 maniter accum mismatch")
+            _rk = _js_skip_ws(stmts, _rk)
+            if not stmts.startswith("+=", _rk):
+                raise _JSExprFail("F677 maniter not +=")
+            _rk = _js_skip_ws(stmts, _rk + 2)
+            _vn2, _rk = _js_parse_ident(stmts, _rk)
+            if _vn2 != rname:
+                raise _JSExprFail("F677 maniter accum wrong result")
+            _rk = _js_skip_ws(stmts, _rk)
+            _rk = _js_expect(stmts, _rk, ".")
+            _vm, _rk = _js_parse_ident(stmts, _js_skip_ws(stmts, _rk))
+            if _vm != "value":
+                raise _JSExprFail("F677 maniter not .value")
+            _rk = _js_skip_ws(stmts, _rk)
+            _rk = _js_expect(stmts, _rk, ";")
+            # Simulate the call node-exactly (v24.20.0).
+            counter += 1
+            if counter > _kk:
+                raise _JSExprFail("F677 maniter call past done")
+            if _vkind == "lit":
+                _vv = _vrest[0]
+            else:
+                _m, _l1, _l2 = _vrest
+                _vv = _l1 if counter == _m else _l2
+            acc_val += _vv
+            state["parts"] += 1  # F452: charge per next() call
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            ncalls += 1
+            if ncalls > 16:
+                raise _JSExprFail("F677 maniter too many calls")
+            sj = _js_skip_ws(stmts, _rk)
+        if ncalls < 1:
+            raise _JSExprFail("F677 maniter no calls")
+        sj = _js_parse_f6xx_return_acc(stmts, sj, acc)
+        state["ops"] += 1  # the iterator simulation is obfuscation-shaped
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, acc_val)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f677_nextseq_body(text, j, state):
+    """Parse an F677 nextseq generator body (bare yields + optional trailing return).
+
+    Like _js_parse_f6xx_fixed_yield_body, but the trailing
+    `return 'LIT';` VALUE is captured: the post-exhaustion
+    `.next()` delivers it as `{value, done:true}` (node v24.20.0).
+    Returns (yields, ret_or_None, next_index) just past the closing
+    `}`. Never evals.
+    """
+    n = len(text)
+    yields = []
+    ret = None
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "}":
+            j += 1
+            break
+        _rk = _js_match_kw(text, j, "return")
+        if _rk is not None:
+            j = _js_skip_ws(text, _rk)
+            if j >= n or text[j] not in "'\"":
+                raise _JSExprFail("F677 nextseq return not literal")
+            ret, j = _js_parse_string(text, j)
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ";":
+                j += 1
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != "}":
+                raise _JSExprFail("F677 nextseq return not last")
+            j += 1
+            break
+        _yk = _js_match_kw(text, j, "yield")
+        if _yk is None:
+            raise _JSExprFail("F677 nextseq body not yields")
+        j = _js_skip_ws(text, _yk)
+        if j < n and text[j] == "(":
+            j = _js_skip_ws(text, j + 1)
+            _paren = True
+        else:
+            _paren = False
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F677 nextseq yield not literal")
+        _yv, j = _js_parse_string(text, j)
+        if _paren:
+            j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ";":
+            j += 1
+        yields.append(_yv)
+        state["parts"] += 1  # F452: charge per yield
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+    if not yields:
+        raise _JSExprFail("F677 nextseq yields nothing")
+    return yields, ret, j
+
+
+def _js_parse_f677_value_additive(stmts, k, results, state):
+    """Parse a string-only additive of `'LIT'` and `R.value` terms (F677).
+
+    Each `R` must be a bound `.next()` result name in *results*.
+    Returns (value, next_index). Never evals.
+    """
+    del state
+    n = len(stmts)
+    parts = []
+    while True:
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] in "'\"":
+            _v, k = _js_parse_string(stmts, k)
+            parts.append(_v)
+        elif k < n and stmts[k] in _JS_IDENT_START:
+            _rn, k = _js_parse_ident(stmts, k)
+            if _rn not in results:
+                raise _JSExprFail("F677 additive unknown result")
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, ".")
+            _vm, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+            if _vm != "value":
+                raise _JSExprFail("F677 additive not .value")
+            parts.append(results[_rn])
+        else:
+            raise _JSExprFail("F677 additive bad term")
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == "+":
+            k = _js_skip_ws(stmts, k + 1)
+            continue
+        break
+    return "".join(parts), k
+
+
+def _js_parse_f677_nextseq_iife(text, i, depth, state):
+    """Parse the F677 sequenced-`.next()` statement IIFEs (filed shapes 3, 4).
+
+    Form A (generator declaration):
+      `(function(){function* G(){yield 'LIT';...;return 'LIT'?;}var|let|const IT=G();(var|let|const R=IT.next();)+return ADD;})()`
+    Form B (var-bound invoked generator expression):
+      `(function(){var|let|const G=(function*(){yield 'LIT';...;return 'LIT'?;})();(var|let|const R=G.next();)+return ADD;})()`
+    ADD is a string-only additive of `'LIT'` and `R.value` terms.
+
+    Node-exact desugar (v24.20.0): the n-th `.next()` delivers
+    yields[n-1] (`{value, done:false}`); the call after the last
+    yield delivers the trailing return value as `{value,
+    done:true}`; any later call delivers `undefined` -- the
+    decoder refuses that coded (fail closed, never mis-decoded).
+    `.next()` takes no arguments and only `.value` is read; any
+    other member, call args, or a second binding of the iterator
+    fails closed. Bounded: at most 16 calls, F452 parts charged
+    per call. Returns (value, next_index), or None when the head
+    does not match or a guard fails. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        _fk = _js_match_kw(stmts, sj, "function")
+        if _fk is not None:
+            # Form A: `function* G(){...}` then `var|let|const IT=G();`
+            k = _js_skip_ws(stmts, _fk)
+            if k >= n or stmts[k] != "*":
+                raise _JSExprFail("F677 nextseq not a generator")
+            k = _js_skip_ws(stmts, k + 1)
+            gname, k = _js_parse_ident(stmts, k)
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, "(")
+            k = _js_expect(stmts, k, ")")
+            k = _js_expect(stmts, k, "{")
+            yields, ret, k = _js_parse_f677_nextseq_body(
+                stmts, k, state)
+            k = _js_skip_ws(stmts, k)
+            _dk = (_js_match_kw(stmts, k, "var")
+                   or _js_match_kw(stmts, k, "let")
+                   or _js_match_kw(stmts, k, "const"))
+            if _dk is None:
+                raise _JSExprFail("F677 nextseq IT not declared")
+            k = _js_skip_ws(stmts, _dk)
+            itname, k = _js_parse_ident(stmts, k)
+            if itname in ("arguments", gname):
+                raise _JSExprFail("F677 nextseq bad IT name")
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, "=")
+            k = _js_skip_ws(stmts, k)
+            _gn, k = _js_parse_ident(stmts, k)
+            if _gn != gname:
+                raise _JSExprFail("F677 nextseq IT not G()")
+            k = _js_expect(stmts, k, "(")
+            k = _js_expect(stmts, k, ")")
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, ";")
+        else:
+            # Form B: `var|let|const G=(function*(){...})();`
+            k = _js_skip_ws(stmts, sj)
+            _dk = (_js_match_kw(stmts, k, "var")
+                   or _js_match_kw(stmts, k, "let")
+                   or _js_match_kw(stmts, k, "const"))
+            if _dk is None:
+                raise _JSExprFail("F677 nextseq G not declared")
+            k = _js_skip_ws(stmts, _dk)
+            gname, k = _js_parse_ident(stmts, k)
+            if gname == "arguments":
+                raise _JSExprFail("F677 nextseq binds arguments")
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, "=")
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, "(")
+            k = _js_skip_ws(stmts, k)
+            _fk = _js_match_kw(stmts, k, "function")
+            if _fk is None:
+                raise _JSExprFail("F677 nextseq not function*")
+            k = _js_skip_ws(stmts, _fk)
+            if k >= n or stmts[k] != "*":
+                raise _JSExprFail("F677 nextseq not a generator")
+            k = _js_skip_ws(stmts, k + 1)
+            if k < n and stmts[k] in _JS_IDENT_START:
+                _, k = _js_parse_ident(stmts, k)  # optional name
+                k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, "(")
+            k = _js_expect(stmts, k, ")")
+            k = _js_expect(stmts, k, "{")
+            yields, ret, k = _js_parse_f677_nextseq_body(
+                stmts, k, state)
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, ")")
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, "(")
+            k = _js_expect(stmts, k, ")")
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, ";")
+            itname = gname
+        # The sequenced `.next()` calls.
+        k = _js_skip_ws(stmts, k)
+        results = {}
+        calln = 0
+        while True:
+            _rk = _js_skip_ws(stmts, k)
+            _rdk = (_js_match_kw(stmts, _rk, "var")
+                    or _js_match_kw(stmts, _rk, "let")
+                    or _js_match_kw(stmts, _rk, "const"))
+            if _rdk is None:
+                break
+            _rk = _js_skip_ws(stmts, _rdk)
+            _rn, _rk = _js_parse_ident(stmts, _rk)
+            if (_rn in results or _rn == "arguments"
+                    or _rn == itname):
+                raise _JSExprFail("F677 nextseq bad result name")
+            _rk = _js_skip_ws(stmts, _rk)
+            _rk = _js_expect(stmts, _rk, "=")
+            _rk = _js_skip_ws(stmts, _rk)
+            _inm, _rk = _js_parse_ident(stmts, _rk)
+            if _inm != itname:
+                raise _JSExprFail("F677 nextseq next() of other")
+            _rk = _js_skip_ws(stmts, _rk)
+            _rk = _js_expect(stmts, _rk, ".")
+            _nm, _rk = _js_parse_ident(stmts, _js_skip_ws(stmts, _rk))
+            if _nm != "next":
+                raise _JSExprFail("F677 nextseq not next()")
+            _rk = _js_call_empty_parens(stmts, _rk)
+            _rk = _js_skip_ws(stmts, _rk)
+            _rk = _js_expect(stmts, _rk, ";")
+            calln += 1
+            if calln > 16:
+                raise _JSExprFail("F677 nextseq too many calls")
+            if calln <= len(yields):
+                _rv = yields[calln - 1]
+            elif calln == len(yields) + 1 and ret is not None:
+                _rv = ret
+            else:
+                # The engine delivers undefined past exhaustion;
+                # refuse coded rather than mis-decode.
+                raise _JSExprFail("F677 nextseq past exhaustion")
+            state["parts"] += 1  # F452: charge per next() call
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            results[_rn] = _rv
+            k = _rk
+        if calln < 1:
+            raise _JSExprFail("F677 nextseq no calls")
+        k = _js_skip_ws(stmts, k)
+        _rk = _js_match_kw(stmts, k, "return")
+        if _rk is None:
+            raise _JSExprFail("F677 nextseq no return")
+        k = _js_skip_ws(stmts, _rk)
+        val, k = _js_parse_f677_value_additive(stmts, k, results,
+                                               state)
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == ";":
+            k += 1
+        k = _js_skip_ws(stmts, k)
+        if k != n:
+            raise _JSExprFail("F677 nextseq trailing junk")
+        state["ops"] += 1  # the next() sequencing is obfuscation-shaped
         return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
     except _JSExprFail:
         return None
@@ -42798,6 +43614,23 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f653 is not None:
             val, i = _f653
             return _js_parse_postfix(text, i, val, depth, state)
+        # F677 (manual iterator): (function(){var|let|const
+        #   O={I:INT0,next:function(){this.I++;return this.I<=K?
+        #   {value:V,done:false}:{done:true};}};var|let S='';
+        #   (var|let|const R=O.next();S+=R.value;)+return S;})() --
+        #   a manually-sequenced iterator-protocol object with a
+        #   counter-conditional fragment selector. Tried after F653:
+        #   the `{I:INT,next:function...}` object head is disjoint
+        #   from every earlier route (F653 requires the
+        #   `var FR=[...]` frag-array head; F655 requires literal
+        #   initializers; F671 requires a member-read additive
+        #   return); None falls through to the parenthesized-additive
+        #   path like F653.
+        _f677m = _js_parse_f677_manual_iterator_iife(text, i, depth,
+                                                     state)
+        if _f677m is not None:
+            val, i = _f677m
+            return _js_parse_postfix(text, i, val, depth, state)
         # F656: (function*(){yield 'LIT';...})().next().value -- the
         # first-next value read on an immediately-invoked fixed-yield
         # generator, and the statement twin
@@ -42817,6 +43650,24 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                          depth, state)
         if _f656 is not None:
             val, i = _f656
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F677 (nextseq): (function(){function* G(){yield 'LIT';...;
+        #   return 'LIT'?;}var|let|const IT=G();
+        #   (var|let|const R=IT.next();)+return ADD;})() and the
+        #   var-bound generator-expression twin
+        #   (function(){var|let|const G=(function*(){yield 'LIT';...;
+        #   return 'LIT'?;})();(var|let|const R=G.next();)+
+        #   return ADD;})() -- sequenced `.next()` reads with bound
+        #   result idents consumed in a string-only additive of
+        #   `'LIT'` and `R.value` terms. Tried after F656: F656's
+        #   bound form requires the single inline `G.next().value`
+        #   read in the return (no result statements); this requires
+        #   >=1 result statement, so no previously-decoded input
+        #   changes behavior. None falls through to the
+        #   parenthesized-additive path like F656.
+        _f677n = _js_parse_f677_nextseq_iife(text, i, depth, state)
+        if _f677n is not None:
+            val, i = _f677n
             return _js_parse_postfix(text, i, val, depth, state)
         # F663: (function(){DECL o=Object.fromEntries(ENTRIES);
         #   return o.M(+o.M)*;})() -- member reads on a var-bound

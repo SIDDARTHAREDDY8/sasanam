@@ -126,11 +126,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F677, F679-F685, F699 open, next F700 (F672-F676, F678 CLOSED wave-380 lanes 1-4; lane-4 F686->F699)."""
+    """Control: footer shows F679-F685, F699 open, next F700 (F672-F678 CLOSED wave-380 lanes 1-5; lane-4 F686->F699)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F700**" in text
-          and "Open findings: F677, F679, F680, F681, F682, F683, F684, F685, F699." in text)  # Wave-380 merge: lanes 1-4 CLOSED F672-F676, F678; lane-4 F686 -> F699
+          and "Open findings: F679, F680, F681, F682, F683, F684, F685, F699." in text)  # Wave-380 merge: F672-F678 (lanes 1-5) CLOSED; footer repoint open F679-F685, F699 / next F700
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -405,48 +405,48 @@ def test_r47_f676_s4_open():
     return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
-# ------------------------------------------------- F677 open pins (must miss)
+# ------------------------------------------------- F677 closed pins (must block; wave-380 lane 5)
 
 @_t
 def test_r47_f677_s1_open():
-    """F677 OPEN (manual-obj): miss reproduces."""
-    miss = _misses("(function(){var o={i:0,next:function(){this.i++;return this.i<=2?{value:this.i===1?'%s':'%s',done:false}:{done:true};}};var s='';var r=o.next();s+=r.value;r=o.next();s+=r.value;return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F677 CLOSED (manual-obj): blocked via wave-380 lane 5."""
+    blocked = _blocked("(function(){var o={i:0,next:function(){this.i++;return this.i<=2?{value:this.i===1?'%s':'%s',done:false}:{done:true};}};var s='';var r=o.next();s+=r.value;r=o.next();s+=r.value;return s;})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
 def test_r47_f677_s2_open():
-    """F677 OPEN (async-custom): miss reproduces."""
-    miss = _misses("(async function(){var o={vals:['%s','%s'],[Symbol.asyncIterator]:async function*(){yield this.vals[0];yield this.vals[1];}};var s='';for await(var x of o){s+=x;}return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F677 CLOSED (async-custom): blocked via wave-380 lane 5."""
+    blocked = _blocked("(async function(){var o={vals:['%s','%s'],[Symbol.asyncIterator]:async function*(){yield this.vals[0];yield this.vals[1];}};var s='';for await(var x of o){s+=x;}return s;})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
 def test_r47_f677_s3_open():
-    """F677 OPEN (gen-return): miss reproduces."""
-    miss = _misses("(function(){function* g(){yield '%s';return '%s';}var it=g();var a=it.next();var b=it.next();return a.value+b.value;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F677 CLOSED (gen-return): blocked via wave-380 lane 5."""
+    blocked = _blocked("(function(){function* g(){yield '%s';return '%s';}var it=g();var a=it.next();var b=it.next();return a.value+b.value;})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
 def test_r47_f677_s4_open():
-    """F677 OPEN (next-seq): miss reproduces."""
-    miss = _misses("(function(){var g=(function*(){yield '%s';yield '%s';})();var a=g.next();var b=g.next();return a.value+b.value;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F677 CLOSED (next-seq): blocked via wave-380 lane 5."""
+    blocked = _blocked("(function(){var g=(function*(){yield '%s';yield '%s';})();var a=g.next();var b=g.next();return a.value+b.value;})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
 def test_r47_f677_s5_open():
-    """F677 OPEN (yieldstar-gen): miss reproduces."""
-    miss = _misses("(function(){function* h(){yield '%s';}function* g(){yield* h();yield '%s';}return [...g()].join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F677 CLOSED (yieldstar-gen): blocked via wave-380 lane 5."""
+    blocked = _blocked("(function(){function* h(){yield '%s';}function* g(){yield* h();yield '%s';}return [...g()].join('');})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
 def test_r47_f677_s6_open():
-    """F677 OPEN (forawait-promises): miss reproduces."""
-    miss = _misses("(async function(){var s='';for await(var x of [Promise.resolve('%s'),Promise.resolve('%s')]){s+=x;}return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F677 CLOSED (forawait-promises): blocked via wave-380 lane 5."""
+    blocked = _blocked("(async function(){var s='';for await(var x of [Promise.resolve('%s'),Promise.resolve('%s')]){s+=x;}return s;})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 # ------------------------------------------------- F678 pins (CLOSED wave-380 lane 4)
