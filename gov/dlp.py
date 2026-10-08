@@ -20457,6 +20457,458 @@ def _js_parse_f641_deferred_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f653_frag_array_decl(stmts, j, state):
+    """Parse `var|let|const FR=['LIT',...];` at stmts[j] (F653).
+
+    The fragment source: a string-literal-only array (the F454
+    multi-arg grammar via _js_parse_string_literal_list -- numeric,
+    nested, marker, or additive elements fail closed). Returns
+    (fr_name, frags, next_index) just past the `;`. Never evals.
+    """
+    n = len(stmts)
+    m = (_js_match_kw(stmts, j, "var")
+         or _js_match_kw(stmts, j, "let")
+         or _js_match_kw(stmts, j, "const"))
+    if m is None:
+        raise _JSExprFail("F653 frag decl not var/let/const")
+    j = _js_skip_ws(stmts, m)
+    fr, j = _js_parse_ident(stmts, j)
+    j = _js_expect(stmts, j, "=")
+    j = _js_skip_ws(stmts, j)
+    if j >= n or stmts[j] != "[":
+        raise _JSExprFail("F653 frag source not array literal")
+    frags, j = _js_parse_string_literal_list(stmts, j + 1, state, "]")
+    if not frags:
+        raise _JSExprFail("F653 frag array empty")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ";")
+    return fr, frags, j
+
+
+def _js_parse_f653_counter_obj_decl(stmts, j, state):
+    """Parse `var|let|const O={i:0};` at stmts[j] (F653).
+
+    The iterator's counter object: exactly one key `i` with numeric
+    value 0. Returns (obj_name, next_index) just past the `;`.
+    Never evals.
+    """
+    del state  # no budget charged here
+    m = (_js_match_kw(stmts, j, "var")
+         or _js_match_kw(stmts, j, "let")
+         or _js_match_kw(stmts, j, "const"))
+    if m is None:
+        raise _JSExprFail("F653 counter decl not var/let/const")
+    j = _js_skip_ws(stmts, m)
+    obj, j = _js_parse_ident(stmts, j)
+    j = _js_expect(stmts, j, "=")
+    j = _js_expect(stmts, j, "{")
+    key, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if key != "i":
+        raise _JSExprFail("F653 counter key not i")
+    j = _js_expect(stmts, j, ":")
+    num, j = _js_parse_number(stmts, _js_skip_ws(stmts, j))
+    if num != 0:
+        raise _JSExprFail("F653 counter not zero-init")
+    j = _js_expect(stmts, j, "}")
+    j = _js_expect(stmts, j, ";")
+    return obj, j
+
+
+def _js_parse_f653_symbol_member(stmts, j):
+    """Parse `[Symbol.iterator]` / `[Symbol['iterator']]` at stmts[j] (F653).
+
+    Returns next_index just past the closing `]`. Never evals.
+    """
+    n = len(stmts)
+    j = _js_expect(stmts, j, "[")
+    sym, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if sym != "Symbol":
+        raise _JSExprFail("F653 not Symbol member")
+    j = _js_skip_ws(stmts, j)
+    if j < n and stmts[j] == ".":
+        it, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j + 1))
+        if it != "iterator":
+            raise _JSExprFail("F653 not Symbol.iterator")
+    elif j < n and stmts[j] == "[":
+        j = _js_skip_ws(stmts, j + 1)
+        if j >= n or stmts[j] not in "'\"":
+            raise _JSExprFail("F653 Symbol key not string")
+        s, j = _js_parse_string(stmts, j)
+        if s != "iterator":
+            raise _JSExprFail("F653 not Symbol['iterator']")
+        j = _js_expect(stmts, j, "]")
+    else:
+        raise _JSExprFail("F653 Symbol member not modeled")
+    j = _js_expect(stmts, j, "]")
+    return j
+
+
+def _js_parse_f653_value_expr(stmts, j, self_name, fr_name):
+    """Parse `FR[SELF.i++]` at stmts[j] (F653).
+
+    The then-branch value: exactly the fragment ident indexed by the
+    post-incremented counter. Prefix `++SELF.i`, a bare `i++`, or any
+    other index expression fails closed (node-distinct semantics).
+    Returns next_index. Never evals.
+    """
+    n = len(stmts)
+    fr2, j = _js_parse_ident(stmts, j)
+    if fr2 != fr_name:
+        raise _JSExprFail("F653 value not frag ident")
+    j = _js_expect(stmts, j, "[")
+    s2, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if s2 != self_name:
+        raise _JSExprFail("F653 index not self")
+    j = _js_expect(stmts, j, ".")
+    p2, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if p2 != "i":
+        raise _JSExprFail("F653 index prop not i")
+    j = _js_skip_ws(stmts, j)
+    if not stmts.startswith("++", j):
+        raise _JSExprFail("F653 index not post-increment")
+    j += 2
+    # `+++` would lex as `++` `+` -- the trailing `+` cannot start
+    # `]`, so the expect below fails closed on it.
+    j = _js_expect(stmts, j, "]")
+    if j < n and stmts[j] == "+":
+        raise _JSExprFail("F653 index increment ambiguous")
+    return j
+
+
+def _js_parse_f653_result_obj(stmts, j, self_name, fr_name, want_done):
+    """Parse `{value:FR[SELF.i++],done:D}` / `{done:D,value:FR[SELF.i++]}` (F653).
+
+    The next() result object: exactly the two keys `value` and
+    `done` in either order, `done` the boolean want_done. Extra
+    keys, missing keys, or a non-fragment value fail closed.
+    Returns next_index. Never evals.
+    """
+    j = _js_expect(stmts, j, "{")
+    seen = {}
+    for _ in range(2):
+        key, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+        if key not in ("value", "done") or key in seen:
+            raise _JSExprFail("F653 result key not modeled")
+        j = _js_expect(stmts, j, ":")
+        if key == "value":
+            j = _js_parse_f653_value_expr(stmts, _js_skip_ws(stmts,
+                                                             j),
+                                          self_name, fr_name)
+            seen[key] = True
+        else:
+            dk = _js_match_kw(stmts, _js_skip_ws(stmts, j),
+                              "true" if want_done else "false")
+            if dk is None:
+                raise _JSExprFail("F653 done flag mismatch")
+            j = dk
+            seen[key] = True
+        j = _js_skip_ws(stmts, j)
+        if j < len(stmts) and stmts[j] == ",":
+            j += 1
+    if set(seen) != {"value", "done"}:
+        raise _JSExprFail("F653 result keys incomplete")
+    j = _js_expect(stmts, j, "}")
+    return j
+
+
+def _js_parse_f653_next_ternary(stmts, j, self_name, fr_name, frags,
+                                state):
+    """Parse `SELF.i<N?{value:FR[SELF.i++],done:false}:{done:true}` (F653).
+
+    Node-exact (v24.20.0): the counter starts at 0 and increments by
+    one per next() call, so the yielded values are frags[:N]. The
+    bound must satisfy N <= len(frags) -- for N > len(frags) the
+    engine yields `undefined` holes (join('') drops them but `s+=x`
+    stringifies them), so that shape fails closed rather than
+    mis-decode. `<=`/other comparisons fail closed. Returns
+    (yields, next_index). Never evals.
+    """
+    n = len(stmts)
+    s, j = _js_parse_ident(stmts, j)
+    if s != self_name:
+        raise _JSExprFail("F653 ternary not self")
+    j = _js_expect(stmts, j, ".")
+    prop, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if prop != "i":
+        raise _JSExprFail("F653 ternary prop not i")
+    j = _js_skip_ws(stmts, j)
+    if j >= n or stmts[j] != "<":
+        raise _JSExprFail("F653 ternary not strict <")
+    if j + 1 < n and stmts[j + 1] in "=<":
+        raise _JSExprFail("F653 ternary not plain <")
+    j += 1
+    bound, j = _js_parse_number(stmts, _js_skip_ws(stmts, j))
+    if bound > len(frags):
+        raise _JSExprFail("F653 bound exceeds frags")
+    j = _js_expect(stmts, j, "?")
+    j = _js_parse_f653_result_obj(stmts, _js_skip_ws(stmts, j),
+                                  self_name, fr_name, want_done=False)
+    j = _js_expect(stmts, j, ":")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "{")
+    dk, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if dk != "done":
+        raise _JSExprFail("F653 else not done-only")
+    j = _js_expect(stmts, j, ":")
+    tk = _js_match_kw(stmts, _js_skip_ws(stmts, j), "true")
+    if tk is None:
+        raise _JSExprFail("F653 else done not true")
+    j = _js_expect(stmts, tk, "}")
+    yields = frags[:bound]
+    for _ in yields:
+        state["parts"] += 1  # F452: charge per yielded fragment
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+    return yields, j
+
+
+def _js_parse_f653_iterator_assign(stmts, j, obj_name, fr_name, frags,
+                                   state):
+    """Parse `O[Symbol.iterator]=function(){var SELF=this;return{next:function(){return TERNARY;}};};` (F653).
+
+    The custom-iterable protocol: the factory is a plain (non-arrow)
+    zero-param function expression (an arrow would capture the
+    lexical `this` -- node-distinct, fails closed), captures `this`
+    into SELF, and returns a single-key `{next:...}` object whose
+    next() is the zero-param bound-guarded ternary. Returns
+    (yields, next_index) just past the terminating `;`. Never evals.
+    """
+    n = len(stmts)
+    o2, j = _js_parse_ident(stmts, j)
+    if o2 != obj_name:
+        raise _JSExprFail("F653 assign not counter obj")
+    j = _js_parse_f653_symbol_member(stmts, j)
+    j = _js_expect(stmts, j, "=")
+    fk = _js_match_kw(stmts, _js_skip_ws(stmts, j), "function")
+    if fk is None:
+        raise _JSExprFail("F653 factory not function")
+    j = _js_skip_ws(stmts, fk)
+    if j < n and stmts[j] in _JS_IDENT_START:
+        _, j = _js_parse_ident(stmts, j)  # optional name, ignored
+        j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "(")
+    j = _js_expect(stmts, j, ")")
+    j = _js_expect(stmts, j, "{")
+    m = (_js_match_kw(stmts, _js_skip_ws(stmts, j), "var")
+         or _js_match_kw(stmts, _js_skip_ws(stmts, j), "let")
+         or _js_match_kw(stmts, _js_skip_ws(stmts, j), "const"))
+    if m is None:
+        raise _JSExprFail("F653 self decl not var/let/const")
+    j = _js_skip_ws(stmts, m)
+    self_name, j = _js_parse_ident(stmts, j)
+    j = _js_expect(stmts, j, "=")
+    tk = _js_match_kw(stmts, _js_skip_ws(stmts, j), "this")
+    if tk is None:
+        raise _JSExprFail("F653 self not this")
+    j = _js_expect(stmts, tk, ";")
+    rk = _js_match_kw(stmts, _js_skip_ws(stmts, j), "return")
+    if rk is None:
+        raise _JSExprFail("F653 factory no return")
+    j = _js_expect(stmts, rk, "{")
+    nk, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if nk != "next":
+        raise _JSExprFail("F653 factory not next-only")
+    j = _js_expect(stmts, j, ":")
+    fk2 = _js_match_kw(stmts, _js_skip_ws(stmts, j), "function")
+    if fk2 is None:
+        raise _JSExprFail("F653 next not function")
+    j = _js_skip_ws(stmts, fk2)
+    if j < n and stmts[j] in _JS_IDENT_START:
+        _, j = _js_parse_ident(stmts, j)  # optional name, ignored
+        j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "(")
+    j = _js_expect(stmts, j, ")")
+    j = _js_expect(stmts, j, "{")
+    rk2 = _js_match_kw(stmts, _js_skip_ws(stmts, j), "return")
+    if rk2 is None:
+        raise _JSExprFail("F653 next no return")
+    yields, j = _js_parse_f653_next_ternary(stmts, _js_skip_ws(stmts,
+                                                               rk2),
+                                            self_name, fr_name,
+                                            frags, state)
+    j = _js_skip_ws(stmts, j)
+    if j < n and stmts[j] == ";":
+        j += 1
+    j = _js_expect(stmts, j, "}")  # closes the next() body
+    j = _js_skip_ws(stmts, j)
+    if j < n and stmts[j] == ";":
+        j += 1
+    j = _js_expect(stmts, j, "}")  # closes the returned {next:...} object
+    j = _js_skip_ws(stmts, j)
+    if j < n and stmts[j] == ";":
+        j += 1
+    j = _js_expect(stmts, j, "}")  # closes the factory body
+    j = _js_expect(stmts, j, ";")  # terminates the assignment
+    return yields, j
+
+
+def _js_parse_f653_consume_tail(stmts, j, obj_name, yields, state):
+    """Parse the F653 consumption tail at stmts[j] (F653).
+
+    Three node-exact forms (v24.20.0):
+      `return [...O].join('SEP');`
+      `return Array.from(O).join('SEP');`
+      `var|let S='';for(var|let|const X of O){S+=X;}return S;`
+    Unlike F619 the receiver is the bare iterator object O (never
+    called -- `O()` would throw; the protocol object is already
+    iterable). Returns (assembled_string, next_index). Never evals.
+    """
+    n = len(stmts)
+    k = _js_match_kw(stmts, _js_skip_ws(stmts, j), "return")
+    if k is not None:
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == "[":
+            # return [...O].join('SEP');
+            k = _js_expect(stmts, k, "[")
+            k = _js_skip_ws(stmts, k)
+            if not stmts.startswith("...", k):
+                raise _JSExprFail("F653 tail not a spread")
+            k = _js_skip_ws(stmts, k + 3)
+            cn, k = _js_parse_ident(stmts, k)
+            if cn != obj_name:
+                raise _JSExprFail("F653 spread of other object")
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, "]")
+            return _js_parse_f619_join_tail(stmts, k, yields, state)
+        if stmts.startswith("Array", k):
+            # return Array.from(O).join('SEP');
+            ak = k + len("Array")
+            if ak < n and stmts[ak] in _JS_IDENT_CONT:
+                raise _JSExprFail("F653 Arrayx")
+            ak = _js_expect(stmts, ak, ".")
+            fn, ak = _js_parse_ident(stmts, _js_skip_ws(stmts, ak))
+            if fn != "from":
+                raise _JSExprFail("F653 not Array.from")
+            ak = _js_expect(stmts, ak, "(")
+            cn, ak = _js_parse_ident(stmts, _js_skip_ws(stmts, ak))
+            if cn != obj_name:
+                raise _JSExprFail("F653 Array.from of other")
+            ak = _js_expect(stmts, ak, ")")
+            return _js_parse_f619_join_tail(stmts, ak, yields,
+                                            state)
+        raise _JSExprFail("F653 return tail not modeled")
+    # var|let S='';for(var|let|const X of O){S+=X;}return S;
+    acc, k = _js_parse_f6xx_accum_decl(stmts, _js_skip_ws(stmts, j))
+    k = _js_skip_ws(stmts, k)
+    fk = _js_match_kw(stmts, k, "for")
+    if fk is None:
+        raise _JSExprFail("F653 not for-of")
+    k = _js_skip_ws(stmts, fk)
+    k = _js_expect(stmts, k, "(")
+    kk = _js_skip_ws(stmts, k)
+    dk = (_js_match_kw(stmts, kk, "var")
+          or _js_match_kw(stmts, kk, "let")
+          or _js_match_kw(stmts, kk, "const"))
+    if dk is None:
+        raise _JSExprFail("F653 for-of decl not var/let/const")
+    k = dk
+    xname, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+    if xname == "arguments":
+        raise _JSExprFail("F653 loop var shadowed")
+    if xname == acc:
+        # The loop variable shadows the accumulator: node-evaluated,
+        # `var s='';for(var s of o){s+=s;}` reuses the single hoisted
+        # binding (yields 'f2f2' here), while `let`/`const` leave the
+        # outer accumulator untouched (yields ''). Decoding yields
+        # would mis-decode, so the shape fails closed (v24.20.0).
+        raise _JSExprFail("F653 loop var shadows accum")
+    k = _js_skip_ws(stmts, k)
+    ofk = _js_match_kw(stmts, k, "of")
+    if ofk is None:
+        raise _JSExprFail("F653 not for-of")
+    k = _js_skip_ws(stmts, ofk)
+    cn, k = _js_parse_ident(stmts, k)
+    if cn != obj_name:
+        raise _JSExprFail("F653 for-of over other object")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ")")
+    k = _js_skip_ws(stmts, k)
+    if k < n and stmts[k] == "{":
+        k += 1
+        braced = True
+    else:
+        braced = False
+    an, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+    if an != acc:
+        raise _JSExprFail("F653 accum mismatch")
+    k = _js_skip_ws(stmts, k)
+    if not stmts.startswith("+=", k):
+        raise _JSExprFail("F653 body not +=")
+    k = _js_skip_ws(stmts, k + 2)
+    xn, k = _js_parse_ident(stmts, k)
+    if xn != xname:
+        raise _JSExprFail("F653 accum operand not loop var")
+    k = _js_skip_ws(stmts, k)
+    if k < n and stmts[k] == ";":
+        k += 1
+    k = _js_skip_ws(stmts, k)
+    if braced:
+        k = _js_expect(stmts, k, "}")
+    k = _js_skip_ws(stmts, k)
+    rk = _js_match_kw(stmts, k, "return")
+    if rk is None:
+        raise _JSExprFail("F653 no return")
+    rn, k = _js_parse_ident(stmts, _js_skip_ws(stmts, rk))
+    if rn != acc:
+        raise _JSExprFail("F653 return not accum")
+    k = _js_skip_ws(stmts, k)
+    if k < n and stmts[k] == ";":
+        k += 1
+    k = _js_skip_ws(stmts, k)
+    if k != n:
+        raise _JSExprFail("F653 tail trailing junk")
+    state["ops"] += 1  # the accumulation is obfuscation-shaped
+    return "".join(yields), k
+
+
+def _js_parse_f653_custom_iterator_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const FR=['LIT',...];var|let|const O={i:0};O[Symbol.iterator]=function(){var SELF=this;return{next:function(){return SELF.i<N?{value:FR[SELF.i++],done:false}:{done:true};}};};<TAIL>})()` (F653).
+
+    Node-exact desugar (v24.20.0): spreading, for-of, or
+    Array.from over the protocol object O invokes
+    O[Symbol.iterator]() once, then calls next() until done:true;
+    the bound-guarded ternary yields frags[:N] in order and the
+    tail assembles the credential. The fragment array must be
+    string-literal-only, the counter must start at 0, and the
+    bound must satisfy N <= len(frags) -- anything else fails
+    closed (documented scope boundary: rejected, never
+    mis-decoded). Returns (value, next_index), or None when the
+    head does not match or a guard fails. Bounded by the
+    part/depth budgets; the wrapper charges one op
+    (obfuscation-shaped). Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        fr_name, frags, sj = _js_parse_f653_frag_array_decl(stmts,
+                                                             sj,
+                                                             state)
+        sj = _js_skip_ws(stmts, sj)
+        obj_name, sj = _js_parse_f653_counter_obj_decl(stmts, sj,
+                                                       state)
+        if obj_name == fr_name:
+            raise _JSExprFail("F653 obj shadows frags")
+        sj = _js_skip_ws(stmts, sj)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        yields, sj = _js_parse_f653_iterator_assign(stmts, sj,
+                                                    obj_name,
+                                                    fr_name, frags,
+                                                    state)
+        sj = _js_skip_ws(stmts, sj)
+        val, _ = _js_parse_f653_consume_tail(stmts, sj, obj_name,
+                                             yields, state)
+        state["ops"] += 1  # the iterator protocol is obfuscation-shaped
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f6xx_iife_head(text, i):
     """Match `(function(){` at text[i] (F600/F601/F602); returns index past `{` or None."""
     n = len(text)
@@ -31957,6 +32409,25 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                              state)
         if _f641 is not None:
             val, i = _f641
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F653: (function(){var|let|const FR=['LIT',...];var|let|const
+        #   O={i:0};O[Symbol.iterator]=function(){var SELF=this;
+        #   return{next:function(){return SELF.i<N?
+        #   {value:FR[SELF.i++],done:false}:{done:true};}};};<TAIL>})()
+        #   -- a custom iterable-protocol object consumed via
+        #   [...O].join('SEP'), Array.from(O).join('SEP'), or for-of
+        #   accumulation. Tried after F641: the `var FR=[...]`
+        #   string-literal-array head is disjoint from every earlier
+        #   route (all require function*/async/arrow/argument forms or
+        #   other bindings); None falls through to the
+        #   parenthesized-additive path like F641. Disjoint from F619
+        #   (named generator declaration + NAME() call receiver) and
+        #   F654 (for-of over sync-iterable sources -- array literals
+        #   and Map.values()/keys(), never a protocol object).
+        _f653 = _js_parse_f653_custom_iterator_iife(text, i, depth,
+                                                    state)
+        if _f653 is not None:
+            val, i = _f653
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")

@@ -559,30 +559,30 @@ def test_r44_f652_s3_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 
-# ------------------------------------------------- F653 open pins (must miss)
+# ------------------------------------------------- F653 closed pins (must block)
 
 @_t
-def test_r44_f653_s1_open():
-    """F653 OPEN (shape symbol-iterator-spread): miss reproduces."""
-    miss = _misses("(function(){var fr=['%s','%s%s'];var o={i:0};o[Symbol.iterator]=function(){var self=this;return{next:function(){return self.i<2?{value:fr[self.i++],done:false}:{done:true};}};};return [...o].join('');})()"
+def test_r44_f653_s1_closed():
+    """F653 CLOSED (shape symbol-iterator-spread): blocks coded (wave-377 lane 7)."""
+    hit = _blocked("(function(){var fr=['%s','%s%s'];var o={i:0};o[Symbol.iterator]=function(){var self=this;return{next:function(){return self.i<2?{value:fr[self.i++],done:false}:{done:true};}};};return [...o].join('');})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r44_f653_s2_open():
-    """F653 OPEN (shape symbol-iterator-forof): miss reproduces."""
-    miss = _misses("(function(){var fr=['%s','%s%s'];var o={i:0};o[Symbol.iterator]=function(){var self=this;return{next:function(){return self.i<2?{value:fr[self.i++],done:false}:{done:true};}};};var s='';for(var x of o){s+=x;}return s;})()"
-                   % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r44_f653_s3_open():
-    """F653 OPEN (shape symbol-iterator-arrayfrom): miss reproduces."""
-    miss = _misses("(function(){var fr=['%s','%s%s'];var o={i:0};o[Symbol.iterator]=function(){var self=this;return{next:function(){return self.i<2?{value:fr[self.i++],done:false}:{done:true};}};};return Array.from(o).join('');})()"
+def test_r44_f653_s2_closed():
+    """F653 CLOSED (shape symbol-iterator-forof): blocks coded (wave-377 lane 7)."""
+    hit = _blocked("(function(){var fr=['%s','%s%s'];var o={i:0};o[Symbol.iterator]=function(){var self=this;return{next:function(){return self.i<2?{value:fr[self.i++],done:false}:{done:true};}};};var s='';for(var x of o){s+=x;}return s;})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_r44_f653_s3_closed():
+    """F653 CLOSED (shape symbol-iterator-arrayfrom): blocks coded (wave-377 lane 7)."""
+    hit = _blocked("(function(){var fr=['%s','%s%s'];var o={i:0};o[Symbol.iterator]=function(){var self=this;return{next:function(){return self.i<2?{value:fr[self.i++],done:false}:{done:true};}};};return Array.from(o).join('');})()"
+                   % (_F1, _F2, _F3))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ---------------------------------------------------------------- green check
