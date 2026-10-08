@@ -10320,6 +10320,131 @@ def _js_parse_f614_fnexpr_dispatch(text, i, depth, state):
     return _js_f556_apply(params, body, args), p
 
 
+def _js_parse_f636_bind_chain(text, i, depth, state):
+    """Parse `((FN)).bind(BT, lit, ...).bind(BT, lit, ...)(call, ...)` /
+    `((FN)).bind(BT, lit, ...).apply(BT, [lit, ...])` /
+    `((FN)).bind(BT, lit, ...).call(BT, lit, ...)` at text[i] (F636),
+    text[i] == '('.
+
+    Bind-on-bound-function chains (F614 models a single dispatch on a
+    function-expression receiver only). Node-exact desugar
+    (v24.20.0): a `.bind` on an already-bound function concatenates
+    the bound arg lists (the earlier thisArg wins, but the modeled
+    targets never reference `this` -- arrows ignore it, the F614
+    additive body forbids it -- so every thisArg is parsed and
+    discarded, the F614/F483 precedent); the chain terminates in an
+    immediate invocation paren (after a `.bind`), a `.call` dispatch,
+    or an `.apply` dispatch, whose args fill the remaining params in
+    order (the F556 arity precedent: extras dropped, fewer args than
+    params fail closed). The dispatch member accepts the same dot /
+    F482 bracket-string / F490 `?.` twins as F614 (all
+    engine-identical, node v24.20.0 verified).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - the first dispatch MUST be `.bind`; `.call`/`.apply` invoke
+      immediately, so their result (the body string, not callable)
+      cannot start a chain in the engine.
+    - exactly one second dispatch (`.bind`/`.call`/`.apply`); 3+
+      dispatch chains fail closed (documented residual).
+    - a single `.bind` with immediate invocation parens is F614's
+      route -- this function returns None there to stay disjoint
+      (F614 is tried first and handles it).
+    - every bound/call arg must be a string literal (F556 grammar);
+      `.apply`'s array admits the F519/F544 literal-or-spread form.
+    - a non-literal thisArg fails closed via _js_parse_ignored_value
+      (documented residual).
+    Returns (value, next_index) or None. On any failure the state
+    budgets (parts/ops) are restored, so a rejected chain never
+    starves later routes. Never evals.
+    """
+    n = len(text)
+    if i >= n or text[i] != "(":
+        return None
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        params, body, k = _js_parse_f614_fn_target(
+            text, _js_skip_ws(text, i + 1), depth, state)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ")":
+            raise _JSExprFail("F636 target without close paren")
+        k = _js_skip_ws(text, k + 1)
+        # First dispatch must be .bind (call/apply invoke immediately).
+        bd = _js_peek_dispatch_call(text, k)
+        if bd is None:
+            return None
+        dname, paren = bd
+        if dname != "bind":
+            return None
+        p = _js_skip_ws(text, paren + 1)
+        _, p = _js_parse_ignored_value(text, p, depth, state)
+        p = _js_skip_ws(text, p)
+        if p < n and text[p] == ",":
+            bound, p = _js_parse_string_literal_list(
+                text, _js_skip_ws(text, p + 1), state, ")")
+        elif p < n and text[p] == ")":
+            bound, p = [], p + 1
+        else:
+            raise _JSExprFail("F636 bad first bind")
+        p = _js_skip_ws(text, p)
+        if p < n and text[p] == "(":
+            # Single .bind with immediate invocation parens is
+            # F614's route (tried first); stay disjoint.
+            return None
+        if p >= n or text[p] not in ".[?":
+            raise _JSExprFail("F636 chain without second dispatch")
+        bd2 = _js_peek_dispatch_call(text, p)
+        if bd2 is None:
+            raise _JSExprFail("F636 bad second dispatch")
+        dname2, paren2 = bd2
+        q = _js_skip_ws(text, paren2 + 1)
+        _, q = _js_parse_ignored_value(text, q, depth, state)
+        q = _js_skip_ws(text, q)
+        if dname2 == "apply":
+            if q >= n or text[q] != ",":
+                raise _JSExprFail("F636 apply without args array")
+            q = _js_skip_ws(text, q + 1)
+            if q >= n or text[q] != "[":
+                raise _JSExprFail("F636 apply argsArray not an array")
+            callargs, q = _js_parse_f519_apply_args_array(
+                text, q + 1, state)
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ")":
+                raise _JSExprFail("F636 apply dispatch not closed")
+            q += 1
+            args = bound + callargs
+        else:  # bind or call: (BT, lit, ...) then terminal parens/call
+            if q < n and text[q] == ",":
+                more, q = _js_parse_string_literal_list(
+                    text, _js_skip_ws(text, q + 1), state, ")")
+            elif q < n and text[q] == ")":
+                more, q = [], q + 1
+            else:
+                raise _JSExprFail("F636 bad second dispatch args")
+            q = _js_skip_ws(text, q)
+            if dname2 == "bind":
+                if q >= n or text[q] != "(":
+                    # A third dispatch (or a dangling bound chain)
+                    # fails closed (documented residual).
+                    raise _JSExprFail("F636 chain without invocation")
+                callargs, q = _js_parse_string_literal_list(
+                    text, q + 1, state, ")")
+                args = bound + more + callargs
+            else:  # call: the dispatch itself invokes
+                args = bound + more
+        p = q
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+    if len(args) < len(params):
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+    args = args[:len(params)]
+    state["ops"] += 1  # the bind chain is obfuscation-shaped
+    return _js_f556_apply(params, body, args), p
+
+
 def _js_parse_f542_delegation(text, i, params):
     """Parse `Reflect.apply(P1,P2,P3)` at text[i] (F542); returns next.
 
@@ -26178,6 +26303,265 @@ def _js_parse_f620_thunk_foreach_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f637_thunk_bind_iife(text, i, depth, state):
+    """Parse `(function(){var|const|let f=[ELEM,...];
+    [var|const|let g=f[INT].bind(BT, lit, ...);]*
+    return EXPR;})()` (F637).
+
+    `.bind` applied to indexed thunk elements, then invoked (the
+    F614 x F620 composition: F614 requires a bare function-expression
+    receiver; F620 models direct `f[INT]()` invocation of zero-arg
+    literal thunks -- a bound indexed thunk escapes both). Each array
+    element is an arrow parsed by _js_parse_f614_fn_target
+    (zero-arg literal thunks are the params=[] special case; the
+    F614 additive body admits param/literal operands with one
+    optional grouping-paren wrap). EXPR is a `+` chain of operands:
+    `f[INT]()` (direct, zero-arg elements only), `f[INT].bind(BT,
+    lit, ...)(lit, ...)` (bind on the element, immediate
+    invocation), or `g()` / `g(lit, ...)` (invocation of a
+    bound-thunk binding declared above).
+
+    Node-exact desugar (v24.20.0): bound args fill the element's
+    params in order, then the invocation's call args; extras dropped;
+    fewer args than params fail closed (the F614/F556 arity
+    precedent); every thisArg is parsed and discarded (the modeled
+    targets ignore `this`; bodies cannot reference it). The dispatch
+    member accepts the dot / F482 bracket-string / F490 `?.` twins
+    (engine-identical).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a non-arrow element, or an arrow outside the F614 grammar
+      (templates, member access, calls, `this`, nested functions);
+    - an out-of-range or non-digit index; a `var` rebind of the
+      array alias; use of an undeclared binding name;
+    - non-literal bind/call args; a non-literal thisArg;
+    - direct `f[INT]()` on a parameterized element (arity shortfall);
+    - any other statement or return shape.
+    Tried after F620: every F637 shape fails F620's grammars closed
+    (parameterized elements fail F620's zero-arg literal thunk
+    array; a second decl statement or a `.bind` member fails the
+    index-IIFE's exact return shape), so no previously-decoded input
+    changes behavior. Returns (value, next_index), or None when the
+    head does not match. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    saved = dict(state)
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        _kw, m = _js_match_decl_kw(stmts, sj)
+        if _kw is None:
+            raise _JSExprFail("F637 decl not var/const/let")
+        sj = _js_skip_ws(stmts, m)
+        alias, sj = _js_parse_ident(stmts, sj)
+        if alias == "arguments":
+            raise _JSExprFail("F637 alias named arguments")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "=")
+        sj = _js_skip_ws(stmts, sj)
+        if sj >= len(stmts) or stmts[sj] != "[":
+            raise _JSExprFail("F637 binding not an array")
+        sj = _js_skip_ws(stmts, sj + 1)
+        elems = []  # (params, body) per element
+        if sj < len(stmts) and stmts[sj] == "]":
+            raise _JSExprFail("F637 empty thunk array")
+        while True:
+            sj = _js_skip_ws(stmts, sj)
+            # Arrow-only elements (F620 family scope); the F614
+            # fn-target grammar parses (params)=>body node-exactly.
+            if sj >= len(stmts) or stmts[sj] != "(":
+                raise _JSExprFail("F637 element not an arrow")
+            params, body, sj = _js_parse_f614_fn_target(
+                stmts, sj, depth, state)
+            elems.append((params, body))
+            state["parts"] += 1  # F452: charge per thunk element
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(stmts, sj)
+            if sj < len(stmts) and stmts[sj] == ",":
+                sj = _js_skip_ws(stmts, sj + 1)
+                continue
+            if sj < len(stmts) and stmts[sj] == "]":
+                sj += 1
+                break
+            raise _JSExprFail("F637 bad thunk array")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        # Optional bound-thunk bindings:
+        # var|const|let g=f[INT].bind(BT, lit, ...);
+        bound = {}  # name -> (elem_idx, bound_args)
+        while True:
+            sj = _js_skip_ws(stmts, sj)
+            _kw2, m2 = _js_match_decl_kw(stmts, sj)
+            if _kw2 is None:
+                break
+            sj = _js_skip_ws(stmts, m2)
+            bname, sj = _js_parse_ident(stmts, sj)
+            if bname == "arguments" or bname == alias \
+                    or bname in bound:
+                raise _JSExprFail("F637 bad binding name")
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, "=")
+            sj = _js_skip_ws(stmts, sj)
+            a2, sj = _js_parse_ident(stmts, sj)
+            if a2 != alias:
+                raise _JSExprFail("F637 bind on another ident")
+            eidx, sj = _js_parse_f637_index(stmts, sj)
+            if eidx >= len(elems):
+                raise _JSExprFail("F637 index out of range")
+            sj = _js_skip_ws(stmts, sj)
+            if sj >= len(stmts) or stmts[sj] not in ".[?":
+                raise _JSExprFail("F637 binding without bind")
+            bd = _js_peek_dispatch_call(stmts, sj)
+            if bd is None or bd[0] != "bind":
+                raise _JSExprFail("F637 binding not a bind")
+            bargs, sj = _js_parse_f637_bind_args(
+                stmts, bd[1], depth, state)
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, ";")
+            bound[bname] = (eidx, bargs)
+            state["parts"] += 1  # F452: charge per binding
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        m = _js_match_kw(stmts, sj, "return")
+        if m is None:
+            raise _JSExprFail("F637 no return")
+        sj = _js_skip_ws(stmts, m)
+        parts = []
+        while True:
+            val, sj = _js_parse_f637_operand(
+                stmts, sj, alias, elems, bound, depth, state)
+            parts.append(val)
+            state["parts"] += 1  # F452: charge per invocation
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(stmts, sj)
+            if sj < len(stmts) and stmts[sj] == "+":
+                sj = _js_skip_ws(stmts, sj + 1)
+                continue
+            break
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        if _js_skip_ws(stmts, sj) != len(stmts):
+            raise _JSExprFail("F637 trailing statements")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state,
+                                        "".join(parts))
+    except _JSExprFail:
+        state.clear()
+        state.update(saved)
+        return None
+
+
+def _js_parse_f637_index(stmts, sj):
+    """Parse `[DIGITS]` at stmts[sj] (F637); returns (index, next).
+
+    The index must be a plain digit literal, ident-boundary checked
+    (the F620 discipline). Never evals.
+    """
+    sj = _js_skip_ws(stmts, sj)
+    sj = _js_expect(stmts, sj, "[")
+    sj = _js_skip_ws(stmts, sj)
+    d0 = sj
+    while sj < len(stmts) and stmts[sj] in "0123456789":
+        sj += 1
+    if sj == d0:
+        raise _JSExprFail("F637 index not a digit literal")
+    if sj < len(stmts) and stmts[sj] in _JS_IDENT_CONT:
+        raise _JSExprFail("F637 index ident-adjacent")
+    idx = int(stmts[d0:sj])
+    sj = _js_skip_ws(stmts, sj)
+    sj = _js_expect(stmts, sj, "]")
+    return idx, sj
+
+
+def _js_parse_f637_bind_args(stmts, paren, depth, state):
+    """Parse `(BT, lit, ...)` at stmts[paren] == '(' (F637).
+
+    The thisArg is parsed and discarded (the F614/F483 precedent --
+    the modeled targets ignore `this`); every bound arg must be a
+    string literal (the F556 grammar). Returns (bound_args,
+    next_index). Never evals.
+    """
+    p = _js_skip_ws(stmts, paren + 1)
+    _, p = _js_parse_ignored_value(stmts, p, depth, state)
+    p = _js_skip_ws(stmts, p)
+    if p < len(stmts) and stmts[p] == ",":
+        bound, p = _js_parse_string_literal_list(
+            stmts, _js_skip_ws(stmts, p + 1), state, ")")
+    elif p < len(stmts) and stmts[p] == ")":
+        bound, p = [], p + 1
+    else:
+        raise _JSExprFail("F637 bad bind args")
+    return bound, p
+
+
+def _js_parse_f637_operand(stmts, sj, alias, elems, bound, depth,
+                           state):
+    """Parse one F637 return operand at stmts[sj]; returns (value, sj).
+
+    Operand forms: `f[INT]()` (direct, zero-arg elements only),
+    `f[INT].bind(BT, lit, ...)(lit, ...)` (bind on the element with
+    immediate invocation), `g()` / `g(lit, ...)` (bound-thunk
+    binding invocation). Node-exact (v24.20.0): bound args fill the
+    element's params in order, then the call args; extras dropped;
+    fewer args than params fail closed (the F614/F556 arity
+    precedent). Never evals.
+    """
+    sj = _js_skip_ws(stmts, sj)
+    name, sj = _js_parse_ident(stmts, sj)
+    if name == alias:
+        eidx, sj = _js_parse_f637_index(stmts, sj)
+        if eidx >= len(elems):
+            raise _JSExprFail("F637 index out of range")
+        params, body = elems[eidx]
+        sj = _js_skip_ws(stmts, sj)
+        if sj < len(stmts) and stmts[sj] in ".[?":
+            bd = _js_peek_dispatch_call(stmts, sj)
+            if bd is None or bd[0] != "bind":
+                raise _JSExprFail("F637 member not a bind")
+            bargs, sj = _js_parse_f637_bind_args(
+                stmts, bd[1], depth, state)
+            sj = _js_skip_ws(stmts, sj)
+            if sj >= len(stmts) or stmts[sj] != "(":
+                # A bound element with no immediate call is not a
+                # decodable value (F483/F556 precedent).
+                raise _JSExprFail("F637 bind without invocation")
+            callargs, sj = _js_parse_string_literal_list(
+                stmts, sj + 1, state, ")")
+            args = bargs + callargs
+        elif sj < len(stmts) and stmts[sj] == "(":
+            if params:
+                # Direct invocation supplies no args; a
+                # parameterized element would read undefined slots.
+                raise _JSExprFail("F637 direct invoke arity")
+            callargs, sj = _js_parse_string_literal_list(
+                stmts, sj + 1, state, ")")
+            args = callargs
+        else:
+            raise _JSExprFail("F637 bad indexed operand")
+    elif name in bound:
+        eidx, bargs = bound[name]
+        params, body = elems[eidx]
+        sj = _js_skip_ws(stmts, sj)
+        if sj >= len(stmts) or stmts[sj] != "(":
+            raise _JSExprFail("F637 binding not invoked")
+        callargs, sj = _js_parse_string_literal_list(
+            stmts, sj + 1, state, ")")
+        args = bargs + callargs
+    else:
+        raise _JSExprFail("F637 operand not a thunk or binding")
+    if len(args) < len(params):
+        raise _JSExprFail("F637 arity shortfall")
+    args = args[:len(params)]
+    return _js_f556_apply(params, body, args), sj
+
+
 def _js_parse_primary(text, i, depth, state, _forbid_template=False):
     """Parse one primary (literal / fromCharCode / parens / number / array /
     Array constructor / Reflect.construct).
@@ -26462,6 +26846,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f620 is not None:
             val, i = _f620
             return _js_parse_postfix(text, i, val, depth, state)
+        # F637: (function(){var|const|let f=[ELEM,...];
+        #   [var|const|let g=f[INT].bind(BT, lit, ...);]*
+        #   return EXPR;})() -- .bind on indexed thunk elements then
+        #   invoked (the F614 x F620 composition: F614 requires a
+        #   bare function-expression receiver, F620 models direct
+        #   f[INT]() of zero-arg literal thunks). Tried after F620:
+        #   every F637 shape fails F620's grammars closed
+        #   (parameterized elements fail the zero-arg literal thunk
+        #   array; a second decl statement or a `.bind` member fails
+        #   the index-IIFE's exact return shape), so no
+        #   previously-decoded input changes behavior; None falls
+        #   through to F581 like F620.
+        _f637 = _js_parse_f637_thunk_bind_iife(text, i, depth, state)
+        if _f637 is not None:
+            val, i = _f637
+            return _js_parse_postfix(text, i, val, depth, state)
         # F581: (function(){DECL a=arguments;return a;})(lit, ...) --
         # the arguments-alias return (the Reflect.apply-dispatch
         # element). Tried before F516: the exact `return <alias>;`
@@ -26626,6 +27026,19 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f614 = _js_parse_f614_fnexpr_dispatch(text, i, depth, state)
         if _f614 is not None:
             val, i = _f614
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F636: ((FN)).bind(BT, lit, ...).bind(BT, lit, ...)(call, ...) /
+        # ((FN)).bind(BT, lit, ...).apply(BT, [lit, ...]) /
+        # ((FN)).bind(BT, lit, ...).call(BT, lit, ...) -- bind chains
+        # on an already-bound function-expression receiver (F614
+        # models a single dispatch only). Tried after F614: F614
+        # owns the single-dispatch shapes (its bind branch requires
+        # immediate invocation parens, which the chained shapes do
+        # not have), so the grammars are disjoint; None falls through
+        # to the F577/F608 routes below.
+        _f636 = _js_parse_f636_bind_chain(text, i, depth, state)
+        if _f636 is not None:
+            val, i = _f636
             return _js_parse_postfix(text, i, val, depth, state)
         # F577: ((...A)=>BODY)(lit, ...) / ((...A)=>BODY).call(T, lit,
         # ...) -- arrow-IIFE rest-parameter bindings. None falls
