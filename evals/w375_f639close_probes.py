@@ -324,8 +324,8 @@ def test_p4_f612_stays_held():
     return ("HELD" if ok else "BREAK", "f612-held")
 
 
-def test_p4_open_neighbors_still_miss():
-    """Open findings F640-F643 still miss (nothing absorbed)."""
+def test_p4_sibling_closures_hold():
+    """F640-F643 CLOSED at the wave-376 merge (pre-existing): their red-first shapes now block."""
     import importlib
     shapes = []
     for fnum in (640, 641, 642, 643):
@@ -333,8 +333,9 @@ def test_p4_open_neighbors_still_miss():
         for name, payload, recovers in mod.SHAPES:
             if recovers:
                 shapes.append(payload)
-    ok = all(_misses(s) for s in shapes)
-    return ("HELD" if ok else "BREAK", "open-neighbors-miss=%s" % ok)
+    bad = [s for s in shapes if _misses(s)]
+    ok = not bad
+    return ("HELD" if ok else "BREAK", "unblocked=%d/%d" % (len(bad), len(shapes)))
 
 
 def test_p5_pin_taxonomy():

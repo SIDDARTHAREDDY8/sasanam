@@ -235,8 +235,8 @@ def p7_pin_and_footer():
         # Lane-local footer: wave-371 lane 7 closes F593/F596 and files
         # F597 (spec-axis review residual); the merge reconciles with
         # sibling lanes.
-        ok = ("Next free finding: **F655**." in text  # Wave-372 merge: footer repoint next F612  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
-              and "**Open findings: F644, F645, F646, F647, F648, F649, F650, F651, F652, F653, F654.**" in text)  # Wave-375 lane 1: F621 CLOSED  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 4: F608 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
+        ok = ("Next free finding: **F672**." in text  # Wave-372 merge: footer repoint next F612  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
+              and "**Open findings: F662, F663, F664, F665, F666, F667, F668, F669, F670, F671.**" in text)  # Wave-375 lane 1: F621 CLOSED  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 4: F608 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
         rows.append(("HELD" if ok else "BREAK", "pin+footer"))
     except AssertionError as e:  # noqa: BLE001
         rows.append(("BREAK", "pin/footer: %s" % e))

@@ -441,7 +441,7 @@ def test_p8_junk_quiet():
 # ------------------------------------------------ p9 pin + footer
 
 def test_p9_pin_and_footer():
-    """Pin 2140; merge footer: open F655-F660 / next F661."""
+    """Pin 2140; merge footer: open F662-F671 / next F672."""
     lines = open(os.path.join(REPO_ROOT, "evals",
                               "FINDINGS.md"), encoding="utf-8").read()
     ok_pin = TAXONOMY_PIN == 2140
@@ -451,9 +451,9 @@ def test_p9_pin_and_footer():
     open_seg = (" " + last.split("Open findings:")[-1]
                 if "Open findings:" in last else "")
     live_list = open_seg.split("#")[0]  # history comments may name F648
-    ok_foot = ("**F661**" in last
-               and "F655, F656, F657, F658, F659, F660" in live_list
-               and "Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN" in open_seg)  # history kept
+    ok_foot = ("**F672**" in last
+               and "F662, F663, F664, F665, F666, F667, F668, F669, F670, F671" in live_list
+               and "Wave-378 merge: lanes 1-6 F655-F661 CLOSED" in open_seg)  # history kept
     ok = ok_pin and ok_foot
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 

@@ -353,10 +353,10 @@ def test_p4_f652_still_misses():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
-def test_p4_f661_still_misses():
-    """F661 OPEN (filed at wave-377 merge): declaration-position comma sequences still miss."""
-    miss = _misses("(function(){var s=('jx','%s');return s+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p4_f661_closed_by_sibling():
+    """F661 CLOSED by wave-378 lane 6: declaration-position comma sequences now block."""
+    blocked = not _misses("(function(){var s=('jx','%s');return s+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "block=%s" % blocked)
 
 
 def test_p4_f612_still_blocks():

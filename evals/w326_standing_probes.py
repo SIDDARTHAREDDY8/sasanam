@@ -415,7 +415,7 @@ def _p11():
     # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
     # Wave-372 merge: footer repoint next F612 | Wave-372 merge: footer repoint open F606-F611 / next F612 \
     # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
-    assert "Next free finding: **F655**. **Open findings: F644, F645, F646, F647, F648, F649, F650, F651, F652, F653, F654.**" in text, \
+    assert "Next free finding: **F672**. **Open findings: F662, F663, F664, F665, F666, F667, F668, F669, F670, F671.**" in text, \
         "footer mismatch"
     _held("P11-footer-state", "open F444, F445 / next F446")
 
