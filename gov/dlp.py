@@ -19601,6 +19601,110 @@ def _js_parse_f574_flatmap_identity(text, j):
     return _single_elem_array(j, p)
 
 
+def _js_parse_f597_flatmap_scalar(text, j):
+    """Parse a flatMap scalar-returning callback at text[j] (F597).
+
+    Recognized (node-verified, v24.20.0), F543 four-form precedent:
+    - identity-scalar: `x=>x`, `(x)=>x`, `x=>{return x;}`,
+      `function(x){return x;}` -- the callback returns the element
+      itself (NOT wrapped in an array, unlike F574's `x=>[x]`);
+      flatMap is map + flat(1), so the mapped list is flattened one
+      level (`[['f1'],['f2']].flatMap((x)=>x)` is `['f1','f2']`).
+    - conditional-scalar: `(c)=>c==='lit'?'a':c`,
+      `(c)=>c==='lit'?'a':'b'` (+ the block/function twins) -- the
+      strict-equality condition is evaluated per element
+      node-exactly; the else branch is the param or a literal.
+    Anything else fails closed (documented scope boundary): the
+    F574 `x=>[x]` form is parsed by _js_parse_f574_flatmap_identity
+    (tried first; the two grammars are disjoint on `[` vs scalar
+    after the return), non-`===` comparisons, extra callback params,
+    and template literals fail closed.
+    Returns (kind, payload, next_index); kind is "identity" or
+    "cond"; payload for "cond" is (cmp_lit, then_lit, else_lit)
+    where else_lit is None when the else branch is the param.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+
+    def _return_expr(k, p):
+        # Parse the scalar return EXPR at text[k] given param p.
+        k = _js_skip_ws(text, k)
+        q, k2 = _js_parse_ident(text, k)
+        if q != p:
+            raise _JSExprFail("F597 flatMap scalar not param expr")
+        k = _js_skip_ws(text, k2)
+        if text.startswith("===", k):
+            k = _js_skip_ws(text, k + 3)
+            if k >= n or text[k] not in "'\"":
+                raise _JSExprFail("F597 flatMap cond not literal")
+            cmp_lit, k = _js_parse_string(text, k)
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, "?")
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] not in "'\"":
+                raise _JSExprFail("F597 flatMap then not literal")
+            then_lit, k = _js_parse_string(text, k)
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, ":")
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] in "'\"":
+                else_lit, k = _js_parse_string(text, k)
+            else:
+                q2, k = _js_parse_ident(text, k)
+                if q2 != p:
+                    raise _JSExprFail("F597 flatMap else not param")
+                else_lit = None
+            return ("cond", (cmp_lit, then_lit, else_lit)), k
+        return ("identity", None), k2
+
+    if text.startswith("function", j):
+        k = j + len("function")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F597 flatMap scalar bad function")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            # optional function name: function f(x){...}
+            _, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "(")
+        p, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "{")
+        rk = _js_match_kw(text, _js_skip_ws(text, k), "return")
+        if rk is None:
+            raise _JSExprFail("F597 flatMap scalar not return")
+        (kind, payload), k = _return_expr(rk, p)
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ";")
+        k = _js_expect(text, _js_skip_ws(text, k), "}")
+        return kind, payload, k
+    if j < n and text[j] == "(":
+        p, k = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        j = k
+    else:
+        p, j = _js_parse_ident(text, j)
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F597 flatMap scalar without =>")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        rk = _js_match_kw(text, _js_skip_ws(text, j + 1), "return")
+        if rk is None:
+            raise _JSExprFail("F597 flatMap scalar not return")
+        (kind, payload), k = _return_expr(rk, p)
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ";")
+        k = _js_expect(text, _js_skip_ws(text, k), "}")
+        return kind, payload, k
+    (kind, payload), k = _return_expr(j, p)
+    return kind, payload, k
+
+
 def _js_parse_f580_length_cmp(text, i):
     """Parse a sort length comparator at text[i] (F580).
 
@@ -20035,21 +20139,63 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         # identity return would silently preserve -- failing closed is
         # the only honest option. Non-str/non-_JSArr elements fail
         # closed likewise (same strictness as _js_flatten_f574).
+        # F597: scalar-returning callbacks -- (x)=>x (bare/(x)/
+        # block/function twins) and (c)=>c==='lit'?'a':c|p (the
+        # conditional is evaluated per element node-exactly). flatMap
+        # is map + flat(1), so the mapped list is flattened one level
+        # ([['f1'],['f2']].flatMap((x)=>x) is ['f1','f2'], verified).
+        # The F574 grammar is tried first; the two are disjoint on
+        # `[` vs scalar after the return. Non-`===` comparisons,
+        # extra callback params, and template literals fail closed.
         # Checked BEFORE the "method on unjoined array" guard below.
         if not isinstance(value, _JSArr):
             raise _JSExprFail("flatMap on non-array")
-        i = _js_parse_f574_flatmap_identity(text, _js_skip_ws(text, i))
+        try:
+            i = _js_parse_f574_flatmap_identity(text, _js_skip_ws(text, i))
+            f597 = None
+        except _JSExprFail:
+            kind, payload, i = _js_parse_f597_flatmap_scalar(
+                text, _js_skip_ws(text, i))
+            f597 = (kind, payload)
         i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != ")":
             raise _JSExprFail("flatMap bad args")
         i += 1
         for e in value.elements:
             if isinstance(e, (_JSNil, _JSBool)):
-                raise _JSExprFail("F574 flatMap over hole/marker")
+                raise _JSExprFail("flatMap over hole/marker")
             if not isinstance(e, (str, _JSArr)):
-                raise _JSExprFail("F574 flatMap over non-string element")
-        elements = list(value.elements)  # identity: net no-op
-        state["ops"] += 1  # the map-flatten is obfuscation-shaped
+                raise _JSExprFail("flatMap over non-string element")
+        if f597 is None:
+            elements = list(value.elements)  # identity: net no-op
+            state["ops"] += 1  # the map-flatten is obfuscation-shaped
+        else:
+            kind, payload = f597
+            mapped = []
+            for e in value.elements:
+                state["ops"] += 1  # per-element evaluation (F452)
+                if kind == "identity":
+                    mapped.append(e)
+                else:
+                    cmp_lit, then_lit, else_lit = payload
+                    # Node-exact: strict equality against STRING
+                    # elements. A numeric literal (_JSNumStr) is never
+                    # === a string literal in the engine (5 !== '5'),
+                    # so it is excluded from the hit -- Python's
+                    # str-compare would otherwise diverge. (_JSArr is
+                    # not a str subclass, so isinstance(e, str)
+                    # already excludes it.)
+                    hit = (isinstance(e, str)
+                           and not isinstance(e, _JSNumStr)
+                           and e == cmp_lit)
+                    if hit:
+                        mapped.append(then_lit)
+                    elif else_lit is None:
+                        mapped.append(e)
+                    else:
+                        mapped.append(else_lit)
+            elements = _js_flatten_f574(mapped, 1)
+            state["ops"] += 1  # the map-flatten is obfuscation-shaped
         return _JSArr(elements), i
     if name == "sort":
         # F580: ARR.sort() / ARR.sort((a,b)=>a.length-b.length) --

@@ -5,6 +5,7 @@ every filed shape hand-crafted and node-verified on v24.20.0).
 
 New findings (8, all LOW, all OPEN), filed from F597:
 - F597: flatMap with non-array-returning callbacks -- 3 shapes.
+  (CLOSED 2026-10-07 wave-372 lane 1; probes flipped to closure pins.)
 - F598: JSON.stringify of derived (non-literal) arrays -- 3 shapes.
 - F599: URLSearchParams.append then getAll -- 2 shapes.
 - F600: Map keys iteration reads (Array.from/.keys spread/.keys forEach) -- 3 shapes.
@@ -22,13 +23,14 @@ Junk-quiet controls pass. No injection attempts this round.
 
 Known-open pins (each probe returns HELD when the miss reproduces; a literal
 BREAK verdict means the pin failed or a NEW break appeared): F595/F596
-(wave-370 merge, regression spot pins), F597-F604 (this round). F583-F594
+(wave-370 merge, regression spot pins), F598-F604 (this round; F597 CLOSED
+2026-10-07 wave-372 lane 1). F583-F594
 (round 38) are pinned by the w370 attack battery, run as the depth-1 green
 check below.
 
 Closed pins (must BLOCK, else BREAK): F535, F541, F546 (spot), F547-F552,
 F558, F560, F563, F567 (wave-369 regression), F570, F571, F573, F574, F576,
-F577, F580, F582 (wave-370 regression spot pins).
+F577, F580, F582 (wave-370 regression spot pins), F597 (wave-372 lane 1).
 
 Rides-with-documented-scope (validated, NOT filed):
 - (new WeakMap([[k,'f1']])).get(k) paren receiver -- IS F586's filed scope
@@ -143,8 +145,8 @@ def test_b0_footer_state():
     """Control: footer shows F583-F596 open, next F597 (wave-371 lane 8)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F606**" in text  # Wave-371 lane 8 (attack round 39): F583-F596 OPEN (base); F597-F604 filed OPEN (next F605)
-          and "Open findings: F597, F598, F599, F600, F601, F602, F603, F604, F605." in text)  # Wave-371 lane 8 (attack round 39): F583-F596 OPEN (base); F597-F604 filed OPEN (next F605)
+    ok = ("Next free finding: **F606**" in text  # Wave-371 lane 8 (attack round 39): F583-F596 OPEN (base); F597-F604 filed OPEN (next F605)  # Wave-372 lane 1: F597 CLOSED (next F606)
+          and "Open findings: F598, F599, F600, F601, F602, F603, F604, F605." in text)  # Wave-371 lane 8 (attack round 39): F583-F596 OPEN (base); F597-F604 filed OPEN (next F605)  # Wave-372 lane 1: F597 CLOSED (next F606)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -300,13 +302,13 @@ def test_p1_f582_closed():
 # ------------------------------------------------- open pins (must miss)
 
 @_t
-def test_r39_f597_open():
-    """F597 OPEN: flatMap with non-array-returning callbacks misses."""
-    m1 = _misses("[['%s'],['%s']].flatMap((x)=>x).join('')" % (_A, _B))
-    m2 = _misses("['%s','%s'].flatMap((x)=>x).join('')" % (_A, _B))
-    m3 = _misses("['%s','%s'].flatMap((c)=>c==='x'?'x':c).join('')" % (_A, _B))
+def test_p1_f597_closed():
+    """F597 CLOSED (wave-372 lane 1): flatMap scalar callbacks block."""
+    m1 = _blocked("[['%s'],['%s']].flatMap((x)=>x).join('')" % (_A, _B))
+    m2 = _blocked("['%s','%s'].flatMap((x)=>x).join('')" % (_A, _B))
+    m3 = _blocked("['%s','%s'].flatMap((c)=>c==='x'?'x':c).join('')" % (_A, _B))
     ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t
