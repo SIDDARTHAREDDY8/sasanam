@@ -20878,6 +20878,255 @@ def _js_parse_f612_values_varbound_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f621_assign_mutate_iife(text, i, depth, state):
+    """Parse `(function(){DECL t=<empty>;ASSIGN+;return READ;})()` (F621).
+
+    F593 (CLOSED) models `Object.assign({}, CHAIN)` in the RETURN
+    position with member reads on the call result, and F605 (CLOSED)
+    generalizes the operand grammar -- but a var-bound target mutated
+    by an assign STATEMENT and read back through
+    Object.values/Object.entries escapes: the decoder never models
+    the mutation of the target binding. Node-exact desugar
+    (v24.20.0):
+
+    - decl: `var|const|let NAME={};` (EMPTY literal) or
+      `var|const|let NAME=new Object();` (empty). The engine binds an
+      empty object; a non-empty literal target fails closed (the
+      engine's [[Set]] on a getter-only target accessor throws
+      TypeError -- F539 precedent -- so a blind later-wins merge
+      would mis-decode; documented residual).
+    - 1..3 assign statements: `Object.assign(NAME, SRC, ...);` (dot
+      form only; `Object['assign']` fails closed, F539 precedent).
+      Each SRC is an object literal parsed by
+      _js_parse_object_literal_keys_values (F510's strict grammar --
+      string-literal values only; getters, spread, computed keys,
+      `__proto__` fail closed, the F510 boundary). 1..3 sources per
+      statement (F605's bound); the engine merges later-wins into
+      the target IN PLACE, so the merged props accumulate across
+      statements. Each merged prop charges the parts budget
+      (F452/F605 discipline).
+    - return: `Object.values(NAME)<postfix>;` or
+      `Object.entries(NAME).map(P=>P[0|1])<postfix>;` (F517's
+      mandatory projection grammar) on the bare bound ident -- the
+      same readback desugars F612 applies, with the enumeration
+      order engine-exact: the merged props are re-serialized to a
+      canonical literal and parsed by _js_parse_enumeration_source
+      (F510), so integer-index keys order ascending first and
+      string keys keep insertion order -- the ordering can never
+      drift from F510.
+    The invocation must be exactly `()`.
+
+    Disjointness: tried after F612. F612 fails closed on every shape
+    this accepts (an assign statement sits between the decl and the
+    return), and this fails closed on every shape F612 accepts (no
+    assign statement). F593/F605 parse Object.assign in the return
+    position of the F572 IIFE body -- their shapes never reach this
+    hook (different body grammar), and this hook never accepts their
+    shapes (the return must be a values/entries readback). No
+    previously-decoded input changes behavior.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements (anything but the assign statements), `new Object`
+      without parens, reassignment of the target var, a target name
+      of `arguments` or a reserved word (F611);
+    - an assign statement whose target is not the bare bound ident;
+    - non-literal sources (null/undefined are engine-ignored but
+      fail closed here -- refusing is the safe direction; a string
+      source would spread to indexed props -- F593 precedent);
+    - more than 3 statements or more than 3 sources per statement.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_skip_ws(text, j + 1)
+    if not text.startswith("function", k):
+        return None
+    k2 = k + len("function")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        return None  # functionx -- not our shape
+    if k2 < n and text[k2] in _JS_IDENT_START:
+        return None  # named function -- not our shape
+    try:
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F621 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        tname, sj = _js_parse_ident(text, sj)
+        if tname == "arguments" or tname in _F611_RESERVED:
+            raise _JSExprFail("F621 reserved binding name")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        # The target starts EMPTY: `{}` or `new Object()`.
+        if sj < n and text[sj] == "{":
+            sj = _js_skip_ws(text, sj + 1)
+            sj = _js_expect(text, sj, "}")
+        else:
+            mn = _js_match_kw(text, sj, "new")
+            if mn is None:
+                raise _JSExprFail("F621 target not empty")
+            q = _js_skip_ws(text, mn)
+            q = _js_match_kw(text, q, "Object")
+            if q is None:
+                raise _JSExprFail("F621 target not new Object")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "(")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ")")
+            sj = q
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        # 1..3 assign statements mutate the bound target in place
+        # (the engine's in-place mutation, later-wins per source).
+        merged = {}
+        nstmt = 0
+        while True:
+            if not text.startswith("Object", sj):
+                break
+            q = sj + len("Object")
+            if q < n and text[q] in _JS_IDENT_CONT:
+                break  # Objectx -- not our statement
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ".":
+                break
+            q = _js_skip_ws(text, q + 1)
+            ma = _js_match_kw(text, q, "assign")
+            if ma is None:
+                break
+            # Committed: `Object.assign(` -- malformed shapes fail
+            # closed from here (F596 statement-form precedent).
+            q = _js_skip_ws(text, ma)
+            q = _js_expect(text, q, "(")
+            q = _js_skip_ws(text, q)
+            aname, q = _js_parse_ident(text, q)
+            if aname != tname:
+                raise _JSExprFail("F621 assign target not the bound ident")
+            nsrc = 0
+            while True:
+                q = _js_skip_ws(text, q)
+                if q >= n or text[q] != ",":
+                    break
+                q = _js_skip_ws(text, q + 1)
+                nsrc += 1
+                if nsrc > 3:
+                    raise _JSExprFail("F621 assign too many sources")
+                if q >= n or text[q] != "{":
+                    raise _JSExprFail("F621 assign source not an object")
+                skeys, svals, q = _js_parse_object_literal_keys_values(
+                    text, q, depth, state)
+                for _sk, _sv in zip(skeys, svals):
+                    merged[_sk] = _sv
+                    state["parts"] += 1
+                    if state["parts"] > _JS_EXPR_MAX_PARTS:
+                        raise _JSExprFail("F621 too many assign parts")
+            if nsrc == 0:
+                raise _JSExprFail("F621 assign without source")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ")")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            state["ops"] += 1 + nsrc  # the assign is obfuscation-shaped
+            nstmt += 1
+            if nstmt > 3:
+                raise _JSExprFail("F621 too many assign statements")
+            sj = _js_skip_ws(text, q)
+        if nstmt == 0:
+            raise _JSExprFail("F621 no assign statement")
+        # The readback: `Object.values(NAME)` / `Object.entries(NAME)`
+        # (dot or bracket-string member, F510 head discipline) on the
+        # bare bound ident. The merged props are re-serialized to a
+        # canonical literal and parsed by _js_parse_enumeration_source
+        # (F510), so the enumeration order is engine-exact by
+        # construction.
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F621 no return")
+        sj = _js_skip_ws(text, m)
+        if not text.startswith("Object", sj):
+            raise _JSExprFail("F621 return not Object.*")
+        q = sj + len("Object")
+        if q < n and text[q] in _JS_IDENT_CONT:
+            raise _JSExprFail("F621 Objectx")
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == "[":
+            _mname, q = _js_parse_bracket_member(text, q)
+            if _mname not in ("values", "entries"):
+                raise _JSExprFail("F621 member not values/entries")
+            member = _mname
+        elif q < n and text[q] == ".":
+            q = _js_skip_ws(text, q + 1)
+            m2 = _js_match_kw(text, q, "values")
+            if m2 is not None:
+                member = "values"
+            else:
+                m2 = _js_match_kw(text, q, "entries")
+                if m2 is None:
+                    raise _JSExprFail("F621 member not values/entries")
+                member = "entries"
+            q = m2
+        else:
+            raise _JSExprFail("F621 no member")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "(")
+        q = _js_skip_ws(text, q)
+        _arg, q = _js_parse_ident(text, q)
+        if _arg != tname:
+            raise _JSExprFail("F621 call arg not the bound ident")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ")")
+        canon = ("{" + ",".join(_js_f611_quote(k) + ":"
+                                + _js_f611_quote(v)
+                                for k, v in merged.items()) + "}")
+        _ckeys, cvals, _ = _js_parse_enumeration_source(
+            canon, 0, depth, state)
+        if member == "entries":
+            # F517's mandatory projection grammar.
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ".")
+            q = _js_skip_ws(text, q)
+            m3 = _js_match_kw(text, q, "map")
+            if m3 is None:
+                raise _JSExprFail("F621 entries without map projection")
+            q = _js_skip_ws(text, m3)
+            q = _js_expect(text, q, "(")
+            kind, q = _js_parse_entries_projection(text, q)
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ")")
+            arr = _JSArr(cvals if kind == "vals" else _ckeys)
+        else:
+            arr = _JSArr(cvals)
+        state["ops"] += 1  # the values/entries call is obfuscation-shaped
+        _rval, q = _js_parse_postfix(text, q, arr, depth, state)
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        q = _js_skip_ws(text, q)
+        if q != inner_end:
+            raise _JSExprFail("F621 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return _rval, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f616_varname_mutation_iife(text, i, depth, state):
     """Parse `(function(){DECL p=new URLSearchParams('LIT');[DECL N='LIT';]*[MUT;]*TERM})()` (F616).
 
@@ -26550,6 +26799,20 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                    state)
         if _f612 is not None:
             val, i = _f612
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F621: (function(){DECL t=<empty>;Object.assign(t,SRC,...);
+        #   return Object.values(t)<postfix>; /
+        #   return Object.entries(t).map(P=>P[0|1])<postfix>;})() --
+        #   statement-form assign mutation of a var-bound target with
+        #   values/entries readback. Tried after F612: F612 fails
+        #   closed on every shape this accepts (an assign statement
+        #   sits between the decl and the return), and this fails
+        #   closed on every shape F612 accepts (no assign statement),
+        #   so no previously-decoded input changes behavior.
+        _f621 = _js_parse_f621_assign_mutate_iife(text, i, depth,
+                                                  state)
+        if _f621 is not None:
+            val, i = _f621
             return _js_parse_postfix(text, i, val, depth, state)
         # F616: (function(){DECL p=new URLSearchParams('LIT');
         #   [DECL N='LIT';]*[MUT;]*TERM})() -- the F599/F606/F610

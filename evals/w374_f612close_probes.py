@@ -273,10 +273,13 @@ def test_p4_f510_inline_still_blocked():
 
 
 def _round42_shapes():
-    """Filed shapes of the currently-OPEN round-42 findings (must still miss)."""
+    """Filed shapes of the currently-OPEN round-42 findings (must still miss).
+
+    F621 dropped: CLOSED 2026-10-08 wave-375 lane 1 (its shapes now block).
+    """
     import importlib
     shapes = []
-    for fnum in (621, 622, 623, 624, 625, 626, 627, 628, 629, 630, 631, 632, 633, 634):
+    for fnum in (622, 623, 624, 625, 626, 627, 628, 629, 630, 631, 632, 633, 634):
         mod = importlib.import_module("w374_f%d_redfirst" % fnum)
         for name, payload, recovers in mod.SHAPES:
             if recovers:
@@ -285,8 +288,9 @@ def _round42_shapes():
 
 
 def test_p4_open_neighbors_still_miss():
-    """Attack findings F621-F634 still miss (nothing absorbed)."""
-    bad = [f for fnum, name, payload in _round42_shapes() if not _misses(payload)]
+    """Attack findings F622-F634 still miss (nothing absorbed)."""
+    bad = [(fnum, name) for fnum, name, payload in _round42_shapes()
+           if not _misses(payload)]
     ok = not bad
     return ("HELD" if ok else "BREAK", "miss=%s bad=%s" % (ok, bad[:3]))
 
@@ -325,7 +329,7 @@ def test_p5_footer_state():
     """Footer: F612 closed; open F613-F620; next F621 (lane-local)."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("Next free finding: **F640**" in text  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
-          and "Open findings: F621, F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635, F636, F637, F638, F639." in text)  # Wave-374 lane 1: F612 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
+          and "Open findings: F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635, F636, F637, F638, F639." in text)  # Wave-375 lane 1: F621 CLOSED  # Wave-374 lane 1: F612 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

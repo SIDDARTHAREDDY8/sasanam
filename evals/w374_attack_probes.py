@@ -4,7 +4,7 @@ Filed 2026-10-08 (local node validation on v24.20.0 + 3 gpt-4o-mini calls,
 hints only; every filed shape hand-crafted and node-verified).
 
 New findings (14, all LOW, all OPEN), filed from F621:
-- F621: Object.assign mutated-target reads -- 3 shapes.
+- F621: Object.assign mutated-target reads -- 3 shapes. [CLOSED 2026-10-08 wave-375 lane 1]
 - F622: Object.keys + computed bracket reads on var-bound objects -- 2 shapes.
 - F623: values()/enumeration reads on Object.fromEntries results -- 3 shapes.
 - F624: String.prototype.slice() with trimming bounds -- 3 shapes.
@@ -55,11 +55,12 @@ controls pass. No injection attempts.
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F612-F620 (round 41, closing in parallel wave-374 lanes), F621-F634
-(this round).
+F612-F620 (round 41, closing in parallel wave-374 lanes), F622-F634
+(this round; F621 CLOSED 2026-10-08 wave-375 lane 1).
 
 Closed pins (must BLOCK, else BREAK): F576, F583, F596 (older spots),
-F595, F606, F607, F608, F609, F610, F611 (wave-373 closures).
+F595, F606, F607, F608, F609, F610, F611 (wave-373 closures),
+F621 (wave-375 lane 1).
 
 Rides-with-documented-scope (validated, NOT filed -- exact shapes recorded
 for merge verification against the parallel wave-374 closure lanes):
@@ -157,7 +158,7 @@ def test_b0_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F640**" in text  # Wave-374 merge: final truth  # Wave-374 merge: footer repoint open F621-F639 / next F640
-          and "Open findings: F621, F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635, F636, F637, F638, F639." in text)  # Wave-374 merge: final truth  # Wave-374 merge: footer repoint open F621-F639 / next F640
+          and "Open findings: F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635, F636, F637, F638, F639." in text)  # Wave-375 lane 1: F621 CLOSED  # Wave-374 merge: footer repoint open F621-F639 / next F640
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -236,10 +237,10 @@ def test_p1_f611_closed():
 # ------------------------------------------- this round's open pins (F621+)
 
 @_t
-def test_r42_f621_open():
-    """F621 OPEN: Object.assign mutated-target reads miss."""
-    miss = _misses("(function(){var t={};Object.assign(t,{a:'%s',b:'%s'});return Object.values(t).join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r42prior_f621_closed():
+    """F621 CLOSED (wave-375 lane 1): assign mutated-target reads block."""
+    hit = _blocked("(function(){var t={};Object.assign(t,{a:'%s',b:'%s'});return Object.values(t).join('');})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
@@ -335,16 +336,16 @@ def test_r42_f634_open():
 
 # --------------------------------- per-shape open pins (round 42)
 @_t
-def test_r42_f621_s2_open():
-    """F621 OPEN (shape assign-entries): miss reproduces."""
-    miss = _misses("(function(){var t={};Object.assign(t,{a:'%s',b:'%s'});return Object.entries(t).map(e=>e[1]).join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r42prior_f621_s2_closed():
+    """F621 CLOSED (wave-375 lane 1, shape assign-entries): blocks."""
+    hit = _blocked("(function(){var t={};Object.assign(t,{a:'%s',b:'%s'});return Object.entries(t).map(e=>e[1]).join('');})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r42_f621_s3_open():
-    """F621 OPEN (shape assign-ctor-target): miss reproduces."""
-    miss = _misses("(function(){var t=new Object();Object.assign(t,{a:'%s',b:'%s'});return Object.values(t).join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r42prior_f621_s3_closed():
+    """F621 CLOSED (wave-375 lane 1, shape assign-ctor-target): blocks."""
+    hit = _blocked("(function(){var t=new Object();Object.assign(t,{a:'%s',b:'%s'});return Object.values(t).join('');})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_r42_f622_s2_open():
