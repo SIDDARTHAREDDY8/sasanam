@@ -39412,6 +39412,459 @@ def _js_parse_f724_setproto_iife(text, i, depth, state):
     except _JSExprFail:
         return None
 
+def _js_parse_f733_litobj(text, i, depth, state):
+    """Parse `{k:'lit',...}` / `{get n(){return 'lit';},...}` (F733).
+
+    Tight literal-fragment object grammar for the F733 referent:
+    data props with string-literal values (ident or string-literal
+    keys) and single getters with a single `return 'lit';` body.
+    Numbers are deliberately rejected even though the engine would
+    stringify them in `+` position: the F535 value grammar returns
+    canonical integers as plain str, losing number provenance, and
+    a number-typed value flowing to a later postfix (`.length`,
+    ...) would mis-decode (F702 precedent). Nested objects,
+    arrays, computed keys, non-literal getter bodies, and
+    this-references all fail closed. Returns (props, next_index):
+    props maps key -> str. Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, i, "{")
+    props = {}
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "}":
+        return props, j + 1
+    while True:
+        j = _js_skip_ws(text, j)
+        g = _js_match_kw(text, j, "get")
+        if g is not None:
+            # getter form -- but `{get:'x'}` is a data prop named
+            # get; the head parse distinguishes them.
+            try:
+                _gn, _gj = _js_parse_f535_getter_head(
+                    text, _js_skip_ws(text, g))
+            except _JSExprFail:
+                _gn, _gj = None, None
+            if _gn is not None:
+                gj = _js_skip_ws(text, _gj)
+                gj = _js_expect(text, gj, "{")
+                gj = _js_skip_ws(text, gj)
+                gr = _js_match_kw(text, gj, "return")
+                if gr is None:
+                    raise _JSExprFail("F733 getter body not return")
+                gj = _js_skip_ws(text, gr)
+                if gj >= n or text[gj] not in "'\"":
+                    raise _JSExprFail(
+                        "F733 getter return not a literal")
+                _glit, gj = _js_parse_string(text, gj)
+                gj = _js_skip_ws(text, gj)
+                gj = _js_expect(text, gj, ";")
+                gj = _js_skip_ws(text, gj)
+                gj = _js_expect(text, gj, "}")
+                props[_gn] = _glit
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                j = gj
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == ",":
+                    j = j + 1
+                    continue
+                break
+        if j < n and text[j] in "'\"":
+            _k, j = _js_parse_string(text, j)
+        else:
+            _k, j = _js_parse_ident(text, j)
+        if _k == "__proto__":
+            # Tree-wide convention: __proto__ as a data-prop key is
+            # the prototype-setter no-op (node: no own property is
+            # created, so a later .__proto__ read yields the
+            # prototype, not the value) -- fail closed rather than
+            # mis-decode. A *getter* named __proto__ is an own
+            # accessor and stays node-exact (handled above).
+            raise _JSExprFail("F733 __proto__ key fails closed")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ":")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F733 value not a string literal")
+        _v, j = _js_parse_string(text, j)
+        props[_k] = _v
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = j + 1
+            continue
+        break
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "}")
+    return props, j
+
+
+def _js_parse_f733_weakref_litfrag_iife(text, i, depth, state):
+    """Parse `(function(){DECL;* return w.deref().MEM(+'LIT')*;})()` (F733).
+
+    F733 residual: F642 (CLOSED) models WeakRef-deref reads of
+    var-frag getter accumulations (`var a,b,c` + `get s(){return
+    a+b+c}` + `w.deref().s`), and F539/F586 model the inline
+    `new WeakRef(OBJLIT).deref()` expression form, but a VAR-BOUND
+    WeakRef whose referent carries LITERAL fragments escapes:
+      `(function(){var o={v:'f1'};var w=new WeakRef(o);
+      return w.deref().v+'f2';})()`
+      `(function(){var w=new WeakRef({v:'f1'});
+      return w.deref()['v']+'f2';})()`
+    plus the literal-getter twin
+      `(function(){var w=new WeakRef({get s(){return 'f1';}});
+      return w.deref().s+'f2';})()`.
+    Node-exact (v24.20.0): `deref()` is the identity on the
+    referent; member reads resolve data props and
+    literal-returning getters (the F535 grammar already evaluates
+    them at parse time).
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (shared F654 head); no params,
+      no name, no async.
+    - declarations: `var|let|const NAME={OBJ};` (tight F733
+      literal-fragment grammar: string-literal data props and
+      literal-returning getters only -- numbers are rejected even
+      though the engine would stringify them, since integer
+      provenance is lost in the value model) or `var|let|const
+      NAME=new WeakRef(SRC);` where SRC is a bound object ident or
+      an inline object literal. Rebinding fails closed. At least
+      one WeakRef declaration is required (disjointness: pure
+      object/member shapes belong to earlier routes).
+    - terminal: `return WNAME.deref().MEM(+'LIT')*;` -- WNAME must
+      be the bound WeakRef; the member (dot or bracket) must
+      resolve to a plain string (missing keys, objects, arrays,
+      and numbers fail closed).
+    - exactly `()` invocation; no trailing statements after the
+      return inside the body.
+
+    Tried after F702/F703: every accepted shape carries a
+    `new WeakRef` declaration head, which no earlier route accepts
+    (F642 requires a string-literal binding section; F539/F586 are
+    expression-level inline forms; red-first verified BREAK on the
+    open tree). Only previously fail-closed inputs are newly
+    decoded. Returns (value, next_index), or None when text[i] is
+    not this shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        bindings = {}
+        saw_weakref = False
+        while True:
+            _kw, m = _js_match_decl_kw(text, sj)
+            if _kw is None:
+                break
+            m = _js_skip_ws(text, m)
+            name, m = _js_parse_ident(text, m)
+            if name in bindings:
+                raise _JSExprFail("F733 rebind")
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, "=")
+            m = _js_skip_ws(text, m)
+            if m < n and text[m] == "{":
+                props, m = _js_parse_f733_litobj(text, m, depth, state)
+                bindings[name] = ("obj", _JSObj(props))
+                state["parts"] += 1  # the object decl is obfuscation-shaped
+            elif (text.startswith("new", m)
+                    and (m + 3 >= n
+                         or text[m + 3] not in _JS_IDENT_CONT)):
+                q = _js_skip_ws(text, m + 3)
+                q2 = _js_match_kw(text, q, "WeakRef")
+                if q2 is None:
+                    raise _JSExprFail("F733 new not WeakRef")
+                q = _js_skip_ws(text, q2)
+                q = _js_expect(text, q, "(")
+                q = _js_skip_ws(text, q)
+                if q < n and text[q] == "{":
+                    props, q = _js_parse_f733_litobj(
+                        text, q, depth, state)
+                    ref = _JSObj(props)
+                else:
+                    sname, q = _js_parse_ident(text, q)
+                    if sname not in bindings \
+                            or bindings[sname][0] != "obj":
+                        raise _JSExprFail(
+                            "F733 weakref source unbound")
+                    ref = bindings[sname][1]
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, ")")
+                bindings[name] = ("weakref", ref)
+                saw_weakref = True
+                state["parts"] += 1  # the WeakRef decl is obfuscation-shaped
+                m = q
+            else:
+                raise _JSExprFail("F733 decl not modeled")
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, ";")
+            sj = _js_skip_ws(text, m)
+        if not saw_weakref:
+            return None
+        # ---- terminal: return WNAME.deref().MEM(+'LIT')*;
+        r = _js_match_kw(text, sj, "return")
+        if r is None:
+            raise _JSExprFail("F733 no return")
+        sj = _js_skip_ws(text, r)
+        wname, sj = _js_parse_ident(text, sj)
+        if wname not in bindings or bindings[wname][0] != "weakref":
+            raise _JSExprFail("F733 terminal not a weakref")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_parse_f586_deref(text, sj)
+        sj = _js_skip_ws(text, sj)
+        mem, sj = _js_parse_f642_terminal_member(text, sj)
+        val = _jsobj_lookup(bindings[wname][1], mem)
+        if not isinstance(val, str) or isinstance(val, _JSNumStr):
+            raise _JSExprFail("F733 member not a string")
+        # Additive tail of string literals only.
+        while True:
+            t = _js_skip_ws(text, sj)
+            if t >= n or text[t] != "+":
+                break
+            t = _js_skip_ws(text, t + 1)
+            if t >= n or text[t] not in "'\"":
+                raise _JSExprFail("F733 tail not a literal")
+            _tail, t = _js_parse_string(text, t)
+            if len(val) + len(_tail) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("concat too long")
+            val = val + _tail
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1
+            sj = t
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F733 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f734_symbol_member_iife(text, i, depth, state):
+    """Parse `(function(){var s=Symbol('D');DECL;o[s]='LIT';*return o[s](+'LIT')*;})()` (F734).
+
+    F734: the decoder's object model is string-keyed, so
+    symbol-keyed member writes and reads recover the exact
+    fragment while the decoder produces zero variants:
+      `(function(){var s=Symbol('k');var o={};o[s]='f1';
+      return o[s]+'f2';})()`
+      `(function(){var s=Symbol('k');var o={[s]:'f1'};
+      return o[s]+'f2';})()`.
+    Node-exact (v24.20.0): `Symbol('k')` creates one unique symbol
+    per evaluation, so within the IIFE the binding names exactly
+    one key; the model keys it as `("sym", name)` -- a separate
+    namespace from string keys and from the F552 `Symbol.for`
+    registry keys (a local symbol is never the registry entry,
+    node-verified), so no collision is possible.
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (shared F654 head); no params,
+      no name, no async.
+    - declarations: `var|let|const S=Symbol('LIT');` (the
+      description must be a string literal; `Symbol()` /
+      non-literal descriptions fail closed), `var|let|const
+      o={};`, or `var|let|const o={[S]:'LIT'(,[S2]:'LIT')*};`
+      (computed local-symbol keys only; any other key form fails
+      closed). Rebinding any name fails closed.
+    - write statements: `o[S]='LIT';` (1+ when the object
+      started empty; later writes win, node-exact). Only
+      string-literal values; only bound symbol idents.
+    - terminal: `return o[S](+'LIT')*;` -- the read must resolve
+      to a plain string (missing keys fail closed; the engine
+      yields undefined there).
+    - exactly `()` invocation; no trailing statements after the
+      return inside the body.
+
+    Tried after F733: every accepted shape carries a `Symbol(`
+    binding head, which no earlier route accepts (F552 models
+    only `Symbol.for` registry keys; red-first verified BREAK on
+    the open tree). Only previously fail-closed inputs are newly
+    decoded. Returns (value, next_index), or None when text[i] is
+    not this shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        symbols = set()
+        objname = None
+        props = None
+        while True:
+            _kw, m = _js_match_decl_kw(text, sj)
+            if _kw is None:
+                break
+            m = _js_skip_ws(text, m)
+            name, m = _js_parse_ident(text, m)
+            if name in symbols or name == objname:
+                raise _JSExprFail("F734 rebind")
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, "=")
+            m = _js_skip_ws(text, m)
+            if text.startswith("Symbol", m) and (
+                    m + 6 >= n or text[m + 6] not in _JS_IDENT_CONT):
+                q = _js_skip_ws(text, m + 6)
+                q = _js_expect(text, q, "(")
+                q = _js_skip_ws(text, q)
+                if q >= n or text[q] not in "'\"":
+                    raise _JSExprFail("F734 symbol desc not a literal")
+                _desc, q = _js_parse_string(text, q)
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, ")")
+                symbols.add(name)
+                state["parts"] += 1  # the symbol decl is obfuscation-shaped
+                m = q
+            elif m < n and text[m] == "{":
+                if objname is not None:
+                    raise _JSExprFail("F734 second object")
+                m = _js_skip_ws(text, m + 1)
+                pdict = {}
+                if m < n and text[m] == "}":
+                    m = m + 1  # empty literal
+                else:
+                    while True:
+                        m = _js_skip_ws(text, m)
+                        m = _js_expect(text, m, "[")
+                        m = _js_skip_ws(text, m)
+                        sname, m = _js_parse_ident(text, m)
+                        if sname not in symbols:
+                            raise _JSExprFail(
+                                "F734 computed key not a symbol")
+                        m = _js_skip_ws(text, m)
+                        m = _js_expect(text, m, "]")
+                        m = _js_skip_ws(text, m)
+                        m = _js_expect(text, m, ":")
+                        m = _js_skip_ws(text, m)
+                        if m >= n or text[m] not in "'\"":
+                            raise _JSExprFail(
+                                "F734 value not a literal")
+                        _lit, m = _js_parse_string(text, m)
+                        pdict[("sym", sname)] = _lit  # later-wins
+                        state["parts"] += 1
+                        if state["parts"] > _JS_EXPR_MAX_PARTS:
+                            raise _JSExprFail("too many parts")
+                        m = _js_skip_ws(text, m)
+                        if m < n and text[m] == ",":
+                            m = m + 1
+                            continue
+                        break
+                    m = _js_skip_ws(text, m)
+                    m = _js_expect(text, m, "}")
+                objname = name
+                props = pdict
+            else:
+                raise _JSExprFail("F734 decl not modeled")
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, ";")
+            sj = _js_skip_ws(text, m)
+        if not symbols or objname is None:
+            return None
+        # ---- write statements: o[S]='LIT';
+        while True:
+            q = _js_skip_ws(text, sj)
+            oname, q2 = _js_parse_ident(text, q)
+            if oname != objname:
+                break
+            q = _js_skip_ws(text, q2)
+            if q >= n or text[q] != "[":
+                break
+            q = _js_skip_ws(text, q + 1)
+            sname, q = _js_parse_ident(text, q)
+            if sname not in symbols:
+                raise _JSExprFail("F734 write key not a symbol")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "]")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "=")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F734 write value not a literal")
+            _lit, q = _js_parse_string(text, q)
+            props[("sym", sname)] = _lit  # later-wins, node-exact
+            state["parts"] += 1  # the write is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            sj = _js_skip_ws(text, q)
+        # ---- terminal: return o[S](+'LIT')*;
+        r = _js_match_kw(text, sj, "return")
+        if r is None:
+            raise _JSExprFail("F734 no return")
+        sj = _js_skip_ws(text, r)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname != objname:
+            raise _JSExprFail("F734 terminal not the object")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "[")
+        sj = _js_skip_ws(text, sj)
+        sname, sj = _js_parse_ident(text, sj)
+        if sname not in symbols:
+            raise _JSExprFail("F734 read key not a symbol")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "]")
+        val = _jsobj_lookup(_JSObj(props), ("sym", sname))
+        if not isinstance(val, str) or isinstance(val, _JSNumStr):
+            raise _JSExprFail("F734 member not a string")
+        # Additive tail of string literals only.
+        while True:
+            t = _js_skip_ws(text, sj)
+            if t >= n or text[t] != "+":
+                break
+            t = _js_skip_ws(text, t + 1)
+            if t >= n or text[t] not in "'\"":
+                raise _JSExprFail("F734 tail not a literal")
+            _tail, t = _js_parse_string(text, t)
+            if len(val) + len(_tail) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("concat too long")
+            val = val + _tail
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1
+            sj = t
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F734 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
 
 def _js_f67x_lookup(obj, key):
     """Resolve *key* on a _JSObj holding F67x bodies (F673/F674).
@@ -56594,6 +57047,32 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f729 is not None:
             return _f729
 
+        # F733: (function(){DECL;* return w.deref().MEM(+'LIT')*;})()
+        #   -- var-bound WeakRef of a literal-fragment referent
+        #   (data props or literal-returning getters). F734:
+        #   (function(){var s=Symbol('D');DECL;o[s]='LIT';*
+        #   return o[s](+'LIT')*;})() -- symbol-keyed member
+        #   writes/reads. Tried after F702/F703: every accepted
+        #   shape carries a `new WeakRef` declaration or a `Symbol(`
+        #   binding head, which no earlier route accepts (F642
+        #   requires a string-literal binding section; F539/F586
+        #   are expression-level inline forms; F552 models only
+        #   `Symbol.for` registry keys; red-first verified BREAK on
+        #   the open tree). Only previously fail-closed inputs are
+        #   newly decoded, so no previously-decoded input changes
+        #   behavior. None falls through to the
+        #   parenthesized-additive path. The F702/F703 hook and its
+        #   trailing `return` are untouched (wave-379 lesson).
+        _f733 = _js_parse_f733_weakref_litfrag_iife(
+            text, i, depth, state)
+        if _f733 is not None:
+            val, i = _f733
+            return _js_parse_postfix(text, i, val, depth, state)
+        _f734 = _js_parse_f734_symbol_member_iife(
+            text, i, depth, state)
+        if _f734 is not None:
+            val, i = _f734
+            return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
         val, i = _js_parse_additive(text, i + 1, depth + 1, state,

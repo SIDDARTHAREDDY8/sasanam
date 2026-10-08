@@ -31,14 +31,11 @@ New findings (24, all LOW, all OPEN), filed F713-F736 (attack-F713 renumbered F7
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F700-F712 (round 49 + wave-381 merge renumbers), F731, F732, F733, F734, F735, F736, F737 (this round).
+F700-F712 (round 49 + wave-381 merge renumbers), F735, F736, F737 (this round).
 
-Closed pins (must BLOCK, else BREAK): F686-F712 (wave-381/382 closures), F713, F714, F715, F716, F717, F718, F719, F720, F721, F722, F723, F724, F725, F726, F727, F728, F729, F730 (wave-383 lanes).
+Closed pins (must BLOCK, else BREAK): F686-F712 (wave-381/382 closures), F713-F734 (wave-383 lanes 1-11).
 F699 fails closed (None) by design -- its pin asserts the miss.
-Closed pins (must BLOCK, else BREAK): F686-F712 (wave-381/382 closures), F713, F714, F715, F716, F717, F718, F719, F720, F721, F722, F723, F724, F725, F726, F727, F728 (wave-383 lanes).
-F699 fails closed (None) by design -- its pin asserts the miss.F699 fails closed (None) by design -- its pin asserts the miss.
-Closed pins (must BLOCK, else BREAK): F686-F712 (wave-381/382 closures), F713, F714, F715, F716, F717, F718, F719, F720 (wave-383 lanes).
-F699 fails closed (None) by design -- its pin asserts the miss.F711 pins the raw-decoder mis-decode (find_credential fails closed on it).
+F711 pins the raw-decoder mis-decode (find_credential fails closed on it).
 
 Rides-with-documented-scope (validated, NOT filed):
 - Steal-lane seams: seqgate full chain refuses coded; userinfo-smuggled
@@ -114,9 +111,12 @@ def test_b0_footer_state():
     """Control: merged footer (wave-383 merge coordinator)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
+    """Control: merged footer (wave-383 merge coordinator)."""
+    path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
+    text = open(path).read()
     ok = ("Next free finding: **F762**" in text
-          and "Open findings: F729, F730, F731, F732, F733, F734, F735, F736, F737, F738, F739, F761." in text)    return ("HELD" if ok else "BREAK", "footer=%s" % ok)
-@_t
+          and "Open findings: F735, F736, F737, F738, F739, F761." in text)
+    return ("HELD" if ok else "BREAK", "footer=%s" % ok)@_t
 def test_p9_junk_quiet():
     """Junk stays quiet (no false positives)."""
     quiet = _misses("'(function(){var s=\\'ab\\' ;return s;})()'")
@@ -616,28 +616,28 @@ def test_r50_f732_s2_closed():
     return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f733_s1_open():
-    """F733 OPEN (WeakRef deref reads): miss reproduces."""
-    miss = _misses("(function(){var o={v:'%s'};var w=new WeakRef(o);return w.deref().v+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f733_s1_closed():
+    """F733 CLOSED (wave-383 lane 11): blocks coded."""
+    ok = _blocked("(function(){var o={v:'%s'};var w=new WeakRef(o);return w.deref().v+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f733_s2_open():
-    """F733 OPEN (WeakRef deref reads): miss reproduces."""
-    miss = _misses("(function(){var w=new WeakRef({v:'%s'});return w.deref()['v']+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f733_s2_closed():
+    """F733 CLOSED (wave-383 lane 11): blocks coded."""
+    ok = _blocked("(function(){var w=new WeakRef({v:'%s'});return w.deref()['v']+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f734_s1_open():
-    """F734 OPEN (symbol-keyed member reads): miss reproduces."""
-    miss = _misses("(function(){var s=Symbol('k');var o={};o[s]='%s';return o[s]+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f734_s1_closed():
+    """F734 CLOSED (wave-383 lane 11): blocks coded."""
+    ok = _blocked("(function(){var s=Symbol('k');var o={};o[s]='%s';return o[s]+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f734_s2_open():
-    """F734 OPEN (symbol-keyed member reads): miss reproduces."""
-    miss = _misses("(function(){var s=Symbol('k');var o={[s]:'%s'};return o[s]+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f734_s2_closed():
+    """F734 CLOSED (wave-383 lane 11): blocks coded."""
+    ok = _blocked("(function(){var s=Symbol('k');var o={[s]:'%s'};return o[s]+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r50_f735_s1_open():
