@@ -256,7 +256,7 @@ def p8_pin_and_footer():
             break
     ok = ok and ("Next free finding: **%s**." % FOOTER_NEXT) in footer
     if FOOTER_OPEN == "none":  # wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454)
-        ok = ok and "Open findings: F621, F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635, F636, F637, F638, F639." in footer  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint  # Wave-373 lane 4: F608 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
+        ok = ok and "Open findings: F640, F641, F642, F643." in footer  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint  # Wave-373 lane 4: F608 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
     else:
         ok = ok and ("Open findings: %s." % FOOTER_OPEN) in footer
     return _check("p8: pin 2140, footer open F437-F441 / next F442", ok,

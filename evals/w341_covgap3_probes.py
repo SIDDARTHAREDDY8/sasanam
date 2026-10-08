@@ -141,7 +141,7 @@ def p0():
         _held("P0a", "taxonomy 2140/2140/0 sorted-unique literals")
     footer = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                   encoding="utf-8").read()
-    want = "Next free finding: **F640**. **Open findings: F621, F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635, F636, F637, F638, F639.**"  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-366 merge: F526-F530 CLOSED (lanes 1-3); F532 CLOSED at merge (honest F527 generalization, F514 precedent); F531, F533-F536 OPEN (next F537)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint next F612  # Wave-373 lane 4: F608 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
+    want = "Next free finding: **F644**. **Open findings: F640, F641, F642, F643.**"  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-366 merge: F526-F530 CLOSED (lanes 1-3); F532 CLOSED at merge (honest F527 generalization, F514 precedent); F531, F533-F536 OPEN (next F537)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint next F612  # Wave-373 lane 4: F608 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
     if want in footer:
         _held("P0b", "footer open F444, F445 / next F446")
     else:

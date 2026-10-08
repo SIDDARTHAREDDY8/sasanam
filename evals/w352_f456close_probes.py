@@ -588,7 +588,7 @@ def p7_pin_and_footer():
     # lists F456 open until the merge sweep. Wave-353 lane 1: the
     # merge-finalized footer now lists F461+F462 closed too.
     ok = ok and (("Open findings: %s." % FOOTER_OPEN) in footer
-                 or "Open findings: F621, F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635, F636, F637, F638, F639."  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 lane 5: F603 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
+                 or "Open findings: F640, F641, F642, F643."  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 lane 5: F603 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
                  in footer)
     ok = ok and "(F456 " in footer
     return ok

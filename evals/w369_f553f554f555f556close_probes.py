@@ -609,8 +609,8 @@ def p11_pin_footer():
     assert guac_graph.TAXONOMY_PIN == 2140, \
         "guac_graph.TAXONOMY_PIN=%r want 2140" % (guac_graph.TAXONOMY_PIN,)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F640**" in text  # Wave-370 merge: F570-F573/F576-F579 CLOSED  # Wave-372 merge: footer repoint next F612  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
-          and "**Open findings: F621, F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635, F636, F637, F638, F639.**" in text  # Wave-370 merge: F574/F575/F580/F581/F582 OPEN  # Wave-372 lane 1: F597 CLOSED  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 4: F608 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
+    ok = ("Next free finding: **F644**" in text  # Wave-370 merge: F570-F573/F576-F579 CLOSED  # Wave-372 merge: footer repoint next F612  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
+          and "**Open findings: F640, F641, F642, F643.**" in text  # Wave-370 merge: F574/F575/F580/F581/F582 OPEN  # Wave-372 lane 1: F597 CLOSED  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 4: F608 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
           and "**Status: CLOSED 2026-10-07 wave-369 lane 4.**" in text)
     return ("HELD" if ok else "BREAK",
             "pin=%s footer=%s" % (TAXONOMY_PIN, ok))

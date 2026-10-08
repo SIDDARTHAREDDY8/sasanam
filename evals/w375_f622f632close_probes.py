@@ -474,8 +474,8 @@ def test_p8_pin_taxonomy():
 def test_p8_footer_state():
     """Footer: F622/F632 closed; open F621,F623-F631,F633-F639; next F640 (lane-local)."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F640**" in text  # Wave-375 lane 2: F622, F632 CLOSED
-          and "Open findings: F621, F623, F624, F625, F626, F627, F628, F629, F630, F631, F633, F634, F635, F636, F637, F638, F639." in text)  # Wave-375 lane 2: F622, F632 CLOSED
+    ok = ("Next free finding: **F644**" in text  # Wave-375 lane 2: F622, F632 CLOSED
+          and "Open findings: F640, F641, F642, F643." in text)  # Wave-375 lane 2: F622, F632 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
