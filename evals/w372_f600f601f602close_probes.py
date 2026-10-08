@@ -260,18 +260,19 @@ def p5_compositions():
         # F599 (USP append) CLOSED wave-372 lane 3 -- moved from open
         "(function(){var p=new URLSearchParams('q=%s');p.append('q','%s');"
         "return p.getAll('q').join('');})()" % (_A, _B),
+        # F606: USP append-mutated sort guard (CLOSED wave-373 lane 2)
+        "(function(){var p=new URLSearchParams('q=%s');"
+        "p.append('q','%s');p.sort();"
+        "return p.getAll('q').join('');})()" % (_A, _B),
+        # F607: filter with non-trivial predicates (CLOSED wave-373 lane 3)
+        "['%s','%s','xx'].filter(x=>x!=='xx').join('')" % (_A, _B),
     ]
     bad_held = [s for s in held if not _blocked(s)]
     # open neighbors: decoder must still MISS (BREAK = still open)
     # (exact filed shapes from FINDINGS.md)
-    open_cases = [
-        # F606: USP append-mutated sort guard (OPEN, wave-372 lane 3)
-        "(function(){var p=new URLSearchParams('q=%s');"
-        "p.append('q','%s');p.sort();"
-        "return p.getAll('q').join('');})()" % (_A, _B),
-        # F607: filter with non-trivial predicates (OPEN, wave-372 lane 7)
-        "['%s','%s','xx'].filter(x=>x!=='xx').join('')" % (_A, _B),
-    ]
+    # (wave-306: F606/F607 moved to held after wave-373 closures;
+    #  no remaining open neighbors in this battery's scope)
+    open_cases = []
     bad_open = [s for s in open_cases if _blocked(s)]
     bad = bad_held + ["absorbed:" + s[:40] for s in bad_open]
     return ("HELD" if not bad else "BREAK",

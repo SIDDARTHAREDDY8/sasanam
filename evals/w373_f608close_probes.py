@@ -235,23 +235,24 @@ def p5_compositions():
         % (_A, _B),
     ]
     bad_held = [s for s in held if not _blocked(s)]
-    # open neighbors: decoder must still MISS (a block here means this
-    # lane accidentally absorbed another finding's scope)
-    open_cases = [
-        # F606: USP mutation guards (OPEN, wave-372 lane 3)
+    # F606 (USP mutation guards), F607 (filter predicates), F609 (replace
+    # function) all CLOSED wave-373 lanes 2/3/5 -- they must now BLOCK.
+    # (wave-306: open-neighbor lists updated after sibling closures)
+    must_block = [
+        # F606: USP mutation guards (CLOSED wave-373 lane 2)
         "(function(){var p=new URLSearchParams('q=%s');"
         "p.append('q','%s');p.sort();"
         "return p.getAll('q').join('');})()" % (_A, _B),
-        # F607: filter with non-trivial predicates (OPEN, round 40)
+        # F607: filter with non-trivial predicates (CLOSED wave-373 lane 3)
         "['%s','%s','xx'].filter(x=>x!=='xx').join('')" % (_A, _B),
-        # F609: replace with function replacements (OPEN, round 40)
+        # F609: replace with function replacements (CLOSED wave-373 lane 5)
         "'%sXX'.replace('XX',()=>'%s')" % (_A, _B),
     ]
-    bad_open = [s for s in open_cases if _blocked(s)]
-    bad = bad_held + ["absorbed:" + s[:40] for s in bad_open]
+    bad_block = [s for s in must_block if not _blocked(s)]
+    bad = bad_held + bad_block
     return ("HELD" if not bad else "BREAK",
-            "%d/%d compositions ok" % (len(held) + len(open_cases) - len(bad),
-                                       len(held) + len(open_cases)))
+            "%d/%d compositions ok" % (len(held) + len(must_block) - len(bad),
+                                       len(held) + len(must_block)))
 
 
 def p6_honest_text_quiet():
