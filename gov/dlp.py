@@ -31654,6 +31654,385 @@ def _js_parse_f693_destructure_default_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f729_void_stmt_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const NAME='LIT';void OPERAND;return EXPR;})()` (F729).
+
+    Void-operator STATEMENT residual beyond F647: F647 models `void`
+    only in nullish-coalescing LEFT position (`(void 0??'f1')`); a
+    `void` statement (`void x;`) fails every statement grammar
+    closed, so the whole IIFE misses while node evaluates the
+    fragment read exactly (v24.20.0).
+
+    Node-exact desugar: `void OPERAND` evaluates OPERAND and discards
+    the value (always undefined). The modeled OPERANDs are exactly
+    the side-effect-free, non-throwing forms: the bound NAME, a
+    string / numeric literal, or the `null` / `undefined` / `true` /
+    `false` keywords. Anything else fails closed -- a member read
+    could invoke a getter, a call could have effects, and an unbound
+    identifier throws ReferenceError in the engine (verified
+    v24.20.0). The void statement contributes no fragments; the
+    return body is processed with the F611 substitution discipline
+    (value-position uses only, reassignment guards).
+
+    Disjoint from every earlier route: F611 requires `return`
+    immediately after the decl `;`; F655/F679's statement dispatch
+    fails closed on `void`; F647 requires a `??` group; F702/F703
+    requires Object.assign / __defineGetter__. Tried after F702/F703
+    (the last hook before the additive fallback). Returns (value,
+    next_index), or None when text[i] is not this shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    if not _js_peek_arguments_iife_head(text, i):
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j + len("function"))
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            return None  # not a decl -- other routes own it
+        sj = _js_skip_ws(text, m)
+        name, sj = _js_parse_ident(text, sj)
+        if name in _F611_RESERVED or name == "arguments":
+            return None  # node throws SyntaxError; never decode
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "=" or text[sj + 1:sj + 2] in ("=", ">"):
+            return None
+        sj = _js_skip_ws(text, sj + 1)
+        if text.startswith("atob", sj) and (sj + 4 >= n
+                                            or text[sj + 4]
+                                            not in _JS_IDENT_CONT):
+            init_val, sj = _js_parse_f611_atob(text, sj)
+            state["ops"] += 1  # the decode call is obfuscation-shaped
+        elif sj < n and text[sj] in "'\"":
+            init_val, sj = _js_parse_string(text, sj)
+        else:
+            return None  # F611 owns other initializers
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        # The void statement: `void OPERAND;` -- value discarded.
+        vk = _js_match_kw(text, _js_skip_ws(text, sj), "void")
+        if vk is None:
+            return None  # no void statement -- other routes own it
+        sj = _js_skip_ws(text, vk)
+        if sj < n and text[sj] in "'\"":
+            _, sj = _js_parse_string(text, sj)
+        elif sj < n and text[sj] in _ASCII_DIGITS:
+            # Numeric literal operand -- value discarded.
+            _, sj = _js_parse_number(text, sj)
+        elif sj < n and text[sj] in _JS_IDENT_START:
+            oname, sj = _js_parse_ident(text, sj)
+            if oname in ("null", "undefined", "true", "false"):
+                pass  # keyword operand -- no effect, no throw
+            elif oname != name:
+                # Unbound (or foreign) identifier: the engine throws
+                # ReferenceError, so decoding would mis-model.
+                # A getter-carrying member read is not an ident at
+                # all -- it fails the parse below.
+                raise _JSExprFail("f729 void operand not bound")
+        else:
+            raise _JSExprFail("f729 void operand not modeled")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        state["parts"] += 1  # the void statement is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("f729 too many parts")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("f729 no return")
+        body_expr = _js_require_single_return(text[sj:inner_end])
+        # F611 substitution discipline: value-position uses of the
+        # bound name (never inside literals, never property names),
+        # with reassignment guards.
+        try:
+            toks = _js_ident_tokens(body_expr)
+        except _JSExprFail:
+            return None
+        _rn = len(body_expr)
+        for tname, ts, te in toks:
+            if tname != name:
+                continue
+            jj = te
+            while jj < _rn and body_expr[jj] in " \t\n\r":
+                jj += 1
+            nxt2 = body_expr[jj:jj + 2]
+            nxt1 = body_expr[jj:jj + 1]
+            if nxt1 == "=" and nxt2 not in ("==", "=>"):
+                return None
+            if nxt2 in ("+=", "-=", "*=", "/=", "%=", "++", "--"):
+                return None
+            pp = ts - 1
+            while pp >= 0 and body_expr[pp] in " \t\n\r":
+                pp -= 1
+            if pp >= 1 and body_expr[pp - 1:pp + 1] in ("++", "--"):
+                return None
+        quoted = _js_f611_quote(init_val)
+        out = []
+        pos = 0
+        for tname, ts, te in toks:
+            if tname != name:
+                continue
+            if ts > 0 and (body_expr[ts - 1] in _JS_IDENT_CONT
+                           or body_expr[ts - 1] in ".$"):
+                continue
+            out.append(body_expr[pos:ts])
+            out.append(quoted)
+            pos = te
+        out.append(body_expr[pos:])
+        rewritten = "".join(out)
+        try:
+            val, rend = _js_parse_additive(rewritten, 0, depth + 1,
+                                           state)
+        except _JSExprFail:
+            return None
+        if rend != len(rewritten):
+            return None
+        if not isinstance(val, str):
+            return None
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f730_entries_source(text, j, depth, state):
+    """Parse `Object.entries({LITS})` at text[j] (F730).
+
+    Returns (keys, vals, next_index): the engine-exact entries pairs
+    of the object literal via _js_parse_object_literal_keys_values
+    (integer-index keys ascending first, then string keys in
+    insertion order; `__proto__` fails closed there; values are
+    string literals only). Raises _JSExprFail on any other shape.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if not text.startswith("Object", j):
+        raise _JSExprFail("f730 not Object.entries")
+    j += len("Object")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        raise _JSExprFail("f730 Objectx")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ".")
+    ek = _js_match_kw(text, _js_skip_ws(text, j), "entries")
+    if ek is None:
+        raise _JSExprFail("f730 not entries")
+    j = _js_skip_ws(text, ek)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "{":
+        raise _JSExprFail("f730 entries source not a literal")
+    keys, vals, j = _js_parse_object_literal_keys_values(text, j,
+                                                         depth, state)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    return keys, vals, j
+
+
+def _js_parse_f730_nested_pattern(text, j):
+    """Parse `[[K1,V1],[K2,V2],...]` at text[j] (F730).
+
+    Each element is a 2-slot array: `[IDENT,IDENT]` or `[,IDENT]`
+    (key elision). Returns (pairs, next_index) where pairs is a list
+    of (key_name_or_None, val_name). Raises _JSExprFail on deeper
+    nesting, non-identifier leaves, defaults, rest elements, or any
+    other shape. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("f730 pattern not an array")
+    j = _js_skip_ws(text, j + 1)
+    pairs = []
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "[":
+            raise _JSExprFail("f730 pattern element not an array")
+        j = _js_skip_ws(text, j + 1)
+        if j < n and text[j] == ",":
+            kname = None  # key elision: [,V]
+            j = _js_skip_ws(text, j + 1)
+        else:
+            kname, j = _js_parse_ident(text, j)
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != ",":
+                raise _JSExprFail("f730 pattern element arity")
+            j = _js_skip_ws(text, j + 1)
+        vname, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "]":
+            raise _JSExprFail("f730 pattern element not closed")
+        j = j + 1
+        pairs.append((kname, vname))
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            continue
+        if j < n and text[j] == "]":
+            return pairs, j + 1
+        raise _JSExprFail("f730 pattern not closed")
+
+
+def _js_parse_f730_nested_entries_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const PAT=Object.entries({LITS});return ADD;})()` (F730).
+
+    Nested-ARRAY destructuring residual beyond F644/F684b/F693:
+    F644 models flat patterns only; F684b models nested OBJECT
+    patterns (`{x:{y}}`); F693 models per-key defaults. A nested
+    array pattern over `Object.entries` (`[[k1,v1],[k2,v2]]`, or
+    `[[,v1],[,v2]]` with key elision) fails closed in all three,
+    while node evaluates the fragment reads exactly (v24.20.0).
+
+    Two productions (node-exact):
+    - direct: `var|let|const PAT=Object.entries({LITS});`
+    - var-bound twin: `var|let|const E=Object.entries({LITS});`
+      then `var|let|const PAT=E;` (the second RHS must be exactly
+      the bound name).
+
+    Node-exact desugar: Object.entries yields [key, value] pairs in
+    engine-exact enumeration order; each pattern element binds
+    positionally against its pair. More pattern pairs than entries
+    throws TypeError in the engine (verified v24.20.0), so it fails
+    closed here -- never mis-decoded. The return body rewrites via
+    _js_bind_destructure_arguments over the flattened quoted pair
+    values and parses with the normal additive grammar.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a non-`[` pattern head (F684b owns `{`), deeper nesting,
+      non-identifier leaves, defaults, rest elements, computed keys;
+    - a duplicate or `arguments` / reserved-word bound name;
+    - a non-literal-values entries source (`__proto__` fails closed
+      in the literal parser);
+    - more pattern pairs than entries, a named function, params, a
+      directive prologue, extra statements, non-empty call args.
+    Disjoint from F644 (its array-pattern parse fails closed on `[`
+    after `[`), F684b (`{` head), and F693 (requires `=` defaults
+    after a sub-pattern). Tried after F693. Returns (value,
+    next_index), or None when text[i] is not this shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    if not _js_peek_arguments_iife_head(text, i):
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j + len("function"))
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            return None  # not a decl -- other routes own it
+        sj = _js_skip_ws(text, m)
+
+        bound_entries_name = None
+        if sj < n and text[sj] == "[":
+            # Direct production: the pattern is the first decl.
+            pairs, sj = _js_parse_f730_nested_pattern(text, sj)
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, "=")
+            keys, vals, sj = _js_parse_f730_entries_source(
+                text, sj, depth, state)
+        else:
+            # Var-bound twin: `var|let|const E=Object.entries(...);`
+            ename, sj = _js_parse_ident(text, sj)
+            if ename in _F611_RESERVED or ename == "arguments":
+                return None
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, "=")
+            keys, vals, sj = _js_parse_f730_entries_source(
+                text, sj, depth, state)
+            bound_entries_name = ename
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, ";")
+            # Second decl: `var|let|const PAT=E;`
+            sj = _js_skip_ws(text, sj)
+            _kw2, m2 = _js_match_decl_kw(text, sj)
+            if _kw2 is None:
+                raise _JSExprFail("f730 twin second decl not a decl")
+            sj = _js_skip_ws(text, m2)
+
+            pairs, sj = _js_parse_f730_nested_pattern(text, sj)
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, "=")
+            rname, sj = _js_parse_ident(text, _js_skip_ws(text, sj))
+            if rname != bound_entries_name:
+                raise _JSExprFail("f730 twin source not the bound name")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        if len(pairs) > len(keys):
+            # The engine throws TypeError destructuring undefined --
+            # fail closed rather than mis-decode.
+            raise _JSExprFail("f730 more pairs than entries")
+        # Bind: flatten the quoted pair values; each element binds
+        # its slots positionally (key slot may be elided).
+        names = []
+        flat = []
+        pkeys = []
+        for (kname, vname), key, val in zip(pairs, keys, vals):
+            if kname is not None:
+                names.append(kname)
+                flat.append(_js_f611_quote(key))
+                pkeys.append(len(flat) - 1)
+            names.append(vname)
+            flat.append(_js_f611_quote(val))
+            pkeys.append(len(flat) - 1)
+            state["parts"] += 1  # each pair is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("f730 too many parts")
+        if len(set(names)) != len(names):
+            raise _JSExprFail("f730 duplicate bound names")
+        if any(nm in _F611_RESERVED or nm == "arguments"
+               for nm in names):
+            raise _JSExprFail("f730 reserved bound name")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("f730 no return")
+        body_expr = _js_require_single_return(text[sj:inner_end])
+        rewritten = _js_bind_destructure_arguments(
+            body_expr, flat, names, pkeys)
+        val, _k = _js_parse_additive(rewritten, 0, depth + 1, state)
+        _k = _js_skip_ws(rewritten, _k)
+        if _k != len(rewritten):
+            raise _JSExprFail("f730 return not an additive")
+        if not isinstance(val, str):
+            raise _JSExprFail("f730 return not a string")
+        state["ops"] += 1  # the destructure is obfuscation-shaped
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
 def _js_f685_rewrite_arrow_calls(body_expr, fname, lit_text):
     """Rewrite `F()` call sites to the resolved arg literal (F685).
 
@@ -51924,6 +52303,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                        state)
         if _f693 is not None:
             return _f693
+        # F730: (function(){var|let|const PAT=Object.entries({LITS});
+        #   return ADD;})() and the var-bound twin
+        #   (function(){var|let|const E=Object.entries({LITS});
+        #   var|let|const PAT=E;return ADD;})() -- nested array
+        #   destructuring of Object.entries (`[[k1,v1],[k2,v2]]`,
+        #   `[[,v1],[,v2]]`). Tried after F693: F693 requires
+        #   per-key `=` defaults (its pattern parser fails closed on
+        #   `[` after `[`); F684b requires a `{` pattern head;
+        #   F644's array-pattern parse fails closed on a nested `[`.
+        #   None of the earlier routes accepts these shapes
+        #   (red-first verified: 2 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior.
+        _f730 = _js_parse_f730_nested_entries_iife(text, i, depth,
+                                                   state)
+        if _f730 is not None:
+            return _f730
         # F685: (function(){DECL F=()=>arguments[N];return ADD;})
         # (LITS) -- arrow-lexical arguments. None falls through
         # (fails closed inside).
@@ -51945,6 +52340,19 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f702f703 is not None:
             val, i = _f702f703
             return _js_parse_postfix(text, i, val, depth, state)
+        # F729: (function(){var|let|const NAME='LIT';void OPERAND;
+        #   return EXPR;})() -- void-operator statements (the void
+        #   value is discarded; only side-effect-free operands are
+        #   modeled). Tried after F702/F703: F702/F703 requires
+        #   Object.assign / __defineGetter__; F611 requires `return`
+        #   immediately after the decl; F655/F679 fail closed on
+        #   `void`; F647 requires a `??` group. None of the earlier
+        #   routes accepts these shapes (red-first verified: 2 BREAK
+        #   on the open tree), so no previously-decoded input
+        #   changes behavior.
+        _f729 = _js_parse_f729_void_stmt_iife(text, i, depth, state)
+        if _f729 is not None:
+            return _f729
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
         val, i = _js_parse_additive(text, i + 1, depth + 1, state,

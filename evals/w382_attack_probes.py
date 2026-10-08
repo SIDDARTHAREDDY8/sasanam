@@ -31,7 +31,8 @@ New findings (24, all LOW, all OPEN), filed F713-F736 (attack-F713 renumbered F7
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F700-F712 (round 49 + wave-381 merge renumbers), F714-F737 (this round; attack-F713 -> F737 at merge).
+F700-F712 (round 49 + wave-381 merge renumbers), F714-F728/F731-F737
+(this round; F729/F730 closed wave-383 lane 9; attack-F713 -> F737 at merge).
 
 Closed pins (must BLOCK, else BREAK): F686-F699 (wave-381 closures).
 F699 fails closed (None) by design -- its pin asserts the miss.
@@ -568,28 +569,28 @@ def test_r50_f728_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r50_f729_s1_open():
-    """F729 OPEN (void operator statements): miss reproduces."""
-    miss = _misses("(function(){var x='%s';void x;return x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f729_s1_closed():
+    """F729 CLOSED (wave-383 lane 9): blocks coded."""
+    ok = _blocked("(function(){var x='%s';void x;return x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f729_s2_open():
-    """F729 OPEN (void operator statements): miss reproduces."""
-    miss = _misses("(function(){var x='%s';void 0;return x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f729_s2_closed():
+    """F729 CLOSED (wave-383 lane 9): blocks coded."""
+    ok = _blocked("(function(){var x='%s';void 0;return x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f730_s1_open():
-    """F730 OPEN (nested destructuring of Object.entries): miss reproduces."""
-    miss = _misses("(function(){var [[k1,v1],[k2,v2]]=Object.entries({a:'%s',b:'%s'});return v1+v2;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f730_s1_closed():
+    """F730 CLOSED (wave-383 lane 9): blocks coded."""
+    ok = _blocked("(function(){var [[k1,v1],[k2,v2]]=Object.entries({a:'%s',b:'%s'});return v1+v2;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f730_s2_open():
-    """F730 OPEN (nested destructuring of Object.entries): miss reproduces."""
-    miss = _misses("(function(){var e=Object.entries({a:'%s',b:'%s'});var [[,v1],[,v2]]=e;return v1+v2;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f730_s2_closed():
+    """F730 CLOSED (wave-383 lane 9): blocks coded."""
+    ok = _blocked("(function(){var e=Object.entries({a:'%s',b:'%s'});var [[,v1],[,v2]]=e;return v1+v2;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r50_f731_s1_open():
