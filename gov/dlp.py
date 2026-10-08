@@ -15912,6 +15912,145 @@ def _js_parse_args_forof_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f594_call_args(text, j, state):
+    """Parse `(lit, ...)` string-literal call args at text[j] (F594).
+
+    The F509/F516/F533 call-arg grammar: zero or more string
+    literals separated by commas. Returns (args, next_index) just
+    after the closing paren. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    args = []
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ")":
+        return args, j + 1
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F594 arg not string literal")
+        aval, j = _js_parse_string(text, j)
+        args.append(aval)
+        state["parts"] += 1  # each arg is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("unterminated iife call")
+        if text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            continue
+        if text[j] == ")":
+            return args, j + 1
+        raise _JSExprFail("bad iife call")
+
+
+def _js_parse_f594_bareargs_forin_iife(text, i, depth, state):
+    """Parse `(function(){var S='';for(var K in arguments){S+=arguments[K];}return S;})(lit, ...)` (F594).
+
+    The bare-arguments for-in accumulation idiom: F529/F533 closed
+    enumeration over arguments ALIASES (`var a=arguments`) and
+    documented bare-arguments enumeration as a fail-closed
+    boundary; the boundary is a genuine bypass (attack round 38).
+    for-in over the arguments exotic yields the integer indices as
+    strings in ascending order (`length`/`callee` are
+    non-enumerable, node v24.20.0), so `S+=arguments[K]` is
+    engine-identical to the argument join. The exact F529
+    accumulation grammar is reused with the source ident
+    "arguments" (the F529 alias guards reject an alias NAMED
+    "arguments" as a binding, but bare `arguments` as the
+    iteration source is exactly the F594 shape -- the F529
+    caller-side bound never admitted this). Loop braces optional
+    (engine-identical, node verified); a leading directive
+    prologue is inert and skipped (F560/F570 precedent,
+    node-exact). The IIFE must be anonymous with zero params.
+    Node-exact desugar (v24.20.0): "".join(args). Returns (value,
+    next_index), or None when the head does not match or a guard
+    fails. Bounded by the part/depth budgets; the wrapper charges
+    one op (obfuscation-shaped). Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): an
+    alias decl before the accumulator (the F529/F533 scope), a
+    key/accumulator named `arguments` (the shared grammar's
+    shadowing guard), iterating anything but bare `arguments`, a
+    body other than `S+=arguments[K]`, non-literal call args, and
+    any other body shape.
+    """
+    if not _js_peek_arguments_iife_head(text, i):
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j) + len("function")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        inner = text[inner_start:inner_end]
+        inner = inner[_js_skip_directive_prologue(inner, state):]
+        _js_parse_f529_forin_accum(inner, 0, "arguments")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        args, j = _js_parse_f594_call_args(text, j, state)
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return "".join(args), j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f594_bareargs_forof_iife(text, i, depth, state):
+    """Parse `(function(){var|let S='';for(var|let|const X of arguments){S+=X;}return S;})(lit, ...)` (F594).
+
+    The bare-arguments for-of accumulation idiom: for-of over the
+    arguments exotic yields the argument VALUES in ascending index
+    order (the exotic's Symbol.iterator is ArrayValues, node
+    v24.20.0), engine-identical to the argument join. The exact
+    F533 accumulation grammar is reused with the source ident
+    "arguments" (same alias/binding note as the for-in twin);
+    loop braces optional; a leading directive prologue is inert
+    and skipped (F560/F570 precedent). The IIFE must be anonymous
+    with zero params. Node-exact desugar (v24.20.0):
+    "".join(args). Returns (value, next_index), or None when the
+    head does not match or a guard fails. Bounded by the
+    part/depth budgets; the wrapper charges one op
+    (obfuscation-shaped). Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): an
+    alias decl before the accumulator (the F529/F533 scope), a
+    loop variable/accumulator named `arguments` (the shared
+    grammar's shadowing guard), iterating anything but bare
+    `arguments`, a body other than `S+=X`, a `const`
+    accumulator, non-literal call args, and any other body shape.
+    """
+    if not _js_peek_arguments_iife_head(text, i):
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j) + len("function")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        inner = text[inner_start:inner_end]
+        inner = inner[_js_skip_directive_prologue(inner, state):]
+        _js_parse_f533_forof_accum(inner, 0, "arguments")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        args, j = _js_parse_f594_call_args(text, j, state)
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return "".join(args), j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f543_entries_values_head(text, j, alias):
     """Parse `Object.entries(a)` / `Object.values(a)` at text[j] (F543).
 
@@ -16536,16 +16675,23 @@ def _js_span_balanced_braces(text, i):
 
 
 def _js_split_forin_accum(text, a, b):
-    """Split the for-in accumulation statements in text[a:b] (F517).
+    """Split the for-in accumulation statements in text[a:b] (F517/F592).
 
     The exact modeled shape (ws-tolerant):
         var ACC='';
         var OBJ={...};
-        for(var K in OBJ)ACC+=OBJ[K];
+        for(var K in OBJ)ACC+=OBJ[K](.MEM)?;
         return ACC;
-    Returns (acc_ident, obj_ident, key_ident, objlit_text). Any
-    other statement, extra statement, or shape mismatch fails
-    closed. Never evals.
+    The loop body braces are optional (engine-identical, node
+    v24.20.0 verified -- the F529 alias grammar already models
+    this; F592 extends it to the object-literal source). The body
+    may read `OBJ[K]` (F517) or `OBJ[K].MEM` with a single dot
+    identifier member (F592: the nested-object twin -- each
+    enumerated value must be an object for the read to resolve;
+    see the F592 desugar). Returns (acc_ident, obj_ident,
+    key_ident, objlit_text, member) where member is None or the
+    member ident string. Any other statement, extra statement, or
+    shape mismatch fails closed. Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, a)
@@ -16610,6 +16756,12 @@ def _js_split_forin_accum(text, a, b):
     j = _js_skip_ws(text, j)
     j = _js_expect(text, j, ")")
     j = _js_skip_ws(text, j)
+    # F592: the loop-body braces are optional (engine-identical,
+    # node v24.20.0 verified).
+    braced = False
+    if j < b and text[j] == "{":
+        braced = True
+        j = _js_skip_ws(text, j + 1)
     acc2, j = _js_parse_ident(text, j)
     if acc2 != acc:
         raise _JSExprFail("forin accum mismatch")
@@ -16628,8 +16780,19 @@ def _js_split_forin_accum(text, a, b):
     j = _js_skip_ws(text, j)
     j = _js_expect(text, j, "]")
     j = _js_skip_ws(text, j)
+    # F592: an optional single dot-identifier member read on the
+    # indexed value (`s+=o[k].v`); anything else (a call, a deeper
+    # chain, a computed member) fails closed.
+    member = None
+    if j < b and text[j] == ".":
+        j = _js_skip_ws(text, j + 1)
+        member, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
     j = _js_expect(text, j, ";")
     j = _js_skip_ws(text, j)
+    if braced:
+        j = _js_expect(text, j, "}")
+        j = _js_skip_ws(text, j)
     m = _js_match_kw(text, j, "return")
     if m is None:
         raise _JSExprFail("forin no return")
@@ -16643,7 +16806,7 @@ def _js_split_forin_accum(text, a, b):
     j = _js_skip_ws(text, j)
     if j != b:
         raise _JSExprFail("forin trailing statements")
-    return acc, obj, keyvar, objlit_text
+    return acc, obj, keyvar, objlit_text, member
 
 
 def _js_parse_f578_defineprop_stmt(text, sj, oname, depth, state):
@@ -16974,12 +17137,54 @@ def _js_parse_f578_defineprop_iife(text, i, depth, state):
         return None
 
 
+def _js_f592_member_join(objlit_text, member, depth, state):
+    """Join the `MEMBER` reads of a for-in over an object literal (F592).
+
+    Desugars `for(var K in O)S+=O[K].MEM` over a literal object O:
+    the enumerated values are the own values in for-in order
+    (integer indices ascending, then string keys in insertion order
+    -- `_js_ownkeys_order`; symbol keys are not enumerated by
+    for-in, node v24.20.0). Each value's `.MEM` read resolves
+    node-exactly:
+    - a _JSObj value: the member lookup (missing -> the string
+      "undefined", the engine's ToString(undefined); a string
+      value resolves; a non-string present value fails closed,
+      documented);
+    - a string value: "undefined" (the engine boxes primitives,
+      node-verified `('x').v === undefined`).
+    Anything else fails closed. The literal is parsed by
+    `_js_parse_f535_object` (its per-property part budget applies),
+    so getters/`__proto__`/computed keys fail closed there as
+    before. Returns the joined string. Never evals.
+    """
+    props, _ = _js_parse_f535_object(objlit_text, 0, depth, state)
+    out = []
+    for key in _js_ownkeys_order(props):
+        if not isinstance(key, str):
+            continue  # for-in skips symbol keys (node v24.20.0)
+        v = props[key]
+        if isinstance(v, _JSObj):
+            mv = _jsobj_lookup(v, member)
+            if mv is None:
+                out.append("undefined")
+            elif isinstance(mv, str):
+                out.append(mv)
+            else:
+                raise _JSExprFail("F592 member value not a string")
+        elif isinstance(v, str):
+            # primitive values box: ('x').v is undefined (node-exact)
+            out.append("undefined")
+        else:
+            raise _JSExprFail("F592 value not an object or string")
+    return "".join(out)
+
+
 def _js_parse_forin_accum_iife(text, i, depth, state):
-    """Parse a for-in accumulation IIFE at text[i] (F517).
+    """Parse a for-in accumulation IIFE at text[i] (F517/F592).
 
     The exact modeled shape (ws-tolerant):
         (function(){var A='';var O={...};
-         for(var K in O)A+=O[K];return A})()
+         for(var K in O){A+=O[K](.MEM)?;}return A})()
 
     Desugars the for-in accumulation idiom: the accumulator starts
     as the empty string and appends each enumerated value in
@@ -16993,11 +17198,17 @@ def _js_parse_forin_accum_iife(text, i, depth, state):
     `Object.values(<literal>).join('')`. The desugared text is
     parsed by the normal additive grammar at depth+1, so every
     downstream decoder, bound, and fail-closed rule applies
-    unchanged. The IIFE must be anonymous with zero params and
-    zero call args. Returns (value, next_index), or None when the
-    head does not match or a guard fails. Bounded by the
-    part/depth budgets; the wrapper charges one op
-    (obfuscation-shaped). Never evals.
+    unchanged. F592 adds two engine-identical extensions (both
+    node v24.20.0 verified): optional braces around the loop body
+    (the F529 alias grammar already models these), and an optional
+    single `.MEM` member read on the indexed value (the nested
+    twin -- resolved by `_js_f592_member_join` over the F535
+    object parse; a missing member or a primitive value reads as
+    the string "undefined", node-exact). The IIFE must be
+    anonymous with zero params and zero call args. Returns
+    (value, next_index), or None when the head does not match or a
+    guard fails. Bounded by the part/depth budgets; the wrapper
+    charges one op (obfuscation-shaped). Never evals.
     """
     if not _js_peek_arguments_iife_head(text, i):
         return None
@@ -17011,8 +17222,13 @@ def _js_parse_forin_accum_iife(text, i, depth, state):
         brace = _js_skip_ws(text, j)
         j = _js_expect(text, brace, "{")
         inner_start, inner_end, j = _js_span_braced(text, brace)
-        _, _, _, objlit_text = _js_split_forin_accum(text, inner_start,
-                                                     inner_end)
+        # F592: a leading directive prologue is inert in the engine
+        # (F560/F570 precedent, node-exact); with no directives this
+        # is exactly the prior behavior.
+        _ps = _js_skip_directive_prologue(text[inner_start:inner_end],
+                                          state)
+        _, _, _, objlit_text, member = _js_split_forin_accum(
+            text, inner_start + _ps, inner_end)
         j = _js_skip_ws(text, j)
         j = _js_expect(text, j, ")")
         j = _js_skip_ws(text, j)
@@ -17021,11 +17237,19 @@ def _js_parse_forin_accum_iife(text, i, depth, state):
         j = _js_expect(text, j, ")")
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
-        rewritten = "Object.values(" + objlit_text + ").join('')"
-        val, k = _js_parse_additive(rewritten, 0, depth + 1, state)
-        k = _js_skip_ws(rewritten, k)
-        if k != len(rewritten):
-            raise _JSExprFail("f517 forin trailing junk")
+        if member is not None:
+            # F592: the nested-member read desugars over the F535
+            # object parse directly (a `.map(x=>x.v)` text desugar
+            # would depend on callback grammars this path cannot
+            # assume); the member=None path below is untouched.
+            val = _js_f592_member_join(objlit_text, member, depth,
+                                       state)
+        else:
+            rewritten = "Object.values(" + objlit_text + ").join('')"
+            val, k = _js_parse_additive(rewritten, 0, depth + 1, state)
+            k = _js_skip_ws(rewritten, k)
+            if k != len(rewritten):
+                raise _JSExprFail("f517 forin trailing junk")
         state["ops"] += 1  # the iife wrapper is obfuscation-shaped
         return val, j
     except _JSExprFail:
@@ -21046,6 +21270,25 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f529 = _js_parse_args_enumerated_iife(text, i, depth, state)
         if _f529 is not None:
             val, i = _f529
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F594: (function(){var S='';
+        #   for(var K in arguments){S+=arguments[K];}return S;})(lit, ...)
+        #   and the for-of twin -- for-in/for-of enumeration over
+        #   BARE arguments (F529/F533 closed the alias forms; the
+        #   bare-arguments boundary was a genuine bypass). Tried
+        #   after F529: the exact accumulation grammars are
+        #   disjoint from the F529/F533 IIFE routes (both wrappers
+        #   require a DECL-alias=arguments first statement, which
+        #   the F594 shapes lack -- they fail that decl
+        #   chargeless), and disjoint from F516's (F516 fails
+        #   closed on `for(`); None falls through like F529.
+        _f594 = _js_parse_f594_bareargs_forin_iife(text, i, depth,
+                                                   state)
+        if _f594 is None:
+            _f594 = _js_parse_f594_bareargs_forof_iife(text, i, depth,
+                                                       state)
+        if _f594 is not None:
+            val, i = _f594
             return _js_parse_postfix(text, i, val, depth, state)
         # F581: (function(){DECL a=arguments;return a;})(lit, ...) --
         # the arguments-alias return (the Reflect.apply-dispatch

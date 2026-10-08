@@ -17,10 +17,12 @@ New findings (12, all LOW, all OPEN), filed from F583:
 - F590: directive prologues in Reflect.apply.call targets -- 2 shapes.
 - F591: defineProperty accessor descriptors (arrow getters; fn-expr
   setters) -- 3 shapes.
-- F592: for-in enumeration over object literals -- 2 shapes.
+- F592: for-in enumeration over object literals -- 2 shapes. CLOSED
+  2026-10-07 wave-371 lane 6 (braced bodies + .member reads modeled).
 - F593: WeakMap variable-identity keys -- 2 shapes.
 - F594: for-in/for-of enumeration over bare arguments (documented
   F529/F533 fail-closed boundary, verified a genuine bypass) -- 2 shapes.
+  CLOSED 2026-10-07 wave-371 lane 6 (bare-arguments accumulation modeled).
 
 Mechanism note (verified this round): the decoder extracts and evaluates
 string-expression SUBEXPRESSIONS regardless of wrapper, so every filed
@@ -31,7 +33,8 @@ Junk-quiet controls pass. No injection attempts this round.
 
 Known-open pins (each probe returns HELD when the miss reproduces; a literal
 BREAK verdict means the pin failed or a NEW break appeared):
-F570-F582 (round 37 + wave-369 merge, scope reconfirmed), F583-F594 (this round).
+F570-F582 (round 37 + wave-369 merge, scope reconfirmed), F583-F591, F593
+(this round; F592/F594 CLOSED 2026-10-07 wave-371 lane 6).
 
 Closed pins (must BLOCK, else BREAK): F496, F503, F504, F505, F512 (spot),
 F506, F513, F514, F515, F516, F517, F518, F519, F520 (wave-364, regression),
@@ -329,12 +332,12 @@ def test_r38_f591_closed():
 
 
 @_t
-def test_r38_f592_open():
-    """F592 OPEN: for-in over object literals misses."""
-    m1 = _misses("(function(){var s='';var o={a:'%s',b:'%s'};for(var k in o){s+=o[k];}return s;})()" % (_A, _B))
-    m2 = _misses("(function(){var s='';var o={a:{v:'%s'},b:{v:'%s'}};for(var k in o){s+=o[k].v;}return s;})()" % (_A, _B))
-    ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_p1_f592_closed():
+    """F592 CLOSED: for-in over object literals blocks (wave-371 lane 6)."""
+    h1 = _blocked("(function(){var s='';var o={a:'%s',b:'%s'};for(var k in o){s+=o[k];}return s;})()" % (_A, _B))
+    h2 = _blocked("(function(){var s='';var o={a:{v:'%s'},b:{v:'%s'}};for(var k in o){s+=o[k].v;}return s;})()" % (_A, _B))
+    ok = h1 and h2
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
 @_t
@@ -347,12 +350,12 @@ def test_r38_f593_open():
 
 
 @_t
-def test_r38_f594_open():
-    """F594 OPEN: for-in/for-of over bare arguments miss."""
-    m1 = _misses("(function(){var s='';for(var k in arguments){s+=arguments[k];}return s;})('%s','%s')" % (_A, _B))
-    m2 = _misses("(function(){var s='';for(var x of arguments){s+=x;}return s;})('%s','%s')" % (_A, _B))
-    ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_p1_f594_closed():
+    """F594 CLOSED: for-in/for-of over bare arguments blocks (wave-371 lane 6)."""
+    h1 = _blocked("(function(){var s='';for(var k in arguments){s+=arguments[k];}return s;})('%s','%s')" % (_A, _B))
+    h2 = _blocked("(function(){var s='';for(var x of arguments){s+=x;}return s;})('%s','%s')" % (_A, _B))
+    ok = h1 and h2
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
 # ---------------------------------------------------------------- green check
