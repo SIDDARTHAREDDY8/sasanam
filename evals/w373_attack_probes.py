@@ -8,6 +8,7 @@ New findings (9, all LOW, all OPEN), filed from F612:
 - F613: String.raw tag template in non-leading positions -- 3 shapes.
 - F614: Function.prototype.call/.apply/.bind on function expressions -- 3 shapes.
 - F615: Map.values() spread into call arguments -- 3 shapes.
+  (CLOSED 2026-10-08 wave-374 lane 4.)
 - F616: variable-bound (non-literal) parameter names in URLSearchParams
   statement-form mutations -- 3 shapes.
 - F617: URL.searchParams set/append/delete + get/getAll laundering -- 3 shapes.
@@ -128,11 +129,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F612-F620 open, next F621 (wave-373 merge)."""
+    """Control: footer shows F612-F614, F616-F620 open, next F621."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F621**" in text  # Wave-373 merge: attack round 41 filed F612-F620
-          and "Open findings: F612, F613, F614, F615, F616, F617, F618, F619, F620." in text)  # Wave-373 merge: F595, F606-F611 CLOSED
+          and "Open findings: F612, F613, F614, F616, F617, F618, F619, F620." in text)  # Wave-374 lane 4: F615 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -312,14 +313,14 @@ def test_r41_f614_open():
 
 
 @_t
-def test_r41_f615_open():
-    """F615 OPEN: Map.values() spread into call arguments misses."""
+def test_r41prior_f615_closed():
+    """F615 CLOSED 2026-10-08 wave-374 lane 4: Map.values() spread args block."""
     src = "new Map([['a','%s'],['b','%s']]).values()" % (_A, _B)
-    m1 = _misses("((...a)=>a.join(''))(..." + src + ")")
-    m2 = _misses("((a,b)=>a+b)(..." + src + ")")
-    m3 = _misses("((a,b)=>a+b).call(null,..." + src + ")")
+    m1 = _blocked("((...a)=>a.join(''))(..." + src + ")")
+    m2 = _blocked("((a,b)=>a+b)(..." + src + ")")
+    m3 = _blocked("((a,b)=>a+b).call(null,..." + src + ")")
     ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    return ("HELD" if ok else "BREAK", "block=%s" % ok)
 
 
 @_t
