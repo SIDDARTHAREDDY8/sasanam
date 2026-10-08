@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Red-first for F738: try/catch value flows.
+"""Red-first for F759: setter value flow.
 
-the decoder models straight-line IIFE bodies but not exception edges: a fragment thrown and caught (or accumulated across the throw boundary) leaves the credential readable while the decoder produces zero variants. Distinct from straight-line accumulation (F679/F709).
+the decoder models getters (F535) but not setters: o.x='f1' through a setter stores the fragment, readable via the backing field node-exactly while the decoder produces zero variants.
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
 (node v24.20.0 verified.)
 """
@@ -18,8 +18,8 @@ _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
 
 SHAPES = [
-    ("s1", "(function(){var r;try{throw '§A';}catch(e){r=e;}return r+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
-    ("s2", "(function(){var r='';try{r+='§A';throw 0;}catch(e){r+='§B';}return r;})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s1", "(function(){var o={_v:'',set x(v){this._v=v;}};o.x='§A';return o._v+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s2", "(function(){var o={set x(v){this.w=v;},get w(){return this._w;},set w(v){this._w=v;}};o.x='§A';return o._w+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
 ]
 
 CONTROLS = [

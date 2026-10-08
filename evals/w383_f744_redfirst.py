@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Red-first for F744: class extends builtin construction.
+"""Red-first for F744: F683 residual: value-replacement reviver.
 
-the decoder models new Map()/new Set() literal construction but not subclassed builtins: class M extends Map with literal entries or set() tails spreads node-exactly while the decoder produces zero variants.
+F683 (CLOSED) models append-style revivers (v+'f2') but not value-REPLACEMENT revivers (k==='k' ? CRED : v): the replaced value is read node-exactly while the decoder produces zero variants.
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
 (node v24.20.0 verified.)
 """
@@ -18,8 +18,8 @@ _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
 
 SHAPES = [
-    ("s1", "(function(){class M extends Map{}var m=new M();m.set('k','§A');return [...m.values()].join('')+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
-    ("s2", "(function(){class M extends Map{}var m=new M([['k','§A']]);var s='';for(var v of m.values())s+=v;return s+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s1", '(function(){return JSON.parse(\'{"k":"x"}\',function(k,v){return k===\'k\'?\'§A\':v;}).k+\'§B\';})()'.replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s2", '(function(){var r=JSON.parse(\'{"a":1}\',function(k,v){return k===\'\'?\'§A\':v;});return r+\'§B\';})()'.replace("\u00a7A", _A).replace("\u00a7B", _B), True),
 ]
 
 CONTROLS = [

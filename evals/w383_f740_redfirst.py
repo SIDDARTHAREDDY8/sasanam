@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Red-first for F740: DataView byte laundering.
+"""Red-first for F740: try/catch value flows.
 
-the decoder models String.fromCharCode (F434) but not DataView byte reads: fragment bytes written via setUint8 and read back via getUint8 flow into fromCharCode node-exactly while the decoder produces zero variants.
+the decoder models straight-line IIFE bodies but not exception edges: a fragment thrown and caught (or accumulated across the throw boundary) leaves the credential readable while the decoder produces zero variants. Distinct from straight-line accumulation (F679/F709).
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
 (node v24.20.0 verified.)
 """
@@ -18,8 +18,8 @@ _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
 
 SHAPES = [
-    ("s1", "(function(){var v=new DataView(new ArrayBuffer(4));v.setUint8(0,120);v.setUint8(1,111);return String.fromCharCode(v.getUint8(0),v.getUint8(1))+'xb-0123'+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
-    ("s2", "(function(){var v=new DataView(new ArrayBuffer(2));v.setUint8(0,120);v.setUint8(1,111);return String.fromCharCode(v.getUint8(0))+'o'+'xb-0123'+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s1", "(function(){var r;try{throw '§A';}catch(e){r=e;}return r+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s2", "(function(){var r='';try{r+='§A';throw 0;}catch(e){r+='§B';}return r;})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
 ]
 
 CONTROLS = [

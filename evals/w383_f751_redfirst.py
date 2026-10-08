@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Red-first for F751: spread argument lists (call + construct).
+"""Red-first for F751: Reflect.ownKeys / Object.keys map-reads.
 
-the decoder models spread in array/object literals but not in argument lists: h(...xs) and new C(...xs) pass fragments node-exactly while the decoder produces zero variants.
+F579 models Reflect.ownKeys ORDER but not key-iteration reads: ownKeys(o).map(k=>o[k]).join('') assembles the credential node-exactly while the decoder produces zero variants.
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
 (node v24.20.0 verified.)
 """
@@ -18,8 +18,8 @@ _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
 
 SHAPES = [
-    ("s1", "(function(){function h(){var s='';for(var i=0;i<arguments.length;i++)s+=arguments[i];return s;}return h(...['§A','§B']);})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
-    ("s2", "(function(){function h(a,b){return a+b;}return h(...['§A','§B']);})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s1", "(function(){var o={x:'§A',y:'§B'};return Reflect.ownKeys(o).map(function(k){return o[k];}).join('');})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s2", "(function(){var o={};o.x='§A';o.y='§B';var s='';Reflect.ownKeys(o).forEach(function(k){s+=o[k];});return s;})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
 ]
 
 CONTROLS = [

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Red-first for F746: logical assignment ||= / &&=.
+"""Red-first for F746: class extends builtin construction.
 
-the decoder has no logical-assignment production: x ||= 'f1' and o.x &&= o.x+'f2' evaluate node-exactly while the decoder produces zero variants.
+the decoder models new Map()/new Set() literal construction but not subclassed builtins: class M extends Map with literal entries or set() tails spreads node-exactly while the decoder produces zero variants.
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
 (node v24.20.0 verified.)
 """
@@ -18,8 +18,8 @@ _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
 
 SHAPES = [
-    ("s1", "(function(){var x;x||='§A';x+='§B';return x;})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
-    ("s2", "(function(){var o={x:'§A'};o.x&&=o.x+'§B';return o.x;})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s1", "(function(){class M extends Map{}var m=new M();m.set('k','§A');return [...m.values()].join('')+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s2", "(function(){class M extends Map{}var m=new M([['k','§A']]);var s='';for(var v of m.values())s+=v;return s+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
 ]
 
 CONTROLS = [

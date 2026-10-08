@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Red-first for F752: delete operator statements.
+"""Red-first for F752: F728 residual: builtin-iterator .next().value.
 
-the decoder has no delete-operator production: a delete statement in the IIFE body fails the whole decode while node evaluates the remaining reads node-exactly.
+F728 (OPEN) covers generator .next().value; builtin iterators (array iterator, Set.values()) .next().value have no modeled path: the values read node-exactly while the decoder produces zero variants.
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
 (node v24.20.0 verified.)
 """
@@ -18,8 +18,8 @@ _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
 
 SHAPES = [
-    ("s1", "(function(){var o={x:'§A',y:'junk'};delete o.y;return o.x+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
-    ("s2", "(function(){var o={x:'§A',y:'junk'};delete o['y'];return o.x+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s1", "(function(){var it=['§A','§B'][Symbol.iterator]();var s='';s+=it.next().value;s+=it.next().value;return s;})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s2", "(function(){var s=new Set(['§A','§B']);var it=s.values();var r='';r+=it.next().value;r+=it.next().value;return r;})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
 ]
 
 CONTROLS = [

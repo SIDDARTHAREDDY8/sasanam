@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Red-first for F743: Set.prototype.union/intersection/difference (ES2025).
+"""Red-first for F743: F697 residual: assigned Symbol.toPrimitive.
 
-the decoder models Set construction/spread (F669) but not the ES2025 set-algebra methods: union/intersection/difference results spread-joined node-exactly while the decoder produces zero variants.
+F697 (CLOSED) models valueOf and the literal {[Symbol.toPrimitive]:...} form, but not the ASSIGNED form o[Symbol.toPrimitive]=function: the coercion fires node-exactly while the decoder produces zero variants.
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
 (node v24.20.0 verified.)
 """
@@ -18,8 +18,8 @@ _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
 
 SHAPES = [
-    ("s1", "(function(){var s=new Set(['§A']).union(new Set(['§B']));return [...s].join('');})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
-    ("s2", "(function(){var a=new Set(['§A']);var b=new Set(['§B']);return [...a.union(b)].join('');})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s1", "(function(){var o={};o[Symbol.toPrimitive]=function(){return '§A';};return o+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s2", "(function(){var o={};o[Symbol.toPrimitive]=function(hint){return '§A';};return String(o)+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
 ]
 
 CONTROLS = [

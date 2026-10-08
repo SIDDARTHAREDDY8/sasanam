@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Red-first for F748: Error .message reads.
+"""Red-first for F748: logical assignment ||= / &&=.
 
-the decoder has no Error-object production: thrown/caught Error .message (incl. subclasses) carries the fragment node-exactly while the decoder produces zero variants.
+the decoder has no logical-assignment production: x ||= 'f1' and o.x &&= o.x+'f2' evaluate node-exactly while the decoder produces zero variants.
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
 (node v24.20.0 verified.)
 """
@@ -18,8 +18,8 @@ _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
 
 SHAPES = [
-    ("s1", "(function(){try{throw new Error('§A');}catch(e){return e.message+'§B';}})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
-    ("s2", "(function(){function f(){throw new RangeError('§A');}try{f();}catch(e){return e.message+'§B';}})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s1", "(function(){var x;x||='§A';x+='§B';return x;})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s2", "(function(){var o={x:'§A'};o.x&&=o.x+'§B';return o.x;})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
 ]
 
 CONTROLS = [

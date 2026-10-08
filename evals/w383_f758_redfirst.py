@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Red-first for F758: template-nested member reads.
+"""Red-first for F758: rest parameters.
 
-F726 covers template toPrimitive COERCION; nested member reads `${o.x}` have no modeled path: the member resolves node-exactly while the decoder produces zero variants.
+the decoder models arguments indexing (F558) but not rest parameters: function h(...xs){return xs.join('')} assembles fragments node-exactly while the decoder produces zero variants.
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
 (node v24.20.0 verified.)
 """
@@ -18,8 +18,8 @@ _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
 
 SHAPES = [
-    ("s1", "(function(){var o={x:'§A'};return `${o.x}§B`;})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
-    ("s2", "(function(){var o={x:'§A',y:'§B'};return `${o.x}${o.y}`;})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s1", "(function(){function h(...xs){return xs.join('');}return h('§A','§B');})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s2", "(function(){function h(a,...rest){return a+rest[0];}return h('§A','§B');})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
 ]
 
 CONTROLS = [

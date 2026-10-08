@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Red-first for F741: F697 residual: assigned Symbol.toPrimitive.
+"""Red-first for F741: switch fallthrough value flows.
 
-F697 (CLOSED) models valueOf and the literal {[Symbol.toPrimitive]:...} form, but not the ASSIGNED form o[Symbol.toPrimitive]=function: the coercion fires node-exactly while the decoder produces zero variants.
+the decoder models switch WITH break (blocks coded) but not fallthrough: a case/default without break that accumulates the fragment leaves the credential readable while the decoder produces zero variants.
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
 (node v24.20.0 verified.)
 """
@@ -18,8 +18,8 @@ _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
 
 SHAPES = [
-    ("s1", "(function(){var o={};o[Symbol.toPrimitive]=function(){return '§A';};return o+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
-    ("s2", "(function(){var o={};o[Symbol.toPrimitive]=function(hint){return '§A';};return String(o)+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s1", "(function(){var x='§A';switch('k'){case 'k':x+='§B';}return x;})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s2", "(function(){var x='§A';switch('z'){default:x+='§B';}return x;})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
 ]
 
 CONTROLS = [

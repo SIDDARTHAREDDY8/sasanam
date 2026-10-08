@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Red-first for F745: F647 residual (missing-key nullish-LEFT + ??=).
+"""Red-first for F745: Set.prototype.union/intersection/difference (ES2025).
 
-the decoder has no nullish-coalescing production: (o.x ?? 'f1') and o.x ??= 'f1' evaluate node-exactly while the decoder produces zero variants. Distinct from || (modeled).
+the decoder models Set construction/spread (F669) but not the ES2025 set-algebra methods: union/intersection/difference results spread-joined node-exactly while the decoder produces zero variants.
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
 (node v24.20.0 verified.)
 """
@@ -18,8 +18,8 @@ _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
 
 SHAPES = [
-    ("s1", "(function(){var o={};return (o.x??'§A')+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
-    ("s2", "(function(){var x=null;var y=x??'§A';return y+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s1", "(function(){var s=new Set(['§A']).union(new Set(['§B']));return [...s].join('');})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s2", "(function(){var a=new Set(['§A']);var b=new Set(['§B']);return [...a.union(b)].join('');})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
 ]
 
 CONTROLS = [

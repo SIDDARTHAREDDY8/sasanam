@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Red-first for F755: new.target.
+"""Red-first for F755: F535 residual: computed string-name getters.
 
-the decoder has no new.target production: new.target===C guards and new.target truthiness evaluate node-exactly while the decoder produces zero variants.
+F535 (CLOSED) models plain getters but not computed string names: get ['x'](){...} fires on read node-exactly while the decoder produces zero variants. Distinct from F552 (computed Symbol.for keys, modeled).
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
 (node v24.20.0 verified.)
 """
@@ -18,8 +18,8 @@ _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
 
 SHAPES = [
-    ("s1", "(function(){function C(){this.x=new.target===C?'§A':'z';}return new C().x+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
-    ("s2", "(function(){class D{constructor(){this.v=new.target?'§A':'z';}}return new D().v+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s1", "(function(){var o={get ['x'](){return '§A';}};return o.x+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s2", "(function(){var o={get ['x'](){return '§A';}};return o['x']+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
 ]
 
 CONTROLS = [

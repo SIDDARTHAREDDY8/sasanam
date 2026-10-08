@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Red-first for F754: ternary conditional value flow.
+"""Red-first for F754: delete operator statements.
 
-the decoder has no conditional-expression production: (c?'f1':'z')+'f2' evaluates node-exactly while the decoder produces zero variants.
+the decoder has no delete-operator production: a delete statement in the IIFE body fails the whole decode while node evaluates the remaining reads node-exactly.
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
 (node v24.20.0 verified.)
 """
@@ -18,8 +18,8 @@ _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
 
 SHAPES = [
-    ("s1", "(function(){var c=true;return (c?'§A':'z')+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
-    ("s2", "(function(){var c=false;var x=c?'z':'§A';return x+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s1", "(function(){var o={x:'§A',y:'junk'};delete o.y;return o.x+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s2", "(function(){var o={x:'§A',y:'junk'};delete o['y'];return o.x+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
 ]
 
 CONTROLS = [

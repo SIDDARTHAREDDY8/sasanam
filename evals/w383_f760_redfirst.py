@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Red-first for F739: switch fallthrough value flows.
+"""Red-first for F760: template-nested member reads.
 
-the decoder models switch WITH break (blocks coded) but not fallthrough: a case/default without break that accumulates the fragment leaves the credential readable while the decoder produces zero variants.
+F726 covers template toPrimitive COERCION; nested member reads `${o.x}` have no modeled path: the member resolves node-exactly while the decoder produces zero variants.
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
 (node v24.20.0 verified.)
 """
@@ -18,8 +18,8 @@ _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
 
 SHAPES = [
-    ("s1", "(function(){var x='§A';switch('k'){case 'k':x+='§B';}return x;})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
-    ("s2", "(function(){var x='§A';switch('z'){default:x+='§B';}return x;})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s1", "(function(){var o={x:'§A'};return `${o.x}§B`;})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s2", "(function(){var o={x:'§A',y:'§B'};return `${o.x}${o.y}`;})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
 ]
 
 CONTROLS = [

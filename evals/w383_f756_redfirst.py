@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Red-first for F756: rest parameters.
+"""Red-first for F756: ternary conditional value flow.
 
-the decoder models arguments indexing (F558) but not rest parameters: function h(...xs){return xs.join('')} assembles fragments node-exactly while the decoder produces zero variants.
+the decoder has no conditional-expression production: (c?'f1':'z')+'f2' evaluates node-exactly while the decoder produces zero variants.
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
 (node v24.20.0 verified.)
 """
@@ -18,8 +18,8 @@ _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
 
 SHAPES = [
-    ("s1", "(function(){function h(...xs){return xs.join('');}return h('§A','§B');})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
-    ("s2", "(function(){function h(a,...rest){return a+rest[0];}return h('§A','§B');})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s1", "(function(){var c=true;return (c?'§A':'z')+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s2", "(function(){var c=false;var x=c?'z':'§A';return x+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
 ]
 
 CONTROLS = [

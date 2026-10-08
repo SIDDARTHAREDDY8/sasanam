@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Red-first for F742: F683 residual: value-replacement reviver.
+"""Red-first for F742: DataView byte laundering.
 
-F683 (CLOSED) models append-style revivers (v+'f2') but not value-REPLACEMENT revivers (k==='k' ? CRED : v): the replaced value is read node-exactly while the decoder produces zero variants.
+the decoder models String.fromCharCode (F434) but not DataView byte reads: fragment bytes written via setUint8 and read back via getUint8 flow into fromCharCode node-exactly while the decoder produces zero variants.
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
 (node v24.20.0 verified.)
 """
@@ -18,8 +18,8 @@ _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
 
 SHAPES = [
-    ("s1", '(function(){return JSON.parse(\'{"k":"x"}\',function(k,v){return k===\'k\'?\'§A\':v;}).k+\'§B\';})()'.replace("\u00a7A", _A).replace("\u00a7B", _B), True),
-    ("s2", '(function(){var r=JSON.parse(\'{"a":1}\',function(k,v){return k===\'\'?\'§A\':v;});return r+\'§B\';})()'.replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s1", "(function(){var v=new DataView(new ArrayBuffer(4));v.setUint8(0,120);v.setUint8(1,111);return String.fromCharCode(v.getUint8(0),v.getUint8(1))+'xb-0123'+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
+    ("s2", "(function(){var v=new DataView(new ArrayBuffer(2));v.setUint8(0,120);v.setUint8(1,111);return String.fromCharCode(v.getUint8(0))+'o'+'xb-0123'+'§B';})()".replace("\u00a7A", _A).replace("\u00a7B", _B), True),
 ]
 
 CONTROLS = [
