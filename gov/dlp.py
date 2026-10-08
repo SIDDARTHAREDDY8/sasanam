@@ -3522,16 +3522,18 @@ def _js_parse_new_set(text, i, depth, state):
     return _JSArr(elements), j
 
 
-def _js_parse_new_map_values(text, i, depth, state):
-    """Parse `new Map([[k,v],...]).values()` at text[i] (F494).
+def _js_parse_new_map_head(text, i, depth, state):
+    """Parse `new Map([[k,v],...])` at text[i] (F494, factored for F625).
 
-    Desugars the Map-values spread source: node-evaluated,
-    [...new Map([[0,'f1'],[1,'f2']]).values()] is ['f1','f2'] --
-    values in insertion order with later-wins on duplicate keys
-    (node v24.20.0 verified). Entries must be [key, value] pairs
-    with string/numeric literal keys and plain string-literal values;
-    anything else fails closed (honest, documented boundary; the
-    filed shapes are literal-only). Returns (_JSArr, next_index).
+    The shared entry-validation head for the Map spread sources:
+    entries are [key, value] pairs with string/numeric literal keys
+    (SameValueZero identity, later-wins on duplicate keys) and plain
+    string-literal values (node v24.20.0 verified); anything else
+    fails closed (the F494 literal-only discipline). Returns
+    (pairs, next_index): pairs is the later-wins list of
+    (kid, key, value) with decoded literal values, next_index just
+    past the closing `)` of the `new Map(...)` head -- the caller
+    parses its own member (`.values()` / `.entries()` / `.keys()`).
     Never evals.
     """
     n = len(text)
@@ -3546,7 +3548,7 @@ def _js_parse_new_map_values(text, i, depth, state):
     if j >= n or text[j] != "[":
         raise _JSExprFail("Map arg not an array literal")
     outer, j = _js_parse_array(text, j, depth, state)
-    order = []
+    pairs = []
     index = {}
     for p in outer.elements:
         if not isinstance(p, _JSArr) or len(p.elements) != 2:
@@ -3561,13 +3563,27 @@ def _js_parse_new_map_values(text, i, depth, state):
         if not isinstance(v, str) or isinstance(v, _JSNumStr):
             raise _JSExprFail("Map value not a string literal")
         if kid in index:
-            order[index[kid]] = v
+            pairs[index[kid]] = (kid, k, v)
         else:
-            index[kid] = len(order)
-            order.append(v)
+            index[kid] = len(pairs)
+            pairs.append((kid, k, v))
     j = _js_expect(text, j, ")")
+    return pairs, j
+
+
+def _js_parse_new_map_values(text, i, depth, state):
+    """Parse `new Map([[k,v],...]).values()` at text[i] (F494).
+
+    Desugars the Map-values spread source: node-evaluated,
+    [...new Map([[0,'f1'],[1,'f2']]).values()] is ['f1','f2'] --
+    values in insertion order with later-wins on duplicate keys
+    (node v24.20.0 verified). Entry validation is the shared
+    `_js_parse_new_map_head` (F494/F625); anything non-literal fails
+    closed. Returns (_JSArr, next_index). Never evals.
+    """
+    pairs, j = _js_parse_new_map_head(text, i, depth, state)
     j = _js_skip_ws(text, j)
-    if j >= n or text[j] != ".":
+    if j >= len(text) or text[j] != ".":
         raise _JSExprFail("expected .values()")
     j = _js_match_kw(text, _js_skip_ws(text, j + 1), "values")
     if j is None:
@@ -3575,7 +3591,7 @@ def _js_parse_new_map_values(text, i, depth, state):
     j = _js_expect(text, j, "(")
     j = _js_expect(text, j, ")")
     state["ops"] += 1  # the iterable-spread source is obfuscation-shaped
-    return _JSArr(order), j
+    return _JSArr([v for _, _, v in pairs]), j
 
 
 def _js_parse_generator_iife(text, i, depth, state):
@@ -15478,9 +15494,11 @@ def _js_parse_f577_arrow_rest_iife(text, i, depth, state):
     `((...A)=>BODY).call(T, lit, ...)` at text[i] (F577).
 
     Call args may also be F608 `...new Set([LITS])` spreads (each
-    expands to the F602 deduped element list) or F615
+    expands to the F602 deduped element list), F615
     `...new Map([[k,v],...]).values()` spreads (each expands to the
-    F494 later-wins value list).
+    F494 later-wins value list), or F625 `...new
+    Map([[k,v],...]).entries()` / `.keys()` spreads (each expands
+    to the pair / key list in iteration order).
 
     An arrow IIFE binding call-site arguments through a rest
     parameter: `((...a)=>a[0]+a[1])('f1','f2')` and the `.call`
@@ -15515,9 +15533,12 @@ def _js_parse_f577_arrow_rest_iife(text, i, depth, state):
       literals and other forms fail closed (documented).
     - call args are string literals only (the F509 arg grammar),
       plus F608 `...new Set([LITS])` spreads (expanded to the F602
-      deduped element list, node-exact) and F615
+      deduped element list, node-exact), F615
       `...new Map([[k,v],...]).values()` spreads (expanded to the
-      F494 later-wins value list, node-exact); other non-literals
+      F494 later-wins value list, node-exact), and F625 `...new
+      Map([[k,v],...]).entries()` / `.keys()` spreads (expanded to
+      the pair / key lists, node-exact); mixed spread kinds in one
+      call fail closed (unfiled residual); other non-literals
       fail closed.
     """
     n = len(text)
@@ -15612,6 +15633,7 @@ def _js_parse_f577_arrow_rest_iife(text, i, depth, state):
         else:
             raise _JSExprFail("F577 not invoked")
         args = []
+        spread_kinds = set()
         k = _js_skip_ws(text, k)
         if k < n and text[k] == ")":
             k += 1
@@ -15627,14 +15649,26 @@ def _js_parse_f577_arrow_rest_iife(text, i, depth, state):
                     # Map-values spread expands to the F494
                     # later-wins insertion-ordered value list
                     # (node-exact: f(...map.values()) spreads
-                    # iteration order); other spreads fail closed
-                    # inside.
+                    # iteration order); F625: `...new
+                    # Map([[k,v],...]).entries()` / `.keys()` -- the
+                    # Map-entries/keys spreads expand to the pair /
+                    # key lists in iteration order; other spreads
+                    # fail closed inside.
                     try:
                         spread_args, k = _js_parse_f608_setspread_args(
                             text, k, depth, state)
+                        spread_kinds.add("set")
                     except _JSExprFail:
-                        spread_args, k = _js_parse_f615_mapspread_args(
-                            text, k, depth, state)
+                        try:
+                            spread_args, k = (
+                                _js_parse_f615_mapspread_args(
+                                    text, k, depth, state))
+                            spread_kinds.add("mapvalues")
+                        except _JSExprFail:
+                            (spread_args, k, _k625) = (
+                                _js_parse_f625_mapspread_args(
+                                    text, k, depth, state))
+                            spread_kinds.add(_k625)
                     args.extend(spread_args)
                 elif text[k] in "'\"":
                     a0 = k
@@ -15657,6 +15691,12 @@ def _js_parse_f577_arrow_rest_iife(text, i, depth, state):
                 raise _JSExprFail("bad f577 call")
         # Lexically-scoped names the static decoder cannot resolve
         # fail closed (miss, never mis-decode).
+        if len(spread_kinds) > 1:
+            # F625: mixed spread kinds in one call (e.g. a Set spread
+            # plus an entries spread) are an unfiled residual -- the
+            # rest-param binder would mix element types; fail closed
+            # rather than mis-decode.
+            raise _JSExprFail("F577 mixed spread kinds")
         segs = _js_split_code_strings(body_expr)
         code = "".join(s for is_code, s in segs if is_code)
         for kw in ("this", "arguments", "super"):
@@ -15678,28 +15718,36 @@ def _js_parse_f577_arrow_rest_iife(text, i, depth, state):
 
 def _js_parse_f608_fixed_arrow_spread_iife(text, i, depth, state):
     """Parse `((P1,...,Pn)=>BODY)(ARGS)` or
-    `((P1,...,Pn)=>BODY).call(T, ARGS)` at text[i] (F608, F615).
+    `((P1,...,Pn)=>BODY).call(T, ARGS)` at text[i] (F608, F615, F625).
 
     Fixed-parameter arrow IIFE whose call-site arguments include at
     least one `...new Set([LITS])` spread (F608 filed shapes:
     `((a,b)=>a+b)(...new Set(['f1','f2']))` and the `.call` twin
     `((a,b)=>a+b).call(null,...new Set(['f1','f2']))`, node
-    v24.20.0) or at least one `...new Map([[k,v],...]).values()`
+    v24.20.0), at least one `...new Map([[k,v],...]).values()`
     spread (F615 filed shapes: the same three forms with the
-    Map-values source). The Set spread expands to the
+    Map-values source), or at least one `...new
+    Map([[k,v],...]).entries()` / `.keys()` spread (F625 filed
+    shapes). The Set spread expands to the
     SameValueZero-deduped insertion-ordered element list (the F602
     discipline, via `_js_parse_f608_setspread_args`); the Map-values
     spread expands to the later-wins insertion-ordered value list
-    (the F494 discipline, via `_js_parse_f615_mapspread_args`);
+    (the F494 discipline, via `_js_parse_f615_mapspread_args`); the
+    Map-entries/keys spreads expand to the later-wins pair / key
+    lists (via `_js_parse_f625_mapspread_args`);
     each param binds positionally to the expanded arg list through
     `_js_bind_destructure_arguments` -- a param is a STRING value in
     the engine, so only the bare-identifier use is modeled
-    (`a[0]`/`a.M`/`a(` fail closed exactly as there). Extra args are
-    dropped engine-exactly; fewer args than params fail closed (the
-    engine coerces `undefined`, which the decoder never guesses --
-    the F524 discipline). The rewritten body is parsed by the normal
-    additive grammar at depth+1, so every downstream decoder,
-    bound, and fail-closed rule applies unchanged. Never evals.
+    (`a[0]`/`a.M`/`a(` fail closed exactly as there) -- except for
+    the F625 entries source, where each param IS a [k,v] pair array
+    in the engine and the pair binder (`_js_bind_f625_pair_arguments`)
+    models bare `a` plus the engine index reads `a[0]`/`a[1]`.
+    Extra args are dropped engine-exactly; fewer args than params
+    fail closed (the engine coerces `undefined`, which the decoder
+    never guesses -- the F524 discipline). The rewritten body is
+    parsed by the normal additive grammar at depth+1, so every
+    downstream decoder, bound, and fail-closed rule applies
+    unchanged. Never evals.
 
     Bounds (all fail closed -- rejected, never mis-decoded):
     - every param must be a plain identifier: a `...rest` param
@@ -15708,9 +15756,11 @@ def _js_parse_f608_fixed_arrow_spread_iife(text, i, depth, state):
       (conservative), and duplicate/destructured/default params
       fail closed.
     - at least one param and at least one arg; at least one arg
-      must be a Set or Map-values spread (pure-literal fixed-param
-      calls are an unfiled residual -- documented, not silently
-      closed).
+      must be a Set, Map-values, Map-entries, or Map-keys spread
+      (pure-literal fixed-param calls are an unfiled residual --
+      documented, not silently closed).
+    - mixed spread kinds in one call (e.g. a values spread plus an
+      entries spread) fail closed (unfiled residual).
     - the `.call` thisArg is parsed and discarded (F577 precedent:
       the engine ignores it for arrows -- node-exact); only
       ignored-value/identifier thisArgs are modeled.
@@ -15718,8 +15768,8 @@ def _js_parse_f608_fixed_arrow_spread_iife(text, i, depth, state):
       arrow's are lexically bound by the enclosing (unknown) scope
       (F577 precedent).
     - other spreads (`...['a']`, `...ident`, `...new Map(...)`
-      without `.values()`, `.keys()`/`.entries()` spreads) and
-      `.apply` fail closed (documented residuals).
+      without a member) and `.apply` fail closed (documented
+      residuals).
     Returns (value, next_index), or None when the head does not
     match (the caller falls through to the parenthesized-additive
     path, which fails closed on the `(` + `(` head as before).
@@ -15828,6 +15878,7 @@ def _js_parse_f608_fixed_arrow_spread_iife(text, i, depth, state):
             raise _JSExprFail("F608 not invoked")
         args = []
         saw_spread = False
+        spread_kinds = set()
         k = _js_skip_ws(text, k)
         if k < n and text[k] == ")":
             raise _JSExprFail("F608 no args")
@@ -15839,13 +15890,23 @@ def _js_parse_f608_fixed_arrow_spread_iife(text, i, depth, state):
                 # F608: `...new Set([LITS])` -- the Set spread;
                 # F615: `...new Map([[k,v],...]).values()` -- the
                 # Map-values spread (the F494 later-wins value
-                # list). Other spreads fail closed.
+                # list); F625: `...new Map([[k,v],...]).entries()` /
+                # `.keys()` -- the Map-entries/keys spreads (the
+                # F625 pair/key lists). Other spreads fail closed.
                 try:
                     spread_args, k = _js_parse_f608_setspread_args(
                         text, k, depth, state)
+                    spread_kinds.add("set")
                 except _JSExprFail:
-                    spread_args, k = _js_parse_f615_mapspread_args(
-                        text, k, depth, state)
+                    try:
+                        spread_args, k = _js_parse_f615_mapspread_args(
+                            text, k, depth, state)
+                        spread_kinds.add("mapvalues")
+                    except _JSExprFail:
+                        (spread_args, k, _k625) = (
+                            _js_parse_f625_mapspread_args(
+                                text, k, depth, state))
+                        spread_kinds.add(_k625)
                 args.extend(spread_args)
                 saw_spread = True
             elif text[k] in "'\"":
@@ -15871,6 +15932,12 @@ def _js_parse_f608_fixed_arrow_spread_iife(text, i, depth, state):
             raise _JSExprFail("F608 no Set spread arg")
         if len(args) < len(names):
             raise _JSExprFail("F608 arity")
+        if len(spread_kinds) > 1:
+            # F625: mixed spread kinds in one call (e.g. a values
+            # spread plus an entries spread) are an unfiled residual
+            # -- the fixed-param binder would mix element types; fail
+            # closed rather than mis-decode.
+            raise _JSExprFail("F608 mixed spread kinds")
         # Lexically-scoped names the static decoder cannot resolve
         # fail closed (miss, never mis-decode).
         segs = _js_split_code_strings(body_expr)
@@ -15880,8 +15947,15 @@ def _js_parse_f608_fixed_arrow_spread_iife(text, i, depth, state):
                 raise _JSExprFail("F608 body references " + kw)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
-        rewritten = _js_bind_destructure_arguments(
-            body_expr, args, names, list(range(len(names))))
+        if "entries" in spread_kinds:
+            # F625: params bind to [k,v] pair arrays -- the pair
+            # binder models bare `a` and the engine index reads
+            # `a[0]`/`a[1]`.
+            rewritten = _js_bind_f625_pair_arguments(
+                body_expr, args, names)
+        else:
+            rewritten = _js_bind_destructure_arguments(
+                body_expr, args, names, list(range(len(names))))
         val, k2 = _js_parse_additive(rewritten, 0, depth + 1, state)
         k2 = _js_skip_ws(rewritten, k2)
         if k2 != len(rewritten):
@@ -18830,8 +18904,8 @@ def _js_parse_f608_setspread_args(text, j, depth, state):
     return raw_texts, k
 
 
-def _js_parse_f615_numkey(text, t):
-    """Parse a numeric Map key at text[t] (F615); return (str(num), next).
+def _js_parse_map_numkey(text, t):
+    """Parse a numeric Map key at text[t] (F615/F625); return (str(num), next).
 
     Mirrors the _JSNumStr identity the F494 validator computes for
     numeric keys: decimal and 0x integers via `_js_parse_number`
@@ -18899,7 +18973,7 @@ def _js_parse_f615_mapspread_args(text, j, depth, state):
             kval, t = _js_parse_string(text, t)
             kid = ("s", kval)
         else:
-            ks, t = _js_parse_f615_numkey(text, t)
+            ks, t = _js_parse_map_numkey(text, t)
             kid = ("n", ks)
         t = _js_skip_ws(text, t)
         if t >= n or text[t] != ",":
@@ -18933,6 +19007,196 @@ def _js_parse_f615_mapspread_args(text, j, depth, state):
         # miss, never a guess.
         raise _JSExprFail("F615 mapspan value mismatch")
     return [r for _, r in order], k
+
+
+def _js_parse_f625_mapspread_args(text, j, depth, state):
+    """Parse `...new Map([[k,v],...]).entries()` / `.keys()` at text[j] (F625).
+
+    The Map entries()/keys() spread sources: spreading `entries()`
+    expands to the [k,v] pairs in iteration order (later-wins on
+    duplicate keys), spreading `keys()` to the keys in iteration
+    order (node v24.20.0). Entry validation is the shared
+    `_js_parse_new_map_head` (F494/F625 -- plain-string-literal
+    rule, SameValueZero identity, F452 part/ops charging unchanged);
+    the rescan below recovers each surviving entry's raw source
+    text (pair span for entries, key span for keys) with the same
+    later-wins order, and the decoded (key, value) pairs must agree
+    with the validated head exactly -- any divergence fails closed
+    (never mis-decoded). Raw source preserves the exact escape
+    encoding, so the downstream binders substitute byte-identical
+    text. `.values()` is refused here (F615 owns that source);
+    Set spreads are refused (F608). Never evals.
+
+    Returns (spread_texts, next_index, kind): *spread_texts* is the
+    raw source text of each spread element in iteration order (pair
+    spans for "entries", key spans for "keys"), *kind* is
+    "entries" or "keys".
+    """
+    n = len(text)
+    if j + 3 > n or not text.startswith("...", j):
+        raise _JSExprFail("F625 not spread")
+    sj = _js_skip_ws(text, j + 3)
+    pairs, k = _js_parse_new_map_head(text, sj, depth, state)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ".":
+        raise _JSExprFail("F625 expected member")
+    km = _js_match_kw(text, _js_skip_ws(text, k + 1), "entries")
+    kind = "entries"
+    if km is None:
+        km = _js_match_kw(text, _js_skip_ws(text, k + 1), "keys")
+        kind = "keys"
+    if km is None:
+        # `.values()` (F615) and anything else are not F625's.
+        raise _JSExprFail("F625 not entries()/keys()")
+    k = _js_expect(text, km, "(")
+    k = _js_expect(text, k, ")")
+    # Rescan the entry-array span for raw key/value/pair source
+    # texts, mirroring the F615 rescan discipline (the head already
+    # validated the entries, so the span scan is total; guards stay
+    # anyway).
+    arr_open = text.find("[", sj)
+    if arr_open < 0:  # defensive: the validator already consumed it
+        raise _JSExprFail("F625 mapspan no array")
+    t = arr_open + 1
+    order = []  # (kid, kval, vval, pair_raw, kraw, vraw), later-wins
+    index = {}
+    while True:
+        t = _js_skip_ws(text, t)
+        if t >= n:
+            raise _JSExprFail("F625 mapspan overrun")
+        if text[t] == "]":
+            break
+        if text[t] != "[":
+            raise _JSExprFail("F625 mapspan entry not a pair")
+        p0 = t
+        t = _js_skip_ws(text, t + 1)
+        if t < n and text[t] in "'\"":
+            k0 = t
+            kval, t = _js_parse_string(text, t)
+            kraw = text[k0:t]
+            kid = ("s", kval)
+        else:
+            k0 = t
+            ks, t = _js_parse_map_numkey(text, t)
+            kraw = text[k0:t]
+            kval = ks
+            kid = ("n", ks)
+        t = _js_skip_ws(text, t)
+        if t >= n or text[t] != ",":
+            raise _JSExprFail("F625 mapspan bad key separator")
+        t = _js_skip_ws(text, t + 1)
+        if t >= n or text[t] not in "'\"":
+            raise _JSExprFail("F625 mapspan value not a literal")
+        v0 = t
+        vval, t = _js_parse_string(text, t)
+        vraw = text[v0:t]
+        t = _js_skip_ws(text, t)
+        if t >= n or text[t] != "]":
+            raise _JSExprFail("F625 mapspan pair not closed")
+        t = _js_skip_ws(text, t + 1)
+        pair_raw = text[p0:t]
+        if kid in index:
+            order[index[kid]] = (kid, kval, vval, pair_raw, kraw, vraw)
+        else:
+            index[kid] = len(order)
+            order.append((kid, kval, vval, pair_raw, kraw, vraw))
+        t = _js_skip_ws(text, t)
+        if t < n and text[t] == ",":
+            t += 1
+            continue
+        if t < n and text[t] == "]":
+            break
+        raise _JSExprFail("F625 mapspan bad separator")
+    if ([(kid, kval, vval) for kid, kval, vval, _, _, _ in order]
+            != [(kid, k, v) for kid, k, v in pairs]):
+        # Defensive: the rescan's later-wins order must agree with
+        # the validated head exactly; anything else is a miss,
+        # never a guess.
+        raise _JSExprFail("F625 mapspan pair mismatch")
+    state["ops"] += 1  # the iterable-spread source is obfuscation-shaped
+    if kind == "entries":
+        return [pr for _, _, _, pr, _, _ in order], k, kind
+    return [kr for _, _, _, _, kr, _ in order], k, kind
+
+
+def _js_bind_f625_pair_arguments(body_expr, arg_texts, names):
+    """Bind fixed params to [k,v] pair raws in *body_expr* (F625).
+
+    The entries-spread twin of `_js_bind_destructure_arguments`: each
+    param IS a [k,v] pair array in the engine (node v24.20.0), so
+    every code-span occurrence of a bound name must be bare `a`
+    (the pair) or `a[N]` with N in {0,1} -- the engine index read.
+    The ident is rewritten to the pair's raw source text, leaving
+    `[N]` in place (`a[1]` -> `['a','f1'][1]`, which the additive
+    grammar parses node-exactly). Any other use (`a.M`, `a(`,
+    `...a`, `.a`, `a['x']`, `a[2]`) fails closed, as do params
+    beyond the call args (the engine coerces `undefined`, which the
+    decoder never guesses -- the F524 discipline). Guards mirror
+    `_js_bind_destructure_arguments` (no nested function/delete/
+    new/class, no bare assignment, no arrow-param shadowing).
+    Substitution never touches string-literal contents. Plain string
+    scanning throughout -- zero new regexes. Never evals.
+    """
+    if len(names) > len(arg_texts):
+        raise _JSExprFail("F625 arity")
+    segs = _js_split_code_strings(body_expr)
+    code = "".join(s for is_code, s in segs if is_code)
+    for kw, msg in (("function", "nested function in bound body"),
+                    ("delete", "delete in bound body"),
+                    ("new", "new in bound body"),
+                    ("class", "class in bound body")):
+        if _js_code_find_idents(code, kw):
+            raise _JSExprFail(msg)
+    if _js_code_has_bare_assign(code):
+        raise _JSExprFail("assignment in bound body")
+    for nm in names:
+        if _js_code_has_ident_arrow_param(code, nm):
+            raise _JSExprFail("bound ident as arrow param")
+    by_name = {nm: k for k, nm in enumerate(names)}
+    out = []
+    for is_code, s in segs:
+        if not is_code:
+            out.append(s)
+            continue
+        occ = []
+        for nm, k in by_name.items():
+            for st in _js_code_find_idents(s, nm):
+                occ.append((st, nm, k))
+        occ.sort()
+        pos = 0
+        buf = []
+        for st, nm, k in occ:
+            en = st + len(nm)
+            if st > 0 and s[st - 1] == ".":
+                raise _JSExprFail("F625 member receiver use")
+            if s[max(0, st - 3):st].endswith("..."):
+                raise _JSExprFail("F625 spread use")
+            rest = s[en:]
+            br = _js_parse_bracket_index(rest)
+            if br is not None:
+                idx, consumed = br
+                if idx not in (0, 1):
+                    raise _JSExprFail("F625 index not 0/1")
+                buf.append(s[pos:st])
+                buf.append(arg_texts[k])
+                pos = en  # the [N] bracket stays in place
+                continue
+            if rest[:1] in (".", "[", "("):
+                raise _JSExprFail("F625 unmodeled pair use")
+            buf.append(s[pos:st])
+            buf.append(arg_texts[k])
+            pos = en
+        buf.append(s[pos:])
+        out.append("".join(buf))
+    rewritten = "".join(out)
+    # Defensive: every code-span occurrence must have been consumed.
+    # (String spans may legitimately contain the word.)
+    rcode = "".join(s for is_code, s in _js_split_code_strings(rewritten)
+                    if is_code)
+    for nm in names:
+        if _js_code_find_idents(rcode, nm):
+            raise _JSExprFail("F625 pair ident left unsubstituted")
+    return rewritten
 
 
 def _js_parse_f602_set_forof_iife(text, i, depth, state):
