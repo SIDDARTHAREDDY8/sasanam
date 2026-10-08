@@ -8,7 +8,7 @@ New findings (14, all LOW, all OPEN), filed from F621:
 - F622: Object.keys + computed bracket reads on var-bound objects -- 2 shapes.
 - F623: values()/enumeration reads on Object.fromEntries results -- 3 shapes.
 - F624: String.prototype.slice() with trimming bounds -- 3 shapes.
-- F625: Map entries()/keys() spread into call arguments -- 3 shapes.
+- F625: Map entries()/keys() spread into call arguments -- 3 shapes (CLOSED wave-375 lane 6).
 - F626: URLSearchParams iteration protocols (for-of/forEach/keys+get) -- 3 shapes.
 - F627: variable-bound VALUES in URLSearchParams statement-form mutations -- 2 shapes.
 - F628: decodeURIComponent fragment laundering -- 2 shapes.
@@ -153,11 +153,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F612-F634 open, next F635 (this lane)."""
+    """Control: footer shows F621-F624, F626-F639 open, next F640 (this lane)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F640**" in text  # Wave-374 merge: final truth  # Wave-374 merge: footer repoint open F621-F639 / next F640
-          and "Open findings: F621, F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635, F636, F637, F638, F639." in text)  # Wave-374 merge: final truth  # Wave-374 merge: footer repoint open F621-F639 / next F640
+    ok = ("Next free finding: **F640**" in text  # Wave-375 lane 6: F625 CLOSED  # Wave-374 merge: final truth  # Wave-374 merge: footer repoint open F621-F639 / next F640
+          and "Open findings: F621, F622, F623, F624, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635, F636, F637, F638, F639." in text)  # Wave-375 lane 6: F625 CLOSED  # Wave-374 merge: final truth  # Wave-374 merge: footer repoint open F621-F639 / next F640
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -264,10 +264,10 @@ def test_r42_f624_open():
 
 
 @_t
-def test_r42_f625_open():
-    """F625 OPEN: Map.entries() spread into call args miss."""
-    miss = _misses("((...a)=>a.map(e=>e[1]).join(''))(...new Map([['a','%s'],['b','%s']]).entries())" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f625_closed():
+    """F625 CLOSED (wave-375 lane 6): Map.entries() spread blocks."""
+    hit = _blocked("((...a)=>a.map(e=>e[1]).join(''))(...new Map([['a','%s'],['b','%s']]).entries())" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
@@ -377,16 +377,16 @@ def test_r42_f624_s3_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r42_f625_s2_open():
-    """F625 OPEN (shape entries-fixed): miss reproduces."""
-    miss = _misses("((a,b)=>a[1]+b[1])(...new Map([['a','%s'],['b','%s']]).entries())" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f625_s2_closed():
+    """F625 CLOSED (wave-375 lane 6, shape entries-fixed): blocks."""
+    hit = _blocked("((a,b)=>a[1]+b[1])(...new Map([['a','%s'],['b','%s']]).entries())" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r42_f625_s3_open():
-    """F625 OPEN (shape keys-spread): miss reproduces."""
-    miss = _misses("((...a)=>a.join(''))(...new Map([['%s','x'],['%s','y']]).keys())" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f625_s3_closed():
+    """F625 CLOSED (wave-375 lane 6, shape keys-spread): blocks."""
+    hit = _blocked("((...a)=>a.join(''))(...new Map([['%s','x'],['%s','y']]).keys())" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_r42_f626_s2_open():

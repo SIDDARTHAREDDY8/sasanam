@@ -31,13 +31,14 @@ Closed (wave-374 lane 4):
   fixed-param arrows `((P1,...,Pn)=>BODY)(ARGS)` /
   `((P1,...,Pn)=>BODY).call(T, ARGS)` with at least one spread arg.
 
-Boundaries (all fail closed, never mis-decoded): `.keys()` /
-`.entries()` spreads; bare Map spreads (`...new Map(...)`); array
-spreads (`...['a']`); `.apply`; var-bound Maps; non-literal keys or
-values; empty/malformed entry arrays; arity shortfalls; named-leading-
-rest `(a,...r)` params; `arguments`-named or duplicate params;
-`this`/`arguments`/`super`/template-literal bodies; non-bare param
-uses; default params; uninvoked arrows.
+Boundaries (all fail closed, never mis-decoded): bare Map spreads
+(`...new Map(...)`); array spreads (`...['a']`); `.apply`; var-bound
+Maps; non-literal keys or values; empty/malformed entry arrays;
+arity shortfalls; named-leading-rest `(a,...r)` params;
+`arguments`-named or duplicate params; `this`/`arguments`/`super`/
+template-literal bodies; non-bare param uses; default params;
+uninvoked arrows. (`.keys()`/`.entries()` spreads are F625-modeled
+since wave-375 -- see the F625-takeover probe below.)
 
 Standalone: green checks ON by default; honors GOV_SKIP_GREEN.
 """
@@ -145,14 +146,26 @@ def p2_variants_held():
                                         len(shapes)))
 
 
+def p2b_f625_takeover_blocked():
+    """F625 (wave-375) takeover: `.keys()`/`.entries()` spreads now coded."""
+    shapes = [
+        # F625 (wave-375): `.keys()`/`.entries()` spreads are now
+        # coded blocks, not misses -- the F625 takeover.
+        "((a,b)=>a+b)(...%s)" % "new Map([['%s','x'],['%s','y']]).keys()"
+        % (_A, _B),
+        "((a,b)=>a[1]+b[1])(...%s)"
+        % "new Map([['a','%s'],['b','%s']]).entries()" % (_A, _B),
+    ]
+    bad = [s for s in shapes if not _blocked(s)]
+    return ("HELD" if not bad else "BREAK",
+            "%d/%d F625-takeover shapes blocked" % (len(shapes) - len(bad),
+                                                   len(shapes)))
+
+
 def p3_fail_closed_boundaries():
     """Boundaries fail closed: no variant, never mis-decoded."""
     shapes = [
         # wrong iterator / wrong spread source
-        "((a,b)=>a+b)(...%s)" % "new Map([['a','%s'],['b','%s']]).keys()"
-        % (_A, _B),
-        "((a,b)=>a+b)(...%s)" % "new Map([['a','%s'],['b','%s']]).entries()"
-        % (_A, _B),
         "((a)=>a)(...new Map([['a','%s']]))" % _A,
         "((a,b)=>a+b)(...['%s','%s'])" % (_A, _B),
         # var-bound Map (literal-only scope, documented residual)
@@ -258,12 +271,15 @@ def p4_node_differential():
 def _open_neighbor_shapes():
     """Filed shapes of the still-OPEN round-42 findings (must stay BREAK).
 
-    Imported from their red-first batteries: F621-F634. This lane must
-    not absorb them. (Wave-374 merge: F612-F620 are now CLOSED.)
+    Imported from their red-first batteries: F621-F634 except F625
+    (this lane closes F625 -- its own shapes now block by design).
+    This lane must not absorb them. (Wave-374 merge: F612-F620 are
+    now CLOSED.)
     """
     import importlib
     shapes = []
-    for fnum in (621, 622, 623, 624, 625, 626, 627, 628, 629, 630, 631, 632, 633, 634):
+    for fnum in (621, 622, 623, 624, 626, 627, 628, 629, 630, 631,
+                 632, 633, 634):
         mod = importlib.import_module("w374_f%d_redfirst" % fnum)
         for name, payload, recovers in mod.SHAPES:
             if recovers:
@@ -316,7 +332,7 @@ def p7_pin_and_footer():
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as fh:
         text = fh.read()
     footer_ok = ("CLOSED 2026-10-08 wave-374 lane 4" in text
-                 and "Open findings: F621, F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635, F636, F637, F638, F639." in text  # Wave-374 lane 4: F615 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
+                 and "Open findings: F621, F622, F623, F624, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635, F636, F637, F638, F639." in text  # Wave-374 lane 4: F615 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
                  and "Next free finding: **F640**" in text)  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
     detail = "pin=%s codes=%d; footer-closed=%s" % (
         TAXONOMY_PIN, n, footer_ok)
@@ -362,7 +378,7 @@ def _green_check():
 
 
 def main():
-    probes = [p1_filed_shapes_held, p2_variants_held,
+    probes = [p1_filed_shapes_held, p2_variants_held, p2b_f625_takeover_blocked,
               p3_fail_closed_boundaries, p4_node_differential,
               p5_compositions, p6_honest_text_quiet, p7_pin_and_footer]
     breaks, held, errors = 0, 0, 0
