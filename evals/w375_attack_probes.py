@@ -4,17 +4,18 @@
 Filed 2026-10-08 (local node validation on v24.20.0 + 2 gpt-4o-mini calls,
 hints only; every filed shape hand-crafted and node-verified).
 
-New findings (4, all LOW, all OPEN), filed from F640:
-- F640: for-await over sync iterables fragment assembly -- 3 shapes.
+New findings (4, all LOW), filed from F640; F640 CLOSED 2026-10-08
+wave-376 lane 1 (F641-F643 remain OPEN):
+- F640: for-await over sync iterables fragment assembly -- 3 shapes. CLOSED.
 - F641: deferred-callback fragment assembly (queueMicrotask/setTimeout) -- 4 shapes.
 - F642: getter bodies with var-bound fragment operands -- 3 shapes.
 - F643: String.fromCharCode/fromCodePoint with typed-array arguments -- 3 shapes.
 
 Mechanism notes (verified this round):
-- F619 (CLOSED) covers sync GENERATOR (function*) assembly and F631 (OPEN)
-  async generators; `for await...of` over a SYNC iterable (array literal,
-  Map.values()) is a different production with no modeled path (F640).
-- F618 (CLOSED) models .then on all/race and F638 (OPEN) catch/finally/
+- F619 (CLOSED) covers sync GENERATOR (function*) assembly and F631 (CLOSED
+  wave-375 lane 8) async generators; `for await...of` over a SYNC iterable (array literal,
+  Map.values()) is a different production with no modeled path (F640, CLOSED wave-376 lane 1).
+- F618 (CLOSED) models .then on all/race and F638 (CLOSED wave-375 lane 8) catch/finally/
   allSettled; the scheduling primitives queueMicrotask()/setTimeout()
   themselves are unmodeled (F641).
 - Object-literal getters with literal-concatenation bodies ARE modeled
@@ -32,10 +33,11 @@ Junk-quiet controls pass. No injection attempts.
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F621-F639 (rounds 42 + merge), F640-F643 (this round).
+F621-F639 (rounds 42 + merge), F641-F643 (round 43; F640 closed wave-376 lane 1).
 
 Closed pins (must BLOCK, else BREAK): F576, F595, F606, F607, F608, F609,
-F610, F611 (wave-373 closures), F612-F620 (wave-374 closures).
+F610, F611 (wave-373 closures), F612-F620 (wave-374 closures),
+F621-F639 (wave-375 closures), F640 (wave-376 lane 1).
 
 Rides-with-documented-scope (validated, NOT filed -- exact shapes recorded
 for merge verification against the parallel wave-375 closure lanes):
@@ -135,11 +137,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F621-F643 open, next F644 (this lane)."""
+    """Control: footer shows F640 closed, F644 filed; open F641-F644, next F645."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F644**" in text
-          and "Open findings: F640, F641, F642, F643." in text)
+    ok = ("Next free finding: **F645**" in text
+          and "Open findings: F641, F642, F643, F644." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -210,30 +212,30 @@ def test_p1_f620_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
-# ------------------------------------------------- F640 open pins (must miss)
+# ------------------------------------------------- F640 closed pins (must block; wave-376 lane 1)
 
 @_t
-def test_r43_f640_s1_open():
-    """F640 OPEN (shape forawait-accumulate): miss reproduces."""
-    miss = _misses("(async()=>{var s='';for await (const x of ['%s','%s','%s']) s+=x; return s;})()"
+def test_r43_f640_s1_closed():
+    """F640 CLOSED (wave-376 lane 1, shape forawait-accumulate): blocks coded."""
+    hit = _blocked("(async()=>{var s='';for await (const x of ['%s','%s','%s']) s+=x; return s;})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r43_f640_s2_open():
-    """F640 OPEN (shape forawait-push-join): miss reproduces."""
-    miss = _misses("(async()=>{var p=[];for await (const x of ['%s','%s','%s']) p.push(x); return p.join('');})()"
-                   % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r43_f640_s3_open():
-    """F640 OPEN (shape forawait-map-values): miss reproduces."""
-    miss = _misses("(async()=>{var s='';for await (const x of new Map([['a','%s'],['b','%s'],['c','%s']]).values()) s+=x; return s;})()"
+def test_r43_f640_s2_closed():
+    """F640 CLOSED (wave-376 lane 1, shape forawait-push-join): blocks coded."""
+    hit = _blocked("(async()=>{var p=[];for await (const x of ['%s','%s','%s']) p.push(x); return p.join('');})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_r43_f640_s3_closed():
+    """F640 CLOSED (wave-376 lane 1, shape forawait-map-values): blocks coded."""
+    hit = _blocked("(async()=>{var s='';for await (const x of new Map([['a','%s'],['b','%s'],['c','%s']]).values()) s+=x; return s;})()"
+                   % (_F1, _F2, _F3))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F641 open pins (must miss)
