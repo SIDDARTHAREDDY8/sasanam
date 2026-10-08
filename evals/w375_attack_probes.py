@@ -142,7 +142,7 @@ def test_b0_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F645**" in text
-          and "Open findings: F642, F643, F644." in text)
+          and "Open findings: F643, F644." in text)  # merge intermediate
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -273,30 +273,30 @@ def test_r43_f641_s4_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
-# ------------------------------------------------- F642 open pins (must miss)
+# ------------------------------------------------- F642 closed pins (must block)
 
 @_t
-def test_r43_f642_s1_open():
-    """F642 OPEN (shape getter-varfrags): miss reproduces."""
-    miss = _misses("(function(){var a='%s',b='%s',c='%s';var o={get s(){return a+b+c;}};return o.s;})()"
+def test_r43_f642_s1_closed():
+    """F642 CLOSED (wave-376 lane 3, shape getter-varfrags): blocks."""
+    hit = _blocked("(function(){var a='%s',b='%s',c='%s';var o={get s(){return a+b+c;}};return o.s;})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r43_f642_s2_open():
-    """F642 OPEN (shape proxy-get-trap-varfrags): miss reproduces."""
-    miss = _misses("(function(){var a='%s',b='%s',c='%s';var p=new Proxy({},{get:(t,k)=>a+b+c});return p.anything;})()"
-                   % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r43_f642_s3_open():
-    """F642 OPEN (shape weakref-deref-getter-varfrags): miss reproduces."""
-    miss = _misses("(function(){var a='%s',b='%s',c='%s';var w=new WeakRef({get s(){return a+b+c;}});return w.deref().s;})()"
+def test_r43_f642_s2_closed():
+    """F642 CLOSED (wave-376 lane 3, shape proxy-get-trap-varfrags): blocks."""
+    hit = _blocked("(function(){var a='%s',b='%s',c='%s';var p=new Proxy({},{get:(t,k)=>a+b+c});return p.anything;})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_r43_f642_s3_closed():
+    """F642 CLOSED (wave-376 lane 3, shape weakref-deref-getter-varfrags): blocks."""
+    hit = _blocked("(function(){var a='%s',b='%s',c='%s';var w=new WeakRef({get s(){return a+b+c;}});return w.deref().s;})()"
+                   % (_F1, _F2, _F3))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F643 open pins (must miss)
