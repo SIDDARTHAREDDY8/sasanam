@@ -9,7 +9,7 @@ New findings (10, all LOW, all OPEN), filed from F644:
 - F645: function default-parameter fragment assembly -- 3 shapes.
 - F646: Array.prototype.forEach accumulation -- 3 shapes.
 - F647: nullish-coalescing RIGHT-pick fragment assembly -- 3 shapes.
-- F648: URLSearchParams no-arg constructor + append + getAll().join() -- 3 shapes.
+- F648: URLSearchParams no-arg constructor + append + getAll().join() -- 3 shapes (CLOSED wave-377 lane 5).
 - F649: structuredClone-sourced enumeration / var-bound member reads -- 3 shapes.
 - F650: object-spread-assembled enumeration sources -- 3 shapes.
 - F651: Array .entries()/.values()/.keys() for-of assembly -- 3 shapes.
@@ -31,8 +31,9 @@ Mechanism notes (verified this round):
   A whole credential in RIGHT still blocks via the literal scan -- the gap
   is specifically the split across ??.
 - F599 (CLOSED) requires `new URLSearchParams('LIT')`; the no-argument
-  constructor with the same appends + getAll('k').join('') escapes (F648).
-  set/get terminals on the no-arg form already block.
+  constructor with the same appends + getAll('k').join('') escaped (F648,
+  CLOSED wave-377 lane 5). set/get terminals on the no-arg form already
+  block.
 - F536 (CLOSED) models INLINE direct member reads on structuredClone;
   var-bound intermediates (var o=structuredClone(...); o.a+o.b) and
   Object.values()/entries() over structuredClone sources escape (F649).
@@ -149,11 +150,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F640-F653 open, next F654 (this lane)."""
+    """Control: footer shows F648 closed; open F644-F647, F649-F654, next F655 (this lane)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F655**" in text  # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
-          and "Open findings: F644, F645, F646, F647, F648, F649, F650, F651, F652, F653, F654." in text)  # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
+    ok = ("Next free finding: **F655**" in text  # Wave-377 lane 5: F648 CLOSED; open F644-F647, F649-F654 (next F655)
+          and "Open findings: F644, F645, F646, F647, F649, F650, F651, F652, F653, F654." in text)  # Wave-377 lane 5: F648 CLOSED; open F644-F647, F649-F654 (next F655)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -429,30 +430,30 @@ def test_r44_f647_s3_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 
-# ------------------------------------------------- F648 open pins (must miss)
+# ------------------------------------------------- F648 closed pins (must block)
 
 @_t
-def test_r44_f648_s1_open():
-    """F648 OPEN (shape usp-noarg-getall-join): miss reproduces."""
-    miss = _misses("(function(){var p=new URLSearchParams();p.append('q','%s');p.append('q','%s%s');return p.getAll('q').join('');})()"
+def test_r44_f648_s1_closed():
+    """F648 CLOSED wave-377 lane 5 (shape usp-noarg-getall-join): blocks."""
+    hit = _blocked("(function(){var p=new URLSearchParams();p.append('q','%s');p.append('q','%s%s');return p.getAll('q').join('');})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r44_f648_s2_open():
-    """F648 OPEN (shape usp-noarg-three-appends): miss reproduces."""
-    miss = _misses("(function(){var p=new URLSearchParams();p.append('q','%s');p.append('q','%s');p.append('q','%s');return p.getAll('q').join('');})()"
-                   % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r44_f648_s3_open():
-    """F648 OPEN (shape usp-noarg-getall-map): miss reproduces."""
-    miss = _misses("(function(){var p=new URLSearchParams();p.append('q','%s');p.append('q','%s%s');return p.getAll('q').map(function(x){return x;}).join('');})()"
+def test_r44_f648_s2_closed():
+    """F648 CLOSED wave-377 lane 5 (shape usp-noarg-three-appends): blocks."""
+    hit = _blocked("(function(){var p=new URLSearchParams();p.append('q','%s');p.append('q','%s');p.append('q','%s');return p.getAll('q').join('');})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_r44_f648_s3_closed():
+    """F648 CLOSED wave-377 lane 5 (shape usp-noarg-getall-map): blocks."""
+    hit = _blocked("(function(){var p=new URLSearchParams();p.append('q','%s');p.append('q','%s%s');return p.getAll('q').map(function(x){return x;}).join('');})()"
+                   % (_F1, _F2, _F3))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F649 open pins (must miss)
