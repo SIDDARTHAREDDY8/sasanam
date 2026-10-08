@@ -99,7 +99,7 @@ def test_b0_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F713**" in text
-          and "Open findings: F704, F705, F706, F707, F708, F709, F710, F711, F712." in text)  # Wave-382 merge: lanes 1+2 (F700-F703 CLOSED)
+          and "Open findings: F706, F707, F708, F709, F710, F711, F712." in text)  # Wave-382 merge: lanes 1-3 (F700-F705 CLOSED)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -239,31 +239,31 @@ def test_r49_f703_defineGetter_two_closed():
 
 
 @_t
-def test_r49_f704_create_null_open():
-    """F704 OPEN (Object.create descriptor): miss reproduces."""
-    miss = _misses("(function(){var o=Object.create(null,{x:{get:function(){return '%s';}}});return o.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r49_f704_create_null_closed():
+    """F704 CLOSED (Object.create descriptor): coded refusal."""
+    hit = _blocked("(function(){var o=Object.create(null,{x:{get:function(){return '%s';}}});return o.x+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r49_f704_create_proto_open():
-    """F704 OPEN (Object.create descriptor): miss reproduces."""
-    miss = _misses("(function(){var o=Object.create(Object.prototype,{x:{enumerable:true,get:function(){return '%s';}}});return o.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r49_f704_create_proto_closed():
+    """F704 CLOSED (Object.create descriptor): coded refusal."""
+    hit = _blocked("(function(){var o=Object.create(Object.prototype,{x:{enumerable:true,get:function(){return '%s';}}});return o.x+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r49_f705_reflect_get_receiver_open():
-    """F705 OPEN (Reflect.get): miss reproduces."""
-    miss = _misses("(function(){var o={get x(){return '%s';}};return Reflect.get(o,'x',{})+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r49_f705_reflect_get_receiver_closed():
+    """F705 CLOSED (Reflect.get): coded refusal."""
+    hit = _blocked("(function(){var o={get x(){return '%s';}};return Reflect.get(o,'x',{})+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r49_f705_reflect_get_plain_open():
-    """F705 OPEN (Reflect.get): miss reproduces."""
-    miss = _misses("(function(){var o={get x(){return '%s';}};return Reflect.get(o,'x')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r49_f705_reflect_get_plain_closed():
+    """F705 CLOSED (Reflect.get): coded refusal."""
+    hit = _blocked("(function(){var o={get x(){return '%s';}};return Reflect.get(o,'x')+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t

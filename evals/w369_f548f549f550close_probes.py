@@ -41,10 +41,12 @@ Closure (gov/dlp.py):
   desugars to a _JSObj with the proto chain attached (new `proto`
   slot; member reads delegate via `_jsobj_lookup`, own properties
   shadow, engine-exact -- node v24.20.0 verified). PROTO: an
-  object literal, a nested `Object.create(...)`, or `null`;
-  PROPS: `{}` or `{k:{value:V}}` (value descriptors only).
-  Non-literal protos, `get`/`set` prop descriptors, and
-  `Object['create']` fail closed (documented).
+  object literal, a nested `Object.create(...)`, `Object.prototype`
+  (F704: modeled as an empty proto), or `null`;
+  PROPS: `{}` or `{k:{value:V}}` / `{k:{get:...}}` (F704: get
+  descriptors install the already-evaluated getter as _JSAccessor).
+  Non-literal protos (other than the modeled forms), `set` prop
+  descriptors, and `Object['create']` fail closed (documented).
 - `_js_parse_f549_gopd_object`: `Object.getOwnPropertyDescriptor`
   on object-literal targets, parsed accessor-aware (new
   `_JSAccessor` marker + `accessor_aware` flag on
@@ -136,6 +138,9 @@ F548_VARIANTS = [
      "Object.create({c:'zz'},{c:{value:'%s'}}).c+'%s'" % (_A1, _A2)),
     ("f548-2arg-newkey",
      "Object.create({c:'zz'},{d:{value:'%s'}}).d+'%s'" % (_A1, _A2)),
+    ("f548-props-getter",
+     "Object.create({},{c:{get:function(){return '%s';}}}).c+'%s'"
+     % (_A1, _A2)),
     ("f548-2arg-empty",
      "Object.create({c:'%s'},{}).c+'%s'" % (_A1, _A2)),
     ("f548-getter-proto",
@@ -205,9 +210,6 @@ BOUNDARIES = [
      "Object.create({c:'%s'}).x+'%s'" % (_A1, _A2)),
     ("f548-bracket-form",
      "Object['create']({c:'%s'}).c+'%s'" % (_A1, _A2)),
-    ("f548-props-getter",
-     "Object.create({},{c:{get:function(){return '%s';}}}).c+'%s'"
-     % (_A1, _A2)),
     ("f548-props-set",
      "Object.create({},{c:{set:function(v){}}}).c+'%s'" % _A2),
     ("f548-props-nonliteral",
