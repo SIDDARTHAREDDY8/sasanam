@@ -28395,11 +28395,13 @@ def _js_parse_f647_term(text, j, undef_ident, depth, state, saw):
     """Parse one F647 return-expression term at text[j].
 
     A term is an F647 `(NULLISH ?? FRAG)` group (tried first;
-    appends to *saw* on success) or a plain primary (the pre-change
-    behavior for non-?? groups). The term value must be a plain
-    str (F624 tail discipline). On group failure the state counters
-    are restored before the primary fallback. Raises _JSExprFail.
-    Never evals.
+    appends to *saw* on success), a bare read of the declared-
+    uninitialized ident (F660: the engine reads it as undefined --
+    node-exact under string concatenation), or a plain primary (the
+    pre-change behavior for non-?? groups). The term value must be a
+    plain str (F624 tail discipline). On group failure the state
+    counters are restored before the primary fallback. Raises
+    _JSExprFail. Never evals.
     """
     n = len(text)
     q = _js_skip_ws(text, j)
@@ -28412,6 +28414,20 @@ def _js_parse_f647_term(text, j, undef_ident, depth, state, saw):
             return val, q2
         except _JSExprFail:
             state["parts"], state["ops"] = sp, so
+    # F660: a bare read of the declared-uninitialized ident. The
+    # group never assigns it (F647 rejects reassignment), so the
+    # engine reads undefined here -- "undefined" under the plain-str
+    # concatenation this term grammar requires (node v24.20.0).
+    # Disjoint from the pre-change fallback: _js_parse_primary fails
+    # closed on a bare ident, so this branch only converts
+    # fail-closed into a node-exact decode; no previously-decoded
+    # input changes behavior.
+    try:
+        _name, _q = _js_parse_ident(text, q)
+        if undef_ident is not None and _name == undef_ident:
+            return "undefined", _q
+    except _JSExprFail:
+        pass
     val, q = _js_parse_primary(text, j, depth, state)
     if type(val) is not str:
         raise _JSExprFail("F647 term not a plain string")
@@ -28667,10 +28683,12 @@ def _js_parse_f652_term(text, j, declared, env, depth, state, saw):
 
     A term is an F652 comma-sequence group (tried first), a
     parenthesized env-additive (for nested groups under `+`, e.g.
-    `((x='f1',x)+(y='f2',y))`), or a plain primary (the pre-change
-    behavior for other groups). The term value must be a plain
-    str. On each failed attempt the state counters are restored
-    before the next fallback. Raises _JSExprFail. Never evals.
+    `((x='f1',x)+(y='f2',y))`), a bare ident bound in the threaded
+    env (F660: the sequence assigned it -- node-exact read), or a
+    plain primary (the pre-change behavior for other groups). The
+    term value must be a plain str. On each failed attempt the state
+    counters are restored before the next fallback. Raises
+    _JSExprFail. Never evals.
     """
     n = len(text)
     q = _js_skip_ws(text, j)
@@ -28690,6 +28708,21 @@ def _js_parse_f652_term(text, j, declared, env, depth, state, saw):
             return val, qq
         except _JSExprFail:
             state["parts"], state["ops"] = sp, so
+    # F660: a bare ident bound in the threaded env reads the bound
+    # value (node-exact: the sequence's assignment bound it). A
+    # declared-but-unassigned ident keeps the pre-change behavior
+    # (fail closed -- _js_parse_f652_pe requires declared-and-
+    # assigned); an undeclared ident also keeps the pre-change
+    # primary fallback. _js_parse_primary fails closed on a bare
+    # ident, so this branch only converts fail-closed into a
+    # node-exact decode; no previously-decoded input changes
+    # behavior.
+    try:
+        _name, _q = _js_parse_ident(text, q)
+        if _name in declared and _name in env:
+            return env[_name], _q
+    except _JSExprFail:
+        pass
     val, q = _js_parse_primary(text, j, depth, state)
     if type(val) is not str:
         raise _JSExprFail("F652 term not a plain string")
