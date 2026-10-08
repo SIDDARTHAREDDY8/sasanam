@@ -115,7 +115,7 @@ def test_b0_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F700**" in text
-          and "Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text)  # Wave-380 merge: F672-F685 CLOSED; lane-4 F686 -> F699
+          and "Open findings: F686, F687, F688, F689, F690, F691, F692, F694, F695, F696, F698, F699." in text)  # Wave-380 merge: F672-F685 CLOSED; lane-4 F686 -> F699
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -360,16 +360,16 @@ def test_r48_f692_super_static_getter_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r48_f693_rename_nested_open():
-    """F693 OPEN (rename-nested): miss reproduces."""
-    miss = _misses("(function(){var {a:{b:c}={b:'%s'}}={};return c+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f693_rename_nested_closed():
+    """F693 CLOSED (rename-nested): coded refusal (wave-381 lane 6)."""
+    hit = _blocked("(function(){var {a:{b:c}={b:'%s'}}={};return c+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r48_f693_array_default_open():
-    """F693 OPEN (array-default): miss reproduces."""
-    miss = _misses("(function(){var {a:[b,c]=['%s','%s']}={};return b+c;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f693_array_default_closed():
+    """F693 CLOSED (array-default): coded refusal (wave-381 lane 6)."""
+    hit = _blocked("(function(){var {a:[b,c]=['%s','%s']}={};return b+c;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_r48_f694_match_open():
@@ -414,22 +414,22 @@ def test_r48_f696_valueOf_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r48_f697_valueOf_open():
-    """F697 OPEN (valueOf): miss reproduces."""
-    miss = _misses("(function(){var o={v:'%s',valueOf:function(){return this.v;}};return o+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f697_valueOf_closed():
+    """F697 CLOSED (valueOf): coded refusal (wave-381 lane 6)."""
+    hit = _blocked("(function(){var o={v:'%s',valueOf:function(){return this.v;}};return o+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r48_f697_toString_open():
-    """F697 OPEN (toString): miss reproduces."""
-    miss = _misses("(function(){var o={v:'%s',toString:function(){return this.v;}};return o+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f697_toString_closed():
+    """F697 CLOSED (toString): coded refusal (wave-381 lane 6)."""
+    hit = _blocked("(function(){var o={v:'%s',toString:function(){return this.v;}};return o+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r48_f697_toPrimitive_open():
-    """F697 OPEN (toPrimitive): miss reproduces."""
-    miss = _misses("(function(){var o={v:'%s',[Symbol.toPrimitive]:function(){return this.v;}};return o+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f697_toPrimitive_closed():
+    """F697 CLOSED (toPrimitive): coded refusal (wave-381 lane 6)."""
+    hit = _blocked("(function(){var o={v:'%s',[Symbol.toPrimitive]:function(){return this.v;}};return o+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 
