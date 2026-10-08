@@ -640,28 +640,28 @@ def test_r50_f734_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r50_f735_s1_open():
-    """F735 OPEN (nested function closure reads): miss reproduces."""
-    miss = _misses("(function(){var f='%s';function g(){return f;}return g()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f735_s1_closed():
+    """F735 CLOSED (wave-383 lane 12): blocks coded."""
+    ok = _blocked("(function(){var f='%s';function g(){return f;}return g()+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f735_s2_open():
-    """F735 OPEN (nested function closure reads): miss reproduces."""
-    miss = _misses("(function(){var f='%s';var g=function(){return f;};return g()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f735_s2_closed():
+    """F735 CLOSED (wave-383 lane 12): blocks coded."""
+    ok = _blocked("(function(){var f='%s';var g=function(){return f;};return g()+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f736_s1_open():
-    """F736 OPEN (default parameter reads): miss reproduces."""
-    miss = _misses("(function(){function h(a='%s'){return a;}return h()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f736_s1_closed():
+    """F736 CLOSED (wave-383 lane 12): blocks coded."""
+    ok = _blocked("(function(){function h(a='%s'){return a;}return h()+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f736_s2_open():
-    """F736 OPEN (default parameter reads): miss reproduces."""
-    miss = _misses("(function(){function h(a='%s',b='%s'){return a+b;}return h('%s');})()" % (_A, _B, _A))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f736_s2_closed():
+    """F736 CLOSED (wave-383 lane 12): blocks coded."""
+    ok = _blocked("(function(){function h(a='%s',b='%s'){return a+b;}return h('%s');})()" % (_A, _B, _A))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 # ------------------------------------------------- green check (depth-1)
 
