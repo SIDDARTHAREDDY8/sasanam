@@ -333,26 +333,28 @@ def test_p3_iife_call_args():
 
 
 def test_p3_sync_forof_stays_open():
-    """Sync for-of twin is F644 (filed OPEN this lane): must still miss."""
+    """Sync for-of twin is F654 (CLOSED wave-377 lane 8): must block."""
     p = ("(function(){var s='';for (const x of ['" + _F1 + "','" + _F2
          + "','" + _B + "']) s+=x; return s;})()")
-    return ("HELD" if _misses(p) else "BREAK", "quiet")
+    return ("HELD" if _blocked(p) else "BREAK", "closed-hit")
 
 
 # ------------------------------------------------ open neighbors (must still miss)
 
 def test_p4_open_neighbors_still_miss():
-    """F644-F654 red-first shapes still BREAK (nothing absorbed)."""
+    """F644-F653 red-first shapes still BREAK (nothing absorbed).
+
+    F654 is CLOSED (wave-377 lane 8) -- its red-first shapes now
+    block and are covered by test_p3 above, so they are excluded
+    here.
+    """
     shapes = []
     for fnum in (644, 645, 646, 647, 648, 649, 650, 651, 652, 653):
         mod = importlib.import_module("w376_f%d_redfirst" % fnum)
         for name, payload, recovers in mod.SHAPES:
             if recovers:
                 shapes.append(payload)
-    mod654 = importlib.import_module("w376_f654_redfirst")
-    for name, payload, recovers in mod654.SHAPES:
-        if recovers:
-            shapes.append(payload)
+    # F654 CLOSED (wave-377 lane 8) -- its shapes now block; covered by test_p3 above.
     ok = all(_misses(s) for s in shapes)
     return ("HELD" if ok else "BREAK", "open-neighbors-miss=%s" % ok)
 
@@ -388,10 +390,10 @@ def test_p5_pin_taxonomy():
 
 
 def test_p5_footer_state():
-    """Footer: F640 closed, F644 filed; open F641-F644; next F645."""
+    """Footer: F654 closed (wave-377 lane 8); open F644-F653; next F655."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F655**" in text  # Wave-376 lane 1: F640 CLOSED; F644 FILED # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
-          and "Open findings: F644, F645, F646, F647, F648, F649, F650, F651, F652, F653, F654." in text)  # Wave-376 lane 1 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
+    ok = ("Next free finding: **F655**" in text  # Wave-376 lane 1: F640 CLOSED; F644 FILED # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655) # Wave-377 lane 8: F654 CLOSED
+          and "Open findings: F644, F645, F646, F647, F648, F649, F650, F651, F652, F653." in text)  # Wave-376 lane 1 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655) # Wave-377 lane 8: F654 CLOSED; F644-F653 OPEN
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

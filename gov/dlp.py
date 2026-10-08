@@ -19858,6 +19858,185 @@ def _js_parse_f640_forawait_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f654_sync_iife_head(text, i):
+    """Match `(function(){` at text[i] (F654); index OF `{` or None.
+
+    The F654 production is the SYNC twin of F640's for-await
+    production: the head must be a plain `(function(){` -- no
+    `async`. F640's head parser requires `async`, so the two heads
+    are disjoint by construction; the async chain owns every
+    `async`-headed shape and never reaches this parser. Returns
+    the index OF `{` (the `_js_span_braced` contract), or None.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    j = _js_skip_ws(text, j + 1)
+    _fk = _js_match_kw(text, j, "function")
+    if _fk is None:
+        return None
+    j = _js_skip_ws(text, _fk)
+    if j >= n or text[j] != "(":
+        return None
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != ")":
+        return None
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "{":
+        return None
+    return j
+
+
+def _js_parse_f654_sync_forof_iife(text, i, depth, state):
+    """Parse the F654 sync for-of-over-sync-iterable IIFE at text[i].
+
+    Node-exact desugar (v24.20.0):
+      `(function(){var|let S='';for (var|let|const X of SRC){S+=X;}return S;})()`
+      `(function(){var|let|const P=[];for (var|let|const X of SRC){P.push(X);}return P.join('SEP');})()`
+    The loop is deterministic over a sync iterable, so the
+    accumulation is modeled statically (F640 precedent). The
+    accumulator declaration and the sync-iterable source grammar
+    are F640's shared helpers (`_js_parse_f640_accum_decl`,
+    `_js_parse_f640_sync_source`) -- the only production
+    difference from F640 is the loop head (`for` vs `for
+    await`). Disjoint from F640 (this head rejects `async`, F640
+    requires it) and from F517/F623/F632 (this requires the `of`
+    keyword -- for-in shapes fail the head guard) and from
+    F626 (this requires an array-literal/Map source binding, not
+    URLSearchParams). Bounds (all fail closed): `for await`
+    (F640 owns), `for-in`, `for(;;)`, undeclared loop var, loop
+    var shadowing the accumulator or `arguments`, non-sync-iterable
+    receivers, non-literal sources, `S+=X` with a non-loop-var
+    operand, multi-arg push, non-literal join separators,
+    trailing statements. Returns (value, next_index), or None
+    when the head does not match or a guard fails. Bounded by
+    the part/depth budgets; the wrapper charges one op
+    (obfuscation-shaped). Never evals.
+    """
+    j = _js_parse_f654_sync_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        acc, kind, sj = _js_parse_f640_accum_decl(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        _fk = _js_match_kw(stmts, sj, "for")
+        if _fk is None:
+            raise _JSExprFail("F654 not for")
+        sj = _js_skip_ws(stmts, _fk)
+        if _js_match_kw(stmts, sj, "await") is not None:
+            # for-await is F640's production (async head) -- an
+            # `await` here can only arrive on a head this parser
+            # already rejected; fail closed, never mis-decode.
+            raise _JSExprFail("F654 for-await is F640")
+        sj = _js_expect(stmts, sj, "(")
+        sj = _js_skip_ws(stmts, sj)
+        _dk = (_js_match_kw(stmts, sj, "var")
+               or _js_match_kw(stmts, sj, "let")
+               or _js_match_kw(stmts, sj, "const"))
+        if _dk is None:
+            raise _JSExprFail("F654 loop var not declared")
+        sj = _dk
+        xname, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+        if xname == "arguments" or xname == acc:
+            # `arguments` shadowing (F631 precedent); a loop var
+            # named as the accumulator fails closed (F640 note:
+            # only the let-accum/var-loopvar mix is an engine
+            # SyntaxError; the other redeclaration mixes are
+            # engine-legal but provably credential-safe, so the
+            # miss is safe, never a mis-decode).
+            raise _JSExprFail("F654 loop var shadowed")
+        sj = _js_skip_ws(stmts, sj)
+        _ofk = _js_match_kw(stmts, sj, "of")
+        if _ofk is None:
+            raise _JSExprFail("F654 not for-of")
+        sj = _js_skip_ws(stmts, _ofk)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        elements, sj = _js_parse_f640_sync_source(stmts, sj, depth + 1,
+                                                  state)
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_skip_ws(stmts, sj)
+        if sj < len(stmts) and stmts[sj] == "{":
+            sj += 1
+            braced = True
+        else:
+            braced = False
+        _an, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+        if _an != acc:
+            raise _JSExprFail("F654 accum mismatch")
+        sj = _js_skip_ws(stmts, sj)
+        if kind == "str":
+            if not stmts.startswith("+=", sj):
+                raise _JSExprFail("F654 body not +=")
+            sj = _js_skip_ws(stmts, sj + 2)
+            _xn, sj = _js_parse_ident(stmts, sj)
+            if _xn != xname:
+                raise _JSExprFail("F654 accum operand not loop var")
+            value = "".join(elements)
+        else:
+            sj = _js_expect(stmts, sj, ".")
+            _mn, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+            if _mn != "push":
+                raise _JSExprFail("F654 body not push")
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, "(")
+            _xn, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+            if _xn != xname:
+                raise _JSExprFail("F654 push operand not loop var")
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, ")")
+            value = None  # resolved at the join
+        sj = _js_skip_ws(stmts, sj)
+        if sj < len(stmts) and stmts[sj] == ";":
+            sj += 1
+        sj = _js_skip_ws(stmts, sj)
+        if braced:
+            sj = _js_expect(stmts, sj, "}")
+        sj = _js_skip_ws(stmts, sj)
+        _rk = _js_match_kw(stmts, sj, "return")
+        if _rk is None:
+            raise _JSExprFail("F654 no return")
+        sj = _js_skip_ws(stmts, _rk)
+        _rn, sj = _js_parse_ident(stmts, sj)
+        if _rn != acc:
+            raise _JSExprFail("F654 return not accum")
+        sj = _js_skip_ws(stmts, sj)
+        if kind == "arr":
+            sj = _js_expect(stmts, sj, ".")
+            _jn, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+            if _jn != "join":
+                raise _JSExprFail("F654 return not join")
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, "(")
+            sj = _js_skip_ws(stmts, sj)
+            if sj < len(stmts) and stmts[sj] in "'\"":
+                sep, sj = _js_parse_string(stmts, sj)
+            elif sj < len(stmts) and stmts[sj] == ")":
+                sep = ","  # engine default (node-verified)
+            else:
+                raise _JSExprFail("F654 join sep not literal")
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, ")")
+            value = sep.join(elements)
+        sj = _js_skip_ws(stmts, sj)
+        if sj < len(stmts) and stmts[sj] == ";":
+            sj += 1
+        sj = _js_skip_ws(stmts, sj)
+        if sj != len(stmts):
+            raise _JSExprFail("F654 tail trailing junk")
+        state["ops"] += 1  # the accumulation is obfuscation-shaped
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, value)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f641_async_arrow_iife_head(text, i):
     """Match `(async()=>{` at text[i] (F641); index past `{` or None."""
     n = len(text)
@@ -31804,6 +31983,23 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                     state)
         if _f642 is not None:
             val, i = _f642
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F654: (function(){var|let S='';for (var|let|const X of SRC)
+        #   {S+=X;}return S;})() / the push/join twin
+        #   (function(){var|let|const P=[];for (var|let|const X of SRC)
+        #   {P.push(X);}return P.join('SEP');})() -- sync for-of
+        #   fragment accumulation over sync iterables (array
+        #   literal, Map.values(), Map.keys()); the sync twin of
+        #   F640's for-await production. Tried after F642: every
+        #   earlier route requires a specific binding family
+        #   (URLSearchParams/URL/enumeration/getter wrappers) or a
+        #   for-in head (F517/F623/F632) and fails closed on a
+        #   for-of statement; F640's hook sits in the async chain
+        #   and requires the `async` head, which this head rejects,
+        #   so no previously-decoded input changes behavior.
+        _f654 = _js_parse_f654_sync_forof_iife(text, i, depth, state)
+        if _f654 is not None:
+            val, i = _f654
             return _js_parse_postfix(text, i, val, depth, state)
         # F586: (new Map(...)) / (new WeakRef(...)) --
         # parenthesized new-expression receivers, engine-identical
