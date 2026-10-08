@@ -248,7 +248,7 @@ def test_p7_pin_footer():
     ok = (TAXONOMY_PIN == 2140 and len(TAXONOMY) > 0)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ok and ("Next free finding: **F672**" in text)  # Wave-378 lane 5: F660 CLOSED; open F662-F671 / next F672
-    ok = ok and ("Open findings: F662, F663, F664, F665, F666, F667, F668, F669, F670, F671." in text)  # Wave-378 lane 5: F660 CLOSED; open F662-F671 / next F672
+    ok = ok and ("Open findings: F662, F663, F664, F665, F666, F667, F669, F670, F671." in text)  # Wave-378 lane 5: F660 CLOSED; open F662-F671 / next F672  # Wave-379 lane 6: F668 CLOSED (lane-local)
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 
 

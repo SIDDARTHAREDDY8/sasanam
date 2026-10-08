@@ -107,9 +107,9 @@ def p_footer_state():
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
     # F397 closed wave-313 lane A: no open findings; next free F398.
     # Wave-359 merge: repointed to open F489, F490, F491, F492, F493, F494, F495 / next F506 (footer-state probe audit).
-    if nxt != 672 or open_s != "F662, F663, F664, F665, F666, F667, F668, F669, F670, F671":  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+    if nxt != 672 or open_s != "F662, F663, F664, F665, F666, F667, F669, F670, F671":  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-379 lane 6: F668 CLOSED (lane-local)
         return _record("footer-state", "BREAK",
-                       "footer pins next F%d open '%s', want next F672 open 'F662, F663, F664, F665, F666, F667, F668, F669, F670, F671'" % (nxt, open_s))
+                       "footer pins next F%d open '%s', want next F672 open 'F662, F663, F664, F665, F666, F667, F669, F670, F671'" % (nxt, open_s))  # Wave-379 lane 6: F668 CLOSED (lane-local)
     _record("footer-state", "HELD", "footer pins open F521, F522, F523, F524, F525 / next F526")  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
 
 

@@ -452,7 +452,7 @@ def test_p9_pin_and_footer():
                 if "Open findings:" in last else "")
     live_list = open_seg.split("#")[0]  # history comments may name F648
     ok_foot = ("**F672**" in last
-               and "F662, F663, F664, F665, F666, F667, F668, F669, F670, F671" in live_list
+               and "F662, F663, F664, F665, F666, F667, F669, F670, F671" in live_list  # Wave-379 lane 6: F668 CLOSED (lane-local)
                and "Wave-378 merge: lanes 1-6 F655-F661 CLOSED" in open_seg)  # history kept
     ok = ok_pin and ok_foot
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
