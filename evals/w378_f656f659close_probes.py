@@ -405,39 +405,39 @@ def test_p3_f659_async_yieldstar():
 
 # ------------------------------------------------ p4: open neighbors still miss
 
-def test_p4_f655_still_open():
-    """F655 (statement-IIFE multi-decl) still misses."""
-    ok = _misses("(function(){var s='%s';var t='%s';return s+t;})()"
+def test_p4_f655_closed_by_sibling():
+    """F655 (statement-IIFE multi-decl) CLOSED by sibling lane (wave-378 merge): filed shape now blocks."""
+    ok = not _misses("(function(){var s='%s';var t='%s';return s+t;})()"
                  % (_A, _B))
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    return ("HELD" if ok else "BREAK", "block=" + str(ok) + " via-sibling")
 
 
-def test_p4_f657_still_open():
-    """F657 (var-bound Map forEach) still misses."""
-    ok = _misses("(function(){var m=new Map([['k','%s'],['j','%s']]);"
+def test_p4_f657_closed_by_sibling():
+    """F657 (var-bound Map forEach) CLOSED by sibling lane (wave-378 merge): filed shape now blocks."""
+    ok = not _misses("(function(){var m=new Map([['k','%s'],['j','%s']]);"
                  "var s='';m.forEach(function(v){s+=v;});return s;})()"
                  % (_A, _B))
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    return ("HELD" if ok else "BREAK", "block=" + str(ok) + " via-sibling")
 
 
-def test_p4_f658_still_open():
-    """F658 (flatMap) still misses."""
-    ok = _misses("['x'].flatMap(()=>['%s','%s']).join('')" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_p4_f658_closed_by_sibling():
+    """F658 (flatMap) CLOSED by sibling lane (wave-378 merge): filed shape now blocks."""
+    ok = not _misses("['x'].flatMap(()=>['%s','%s']).join('')" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "block=" + str(ok) + " via-sibling")
 
 
-def test_p4_f660_still_open():
-    """F660 (env-threaded tail reads) still misses."""
-    ok = _misses("(function(){var x;return (x='%s',x)+'%s'+x;})()"
+def test_p4_f660_closed_by_sibling():
+    """F660 (env-threaded tail reads) CLOSED by sibling lane (wave-378 merge): filed shape now blocks."""
+    ok = not _misses("(function(){var x;return (x='%s',x)+'%s'+x;})()"
                  % (_A, _B))
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    return ("HELD" if ok else "BREAK", "block=" + str(ok) + " via-sibling")
 
 
-def test_p4_f661_still_open():
-    """F661 (declaration-position sequences) still misses."""
-    ok = _misses("(function(){var s=('jx','%s');return s+'%s';})()"
+def test_p4_f661_closed_by_sibling():
+    """F661 (declaration-position sequences) CLOSED by sibling lane (wave-378 merge): filed shape now blocks."""
+    ok = not _misses("(function(){var s=('jx','%s');return s+'%s';})()"
                  % (_A, _B))
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    return ("HELD" if ok else "BREAK", "block=" + str(ok) + " via-sibling")
 
 
 # ------------------------------------------------ p5: closed neighbors still held
@@ -533,7 +533,7 @@ def test_p7_f659_in_additive():
 # ------------------------------------------------ p8: pin + footer
 
 def test_p8_pin_and_footer():
-    """Pin 2140; lane-local footer: open F655, F657, F658, F660, F661 / next F662."""
+    """Pin 2140; lane-local footer: open F662-F671 / next F672."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     ok_pin = False
     footer = None
@@ -544,8 +544,8 @@ def test_p8_pin_and_footer():
             if line.startswith("Next free finding:"):
                 footer = line.strip()
     ok_footer = (footer is not None
-                 and "Next free finding: **F662**" in footer
-                 and "Open findings: F655, F657, F658, F660, F661." in footer)
+                 and "Next free finding: **F672**" in footer
+                 and "Open findings: F662, F663, F664, F665, F666, F667, F668, F669, F670, F671." in footer)
     ok = ok_pin and ok_footer
     return ("HELD" if ok else "BREAK",
             "pin=%s footer=%s" % (ok_pin, ok_footer))

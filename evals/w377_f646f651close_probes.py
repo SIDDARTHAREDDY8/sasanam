@@ -580,8 +580,8 @@ def test_p9_pin_taxonomy_2140_sorted():
 def test_p9_footer_state():
     """Merge footer: F644-F654 closed; open F655-F660; next F661."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F662**" in text  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
-          and "Open findings: F655, F656, F657, F658, F659, F660, F661." in text)  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
+    ok = ("Next free finding: **F672**" in text  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672
+          and "Open findings: F662, F663, F664, F665, F666, F667, F668, F669, F670, F671." in text)  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

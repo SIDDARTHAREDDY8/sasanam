@@ -350,9 +350,10 @@ def test_p3_fractional_switch():
 
 
 def test_p3_multi_declarator():
-    """Multi-declarator var (unmodeled): fail closed."""
+    """Multi-declarator var: now BLOCKS via F661 (wave-378 merge: F661 closed
+    declaration-position sequences incl. the multi-decl twin; F655 residual absorbed)."""
     p = "(function(){var s='" + _A + "',t='" + _B + "';return s+t;})()"
-    return ("HELD" if _misses(p) else "BREAK", "miss")
+    return ("HELD" if not _misses(p) else "BREAK", "block-via-f661")
 
 
 def test_p3_template_literal():
@@ -380,15 +381,16 @@ def test_p3_reserved_word_label():
 
 # ------------------------------------------------ open neighbors (must still miss)
 
-def test_p4_open_neighbors_still_miss():
-    """F656-F661 OPEN: their red-first shapes must still miss (nothing absorbed)."""
-    shapes = []
+def test_p4_sibling_closures_hold():
+    """F656-F661 CLOSED by sibling lanes (wave-378 merge): their red-first shapes now block."""
+    bad = []
     for fnum in (656, 657, 658, 659, 660, 661):
         mod = importlib.import_module("w377_f%d_redfirst" % fnum)
         for shape in mod.SHAPES:
-            shapes.append(shape[1])
-    ok = all(_misses(s) for s in shapes)
-    return ("HELD" if ok else "BREAK", "n=%d miss=%s" % (len(shapes), ok))
+            if _misses(shape[1]):
+                bad.append("f%d:%s" % (fnum, shape[0]))
+    ok = not bad
+    return ("HELD" if ok else "BREAK", "block=%s" % (bad or "all"))
 
 
 # ------------------------------------------------ closed neighbors (must still block)
@@ -437,12 +439,12 @@ def test_p7_pin_taxonomy():
 
 
 def test_p8_lane_footer():
-    """Lane-local footer: F655 CLOSED; open F656-F661 / next F662."""
+    """Lane-local footer: F655 CLOSED; open F662-F671 / next F672."""
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as f:
         text = f.read()
     ok = ("**Status: CLOSED 2026-10-08 wave-378 lane 1.**" in text
-          and "Open findings: F656, F657, F658, F659, F660, F661." in text
-          and "Next free finding: **F662**." in text)
+          and "Open findings: F662, F663, F664, F665, F666, F667, F668, F669, F670, F671." in text
+          and "Next free finding: **F672**." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

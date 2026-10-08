@@ -282,8 +282,8 @@ def test_p3b_true_bounds():
 
 # ------------------------------------------------ open neighbors still miss
 
-def test_p4_open_neighbors_still_miss():
-    """F655-F660 (OPEN) filed shapes still miss -- nothing absorbed."""
+def test_p4_sibling_closures_hold():
+    """F655-F660 CLOSED by sibling lanes (wave-378 merge): filed shapes now block."""
     shapes = [
         # F655: statement-IIFE multi-statement accumulation
         "(function(){var a='%s';var b='%s%s';return a+b;})()",
@@ -303,10 +303,10 @@ def test_p4_open_neighbors_still_miss():
         n = s.count("%s")
         a = (_F1, _F2, _F3)[:n]
         p = s % a
-        if not _misses(p):
+        if _misses(p):
             bad.append(p[:60])
     ok = not bad
-    return ("HELD" if ok else "BREAK", "absorbed=%s" % (bad[:2] if bad else "none"))
+    return ("HELD" if ok else "BREAK", "unblocked=%s" % (bad[:2] if bad else "none"))
 
 
 # ------------------------------------------------ closed neighbors still held
@@ -390,12 +390,12 @@ def test_p7_node_differential():
 # ------------------------------------------------ pin + footer + re.compile
 
 def test_p8_pin_footer():
-    """Pin 2140 and lane-local footer (F661 CLOSED: open F655-F660; next F662)."""
+    """Pin 2140 and lane-local footer (F661 CLOSED: open F662-F671 / next F672)."""
     import gov.decision_codes as dc
     ok = (TAXONOMY_PIN == 2140 and len(dc.TAXONOMY) > 0)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and ("Next free finding: **F662**" in text)  # Wave-378 lane 6: F661 CLOSED; footer repoint open F655-F660 / next F662
-    ok = ok and ("Open findings: F655, F656, F657, F658, F659, F660." in text)  # Wave-378 lane 6: F661 CLOSED; footer repoint open F655-F660 / next F662
+    ok = ok and ("Next free finding: **F672**" in text)  # Wave-378 lane 6: F661 CLOSED; footer repoint open F655-F660 / next F662
+    ok = ok and ("Open findings: F662, F663, F664, F665, F666, F667, F668, F669, F670, F671." in text)  # Wave-378 lane 6: F661 CLOSED; footer repoint open F655-F660 / next F662
     ok = ok and (_dlp is not None)
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 

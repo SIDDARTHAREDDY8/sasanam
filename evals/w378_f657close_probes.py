@@ -374,29 +374,29 @@ def test_p4_junk_quiet():
     return ("HELD" if ok else "BREAK", "quiet=%s" % ok)
 
 
-def test_p4_open_neighbors_still_miss():
-    """Open neighbors F655/F656/F658-F661 still miss (nothing absorbed)."""
+def test_p4_sibling_closures_hold():
+    """F655/F656/F658-F661 CLOSED by sibling lanes (wave-378 merge): their red-first shapes now block."""
     import importlib
     bad = []
     for fnum in (655, 656, 658, 659, 660, 661):
         mod = importlib.import_module("w377_f%d_redfirst" % fnum)
         for entry in mod.SHAPES:
             payload = entry[1]
-            if find_credential(payload) is not None:
+            if find_credential(payload) is None:
                 bad.append("f%d:%s" % (fnum, entry[0]))
     ok = not bad
-    return ("HELD" if ok else "BREAK", "still-miss=%s" % (bad or "all"))
+    return ("HELD" if ok else "BREAK", "block=%s" % (bad or "all"))
 
 
 # ------------------------------------------------ pin + footer
 
 def test_p5_pin_and_footer():
-    """Pin 2140; lane-local footer: open F655, F656, F658-F661 / next F662."""
+    """Pin 2140; lane-local footer: open F662-F671 / next F672."""
     from gov.decision_codes import TAXONOMY  # noqa: E402
     ok = TAXONOMY_PIN == 2140
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and "Next free finding: **F662**" in text  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662  # Wave-378 lane 3: F657 CLOSED; footer repoint open F655, F656, F658-F661 / next F662
-    ok = ok and ("Open findings: F655, F656, F658, F659, F660, F661." in text)  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662  # Wave-378 lane 3: F657 CLOSED; footer repoint open F655, F656, F658-F661 / next F662
+    ok = ok and "Next free finding: **F672**" in text  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672  # Wave-378 lane 3: F657 CLOSED; footer repoint open F662-F671 / next F672
+    ok = ok and ("Open findings: F662, F663, F664, F665, F666, F667, F668, F669, F670, F671." in text)  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672  # Wave-378 lane 3: F657 CLOSED; footer repoint open F662-F671 / next F672
     ok = ok and "**Status: CLOSED 2026-10-08 wave-378 lane 3.**" in text
     return ("HELD" if ok else "BREAK", "ok=%s" % ok)
 
@@ -507,7 +507,7 @@ def main():
         ("p4_f602_still_blocks", test_p4_f602_still_blocks),
         ("p4_f646_still_blocks", test_p4_f646_still_blocks),
         ("p4_junk_quiet", test_p4_junk_quiet),
-        ("p4_open_neighbors_still_miss", test_p4_open_neighbors_still_miss),
+        ("p4_sibling_closures_hold", test_p4_sibling_closures_hold),
         ("p5_pin_and_footer", test_p5_pin_and_footer),
         ("p6_perf", test_p6_perf),
         ("p7_green_check", test_p7_green_check),

@@ -223,7 +223,8 @@ def test_p3_f652_bounds():
 # ------------------------------------------------ open neighbors still miss
 
 def test_p4_open_neighbors_still_miss():
-    """F644-F654 CLOSED at the wave-377 merge: their shapes now block (nothing absorbed); F660 stays open."""
+    """F644-F654 CLOSED at the wave-377 merge, F660/F661 CLOSED at the wave-378 merge:
+    their shapes now block (nothing absorbed)."""
     shapes = [
         "(function(){var {a,b}={a:'%s',b:'%s%s'};return a+b;})()",
         "(function(s='%s',t='%s%s'){return s+t;})()",
@@ -238,21 +239,14 @@ def test_p4_open_neighbors_still_miss():
         "(function(){var x;return (x='%s',x)+'%s%s'+x;})()",
         "(function(){var z;return (z??'%s')+'%s%s'+z;})()",
     ]
-    # Last two shapes are F660 (OPEN); the rest are F644-F654 (CLOSED at merge).
-    # F661 (CLOSED 2026-10-08 wave-378 lane 6): declaration-position comma
-    # sequences -- see w377_f661_redfirst.py and w378_f661close_probes.py.
-    open_shapes = shapes[-2:]
-    closed_shapes = shapes[:-2]
+    # All shapes are CLOSED at the wave-378 merge (F660: lane 5; F661: lane 6).
+    closed_shapes = shapes
     f661_shapes = ["(function(){var s=('jx','%s');return s+'%s%s';})()" % (_F1, _F2, _F3)]
     ok = True
     for s in closed_shapes:
         n = s.count("%s")
         args = (_F1, _F2, _F3)[:n]
         ok = ok and _blocked(s % args)
-    for s in open_shapes:
-        n = s.count("%s")
-        args = (_F1, _F2, _F3)[:n]
-        ok = ok and _misses(s % args)
     for s in f661_shapes:
         ok = ok and _blocked(s)
     return ("HELD" if ok else "BREAK", "ok=%s" % ok)
@@ -324,12 +318,12 @@ def test_p7_node_differential():
 # ------------------------------------------------ pin + footer
 
 def test_p8_pin_footer():
-    """Pin 2140 and lane-local footer (F661 CLOSED: open F655-F660; next F662)."""
+    """Pin 2140 and lane-local footer (F661 CLOSED: open F662-F671 / next F672)."""
     import gov.decision_codes as dc
     ok = (TAXONOMY_PIN == 2140 and len(dc.TAXONOMY) > 0)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and ("Next free finding: **F662**" in text)  # Wave-378 lane 6: F661 CLOSED; footer repoint open F655-F660 / next F662
-    ok = ok and ("Open findings: F655, F656, F657, F658, F659, F660." in text)  # Wave-378 lane 6: F661 CLOSED; footer repoint open F655-F660 / next F662
+    ok = ok and ("Next free finding: **F672**" in text)  # Wave-378 lane 6: F661 CLOSED; footer repoint open F655-F660 / next F662
+    ok = ok and ("Open findings: F662, F663, F664, F665, F666, F667, F668, F669, F670, F671." in text)  # Wave-378 lane 6: F661 CLOSED; footer repoint open F655-F660 / next F662
     ok = ok and (_dlp is not None)
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 

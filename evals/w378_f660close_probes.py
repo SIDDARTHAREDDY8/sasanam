@@ -193,8 +193,8 @@ def test_p3_f652_const_decl():
 # ------------------------------------------------ p4: open neighbors still miss
 
 @_t
-def test_p4_open_neighbors_still_miss():
-    """Open F655-F659/F661 stay BREAK (nothing absorbed)."""
+def test_p4_sibling_closures_hold():
+    """F655-F659/F661 CLOSED by sibling lanes (wave-378 merge): filed shapes now block."""
     shapes = [
         "(function(){var a='" + _A + "';var b='" + _B + "';return a+b;})()",
         "(function*(){yield '" + _A + "';})().next().value+'" + _B + "'",
@@ -204,9 +204,9 @@ def test_p4_open_neighbors_still_miss():
         "[...(function*(){yield* ['" + _A + "','" + _B + "'];})()].join('')",
         "(function(){var s=('jx','" + _A + "');return s+'" + _B + "';})()",
     ]
-    got = [dlp.find_credential(s) is None for s in shapes]
+    got = [dlp.find_credential(s) is not None for s in shapes]
     ok = all(got)
-    return ("HELD" if ok else "BREAK", "miss=%s" % got)
+    return ("HELD" if ok else "BREAK", "block=%s" % got)
 
 
 # ------------------------------------------------ p5: composition (closed neighbors held)
@@ -244,11 +244,11 @@ def test_p6_junk_quiet():
 
 @_t
 def test_p7_pin_footer():
-    """Pin 2140; lane-local footer (open F655-F659, F661; next F662)."""
+    """Pin 2140; lane-local footer (open F662-F671 / next F672)."""
     ok = (TAXONOMY_PIN == 2140 and len(TAXONOMY) > 0)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and ("Next free finding: **F662**" in text)  # Wave-378 lane 5: F660 CLOSED; open F655-F659, F661; next F662
-    ok = ok and ("Open findings: F655, F656, F657, F658, F659, F661." in text)  # Wave-378 lane 5: F660 CLOSED; open F655-F659, F661; next F662
+    ok = ok and ("Next free finding: **F672**" in text)  # Wave-378 lane 5: F660 CLOSED; open F662-F671 / next F672
+    ok = ok and ("Open findings: F662, F663, F664, F665, F666, F667, F668, F669, F670, F671." in text)  # Wave-378 lane 5: F660 CLOSED; open F662-F671 / next F672
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 
 

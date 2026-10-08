@@ -235,8 +235,8 @@ def test_p5_pin_taxonomy():
 def test_p5_footer_state():
     """Footer: F614 closed; open F612, F613, F615-F620; next F621."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F662**" in text  # Wave-374 lane 3: F614 CLOSED  # Wave-374 merge: footer repoint open F612, F613, F615-F620 / next F621  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
-          and "Open findings: F655, F656, F657, F658, F659, F660, F661." in text)  # Wave-374 lane 3: F614 CLOSED  # Wave-374 merge: footer repoint open F612, F613, F615-F620 / next F621  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
+    ok = ("Next free finding: **F672**" in text  # Wave-374 lane 3: F614 CLOSED  # Wave-374 merge: footer repoint open F612, F613, F615-F620 / next F621  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672
+          and "Open findings: F662, F663, F664, F665, F666, F667, F668, F669, F670, F671." in text)  # Wave-374 lane 3: F614 CLOSED  # Wave-374 merge: footer repoint open F612, F613, F615-F620 / next F621  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

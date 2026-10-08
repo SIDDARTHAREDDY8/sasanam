@@ -428,8 +428,8 @@ def test_p8_pin_and_footer():
     """Pin 2140 and merge footer (open F655-F660; next F661)."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     pin_ok = TAXONOMY_PIN == 2140
-    next_ok = "Next free finding: **F662**" in text  # Wave-377 lane 2  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
-    open_ok = "Open findings: F655, F656, F657, F658, F659, F660, F661." in text  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
+    next_ok = "Next free finding: **F672**" in text  # Wave-377 lane 2  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672
+    open_ok = "Open findings: F662, F663, F664, F665, F666, F667, F668, F669, F670, F671." in text  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672
     closed_ok = "**Status: CLOSED 2026-10-08 wave-377 lane 2.**" in text
     ok = pin_ok and next_ok and open_ok and closed_ok
     return ("HELD" if ok else "BREAK",

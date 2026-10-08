@@ -363,13 +363,13 @@ def test_p7_pin_taxonomy():
 
 
 def test_p8_lane_footer():
-    """Merge footer: F644-F655 closed; open F656-F661 / next F662."""
+    """Merge footer: F644-F655 closed; open F662-F671 / next F672."""
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as f:
         text = f.read()
     ok = ("**Status: CLOSED 2026-10-08 wave-377 lane 8.**" in text  # Wave-377 lane 8: F654 CLOSED
           and "**Status: CLOSED 2026-10-08 wave-378 lane 1.**" in text  # Wave-378 lane 1: F655 CLOSED
-          and "Open findings: F656, F657, F658, F659, F660, F661." in text  # Wave-378 lane 1: F655 CLOSED; footer repoint open F656-F661 / next F662
-          and "Next free finding: **F662**." in text)  # Wave-378 lane 1: F655 CLOSED; footer repoint open F656-F661 / next F662
+          and "Open findings: F662, F663, F664, F665, F666, F667, F668, F669, F670, F671." in text  # Wave-378 lane 1: F655 CLOSED; footer repoint open F662-F671 / next F672
+          and "Next free finding: **F672**." in text)  # Wave-378 lane 1: F655 CLOSED; footer repoint open F662-F671 / next F672
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

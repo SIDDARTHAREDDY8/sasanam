@@ -237,8 +237,9 @@ def test_p3_named_function_bad_name():
 
 # ------------------------------------------------ p4 open neighbors still miss
 
-def test_p4_open_neighbors_still_miss():
-    """F655-F657, F659-F661 are still open: their shapes must still miss.
+def test_p4_sibling_closures_hold():
+    """F655-F657, F659-F661 CLOSED by sibling lanes (wave-378 merge):
+    their shapes must now block.
 
     Neighbor shapes use _A/_B halves (the red-first convention): the
     full credential appears only if the decoder assembles it.
@@ -263,8 +264,8 @@ def test_p4_open_neighbors_still_miss():
          % (_F1, _F2, _F3)),
     ]
     missed = sum(1 for s in shapes if _misses(s))
-    ok = missed == len(shapes)
-    return ("HELD" if ok else "BREAK", "miss=%d/%d" % (missed, len(shapes)))
+    ok = missed == 0
+    return ("HELD" if ok else "BREAK", "unblocked=%d/%d" % (missed, len(shapes)))
 
 
 # ------------------------------------------------ p5 closed neighbors still held
@@ -369,7 +370,7 @@ def test_p8_junk_quiet():
 # ------------------------------------------------ p9 pin + footer
 
 def test_p9_pin_and_footer():
-    """Pin 2140; lane-local footer: F658 closed, open F655-657,659-661."""
+    """Pin 2140; merge footer: F655-F661 closed, open F662-F671, next F672."""
     lines = open(os.path.join(REPO_ROOT, "evals",
                               "FINDINGS.md"), encoding="utf-8").read()
     ok_pin = TAXONOMY_PIN == 2140
@@ -378,10 +379,10 @@ def test_p9_pin_and_footer():
     last = foot[-1] if foot else ""
     open_seg = (" " + last.split("Open findings:")[-1]
                 if "Open findings:" in last else "")
-    live_list = open_seg.split("#")[0]  # history comments may name F658
-    ok_foot = ("**F662**" in last
-               and "F655, F656, F657, F659, F660, F661" in live_list
-               and "F658" not in live_list)
+    live_list = open_seg.split("#")[0]  # history comments may name F-numbers
+    ok_foot = ("**F672**" in last
+               and "F662, F663, F664, F665, F666, F667, F668, F669, F670, F671" in live_list
+               and "F655" not in live_list)
     ok = ok_pin and ok_foot
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 
@@ -474,7 +475,7 @@ def main():
     _t("p3-numeric-element", test_p3_numeric_element)
     _t("p3-missing-semi", test_p3_missing_semi)
     _t("p3-named-function-bad-name", test_p3_named_function_bad_name)
-    _t("p4-open-neighbors-still-miss", test_p4_open_neighbors_still_miss)
+    _t("p4-sibling-closures-hold", test_p4_sibling_closures_hold)
     _t("p5-f554-still-held", test_p5_f554_still_held)
     _t("p5-f574-identity-still-held", test_p5_f574_identity_still_held)
     _t("p5-f597-scalar-still-held", test_p5_f597_scalar_still_held)
