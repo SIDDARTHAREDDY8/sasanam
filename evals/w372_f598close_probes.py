@@ -8,7 +8,7 @@ Set(['f1','f2'])))).join(''), JSON.parse(JSON.stringify([...new
 Set(['f1','f2'])]))).join(''), and JSON.parse(JSON.stringify(Array.from(new
 Map([['a','f1'],['b','f2']]).values()))).join('') all node-evaluate to the
 exact credential (v24.20.0) with zero decoder variants. Distinct from F571
-(literal arrays, CLOSED) and F595 (nested array values, OPEN).
+(literal arrays, CLOSED) and F595 (nested array values, CLOSED 2026-10-08 wave-373 lane 1).
 
 Closed by two composable extensions (node-exact, each previously
 fail-closed, so no previously-decoded input changes behavior):
@@ -163,16 +163,17 @@ def p4_compositions():
         v, m = _verdict(s % {"A1": _A1, "A2": _A2}, True)
         if v != "HELD":
             return v, "composition: " + m
-    # F595 (OPEN, nested array values) must still miss
-    open_shapes = [
+    # F595 (CLOSED 2026-10-08 wave-373 lane 1, nested array values) now
+    # decodes -- the "still open" expectation is superseded.
+    closed_shapes = [
         "JSON.parse(JSON.stringify({a:['%(A1)s','%(A2)s']})).a.join('')",
         "JSON.parse(JSON.stringify([['%(A1)s'],['%(A2)s']])).flat().join('')",
     ]
-    for s in open_shapes:
-        v, m = _verdict(s % {"A1": _A1, "A2": _A2}, False)
+    for s in closed_shapes:
+        v, m = _verdict(s % {"A1": _A1, "A2": _A2}, True)
         if v != "HELD":
-            return v, "f595-still-open: " + m
-    return "HELD", "%d compositions block, F595 stays open" % len(shapes)
+            return v, "f595-now-closed: " + m
+    return "HELD", "%d compositions block, F595 closed" % len(shapes)
 
 
 # (carrier input for the decoder, bare JS expression for node): the
@@ -225,7 +226,7 @@ def p6_pin_footer():
         "guac_graph.TAXONOMY_PIN=%r want 2140" % (guac_graph.TAXONOMY_PIN,)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("Next free finding: **F612**" in text  # Wave-372 merge: footer repoint next F612
-          and "**Open findings: F595, F606, F607, F608, F609, F610, F611.**" in text  # Wave-372 merge: footer repoint open F606-F611 / next F612
+          and "**Open findings: F606, F607, F608, F609, F610, F611.**" in text  # Wave-373 lane 1: F595 CLOSED
           # Wave-372 lane 2: F598 CLOSED
           and text.count("**Status: CLOSED 2026-10-07 wave-372 lane 2.**")
               == 1)
