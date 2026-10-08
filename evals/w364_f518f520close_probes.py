@@ -232,7 +232,7 @@ def p6_pin_and_footer():
         if f not in text:
             return ("BREAK", "%s entry missing" % f)
     # Lane-local footer: F518, F520 CLOSED; open F513-F517, F519; next F521.
-    if "Open findings: F606, F607, F608, F609, F610, F611." not in text:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526); Wave-365 lane 2: F522, F525 CLOSED  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint open F606-F611 / next F612
+    if "Open findings: F595, F606, F607, F608, F609, F610, F611." not in text:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526); Wave-365 lane 2: F522, F525 CLOSED  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint open F606-F611 / next F612
         return ("BREAK", "footer open-list not lane-local")
     if "Next free finding: **F612**" not in text:  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint next F612
         return ("BREAK", "footer next-free not F521")

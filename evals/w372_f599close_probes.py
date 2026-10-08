@@ -42,7 +42,7 @@ _CRED = _A1 + _A2
 
 TAXONOMY_PIN = 2140  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
-FOOTER_OPEN = "F606, F607, F608, F609, F610, F611"  # Wave-372 merge: footer repoint
+FOOTER_OPEN = "F595, F606, F607, F608, F609, F610, F611"  # Wave-372 merge: footer repoint
 FOOTER_NEXT = "F612"  # Wave-372 merge: footer repoint
 
 

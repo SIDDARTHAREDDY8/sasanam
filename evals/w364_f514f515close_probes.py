@@ -202,7 +202,7 @@ def p5_pin_and_footer():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     if "CLOSED 2026-10-07 wave-364 lane 2" not in text:
         return ("BREAK", "F514/F515 closure entries missing")
-    if "Open findings: F606, F607, F608, F609, F610, F611." not in text:  # Wave-366 lane 2: F527/F530 CLOSED; F526/F528/F529 OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint open F606-F611 / next F612
+    if "Open findings: F595, F606, F607, F608, F609, F610, F611." not in text:  # Wave-366 lane 2: F527/F530 CLOSED; F526/F528/F529 OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint open F606-F611 / next F612
         return ("BREAK", "lane-local footer wrong")
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     if len(re.findall(r"re\.compile\(", src)) != 28:
