@@ -28713,6 +28713,976 @@ def _js_parse_f664_gopd_varbound_iife(text, i, depth, state):
         return None
 
 
+class _JSF67xBody:
+    """A this-bound method/getter body (F673/F674).
+
+    Produced only by _js_parse_f67x_object (this_bodies=True) and by
+    the F673 defineProperties descriptor parser. kind is "method"
+    (invoked as o.M()) or "getter" (invoked on read of o.M).
+    add_text is the raw additive source between `return` and `;`
+    inside the body -- parsed at invocation time by
+    _js_parse_f67x_this_additive with `this` bound to the receiver
+    object (the engine binds `this` to the receiver at the
+    call/read site, node v24.20.0). Never evals.
+    """
+    __slots__ = ("kind", "add_text")
+
+    def __init__(self, kind, add_text):
+        self.kind = kind
+        self.add_text = add_text
+
+
+def _js_f67x_lookup(obj, key):
+    """Resolve *key* on a _JSObj holding F67x bodies (F673/F674).
+
+    Like _jsobj_lookup (walks the F548 prototype chain, own
+    properties shadow) but preserves _JSF67xBody values instead of
+    unwrapping them -- the caller decides whether a body is
+    invocable in its position. Returns (value, holder) or
+    (None, None) when the key resolves nowhere. Never evals.
+    """
+    cur = obj
+    while cur is not None:
+        if key in cur.props:
+            return cur.props[key], cur
+        cur = cur.proto
+    return None, None
+
+
+def _js_scan_f67x_body_text(text, i, end):
+    """Scan `return ADD;` starting at text[i], bounded by end (F673/F674).
+
+    Returns (add_text, index_past_semicolon): add_text is the raw
+    additive source between `return` and the terminating `;`. The
+    scan is string-aware (a `;` inside quotes never terminates);
+    the ADD grammar itself is validated at invocation time by
+    _js_parse_f67x_this_additive, so this scan only needs the exact
+    boundary. Anything but `return ... ;` before end fails closed.
+    Never evals.
+    """
+    j = _js_skip_ws(text, i)
+    m = _js_match_kw(text, j, "return")
+    if m is None:
+        raise _JSExprFail("F67x body needs return")
+    j = _js_skip_ws(text, m)
+    start = j
+    k = j
+    while True:
+        k = _js_skip_ws(text, k)
+        if k >= end:
+            raise _JSExprFail("F67x body unterminated")
+        c = text[k]
+        if c in "'\"":
+            _, k = _js_parse_string(text, k)
+            if k > end:
+                raise _JSExprFail("F67x body string overruns")
+        elif c == ";":
+            return text[start:k], k + 1
+        else:
+            k += 1
+
+
+def _js_f67x_member(recv, mname, depth, state):
+    """Resolve one member read on a _JSObj with F67x bodies (F673/F674).
+
+    Data strings return as-is; getters evaluate with `this` = recv
+    (the receiver the engine binds, node v24.20.0); methods are
+    function values, never strings, and fail closed; missing keys
+    fail closed. Never evals.
+    """
+    val, _holder = _js_f67x_lookup(recv, mname)
+    if val is None:
+        raise _JSExprFail("F67x missing key")
+    if isinstance(val, str):
+        return val
+    if isinstance(val, _JSF67xBody) and val.kind == "getter":
+        return _js_f67x_eval_body(val, recv, depth, state)
+    raise _JSExprFail("F67x member not a string")
+
+
+def _js_f67x_eval_body(body, recv, depth, state):
+    """Evaluate a _JSF67xBody with `this` = recv (F673/F674).
+
+    The stored additive source is parsed by
+    _js_parse_f67x_this_additive at depth+1 (depth-bounded, so a
+    self-reading getter fails closed instead of recursing
+    forever). Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F67x body too deep")
+    return _js_parse_f67x_this_additive(body.add_text, recv, depth + 1,
+                                       state)
+
+
+def _js_parse_f67x_this_additive(add_text, recv, depth, state):
+    """Parse a this-bound body ADD over add_text (F673/F674).
+
+    Terms: string literals, or `this`-member reads (`this.M`,
+    `this['M']`) resolved against recv via _js_f67x_member
+    (data strings, getter recursion with the same receiver --
+    `this` is never nullish in a method/getter body, so `?.`
+    forms fail closed as unmodeled). `+`-joined; the whole text
+    must be consumed. Bounded by the part/depth budgets. Never
+    evals.
+    """
+    n = len(add_text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F67x this-additive too deep")
+    j = _js_skip_ws(add_text, 0)
+    if j >= n:
+        raise _JSExprFail("F67x this-additive empty")
+    total = None
+    while True:
+        j = _js_skip_ws(add_text, j)
+        if j >= n:
+            raise _JSExprFail("F67x this-additive empty term")
+        c = add_text[j]
+        if c in "'\"":
+            term, j = _js_parse_string(add_text, j)
+        elif (add_text.startswith("this", j)
+                and (j + 4 >= n
+                     or add_text[j + 4] not in _JS_IDENT_CONT)):
+            k = _js_skip_ws(add_text, j + 4)
+            if k < n and add_text[k] == ".":
+                k = _js_skip_ws(add_text, k + 1)
+                mname, k = _js_parse_ident(add_text, k)
+            elif k < n and add_text[k] == "[":
+                mname, k = _js_parse_bracket_member(add_text, k)
+            else:
+                raise _JSExprFail("F67x this without member")
+            term = _js_f67x_member(recv, mname, depth, state)
+            j = k
+            state["ops"] += 1  # the this-bound read is
+            # obfuscation-shaped
+        else:
+            raise _JSExprFail("F67x this-additive bad term")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        if total is None:
+            total = term
+        else:
+            if len(total) + len(term) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("concat too long")
+            total = total + term
+        j = _js_skip_ws(add_text, j)
+        if j < n and add_text[j] == "+":
+            j = j + 1
+            continue
+        break
+    j = _js_skip_ws(add_text, j)
+    if j != n:
+        raise _JSExprFail("F67x this-additive trailing")
+    return total
+
+
+def _js_parse_f67x_object(text, i, depth, state, pre_env=None,
+                         this_bodies=False):
+    """Parse a this-aware object literal at text[i] == '{' (F673/F674).
+
+    Returns (props, next_index). Props map key -> str (string
+    literal data values) | _JSF67xBody (methods/getters, only when
+    this_bodies=True). Keys: string literals, decimal integer
+    literals (raw text, like F535), identifiers, or computed
+    `[IDENT]` where IDENT is bound to a string literal in pre_env
+    (the F673 computed-key shape; other computed keys fail
+    closed). Methods are `name:function(){return ADD;}` (an optional
+    function name is allowed -- engine-identical, node v24.20.0);
+    getters are `get name(){return ADD;}` (the
+    _js_parse_f535_getter_head grammar). Bodies are captured as raw
+    additive text and validated at invocation time; `this`-free
+    bodies decode identically. `__proto__`, setters, method
+    shorthand, spreads, nested values, and non-literal data values
+    fail closed. Each property charges the F430 parts budget.
+    Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F67x object too deep")
+    if pre_env is None:
+        pre_env = {}
+    props = {}
+    j = _js_skip_ws(text, i + 1)
+    if j < n and text[j] == "}":
+        return props, j + 1
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("F67x unterminated object")
+        c = text[j]
+        if c == "[":
+            # Computed [IDENT] -- IDENT must name a string literal
+            # bound in pre_env (the F673 computed-key shape).
+            k = _js_skip_ws(text, j + 1)
+            cname, k = _js_parse_ident(text, k)
+            if (cname not in pre_env
+                    or not isinstance(pre_env[cname], str)):
+                raise _JSExprFail("F67x computed key not bound")
+            key = pre_env[cname]
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "]":
+                raise _JSExprFail("F67x bad computed key")
+            j = k + 1
+        elif c in "'\"":
+            key, j = _js_parse_string(text, j)
+        elif c in _ASCII_DIGITS:
+            k = j + 1
+            while k < n and text[k] in _ASCII_DIGITS:
+                k += 1
+            key = text[j:k]
+            j = k
+        elif c in _JS_IDENT_START:
+            key, j = _js_parse_ident(text, j)
+        else:
+            raise _JSExprFail("F67x object key not a literal")
+        if key == "__proto__":
+            raise _JSExprFail("F67x __proto__ fails closed")
+        k = _js_skip_ws(text, j)
+        if key == "get" and k < n and text[k] not in ":(":
+            # Getter head: `get name(){return ADD;}`. A `get` followed
+            # by ':' is a data property named "get"; a `get` followed
+            # by '(' is method shorthand (fails closed at the colon
+            # check below).
+            if not this_bodies:
+                raise _JSExprFail("F67x getter not modeled")
+            gname, gk = _js_parse_f535_getter_head(text, k)
+            gk = _js_skip_ws(text, gk)
+            if gk >= n or text[gk] != "{":
+                raise _JSExprFail("F67x getter needs a body")
+            bstart, bend, gk2 = _js_span_braced(text, gk)
+            add_text, kend = _js_scan_f67x_body_text(text, bstart,
+                                                    bend)
+            if _js_skip_ws(text, kend) != bend:
+                raise _JSExprFail("F67x getter body trailing")
+            props[gname] = _JSF67xBody("getter", add_text)
+            j = gk2
+        else:
+            if k >= n or text[k] != ":":
+                raise _JSExprFail("F67x object needs colon")
+            vj = _js_skip_ws(text, k + 1)
+            if vj < n and text[vj] in "'\"":
+                val, vj = _js_parse_string(text, vj)
+                props[key] = val
+            elif (text.startswith("function", vj)
+                    and (vj + 8 >= n
+                         or text[vj + 8] not in _JS_IDENT_CONT)):
+                # Method value: `name:function(){return ADD;}`.
+                if not this_bodies:
+                    raise _JSExprFail("F67x method not modeled")
+                fk = _js_skip_ws(text, vj + 8)
+                if fk < n and text[fk] in _JS_IDENT_START:
+                    # Named function expression -- engine-identical
+                    # for the modeled (this-bound, zero-arg) body.
+                    _, fk = _js_parse_ident(text, fk)
+                    fk = _js_skip_ws(text, fk)
+                if fk >= n or text[fk] != "(":
+                    raise _JSExprFail("F67x method needs parens")
+                fk = _js_skip_ws(text, fk + 1)
+                if fk >= n or text[fk] != ")":
+                    raise _JSExprFail("F67x method takes no args")
+                fk = _js_skip_ws(text, fk + 1)
+                if fk >= n or text[fk] != "{":
+                    raise _JSExprFail("F67x method needs a body")
+                bstart, bend, fk2 = _js_span_braced(text, fk)
+                add_text, kend = _js_scan_f67x_body_text(text,
+                                                        bstart, bend)
+                if _js_skip_ws(text, kend) != bend:
+                    raise _JSExprFail("F67x method body trailing")
+                props[key] = _JSF67xBody("method", add_text)
+                vj = fk2
+            else:
+                raise _JSExprFail("F67x object value not a literal")
+            j = vj
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "}":
+                return props, j + 1
+            continue
+        if j < n and text[j] == "}":
+            return props, j + 1
+        raise _JSExprFail("F67x bad object literal")
+
+
+def _js_parse_f673_define_descriptors(text, i, obj, depth, state):
+    """Parse `{x:{get:FN},...}` at text[i] == '{' (F673).
+
+    The descriptors argument of `Object.defineProperties(o, ...)`:
+    each entry maps a property name to a descriptor object holding
+    exactly one field -- `get: function(){return ADD;}` (an
+    accessor descriptor; the getter body is captured as raw
+    additive text and evaluated with `this` = the target at read
+    time, node v24.20.0) or `value: 'LIT'` (a data descriptor --
+    a node-exact generalization of the filed getter-only shape).
+    Installs onto obj.props (later-wins, engine-exact). Anything
+    else (extra descriptor fields, non-literal values, named
+    targets other than the bound ident) fails closed. Returns the
+    index just past the descriptors object. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i + 1)
+    if j < n and text[j] == "}":
+        return j + 1  # empty descriptors -- a no-op install
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("F673 descriptors unterminated")
+        if text[j] in "'\"":
+            pname, j = _js_parse_string(text, j)
+        elif text[j] in _JS_IDENT_START:
+            pname, j = _js_parse_ident(text, j)
+        else:
+            raise _JSExprFail("F673 descriptor name not a literal")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ":")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "{")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] in "'\"":
+            dkind, j = _js_parse_string(text, j)
+        elif j < n and text[j] in _JS_IDENT_START:
+            dkind, j = _js_parse_ident(text, j)
+        else:
+            raise _JSExprFail("F673 descriptor kind not a literal")
+        if dkind not in ("get", "value"):
+            raise _JSExprFail("F673 descriptor kind not modeled")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ":")
+        j = _js_skip_ws(text, j)
+        if dkind == "get":
+            if not (text.startswith("function", j)
+                    and (j + 8 >= n
+                         or text[j + 8] not in _JS_IDENT_CONT)):
+                raise _JSExprFail("F673 getter not a function")
+            fk = _js_skip_ws(text, j + 8)
+            if fk < n and text[fk] in _JS_IDENT_START:
+                _, fk = _js_parse_ident(text, fk)
+                fk = _js_skip_ws(text, fk)
+            if fk >= n or text[fk] != "(":
+                raise _JSExprFail("F673 getter needs parens")
+            fk = _js_skip_ws(text, fk + 1)
+            if fk >= n or text[fk] != ")":
+                raise _JSExprFail("F673 getter takes no args")
+            fk = _js_skip_ws(text, fk + 1)
+            if fk >= n or text[fk] != "{":
+                raise _JSExprFail("F673 getter needs a body")
+            bstart, bend, fk2 = _js_span_braced(text, fk)
+            add_text, kend = _js_scan_f67x_body_text(text, bstart,
+                                                    bend)
+            if _js_skip_ws(text, kend) != bend:
+                raise _JSExprFail("F673 getter body trailing")
+            obj.props[pname] = _JSF67xBody("getter", add_text)
+            j = fk2
+        else:
+            if j >= n or text[j] not in "'\"":
+                raise _JSExprFail("F673 value descriptor literal")
+            val, j = _js_parse_string(text, j)
+            obj.props[pname] = val
+        state["parts"] += 1  # the installed property is
+        # obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "}":
+            raise _JSExprFail("F673 descriptor needs one field")
+        j = _js_skip_ws(text, j + 1)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "}":
+                return j + 1
+            continue
+        if j < n and text[j] == "}":
+            return j + 1
+        raise _JSExprFail("F673 bad descriptors")
+
+
+def _js_f673_hasown_guard(tobj, key):
+    """Node-exact `Object.hasOwn(tobj, key)` for the modeled value kinds.
+
+    _JSObj: own properties only (engine's own-only semantics). str and
+    _JSArr receivers go through ToObject: the String/Array exotic objects
+    own `length` and the canonical numeric indices (node v24.20.0:
+    Object.hasOwn('xy','length') and ('xy','0') are true, ('xy','00')
+    and (5,'x') are false -- the canonical-index check `str(idx) == key`
+    rejects non-canonical forms). Any other receiver (including an
+    unbound ident, which node rejects with ReferenceError) fails closed:
+    node would throw, so the decoder must not silently pick a branch.
+    """
+    if isinstance(tobj, _JSObj):
+        return key in tobj.props
+    if isinstance(tobj, str):
+        n = len(tobj)
+    elif isinstance(tobj, _JSArr):
+        n = len(tobj.elements)
+    else:
+        raise _JSExprFail("F673 hasOwn unmodeled receiver")
+    if key == "length":
+        return True
+    try:
+        idx = int(key)
+    except ValueError:
+        return False
+    return str(idx) == key and 0 <= idx < n
+
+
+def _js_parse_f673_term(text, j, env, depth, state):
+    """Parse one F673 return-additive term at text[j].
+
+    Terms: a string literal; a member read on a bound _JSObj
+    (`.M` / `['M']`, resolved via _js_f67x_member -- data
+    strings, defineProperties-installed getters evaluated with
+    `this` = the receiver, prototype-chain reads for
+    Object.create results); a bare ident bound to a string (the
+    destructured entries/values bindings); or the hasOwn-guarded
+    conditional `(Object.hasOwn(IDENT,'LIT')?TERM:TERM)` --
+    the guard is evaluated node-exactly (own properties only),
+    both branches must parse as terms (the unchosen branch is
+    parsed but never decoded -- fail-closed, never mis-decoded).
+    Returns (value, next_index, saw_hasown). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n:
+        raise _JSExprFail("F673 term empty")
+    if text[j] in "'\"":
+        val, j = _js_parse_string(text, j)
+        return val, j, False
+    if text[j] == "(":
+        # The hasOwn-guarded conditional term.
+        k = _js_skip_ws(text, j + 1)
+        if not (text.startswith("Object", k)
+                and (k + 6 >= n or text[k + 6] not in _JS_IDENT_CONT)):
+            raise _JSExprFail("F673 paren term not hasOwn")
+        k = _js_skip_ws(text, k + 6)
+        k = _js_expect(text, k, ".")
+        k = _js_skip_ws(text, k)
+        if not (text.startswith("hasOwn", k)
+                and (k + 6 >= n or text[k + 6] not in _JS_IDENT_CONT)):
+            raise _JSExprFail("F673 paren term not hasOwn")
+        k = _js_skip_ws(text, k + 6)
+        k = _js_expect(text, k, "(")
+        k = _js_skip_ws(text, k)
+        tname, k = _js_parse_ident(text, k)
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ",")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] not in "'\"":
+            raise _JSExprFail("F673 hasOwn key not a literal")
+        key, k = _js_parse_string(text, k)
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "?")
+        k = _js_skip_ws(text, k)
+        tobj = env.get(tname)
+        if tobj is None:
+            # Unbound ident: node throws ReferenceError, so the decoder
+            # must not silently pick a branch.
+            raise _JSExprFail("F673 hasOwn unbound receiver")
+        # Own-properties only for objects; ToObject-exact for str/_JSArr
+        # (node v24.20.0 -- a create-prototype key answers false).
+        guard = _js_f673_hasown_guard(tobj, key)
+        cons, k, _ = _js_parse_f673_term(text, k, env, depth, state)
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ":")
+        k = _js_skip_ws(text, k)
+        alt, k, _ = _js_parse_f673_term(text, k, env, depth, state)
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        state["ops"] += 1  # the guarded read is obfuscation-shaped
+        return (cons if guard else alt), k, True
+    name, k = _js_parse_ident(text, j)
+    if name not in env:
+        raise _JSExprFail("F673 unbound term")
+    v = env[name]
+    if isinstance(v, str):
+        # A bare bound string (the destructured binding). A member
+        # step on a string is engine-undefined -- fail closed.
+        kk = _js_skip_ws(text, k)
+        if kk < n and text[kk] == ".":
+            raise _JSExprFail("F673 member on string")
+        if kk < n and text[kk] == "[":
+            raise _JSExprFail("F673 member on string")
+        return v, k, False
+    if isinstance(v, _JSObj):
+        steps = 0
+        term = None
+        while True:
+            kk = _js_skip_ws(text, k)
+            if kk < n and text[kk] == ".":
+                kk = _js_skip_ws(text, kk + 1)
+                mname, kk = _js_parse_ident(text, kk)
+            elif kk < n and text[kk] == "[":
+                mname, kk = _js_parse_bracket_member(text, kk)
+            else:
+                break
+            if steps > 0:
+                # Chained reads past the first resolve on a string
+                # -- engine-undefined, fail closed.
+                raise _JSExprFail("F673 chained member")
+            term = _js_f67x_member(v, mname, depth, state)
+            if not isinstance(term, str):
+                raise _JSExprFail("F673 member not a string")
+            k = kk
+            steps += 1
+            state["ops"] += 1  # the member read is
+            # obfuscation-shaped
+        if steps == 0:
+            # A bare bound object ident reads "[object Object]" in
+            # the engine -- never decoded.
+            raise _JSExprFail("F673 bare object ident")
+        return term, k, False
+    raise _JSExprFail("F673 term not modeled")
+
+
+def _js_parse_f673_object_construction_iife(text, i, depth, state):
+    """Parse `(function(){STMT;return ADD;})()` (F673).
+
+    F671 (CLOSED) files plain-literal member reads in IIFE-return
+    additive position, but object-construction laundering escapes
+    it: `Object.defineProperties`-installed getters, `Object.entries`
+    / `Object.values` destructuring, computed-key literals,
+    `Object.create` prototype reads, and `Object.hasOwn`-guarded
+    reads all node-evaluate (v24.20.0) to the exact credential while
+    the decoder produces zero variants. Node-exact desugars: the
+    var binds the constructed value (a _JSObj with _JSF67xBody
+    accessors, an enumeration-ordered destructuring, or a
+    create-prototype chain); the return is a `+`-joined additive of
+    string literals, member reads (defineProperties getters
+    evaluated with `this` = the receiver; create-prototype reads
+    via the F548 chain), destructured string bindings, and
+    hasOwn-guarded conditionals (own-properties only).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, multi-decl, reassignment, non-empty call args;
+    - a binding outside the six modeled statement shapes; a
+      destructuring pattern other than `[[a,b]]`/`[a]`; an
+      entries/values mismatch with the pattern; an empty
+      enumeration;
+    - a computed key naming an unbound/non-string ident; a
+      non-`{` create argument; a defineProperties target other
+      than the bound ident; descriptor fields other than
+      get/value; non-literal descriptor values;
+    - a hasOwn guard on a non-object; an unchosen branch that is
+      not a term (parsed, never decoded); a missing key; a bare
+      bound ident with no member step.
+    The plain `var o={LIT};` statement shape additionally requires
+    a hasOwn-guarded term in the return -- bare member-read
+    returns stay F671's (hooked earlier). Tried after F664: every
+    shape carries a statement head no earlier route accepts (the
+    defineProperties call, a destructuring pattern, Object.create,
+    a computed-key second declaration, or a hasOwn ternary in the
+    return -- F655/F671 fail closed on all of them); None falls
+    through to the parenthesized-additive path like F664. Never
+    evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + 8
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        env = {}
+        need_hasown = False
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F673 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        if sj < n and text[sj] == "[":
+            # Destructuring: `var [[a,b]]=Object.entries({LIT});`
+            # or `var [a]=Object.values({LIT});`.
+            sj = _js_skip_ws(text, sj + 1)
+            nested = False
+            if sj < n and text[sj] == "[":
+                nested = True
+                sj = _js_skip_ws(text, sj + 1)
+            a, sj = _js_parse_ident(text, sj)
+            if a == "arguments":
+                raise _JSExprFail("F673 binding named arguments")
+            b = None
+            if nested:
+                sj = _js_skip_ws(text, sj)
+                sj = _js_expect(text, sj, ",")
+                sj = _js_skip_ws(text, sj)
+                b, sj = _js_parse_ident(text, sj)
+                if b == "arguments":
+                    raise _JSExprFail("F673 binding named arguments")
+                sj = _js_skip_ws(text, sj)
+                sj = _js_expect(text, sj, "]")
+                sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, "]")
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, "=")
+            sj = _js_skip_ws(text, sj)
+            if not (text.startswith("Object", sj)
+                    and (sj + 6 >= n
+                         or text[sj + 6] not in _JS_IDENT_CONT)):
+                raise _JSExprFail("F673 destructure not Object.*")
+            k = _js_skip_ws(text, sj + 6)
+            k = _js_expect(text, k, ".")
+            k = _js_skip_ws(text, k)
+            if (text.startswith("entries", k)
+                    and (k + 7 >= n
+                         or text[k + 7] not in _JS_IDENT_CONT)):
+                is_entries = True
+                k = k + 7
+            elif (text.startswith("values", k)
+                    and (k + 6 >= n
+                         or text[k + 6] not in _JS_IDENT_CONT)):
+                is_entries = False
+                k = k + 6
+            else:
+                raise _JSExprFail("F673 destructure not entries/values")
+            if is_entries != nested:
+                raise _JSExprFail("F673 destructure/builtin mismatch")
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, "(")
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "{":
+                raise _JSExprFail("F673 destructure source literal")
+            okeys, ovals, k = _js_parse_object_literal_keys_values(
+                text, k, depth, state)
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, ")")
+            if not ovals:
+                raise _JSExprFail("F673 empty enumeration")
+            if nested:
+                env[a] = okeys[0]
+                env[b] = ovals[0]
+            else:
+                env[a] = ovals[0]
+            sj = _js_skip_ws(text, k)
+            sj = _js_expect(text, sj, ";")
+            sj = _js_skip_ws(text, sj)
+        else:
+            name, sj = _js_parse_ident(text, sj)
+            if name == "arguments":
+                raise _JSExprFail("F673 binding named arguments")
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, "=")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "{":
+                props, sj = _js_parse_f67x_object(
+                    text, sj, depth, state, this_bodies=False)
+                obj = _JSObj(props)
+                sj = _js_skip_ws(text, sj)
+                sj = _js_expect(text, sj, ";")
+                sj = _js_skip_ws(text, sj)
+                # defineProperties branch?
+                _dp = (text.startswith("Object", sj)
+                       and (sj + 6 >= n
+                            or text[sj + 6] not in _JS_IDENT_CONT))
+                _dpk = _js_skip_ws(text, sj + 6) if _dp else sj
+                _dpd = (_dp and _dpk < n and text[_dpk] == ".")
+                _dpk2 = _js_skip_ws(text, _dpk + 1) if _dpd else sj
+                if (_dpd and text.startswith("defineProperties", _dpk2)
+                        and (_dpk2 + 16 >= n
+                             or text[_dpk2 + 16] not in _JS_IDENT_CONT)):
+                    k = _js_skip_ws(text, _dpk2 + 16)
+                    k = _js_expect(text, k, "(")
+                    k = _js_skip_ws(text, k)
+                    tname, k = _js_parse_ident(text, k)
+                    if tname != name:
+                        raise _JSExprFail("F673 not bound target")
+                    k = _js_skip_ws(text, k)
+                    k = _js_expect(text, k, ",")
+                    k = _js_skip_ws(text, k)
+                    if k >= n or text[k] != "{":
+                        raise _JSExprFail("F673 descriptors literal")
+                    k = _js_parse_f673_define_descriptors(text, k, obj,
+                                                         depth, state)
+                    k = _js_skip_ws(text, k)
+                    k = _js_expect(text, k, ")")
+                    k = _js_skip_ws(text, k)
+                    sj = _js_expect(text, k, ";")
+                    sj = _js_skip_ws(text, sj)
+                    env[name] = obj
+                else:
+                    # Plain object statement -- the hasOwn shape.
+                    # F671 (hooked earlier) owns bare member-read
+                    # returns; this branch requires a hasOwn guard.
+                    env[name] = obj
+                    need_hasown = True
+            elif (text.startswith("Object", sj)
+                    and (sj + 6 >= n
+                         or text[sj + 6] not in _JS_IDENT_CONT)):
+                # Object.create({LIT}) -- prototype reads.
+                k = _js_skip_ws(text, sj + 6)
+                k = _js_expect(text, k, ".")
+                k = _js_skip_ws(text, k)
+                if not (text.startswith("create", k)
+                        and (k + 6 >= n
+                             or text[k + 6] not in _JS_IDENT_CONT)):
+                    raise _JSExprFail("F673 not create")
+                k = _js_skip_ws(text, k + 6)
+                k = _js_expect(text, k, "(")
+                k = _js_skip_ws(text, k)
+                if k >= n or text[k] != "{":
+                    raise _JSExprFail("F673 create arg literal")
+                pprops, k = _js_parse_f67x_object(
+                    text, k, depth, state, this_bodies=True)
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, ")")
+                env[name] = _JSObj({}, proto=_JSObj(pprops))
+                sj = _js_skip_ws(text, k)
+                sj = _js_expect(text, sj, ";")
+                sj = _js_skip_ws(text, sj)
+            elif sj < n and text[sj] in "'\"":
+                # Computed-key shape: `var k='x';` then
+                # `var o={[k]:'LIT'};`.
+                lit, sj = _js_parse_string(text, sj)
+                env[name] = lit
+                sj = _js_skip_ws(text, sj)
+                sj = _js_expect(text, sj, ";")
+                sj = _js_skip_ws(text, sj)
+                _kw2, m2 = _js_match_decl_kw(text, sj)
+                if _kw2 is None:
+                    raise _JSExprFail("F673 computed needs decl")
+                sj = _js_skip_ws(text, m2)
+                oname, sj = _js_parse_ident(text, sj)
+                if oname == "arguments":
+                    raise _JSExprFail("F673 binding named arguments")
+                sj = _js_skip_ws(text, sj)
+                sj = _js_expect(text, sj, "=")
+                sj = _js_skip_ws(text, sj)
+                if sj >= n or text[sj] != "{":
+                    raise _JSExprFail("F673 computed not an object")
+                oprops, sj = _js_parse_f67x_object(
+                    text, sj, depth, state, pre_env=env,
+                    this_bodies=False)
+                env[oname] = _JSObj(oprops)
+                sj = _js_skip_ws(text, sj)
+                sj = _js_expect(text, sj, ";")
+                sj = _js_skip_ws(text, sj)
+            else:
+                raise _JSExprFail("F673 binding not modeled")
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F673 no return")
+        sj = _js_skip_ws(text, m)
+        total = None
+        saw_hasown = False
+        while True:
+            term, sj, th = _js_parse_f673_term(text, sj, env, depth,
+                                              state)
+            saw_hasown = saw_hasown or th
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            state["ops"] += 1
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        if need_hasown and not saw_hasown:
+            raise _JSExprFail("F673 plain object needs hasOwn")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F673 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f674_term(text, j, oname, obj, depth, state):
+    """Parse one F674 return-additive term at text[j].
+
+    Terms: a string literal; a method call `NAME.M()` on the bound
+    object (the method body evaluates with `this` = the receiver,
+    node v24.20.0); or a member read `NAME.M` / `NAME['M']` (data
+    strings, or getters evaluated with `this` = the receiver).
+    Anything else (unbound idents, call args, chained steps, bare
+    bound idents) fails closed. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n:
+        raise _JSExprFail("F674 term empty")
+    if text[j] in "'\"":
+        return _js_parse_string(text, j)
+    name, k = _js_parse_ident(text, j)
+    if name != oname:
+        raise _JSExprFail("F674 unbound term")
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ".":
+        k = _js_skip_ws(text, k + 1)
+        mname, k = _js_parse_ident(text, k)
+    elif k < n and text[k] == "[":
+        mname, k = _js_parse_bracket_member(text, k)
+    else:
+        # A bare bound object ident reads "[object Object]" in the
+        # engine -- never decoded.
+        raise _JSExprFail("F674 bare object ident")
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == "(":
+        # Method call: `o.M()`.
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            raise _JSExprFail("F674 method takes no args")
+        k = k + 1
+        val, _holder = _js_f67x_lookup(obj, mname)
+        if not (isinstance(val, _JSF67xBody)
+                and val.kind == "method"):
+            # Calling a data property throws TypeError in the
+            # engine; a getter is not a function -- fail closed.
+            raise _JSExprFail("F674 not a method")
+        state["ops"] += 1  # the this-bound call is
+        # obfuscation-shaped
+        return _js_f67x_eval_body(val, obj, depth, state), k
+    term = _js_f67x_member(obj, mname, depth, state)
+    state["ops"] += 1  # the member read is obfuscation-shaped
+    return term, k
+
+
+def _js_parse_f674_this_bound_iife(text, i, depth, state):
+    """Parse `(function(){DECL o={...};return ADD;})()` (F674).
+
+    The decoder resolves member reads on the receiver object but
+    never binds `this`: `o.get()` where the method body reads
+    `this.x`, and `o.x` where `x` is a getter reading `this.y`,
+    both node-evaluate (v24.20.0) to the exact credential while the
+    decoder produces zero variants. Node-exact desugar: the var
+    binds the this-aware object (methods/getters captured as
+    _JSF67xBody, at least one required); the return is a
+    `+`-joined additive of string literals, method calls
+    (zero-arg, `this` = the receiver), and member reads (data
+    strings or getters evaluated with `this` = the receiver).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, multi-decl, reassignment, non-empty call args;
+    - an object with no this-bound body (pure-data shapes stay
+      F671's -- hooked earlier);
+    - a method call with arguments, on a missing key, or on a
+      data/getter property; a member read on a method; a missing
+      key; a bare bound ident; an unbound receiver.
+    Tried after F673: the object must carry >= 1 this-bound body,
+    which every earlier object grammar fails closed on (F535/F671
+    reject methods and this-bodies; F673's statement objects use
+    this_bodies=False); None falls through to the
+    parenthesized-additive path like F673. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + 8
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F674 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            raise _JSExprFail("F674 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "{":
+            return None  # not an object binding
+        props, sj = _js_parse_f67x_object(text, sj, depth, state,
+                                         this_bodies=True)
+        if not any(isinstance(v, _JSF67xBody)
+                   for v in props.values()):
+            raise _JSExprFail("F674 needs a this-bound body")
+        obj = _JSObj(props)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F674 no return")
+        sj = _js_skip_ws(text, m)
+        total = None
+        while True:
+            term, sj = _js_parse_f674_term(text, sj, oname, obj,
+                                          depth, state)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            state["ops"] += 1
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F674 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
+
+
 def _js_parse_f612_values_varbound_iife(text, i, depth, state):
     """Parse `(function(){DECL o=ENUMSRC;return Object.values(o)<postfix>;})()`
     / `(function(){DECL o=ENUMSRC;return
@@ -39392,6 +40362,32 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                  state)
         if _f664 is not None:
             val, i = _f664
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F673: (function(){STMT;return ADD;})() -- object-construction
+        #   member reads beyond F663/F664/F671 (defineProperties
+        #   getters, entries/values destructuring, computed keys,
+        #   Object.create prototypes, hasOwn guards). Tried after
+        #   F664: every shape carries a statement head no earlier
+        #   route accepts (the defineProperties call, a destructuring
+        #   pattern, Object.create, a computed-key second declaration,
+        #   or a hasOwn ternary in the return -- F655/F671 fail closed
+        #   on all of them); None falls through to the
+        #   parenthesized-additive path like F664.
+        _f673 = _js_parse_f673_object_construction_iife(text, i, depth,
+                                                       state)
+        if _f673 is not None:
+            val, i = _f673
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F674: (function(){DECL o={...};return ADD;})() -- this-bound
+        #   method/getter reads. Tried after F673: the object must
+        #   carry >= 1 this-bound body, which every earlier object
+        #   grammar fails closed on (F535/F671 reject methods and
+        #   this-bodies; F673's statement objects use
+        #   this_bodies=False); None falls through to the
+        #   parenthesized-additive path like F673.
+        _f674 = _js_parse_f674_this_bound_iife(text, i, depth, state)
+        if _f674 is not None:
+            val, i = _f674
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")

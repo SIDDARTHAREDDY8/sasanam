@@ -124,11 +124,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F662-F685 open, next F686 (this lane)."""
+    """Control: footer shows F672, F675-F685 open, next F686 (this lane)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F686**" in text
-          and "Open findings: F672, F673, F674, F675, F676, F677, F678, F679, F680, F681, F682, F683, F684, F685." in text)
+          and "Open findings: F672, F675, F676, F677, F678, F679, F680, F681, F682, F683, F684, F685." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -276,64 +276,64 @@ def test_r47_f672_s7_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 
-# ------------------------------------------------- F673 open pins (must miss)
+# ------------------------------------------------- F673 closed pins (must block)
 
 @_t
-def test_r47_f673_s1_open():
-    """F673 OPEN (defineprop-getter): miss reproduces."""
-    miss = _misses("(function(){var o={};Object.defineProperties(o,{x:{get:function(){return '%s';}}});return o.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r47_f673_s2_open():
-    """F673 OPEN (entries-destr): miss reproduces."""
-    miss = _misses("(function(){var [[k,v]]=Object.entries({x:'%s'});return v+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f673_s1_closed():
+    """F673 CLOSED (defineprop-getter): now blocks."""
+    ok = _blocked("(function(){var o={};Object.defineProperties(o,{x:{get:function(){return '%s';}}});return o.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t
-def test_r47_f673_s3_open():
-    """F673 OPEN (values-destr): miss reproduces."""
-    miss = _misses("(function(){var [v]=Object.values({x:'%s'});return v+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f673_s2_closed():
+    """F673 CLOSED (entries-destr): now blocks."""
+    ok = _blocked("(function(){var [[k,v]]=Object.entries({x:'%s'});return v+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t
-def test_r47_f673_s4_open():
-    """F673 OPEN (computed-key): miss reproduces."""
-    miss = _misses("(function(){var k='x';var o={[k]:'%s'};return o.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f673_s3_closed():
+    """F673 CLOSED (values-destr): now blocks."""
+    ok = _blocked("(function(){var [v]=Object.values({x:'%s'});return v+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t
-def test_r47_f673_s5_open():
-    """F673 OPEN (create): miss reproduces."""
-    miss = _misses("(function(){var o=Object.create({x:'%s'});return o.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f673_s4_closed():
+    """F673 CLOSED (computed-key): now blocks."""
+    ok = _blocked("(function(){var k='x';var o={[k]:'%s'};return o.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t
-def test_r47_f673_s6_open():
-    """F673 OPEN (hasown): miss reproduces."""
-    miss = _misses("(function(){var o={x:'%s'};return (Object.hasOwn(o,'x')?o.x:'junk')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-# ------------------------------------------------- F674 open pins (must miss)
-
-@_t
-def test_r47_f674_s1_open():
-    """F674 OPEN (this-method): miss reproduces."""
-    miss = _misses("(function(){var o={x:'%s',get:function(){return this.x;}};return o.get()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f673_s5_closed():
+    """F673 CLOSED (create): now blocks."""
+    ok = _blocked("(function(){var o=Object.create({x:'%s'});return o.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t
-def test_r47_f674_s2_open():
-    """F674 OPEN (this-getter): miss reproduces."""
-    miss = _misses("(function(){var o={get x(){return this.y;},y:'%s'};return o.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f673_s6_closed():
+    """F673 CLOSED (hasown): now blocks."""
+    ok = _blocked("(function(){var o={x:'%s'};return (Object.hasOwn(o,'x')?o.x:'junk')+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
+
+
+# ------------------------------------------------- F674 closed pins (must block)
+
+@_t
+def test_r47_f674_s1_closed():
+    """F674 CLOSED (this-method): now blocks."""
+    ok = _blocked("(function(){var o={x:'%s',get:function(){return this.x;}};return o.get()+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
+
+
+@_t
+def test_r47_f674_s2_closed():
+    """F674 CLOSED (this-getter): now blocks."""
+    ok = _blocked("(function(){var o={get x(){return this.y;},y:'%s'};return o.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 # ------------------------------------------------- F675 open pins (must miss)
