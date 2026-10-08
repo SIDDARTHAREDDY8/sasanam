@@ -37266,6 +37266,264 @@ def _js_parse_f705_reflect_get_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f716_reflect_set_iife(text, i, depth, state):
+    """Parse `(function(){DECL o=OBJLIT;[DECL k='LIT';]*
+    [Reflect.set(o,KEY,'LIT');]+return ADD;})()` at text[i] (F716).
+
+    The decoder has no Reflect.set production: Reflect.set installs
+    the fragment on the object and a later member read recovers it
+    while the decoder produces zero variants. Distinct from F705
+    (Reflect.get, which only reads). Filed shapes:
+    `(function(){var o={};Reflect.set(o,'x','f1');
+    return o.x+'f2';})()` and the var-bound-key twin
+    `(function(){var o={};var k='x';Reflect.set(o,k,'f1');
+    return o[k]+'f2';})()`. Node-exact desugar (v24.20.0):
+    - `var|let|const o={...};` binds the F535 literal object
+      (parsed accessor-aware, F705 parity);
+    - `var|let|const k='LIT';` binds string-literal key aliases;
+    - `Reflect.set(o,'K','LIT');` / `Reflect.set(o,k,'LIT');`
+      installs a data property on the tracked object
+      (later-wins, node-exact). The value must be a plain string
+      (the F699 `_js_str_is_unsafe_int` guard applies); a set on a
+      key that currently holds an `_JSAccessor` fails closed --
+      the engine's [[Set]] on a getter-only accessor returns false
+      and installs nothing; `__proto__` keys fail closed;
+    - `return o.K(+'LIT')*;` / `o['K']` / `o[k]` reads resolve
+      against the written props exactly like the engine's
+      own-property lookup (a missing key is engine undefined --
+      fail closed).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, reassignment, non-`{}`-literal object binding;
+    - `Reflect['set']` (dot form only, F664/F691 parity), a target
+      other than the bound ident, a non-literal key, a non-string
+      value, a 4th receiver argument, an unbound key alias;
+    - a return term that is not a string literal or a bound member
+      read resolving to a plain string.
+
+    Tried after F702/F703: every accepted shape carries a
+    `Reflect.set(` statement head, which no earlier route accepts
+    (F705's term head requires `.get`; F702/F703 fail closed on the
+    statement head; red-first verified: BREAK on the open tree);
+    None falls through to the parenthesized-additive path. The
+    F702/F703 hook and its trailing `return` are untouched
+    (wave-379 lesson). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F716 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            raise _JSExprFail("F716 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "{":
+            return None  # not an object-literal target
+        props, sj = _js_parse_f535_object(text, sj, depth, state,
+                                         accessor_aware=True)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        tracked = dict(props)
+        keys = {}
+        nset = 0
+
+        def _f716_set_key(q):
+            # Parse the KEY of Reflect.set at q: a string literal,
+            # or a bound key alias. Returns (key, next_index).
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] in "'\"":
+                return _js_parse_string(text, q)
+            _kname, q = _js_parse_ident(text, q)
+            if _kname not in keys:
+                raise _JSExprFail("F716 set key not a bound alias")
+            return keys[_kname], q
+
+        while True:
+            q = _js_skip_ws(text, sj)
+            r = _js_match_kw(text, q, "return")
+            if r is not None:
+                sj = q
+                break
+            kw2, m2 = _js_match_decl_kw(text, q)
+            if kw2 is not None:
+                # A string-literal key alias: `var k='LIT';`
+                m2 = _js_skip_ws(text, m2)
+                kname, m2 = _js_parse_ident(text, m2)
+                if kname == "arguments" or kname == oname \
+                        or kname in keys:
+                    raise _JSExprFail("F716 key alias redeclared")
+                m2 = _js_skip_ws(text, m2)
+                m2 = _js_expect(text, m2, "=")
+                m2 = _js_skip_ws(text, m2)
+                if m2 >= n or text[m2] not in "'\"":
+                    raise _JSExprFail("F716 key alias not a literal")
+                kval, m2 = _js_parse_string(text, m2)
+                if not kval or kval == "__proto__":
+                    raise _JSExprFail("F716 key alias bad value")
+                m2 = _js_skip_ws(text, m2)
+                m2 = _js_expect(text, m2, ";")
+                keys[kname] = kval
+                state["ops"] += 1  # the alias decl is
+                # obfuscation-shaped
+                sj = _js_skip_ws(text, m2)
+                continue
+            # A Reflect.set statement.
+            if not text.startswith("Reflect", q):
+                raise _JSExprFail("F716 stmt not Reflect.set")
+            q2 = q + len("Reflect")
+            if q2 < n and text[q2] in _JS_IDENT_CONT:
+                raise _JSExprFail("F716 Reflectx is not Reflect")
+            q2 = _js_skip_ws(text, q2)
+            if q2 >= n or text[q2] != ".":
+                raise _JSExprFail("F716 Reflect without dot")
+            q2 = _js_skip_ws(text, q2 + 1)
+            if not text.startswith("set", q2):
+                raise _JSExprFail("F716 not Reflect.set")
+            q3 = q2 + len("set")
+            if q3 < n and text[q3] in _JS_IDENT_CONT:
+                raise _JSExprFail("F716 setx is not set")
+            # The `set` member commits the parse: malformed shapes
+            # fail closed.
+            q2 = _js_skip_ws(text, q3)
+            if q2 >= n or text[q2] != "(":
+                raise _JSExprFail("F716 Reflect.set without paren")
+            q2 = _js_skip_ws(text, q2 + 1)
+            _tname, q2 = _js_parse_ident(text, q2)
+            if _tname != oname:
+                raise _JSExprFail(
+                    "F716 Reflect.set target not bound ident")
+            q2 = _js_skip_ws(text, q2)
+            if q2 >= n or text[q2] != ",":
+                raise _JSExprFail("F716 Reflect.set without key")
+            _key, q2 = _f716_set_key(q2 + 1)
+            if not _key or _key == "__proto__":
+                raise _JSExprFail("F716 Reflect.set bad key")
+            q2 = _js_skip_ws(text, q2)
+            if q2 >= n or text[q2] != ",":
+                raise _JSExprFail("F716 Reflect.set without value")
+            q2 = _js_skip_ws(text, q2 + 1)
+            if q2 >= n or text[q2] not in "'\"":
+                raise _JSExprFail(
+                    "F716 Reflect.set value not a literal")
+            _val, q2 = _js_parse_string(text, q2)
+            q2 = _js_skip_ws(text, q2)
+            if q2 < n and text[q2] == ",":
+                raise _JSExprFail("F716 Reflect.set receiver arg")
+            if q2 >= n or text[q2] != ")":
+                raise _JSExprFail("F716 Reflect.set unterminated")
+            q2 = _js_skip_ws(text, q2 + 1)
+            q2 = _js_expect(text, q2, ";")
+            _cur = tracked.get(_key)
+            if isinstance(_cur, _JSAccessor):
+                # The engine's [[Set]] on a getter-only accessor
+                # returns false and installs nothing -- fail closed
+                # rather than mis-decode.
+                raise _JSExprFail("F716 Reflect.set on accessor")
+            if (not isinstance(_val, str)
+                    or isinstance(_val, (_JSNumStr, _JSBigInt))
+                    or _js_str_is_unsafe_int(_val)):
+                raise _JSExprFail(
+                    "F716 Reflect.set value not a plain string")
+            tracked[_key] = _val
+            state["ops"] += 1  # the Reflect.set indirection is
+            # obfuscation-shaped
+            nset += 1
+            sj = _js_skip_ws(text, q2)
+        if nset == 0:
+            raise _JSExprFail("F716 no Reflect.set statement")
+
+        def _f716_term(sj):
+            # One additive term: a string literal, or a member read
+            # on the bound object resolving to a plain string.
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                return _js_parse_string(text, sj)
+            _rname, sj = _js_parse_ident(text, sj)
+            if _rname != oname:
+                raise _JSExprFail("F716 term not bound ident")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == ".":
+                sj = _js_skip_ws(text, sj + 1)
+                _mem, sj = _js_parse_ident(text, sj)
+            elif sj < n and text[sj] == "[":
+                _qb = _js_skip_ws(text, sj + 1)
+                if _qb < n and text[_qb] in "'\"":
+                    _mem, sj = _js_parse_bracket_member(text, sj)
+                else:
+                    _kname, sj = _js_parse_ident(text, _qb)
+                    sj = _js_skip_ws(text, sj)
+                    sj = _js_expect(text, sj, "]")
+                    if _kname not in keys:
+                        raise _JSExprFail(
+                            "F716 term key not a bound alias")
+                    _mem = keys[_kname]
+            else:
+                raise _JSExprFail("F716 term not a member read")
+            if _mem == "__proto__":
+                raise _JSExprFail("F716 term __proto__")
+            _raw = tracked.get(_mem)
+            if _raw is None:
+                raise _JSExprFail("F716 term missing key")
+            _rv = _raw.value if isinstance(_raw, _JSAccessor) \
+                else _raw
+            if (not isinstance(_rv, str)
+                    or isinstance(_rv, (_JSNumStr, _JSBigInt))
+                    or _js_str_is_unsafe_int(_rv)):
+                raise _JSExprFail(
+                    "F716 term value not a plain string")
+            state["ops"] += 1  # the member read is
+            # obfuscation-shaped
+            return _rv, sj
+
+        m = _js_match_kw(text, sj, "return")
+        sj = _js_skip_ws(text, m)
+        total = None
+        while True:
+            _val, sj = _f716_term(sj)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = _val
+            else:
+                if len(total) + len(_val) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + _val
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F716 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f674_term(text, j, oname, obj, depth, state):
     """Parse one F674 return-additive term at text[j].
 
@@ -41009,17 +41267,22 @@ def _js_parse_f675_object_fn(text, i, depth, state):
 
 
 def _js_parse_f675_delete_body_after_head(text, j, params, is_block):
-    """Parse deleteProperty-trap body content after the head (F675).
+    """Parse deleteProperty-trap body content after the head (F675, F715).
 
-    Two node-exact forms (v24.20.0): the no-op `{return true;}` /
+    Node-exact forms (v24.20.0): the no-op `{return true;}` /
     `(P)=>true` (the filed shape -- the trap claims the delete
     without touching the target, so the target's members survive),
-    and the deleting `{delete T0[T1];return true;}` /
+    the `{return false;}` / `(P)=>false` twin (F715 -- the trap
+    reports failure; the delete does not happen unless the body
+    itself deleted, so the target's members survive too), and the
+    deleting `{delete T0[T1];return true;}` /
     `(P)=>delete T0[T1]` (T0/T1 the trap's first/second params --
     the member named by the later `delete` statement is removed
-    from the tracked target). Returns (deletes, next_index):
-    deletes is True when the body removes the member. Anything
-    else fails closed. Never evals.
+    from the tracked target). A `{delete T0[T1];return false;}`
+    body still deletes (the trap body's own delete removed the
+    member before the false return), so it returns deletes=True.
+    Returns (deletes, next_index). Anything else fails closed.
+    Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, j)
@@ -41051,7 +41314,12 @@ def _js_parse_f675_delete_body_after_head(text, j, params, is_block):
         j = _js_skip_ws(text, r)
         t = _js_match_kw(text, j, "true")
         if t is None:
-            raise _JSExprFail("F675 delete return not true")
+            # F715: `{return false;}` -- the trap reports the delete
+            # failed; the member survives unless the body itself
+            # deleted it (saw_delete).
+            t = _js_match_kw(text, j, "false")
+            if t is None:
+                raise _JSExprFail("F675 delete return not true/false")
         j = _js_skip_ws(text, t)
         j = _js_expect(text, j, ";")
         j = _js_skip_ws(text, j)
@@ -41076,7 +41344,11 @@ def _js_parse_f675_delete_body_after_head(text, j, params, is_block):
         return True, d
     t = _js_match_kw(text, j, "true")
     if t is None:
-        raise _JSExprFail("F675 delete concise not true")
+        # F715: the concise `=>false` twin -- same no-delete
+        # semantics as `=>true`.
+        t = _js_match_kw(text, j, "false")
+        if t is None:
+            raise _JSExprFail("F675 delete concise not true/false")
     return False, t
 
 
@@ -52349,6 +52621,19 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             text, i, depth, state)
         if _f702f703 is not None:
             val, i = _f702f703
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F716: (function(){DECL o=OBJLIT;[DECL k='LIT';]*
+        #   [Reflect.set(o,KEY,'LIT');]+return ADD;})() -- Reflect.set
+        #   fragment writes. Tried after F702/F703: every accepted
+        #   shape carries a `Reflect.set(` statement head, which no
+        #   earlier route accepts (red-first verified: BREAK on the
+        #   open tree); None falls through to the
+        #   parenthesized-additive path. The F702/F703 hook and its
+        #   trailing `return` are untouched (wave-379 lesson).
+        _f716 = _js_parse_f716_reflect_set_iife(text, i, depth,
+                                               state)
+        if _f716 is not None:
+            val, i = _f716
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
