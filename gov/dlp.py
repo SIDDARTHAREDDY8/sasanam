@@ -2220,7 +2220,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|atob(?![_$A-Za-z0-9])|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty|fromEntries|groupBy)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|Map[ \t\n\r]*\.[ \t\n\r]*groupBy(?![_$A-Za-z0-9])|new[ \t\n\r]+Map(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|new[ \t\n\r]+Proxy(?![_$A-Za-z0-9])|new[ \t\n\r]+URLSearchParams(?![_$A-Za-z0-9])|new[ \t\n\r]+URL(?![_$A-Za-z0-9])|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|atob(?![_$A-Za-z0-9])|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty|fromEntries|groupBy)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|Promise(?![_$A-Za-z0-9])|Map[ \t\n\r]*\.[ \t\n\r]*groupBy(?![_$A-Za-z0-9])|new[ \t\n\r]+Map(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|new[ \t\n\r]+Proxy(?![_$A-Za-z0-9])|new[ \t\n\r]+URLSearchParams(?![_$A-Za-z0-9])|new[ \t\n\r]+URL(?![_$A-Za-z0-9])|\(")
 # F536: the structuredClone anchor carries its own ident-boundary
 # lookahead so `structuredClonex(` never anchors (no wasted F512
 # total-attempt budget); the primary branch re-checks the boundary
@@ -17399,6 +17399,500 @@ def _js_parse_f6xx_return_acc(stmts, j, acc):
     return j
 
 
+def _js_parse_f618_promise_resolve(text, j, state):
+    """Parse `Promise.resolve('LIT')` at text[j] (F618).
+
+    Node-exact (v24.20.0): a literal resolve fulfills with the
+    literal itself. Exactly one string-literal argument -- extra
+    arguments (the engine ignores them), non-literal arguments,
+    and any other Promise static fail closed. Returns (value,
+    next_index). Never evals.
+    """
+    n = len(text)
+    k = _js_match_kw(text, _js_skip_ws(text, j), "Promise")
+    if k is None:
+        raise _JSExprFail("F618 element not Promise.resolve")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, ".")
+    _rname, k = _js_parse_ident(text, _js_skip_ws(text, k))
+    if _rname != "resolve":
+        raise _JSExprFail("F618 element not Promise.resolve")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, "(")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] not in "'\"":
+        raise _JSExprFail("F618 resolve arg not a literal")
+    val, k = _js_parse_string(text, k)
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, ")")
+    state["parts"] += 1  # F452: charge per resolved element
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return val, k
+
+
+def _js_f618_array_literal_text(arr):
+    """Source text for a resolved _JSArr (F618): `['a','b']`."""
+    return "[" + ",".join(_js_quote_literal(e) for e in arr.elements) + "]"
+
+
+def _js_try_f618_param_join(body, pname, arr):
+    """Try the `P.join('SEP')` then-body form (F618 filed shape 1).
+
+    Evaluates the join structurally over the resolved array's
+    elements (node-exact). Returns the joined string, or None when
+    the body is not exactly that form -- the caller falls back to
+    bare-read substitution. Never evals.
+    """
+    try:
+        j = _js_skip_ws(body, 0)
+        _qn, j = _js_parse_ident(body, j)
+        if _qn != pname:
+            return None
+        j = _js_skip_ws(body, j)
+        j = _js_expect(body, j, ".")
+        _mn, j = _js_parse_ident(body, _js_skip_ws(body, j))
+        if _mn != "join":
+            return None
+        j = _js_skip_ws(body, j)
+        j = _js_expect(body, j, "(")
+        j = _js_skip_ws(body, j)
+        if j >= len(body) or body[j] not in "'\"":
+            return None
+        sep, j = _js_parse_string(body, j)
+        j = _js_skip_ws(body, j)
+        j = _js_expect(body, j, ")")
+        j = _js_skip_ws(body, j)
+        if j != len(body):
+            return None
+        return sep.join(arr.elements)
+    except _JSExprFail:
+        return None
+
+
+def _js_f618_then_body_value(body, bindings, depth, state):
+    """Evaluate a `.then` concise arrow body (F618).
+
+    *body* is the raw body text; *bindings* the (param,
+    literal-text) pairs. Each param is substituted with its
+    literal text (bare reads only -- the F600/F601/F602
+    discipline; any other use fails closed), and the rewritten
+    text is parsed by the normal additive grammar at depth+1, so
+    every downstream decoder, bound, and fail-closed rule applies
+    unchanged. Returns the body's string value. Never evals.
+    """
+    rewritten = body
+    for pname, ptext in bindings:
+        rewritten = _js_bind_foreach_param(rewritten, pname, ptext)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    val, k = _js_parse_additive(rewritten, 0, depth + 1, state)
+    k = _js_skip_ws(rewritten, k)
+    if k != len(rewritten):
+        raise _JSExprFail("F618 then body trailing junk")
+    if not isinstance(val, str):
+        raise _JSExprFail("F618 then body not a string")
+    return val
+
+
+def _js_parse_f618_then_callback(text, j, resolved, depth, state):
+    """Parse the `.then(...)` callback at text[j] (F618).
+
+    Recognized (node-verified, v24.20.0):
+      `P=>BODY`, `(P)=>BODY`, `([P1,P2])=>BODY`
+    with concise (expression) bodies only -- block bodies,
+    default/rest params, and `function` callbacks fail closed.
+    *resolved* is the fulfillment value: a _JSArr for
+    Promise.all, a string for the single-element Promise.race.
+    The single-param `P.join('SEP')` member form is evaluated
+    structurally over the resolved array (filed shape 1); every
+    other body goes through bare-read substitution + the additive
+    grammar. Destructuring requires the param count to equal the
+    resolved array length (the engine would bind undefined
+    otherwise -- never guessed). Returns (value, next_index)
+    just past the callback. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    params = []
+    is_destructure = False
+    if j < n and text[j] == "(":
+        j = _js_skip_ws(text, j + 1)
+        if j < n and text[j] == "[":
+            j = _js_skip_ws(text, j + 1)
+            while True:
+                _pn, j = _js_parse_ident(text, _js_skip_ws(text, j))
+                if _pn in params or _pn == "arguments":
+                    raise _JSExprFail("F618 destructure param shadowed")
+                params.append(_pn)
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == ",":
+                    j = _js_skip_ws(text, j + 1)
+                    continue
+                break
+            j = _js_expect(text, j, "]")
+            is_destructure = True
+        else:
+            _pn, j = _js_parse_ident(text, j)
+            if _pn == "arguments":
+                raise _JSExprFail("F618 then param shadowed")
+            params = [_pn]
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+    elif j < n and text[j] in _JS_IDENT_START:
+        _pn, j = _js_parse_ident(text, j)
+        if _pn == "arguments":
+            raise _JSExprFail("F618 then param shadowed")
+        params = [_pn]
+    else:
+        raise _JSExprFail("F618 then callback not an arrow")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F618 then callback not an arrow")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        raise _JSExprFail("F618 then block body not modeled")
+    body, j = _js_scan_foreach_E(text, j, ")")
+    if is_destructure:
+        if not isinstance(resolved, _JSArr):
+            raise _JSExprFail("F618 destructure of non-array")
+        if len(params) != len(resolved.elements):
+            raise _JSExprFail("F618 destructure arity mismatch")
+        bindings = [(p, _js_quote_literal(e))
+                    for p, e in zip(params, resolved.elements)]
+        return _js_f618_then_body_value(body, bindings, depth,
+                                        state), j
+    _p = params[0]
+    if isinstance(resolved, _JSArr):
+        _jv = _js_try_f618_param_join(body, _p, resolved)
+        if _jv is not None:
+            return _jv, j
+        bindings = [(_p, _js_f618_array_literal_text(resolved))]
+    else:
+        bindings = [(_p, _js_quote_literal(resolved))]
+    return _js_f618_then_body_value(body, bindings, depth, state), j
+
+
+def _js_parse_f618_promise_then(text, i, depth, state):
+    """Parse `Promise.all([...]).then(CB)` / `Promise.race([...]).then(CB)` (F618).
+
+    Node-exact static model (v24.20.0): Promise.all fulfills with
+    the input-order array of fulfillment values; the
+    single-element Promise.race fulfills with that element's
+    value; the .then callback observes the fulfillment value. The
+    decoder cannot await, so the deterministic fulfillment is
+    modeled statically. Only `Promise.resolve('LIT')` elements
+    (string literals); non-resolve elements, non-literal resolve
+    args, extra resolve args, a multi-element or empty race, a
+    second .then argument, non-arrow/block-body callbacks, and
+    .catch/.finally chains all fail closed (documented F618
+    boundary). Returns (value, next_index) just past `.then(...)`.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_match_kw(text, i, "Promise")
+    if j is None:
+        raise _JSExprFail("F618 not a Promise expression")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ".")
+    _mname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if _mname not in ("all", "race"):
+        raise _JSExprFail("F618 Promise member not modeled")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "[")
+    elements = []
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] != "]":
+        while True:
+            _ev, j = _js_parse_f618_promise_resolve(text, j, state)
+            elements.append(_ev)
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ",":
+                j = _js_skip_ws(text, j + 1)
+                continue
+            break
+    j = _js_expect(text, j, "]")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    if _mname == "all":
+        resolved = _JSArr(elements)
+    else:
+        if len(elements) != 1:
+            raise _JSExprFail("F618 race needs exactly one element")
+        resolved = elements[0]
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ".")
+    _tname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if _tname != "then":
+        raise _JSExprFail("F618 terminal not .then")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    val, j = _js_parse_f618_then_callback(text, j, resolved, depth,
+                                          state)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    return val, j
+
+
+def _js_call_empty_parens(stmts, k):
+    """Parse `()` (empty call parens) at stmts[k] (F619).
+
+    The generator must be invoked with zero arguments -- any
+    argument fails closed. Returns next_index. Never evals.
+    """
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, "(")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ")")
+    return k
+
+
+def _js_parse_f619_generator_decl(stmts, sj, state):
+    """Parse `function* NAME(){yield 'LIT';...}` at stmts[sj] (F619).
+
+    The generator body must be a bare sequence of literal yields
+    (ws-tolerant, optional parens around the literal, ASI-tolerant
+    before `}`) -- the F494 fixed-yield discipline. Parameters,
+    non-literal yields, `yield*` delegation, `return`, loops, or
+    any other statement fail closed. Returns (name, yields,
+    next_index) just past the declaration's closing brace. Never
+    evals.
+    """
+    n = len(stmts)
+    k = _js_match_kw(stmts, sj, "function")
+    if k is None:
+        raise _JSExprFail("F619 not a generator decl")
+    k = _js_skip_ws(stmts, k)
+    if k >= n or stmts[k] != "*":
+        raise _JSExprFail("F619 not a generator")
+    k = _js_skip_ws(stmts, k + 1)
+    name, k = _js_parse_ident(stmts, k)
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, "(")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ")")
+    k = _js_expect(stmts, k, "{")
+    yields = []
+    while True:
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == "}":
+            k += 1
+            break
+        rk = _js_match_kw(stmts, k, "yield")
+        if rk is None:
+            raise _JSExprFail("F619 body not fixed yields")
+        k = _js_skip_ws(stmts, rk)
+        if k < n and stmts[k] == "(":
+            k = _js_skip_ws(stmts, k + 1)
+            paren = True
+        else:
+            paren = False
+        if k >= n or stmts[k] not in "'\"":
+            raise _JSExprFail("F619 yield of non-literal")
+        val, k = _js_parse_string(stmts, k)
+        if paren:
+            k = _js_expect(stmts, k, ")")
+        k = _js_skip_ws(stmts, k)
+        if k < len(stmts) and stmts[k] == ";":
+            k += 1
+        yields.append(val)
+        state["parts"] += 1  # F452: charge per yield
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+    if not yields:
+        raise _JSExprFail("F619 generator yields nothing")
+    return name, yields, k
+
+
+def _js_parse_f619_join_tail(stmts, k, yields, state):
+    """Parse `.join('SEP');` at stmts[k] through end-of-body (F619).
+
+    Returns (assembled_string, next_index). Never evals.
+    """
+    n = len(stmts)
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ".")
+    _jn, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+    if _jn != "join":
+        raise _JSExprFail("F619 tail not join")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, "(")
+    k = _js_skip_ws(stmts, k)
+    if k >= n or stmts[k] not in "'\"":
+        raise _JSExprFail("F619 join sep not literal")
+    sep, k = _js_parse_string(stmts, k)
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ")")
+    k = _js_skip_ws(stmts, k)
+    if k < n and stmts[k] == ";":
+        k += 1
+    k = _js_skip_ws(stmts, k)
+    if k != n:
+        raise _JSExprFail("F619 tail trailing junk")
+    state["ops"] += 1  # the join is obfuscation-shaped
+    return sep.join(yields), k
+
+
+def _js_parse_f619_consume_tail(stmts, sj, name, yields, state):
+    """Parse the F619 consumption tail at stmts[sj] (F619).
+
+    Three node-exact forms (v24.20.0):
+      `return [...NAME()].join('SEP');`
+      `return Array.from(NAME()).join('SEP');`
+      `var|let S='';for(var|let|const X of NAME())S+=X;return S;`
+    The generator must be CALLED (`NAME()`) -- a bare NAME
+    reference is not iterable and the engine throws. Returns
+    (assembled_string, next_index). Never evals.
+    """
+    n = len(stmts)
+    k = _js_match_kw(stmts, sj, "return")
+    if k is not None:
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == "[":
+            # return [...NAME()].join('SEP');
+            k = _js_expect(stmts, k, "[")
+            k = _js_skip_ws(stmts, k)
+            if not stmts.startswith("...", k):
+                raise _JSExprFail("F619 tail not a spread")
+            k = _js_skip_ws(stmts, k + 3)
+            _cn, k = _js_parse_ident(stmts, k)
+            if _cn != name:
+                raise _JSExprFail("F619 spread of other generator")
+            k = _js_call_empty_parens(stmts, k)
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, "]")
+            return _js_parse_f619_join_tail(stmts, k, yields, state)
+        if stmts.startswith("Array", k):
+            # return Array.from(NAME()).join('SEP');
+            _ak = k + len("Array")
+            if _ak < n and stmts[_ak] in _JS_IDENT_CONT:
+                raise _JSExprFail("F619 Arrayx")
+            _ak = _js_skip_ws(stmts, _ak)
+            _ak = _js_expect(stmts, _ak, ".")
+            _fn, _ak = _js_parse_ident(stmts, _js_skip_ws(stmts, _ak))
+            if _fn != "from":
+                raise _JSExprFail("F619 not Array.from")
+            _ak = _js_skip_ws(stmts, _ak)
+            _ak = _js_expect(stmts, _ak, "(")
+            _cn, _ak = _js_parse_ident(stmts, _js_skip_ws(stmts, _ak))
+            if _cn != name:
+                raise _JSExprFail("F619 Array.from of other")
+            _ak = _js_call_empty_parens(stmts, _ak)
+            _ak = _js_skip_ws(stmts, _ak)
+            _ak = _js_expect(stmts, _ak, ")")
+            return _js_parse_f619_join_tail(stmts, _ak, yields, state)
+        raise _JSExprFail("F619 return tail not modeled")
+    # var|let S='';for(var|let|const X of NAME())S+=X;return S;
+    acc, k = _js_parse_f6xx_accum_decl(stmts, sj)
+    k = _js_skip_ws(stmts, k)
+    _fk = _js_match_kw(stmts, k, "for")
+    if _fk is None:
+        raise _JSExprFail("F619 not for-of")
+    k = _js_skip_ws(stmts, _fk)
+    k = _js_expect(stmts, k, "(")
+    kk = _js_skip_ws(stmts, k)
+    _dk = (_js_match_kw(stmts, kk, "var")
+           or _js_match_kw(stmts, kk, "let")
+           or _js_match_kw(stmts, kk, "const"))
+    if _dk is None:
+        raise _JSExprFail("F619 for-of decl not var/let/const")
+    k = _dk
+    _xname, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+    if _xname == "arguments":
+        raise _JSExprFail("F619 loop var shadowed")
+    k = _js_skip_ws(stmts, k)
+    _ofk = _js_match_kw(stmts, k, "of")
+    if _ofk is None:
+        raise _JSExprFail("F619 not for-of")
+    k = _js_skip_ws(stmts, _ofk)
+    _cn, k = _js_parse_ident(stmts, k)
+    if _cn != name:
+        raise _JSExprFail("F619 for-of over other generator")
+    k = _js_call_empty_parens(stmts, k)
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ")")
+    k = _js_skip_ws(stmts, k)
+    # Loop body: `{S+=X;}` or the bare `S+=X;` (both node-exact --
+    # the filed shape is the bare form).
+    if k < n and stmts[k] == "{":
+        k += 1
+        braced = True
+    else:
+        braced = False
+    _an, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+    if _an != acc:
+        raise _JSExprFail("F619 accum mismatch")
+    k = _js_skip_ws(stmts, k)
+    if not stmts.startswith("+=", k):
+        raise _JSExprFail("F619 body not +=")
+    k = _js_skip_ws(stmts, k + 2)
+    _xn, k = _js_parse_ident(stmts, k)
+    if _xn != _xname:
+        raise _JSExprFail("F619 accum operand not loop var")
+    k = _js_skip_ws(stmts, k)
+    if k < n and stmts[k] == ";":
+        k += 1
+    k = _js_skip_ws(stmts, k)
+    if braced:
+        k = _js_expect(stmts, k, "}")
+    k = _js_skip_ws(stmts, k)
+    _rk = _js_match_kw(stmts, k, "return")
+    if _rk is None:
+        raise _JSExprFail("F619 no return")
+    _rn, k = _js_parse_ident(stmts, _js_skip_ws(stmts, _rk))
+    if _rn != acc:
+        raise _JSExprFail("F619 return not accum")
+    k = _js_skip_ws(stmts, k)
+    if k < n and stmts[k] == ";":
+        k += 1
+    k = _js_skip_ws(stmts, k)
+    if k != n:
+        raise _JSExprFail("F619 tail trailing junk")
+    state["ops"] += 1  # the accumulation is obfuscation-shaped
+    return "".join(yields), k
+
+
+def _js_parse_f619_generator_iife(text, i, depth, state):
+    """Parse `(function(){function* NAME(){yield 'LIT';...}<TAIL>})()` (F619).
+
+    Node-exact desugar (v24.20.0): the generator's yields happen in
+    order; spreading, for-of, or Array.from over the INVOKED
+    generator collects them into an array in yield order, and the
+    tail assembles the credential. The generator body follows the
+    F494 fixed-yield discipline (literal yields only; parameters,
+    non-literal yields, `yield*` delegation, `return`, loops, or any
+    other statement fail closed). The three consumption tails are
+    `return [...NAME()].join('SEP');`,
+    `return Array.from(NAME()).join('SEP');`, and the for-of
+    accumulation `var|let S='';for(var|let|const X of
+    NAME())S+=X;return S;`. The generator must be CALLED -- a bare
+    NAME reference is not iterable (the engine throws). Returns
+    (value, next_index), or None when the head does not match or a
+    guard fails. Bounded by the part/depth budgets; the wrapper
+    charges one op (obfuscation-shaped). Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        name, yields, sj = _js_parse_f619_generator_decl(stmts, sj,
+                                                         state)
+        sj = _js_skip_ws(stmts, sj)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        val, _ = _js_parse_f619_consume_tail(stmts, sj, name, yields,
+                                             state)
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f6xx_iife_head(text, i):
     """Match `(function(){` at text[i] (F600/F601/F602); returns index past `{` or None."""
     n = len(text)
@@ -24649,6 +25143,21 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f611 is not None:
             val, i = _f611
             return _js_parse_postfix(text, i, val, depth, state)
+        # F619: (function(){function* NAME(){yield 'LIT';...}
+        #   <TAIL>})() -- a named fixed-yield generator declared in a
+        #   statement IIFE, consumed via [...NAME()].join('SEP'),
+        #   Array.from(NAME()).join('SEP'), or for-of accumulation.
+        #   Tried after F611: the `function*` head is disjoint from
+        #   every earlier route (all require `function(` without the
+        #   star, arguments forms, or other bindings); None falls
+        #   through to the parenthesized-additive path like F611.
+        #   Disjoint from F494 (the anonymous immediate
+        #   `(function*(){...})()` spread source -- that shape never
+        #   reaches this chain as a named declaration).
+        _f619 = _js_parse_f619_generator_iife(text, i, depth, state)
+        if _f619 is not None:
+            val, i = _f619
+            return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
         val, i = _js_parse_additive(text, i + 1, depth + 1, state,
@@ -24725,6 +25234,23 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             return _js_parse_postfix(text, i, val, depth, state)
         val, i = _js_parse_array_constructor(text, i, state)
         state["ops"] += 1  # an Array(N)/Array.of construction is obfuscation-shaped
+        return _js_parse_postfix(text, i, val, depth, state)
+    if text.startswith("Promise", i):
+        # F618: Promise.all([Promise.resolve('LIT'),...]).then(CB) /
+        # Promise.race([Promise.resolve('LIT')]).then(CB) -- static
+        # promise-resolution modeling (node v24.20.0): Promise.all
+        # fulfills with the input-order value array, the
+        # single-element Promise.race with that element's value, and
+        # the .then callback observes the fulfillment value. The
+        # decoder cannot await, so the deterministic fulfillment is
+        # modeled statically; everything outside the filed grammar
+        # fails closed (see _js_parse_f618_promise_then). The
+        # ident-boundary check keeps Promisex failing closed.
+        _pk = i + len("Promise")
+        if _pk < len(text) and text[_pk] in _JS_IDENT_CONT:
+            raise _JSExprFail("Promisex is not Promise")
+        val, i = _js_parse_f618_promise_then(text, i, depth, state)
+        state["ops"] += 1  # the promise-resolution model is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("structuredClone", i):
         # F536: structuredClone(OBJ) -- deep-copy of a JSON-literal
@@ -25720,7 +26246,14 @@ def _try_js_expr_decode(text, start):
       fail closed), and (F472) the `.repeat`N`` tagged-template call site
       with a literal-only count template (ToNumber + ToIntegerOrInfinity
       via _js_tag_repeat_count; interpolation, negative/infinite counts
-      fail closed)
+      fail closed), (F618) `Promise.all([Promise.resolve('LIT'),...])` /
+      `Promise.race([Promise.resolve('LIT')])` with a `.then` arrow
+      callback -- the deterministic fulfillment is modeled statically
+      (node-exact; the decoder cannot await), and (F619) the
+      statement-IIFE named-generator assembly
+      `(function(){function* NAME(){yield 'LIT';...}<TAIL>})()` with
+      the `[...NAME()].join` / `Array.from(NAME()).join` / for-of
+      accumulation tails (the F494 fixed-yield discipline).
 . Bounded by part, depth, codepoint, repeat, and output budgets; never
     evals; undecodable runs are ignored. A bare string literal (or an
     unjoined array literal) with no operator or call is not rewritten
