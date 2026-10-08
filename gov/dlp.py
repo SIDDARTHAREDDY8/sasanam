@@ -20236,6 +20236,515 @@ def _js_parse_f640_forawait_iife(text, i, depth, state):
         return None
 
 
+class _JSF655Break(Exception):
+    """Internal control flow for F655: `break;` / `break LBL;`.
+
+    Raised by the F655 statement simulator; caught by the enclosing
+    switch (bare break only), do-while (bare break only), or labeled
+    block (its own label, or a bare break directly inside it).
+    `label` is None for a bare `break;`. Never escapes the F655
+    parser as a decode -- an uncaught break is a node SyntaxError,
+    so the top level converts it to _JSExprFail. Never evals.
+    """
+
+    def __init__(self, label):
+        super().__init__("f655 break")
+        self.label = label
+
+
+def _js_f655_head(text, i):
+    """Match the F655 head `(function(){` at text[i] (anonymous,
+    parameterless, sync); index OF `{` or None. Reuses the F654
+    head discipline (F640's async head is disjoint by construction).
+    Never evals."""
+    return _js_parse_f654_sync_iife_head(text, i)
+
+
+def _js_f655_sim_accum(text, j, env, state):
+    """Simulate one F655 accumulation/assignment statement at text[j]:
+    `NAME+='LIT';` / `NAME='LIT';` / `NAME+=BOUND;`.
+
+    Node-exact (v24.20.0): the name must be bound and mutable (a
+    `const` binding throws TypeError in the engine -- fail closed);
+    an unbound name throws ReferenceError -- fail closed. Returns the
+    index just past `;`; mutates env in place. Never evals."""
+    n = len(text)
+    name, q = _js_parse_ident(text, j)
+    if name not in env:
+        raise _JSExprFail("F655 accum unbound")
+    val, mutable = env[name]
+    if not mutable:
+        raise _JSExprFail("F655 accum const")
+    q = _js_skip_ws(text, q)
+    if q < n and text.startswith("+=", q):
+        q += 2
+        is_plus = True
+    elif (q < n and text[q] == "="
+          and not text.startswith(("==", "=>"), q)):
+        q += 1
+        is_plus = False
+    else:
+        raise _JSExprFail("F655 bad accum op")
+    q = _js_skip_ws(text, q)
+    if q < n and text[q] in "'\"":
+        rhs, q = _js_parse_string(text, q)
+    elif q < n and text[q] in _JS_IDENT_START:
+        rname, q = _js_parse_ident(text, q)
+        if rname not in env:
+            raise _JSExprFail("F655 accum rhs unbound")
+        rhs = env[rname][0]
+    else:
+        raise _JSExprFail("F655 bad accum rhs")
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ";")
+    newval = val + rhs if is_plus else rhs
+    if len(newval) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F655 concat too long")
+    env[name] = (newval, mutable)
+    state["parts"] += 1  # the accumulation is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return q
+
+
+def _js_f655_sim_inner(text, j, inner_end, env, state, depth):
+    """Simulate F655 wrapper-body statements from j to inner_end.
+
+    Accepts accumulation statements, `break;` / `break LBL;`, and
+    nested wrapper statements (switch / try-finally / do-while /
+    with / labeled-block -- the same node-exact semantics,
+    recursively). Declarations and `return` are outside the modeled
+    subset -- fail closed (documented bound; declarations would
+    need block scoping, `return` would need function-exit
+    semantics). A break raises _JSF655Break for the enclosing
+    construct. Returns the index at inner_end. Never evals."""
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= inner_end:
+            return j
+        bk = _js_match_kw(text, j, "break")
+        if bk is not None:
+            q = _js_skip_ws(text, bk)
+            label = None
+            if q < n and text[q] in _JS_IDENT_START:
+                label, q = _js_parse_ident(text, q)
+                q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            raise _JSF655Break(label)
+        for wkw, wfn in (("switch", _js_f655_sim_switch),
+                         ("try", _js_f655_sim_try),
+                         ("do", _js_f655_sim_dowhile),
+                         ("with", _js_f655_sim_with)):
+            wk = _js_match_kw(text, j, wkw)
+            if wk is not None:
+                j = wfn(text, j, env, state, depth + 1)
+                break
+        else:
+            if j < n and text[j] in _JS_IDENT_START:
+                _name, q = _js_parse_ident(text, j)
+                q2 = _js_skip_ws(text, q)
+                if q2 < n and text[q2] == ":":
+                    j = _js_f655_sim_labeled(text, j, env, state,
+                                             depth + 1)
+                    continue
+            j = _js_f655_sim_accum(text, j, env, state)
+
+
+def _js_f655_case_span(text, j, n):
+    """Scan one switch-case body from j to the next top-level
+    `case` / `default` / `}` (F655).
+
+    String spans are skipped with escape handling; backticks and
+    `/` fail closed (outside the modeled grammar). Brace depth is
+    tracked so nested wrapper blocks never split the scan;
+    `case`/`default` are recognized only at statement starts at
+    depth 0, so an identifier merely containing those words never
+    splits it. Returns (body_start, body_end, next_index) with
+    next_index at the terminator. Never evals."""
+    k = j
+    depth = 0
+    at_start = True
+    while k < n:
+        c = text[k]
+        if c in "'\"":
+            k = _js_skip_quoted(text, k)
+            at_start = False
+            continue
+        if c == "`" or c == "/":
+            raise _JSExprFail("F655 bad char in switch")
+        if c == "{":
+            depth += 1
+            at_start = False
+        elif c == "}":
+            if depth == 0:
+                return j, k, k
+            depth -= 1
+            at_start = False
+        elif depth == 0 and at_start and c in _JS_IDENT_START:
+            if _js_match_kw(text, k, "case") is not None:
+                return j, k, k
+            if _js_match_kw(text, k, "default") is not None:
+                return j, k, k
+            at_start = False
+        elif c == ";" or (c == ":" and depth == 0):
+            at_start = True
+        elif c not in " \t\n\r":
+            at_start = False
+        k += 1
+    raise _JSExprFail("F655 unterminated switch")
+
+
+def _js_f655_sim_switch(text, j, env, state, depth):
+    """Simulate `switch(INT){case INT: STMTS; ...}` at text[j] (F655).
+
+    Node-exact (v24.20.0) for the modeled subset: the discriminant
+    and every case label are integer literals (a fractional literal
+    fails closed -- `_js_parse_number` would silently truncate);
+    strict-equality match; fallthrough from the matching case
+    through subsequent cases until a bare `break;` or the end;
+    `default:` runs only when no case matches (a duplicate
+    `default:` is a node SyntaxError -- fail closed); a labeled
+    `break LBL;` propagates to an enclosing labeled block. Bodies
+    hold accumulation/break statements only. Returns the index just
+    past `}`. Never evals."""
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    j = _js_skip_ws(text, _js_match_kw(text, j, "switch"))
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    disc, j = _js_parse_number(text, j)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ".":
+        raise _JSExprFail("F655 fractional switch")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    cases = []
+    seen_default = False
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("F655 unterminated switch")
+        if text[j] == "}":
+            j += 1
+            break
+        ck = _js_match_kw(text, j, "case")
+        if ck is not None:
+            q = _js_skip_ws(text, ck)
+            cval, q = _js_parse_number(text, q)
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == ".":
+                raise _JSExprFail("F655 fractional case")
+            q = _js_expect(text, q, ":")
+            bs, be, j = _js_f655_case_span(text, _js_skip_ws(text, q), n)
+            cases.append((cval, bs, be))
+            continue
+        dk = _js_match_kw(text, j, "default")
+        if dk is not None:
+            if seen_default:
+                raise _JSExprFail("F655 duplicate default")
+            seen_default = True
+            q = _js_expect(text, _js_skip_ws(text, dk), ":")
+            bs, be, j = _js_f655_case_span(text, _js_skip_ws(text, q), n)
+            cases.append((None, bs, be))
+            continue
+        raise _JSExprFail("F655 bad switch clause")
+    start = None
+    for idx, (cval, _bs, _be) in enumerate(cases):
+        if cval is not None and cval == disc:
+            start = idx
+            break
+    if start is None:
+        for idx, (cval, _bs, _be) in enumerate(cases):
+            if cval is None:
+                start = idx
+                break
+    if start is not None:
+        for idx in range(start, len(cases)):
+            _cval, bs, be = cases[idx]
+            try:
+                _js_f655_sim_inner(text, bs, be, env, state, depth)
+            except _JSF655Break as brk:
+                if brk.label is not None:
+                    raise
+                break
+    return j
+
+
+def _js_f655_sim_try(text, j, env, state, depth):
+    """Simulate `try{STMTS}finally{STMTS}` at text[j] (F655).
+
+    Node-exact (v24.20.0) for the modeled subset: the try block
+    runs, then the finally block runs; the modeled statements
+    never throw, so no catch behavior is needed -- a `catch`
+    clause fails closed (documented bound). A break inside either
+    block propagates (a top-level break is a node SyntaxError).
+    Returns the index just past the finally `}`. Never evals."""
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    j = _js_skip_ws(text, _js_match_kw(text, j, "try"))
+    j = _js_expect(text, j, "{")
+    bs, be, j = _js_span_braced(text, j - 1)
+    _js_f655_sim_inner(text, _js_skip_ws(text, bs), be, env, state, depth)
+    j = _js_skip_ws(text, j)
+    fk = _js_match_kw(text, j, "finally")
+    if fk is None:
+        raise _JSExprFail("F655 try without finally")
+    j = _js_expect(text, _js_skip_ws(text, fk), "{")
+    bs, be, j = _js_span_braced(text, j - 1)
+    _js_f655_sim_inner(text, _js_skip_ws(text, bs), be, env, state, depth)
+    return j
+
+
+def _js_f655_sim_dowhile(text, j, env, state, depth):
+    """Simulate `do{STMTS}while(false);` at text[j] (F655).
+
+    Node-exact (v24.20.0): the body runs exactly once when the
+    condition is the `false` literal; any other condition fails
+    closed (a truthy condition loops -- the decoder never decodes
+    a non-terminating shape). A bare `break;` in the body exits
+    the loop early (node-exact). Returns the index just past `;`.
+    Never evals."""
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    j = _js_skip_ws(text, _js_match_kw(text, j, "do"))
+    j = _js_expect(text, j, "{")
+    bs, be, j = _js_span_braced(text, j - 1)
+    try:
+        _js_f655_sim_inner(text, _js_skip_ws(text, bs), be, env, state, depth)
+    except _JSF655Break as brk:
+        if brk.label is not None:
+            raise
+    j = _js_skip_ws(text, j)
+    wk = _js_match_kw(text, j, "while")
+    if wk is None:
+        raise _JSExprFail("F655 do without while")
+    j = _js_expect(text, _js_skip_ws(text, wk), "(")
+    fk = _js_match_kw(text, _js_skip_ws(text, j), "false")
+    if fk is None:
+        raise _JSExprFail("F655 do-while not false")
+    j = _js_expect(text, _js_skip_ws(text, fk), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    return j
+
+
+def _js_f655_sim_with(text, j, env, state, depth):
+    """Simulate `with({}){STMTS}` at text[j] (F655).
+
+    Node-exact (v24.20.0) for the modeled subset: the scope object
+    must be the empty object literal -- it contributes no bindings,
+    so the body statements resolve against the outer bindings
+    unchanged. Any other scope object fails closed (it could
+    shadow). Returns the index just past `}`. Never evals."""
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    j = _js_skip_ws(text, _js_match_kw(text, j, "with"))
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "{")
+    bs, be, j = _js_span_braced(text, j - 1)
+    if _js_skip_ws(text, bs) < be:
+        raise _JSExprFail("F655 with non-empty object")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    bs, be, j = _js_span_braced(text, j - 1)
+    _js_f655_sim_inner(text, _js_skip_ws(text, bs), be, env, state, depth)
+    return j
+
+
+def _js_f655_sim_labeled(text, j, env, state, depth):
+    """Simulate `LBL:{STMTS}` at text[j] (F655).
+
+    Node-exact (v24.20.0): statements run in order; `break LBL;`
+    exits the labeled block, skipping the rest. A bare `break;`
+    directly in the block is a node SyntaxError ("Illegal break
+    statement") -- it propagates outward and fails closed. A break
+    for any other label propagates outward. Returns the index just
+    past `}`. Never evals."""
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    lbl, j = _js_parse_ident(text, j)
+    if lbl in _F611_RESERVED:
+        # A reserved word cannot be a label (node SyntaxError) --
+        # fail closed, never mis-decode.
+        raise _JSExprFail("F655 reserved label")
+    j = _js_expect(text, _js_skip_ws(text, j), ":")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    bs, be, j = _js_span_braced(text, j - 1)
+    try:
+        _js_f655_sim_inner(text, _js_skip_ws(text, bs), be, env, state, depth)
+    except _JSF655Break as brk:
+        if brk.label != lbl:
+            raise
+    return j
+
+
+def _js_f655_top_stmt(text, j, inner_end, env, state, depth):
+    """Simulate ONE top-level F655 statement at text[j].
+
+    Accepts `var|const|let NAME='LIT';` (the name must be fresh and
+    not reserved -- a duplicate or reserved binding is a node
+    SyntaxError -- fail closed), accumulation statements, and the
+    five wrapper statements (switch / try-finally / do-while /
+    with / labeled-block). A `break` at top level is a node
+    SyntaxError -- fail closed. Sloppy-mode soft-reserved binding
+    names (`let`, `static`, `yield`): a statement like `let+='x';`
+    first matches the `let` declaration keyword, fails the
+    declaration parse, and falls through to the accumulation
+    dispatch -- node-exact. Returns the index just past the
+    statement. Never evals."""
+    n = len(text)
+    if n == 0 or j >= n:
+        raise _JSExprFail("F655 statement overrun")
+    bk = _js_match_kw(text, j, "break")
+    if bk is not None:
+        raise _JSExprFail("F655 break at top level")
+    kw, m = _js_match_decl_kw(text, j)
+    if kw is not None:
+        try:
+            q = _js_skip_ws(text, m)
+            name, q = _js_parse_ident(text, q)
+            if (name == "arguments" or name in _F611_RESERVED
+                    or name in env):
+                raise _JSExprFail("F655 bad decl name")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != "=" or text.startswith(("==", "=>"), q):
+                raise _JSExprFail("F655 decl not initialized")
+            q = _js_skip_ws(text, q + 1)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F655 decl not a literal")
+            val, q = _js_parse_string(text, q)
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == ",":
+                raise _JSExprFail("F655 multi-declarator")
+            q = _js_expect(text, q, ";")
+        except _JSExprFail:
+            # Not a declaration after all: `let`/`static`/`yield` are
+            # legal binding names in sloppy mode, so `let+='x';`
+            # (with `let` bound) first matches the `let` declaration
+            # keyword, then fails the declaration parse. Fall
+            # through to the accumulation dispatch below -- the
+            # failed declaration parse mutates nothing (the env
+            # assignment happens only after the full parse).
+            pass
+        else:
+            env[name] = (val, kw != "const")
+            state["parts"] += 1  # the binding is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            return q
+    for wkw, wfn in (("switch", _js_f655_sim_switch),
+                     ("try", _js_f655_sim_try),
+                     ("do", _js_f655_sim_dowhile),
+                     ("with", _js_f655_sim_with)):
+        wk = _js_match_kw(text, j, wkw)
+        if wk is not None:
+            return wfn(text, j, env, state, depth)
+    if text[j] in _JS_IDENT_START:
+        name, q = _js_parse_ident(text, j)
+        q2 = _js_skip_ws(text, q)
+        if q2 < n and text[q2] == ":":
+            return _js_f655_sim_labeled(text, j, env, state, depth)
+        return _js_f655_sim_accum(text, j, env, state)
+    raise _JSExprFail("F655 bad statement")
+
+
+def _js_parse_f655_multistatement_iife(text, i, depth, state):
+    """Parse `(function(){STMT* return ADD;})()` at text[i] (F655).
+
+    Statement-IIFE multi-statement fragment accumulation: the
+    statement-IIFE routes model only single-declaration+return
+    bodies, but a body that accumulates the credential across
+    several statements -- two literal declarations, a declaration
+    plus an accumulation, or the same statements inside
+    switch-fallthrough / try-finally / do-while(false) /
+    with({}) / labeled-block wrappers -- node-evaluates (v24.20.0)
+    to the assembled credential while the decoder produced zero
+    variants. Node-exact desugar (v24.20.0): statements simulate
+    in order against a binding environment (literal sources only);
+    wrapper semantics are modeled exactly for the accepted subset
+    (see the _js_f655_sim_* helpers); the return additive resolves
+    bound idents via the F645 string-only additive grammar.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, `function*`, `async`, parameters, a
+      directive prologue, non-empty call args;
+    - non-literal declaration initializers, duplicate or reserved
+      binding names, multi-declarator `var a=.., b=..`;
+    - accumulation into `const` bindings or unbound names
+      (the engine throws -- the decoder never decodes a throw);
+    - non-integer / fractional switch discriminants and case
+      labels, duplicate `default:`, a `catch` clause, a
+      non-`false` do-while condition, a non-empty `with` scope
+      object, a reserved word as a labeled-block label, declarations
+      or `return` inside wrappers, a break that escapes to the top
+      level (a node SyntaxError);
+    - template literals, regex/division `/`, and comments anywhere
+      in the body (the `_js_span_braced` boundary -- a miss, never
+      a mis-decode).
+    Disjoint from every earlier IIFE route: F611 accepts exactly
+    one declaration then a direct return (it fails closed on the
+    second statement); F516/F645 require call arguments or
+    parameters; every binding-family route requires its own
+    binding (URLSearchParams/URL/enumeration/getter/...) and fails
+    closed on plain literal bindings; F654 requires a for-of head.
+    Tried after F654: none of the earlier routes decodes any
+    shape this accepts (red-first verified: 7 BREAK on the open
+    tree), so no previously-decoded input changes behavior.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_f655_head(text, i)
+        if brace is None:
+            raise _JSExprFail("F655 not our head")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        env = {}
+        sj = _js_skip_ws(text, inner_start)
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj >= inner_end:
+                raise _JSExprFail("F655 body without return")
+            rk = _js_match_kw(text, sj, "return")
+            if rk is not None:
+                break
+            sj = _js_f655_top_stmt(text, sj, inner_end, env, state,
+                                  depth)
+        bindings = {nm: val for nm, (val, _mut) in env.items()}
+        rval, sj = _js_parse_f645_bound_additive(
+            text, _js_skip_ws(text, rk), depth, state, bindings)
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != ";":
+            raise _JSExprFail("F655 return without semicolon")
+        sj = _js_skip_ws(text, sj + 1)
+        if sj != inner_end:
+            raise _JSExprFail("F655 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return rval, j
+    except _JSExprFail:
+        return None
+    except _JSF655Break:
+        # A break that escapes to the function top level is a node
+        # SyntaxError -- fail closed, never mis-decode.
+        return None
+
+
 def _js_parse_f654_sync_iife_head(text, i):
     """Match `(function(){` at text[i] (F654); index OF `{` or None.
 
@@ -34801,6 +35310,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f654 = _js_parse_f654_sync_forof_iife(text, i, depth, state)
         if _f654 is not None:
             val, i = _f654
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F655: (function(){STMT* return ADD;})() -- statement-IIFE
+        #   multi-statement fragment accumulation (two literal
+        #   declarations, decl+accum, or the same statements inside
+        #   switch-fallthrough / try-finally / do-while(false) /
+        #   with({}) / labeled-block wrappers). Tried after F654:
+        #   every earlier route requires a specific binding family
+        #   or statement head (URLSearchParams/URL/enumeration/
+        #   getter wrappers, for-in, for-of) and fails closed on
+        #   plain sequential bodies; F611 accepts exactly one
+        #   declaration (it fails closed on the second statement),
+        #   so no previously-decoded input changes behavior.
+        _f655 = _js_parse_f655_multistatement_iife(text, i, depth,
+                                                  state)
+        if _f655 is not None:
+            val, i = _f655
             return _js_parse_postfix(text, i, val, depth, state)
         # F586: (new Map(...)) / (new WeakRef(...)) --
         # parenthesized new-expression receivers, engine-identical
