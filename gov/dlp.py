@@ -17809,6 +17809,194 @@ def _js_parse_f661_declseq_iife(text, i, depth, state):
     return val, k
 
 
+def _js_parse_f671_member_term(text, j, env, depth, state):
+    """Parse one F671 return-additive term at text[j].
+
+    A term is a string literal, or a member read on the bound object
+    ident (`NAME(.M | ?.M | ['M'] | ?.['M'])+`) or on an inline object
+    literal (`{LIT}(.M | ?.M | ['M'] | ?.['M'])+` /
+    `({LIT})(.M | ?.M | ['M'] | ?.['M'])+`). Member reads resolve via
+    _jsobj_lookup (the F548 prototype chain); the receiver is
+    provably non-null, so `?.` === `.` (the F665 normalization).
+    Returns the resolved string. Raises _JSExprFail on any mismatch
+    (unbound receiver, missing key, computed member, non-string
+    value, a bare bound ident with no member step). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n:
+        raise _JSExprFail("F671 term empty")
+    if text[j] in "'\"":
+        return _js_parse_string(text, j)
+    if text[j] == "{":
+        props, j = _js_parse_f535_object(text, j, depth, state)
+        recv = _JSObj(props)
+    elif text[j] == "(":
+        k = _js_skip_ws(text, j + 1)
+        if k >= n or text[k] != "{":
+            raise _JSExprFail("F671 paren not an object")
+        props, k = _js_parse_f535_object(text, k, depth, state)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ")":
+            raise _JSExprFail("F671 paren unterminated")
+        recv = _JSObj(props)
+        j = k + 1
+    else:
+        name, j = _js_parse_ident(text, j)
+        if name not in env:
+            raise _JSExprFail("F671 unbound member receiver")
+        recv = env[name]
+    # At least one member step is required: a bare bound ident would
+    # read "[object Object]" in the engine -- never decoded.
+    steps = 0
+    while isinstance(recv, _JSObj):
+        j = _js_skip_ws(text, j)
+        if (j + 2 < n and text[j] == "?"
+                and text[j + 1] == "." and text[j + 2] == "["):
+            # `?.[` before `?.` -- the `?.` branch below would
+            # otherwise consume the `?.` and fail on the `[`.
+            mname, j = _js_parse_bracket_member(text, j + 2)
+        elif (j + 1 < n and text[j] == "?"
+                and text[j + 1] == "."):
+            j = _js_skip_ws(text, j + 2)
+            mname, j = _js_parse_ident(text, j)
+        elif j < n and text[j] == ".":
+            j = _js_skip_ws(text, j + 1)
+            mname, j = _js_parse_ident(text, j)
+        elif j < n and text[j] == "[":
+            mname, j = _js_parse_bracket_member(text, j)
+        else:
+            break
+        val = _jsobj_lookup(recv, mname)
+        if val is None:
+            raise _JSExprFail("F671 missing key")
+        recv = val
+        steps += 1
+        state["ops"] += 1  # the member read is obfuscation-shaped
+    if steps == 0:
+        raise _JSExprFail("F671 member term without member")
+    if not isinstance(recv, str):
+        raise _JSExprFail("F671 member not a string")
+    return recv, j
+
+
+def _js_parse_f671_member_reads_iife(text, i, depth, state):
+    """Parse `(function(){[DECL NAME={LIT};]return ADD;})()` (F671).
+
+    F535 (CLOSED) routes member reads on object literals at
+    statement level, but the IIFE-body return additive grammar has
+    no member-read term: `(function(){var o={x:'f1'};
+    return o.x+'f2';})()`, `(function(){return {x:'f1'}.x+'f2';})()`,
+    and `(function(){var o={x:'f1',y:'f2'};
+    return o.x+o.y;})()` all node-evaluate to the exact credential
+    (v24.20.0) while the decoder produces zero variants.
+    Node-exact desugar: the var binds the parsed object literal
+    (`_js_parse_f535_object` -- duplicate keys later-wins,
+    getters evaluated at parse time, `__proto__` fails closed);
+    the return is an additive (`+`-joined, the F649m discipline)
+    of string literals and member reads on the bound ident or an
+    inline object literal (`?.` included, the F665
+    normalization -- the receiver is provably non-null).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, multi-decl (`var o=..., p=...`), non-empty call
+      args, reassignment (the grammar is constructive -- no
+      assignment production exists);
+    - a binding source outside the F535 object-literal grammar;
+    - an unbound member receiver, a computed member, a missing key,
+      a non-string member value, or a bare bound ident with no
+      member step (the engine's "[object Object]" is never
+      decoded).
+    Tried after F661: F611/F612/F616/F617/F622/F626/F639/F642/
+    F645/F647/F649m/F652/F654/F655/F660/F661 all fail closed on
+    every shape this accepts (each requires a literal/atob
+    initializer, an Object.* terminal, a URLSearchParams/URL
+    binding, or a different return grammar), and this fails closed
+    on every shape they accept (an object-literal initializer is
+    required), so no previously-decoded input changes behavior.
+    Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        env = {}
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is not None:
+            # Optional `DECL NAME={LIT};` binding -- the filed
+            # inline-literal shape takes no declaration.
+            sj = _js_skip_ws(text, m)
+            oname, sj = _js_parse_ident(text, sj)
+            if oname == "arguments":
+                raise _JSExprFail("F671 binding named arguments")
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, "=")
+            sj = _js_skip_ws(text, sj)
+            props, sj = _js_parse_f535_object(text, sj, depth, state)
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, ";")
+            sj = _js_skip_ws(text, sj)
+            env = {oname: _JSObj(props)}
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F671 no return")
+        sj = _js_skip_ws(text, m)
+        # ADD := TERM (+ TERM)* -- the F649m additive discipline.
+        total = None
+        while True:
+            term, sj = _js_parse_f671_member_term(text, sj, env,
+                                                 depth, state)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            state["ops"] += 1
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F671 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_args_laundered_iife(text, i, depth, state):
     """Parse `(function(){var A=SRC;return BODY})(lit, ...)` or
     `(function(...A){return BODY})(lit, ...)` at text[i] (F516).
@@ -34319,15 +34507,44 @@ def _js_parse_postfix(text, i, value, depth, state):
         # closed -- the _JSObj never escapes the postfix chain as a
         # value (the additive cannot consume it).
         if isinstance(value, _JSObj):
-            if text[j] == ".":
-                _mk = _js_skip_ws(text, j + 1)
+            # F665: `?.` member reads on a statically-resolved
+            # object. The receiver is provably non-null (an object
+            # literal), so the short-circuit can never trigger and
+            # `?.` === `.` (node-exact; the same normalization F490
+            # applies to `?.` members). A bare `?`, `??`, or `?.(`
+            # fails closed as before. Under `?.`, ident and
+            # string-literal-bracket members resolve; the
+            # Symbol/Reflect computed-key forms stay fail-closed
+            # under `?.` (tight scope, documented).
+            _mj = j
+            _optchain = (_mj + 1 < len(text)
+                         and text[_mj] == "?"
+                         and text[_mj + 1] == ".")
+            if _optchain:
+                _mj += 2
+                if _mj < len(text) and text[_mj] == "[":
+                    try:
+                        _mname, _mk = _js_parse_bracket_member(text,
+                                                               _mj)
+                    except _JSExprFail:
+                        raise _JSExprFail("object optchain bracket "
+                                          "not a literal")
+                else:
+                    _mk = _js_skip_ws(text, _mj)
+                    try:
+                        _mname, _mk = _js_parse_ident(text, _mk)
+                    except _JSExprFail:
+                        raise _JSExprFail("object optchain member not "
+                                          "an ident")
+            elif text[_mj] == ".":
+                _mk = _js_skip_ws(text, _mj + 1)
                 try:
                     _mname, _mk = _js_parse_ident(text, _mk)
                 except _JSExprFail:
                     raise _JSExprFail("object dot member not an ident")
-            elif text[j] == "[":
+            elif text[_mj] == "[":
                 try:
-                    _mname, _mk = _js_parse_bracket_member(text, j)
+                    _mname, _mk = _js_parse_bracket_member(text, _mj)
                 except _JSExprFail:
                     # F552: `[Symbol.for('K')]` read on a symbol-keyed
                     # literal. Only attempted when the bracket opens
@@ -34335,16 +34552,16 @@ def _js_parse_postfix(text, i, value, depth, state):
                     # Reflect keyword; anything else keeps the
                     # original fail-closed error. Dot reads can never
                     # address symbol keys (node-exact).
-                    k2 = _js_skip_ws(text, j + 1)
+                    k2 = _js_skip_ws(text, _mj + 1)
                     if _js_match_kw(text, k2, "Symbol") is not None:
-                        skey, _mk = _js_parse_f552_symbol_for(text, j)
+                        skey, _mk = _js_parse_f552_symbol_for(text, _mj)
                         _mname = _js_symbol_key(skey)
                     elif _js_match_kw(text, k2, "Reflect") is not None:
                         # F579: `[Reflect.ownKeys(OBJLIT)[INTLIT]]`
                         # computed key -- resolves to a plain string
                         # key used exactly like a literal bracket key.
                         _mname, _mk = _js_parse_f579_ownkeys_key(
-                            text, j, depth, state)
+                            text, _mj, depth, state)
                     else:
                         raise _JSExprFail("object bracket member not a "
                                           "literal")
@@ -36333,6 +36550,25 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f661 = _js_parse_f661_declseq_iife(text, i, depth, state)
         if _f661 is not None:
             val, i = _f661
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F671: (function(){DECL NAME={LIT};return ADD;})() --
+        # member reads in IIFE-return additive position: the return
+        # is a `+`-additive of string literals and member reads on
+        # the bound object ident or an inline object literal
+        # (`?.` included -- the receiver is provably non-null).
+        # Tried after F661: every earlier route requires a
+        # literal/atob initializer, an Object.* terminal, a
+        # URLSearchParams/URL binding, or a different return
+        # grammar, and fails closed on the object-initializer +
+        # member-read-additive shape; this requires the object
+        # initializer and fails closed on every shape they accept,
+        # so no previously-decoded input changes behavior. None
+        # falls through to the parenthesized-additive path like
+        # F661.
+        _f671 = _js_parse_f671_member_reads_iife(text, i, depth,
+                                                state)
+        if _f671 is not None:
+            val, i = _f671
             return _js_parse_postfix(text, i, val, depth, state)
         # F619: (function(){function* NAME(){yield 'LIT';...}
         #   <TAIL>})() -- a named fixed-yield generator declared in a

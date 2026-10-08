@@ -11,11 +11,8 @@ New findings (8, all LOW, all OPEN), filed from F662:
   Object.values twin blocks -- boundary).
 - F664: Object.getOwnPropertyDescriptor getter invocation in additive
   position (1 shape; the bare-call twin blocks -- boundary).
-- F665: optional-chaining member reads o?.x (2 bare-expression shapes;
-  the ?.-specific gap -- the plain-dot statement-level twin blocks).
-- F671: member reads in IIFE-return additive position (3 shapes; split
-  out of F665 at spec review -- var-bound additive member reads miss
-  regardless of ?. vs .).
+- F665: CLOSED wave-379 lane 3 (optional-chaining member reads now route via the _JSObj postfix ?.-head).
+- F671: CLOSED wave-379 lane 3 (new _js_parse_f671_member_reads_iife route).
 - F666: Proxy apply/has traps beyond F642's get (2 shapes).
 - F667: with-statement scope resolution (bare ident reads through the
   with object; F655 models with only as a decl+accum wrapper) (2 shapes).
@@ -134,11 +131,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F655-F671 open, next F672 (this lane)."""
+    """Control: footer shows F665/F671 closed, next F672 (wave-379 lane 3)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F672**" in text
-          and "Open findings: F662, F663, F664, F665, F666, F667, F668, F669, F670, F671." in text)
+          and "Open findings: F662, F663, F664, F666, F667, F668, F669, F670." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -262,20 +259,20 @@ def test_p1_f664_bare_twin_closed():
     return ("HELD" if ok else "BREAK", "f664-boundary=%s" % ok)
 
 
-# ------------------------------------------------- F665 open pins (must miss)
+# ------------------------------------------------- F665 pins (CLOSED wave-379 lane 3)
 
 @_t
-def test_r46_f665_s1_open():
-    """F665 OPEN (bare ?. read): miss reproduces."""
-    miss = _misses("({x:'%s'})?.x+'%s'" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f665_s1_closed():
+    """F665 CLOSED (bare ?. read): blocks coded (wave-379 lane 3)."""
+    ok = _blocked("({x:'%s'})?.x+'%s'" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t
-def test_r46_f665_s2_open():
-    """F665 OPEN (bare ?. double read): miss reproduces."""
-    miss = _misses("(({x:'%s'})?.x)+(({x:'%s'})?.x)" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f665_s2_closed():
+    """F665 CLOSED (bare ?. double read): blocks coded (wave-379 lane 3)."""
+    ok = _blocked("(({x:'%s'})?.x)+(({x:'%s'})?.x)" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t
@@ -377,25 +374,27 @@ def test_r46_f670_s3_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 
-@_t
-def test_r46_f671_s1_open():
-    """F671 OPEN (IIFE-return var-bound dot read): miss reproduces."""
-    miss = _misses("(function(){var o={x:'%s'};return o.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
+# ------------------------------------------------- F671 pins (CLOSED wave-379 lane 3)
 
 @_t
-def test_r46_f671_s2_open():
-    """F671 OPEN (IIFE-return inline dot read): miss reproduces."""
-    miss = _misses("(function(){return {x:'%s'}.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f671_s1_closed():
+    """F671 CLOSED (IIFE-return var-bound dot read): blocks coded (wave-379 lane 3)."""
+    ok = _blocked("(function(){var o={x:'%s'};return o.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t
-def test_r46_f671_s3_open():
-    """F671 OPEN (IIFE-return var-bound double read): miss reproduces."""
-    miss = _misses("(function(){var o={x:'%s',y:'%s'};return o.x+o.y;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f671_s2_closed():
+    """F671 CLOSED (IIFE-return inline dot read): blocks coded (wave-379 lane 3)."""
+    ok = _blocked("(function(){return {x:'%s'}.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
+
+
+@_t
+def test_p1_f671_s3_closed():
+    """F671 CLOSED (IIFE-return var-bound double read): blocks coded (wave-379 lane 3)."""
+    ok = _blocked("(function(){var o={x:'%s',y:'%s'};return o.x+o.y;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 # ------------------------------------------------- green check (depth-1)
