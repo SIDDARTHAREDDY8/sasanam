@@ -33,11 +33,12 @@ New findings (13, all LOW, all OPEN), filed from F686:
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F672-F685 (round 47), F686-F698 (this round).
+F672-F685 (round 47), F686, F687, F689-F693, F695-F699 (round 48;
+F688/F694 closed wave-381 lane 3).
 
 Closed pins (must BLOCK, else BREAK): F463, F510, F535, F601, F612,
 F619, F642, F653, F655, F657, F658, F661, F662-F671 (rounds 46-47
-closures).
+closures), F688, F694 (round 48; closed wave-381 lane 3).
 
 Rides-with-documented-scope (validated, NOT filed):
 - Array toSorted on the fragments -- malformed (sort order);
@@ -115,7 +116,7 @@ def test_b0_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F700**" in text
-          and "Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text)  # Wave-380 merge: F672-F685 CLOSED; lane-4 F686 -> F699
+          and "Open findings: F686, F687, F689, F690, F691, F692, F693, F695, F696, F697, F698, F699." in text)  # Wave-381 lane 3: F688, F694 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -300,16 +301,16 @@ def test_r48_f687_two_key_guard_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r48_f688_replaceAll_fn_open():
-    """F688 OPEN (replaceAll-fn): miss reproduces."""
-    miss = _misses("(function(){return 'ab'.replaceAll(/a|b/g,function(m){return m==='a'?'%s':'%s';});})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f688_replaceAll_fn_closed():
+    """F688 CLOSED (replaceAll-fn): coded refusal."""
+    ok = _blocked("(function(){return 'ab'.replaceAll(/a|b/g,function(m){return m==='a'?'%s':'%s';});})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r48_f688_replace_fn_open():
-    """F688 OPEN (replace-fn): miss reproduces."""
-    miss = _misses("(function(){return 'ab'.replace(/a|b/g,function(m){return m==='a'?'%s':'%s';});})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f688_replace_fn_closed():
+    """F688 CLOSED (replace-fn): coded refusal."""
+    ok = _blocked("(function(){return 'ab'.replace(/a|b/g,function(m){return m==='a'?'%s':'%s';});})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r48_f689_spread_open():
@@ -372,16 +373,16 @@ def test_r48_f693_array_default_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r48_f694_match_open():
-    """F694 OPEN (match): miss reproduces."""
-    miss = _misses("(function(){var m='%s:%s'.match(/(%s):(%s)/);return m[1]+m[2];})()" % (_A, _B, _A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f694_match_closed():
+    """F694 CLOSED (match): coded refusal."""
+    ok = _blocked("(function(){var m='%s:%s'.match(/(%s):(%s)/);return m[1]+m[2];})()" % (_A, _B, _A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r48_f694_matchAll_open():
-    """F694 OPEN (matchAll): miss reproduces."""
-    miss = _misses("(function(){var m=[...'%s:%s'.matchAll(/(%s):(%s)/g)][0];return m[1]+m[2];})()" % (_A, _B, _A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f694_matchAll_closed():
+    """F694 CLOSED (matchAll): coded refusal."""
+    ok = _blocked("(function(){var m=[...'%s:%s'.matchAll(/(%s):(%s)/g)][0];return m[1]+m[2];})()" % (_A, _B, _A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r48_f695_pair_value_open():
