@@ -149,11 +149,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F640-F653 open, next F654 (this lane)."""
+    """Control: lane-local footer (F646, F651 closed by wave-377 lane 3)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F655**" in text  # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
-          and "Open findings: F644, F645, F646, F647, F648, F649, F650, F651, F652, F653, F654." in text)  # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
+          and "Open findings: F644, F645, F647, F648, F649, F650, F652, F653, F654." in text)  # Wave-377 lane 3: F646, F651 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -377,30 +377,30 @@ def test_r44_f645_s3_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 
-# ------------------------------------------------- F646 open pins (must miss)
+# ------------------------------------------------- F646 closed pins (must block)  # Wave-377 lane 3: F646 CLOSED
 
 @_t
-def test_r44_f646_s1_open():
-    """F646 OPEN (shape foreach-push-join): miss reproduces."""
-    miss = _misses("(function(){var p=[];['%s','%s%s'].forEach(function(x){p.push(x);});return p.join('');})()"
+def test_r44_f646_s1_closed():
+    """F646 CLOSED (wave-377 lane 3) (shape foreach-push-join): now blocked."""
+    hit = _blocked("(function(){var p=[];['%s','%s%s'].forEach(function(x){p.push(x);});return p.join('');})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r44_f646_s2_open():
-    """F646 OPEN (shape foreach-accumulate): miss reproduces."""
-    miss = _misses("(function(){var s='';['%s','%s%s'].forEach(function(x){s+=x;});return s;})()"
-                   % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r44_f646_s3_open():
-    """F646 OPEN (shape foreach-arrow): miss reproduces."""
-    miss = _misses("(function(){var s='';['%s','%s%s'].forEach((x)=>{s+=x;});return s;})()"
+def test_r44_f646_s2_closed():
+    """F646 CLOSED (wave-377 lane 3) (shape foreach-accumulate): now blocked."""
+    hit = _blocked("(function(){var s='';['%s','%s%s'].forEach(function(x){s+=x;});return s;})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_r44_f646_s3_closed():
+    """F646 CLOSED (wave-377 lane 3) (shape foreach-arrow): now blocked."""
+    hit = _blocked("(function(){var s='';['%s','%s%s'].forEach((x)=>{s+=x;});return s;})()"
+                   % (_F1, _F2, _F3))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F647 open pins (must miss)
@@ -507,30 +507,30 @@ def test_r44_f650_s3_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 
-# ------------------------------------------------- F651 open pins (must miss)
+# ------------------------------------------------- F651 closed pins (must block)  # Wave-377 lane 3: F651 CLOSED
 
 @_t
-def test_r44_f651_s1_open():
-    """F651 OPEN (shape array-entries-forof): miss reproduces."""
-    miss = _misses("(function(){var s='';for(var _e of ['%s','%s%s'].entries()){s+=_e[1];}return s;})()"
+def test_r44_f651_s1_closed():
+    """F651 CLOSED (wave-377 lane 3) (shape array-entries-forof): now blocked."""
+    hit = _blocked("(function(){var s='';for(var _e of ['%s','%s%s'].entries()){s+=_e[1];}return s;})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r44_f651_s2_open():
-    """F651 OPEN (shape array-values-forof): miss reproduces."""
-    miss = _misses("(function(){var s='';for(var x of ['%s','%s%s'].values()){s+=x;}return s;})()"
-                   % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r44_f651_s3_open():
-    """F651 OPEN (shape array-keys-index): miss reproduces."""
-    miss = _misses("(function(){var fr=['%s','%s%s'];var s='';for(var i of fr.keys()){s+=fr[i];}return s;})()"
+def test_r44_f651_s2_closed():
+    """F651 CLOSED (wave-377 lane 3) (shape array-values-forof): now blocked."""
+    hit = _blocked("(function(){var s='';for(var x of ['%s','%s%s'].values()){s+=x;}return s;})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_r44_f651_s3_closed():
+    """F651 CLOSED (wave-377 lane 3) (shape array-keys-index): now blocked."""
+    hit = _blocked("(function(){var fr=['%s','%s%s'];var s='';for(var i of fr.keys()){s+=fr[i];}return s;})()"
+                   % (_F1, _F2, _F3))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F652 open pins (must miss)

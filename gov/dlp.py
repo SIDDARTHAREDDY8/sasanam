@@ -21201,6 +21201,357 @@ def _js_parse_f602_set_foreach_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f646_accum_decl(stmts, j):
+    """Parse `var|let NAME='';` or `var|let|const NAME=[];` at stmts[j] (F646).
+
+    The string accumulator reuses the F600/F601/F602 discipline
+    (empty-string initializer; a `const` accumulator throws at
+    runtime on `+=` and fails closed). The array accumulator takes
+    the exact empty-array literal (a non-empty initializer fails
+    closed -- the engine would pre-seed the join); `const` is
+    node-legal for the array form (push mutates the array, nothing
+    reassigns the binding -- the push grammar has no room for a
+    reassignment). Returns (kind, name, next_index) with kind
+    "str"|"arr". Never evals.
+    """
+    try:
+        acc, j2 = _js_parse_f6xx_accum_decl(stmts, j)
+        return "str", acc, j2
+    except _JSExprFail:
+        pass
+    n = len(stmts)
+    m = _js_match_kw(stmts, j, "var")
+    if m is None:
+        m = _js_match_kw(stmts, j, "let")
+    if m is None:
+        m = _js_match_kw(stmts, j, "const")
+    if m is None:
+        raise _JSExprFail("F646 accum decl not var/let/const")
+    j = _js_skip_ws(stmts, m)
+    acc, j = _js_parse_ident(stmts, j)
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "=")
+    j = _js_skip_ws(stmts, j)
+    if j >= n or stmts[j] != "[":
+        raise _JSExprFail("F646 accum not string/array")
+    j = _js_skip_ws(stmts, j + 1)
+    if j >= n or stmts[j] != "]":
+        raise _JSExprFail("F646 array accum not empty")
+    j = _js_skip_ws(stmts, j + 1)
+    j = _js_expect(stmts, j, ";")
+    return "arr", acc, j
+
+
+def _js_parse_f646_array_source(stmts, j, depth, state):
+    """Parse `['LIT', ...]` at stmts[j] (F646/F651).
+
+    Plain string-literal elements only (the F494 discipline):
+    holes, null/undefined, numeric literals, nested arrays, and
+    spread fail closed -- forEach skips holes but visits
+    null/undefined, while _js_parse_array models both as _JSNil,
+    so any _JSNil element is a miss, never a guess; for-of visits
+    holes as undefined, also a miss. Returns (elements,
+    next_index). Never evals.
+    """
+    arr, j = _js_parse_array(stmts, j, depth, state)
+    elements = []
+    for e in arr.elements:
+        if not isinstance(e, str) or isinstance(e, _JSNumStr):
+            raise _JSExprFail("F646 non-string element")
+        state["parts"] += 1  # F452: charge per element
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        elements.append(e)
+    return elements, j
+
+
+def _js_parse_f646_push_expr(text, j, acc_name):
+    """Parse `ACC.push(X)` at text[j] (F646).
+
+    Returns (X_text, next_index) just past the closing paren. X
+    is scanned string/paren-depth-aware to `)` at depth 0 (the
+    _js_scan_foreach_E discipline). Never evals.
+    """
+    j = _js_skip_ws(text, j)
+    a2, j = _js_parse_ident(text, j)
+    if a2 != acc_name:
+        raise _JSExprFail("F646 push accum mismatch")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ".")
+    _mn, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if _mn != "push":
+        raise _JSExprFail("F646 not push")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    X, k = _js_scan_foreach_E(text, j, ")")
+    return X, k + 1
+
+
+def _js_parse_f646_push_stmt(text, j, acc_name):
+    """Parse `ACC.push(X);` at text[j] (F646 block-body form).
+
+    Returns (X_text, next_index) just past the `;`. Never evals.
+    """
+    X, j = _js_parse_f646_push_expr(text, j, acc_name)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    return X, j
+
+
+def _js_parse_f646_push_callback(text, j, acc_name):
+    """Parse a forEach push callback at text[j] (F646).
+
+    Recognized (node-verified, v24.20.0):
+      `function(P){ACC.push(X);}`, `(P)=>ACC.push(X)`,
+      `(P)=>{ACC.push(X);}`, `P=>ACC.push(X)`, `P=>{ACC.push(X);}`
+    where P is one or two distinct parameter idents (forEach
+    passes (element, index) positionally; a third param would be
+    the array itself -- unmodeled, fails closed at param parse)
+    and X is an additive expression over the params. Returns
+    (params, X_text, next_index) just past the callback. Never
+    evals.
+    """
+    n = len(text)
+    params = []
+    if _js_match_kw(text, j, "function") is not None:
+        j = _js_skip_ws(text, j + len("function"))
+        j = _js_expect(text, j, "(")
+        params, j = _js_parse_foreach_params(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "{")
+        X, j = _js_parse_f646_push_stmt(text, j, acc_name)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "}")
+        return params, X, j
+    # Arrow forms (the bare single-param form is engine-identical,
+    # F448 precedent).
+    j0 = _js_skip_ws(text, j)
+    if j0 >= n:
+        raise _JSExprFail("F646 callback not a function")
+    if text[j0] == "(":
+        j = _js_skip_ws(text, j0 + 1)
+        params, j = _js_parse_foreach_params(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+    elif text[j0] in _JS_IDENT_START:
+        _pname, j = _js_parse_ident(text, j0)
+        if _pname == "arguments":
+            raise _JSExprFail("F646 param shadowed")
+        params = [_pname]
+        j = _js_skip_ws(text, j)
+    else:
+        raise _JSExprFail("F646 callback not a function")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F646 arrow without =>")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        X, j = _js_parse_f646_push_stmt(text, j + 1, acc_name)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "}")
+        return params, X, j
+    # Concise body: `ACC.push(X)` terminated by `)` at depth 0.
+    X, j = _js_parse_f646_push_expr(text, j, acc_name)
+    return params, X, j
+
+
+def _js_parse_f646_return_join(stmts, j, acc):
+    """Parse `return ACC.join('SEP');` / `return ACC.join();` at stmts[j] (F646).
+
+    The no-argument form joins with the engine's comma default
+    (node v24.20.0 verified). The separator must be a string
+    literal. Parses through end-of-body like
+    _js_parse_f6xx_return_acc. Returns (sep, next_index) with sep
+    None for the comma default. Never evals.
+    """
+    j = _js_skip_ws(stmts, j)
+    m = _js_match_kw(stmts, j, "return")
+    if m is None:
+        raise _JSExprFail("F646 no return")
+    j = _js_skip_ws(stmts, m)
+    acc2, j = _js_parse_ident(stmts, j)
+    if acc2 != acc:
+        raise _JSExprFail("F646 returns another ident")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ".")
+    _mn, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if _mn != "join":
+        raise _JSExprFail("F646 not join")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "(")
+    j = _js_skip_ws(stmts, j)
+    sep = None
+    if j < len(stmts) and stmts[j] in "'\"":
+        sep, j = _js_parse_string(stmts, j)
+        j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ")")
+    j = _js_skip_ws(stmts, j)
+    if j < len(stmts) and stmts[j] == ";":
+        j += 1
+    if _js_skip_ws(stmts, j) != len(stmts):
+        raise _JSExprFail("F646 trailing statements")
+    return sep, j
+
+
+def _js_f6xx_operand_exact(text, i):
+    """Parse one additive operand for the concat-exactness check (F646/F651).
+
+    Returns (is_string, end_index). String literals are strings;
+    numeric literals are numbers; parenthesized additive chains
+    recurse. Anything else raises _JSExprFail (fail closed).
+    Never evals.
+    """
+    i = _js_skip_ws(text, i)
+    if i >= len(text):
+        raise _JSExprFail("F6xx exactness truncated")
+    c = text[i]
+    if c == chr(34) or c == "'":
+        _, j = _js_parse_string(text, i)
+        return True, j
+    if c == "(":
+        inner_str, j = _js_f6xx_additive_exact(text, i + 1)
+        j = _js_expect(text, j, ")")
+        return inner_str, j
+    if c.isdigit():
+        j = i
+        while j < len(text) and (text[j].isdigit() or text[j] == "."):
+            j += 1
+        return False, j
+    raise _JSExprFail("F6xx exactness non-literal")
+
+
+def _js_f6xx_additive_exact(text, i):
+    """Parse an additive chain for the concat-exactness check (F646/F651).
+
+    Returns (is_string, end_index). A '+' whose operands are both
+    numbers raises _JSExprFail: the engine adds numerically there
+    while the string-typed decoder would concatenate -- a silent
+    mis-decode (false negative), e.g. `(i+1)` gives node '12' vs
+    decoder '0111'. Refused coded, never mis-decoded. Never evals.
+    """
+    is_str, i = _js_f6xx_operand_exact(text, i)
+    while True:
+        j = _js_skip_ws(text, i)
+        if j >= len(text) or text[j] != "+":
+            return is_str, i
+        rhs_str, i = _js_f6xx_operand_exact(text, j + 1)
+        if not is_str and not rhs_str:
+            raise _JSExprFail("F6xx exactness numeric plus")
+        is_str = True
+
+
+def _js_f6xx_check_E_concat_exact(E, template_bindings):
+    """Fail closed unless every '+' in E is string-concat (F646/F651).
+
+    *E* is the raw `S+=E` (or push-argument) text; *template_bindings*
+    maps each bound name to a type template ("''" for engine-strings
+    such as elements, "0" for engine-numbers such as indices).
+    After template substitution, every '+' in the additive AST must
+    have a string operand -- otherwise the engine's numeric '+'
+    diverges from the decoder's string-typed '+' and the shape is
+    refused coded rather than mis-decoded. Raises _JSExprFail on any
+    violation. Never evals.
+    """
+    rewritten = E
+    for pname, ptext in template_bindings:
+        rewritten = _js_bind_foreach_param(rewritten, pname, ptext)
+    _, j = _js_f6xx_additive_exact(rewritten, 0)
+    j = _js_skip_ws(rewritten, j)
+    if j != len(rewritten):
+        raise _JSExprFail("F6xx exactness trailing junk")
+
+
+def _js_parse_f646_array_foreach_iife(text, i, depth, state):
+    """Parse `(function(){var|let S='';['LIT',...].forEach(CB);return S;})()` and the push/join twin (F646).
+
+    Node-exact desugar (v24.20.0): Array.prototype.forEach calls
+    CB once per element in ascending index order with (element,
+    index, array). Two callback disciplines: the `S+=E`
+    accumulation (the F600/F601/F602 callback grammar reused
+    verbatim) and the `P.push(X)` / `return P.join('SEP')` twin
+    (join with no argument uses the engine's comma default).
+    Params are positional: P1=element, P2=index (a third param
+    would be the array itself -- unmodeled, fails closed at param
+    parse). Returns (value, next_index), or None on mismatch or
+    guard failure. Bounded by the part/depth budgets; the wrapper
+    charges one op (obfuscation-shaped). Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-empty accumulator initializer, a `const` accumulator,
+    non-literal array elements, holes, a callback that is not the
+    exact accumulation/push shape, params shadowing the
+    accumulator, non-string E/X values, a non-literal join
+    separator, call args on the IIFE.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        kind, acc, sj = _js_parse_f646_accum_decl(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        elements, sj = _js_parse_f646_array_source(stmts, sj, depth,
+                                                   state)
+        sj = _js_skip_ws(stmts, sj)
+        if sj >= len(stmts) or stmts[sj] != ".":
+            raise _JSExprFail("F646 no dot")
+        _mn, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj + 1))
+        if _mn != "forEach":
+            raise _JSExprFail("F646 not forEach")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "(")
+        sj = _js_skip_ws(stmts, sj)
+        if kind == "str":
+            params, E, sj = _js_parse_foreach_accum_callback(
+                stmts, sj, acc, depth, state)
+        else:
+            params, E, sj = _js_parse_f646_push_callback(
+                stmts, sj, acc)
+        if acc in params:
+            raise _JSExprFail("F646 param shadows accum")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        if kind == "str":
+            _js_parse_f6xx_return_acc(stmts, _js_skip_ws(stmts, sj),
+                                      acc)
+            joiner = ""
+        else:
+            sep, _sj2 = _js_parse_f646_return_join(
+                stmts, _js_skip_ws(stmts, sj), acc)
+            joiner = "," if sep is None else sep
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        # Spec-axis (concat exactness): the shared additive grammar
+        # is string-typed, so a '+' applied to two numbers (the index
+        # combined with itself or a numeric literal) would mis-decode
+        # instead of failing closed. Refuse coded.
+        _js_f6xx_check_E_concat_exact(
+            E, [(params[0], "''")] +
+               ([(params[1], "0")] if len(params) > 1 else []))
+        parts = []
+        for idx, elem in enumerate(elements):
+            bindings = [(params[0], _js_quote_literal(elem))]
+            if len(params) > 1:
+                bindings.append((params[1], str(idx)))
+            parts.append(_js_foreach_E_value(E, bindings, depth,
+                                             state))
+            state["parts"] += 1  # F452: charge per iteration
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state,
+                                        joiner.join(parts))
+    except _JSExprFail:
+        return None
+
+
+
 def _js_parse_args_entries_values_iife(text, i, depth, state):
     """Parse `(function(){DECL a=arguments; BODY})(lit, ...)` (F543).
 
@@ -24302,6 +24653,327 @@ def _js_parse_f622_keys_bracket_iife(text, i, depth, state):
         return rval, j
     except _JSExprFail:
         return None
+
+
+def _js_parse_f651_array_binding(stmts, j, depth, state):
+    """Try `var|let|const NAME=['LIT',...];` at stmts[j] (F651).
+
+    The optional bound-array declaration (the keys twin binds
+    the array before the loop). Returns (name, elements,
+    next_index) or None on non-match -- never raises for a
+    non-matching statement (the binding is optional), but a
+    malformed array literal after `NAME=[` fails the whole parse
+    closed via _js_parse_f646_array_source. Never evals.
+    """
+    n = len(stmts)
+    m = _js_match_kw(stmts, j, "var")
+    if m is None:
+        m = _js_match_kw(stmts, j, "let")
+    if m is None:
+        m = _js_match_kw(stmts, j, "const")
+    if m is None:
+        return None
+    k = _js_skip_ws(stmts, m)
+    if k >= n or stmts[k] not in _JS_IDENT_START:
+        return None
+    name, k = _js_parse_ident(stmts, k)
+    k = _js_skip_ws(stmts, k)
+    if k >= n or stmts[k] != "=":
+        return None
+    k = _js_skip_ws(stmts, k + 1)
+    if k >= n or stmts[k] != "[":
+        return None
+    try:
+        elements, k = _js_parse_f646_array_source(stmts, k, depth,
+                                                  state)
+    except _JSExprFail:
+        return None
+    k = _js_skip_ws(stmts, k)
+    if k >= n or stmts[k] != ";":
+        return None
+    return name, elements, k + 1
+
+
+def _js_parse_f651_loopvar(stmts, j):
+    """Parse `var|let|const X` or `var|let|const [A,B]` at stmts[j] (F651).
+
+    The entries() twin destructures `[index, value]` pairs; the
+    other methods take a plain ident. Returns ((kind, names),
+    next_index) with kind "ident"|[name] or "pair"|(a, b); the
+    destructured names must be distinct. Never evals.
+    """
+    m = _js_match_kw(stmts, j, "var")
+    if m is None:
+        m = _js_match_kw(stmts, j, "let")
+    if m is None:
+        m = _js_match_kw(stmts, j, "const")
+    if m is None:
+        raise _JSExprFail("F651 loopvar not var/let/const")
+    j = _js_skip_ws(stmts, m)
+    if j < len(stmts) and stmts[j] == "[":
+        j = _js_skip_ws(stmts, j + 1)
+        a, j = _js_parse_ident(stmts, j)
+        j = _js_skip_ws(stmts, j)
+        j = _js_expect(stmts, j, ",")
+        b, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+        if a == b:
+            raise _JSExprFail("F651 destructure dup")
+        j = _js_skip_ws(stmts, j)
+        j = _js_expect(stmts, j, "]")
+        return ("pair", (a, b)), j
+    name, j = _js_parse_ident(stmts, j)
+    return ("ident", (name,)), j
+
+
+def _js_parse_f651_iter_source(stmts, j, bound_name, depth, state):
+    """Parse `['LIT',...].entries()|.values()|.keys()` or `ARR.entries()|...` at stmts[j] (F651).
+
+    The receiver is an inline array literal or the bound ARR
+    (when *bound_name* is not None); the method call takes no
+    arguments. Returns (inline_elements_or_None, method,
+    next_index) -- the caller substitutes the bound elements when
+    the receiver is ARR. Never evals.
+    """
+    j = _js_skip_ws(stmts, j)
+    n = len(stmts)
+    elements = None
+    if j < n and stmts[j] == "[":
+        elements, j = _js_parse_f646_array_source(stmts, j, depth,
+                                                   state)
+    else:
+        if bound_name is None:
+            raise _JSExprFail("F651 source not array")
+        _nm, j = _js_parse_ident(stmts, j)
+        if _nm != bound_name:
+            raise _JSExprFail("F651 source not bound array")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ".")
+    _mn, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if _mn not in ("entries", "values", "keys"):
+        raise _JSExprFail("F651 not an iterator method")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "(")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ")")
+    return elements, _mn, j
+
+
+def _js_f651_subst_bracket(expr, obj_name, idx_name, repl):
+    """Substitute `OBJ[IDX]` bracket reads with *repl* in *expr* (F651 keys twin).
+
+    String-aware (string contents are never touched); IDX must be
+    exactly the loop-var name (ws-tolerant). Any other use of
+    OBJ -- a bare read, call, member access, or a non-loopvar
+    index -- fails closed. Returns the rewritten text. Never
+    evals.
+    """
+    out = []
+    for is_code, s in _js_split_code_strings(expr):
+        if not is_code:
+            out.append(s)
+            continue
+        buf = []
+        pos = 0
+        for st in _js_code_find_idents(s, obj_name):
+            en = st + len(obj_name)
+            k = en
+            while k < len(s) and s[k] in " \t\n\r":
+                k += 1
+            if k >= len(s) or s[k] != "[":
+                raise _JSExprFail("F651 obj not a bracket read")
+            k += 1
+            while k < len(s) and s[k] in " \t\n\r":
+                k += 1
+            if (s[k:k + len(idx_name)] != idx_name
+                    or not _js_code_ident_at(s, idx_name, k)):
+                raise _JSExprFail("F651 bracket not loopvar")
+            k += len(idx_name)
+            while k < len(s) and s[k] in " \t\n\r":
+                k += 1
+            if k >= len(s) or s[k] != "]":
+                raise _JSExprFail("F651 bracket not closed")
+            buf.append(s[pos:st])
+            buf.append(repl)
+            pos = k + 1
+        buf.append(s[pos:])
+        out.append("".join(buf))
+    return "".join(out)
+
+
+def _js_f651_subst_pair(expr, pair_name, idx_text, val_text):
+    """Substitute `PAIR[0]`/`PAIR[1]` reads in *expr* (F651 entries twin).
+
+    String-aware; any other use of PAIR -- a bare read, call,
+    member access, or a non-0/1 index -- fails closed. Returns
+    the rewritten text. Never evals.
+    """
+    out = []
+    for is_code, s in _js_split_code_strings(expr):
+        if not is_code:
+            out.append(s)
+            continue
+        buf = []
+        pos = 0
+        for st in _js_code_find_idents(s, pair_name):
+            en = st + len(pair_name)
+            k = en
+            while k < len(s) and s[k] in " \t\n\r":
+                k += 1
+            if k >= len(s) or s[k] != "[":
+                raise _JSExprFail("F651 pair not a bracket read")
+            k += 1
+            while k < len(s) and s[k] in " \t\n\r":
+                k += 1
+            if k < len(s) and s[k] in "01":
+                which = s[k]
+                k += 1
+            else:
+                raise _JSExprFail("F651 pair index not 0/1")
+            while k < len(s) and s[k] in " \t\n\r":
+                k += 1
+            if k >= len(s) or s[k] != "]":
+                raise _JSExprFail("F651 pair bracket not closed")
+            buf.append(s[pos:st])
+            buf.append(idx_text if which == "0" else val_text)
+            pos = k + 1
+        buf.append(s[pos:])
+        out.append("".join(buf))
+    return "".join(out)
+
+
+def _js_parse_f651_array_iter_forof_iife(text, i, depth, state):
+    """Parse `(function(){[var|let|const ARR=['LIT',...];]var|let S='';for(var|let|const X of SRC){S+=E;}return S;})()` (F651).
+
+    SRC is `['LIT',...].entries()|.values()|.keys()` or the same
+    member call on the bound ARR. Node-exact desugar (v24.20.0):
+    .values() yields elements, .keys() yields indices,
+    .entries() yields [index, element] pairs, all in ascending
+    index order. The bound array is single-assignment (the
+    exact-shape grammar has no room for reassignment).
+    Destructuring `[A,B]` is entries()-only (the engine
+    destructures values()/keys() yields as strings -- unmodeled,
+    fails closed). Holes fail closed (for-of visits holes as
+    undefined; the decoder refuses rather than mis-decodes).
+    Returns (value, next_index), or None on mismatch or guard
+    failure. Bounded by the part/depth budgets; the wrapper
+    charges one op (obfuscation-shaped). Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-empty accumulator, a `const` accumulator, a loopvar
+    shadowing the accumulator or the bound array, non-literal
+    elements, holes, a body other than `S+=E`, non-string E
+    values, destructuring outside entries(), a bare pair read
+    (`s+=_e`), call args on the IIFE.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        bound = _js_parse_f651_array_binding(stmts, sj, depth, state)
+        bound_name = None
+        bound_elems = None
+        if bound is not None:
+            bound_name, bound_elems, sj = bound
+        sj = _js_skip_ws(stmts, sj)
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, sj)
+        if bound_name == acc:
+            raise _JSExprFail("F651 binding shadows accum")
+        sj = _js_skip_ws(stmts, sj)
+        m = _js_match_kw(stmts, sj, "for")
+        if m is None:
+            raise _JSExprFail("F651 no for")
+        sj = _js_skip_ws(stmts, m)
+        sj = _js_expect(stmts, sj, "(")
+        sj = _js_skip_ws(stmts, sj)
+        (lvkind, lvnames), sj = _js_parse_f651_loopvar(stmts, sj)
+        if acc in lvnames:
+            raise _JSExprFail("F651 loopvar shadows accum")
+        if bound_name is not None and bound_name in lvnames:
+            raise _JSExprFail("F651 loopvar shadows array")
+        sj = _js_skip_ws(stmts, sj)
+        m = _js_match_kw(stmts, sj, "of")
+        if m is None:
+            raise _JSExprFail("F651 no of")
+        sj = _js_skip_ws(stmts, m)
+        inline_elems, method, sj = _js_parse_f651_iter_source(
+            stmts, sj, bound_name, depth, state)
+        elements = (inline_elems if inline_elems is not None
+                    else bound_elems)
+        if elements is None:
+            raise _JSExprFail("F651 no elements")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_skip_ws(stmts, sj)
+        braced = False
+        if sj < len(stmts) and stmts[sj] == "{":
+            braced = True
+            sj = _js_skip_ws(stmts, sj + 1)
+        # The `S+=E;` accumulation body (the F600/F601/F602 block
+        # form reused verbatim).
+        E, sj = _js_parse_foreach_accum_stmt(stmts, sj, acc)
+        sj = _js_skip_ws(stmts, sj)
+        if braced:
+            sj = _js_expect(stmts, sj, "}")
+            sj = _js_skip_ws(stmts, sj)
+        _js_parse_f6xx_return_acc(stmts, sj, acc)
+        if lvkind == "pair" and method != "entries":
+            raise _JSExprFail("F651 destructure not entries")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        # Spec-axis (concat exactness): template-substitute the loop
+        # bindings (elements -> "''", indices -> "0") and refuse coded
+        # unless every '+' is string-concat (see F646 hook).
+        if method == "values":
+            _E2t, _tbind = E, [(lvnames[0], "''")]
+        elif method == "keys":
+            _E2t = E
+            if bound_name is not None:
+                _E2t = _js_f651_subst_bracket(_E2t, bound_name,
+                                              lvnames[0], "''")
+            _tbind = [(lvnames[0], "0")]
+        elif lvkind == "pair":
+            _E2t, _tbind = E, [(lvnames[0], "0"),
+                               (lvnames[1], "''")]
+        else:
+            _E2t = _js_f651_subst_pair(E, lvnames[0], "0", "''")
+            _tbind = []
+        _js_f6xx_check_E_concat_exact(_E2t, _tbind)
+        parts = []
+        for idx, elem in enumerate(elements):
+            idx_text = str(idx)
+            val_text = _js_quote_literal(elem)
+            if method == "values":
+                E2 = E
+                bindings = [(lvnames[0], val_text)]
+            elif method == "keys":
+                E2 = E
+                if bound_name is not None:
+                    E2 = _js_f651_subst_bracket(E2, bound_name,
+                                                lvnames[0], val_text)
+                bindings = [(lvnames[0], idx_text)]
+            else:  # entries
+                if lvkind == "pair":
+                    E2 = E
+                    bindings = [(lvnames[0], idx_text),
+                                (lvnames[1], val_text)]
+                else:
+                    E2 = _js_f651_subst_pair(E, lvnames[0], idx_text,
+                                             val_text)
+                    bindings = []
+            parts.append(_js_foreach_E_value(E2, bindings, depth,
+                                             state))
+            state["parts"] += 1  # F452: charge per iteration
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state,
+                                        "".join(parts))
+    except _JSExprFail:
+        return None
+
 
 
 def _js_parse_f624_slicebound_iife(text, i, depth, state):
@@ -31553,6 +32225,21 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f600 is not None:
             val, i = _f600
             return _js_parse_postfix(text, i, val, depth, state)
+        # F646: (function(){var|let S='';['LIT',...].forEach(CB);
+        #   return S;})() and the push/join twin (function(){
+        #   var|let P=[];['LIT',...].forEach(function(x){P.push(x);});
+        #   return P.join('SEP');})() -- Array.prototype.forEach
+        #   fragment accumulation. Tried after F600/F601/F602: those
+        #   require new Map/new Set sources (all fail closed on `[`
+        #   -- the F563 Map and F602 Set grammars never accept an
+        #   array literal); F620 requires a thunk array (plain
+        #   string literals fail its element grammar closed); None
+        #   falls through to F620 like F600.
+        _f646 = _js_parse_f646_array_foreach_iife(text, i, depth,
+                                                  state)
+        if _f646 is not None:
+            val, i = _f646
+            return _js_parse_postfix(text, i, val, depth, state)
         # F620: (function(){var|const|let f=[()=>LIT,...];
         #   return f[INT]()+f[INT]();})() /
         #   (function(){var|let s='';[()=>LIT,...].forEach(
@@ -31744,6 +32431,23 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                  state)
         if _f622 is not None:
             val, i = _f622
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F651: (function(){[var|let|const ARR=['LIT',...];]
+        #   var|let S='';for(var|let|const X of SRC){S+=E;}
+        #   return S;})() -- Array iterator-method for-of fragment
+        #   assembly, where SRC is ['LIT',...].entries()|.values()|
+        #   .keys() or the same member call on the bound ARR. Tried
+        #   after F622: F622 requires Object.keys enumeration
+        #   bindings and terminals while this requires
+        #   .entries()/.values()/.keys() for-of; F632 requires
+        #   for-in; F640 requires for-await; F654 (OPEN) requires a
+        #   bare sync-iterable for-of with no iterator-method
+        #   member call, so no previously-decoded input changes
+        #   behavior.
+        _f651 = _js_parse_f651_array_iter_forof_iife(text, i, depth,
+                                                     state)
+        if _f651 is not None:
+            val, i = _f651
             return _js_parse_postfix(text, i, val, depth, state)
         # F624: (function(){DECL s='LIT';
         #   return s.slice(A[,B])[+'LIT'...];})() -- trimming string

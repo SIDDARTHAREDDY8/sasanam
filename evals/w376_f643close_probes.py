@@ -259,10 +259,10 @@ def test_p3_newx_ident():
 # ------------------------------------------------ open neighbors still miss
 
 def test_p4_open_neighbors_still_miss():
-    """F644-F654 red-first shapes still miss (nothing absorbed)."""
+    """F644-F654 red-first shapes still miss (nothing absorbed; F646, F651 closed wave-377 lane 3)."""
     import importlib
     shapes = []
-    for fnum in (644, 645, 646, 647, 648, 649, 650, 651, 652, 653):
+    for fnum in (644, 645, 647, 648, 649, 650, 652, 653):  # Wave-377 lane 3: F646, F651 CLOSED (removed from open list)
         mod = importlib.import_module("w376_f%d_redfirst" % fnum)
         for name, payload, recovers in mod.SHAPES:
             if recovers:
