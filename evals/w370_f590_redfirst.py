@@ -26,9 +26,9 @@ SHAPES = [
 ]
 
 CONTROLS = [
-    ('f570-open-still-miss',
+    ('f570-closed-now-blocks',
      '\'Reflect.apply(function(){"use strict";var a=arguments;return a[0]+a[1];},null,[\\\'%(A1)s\\\',\\\'%(A2)s\\\'])\''
-     % {"A1": A1, "A2": A2}, False),
+     % {"A1": A1, "A2": A2}, True),
     ('junk-quiet',
      '\'Reflect.apply.call(null,function(){"use strict";var a=arguments;return a[0]+a[1];},null,[\\\'zz\\\',\\\'yy\\\'])\''
      % {"A1": A1, "A2": A2}, False)

@@ -5126,6 +5126,81 @@ def _js_parse_array_bracket_dispatch(text, i, state):
     raise _JSExprFail("Array bracket member not modeled")
 
 
+def _js_parse_carrier_escaped_string(text, j):
+    """Parse `\\'...\\'` / `\\"..."` at text[j] (F590).
+
+    The whole-text scanner anchors INSIDE an outer string literal
+    (the "carrier"), so the raw text carries the carrier's escapes:
+    raw `\\'` is `'` in the carrier's value (node-exact). This
+    parses one carrier-escaped element to its value, applying the
+    standard string-literal termination rule at the VALUE level (a
+    value quote preceded by an odd run of value backslashes is an
+    escaped interior quote, not the terminator -- so raw `\\\\\\'`
+    correctly fails closed exactly where the value-level parse
+    would). The resolved value interior is re-parsed by
+    `_js_parse_string`, so value-level escapes resolve through the
+    tested path. Exotic carrier escapes (`\\n`, `\\xNN`, ...) fail
+    closed -- conservative, documented. Only called where a plain
+    backslash always raised before: strictly additive, never
+    mis-decodes. Never evals.
+    """
+    n = len(text)
+    quote = text[j + 1]
+    k = j + 2  # past the opening \'
+    val_chars = []
+    trail_bs = 0  # trailing run of value backslashes (F452: O(1)
+                  # amortized -- the old rescan was O(L^2))
+    while True:
+        if k >= n:
+            raise _JSExprFail("carrier string unterminated")
+        c = text[k]
+        if c == "\\" and k + 1 < n and text[k + 1] in "'\"\\":
+            vch = text[k + 1]  # \' -> ', \" -> ", \\ -> \
+            k += 2
+            if vch == quote:
+                # Value-level termination rule: the value string
+                # ends here iff the quote is not value-escaped.
+                if trail_bs % 2 == 0:
+                    break  # terminator: not part of the value
+                val_chars.append(vch)
+                trail_bs = 0
+                continue
+            val_chars.append(vch)
+            trail_bs = trail_bs + 1 if vch == "\\" else 0
+            continue
+        if c == "\\":
+            raise _JSExprFail("carrier exotic escape fails closed")
+        if c == quote:
+            # A bare delimiter quote cannot appear in genuine
+            # carrier text (it would end the carrier) -- fail
+            # closed rather than mis-decode.
+            raise _JSExprFail("bare quote in carrier element")
+        val_chars.append(c)
+        trail_bs = 0
+        k += 1
+    val, end = _js_parse_string(quote + "".join(val_chars) + quote, 0)
+    if end != len(quote + "".join(val_chars) + quote):
+        raise _JSExprFail("carrier value re-parse trailing text")
+    return val, k
+
+
+def _js_parse_string_carrier_tolerant(text, j):
+    """Parse one string literal, tolerating carrier escapes (F590).
+
+    When the whole-text scanner anchors inside an outer string
+    literal (the "carrier"), raw `\\'` is `'` in the carrier's
+    value (node-exact). Delegates to
+    `_js_parse_carrier_escaped_string` in that case, else to
+    `_js_parse_string` (backtick still raises there -- fail
+    closed). Never evals.
+    """
+    n = len(text)
+    if j < n and text[j] == "\\" and j + 1 < n \
+            and text[j + 1] in "'\"":
+        return _js_parse_carrier_escaped_string(text, j)
+    return _js_parse_string(text, j)
+
+
 def _js_parse_string_literal_list(text, j, state, closer):
     """Parse `lit (, lit)* <closer>` -- a string-literal-only argument
     list (F454 / F446 / F480 grammar); returns (elements, idx_after_closer).
@@ -5144,9 +5219,8 @@ def _js_parse_string_literal_list(text, j, state, closer):
     if j < n and text[j] == closer:
         return elements, j + 1
     while True:
-        if j >= n or text[j] not in "'\"`":
-            raise _JSExprFail("arg not a string literal")
-        frag, j = _js_parse_string(text, j)  # backtick raises: fail closed
+        j = _js_skip_ws(text, j)
+        frag, j = _js_parse_string_carrier_tolerant(text, j)
         elements.append(frag)
         state["parts"] += 1
         if state["parts"] > _JS_EXPR_MAX_PARTS:
@@ -7722,18 +7796,33 @@ def _js_parse_f521_call_dispatch(text, paren, depth, state):
     additive body over declared params, literal-or-spread argsArray;
     F569 adds the F546 enumerating-body and F558 destructuring-body
     targets); any other target fails closed here -- call-indirection
-    with other targets is a documented residual, not filed. Returns
+    with other targets is a documented residual, not filed. F590:
+    the call receiver is the literal `Reflect` (canonical) or the
+    literal `null` -- Function.prototype.call's receiver is
+    unobservable when invoking the built-in Reflect.apply (its this
+    value cannot affect behavior), so `Reflect.apply.call(null, T,
+    ...)` desugars node-exactly to the canonical form
+    (v24.20.0). Any other receiver (`undefined`, `void 0`,
+    arbitrary expressions) fails closed -- conservative,
+    documented. The directive-prologue skip (F570) composes here
+    through the shared `_js_parse_fn_enum_body_target` /
+    `_js_parse_fn_destructure_body_target` parsers. Returns
     (value, next_index) without the postfix chain (the caller applies
     it). Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, paren + 1)
-    if not text.startswith("Reflect", j):
+    if text.startswith("Reflect", j) and (
+            j + 7 >= n or text[j + 7] not in _JS_IDENT_CONT):
+        j = _js_skip_ws(text, j + 7)
+    elif text.startswith("null", j) and (
+            j + 4 >= n or text[j + 4] not in _JS_IDENT_CONT):
+        # F590: the null receiver desugars node-exactly to the
+        # canonical Reflect receiver (the built-in ignores its
+        # this). Anything else fails closed.
+        j = _js_skip_ws(text, j + 4)
+    else:
         raise _JSExprFail("F521 call receiver not Reflect")
-    k = j + len("Reflect")
-    if k < n and text[k] in _JS_IDENT_CONT:
-        raise _JSExprFail("F521 Reflectx is not Reflect")
-    j = _js_skip_ws(text, k)
     if j >= n or text[j] != ",":
         raise _JSExprFail("F521 call dispatch without target")
     # The bound-target triple parsers, tried in order: F521 (concat),
@@ -11684,46 +11773,147 @@ def _js_parse_f539_weakref(text, i, depth, state):
     return _JSObj(props), j + 1
 
 
-def _js_parse_descriptor_getter(text, k, depth, state):
-    """Parse `function(){return EXPR;}` at text[k] (F548/F550).
+def _js_parse_getter_return_block(text, k, depth, state, what):
+    """Parse `{return EXPR;}` at text[k] (F550/F591).
 
-    Returns (evaluated_value, next_index). The engine invokes the
-    getter on property read; the static model evaluates the return
-    expression with _js_parse_f535_getter_value (the F535 getter
-    grammar -- `this`-dependent bodies fail closed there, so the
-    evaluation is argument-independent, node v24.20.0 verified).
-    An optional function name is accepted (engine-exact). Arrow
-    getters fail closed (documented boundary -- the filed shapes use
-    function expressions). Never evals.
+    Shared by the function-expression and block-arrow getter
+    bodies: the engine invokes the getter on read, so the return
+    expression is evaluated with `_js_parse_f535_getter_value`.
+    *what* names the getter kind for diagnostics ("getter" /
+    "arrow getter"). Returns (evaluated_value, next_index).
+    Never evals.
     """
     n = len(text)
-    if not (text.startswith("function", k)
-            and (k + 8 >= n or text[k + 8] not in _JS_IDENT_CONT)):
-        raise _JSExprFail("getter not a function expression")
-    k = _js_skip_ws(text, k + 8)
-    if k < n and text[k] in _JS_IDENT_START:
-        _, k = _js_parse_ident(text, k)
-        k = _js_skip_ws(text, k)
-    if k >= n or text[k] != "(":
-        raise _JSExprFail("getter needs parens")
-    k = _js_skip_ws(text, k + 1)
-    if k >= n or text[k] != ")":
-        raise _JSExprFail("getter takes no args")
-    k = _js_skip_ws(text, k + 1)
-    if k >= n or text[k] != "{":
-        raise _JSExprFail("getter needs a body")
-    k = _js_skip_ws(text, k + 1)
     if not (text.startswith("return", k)
             and (k + 6 >= n or text[k + 6] not in _JS_IDENT_CONT)):
-        raise _JSExprFail("getter body not a return")
+        raise _JSExprFail(what + " body not a return")
     gval, k = _js_parse_f535_getter_value(text, _js_skip_ws(text, k + 6),
                                           depth + 1, state)
     k = _js_skip_ws(text, k)
     if k < n and text[k] == ";":
         k = _js_skip_ws(text, k + 1)
     if k >= n or text[k] != "}":
-        raise _JSExprFail("bad getter body")
+        raise _JSExprFail("bad " + what + " body")
     return gval, k + 1
+
+
+def _js_parse_descriptor_getter(text, k, depth, state):
+    """Parse `function(){return EXPR;}` / `()=>EXPR` / `()=>{return
+    EXPR;}` at text[k] (F548/F550, arrows F591).
+
+    Returns (evaluated_value, next_index). The engine invokes the
+    getter on property read; the static model evaluates the return
+    expression with _js_parse_f535_getter_value (the F535 getter
+    grammar -- `this`-dependent bodies fail closed there, so the
+    evaluation is argument-independent, node v24.20.0 verified; an
+    arrow's `this` is lexical and equally unmodelable, so it fails
+    closed the same way). An optional function name is accepted
+    (engine-exact). Arrow getters take zero parameters -- any
+    parameter fails closed (conservative, documented); the
+    single-bare-param form (`x=>EXPR`) also fails closed. Never
+    evals.
+    """
+    n = len(text)
+    if text.startswith("function", k) \
+            and (k + 8 >= n or text[k + 8] not in _JS_IDENT_CONT):
+        k = _js_skip_ws(text, k + 8)
+        if k < n and text[k] in _JS_IDENT_START:
+            _, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "(":
+            raise _JSExprFail("getter needs parens")
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            raise _JSExprFail("getter takes no args")
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "{":
+            raise _JSExprFail("getter needs a body")
+        k = _js_skip_ws(text, k + 1)
+        return _js_parse_getter_return_block(text, k, depth, state,
+                                               "getter")
+    # F591: arrow getters -- `()=>EXPR` (concise) or
+    # `()=>{return EXPR;}` (block). Zero parameters only.
+    if text.startswith("(", k):
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            raise _JSExprFail("arrow getter takes no args")
+        k = _js_skip_ws(text, k + 1)
+        if not text.startswith("=>", k):
+            raise _JSExprFail("arrow getter without =>")
+        k = _js_skip_ws(text, k + 2)
+        if k < n and text[k] == "{":
+            k = _js_skip_ws(text, k + 1)
+            return _js_parse_getter_return_block(
+                text, k, depth, state, "arrow getter")
+        gval, k = _js_parse_f535_getter_value(text, k, depth + 1, state)
+        return gval, k
+    raise _JSExprFail("getter not a function expression")
+
+
+def _js_parse_f591_setter(text, k, depth, state):
+    """Parse `function(v){this._c=v;}` at text[k] (F591).
+
+    Returns ((param_name, target_prop), next_index). The modeled
+    shape is exactly one parameter and a single-statement body
+    assigning the parameter to a `this`-property: the engine, on
+    `o.c = V`, invokes the setter with `this === o` and stores V
+    at `this[target_prop]` node-exactly (v24.20.0). Anything else --
+    zero or 2+ parameters, a named `arguments` parameter, a body
+    that is not exactly `this.PROP = PARAM;`, a bracket-string
+    `this['p']` target, an arrow setter -- fails closed
+    (documented). Never evals.
+    """
+    n = len(text)
+    if not (text.startswith("function", k)
+            and (k + 8 >= n or text[k + 8] not in _JS_IDENT_CONT)):
+        raise _JSExprFail("setter not a function expression")
+    k = _js_skip_ws(text, k + 8)
+    if k < n and text[k] in _JS_IDENT_START:
+        _, k = _js_parse_ident(text, k)
+        k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("setter needs parens")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] not in _JS_IDENT_START:
+        raise _JSExprFail("setter needs one param")
+    param, k = _js_parse_ident(text, k)
+    if param == "arguments":
+        raise _JSExprFail("setter param named arguments")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("setter takes one arg")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "{":
+        raise _JSExprFail("setter needs a body")
+    k = _js_skip_ws(text, k + 1)
+    if not (text.startswith("this", k)
+            and (k + 4 >= n or text[k + 4] not in _JS_IDENT_CONT)):
+        raise _JSExprFail("setter body not a this-store")
+    k = _js_skip_ws(text, k + 4)
+    if k >= n or text[k] != ".":
+        raise _JSExprFail("setter this-store not a member")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] not in _JS_IDENT_START:
+        raise _JSExprFail("setter this-store bad prop")
+    prop, k = _js_parse_ident(text, k)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "=":
+        raise _JSExprFail("setter body not an assignment")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] not in _JS_IDENT_START:
+        raise _JSExprFail("setter assigns non-ident")
+    rhs, k = _js_parse_ident(text, k)
+    if rhs != param:
+        raise _JSExprFail("setter assigns not the param")
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ";":
+        k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "}":
+        raise _JSExprFail("setter body trailing text")
+    state["parts"] += 1  # the setter body is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return (param, prop), k + 1
 
 
 def _js_parse_f548f550_descriptor(text, j, depth, state):
@@ -11731,20 +11921,25 @@ def _js_parse_f548f550_descriptor(text, j, depth, state):
     (F548/F550).
 
     Returns ("value", val, next_index) for `{value: V}` (V via
-    _js_parse_f535_value) or ("get", fnval, next_index) for
-    `{get:function(){return EXPR}}` (via _js_parse_descriptor_getter).
-    `writable`/`enumerable`/`configurable` with true/false literals
-    are accepted and ignored (they do not affect the decoded value)
-    -- except `writable` alongside `get`: the engine throws
-    TypeError on {get, writable} (either boolean, node v24.20.0
-    verified), so that combination fails closed rather than
-    mis-decoding a shape the engine rejects.
-    `set` descriptors and any other descriptor key fail closed --
-    the engine would invoke them on read/write, which the static
-    model cannot reproduce node-exactly. `{value:V, get:...}`
-    together throws in the engine (node v24.20.0 verified), so a
-    second semantic key fails closed. Keys: identifiers or string
-    literals. Never evals.
+    _js_parse_f535_value), ("get", fnval, next_index) for
+    `{get:function(){return EXPR}}` / `{get:()=>EXPR}` /
+    `{get:()=>{return EXPR;}}` (via _js_parse_descriptor_getter),
+    or ("set", (param, target_prop), next_index) for
+    `{set:function(v){this._c=v;}}` (via _js_parse_f591_setter --
+    the F591 single-store setter shape). `writable`/`enumerable`/
+    `configurable` with true/false literals are accepted and ignored
+    (they do not affect the decoded value) -- except `writable`
+    alongside `get`/`set`: the engine throws TypeError on
+    {get|set, writable} (either boolean, node v24.20.0 verified), so
+    that combination fails closed rather than mis-decoding a shape
+    the engine rejects. Any other descriptor key fails closed --
+    the engine would invoke it on read/write, which the static
+    model cannot reproduce node-exactly. `{value:V, get:...}` /
+    `{value:V, set:...}` together throw in the engine (node v24.20.0
+    verified), so a second semantic key fails closed; `{get, set}`
+    together is engine-valid but fails closed here (documented --
+    the direct and statement paths model only single-semantic
+    descriptors). Keys: identifiers or string literals. Never evals.
     """
     n = len(text)
     if depth >= _JS_EXPR_MAX_DEPTH:
@@ -11785,6 +11980,15 @@ def _js_parse_f548f550_descriptor(text, j, depth, state):
                 raise _JSExprFail("get with writable throws")
             v, k = _js_parse_descriptor_getter(text, k, depth, state)
             kind, val = "get", v
+        elif dkey == "set":
+            if kind is not None:
+                raise _JSExprFail("descriptor has two semantics")
+            if saw_writable:
+                # The engine throws TypeError on {set, writable}
+                # (either boolean, node v24.20.0 verified).
+                raise _JSExprFail("set with writable throws")
+            v, k = _js_parse_f591_setter(text, k, depth, state)
+            kind, val = "set", v
         elif dkey in ("writable", "enumerable", "configurable"):
             if (text.startswith("true", k)
                     and (k + 4 >= n
@@ -11801,9 +12005,12 @@ def _js_parse_f548f550_descriptor(text, j, depth, state):
                     # The engine throws TypeError on {get, writable}
                     # (either boolean, node v24.20.0 verified).
                     raise _JSExprFail("get with writable throws")
+                if kind == "set":
+                    # Same for {set, writable} (node v24.20.0).
+                    raise _JSExprFail("set with writable throws")
                 saw_writable = True
         else:
-            # `set` and anything else fail closed (documented).
+            # Anything else fails closed (documented).
             raise _JSExprFail("descriptor key not modeled")
         state["parts"] += 1
         if state["parts"] > _JS_EXPR_MAX_PARTS:
@@ -12064,12 +12271,16 @@ def _js_parse_f550_define_property(text, i, depth, state):
     return value (the engine invokes the getter on read; the static
     model evaluates the return expression, exactly like F535
     getters -- `this`-dependent bodies fail closed because the
-    value grammar has no `this`). `set` descriptors fail closed
-    (documented). TARGET: `{}` or an object literal (freshly parsed
-    per call -- no aliasing). KEY: a string literal (`__proto__`
-    fails closed). Exactly three arguments; dot form only
-    (`Object['defineProperty']` fails closed, documented residual).
-    Never evals.
+    value grammar has no `this`). Arrow getters (`()=>EXPR`,
+    `()=>{return EXPR;}`) install the same way (F591). A `set`-only
+    descriptor fails closed here: the engine installs an accessor
+    with no getter, so reading the key yields undefined -- not a
+    decodable value (node v24.20.0 verified; the F578 statement
+    path models setter invocation separately). TARGET: `{}` or an
+    object literal (freshly parsed per call -- no aliasing). KEY: a
+    string literal (`__proto__` fails closed). Exactly three
+    arguments; dot form only (`Object['defineProperty']` fails
+    closed, documented residual). Never evals.
     """
     n = len(text)
     if i > 0 and text[i - 1] in _JS_IDENT_CONT:
@@ -12109,7 +12320,12 @@ def _js_parse_f550_define_property(text, i, depth, state):
     k = _js_skip_ws(text, k + 1)
     if k >= n or text[k] != "{":
         raise _JSExprFail("defineProperty descriptor not an object")
-    _, dval, k = _js_parse_f548f550_descriptor(text, k, depth, state)
+    dkind, dval, k = _js_parse_f548f550_descriptor(text, k, depth, state)
+    if dkind == "set":
+        # A set-only accessor reads as undefined in the engine --
+        # not a decodable value (F591; the statement path models
+        # setter invocation).
+        raise _JSExprFail("set-only descriptor reads undefined")
     k = _js_skip_ws(text, k)
     if k >= n or text[k] != ")":
         raise _JSExprFail("defineProperty unterminated")
@@ -16436,10 +16652,11 @@ def _js_parse_f578_defineprop_stmt(text, sj, oname, depth, state):
 
     The target must be the bare bound ident *oname*; the key a
     string literal (`__proto__` fails closed); the descriptor parsed
-    by `_js_parse_f548f550_descriptor` (F550's exact discipline).
-    Returns (key, dval, next_index) just after the statement's `;`.
-    Raises _JSExprFail on any mismatch (the caller treats it as
-    end-of-sequence or a hard fail). Never evals.
+    by `_js_parse_f548f550_descriptor` (F550's exact discipline,
+    F591's `set` shape included). Returns (key, kind, dval,
+    next_index) just after the statement's `;`. Raises _JSExprFail
+    on any mismatch (the caller treats it as end-of-sequence or a
+    hard fail). Never evals.
     """
     n = len(text)
     sj = _js_skip_ws(text, sj)
@@ -16475,12 +16692,63 @@ def _js_parse_f578_defineprop_stmt(text, sj, oname, depth, state):
     q = _js_skip_ws(text, q)
     if q >= n or text[q] != "{":
         raise _JSExprFail("F578 descriptor not an object")
-    _, dval, q = _js_parse_f548f550_descriptor(text, q, depth, state)
+    dkind, dval, q = _js_parse_f548f550_descriptor(text, q, depth,
+                                                       state)
     q = _js_skip_ws(text, q)
     q = _js_expect(text, q, ")")
     q = _js_skip_ws(text, q)
     q = _js_expect(text, q, ";")
-    return key, dval, q
+    return key, dkind, dval, q
+
+
+def _js_parse_f591_assign_stmt(text, sj, oname, setters, new_props,
+                               depth, state):
+    """Parse one `o.c='lit';` assignment at text[sj] (F591).
+
+    The target must be the bare bound ident *oname* with a `.ident`
+    / `['literal']` member naming a key that has a recorded
+    `set`-descriptor (F591): the engine invokes the setter with
+    `this === o`, storing the assigned literal at the setter's
+    target property node-exactly. The assigned value must be a
+    string literal (carrier-escape tolerant, F590). An assignment
+    to a key with no recorded setter raises _JSExprFail (the caller
+    treats it as end-of-sequence -- the F578 exact-shape grammar
+    has no room for rebinding, unchanged). Never evals.
+    """
+    n = len(text)
+    sj = _js_skip_ws(text, sj)
+    aname, q = _js_parse_ident(text, sj)
+    if aname != oname:
+        raise _JSExprFail("F591 assigns another ident")
+    q = _js_skip_ws(text, q)
+    if q < n and text[q] == "[":
+        member, q = _js_parse_bracket_member(text, q)
+    elif q < n and text[q] == ".":
+        q = _js_skip_ws(text, q + 1)
+        member, q = _js_parse_ident(text, q)
+    else:
+        raise _JSExprFail("F591 assignment not a member")
+    if member not in setters:
+        raise _JSExprFail("F591 assignment without setter")
+    if setters[member] == member:
+        # Self-recursive setter: the engine invokes the setter again
+        # on `this[member] = v`, recursing to a RangeError (node
+        # v24.20.0 verified) -- a throwing shape cannot exfiltrate,
+        # so fail closed rather than emit a variant for it.
+        raise _JSExprFail("F591 setter self-recursion throws")
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, "=")
+    q = _js_skip_ws(text, q)
+    aval, q = _js_parse_string_carrier_tolerant(text, q)
+    if not isinstance(aval, str):
+        raise _JSExprFail("F591 assigns non-string")
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ";")
+    new_props[setters[member]] = aval
+    state["parts"] += 1  # the setter invocation is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return q
 
 
 def _js_parse_f578_defineprop_iife(text, i, depth, state):
@@ -16500,11 +16768,18 @@ def _js_parse_f578_defineprop_iife(text, i, depth, state):
 
     The exact modeled shape (ws-tolerant):
         (function(){var|const|let o={...};
-         Object.defineProperty(o,'K',{value:V} | {get:FN}); [...];
-         return o.M;})()
+         Object.defineProperty(o,'K',{value:V} | {get:FN} | {set:SF});
+         [o.J='lit'; ...];
+         return EXPR;})()
     One or more defineProperty statements may follow the binding
     (descriptor merge is a per-key overwrite, so sequences apply
-    node-exactly in order).
+    node-exactly in order). F591: a `{set:function(v){this._c=v;}}`
+    descriptor records a setter; a later `o.J='lit';` statement
+    invokes it node-exactly (the engine calls the setter with
+    `this === o`, storing the literal at `this._c`). The return
+    EXPR is an additive concatenation of `o.M` member reads and
+    string literals with at least one member read (F591); the
+    legacy `return o.M;` is the single-operand case.
     The descriptor is parsed by `_js_parse_f548f550_descriptor` --
     F550's exact discipline: `{value: V}` installs V; `{get:
     function(){return EXPR}}` installs the getter's evaluated
@@ -16587,36 +16862,90 @@ def _js_parse_f578_defineprop_iife(text, i, depth, state):
         # charges the parts budget via the descriptor parse, and
         # every iteration consumes input, so the loop is bounded).
         new_props = dict(props)
-        count = 0
+        setters = {}  # F591: key -> setter target prop
+        saw_defineprop = False
         while True:
             save = sj
             try:
-                key, dval, sj = _js_parse_f578_defineprop_stmt(
+                key, dkind, dval, sj = _js_parse_f578_defineprop_stmt(
                     text, sj, oname, depth, state)
             except _JSExprFail:
-                sj = save
-                break
-            new_props[key] = dval
-            count += 1
-        if count == 0:
+                # F591: `o.c='lit';` setter-invocation statements.
+                try:
+                    sj = _js_parse_f591_assign_stmt(
+                        text, save, oname, setters, new_props,
+                        depth, state)
+                except _JSExprFail:
+                    sj = save
+                    break
+                continue
+            if dkind == "set":
+                # The engine installs an accessor with no data
+                # value; the setter fires only via assignment.
+                setters[key] = dval[1]
+            else:
+                new_props[key] = dval
+            saw_defineprop = True
+        if not saw_defineprop:
             raise _JSExprFail("F578 no defineProperty statement")
-        # return o.M;
+        # return EXPR; -- F591: EXPR is an additive concatenation
+        # of `o.M` member reads on the bound ident and string
+        # literals, with at least one member read (a pure literal
+        # concat is not this shape). Each member must resolve in
+        # new_props (the engine yields undefined otherwise -- not a
+        # decodable value); every operand must be a string
+        # (node-exact `+` on strings). Previously only `return o.M;`
+        # was accepted, so this admits only previously-failing
+        # inputs.
         q = _js_skip_ws(text, sj)
         rk = _js_match_kw(text, q, "return")
         if rk is None:
             raise _JSExprFail("F578 body not return")
         q = _js_skip_ws(text, rk)
-        rname, q = _js_parse_ident(text, q)
-        if rname != oname:
-            raise _JSExprFail("F578 returns another ident")
-        q = _js_skip_ws(text, q)
-        if q < n and text[q] == "[":
-            member, q = _js_parse_bracket_member(text, q)
-        elif q < n and text[q] == ".":
-            q = _js_skip_ws(text, q + 1)
-            member, q = _js_parse_ident(text, q)
-        else:
-            raise _JSExprFail("F578 return not a member read")
+        parts = []
+        saw_member = False
+        while True:
+            q = _js_skip_ws(text, q)
+            if q < n and (text[q] in "'\"" or (
+                    text[q] == "\\" and q + 1 < n
+                    and text[q + 1] in "'\"")):
+                sval, q = _js_parse_string_carrier_tolerant(text, q)
+                if not isinstance(sval, str):
+                    raise _JSExprFail("F578 return non-string")
+                parts.append(sval)
+            else:
+                rname, q2 = _js_parse_ident(text, q)
+                if rname != oname:
+                    raise _JSExprFail("F578 returns another ident")
+                q = _js_skip_ws(text, q2)
+                if q < n and text[q] == "[":
+                    member, q = _js_parse_bracket_member(text, q)
+                elif q < n and text[q] == ".":
+                    q = _js_skip_ws(text, q + 1)
+                    member, q = _js_parse_ident(text, q)
+                else:
+                    raise _JSExprFail("F578 return not a member read")
+                if not isinstance(member, str) \
+                        or member not in new_props:
+                    # The engine yields undefined -- not a decodable
+                    # value.
+                    raise _JSExprFail("F578 return key missing")
+                mval = new_props[member]
+                if not isinstance(mval, str):
+                    raise _JSExprFail("F578 return member non-string")
+                parts.append(mval)
+                saw_member = True
+            state["parts"] += 1  # each return operand is
+                                 # obfuscation-shaped (F452)
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == "+":
+                q = _js_skip_ws(text, q + 1)
+                continue
+            break
+        if not saw_member:
+            raise _JSExprFail("F578 return without member read")
         q = _js_skip_ws(text, q)
         if q < n and text[q] == ";":
             q += 1
@@ -16632,16 +16961,15 @@ def _js_parse_f578_defineprop_iife(text, i, depth, state):
         j = _js_expect(text, j, ")")
         # Descriptor merge is a per-key overwrite (node-exact for the
         # modeled descriptor classes -- data->data, data->accessor,
-        # accessor->data); sequences apply in order.
-        if not isinstance(member, str) or member not in new_props:
-            # The engine yields undefined -- not a decodable value.
-            raise _JSExprFail("F578 return key missing")
+        # accessor->data); sequences apply in order. The return EXPR
+        # was resolved operand-by-operand above (missing keys already
+        # failed closed there).
         state["ops"] += 1  # the iife wrapper is obfuscation-shaped
         state["parts"] += 1  # the defineProperty statement(s) are
                            # obfuscation-shaped
         if state["parts"] > _JS_EXPR_MAX_PARTS:
             raise _JSExprFail("too many parts")
-        return new_props[member], j
+        return "".join(parts), j
     except _JSExprFail:
         return None
 

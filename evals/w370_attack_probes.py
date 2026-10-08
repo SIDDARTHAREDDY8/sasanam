@@ -308,22 +308,24 @@ def test_r38_f589_closed():
 
 
 @_t
-def test_r38_f590_open():
-    """F590 OPEN: directive prologues in Reflect.apply.call targets miss."""
-    m1 = _misses("Reflect.apply.call(null,function(){\"use strict\";var a=arguments;return a[0]+a[1];},null,['%s','%s'])" % (_A, _B))
-    m2 = _misses("Reflect.apply.call(null,function(){'use strict';var a=arguments;var s='';for(var x of a){s+=x;}return s;},null,['%s','%s'])" % (_A, _B))
-    ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_r38_f590_closed():
+    """F590 CLOSED 2026-10-07 wave-371 lane 5: .call targets with
+    directive prologues (incl. null receiver) now block coded."""
+    h1 = not _misses("Reflect.apply.call(null,function(){\"use strict\";var a=arguments;return a[0]+a[1];},null,['%s','%s'])" % (_A, _B))
+    h2 = not _misses("Reflect.apply.call(null,function(){'use strict';var a=arguments;var s='';for(var x of a){s+=x;}return s;},null,['%s','%s'])" % (_A, _B))
+    ok = h1 and h2
+    return ("HELD" if ok else "BREAK", "blocks=%s" % ok)
 
 
 @_t
-def test_r38_f591_open():
-    """F591 OPEN: defineProperty accessor descriptors miss."""
-    m1 = _misses("Object.defineProperty({},'c',{get:()=>'%s'}).c+'%s'" % (_A, _B))
-    m2 = _misses("Object.defineProperty({},'c',{get:()=>{return '%s';}}).c+'%s'" % (_A, _B))
-    m3 = _misses("(function(){var o={};Object.defineProperty(o,'c',{set:function(v){this._c=v;}});o.c='%s';return o._c+'%s';})()" % (_A, _B))
-    ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_r38_f591_closed():
+    """F591 CLOSED 2026-10-07 wave-371 lane 5: accessor descriptors
+    (arrow getters, fn-expr setters) now block coded."""
+    h1 = not _misses("Object.defineProperty({},'c',{get:()=>'%s'}).c+'%s'" % (_A, _B))
+    h2 = not _misses("Object.defineProperty({},'c',{get:()=>{return '%s';}}).c+'%s'" % (_A, _B))
+    h3 = not _misses("(function(){var o={};Object.defineProperty(o,'c',{set:function(v){this._c=v;}});o.c='%s';return o._c+'%s';})()" % (_A, _B))
+    ok = h1 and h2 and h3
+    return ("HELD" if ok else "BREAK", "blocks=%s" % ok)
 
 
 @_t
