@@ -35626,6 +35626,520 @@ def _js_parse_f691f698_descriptor_iife(text, i, depth, state):
     except _JSExprFail:
         return None
 
+_F717_MAX_INSTALLS = 8
+
+
+def _js_parse_f717_reflect_defineproperty_iife(text, i, depth, state):
+    """Parse `(function(){DECL o={};
+    Reflect.defineProperty(o,'KEY',DESC);+
+    return (LIT|o.MEM|o['KEY'])(+...)*;})()` at text[i] (F717).
+
+    F691 (CLOSED) models `Object.defineProperty`-installed data
+    descriptors read via descriptor `.value`, and F698 (CLOSED)
+    models defineProperty-installed accessors read via descriptor
+    `.get()` -- but the `Reflect.defineProperty` head has no
+    production at all: the fragment is installed as a
+    data-descriptor value and a later DIRECT member read recovers
+    it while the decoder produces zero variants (node v24.20.0).
+    Node-exact desugar: the var binds an empty object; each
+    `Reflect.defineProperty` installs KEY -> the descriptor's
+    decoded value (the descriptor grammar is
+    `_js_parse_f548f550_descriptor`, so `value`/`get`/`set`
+    semantics, `writable`-with-accessor rejection, and
+    non-boolean-flag failures are inherited node-exactly);
+    `Reflect.defineProperty` and `Object.defineProperty`
+    install identically on success (the only engine difference is
+    the failure channel -- boolean false vs thrown TypeError --
+    and every failure here fails closed, so the distinction never
+    reaches a decode). A direct member read `o.MEM` / `o['KEY']`
+    resolves against the installed map: data descriptors yield
+    the stored value; accessor descriptors invoke the getter
+    (its return was already evaluated at install, F549/F550
+    precedent -- `this`-dependent bodies fail closed at parse).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - `Reflect['defineProperty']` (dot form only, F550 parity),
+      a non-literal KEY, `__proto__` keys, a target other than
+      the bound ident, a non-`{}` install target, a set-only
+      descriptor (reads as undefined, F550 parity);
+    - a descriptor value that is not a plain string after the
+      F535 value grammar (`_JSNumStr`/`_JSBigInt` fail closed,
+      F664 parity; small integers decode node-exactly via
+      canonical-int parsing, while precision-losing integers
+      fail closed under the F699 `_js_str_is_unsafe_int` guard);
+    - re-installing an already installed KEY (the engine keeps
+      the first value and returns false -- the static model stays
+      conservative, documented residual, never mis-decoded),
+      more than `_F717_MAX_INSTALLS` installs, reassignment of
+      the var, multi-decl, a named function, parameters, a
+      directive prologue, extra statements, non-empty call args,
+      a read of an uninstalled KEY (the engine yields undefined
+      -- not a credential decode), any trailing statements after
+      the return additive inside the body (IIFE-level postfix
+      after the `()` invocation is handled by the hook's
+      `_js_parse_postfix`, F664 parity).
+    Tried after F691/F698: the `Reflect` statement head is
+    disjoint from F691/F698's `Object` head (their scanner
+    breaks on a non-Object first statement and returns None;
+    a mixed Object+Reflect install body fails closed in both).
+    None falls through to the F673 route like F691/F698.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F717 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            raise _JSExprFail("F717 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        # The target starts as the empty object literal -- the
+        # properties are installed by the Reflect.defineProperty
+        # statements that follow (a non-empty literal fails
+        # closed, documented residual, F691 parity).
+        sj = _js_expect(text, sj, "{")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "}")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        props = {}
+        ndef = 0
+        while True:
+            # One `Reflect.defineProperty(o,'KEY',DESC);`
+            # statement.
+            if not text.startswith("Reflect", sj):
+                break
+            q = sj + len("Reflect")
+            if q < n and text[q] in _JS_IDENT_CONT:
+                raise _JSExprFail("F717 Reflectx is not Reflect")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ".":
+                raise _JSExprFail("F717 Reflect without dot")
+            q = _js_skip_ws(text, q + 1)
+            if not text.startswith("defineProperty", q):
+                break  # not an install statement -- done scanning
+            q = q + len("defineProperty")
+            if q < n and text[q] in _JS_IDENT_CONT:
+                raise _JSExprFail(
+                    "F717 defineProperties is not defineProperty")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != "(":
+                raise _JSExprFail(
+                    "F717 defineProperty without paren")
+            q = _js_skip_ws(text, q + 1)
+            _tname, q = _js_parse_ident(text, q)
+            if _tname != oname:
+                raise _JSExprFail(
+                    "F717 defineProperty target not bound ident")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ",":
+                raise _JSExprFail(
+                    "F717 defineProperty without key")
+            q = _js_skip_ws(text, q + 1)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail(
+                    "F717 defineProperty key not a literal")
+            _key, q = _js_parse_string(text, q)
+            if _key == "__proto__":
+                raise _JSExprFail("__proto__ key fails closed")
+            if _key in props:
+                # Redefinition: the engine keeps the first value
+                # and returns false -- the static model stays
+                # conservative (documented residual, never
+                # mis-decoded).
+                raise _JSExprFail(
+                    "F717 descriptor redefinition fails closed")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ",":
+                raise _JSExprFail(
+                    "F717 defineProperty without descriptor")
+            q = _js_skip_ws(text, q + 1)
+            if q >= n or text[q] != "{":
+                raise _JSExprFail(
+                    "F717 descriptor not an object")
+            dkind, dval, q = _js_parse_f548f550_descriptor(
+                text, q, depth, state)
+            if dkind == "set":
+                # A set-only accessor reads as undefined in the
+                # engine -- not a decodable value (F550 parity).
+                raise _JSExprFail(
+                    "F717 set-only descriptor reads undefined")
+            if not isinstance(dval, str) \
+                    or isinstance(dval, (_JSNumStr, _JSBigInt)) \
+                    or _js_str_is_unsafe_int(dval):
+                # Values must survive the F535 value grammar as
+                # plain strings -- _JSNumStr/_JSBigInt fail closed
+                # (F664 parity); small integers decode
+                # node-exactly via canonical-int parsing while
+                # precision-losing integers fail closed under the
+                # F699 guard.
+                raise _JSExprFail(
+                    "F717 descriptor value not a plain string")
+            if dkind == "get":
+                props[_key] = _JSAccessor(dval)
+            else:
+                props[_key] = dval
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ")":
+                raise _JSExprFail(
+                    "F717 defineProperty unterminated")
+            q = _js_skip_ws(text, q + 1)
+            q = _js_expect(text, q, ";")
+            ndef += 1
+            if ndef > _F717_MAX_INSTALLS:
+                raise _JSExprFail("F717 too many installs")
+            state["ops"] += 1  # the defineProperty call is
+            # obfuscation-shaped
+            sj = _js_skip_ws(text, q)
+        if ndef == 0:
+            # No install statement: not our shape.
+            return None
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F717 no return")
+        sj = _js_skip_ws(text, m)
+
+        def _f717_term(sj):
+            # One additive term: a string literal, or a direct
+            # member read `o.MEM` / `o['KEY']` on the bound ident.
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                return _js_parse_string(text, sj)
+            _tname, k = _js_parse_ident(text, sj)
+            if _tname != oname:
+                raise _JSExprFail(
+                    "F717 term target not bound ident")
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ".":
+                _mname, k = _js_parse_ident(
+                    text, _js_skip_ws(text, k + 1))
+            elif k < n and text[k] == "[":
+                k = _js_skip_ws(text, k + 1)
+                if k >= n or text[k] not in "'\"":
+                    raise _JSExprFail(
+                        "F717 bracket key not a literal")
+                _mname, k = _js_parse_string(text, k)
+                k = _js_skip_ws(text, k)
+                if k >= n or text[k] != "]":
+                    raise _JSExprFail(
+                        "F717 bracket unterminated")
+                k = k + 1
+            else:
+                raise _JSExprFail(
+                    "F717 term not a member read")
+            if _mname not in props:
+                # The engine yields undefined for an uninstalled
+                # key -- not a credential decode (fail closed).
+                raise _JSExprFail(
+                    "F717 read of uninstalled key")
+            _raw = props[_mname]
+            if isinstance(_raw, _JSAccessor):
+                _raw = _raw.value
+            if not isinstance(_raw, str) \
+                    or isinstance(_raw, (_JSNumStr, _JSBigInt)):
+                raise _JSExprFail(
+                    "F717 installed value not a plain string")
+            state["ops"] += 1  # the member indirection is
+            # obfuscation-shaped
+            return _raw, k
+
+        parts = []
+        while True:
+            _val, sj = _f717_term(sj)
+            parts.append(_val)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F717 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return "".join(parts), j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f718_reflect_has_cond(text, i, depth, env, state):
+    """Parse `[!]Reflect.has(OBJ,'KEY')` at text[i] (F718).
+
+    Returns (bool, next_index). OBJ is a bound ident (env maps it
+    to an F535-parsed props dict) or an inline object literal
+    (parsed by `_js_parse_f535_object`); KEY must be a plain
+    string literal (`__proto__` fails closed -- the F535 grammar
+    never produces it as an own key). Membership is provable
+    only when KEY is present as an own prop of the literal --
+    the engine's [[HasProperty]] is then true regardless of the
+    prototype chain (node v24.20.0). An ABSENT key fails closed:
+    the engine would consult Object.prototype (unmodeled), so
+    the static model refuses rather than mis-decoding
+    (documented residual). The bracket form
+    `Reflect['has']` fails closed (dot form only, F550 parity).
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    neg = False
+    if j < n and text[j] == "!":
+        neg = True
+        j = _js_skip_ws(text, j + 1)
+    if not text.startswith("Reflect", j):
+        raise _JSExprFail("F718 not Reflect.has")
+    j = j + len("Reflect")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        raise _JSExprFail("F718 Reflectx is not Reflect")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("F718 Reflect without dot")
+    j = _js_skip_ws(text, j + 1)
+    mname, j = _js_parse_ident(text, j)
+    if mname != "has":
+        raise _JSExprFail("F718 Reflect member not has")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("F718 has without paren")
+    j = _js_skip_ws(text, j + 1)
+    if j < n and text[j] == "{":
+        oprops, j = _js_parse_f535_object(text, j, depth, state)
+    else:
+        oname, j = _js_parse_ident(text, j)
+        obinding = env.get(oname)
+        if obinding is None or not isinstance(obinding, dict):
+            raise _JSExprFail(
+                "F718 has() on unbound/non-object")
+        oprops = obinding
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F718 has without key")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail("F718 has key not a string literal")
+    key, j = _js_parse_string(text, j)
+    if not isinstance(key, str) or isinstance(key, _JSNumStr) \
+            or key == "__proto__":
+        raise _JSExprFail("F718 has key not a plain string")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("F718 has unterminated")
+    state["ops"] += 1  # the has() call is obfuscation-shaped
+    if key not in oprops:
+        raise _JSExprFail(
+            "F718 has() key not provably present")
+    val = True
+    return (not val) if neg else val, j + 1
+
+
+def _js_parse_f718_ternary(text, i, depth, env, state):
+    """Parse `[!]Reflect.has(OBJ,'KEY')?'LIT':'LIT'` at text[i]
+    (F718); returns (str, next_index).
+
+    The condition is `_js_parse_f718_reflect_has_cond`; the
+    branches must be plain string literals (the _JSNumStr
+    discipline, mirroring F687/F710). Returns the selected
+    branch. Never evals.
+    """
+    n = len(text)
+    cond, k = _js_parse_f718_reflect_has_cond(text, i, depth, env, state)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "?":
+        raise _JSExprFail("F718 ternary without ?")
+    then_lit, k = _js_parse_string(text, _js_skip_ws(text, k + 1))
+    if not isinstance(then_lit, str) or isinstance(then_lit, _JSNumStr):
+        raise _JSExprFail("F718 then not a plain string")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ":":
+        raise _JSExprFail("F718 ternary without :")
+    else_lit, k = _js_parse_string(text, _js_skip_ws(text, k + 1))
+    if not isinstance(else_lit, str) or isinstance(else_lit, _JSNumStr):
+        raise _JSExprFail("F718 else not a plain string")
+    return (then_lit if cond else else_lit), k
+
+
+def _js_parse_f718_reflect_has_iife(text, i, depth, state):
+    """Parse `(function(){DECL*;return ...;})()` (F718).
+
+    Reflect.has conditional reads, node-exact (v24.20.0). Body
+    grammar (all other shapes fail closed):
+      - `var|const|let NAME = {LITOBJ};` -- a plain object literal
+        (F535 grammar; getters resolve to their values, which is
+        exact for membership);
+      - optionally `var|const|let F = COND?'LIT':'LIT';` -- the
+        conditional result bound to F (filed shape 1); branches
+        are plain string literals;
+      - `return` either the bound F or a parenthesized
+        `(COND?'LIT':'LIT')` (the parenthesized ternary must be
+        the additive left operand -- the engine would
+        re-associate an unparenthesized tail into the else
+        branch, F710 parity), then TAIL = `+ 'LIT'` repeated
+        (plain string literals only; non-string operands fail
+        closed).
+      - COND = `[!]Reflect.has(OBJ,'KEY')` -- OBJ a bound ident
+        or inline literal, KEY a plain string literal; the
+        condition decodes only when the key is provably present
+        as an own prop (absent keys fail closed -- the prototype
+        chain is unmodeled, documented residual).
+    Disjoint from F687/F710 (their decl grammars require
+    `new WeakSet`/`new Set` -- a plain object literal fails
+    closed in each; the `Reflect.has` head is accepted by no
+    earlier route). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        env = {}
+        while True:
+            _kw, m = _js_match_decl_kw(text, sj)
+            if _kw is None:
+                break
+            m = _js_skip_ws(text, m)
+            _name, m = _js_parse_ident(text, m)
+            if _name == "arguments":
+                raise _JSExprFail("F718 binding named arguments")
+            if _name in env:
+                raise _JSExprFail("F718 duplicate binding")
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, "=")
+            m = _js_skip_ws(text, m)
+            if m < n and text[m] == "{":
+                _props, m = _js_parse_f535_object(
+                    text, m, depth, state)
+                env[_name] = _props
+            else:
+                # A ternary binding: the Reflect.has condition
+                # must see the object bindings declared so far
+                # (a forward reference fails closed -- the engine
+                # would throw or read undefined there).
+                _tv, m = _js_parse_f718_ternary(text, m, depth, env, state)
+                if not isinstance(_tv, str) \
+                        or isinstance(_tv, (_JSNumStr, _JSBigInt)):
+                    raise _JSExprFail(
+                        "F718 ternary bound non-string")
+                env[_name] = _tv
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, ";")
+            state["parts"] += 1  # F452: each binding is
+            # decode-producing work (F710 parity)
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("F718 too many bindings")
+            sj = _js_skip_ws(text, m)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F718 no return")
+        sj = _js_skip_ws(text, m)
+        if sj < n and text[sj] == "(":
+            sj = _js_skip_ws(text, sj + 1)
+            _rv, sj = _js_parse_f718_ternary(text, sj, depth, env, state)
+            sj = _js_skip_ws(text, sj)
+            if sj >= n or text[sj] != ")":
+                raise _JSExprFail(
+                    "F718 parenthesized ternary unterminated")
+            sj = sj + 1
+        else:
+            _rname, sj = _js_parse_ident(text, sj)
+            _rb = env.get(_rname)
+            if not isinstance(_rb, str) \
+                    or isinstance(_rb, (_JSNumStr, _JSBigInt)):
+                # Not a bound ternary string (an unbound ident,
+                # the object itself, or a non-string) -- fail
+                # closed.
+                raise _JSExprFail(
+                    "F718 return not a bound ternary")
+            _rv = _rb
+        parts = [_rv]
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                _p, sj = _js_parse_string(
+                    text, _js_skip_ws(text, sj + 1))
+                if not isinstance(_p, str) \
+                        or isinstance(_p, (_JSNumStr, _JSBigInt)):
+                    raise _JSExprFail(
+                        "F718 tail not a plain string")
+                parts.append(_p)
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F718 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return "".join(parts), j
+    except _JSExprFail:
+        return None
+
+
 _F702F703_MAX_INSTALLS = 8
 
 
@@ -50828,6 +51342,20 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f710 is not None:
             val, i = _f710
             return _js_parse_postfix(text, i, val, depth, state)
+        # F718: (function(){DECL o={...};[DECL f=COND?'A':'B';]
+        #   return (f|(COND?'A':'B'))(+LIT)*;})() -- Reflect.has
+        #   conditional reads on provably-present own keys.
+        #   Tried after F710: disjoint heads (Reflect.has vs
+        #   s.has on Set bindings -- F710's decl grammar requires
+        #   `new Set`, which a plain object literal fails closed
+        #   on; no earlier route accepts the Reflect.has head).
+        #   None falls through like F710. F710's hook and its
+        #   trailing `return` are untouched (wave-379 lesson).
+        _f718 = _js_parse_f718_reflect_has_iife(text, i, depth,
+                                               state)
+        if _f718 is not None:
+            val, i = _f718
+            return _js_parse_postfix(text, i, val, depth, state)
         # F517: (function(){var A='';var O={...};
         # for(var K in O)A+=O[K];return A})() -- for-in
         # accumulation; None falls through like F509.
@@ -51804,6 +52332,23 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                       state)
         if _f691f698 is not None:
             val, i = _f691f698
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F717: (function(){DECL o={};
+        #   Reflect.defineProperty(o,'KEY',DESC);+
+        #   return (LIT|o.MEM|o['KEY'])(+...)*;})() -- data-descriptor
+        #   installs (and defineProperty-installed accessor reads)
+        #   on a var-bound target via the Reflect head, read back
+        #   through direct member reads. Tried after F691/F698:
+        #   the Reflect statement head is disjoint from F691/F698's
+        #   Object head (their scanner breaks on a non-Object first
+        #   statement and returns None); a mixed Object+Reflect
+        #   install body fails closed in both. None falls through
+        #   to the F673 route like F691/F698. F691/F698's hook and
+        #   its trailing `return` are untouched (wave-379 lesson).
+        _f717 = _js_parse_f717_reflect_defineproperty_iife(
+            text, i, depth, state)
+        if _f717 is not None:
+            val, i = _f717
             return _js_parse_postfix(text, i, val, depth, state)
         # F673: (function(){STMT;return ADD;})() -- object-construction
         #   member reads beyond F663/F664/F671 (defineProperties
