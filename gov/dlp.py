@@ -31429,6 +31429,836 @@ def _js_parse_f666_has_trap_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f675_fn_head(text, i):
+    """Parse a trap function head at text[i] (F675).
+
+    Accepts `function[NAME](P){`, `(P)=>{`, `P=>{` (block bodies)
+    and `(P)=>`, `P=>` (concise arrows) -- the four node-exact
+    function forms shared with F642/F666/F670. Returns (params,
+    is_block, next_index): next_index is just after the opening
+    `{` for block bodies, just after `=>` for concise arrows.
+    Params are plain idents via `_js_parse_f6xx_trap_params`.
+    `async` arrows and generators fail closed (the F642 idiom: a
+    bare `async` parses as an ordinary param, so the `=>`/`{`
+    check after it fails closed; `function*` never clears the
+    head's ident-boundary check). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if (text.startswith("function", j)
+            and (j + 8 >= n or text[j + 8] not in _JS_IDENT_CONT)):
+        j = _js_skip_ws(text, j + 8)
+        if j < n and text[j] in _JS_IDENT_START:
+            _, j = _js_parse_ident(text, j)  # optional name
+            j = _js_skip_ws(text, j)
+        params, j = _js_parse_f6xx_trap_params(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "{")
+        return params, True, j
+    params, j = _js_parse_f6xx_trap_params(text, j)
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F675 trap not an arrow")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        return params, True, j + 1
+    return params, False, j
+
+
+def _js_parse_f675_set_body_after_head(text, j, params, is_block):
+    """Parse set-trap body content after the head (F675).
+
+    The body must be exactly the target-write `TR[K]=V` with
+    TR/K/V the trap's first/second/third params: block form
+    `{TR[K]=V;return true;}` / `{TR[K]=V;}`, or concise arrow
+    `(TR,K,V)=>TR[K]=V`. The write is what makes the filed shape
+    assemble (`p.X='LIT'` stores into the bound target through the
+    trap). A body that never writes (`{return true;}`) leaves the
+    later read undefined in the engine, so it fails closed here.
+    Returns next_index. Never evals.
+    """
+    n = len(text)
+    if len(params) < 3:
+        raise _JSExprFail("F675 set trap needs 3 params")
+    j = _js_skip_ws(text, j)
+    t0, j = _js_parse_ident(text, j)
+    if t0 != params[0]:
+        raise _JSExprFail("F675 set write not on target param")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "[")
+    j = _js_skip_ws(text, j)
+    t1, j = _js_parse_ident(text, j)
+    if t1 != params[1]:
+        raise _JSExprFail("F675 set write not on key param")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "]")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "=")
+    j = _js_skip_ws(text, j)
+    t2, j = _js_parse_ident(text, j)
+    if t2 != params[2]:
+        raise _JSExprFail("F675 set write not value param")
+    j = _js_skip_ws(text, j)
+    if is_block:
+        j = _js_expect(text, j, ";")
+        j = _js_skip_ws(text, j)
+        r = _js_match_kw(text, j, "return")
+        if r is not None:
+            j = _js_skip_ws(text, r)
+            t = _js_match_kw(text, j, "true")
+            if t is None:
+                raise _JSExprFail("F675 set return not true")
+            j = _js_skip_ws(text, t)
+            j = _js_expect(text, j, ";")
+            j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "}")
+    return j
+
+
+def _js_parse_f675_set_fn(text, i, depth, state):
+    """Parse a full set-trap function value at text[i] (F675).
+
+    Returns (params, next_index). Never evals.
+    """
+    params, is_block, j = _js_parse_f675_fn_head(text, i)
+    j = _js_parse_f675_set_body_after_head(text, j, params, is_block)
+    return params, j
+
+
+def _js_parse_f675_object_body_after_head(text, j, params, is_block,
+                                          depth, state):
+    """Parse trap body content `return {PROPS};` after the head
+    (F675 construct/getPrototypeOf).
+
+    PROPS is a literal object via `_js_parse_f535_object` (string
+    values read node-exactly at the use site). The engine's
+    construct/getPrototypeOf invariants require an object result
+    (a primitive throws TypeError), so only the object-return
+    form is modeled; anything else fails closed. Block bodies
+    (`return {PROPS};`) and the concise-arrow parenthesized form
+    `(P)=>({PROPS})` are modeled (node-exact, v24.20.0); other
+    concise forms fail closed. Returns (props, next_index).
+    Never evals.
+    """
+    del params
+    n = len(text)
+    if not is_block:
+        # concise arrow with parenthesized object: (P)=>({PROPS})
+        # (node-exact, v24.20.0)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "(":
+            raise _JSExprFail("F675 object concise not paren")
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != "{":
+            raise _JSExprFail("F675 object concise not object")
+        props, j = _js_parse_f535_object(text, j, depth, state)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        return props, j
+    j = _js_skip_ws(text, j)
+    r = _js_match_kw(text, j, "return")
+    if r is None:
+        raise _JSExprFail("F675 object body not return")
+    j = _js_skip_ws(text, r)
+    if j >= n or text[j] != "{":
+        raise _JSExprFail("F675 object body not an object")
+    props, j = _js_parse_f535_object(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ";":
+        j = _js_skip_ws(text, j + 1)
+    j = _js_expect(text, j, "}")
+    return props, j
+
+
+def _js_parse_f675_object_fn(text, i, depth, state):
+    """Parse a full object-returning trap function value at text[i]
+    (F675 construct/getPrototypeOf). Returns (props, next_index).
+    Never evals.
+    """
+    params, is_block, j = _js_parse_f675_fn_head(text, i)
+    props, j = _js_parse_f675_object_body_after_head(text, j, params,
+                                                     is_block, depth,
+                                                     state)
+    return props, j
+
+
+def _js_parse_f675_delete_body_after_head(text, j, params, is_block):
+    """Parse deleteProperty-trap body content after the head (F675).
+
+    Two node-exact forms (v24.20.0): the no-op `{return true;}` /
+    `(P)=>true` (the filed shape -- the trap claims the delete
+    without touching the target, so the target's members survive),
+    and the deleting `{delete T0[T1];return true;}` /
+    `(P)=>delete T0[T1]` (T0/T1 the trap's first/second params --
+    the member named by the later `delete` statement is removed
+    from the tracked target). Returns (deletes, next_index):
+    deletes is True when the body removes the member. Anything
+    else fails closed. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    saw_delete = False
+    if is_block:
+        d = _js_match_kw(text, j, "delete")
+        if d is not None:
+            if len(params) < 2:
+                raise _JSExprFail("F675 delete trap needs 2 params")
+            d = _js_skip_ws(text, d)
+            t0, d = _js_parse_ident(text, d)
+            if t0 != params[0]:
+                raise _JSExprFail("F675 delete not on target param")
+            d = _js_skip_ws(text, d)
+            d = _js_expect(text, d, "[")
+            d = _js_skip_ws(text, d)
+            t1, d = _js_parse_ident(text, d)
+            if t1 != params[1]:
+                raise _JSExprFail("F675 delete not on key param")
+            d = _js_skip_ws(text, d)
+            d = _js_expect(text, d, "]")
+            d = _js_skip_ws(text, d)
+            d = _js_expect(text, d, ";")
+            j = _js_skip_ws(text, d)
+            saw_delete = True
+        r = _js_match_kw(text, j, "return")
+        if r is None:
+            raise _JSExprFail("F675 delete body not return")
+        j = _js_skip_ws(text, r)
+        t = _js_match_kw(text, j, "true")
+        if t is None:
+            raise _JSExprFail("F675 delete return not true")
+        j = _js_skip_ws(text, t)
+        j = _js_expect(text, j, ";")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "}")
+        return saw_delete, j
+    d = _js_match_kw(text, j, "delete")
+    if d is not None:
+        if len(params) < 2:
+            raise _JSExprFail("F675 delete trap needs 2 params")
+        d = _js_skip_ws(text, d)
+        t0, d = _js_parse_ident(text, d)
+        if t0 != params[0]:
+            raise _JSExprFail("F675 delete not on target param")
+        d = _js_skip_ws(text, d)
+        d = _js_expect(text, d, "[")
+        d = _js_skip_ws(text, d)
+        t1, d = _js_parse_ident(text, d)
+        if t1 != params[1]:
+            raise _JSExprFail("F675 delete not on key param")
+        d = _js_skip_ws(text, d)
+        d = _js_expect(text, d, "]")
+        return True, d
+    t = _js_match_kw(text, j, "true")
+    if t is None:
+        raise _JSExprFail("F675 delete concise not true")
+    return False, t
+
+
+def _js_parse_f675_delete_fn(text, i, depth, state):
+    """Parse a full deleteProperty-trap function value at text[i]
+    (F675). Returns (deletes, next_index). Never evals.
+    """
+    params, is_block, j = _js_parse_f675_fn_head(text, i)
+    deletes, j = _js_parse_f675_delete_body_after_head(text, j,
+                                                       params,
+                                                       is_block)
+    return deletes, j
+
+
+def _js_parse_f675_set_method_body(text, j, params, depth, state):
+    """Method-shorthand body for a set trap (F675): always a block."""
+    del depth, state
+    j = _js_parse_f675_set_body_after_head(text, j, params, True)
+    return params, j
+
+
+def _js_parse_f675_object_method_body(text, j, params, depth, state):
+    """Method-shorthand body for an object-returning trap (F675)."""
+    return _js_parse_f675_object_body_after_head(text, j, params,
+                                                 True, depth, state)
+
+
+def _js_parse_f675_delete_method_body(text, j, params, depth, state):
+    """Method-shorthand body for a deleteProperty trap (F675)."""
+    del depth, state
+    deletes, j = _js_parse_f675_delete_body_after_head(text, j,
+                                                       params, True)
+    return deletes, j
+
+
+def _js_parse_f675_keyed_trap(text, i, key, fn_parser,
+                              body_after_head, depth, state):
+    """Parse `{KEY:FN}` / `{KEY(P){BODY}}` at text[i] (F675).
+
+    KEY is the trap name (`set`, `construct`, `deleteProperty`,
+    `getPrototypeOf`). fn_parser(text, i, depth, state) parses the
+    full FN (function/arrow forms); body_after_head(text, j,
+    params, depth, state) parses the method-shorthand body content
+    after `{`. Returns (result, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, i, "{")
+    j = _js_skip_ws(text, j)
+    k = _js_match_kw(text, j, key)
+    if k is None:
+        raise _JSExprFail("F675 handler not a %s trap" % key)
+    j = _js_skip_ws(text, k)
+    if j < n and text[j] == ":":
+        res, j = fn_parser(text, j + 1, depth, state)
+    elif j < n and text[j] == "(":
+        # method shorthand: key(P){BODY}
+        params, j = _js_parse_f6xx_trap_params(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "{")
+        res, j = body_after_head(text, j, params, depth, state)
+    else:
+        raise _JSExprFail("F675 %s trap not a function" % key)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "}")
+    return res, j
+
+
+def _js_parse_f675_iife_head(text, i):
+    """Match `(function(){` at text[i] and span the braced body
+    (F675).
+
+    Returns (inner_start, inner_end, after_brace) or None. The
+    anonymous-function head check mirrors the F666 idiom
+    (`function` with an ident boundary, empty params). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_skip_ws(text, j + 1)
+    if not text.startswith("function", k):
+        return None
+    k2 = k + len("function")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        return None  # functionx -- not our shape
+    if k2 < n and text[k2] in _JS_IDENT_START:
+        return None  # named function -- not our shape
+    try:
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+    except _JSExprFail:
+        return None
+    return inner_start, inner_end, j
+
+
+def _js_parse_f675_decl_ident(text, j, forbid):
+    """Parse `var|let|const NAME=` at text[j] (F675).
+
+    Returns (name, next_index) just after `=` plus trailing
+    whitespace. NAME must not be in forbid and must not be
+    `arguments`. Never evals.
+    """
+    m = _js_skip_ws(text, j)
+    kw, m = _js_match_decl_kw(text, m)
+    if kw is None:
+        raise _JSExprFail("F675 no wrapper decl")
+    m = _js_skip_ws(text, m)
+    name, m = _js_parse_ident(text, m)
+    if name in forbid or name == "arguments":
+        raise _JSExprFail("F675 wrapper ident bound")
+    m = _js_skip_ws(text, m)
+    m = _js_expect(text, m, "=")
+    return name, _js_skip_ws(text, m)
+
+
+def _js_parse_f675_add_tail(text, j, val, wname, tname, tracked,
+                            depth, state):
+    """Parse `(+SUMM)*;` at text[j] (F675).
+
+    Each summand is a string literal or a member read on the
+    proxy/target receiver (`+(p|t).MEM`, resolved against the
+    tracked target -- node-exact, since with no get trap the
+    proxy read falls through to the target). The F510
+    string-only discipline holds: non-string members fail closed,
+    as do bound idents (no binding section in the F675
+    grammars). Returns (value, next_index) just after `;`.
+    Never evals.
+    """
+    del depth
+    n = len(text)
+    m = j
+    while True:
+        q = _js_skip_ws(text, m)
+        if q >= n or text[q] != "+":
+            break
+        q = _js_skip_ws(text, q + 1)
+        if q < n and text[q] in "'\"":
+            lit, q = _js_parse_string(text, q)
+        elif q < n and text[q] in _JS_IDENT_START:
+            recv, q = _js_parse_ident(text, q)
+            if recv != wname and recv != tname:
+                raise _JSExprFail("F675 tail wrong receiver")
+            mem, q = _js_parse_f642_terminal_member(text, q)
+            if mem == "__proto__":
+                raise _JSExprFail("F675 tail __proto__")
+            lit = tracked.get(mem)
+            if not isinstance(lit, str):
+                raise _JSExprFail("F675 tail member not a string")
+        else:
+            raise _JSExprFail("F675 tail not a summand")
+        if len(val) + len(lit) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F675 concat too long")
+        val = val + lit
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        m = q
+    m = _js_skip_ws(text, m)
+    m = _js_expect(text, m, ";")
+    return val, m
+
+
+def _js_parse_f675_iife_tail(text, j, m, inner_end, val, state):
+    """Close `})()` after an F675 body (F675).
+
+    m is just after the terminal `;`; it must reach inner_end (no
+    trailing statements), then exactly `})()`. Returns (value,
+    next_index). Never evals.
+    """
+    m = _js_skip_ws(text, m)
+    if m != inner_end:
+        raise _JSExprFail("F675 trailing statements")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+    return val, j
+
+
+def _js_parse_f675_new_proxy_head(text, m, depth, state):
+    """Parse `new Proxy(` at text[m] (F675).
+
+    Returns next_index just after `(`. Never evals.
+    """
+    del depth, state
+    n = len(text)
+    m = _js_skip_ws(text, m)
+    if not (text.startswith("new", m)
+            and (m + 3 >= n or text[m + 3] not in _JS_IDENT_CONT)):
+        raise _JSExprFail("F675 wrapper not new")
+    m = _js_skip_ws(text, m + 3)
+    pk = _js_match_kw(text, m, "Proxy")
+    if pk is None:
+        raise _JSExprFail("F675 wrapper not Proxy")
+    m = _js_skip_ws(text, pk)
+    return _js_expect(text, m, "(")
+
+
+def _js_parse_f675_set_trap_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const t={PROPS};var|let|const p=
+    new Proxy(t,{set:SETFN});((p|t).X='LIT';)*return (p|t).MEM
+    (+'LIT')*;})()` (F675).
+
+    The set trap fires on `p.X='LIT'`, executing the modeled
+    `TR[K]=V` write into the bound target (node-exact, v24.20.0);
+    with no get trap, `p.MEM` reads fall through to the target, as
+    do direct `t.MEM` reads. The tracked target starts as the
+    literal PROPS and accumulates each trap write. `__proto__`
+    members fail closed (the engine's write is silently ignored,
+    so decoding it would mis-decode). Non-string writes, `delete`
+    statements, and extra statements fail closed. Never evals.
+    Returns (value, next_index) or None.
+    """
+    head = _js_parse_f675_iife_head(text, i)
+    if head is None:
+        return None
+    inner_start, inner_end, j = head
+    n = len(text)
+    try:
+        tname, m = _js_parse_f675_decl_ident(text, inner_start, ())
+        if m >= n or text[m] != "{":
+            raise _JSExprFail("F675 set target not an object")
+        props, m = _js_parse_f535_object(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        wname, m = _js_parse_f675_decl_ident(text, m, (tname,))
+        m = _js_parse_f675_new_proxy_head(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        targ, m = _js_parse_ident(text, m)
+        if targ != tname:
+            raise _JSExprFail("F675 set target not bound")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ",")
+        m = _js_skip_ws(text, m)
+        _sparams, m = _js_parse_f675_keyed_trap(
+            text, m, "set", _js_parse_f675_set_fn,
+            _js_parse_f675_set_method_body, depth, state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        # ---- statements: ((p|t).X='LIT';)*
+        tracked = dict(props)
+        while True:
+            q = _js_skip_ws(text, m)
+            r = _js_match_kw(text, q, "return")
+            if r is not None:
+                break
+            recv, q = _js_parse_ident(text, q)
+            if recv != wname and recv != tname:
+                raise _JSExprFail("F675 set write wrong receiver")
+            mem, q = _js_parse_f642_terminal_member(text, q)
+            if mem == "__proto__":
+                raise _JSExprFail("F675 set __proto__")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "=")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F675 set write not a literal")
+            lit, q = _js_parse_string(text, q)
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            tracked[mem] = lit
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            m = q
+        # ---- terminal: return (p|t).MEM(+'LIT')*;
+        m = _js_skip_ws(text, r)
+        recv, m = _js_parse_ident(text, m)
+        if recv != wname and recv != tname:
+            raise _JSExprFail("F675 set terminal wrong receiver")
+        mem, m = _js_parse_f642_terminal_member(text, m)
+        if mem == "__proto__":
+            raise _JSExprFail("F675 set __proto__")
+        v = tracked.get(mem)
+        if not isinstance(v, str):
+            raise _JSExprFail("F675 set member not a string")
+        val, m = _js_parse_f675_add_tail(text, m, v, wname, tname,
+                                         tracked, depth, state)
+        return _js_parse_f675_iife_tail(text, j, m, inner_end, val,
+                                        state)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f675_construct_trap_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const P=new Proxy(function(){},
+    {construct:CFN});return new P().MEM(+'LIT')*;})()` (F675).
+
+    `new P()` invokes the construct trap; the modeled body
+    returns the literal object, so `.MEM` reads it node-exactly
+    (v24.20.0). The target is exactly the empty `function(){}`;
+    constructor args fail closed (the modeled trap ignores its
+    params, but an arg-bearing `new` is outside the filed grammar).
+    A missing member reads undefined in the engine, so it fails
+    closed here. Never evals. Returns (value, next_index) or None.
+    """
+    head = _js_parse_f675_iife_head(text, i)
+    if head is None:
+        return None
+    inner_start, inner_end, j = head
+    n = len(text)
+    try:
+        wname, m = _js_parse_f675_decl_ident(text, inner_start, ())
+        m = _js_parse_f675_new_proxy_head(text, m, depth, state)
+        # target: exactly the empty function `function(){}`
+        m = _js_skip_ws(text, m)
+        if not text.startswith("function", m):
+            raise _JSExprFail("F675 construct target not a function")
+        m2 = m + len("function")
+        if m2 < n and text[m2] in _JS_IDENT_CONT:
+            raise _JSExprFail("F675 construct target not empty")
+        if m2 < n and text[m2] in _JS_IDENT_START:
+            raise _JSExprFail("F675 construct target not empty")
+        m = _js_skip_ws(text, m2)
+        m = _js_expect(text, m, "(")
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "{")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "}")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ",")
+        m = _js_skip_ws(text, m)
+        cprops, m = _js_parse_f675_keyed_trap(
+            text, m, "construct", _js_parse_f675_object_fn,
+            _js_parse_f675_object_method_body, depth, state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        # ---- terminal: return new P().MEM(+'LIT')*;
+        r = _js_match_kw(text, _js_skip_ws(text, m), "return")
+        if r is None:
+            raise _JSExprFail("F675 construct no return")
+        m = _js_skip_ws(text, r)
+        nw = _js_match_kw(text, m, "new")
+        if nw is None:
+            raise _JSExprFail("F675 construct no new")
+        m = _js_skip_ws(text, nw)
+        pname, m = _js_parse_ident(text, m)
+        if pname != wname:
+            raise _JSExprFail("F675 construct wrong ident")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "(")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        mem, m = _js_parse_f642_terminal_member(text, m)
+        if mem == "__proto__":
+            raise _JSExprFail("F675 construct __proto__")
+        v = cprops.get(mem)
+        if not isinstance(v, str):
+            raise _JSExprFail("F675 construct member not a string")
+        # literals-only tail: a member summand would need a `new P()`
+        # re-invocation (documented boundary); the empty tracked map
+        # fails any member summand closed.
+        val, m = _js_parse_f675_add_tail(text, m, v, wname, wname,
+                                         {}, depth, state)
+        return _js_parse_f675_iife_tail(text, j, m, inner_end, val,
+                                        state)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f675_delete_trap_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const o={PROPS};var|let|const p=
+    new Proxy(o,{deleteProperty:DFN});(delete (p|o).X;)*return
+    (o|p).MEM(+'LIT')*;})()` (F675).
+
+    The filed no-op body `{return true;}` claims a
+    proxy-receiver delete (`delete p.x`) without touching the
+    target (node-exact, v24.20.0), so the target's members
+    survive; a direct-target delete (`delete o.x`) bypasses the
+    trap entirely and always removes the member. The deleting
+    body `{delete T0[T1];return true;}` removes the named member
+    from the tracked target for proxy-receiver deletes. A later
+    read of a deleted (or never present) member is undefined in
+    the engine, so it fails closed here. Never evals. Returns
+    (value, next_index) or None.
+    """
+    head = _js_parse_f675_iife_head(text, i)
+    if head is None:
+        return None
+    inner_start, inner_end, j = head
+    n = len(text)
+    try:
+        tname, m = _js_parse_f675_decl_ident(text, inner_start, ())
+        if m >= n or text[m] != "{":
+            raise _JSExprFail("F675 delete target not an object")
+        props, m = _js_parse_f535_object(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        wname, m = _js_parse_f675_decl_ident(text, m, (tname,))
+        m = _js_parse_f675_new_proxy_head(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        targ, m = _js_parse_ident(text, m)
+        if targ != tname:
+            raise _JSExprFail("F675 delete target not bound")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ",")
+        m = _js_skip_ws(text, m)
+        deletes, m = _js_parse_f675_keyed_trap(
+            text, m, "deleteProperty", _js_parse_f675_delete_fn,
+            _js_parse_f675_delete_method_body, depth, state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        # ---- statements: (delete (p|o).X;)*
+        tracked = dict(props)
+        while True:
+            q = _js_skip_ws(text, m)
+            r = _js_match_kw(text, q, "return")
+            if r is not None:
+                break
+            d = _js_match_kw(text, q, "delete")
+            if d is None:
+                raise _JSExprFail("F675 delete stmt not delete")
+            q = _js_skip_ws(text, d)
+            recv, q = _js_parse_ident(text, q)
+            if recv != wname and recv != tname:
+                raise _JSExprFail("F675 delete wrong receiver")
+            mem, q = _js_parse_f642_terminal_member(text, q)
+            if mem == "__proto__":
+                raise _JSExprFail("F675 delete __proto__")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            # A direct-target delete (`delete o.x`) bypasses the proxy
+            # trap entirely, so it always removes the member
+            # (node-exact, v24.20.0); a proxy-receiver delete only
+            # removes it when the trap body actually deletes.
+            if deletes or recv == tname:
+                tracked.pop(mem, None)
+            m = q
+        # ---- terminal: return (o|p).MEM(+'LIT')*;
+        m = _js_skip_ws(text, r)
+        recv, m = _js_parse_ident(text, m)
+        if recv != wname and recv != tname:
+            raise _JSExprFail("F675 delete terminal wrong receiver")
+        mem, m = _js_parse_f642_terminal_member(text, m)
+        if mem == "__proto__":
+            raise _JSExprFail("F675 delete __proto__")
+        v = tracked.get(mem)
+        if not isinstance(v, str):
+            raise _JSExprFail("F675 delete member not a string")
+        val, m = _js_parse_f675_add_tail(text, m, v, wname, tname,
+                                         tracked, depth, state)
+        return _js_parse_f675_iife_tail(text, j, m, inner_end, val,
+                                        state)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f675_getproto_trap_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const p=new Proxy({PROPS},
+    {getPrototypeOf:GPFN});return Object.getPrototypeOf(p).MEM
+    (+'LIT')*;})()` (F675).
+
+    `Object.getPrototypeOf(p)` invokes the trap; the modeled
+    body returns the literal object, so `.MEM` reads it
+    node-exactly (v24.20.0). The proxy target's own properties
+    are provably irrelevant (the trap result replaces the
+    prototype entirely), so any literal-object target is accepted
+    and ignored. A missing member reads undefined in the engine,
+    so it fails closed here. Never evals. Returns (value,
+    next_index) or None.
+    """
+    head = _js_parse_f675_iife_head(text, i)
+    if head is None:
+        return None
+    inner_start, inner_end, j = head
+    n = len(text)
+    try:
+        wname, m = _js_parse_f675_decl_ident(text, inner_start, ())
+        m = _js_parse_f675_new_proxy_head(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        if m >= n or text[m] != "{":
+            raise _JSExprFail("F675 getproto target not an object")
+        _tprops, m = _js_parse_f535_object(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ",")
+        m = _js_skip_ws(text, m)
+        gprops, m = _js_parse_f675_keyed_trap(
+            text, m, "getPrototypeOf", _js_parse_f675_object_fn,
+            _js_parse_f675_object_method_body, depth, state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        # ---- terminal: return Object.getPrototypeOf(p).MEM(+'LIT')*;
+        r = _js_match_kw(text, _js_skip_ws(text, m), "return")
+        if r is None:
+            raise _JSExprFail("F675 getproto no return")
+        m = _js_skip_ws(text, r)
+        ob = _js_match_kw(text, m, "Object")
+        if ob is None:
+            raise _JSExprFail("F675 getproto not Object")
+        m = _js_skip_ws(text, ob)
+        m = _js_expect(text, m, ".")
+        m = _js_skip_ws(text, m)
+        gp = _js_match_kw(text, m, "getPrototypeOf")
+        if gp is None:
+            raise _JSExprFail("F675 getproto not getPrototypeOf")
+        m = _js_skip_ws(text, gp)
+        m = _js_expect(text, m, "(")
+        m = _js_skip_ws(text, m)
+        pname, m = _js_parse_ident(text, m)
+        if pname != wname:
+            raise _JSExprFail("F675 getproto wrong ident")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        mem, m = _js_parse_f642_terminal_member(text, m)
+        if mem == "__proto__":
+            raise _JSExprFail("F675 getproto __proto__")
+        v = gprops.get(mem)
+        if not isinstance(v, str):
+            raise _JSExprFail("F675 getproto member not a string")
+        # literals-only tail: a member summand would need another
+        # Object.getPrototypeOf(p) call (documented boundary); the
+        # empty tracked map fails any member summand closed.
+        val, m = _js_parse_f675_add_tail(text, m, v, wname, wname,
+                                         {}, depth, state)
+        return _js_parse_f675_iife_tail(text, j, m, inner_end, val,
+                                        state)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f675_revocable_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const r=Proxy.revocable({PROPS},
+    {get:TRAP});return r.proxy.MEM(+'LIT')*;})()` (F675).
+
+    `Proxy.revocable` returns `{proxy, revoke}`; `r.proxy.MEM`
+    fires the get trap, whose value is the trap's ADD (the trap
+    ignores its params in the modeled grammar, so any key reads
+    the same value -- node-exact, v24.20.0). The get trap is
+    parsed by `_js_parse_f642_proxy_trap` (all four node-exact
+    function forms). Any `revoke()` call fails closed (the engine
+    throws TypeError on the later read -- the decoder never
+    decodes a throw); with no binding section the trap body is
+    literal-only. Never evals. Returns (value, next_index) or
+    None.
+    """
+    head = _js_parse_f675_iife_head(text, i)
+    if head is None:
+        return None
+    inner_start, inner_end, j = head
+    n = len(text)
+    try:
+        rname, m = _js_parse_f675_decl_ident(text, inner_start, ())
+        m = _js_skip_ws(text, m)
+        px = _js_match_kw(text, m, "Proxy")
+        if px is None:
+            raise _JSExprFail("F675 revocable not Proxy")
+        m = _js_skip_ws(text, px)
+        m = _js_expect(text, m, ".")
+        m = _js_skip_ws(text, m)
+        rv = _js_match_kw(text, m, "revocable")
+        if rv is None:
+            raise _JSExprFail("F675 revocable not revocable")
+        m = _js_skip_ws(text, rv)
+        m = _js_expect(text, m, "(")
+        m = _js_skip_ws(text, m)
+        if m >= n or text[m] != "{":
+            raise _JSExprFail("F675 revocable target not an object")
+        _tprops, m = _js_parse_f535_object(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ",")
+        m = _js_skip_ws(text, m)
+        trap_val, m = _js_parse_f642_proxy_trap(text, m, {},
+                                                depth, state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        # ---- terminal: return r.proxy.MEM(+'LIT')*; (no statements:
+        # any `r.revoke();` fails closed at the return match, and the
+        # engine would throw TypeError on the later read)
+        r = _js_match_kw(text, _js_skip_ws(text, m), "return")
+        if r is None:
+            raise _JSExprFail("F675 revocable no return")
+        m = _js_skip_ws(text, r)
+        recv, m = _js_parse_ident(text, m)
+        if recv != rname:
+            raise _JSExprFail("F675 revocable wrong ident")
+        pmem, m = _js_parse_f642_terminal_member(text, m)
+        if pmem != "proxy":
+            raise _JSExprFail("F675 revocable not .proxy")
+        m = _js_skip_ws(text, m)
+        _kmem, m = _js_parse_f642_terminal_member(text, m)
+        val, m = _js_parse_f675_add_tail(text, m, trap_val, rname,
+                                         rname, {}, depth, state)
+        return _js_parse_f675_iife_tail(text, j, m, inner_end, val,
+                                        state)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f647_nullish_left(text, j, undef_ident):
     """Parse the nullish LEFT of a `(LEFT ?? RIGHT)` group at text[j] (F647).
 
@@ -39013,6 +39843,52 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f666h = _js_parse_f666_has_trap_iife(text, i, depth, state)
         if _f666h is not None:
             val, i = _f666h
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F675: set/construct/deleteProperty/getPrototypeOf/
+        #   revocable Proxy traps --
+        #   (function(){var|let|const t={...};var|let|const p=
+        #   new Proxy(t,{set:SETFN});((p|t).X='LIT';)*return
+        #   (p|t).MEM(+'LIT')*;})() (set: p.X='LIT' writes through the
+        #   trap into the bound target; (p|t).MEM reads the target) /
+        #   (function(){var|let|const P=new Proxy(function(){},
+        #   {construct:CFN});return new P().MEM(+'LIT')*;})() /
+        #   (function(){var|let|const o={...};var|let|const p=new
+        #   Proxy(o,{deleteProperty:DFN});(delete (p|o).X;)*return
+        #   (o|p).MEM(+'LIT')*;})() /
+        #   (function(){var|let|const p=new Proxy({...},
+        #   {getPrototypeOf:GPFN});return
+        #   Object.getPrototypeOf(p).MEM(+'LIT')*;})() /
+        #   (function(){var|let|const r=Proxy.revocable({...},
+        #   {get:TRAP});return r.proxy.MEM(+'LIT')*;})().
+        #   Tried after F666: F642 requires a `get`-keyed handler
+        #   with `new Proxy` (these require `set`/`construct`/
+        #   `deleteProperty`/`getPrototypeOf` keys, or the
+        #   `Proxy.revocable` head); F666 requires `apply`/`has`
+        #   keys. None of the earlier routes accepts these shapes,
+        #   so no previously-decoded input changes behavior.
+        _f675s = _js_parse_f675_set_trap_iife(text, i, depth, state)
+        if _f675s is not None:
+            val, i = _f675s
+            return _js_parse_postfix(text, i, val, depth, state)
+        _f675c = _js_parse_f675_construct_trap_iife(text, i, depth,
+                                                     state)
+        if _f675c is not None:
+            val, i = _f675c
+            return _js_parse_postfix(text, i, val, depth, state)
+        _f675d = _js_parse_f675_delete_trap_iife(text, i, depth,
+                                                 state)
+        if _f675d is not None:
+            val, i = _f675d
+            return _js_parse_postfix(text, i, val, depth, state)
+        _f675g = _js_parse_f675_getproto_trap_iife(text, i, depth,
+                                                   state)
+        if _f675g is not None:
+            val, i = _f675g
+            return _js_parse_postfix(text, i, val, depth, state)
+        _f675r = _js_parse_f675_revocable_iife(text, i, depth,
+                                               state)
+        if _f675r is not None:
+            val, i = _f675r
             return _js_parse_postfix(text, i, val, depth, state)
         # F647: (function(){[var|let IDENT;]?return RET;})() --
         # nullish-coalescing RIGHT-pick fragment assembly

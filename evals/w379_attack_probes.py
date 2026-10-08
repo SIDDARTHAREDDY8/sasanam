@@ -124,11 +124,12 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F662-F685 open, next F686 (this lane)."""
+    """Control: footer shows F675 closed (wave-380 lane 3 local)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F686**" in text
-          and "Open findings: F672, F673, F674, F675, F676, F677, F678, F679, F680, F681, F682, F683, F684, F685." in text)
+          # Wave-380 lane 3: F675 CLOSED; open F672-F674, F676-F685.
+          and "Open findings: F672, F673, F674, F676, F677, F678, F679, F680, F681, F682, F683, F684, F685." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -336,41 +337,41 @@ def test_r47_f674_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 
-# ------------------------------------------------- F675 open pins (must miss)
+# ------------------------------------------------- F675 closed pins (must block; wave-380 lane 3)
 
 @_t
-def test_r47_f675_s1_open():
-    """F675 OPEN (set-trap): miss reproduces."""
-    miss = _misses("(function(){var t={};var p=new Proxy(t,{set:function(tr,k,v){tr[k]=v;return true;}});p.x='%s';return p.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r47_f675_s2_open():
-    """F675 OPEN (construct): miss reproduces."""
-    miss = _misses("(function(){var P=new Proxy(function(){},{construct:function(){return {x:'%s'};}});return new P().x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f675_s1_closed():
+    """F675 CLOSED (set-trap): blocks coded."""
+    hit = _blocked("(function(){var t={};var p=new Proxy(t,{set:function(tr,k,v){tr[k]=v;return true;}});p.x='%s';return p.x+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r47_f675_s3_open():
-    """F675 OPEN (delete): miss reproduces."""
-    miss = _misses("(function(){var o={x:'%s'};var p=new Proxy(o,{deleteProperty:function(t,k){return true;}});delete p.x;return o.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f675_s2_closed():
+    """F675 CLOSED (construct): blocks coded."""
+    hit = _blocked("(function(){var P=new Proxy(function(){},{construct:function(){return {x:'%s'};}});return new P().x+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r47_f675_s4_open():
-    """F675 OPEN (getproto): miss reproduces."""
-    miss = _misses("(function(){var p=new Proxy({},{getPrototypeOf:function(){return {x:'%s'};}});return Object.getPrototypeOf(p).x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f675_s3_closed():
+    """F675 CLOSED (delete): blocks coded."""
+    hit = _blocked("(function(){var o={x:'%s'};var p=new Proxy(o,{deleteProperty:function(t,k){return true;}});delete p.x;return o.x+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r47_f675_s5_open():
-    """F675 OPEN (revocable): miss reproduces."""
-    miss = _misses("(function(){var r=Proxy.revocable({},{get:function(){return '%s';}});return r.proxy.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f675_s4_closed():
+    """F675 CLOSED (getproto): blocks coded."""
+    hit = _blocked("(function(){var p=new Proxy({},{getPrototypeOf:function(){return {x:'%s'};}});return Object.getPrototypeOf(p).x+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_r47_f675_s5_closed():
+    """F675 CLOSED (revocable): blocks coded."""
+    hit = _blocked("(function(){var r=Proxy.revocable({},{get:function(){return '%s';}});return r.proxy.x+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F676 open pins (must miss)
