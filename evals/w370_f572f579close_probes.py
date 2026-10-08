@@ -338,7 +338,7 @@ def p7_pin_and_footer():
     # Lane-local footer: wave-370 lane 3 closes F572/F579; the merge
     # reconciles with sibling lanes.
     ok = ("Next free finding: **F612**." in text  # Wave-372 merge: footer repoint next F612
-          and "**Open findings: F595, F606, F607, F608, F609, F610, F611.**" in text  # Wave-372 merge: footer repoint open F606-F611 / next F612
+          and "**Open findings: F595, F606, F607, F609, F610, F611.**" in text  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 4: F608 CLOSED
           and "**Status: CLOSED 2026-10-07 wave-370 lane 3.**" in text)
     return [("HELD" if ok else "BREAK",
              "pin=%s footer=%s" % (TAXONOMY_PIN, ok))]
