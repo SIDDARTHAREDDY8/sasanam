@@ -17368,6 +17368,348 @@ def _js_parse_f611_varbound_iife(text, i, depth, state):
     return val, k
 
 
+def _js_parse_f661_seq_operand(text, j, declared, env, depth, state):
+    """Parse one declaration-position sequence operand at text[j] (F661).
+
+    An operand is a string literal, a read of a name already bound
+    in the same declaration statement (node-exact left-to-right --
+    `var a='f1',s=(a,'f2')` binds s to 'f2'), an assignment
+    `NAME=OPERAND` to a declared name (env-threaded, F652
+    discipline; `==`/`===`/`=>` fail closed -- they are not
+    assignments), or a nested parenthesized sequence (recursed).
+    Every operand value is a plain str. Raises _JSExprFail on
+    mismatch. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "(":
+        return _js_parse_f661_sequence(text, j, declared, env,
+                                       depth, state)
+    if j < n and text[j] in "'\"":
+        return _js_parse_string(text, j)
+    name, q = _js_parse_ident(text, j)
+    if name in _F611_RESERVED or name == "arguments":
+        raise _JSExprFail("F661 operand reserved name")
+    r = _js_skip_ws(text, q)
+    if (r < n and text[r] == "=" and not (r + 1 < n
+                                         and text[r + 1] in "=>")):
+        if name not in declared:
+            raise _JSExprFail("F661 assign to undeclared")
+        val, q2 = _js_parse_f661_seq_operand(
+            text, _js_skip_ws(text, r + 1), declared, env, depth,
+            state)
+        env[name] = val
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("F661 too many parts")
+        state["ops"] += 1
+        return val, q2
+    if name not in env:
+        raise _JSExprFail("F661 operand ident not bound")
+    return env[name], q
+
+
+def _js_parse_f661_sequence(text, j, declared, env, depth, state):
+    """Parse `(OP (, OP)+)` at text[j] -- declaration-position comma
+    sequence (F661). Returns (last_operand_value, next_index).
+
+    The comma operator evaluates each operand left-to-right and
+    takes the last (node v24.20.0). At least two operands are
+    required (a lone paren group is not a sequence -- `var
+    s=('f1')` fails closed, documented residual).
+
+    Fragment-quiet intermediates (composition safety): the engine
+    discards every operand but the last, so the decoder's sequence
+    value is the last operand's value. An intermediate operand
+    whose value is itself credential-shaped fails the shape closed
+    -- the decoder never silently drops a credential-shaped value
+    from a discarded position. Raises _JSExprFail on mismatch.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "(")
+    vals = []
+    while True:
+        val, j = _js_parse_f661_seq_operand(text, j, declared,
+                                            env, depth, state)
+        vals.append(val)
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("F661 too many parts")
+        q = _js_skip_ws(text, j)
+        if q >= n or text[q] != ",":
+            j = q
+            break
+        # `('a','b',)` is a SyntaxError in the engine (v24.20.0
+        # verified) -- a comma must be followed by an operand.
+        qq = _js_skip_ws(text, q + 1)
+        if qq < n and text[qq] == ")":
+            raise _JSExprFail("F661 trailing comma")
+        j = q + 1
+    if len(vals) < 2:
+        raise _JSExprFail("F661 not a sequence")
+    j = _js_expect(text, j, ")")
+    for v in vals[:-1]:
+        if _find_credential_strict(v) is not None:
+            raise _JSExprFail("F661 intermediate not fragment-quiet")
+    state["ops"] += 1  # the comma sequence is obfuscation-shaped
+    return vals[-1], j
+
+
+def _js_parse_f661_declseq_iife(text, i, depth, state):
+    """Parse `(function(){(var|let|const) D(,D)*;return EXPR;})()` (F661).
+
+    Declaration-position comma sequences: F652 (CLOSED) models
+    comma/sequence expressions in the additive grammar only, but a
+    sequence in a var/let/const INITIALIZER evaluates to the LAST
+    operand node-exactly (v24.20.0), and the bound variable then
+    participates in additive fragment assembly:
+    `(function(){var s=('jx','f1');return s+'f2';})()`.
+
+    Each declarator is `NAME[=INIT]` with INIT a string literal, an
+    atob('LIT') call (the F611 twin, same fragment-assembly
+    mechanism), or a declaration-position sequence `(OP(,OP)+)`
+    whose operands are string literals, reads of earlier-bound
+    names in the same statement, assignments to declared names, or
+    nested sequences. An uninitialized declarator (`var t,`) is
+    `var`/`let`-only (`const` without an initializer is a
+    SyntaxError in the engine, v24.20.0): the name is declared but
+    unbound, and a later declarator's sequence may assign it (F652
+    discipline). The return expression is rewritten by
+    substituting every bound name (value positions only -- the
+    F611/F501 token discipline via _js_ident_tokens) with its
+    quoted value, then parsed by the normal additive grammar, so
+    every downstream decoder, bound, and fail-closed rule applies
+    unchanged.
+
+    Gate (disjointness): at least two declarators, or at least one
+    sequence initializer. F611 owns the single-plain-declarator
+    shape (it fails closed on `,` and on `(` initializers); this
+    parser fails closed on the single-plain shape), so no
+    previously-decoded input changes behavior. Tried after F611.
+
+    Accepted generalization (same mechanism, node-exact,
+    battery-pinned): the all-plain multi-declarator form
+    `(function(){var s='f1',t='f2';return s+t;})()` decodes by the
+    identical substitution machinery (it misses on the base tree,
+    so no previously-decoded input changes behavior).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a non-literal/non-atob/non-sequence initializer (incl. bare
+      ident copies, template literals, numerics);
+    - a lone paren group as initializer (`var s=('f1')` -- not a
+      sequence);
+    - `const` without an initializer, duplicate `let`/`const`
+      names (both SyntaxErrors in the engine, v24.20.0); `var`
+      duplicates rebind last-wins (engine-exact); a bare `var s,`
+      never unbinds a previous value (engine-exact);
+    - reserved-word or `arguments` declarator names;
+    - reads of unbound names, assignments to undeclared names,
+      `==`/`===` in operand position;
+    - a credential-shaped intermediate sequence operand (the
+      fragment-quiet rule);
+    - reassignment/rebinding of a bound name in the return
+      expression (F611/F501 discipline);
+    - a named function, parameters, a directive prologue, extra
+      statements, non-empty call args.
+    Returns (value, next_index), or None when the head does not
+    match or a guard fails. Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+        if k is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            # Optional name (engine-exact; ignored) -- F611 twin.
+            _, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # params: the filed shapes take none
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "{":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        dkw, k = _js_match_decl_kw(text, k)
+        if dkw is None:
+            return None
+        k = _js_skip_ws(text, k)
+        # Declarators: NAME[=INIT] (, NAME[=INIT])* -- bound
+        # left-to-right (node-exact); `var` duplicates rebind
+        # last-wins. An uninitialized declarator (`var t,`) declares
+        # but does not bind: `const` without an initializer is a
+        # SyntaxError in the engine (v24.20.0), `var`/`let` leave the
+        # name unbound (reads fail closed; a later declarator's
+        # sequence may assign it -- F652 discipline).
+        bindings = {}
+        declared = []
+        ndecl = 0
+        saw_seq = False
+        while True:
+            name, k = _js_parse_ident(text, k)
+            if name in _F611_RESERVED or name == "arguments":
+                raise _JSExprFail("F661 reserved declarator")
+            if name in declared and dkw in ("let", "const"):
+                raise _JSExprFail("F661 duplicate let/const")
+            k = _js_skip_ws(text, k)
+            if (k < n and text[k] == "="
+                    and not (k + 1 < n and text[k + 1] in "=>")):
+                k = _js_skip_ws(text, k + 1)
+                if k < n and text[k] in "'\"":
+                    init_val, k = _js_parse_string(text, k)
+                elif (text.startswith("atob", k)
+                        and (k + 4 >= n
+                             or text[k + 4] not in _JS_IDENT_CONT)):
+                    init_val, k = _js_parse_f611_atob(text, k)
+                    state["ops"] += 1  # the decode call is
+                    # obfuscation-shaped
+                elif k < n and text[k] == "(":
+                    init_val, k = _js_parse_f661_sequence(
+                        text, k, declared, bindings, depth, state)
+                    saw_seq = True
+                else:
+                    raise _JSExprFail("F661 bad initializer")
+                bindings[name] = init_val
+            elif dkw == "const":
+                raise _JSExprFail("F661 const without init")
+            # else: uninitialized var/let -- declared, unbound.
+            if name not in declared:
+                declared.append(name)
+            ndecl += 1
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("F661 too many parts")
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ",":
+                k = _js_skip_ws(text, k + 1)
+                continue
+            break
+        if ndecl < 2 and not saw_seq:
+            # F611 owns the single-plain-declarator shape.
+            return None
+        k = _js_expect(text, k, ";")
+        rk = _js_match_kw(text, _js_skip_ws(text, k), "return")
+        if rk is None:
+            raise _JSExprFail("F661 no return")
+        # Capture the return expression: scan to the terminating
+        # `;` at depth 0, respecting string literals (F611
+        # discipline).
+        e = _js_skip_ws(text, rk)
+        q = None
+        pdepth = 0
+        m = e
+        while m < n:
+            c = text[m]
+            if q is not None:
+                if c == "\\":
+                    m += 2
+                    continue
+                if c == q:
+                    q = None
+            elif c in "'\"":
+                q = c
+            elif c == "`":
+                raise _JSExprFail("F661 template in return")
+            elif c in "([{":
+                pdepth += 1
+            elif c in ")]}":
+                pdepth -= 1
+                if pdepth < 0:
+                    raise _JSExprFail("F661 unbalanced return")
+            elif c == ";" and pdepth == 0:
+                break
+            m += 1
+        else:
+            raise _JSExprFail("F661 unterminated return")
+        if q is not None or pdepth != 0:
+            raise _JSExprFail("F661 bad return scan")
+        # Trailing whitespace before the `;` is insignificant to the
+        # engine (v24.20.0) -- strip it so `return s+'f2' ;` decodes
+        # exactly like `return s+'f2';`. (F611's own capture keeps
+        # the trailing space and fails closed there; that boundary
+        # is F611's, left untouched.)
+        expr_text = text[e:m].rstrip(" \t\n\r")
+        # Reassignment/rebinding guard over every bound name
+        # (F611/F501 discipline, generalized to N names).
+        try:
+            toks = _js_ident_tokens(expr_text)
+        except _JSExprFail:
+            raise _JSExprFail("F661 return tokens")
+        _rn = len(expr_text)
+        for bname in bindings:
+            for tname, ts, te in toks:
+                if tname != bname:
+                    continue
+                jj = te
+                while jj < _rn and expr_text[jj] in " \t\n\r":
+                    jj += 1
+                nxt2 = expr_text[jj:jj + 2]
+                nxt1 = expr_text[jj:jj + 1]
+                if nxt1 == "=" and nxt2 not in ("==", "=>"):
+                    raise _JSExprFail("F661 return reassigns")
+                if nxt2 in ("+=", "-=", "*=", "/=", "%=", "++",
+                            "--"):
+                    raise _JSExprFail("F661 return mutates")
+                pp = ts - 1
+                while pp >= 0 and expr_text[pp] in " \t\n\r":
+                    pp -= 1
+                if pp >= 1 and expr_text[pp - 1:pp + 1] in ("++",
+                                                           "--"):
+                    raise _JSExprFail("F661 return prefix mutates")
+        # Substitute value-position uses with the quoted values
+        # (never inside literals -- _js_ident_tokens skips those;
+        # never property names -- preceded by `.`/`$`/word char).
+        quoted = {bname: _js_f611_quote(bval)
+                  for bname, bval in bindings.items()}
+        out = []
+        pos = 0
+        for tname, ts, te in toks:
+            if tname not in quoted:
+                continue
+            if ts > 0 and (expr_text[ts - 1] in _JS_IDENT_CONT
+                           or expr_text[ts - 1] in ".$"):
+                continue
+            out.append(expr_text[pos:ts])
+            out.append(quoted[tname])
+            pos = te
+        out.append(expr_text[pos:])
+        rewritten = "".join(out)
+        try:
+            val, rend = _js_parse_additive(rewritten, 0, depth + 1,
+                                           state)
+        except _JSExprFail:
+            raise _JSExprFail("F661 return not additive")
+        if rend != len(rewritten):
+            raise _JSExprFail("F661 return trailing junk")
+        k = _js_skip_ws(text, m + 1)
+        if k >= n or text[k] != "}":
+            raise _JSExprFail("F661 no close brace")
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            raise _JSExprFail("F661 no close paren")
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "(":
+            raise _JSExprFail("F661 no call paren")
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            raise _JSExprFail("F661 call args")  # filed shapes
+        # take none
+        k = k + 1
+    except _JSExprFail:
+        return None
+    state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+    return val, k
+
+
 def _js_parse_args_laundered_iife(text, i, depth, state):
     """Parse `(function(){var A=SRC;return BODY})(lit, ...)` or
     `(function(...A){return BODY})(lit, ...)` at text[i] (F516).
@@ -34910,6 +35252,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f611 = _js_parse_f611_varbound_iife(text, i, depth, state)
         if _f611 is not None:
             val, i = _f611
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F661: (function(){(var|let|const) D(,D)*;return EXPR;})()
+        #   where each declarator is NAME='LIT'|atob('LIT')|(SEQ) --
+        #   declaration-position comma sequences. Tried after F611:
+        #   F611 requires exactly one declarator with a literal/atob
+        #   initializer and fails closed on `,` and `(` initializers;
+        #   this parser requires >=2 declarators or >=1 sequence
+        #   initializer and fails closed on the single-plain shape,
+        #   so no previously-decoded input changes behavior. None
+        #   falls through to the parenthesized-additive path like
+        #   F611. Disjoint from F652 (additive-position sequences --
+        #   that route requires an uninitialized declaration
+        #   section).
+        _f661 = _js_parse_f661_declseq_iife(text, i, depth, state)
+        if _f661 is not None:
+            val, i = _f661
             return _js_parse_postfix(text, i, val, depth, state)
         # F619: (function(){function* NAME(){yield 'LIT';...}
         #   <TAIL>})() -- a named fixed-yield generator declared in a

@@ -239,7 +239,8 @@ def test_p4_open_neighbors_still_miss():
         "(function(){var z;return (z??'%s')+'%s%s'+z;})()",
     ]
     # Last two shapes are F660 (OPEN); the rest are F644-F654 (CLOSED at merge).
-    # F661 (OPEN, filed at merge): declaration-position comma sequences -- see w377_f661_redfirst.py.
+    # F661 (CLOSED 2026-10-08 wave-378 lane 6): declaration-position comma
+    # sequences -- see w377_f661_redfirst.py and w378_f661close_probes.py.
     open_shapes = shapes[-2:]
     closed_shapes = shapes[:-2]
     f661_shapes = ["(function(){var s=('jx','%s');return s+'%s%s';})()" % (_F1, _F2, _F3)]
@@ -253,7 +254,7 @@ def test_p4_open_neighbors_still_miss():
         args = (_F1, _F2, _F3)[:n]
         ok = ok and _misses(s % args)
     for s in f661_shapes:
-        ok = ok and _misses(s)
+        ok = ok and _blocked(s)
     return ("HELD" if ok else "BREAK", "ok=%s" % ok)
 
 
@@ -323,12 +324,12 @@ def test_p7_node_differential():
 # ------------------------------------------------ pin + footer
 
 def test_p8_pin_footer():
-    """Pin 2140 and merge footer (open F655-F660; next F661)."""
+    """Pin 2140 and lane-local footer (F661 CLOSED: open F655-F660; next F662)."""
     import gov.decision_codes as dc
     ok = (TAXONOMY_PIN == 2140 and len(dc.TAXONOMY) > 0)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and ("Next free finding: **F662**" in text)  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
-    ok = ok and ("Open findings: F655, F656, F657, F658, F659, F660, F661." in text)  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
+    ok = ok and ("Next free finding: **F662**" in text)  # Wave-378 lane 6: F661 CLOSED; footer repoint open F655-F660 / next F662
+    ok = ok and ("Open findings: F655, F656, F657, F658, F659, F660." in text)  # Wave-378 lane 6: F661 CLOSED; footer repoint open F655-F660 / next F662
     ok = ok and (_dlp is not None)
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 
