@@ -4137,24 +4137,23 @@ def _js_parse_bracket_member(text, j):
     return name, _js_skip_ws(text, j + 1)
 
 
-def _js_parse_f552_symbol_for(text, j):
-    """Parse `[Symbol.for('K')]` at text[j] == '[' (F552).
+def _js_parse_symbol_for_expr(text, j):
+    """Parse `Symbol.for('K')` at text[j] (F588; shared with F552).
 
-    Symbol-keyed properties: only the shared-registry form is
-    modeled. `Symbol.for('K')` returns the same symbol on every call
-    (node v24.20.0), so a write `[Symbol.for('K')]:v` and a read
-    `[Symbol.for('K')]` provably address the same key. Bare
-    `Symbol()` creates a unique symbol per call -- a static model can
-    never match a write to a read, so it fails closed (documented
-    boundary; engine-exact for the static decoder: the two-call
-    shape never resolves in node either).
+    The bracket form `[Symbol.for('K')]` (F552) wraps this expression;
+    the bare form appears as the Reflect.get key (F588). `Symbol.for`
+    returns the same symbol on every call (node v24.20.0), so a write
+    `[Symbol.for('K')]:v` and a read `Symbol.for('K')` provably
+    address the same key. Bare `Symbol()` creates a unique symbol per
+    call -- a static model can never match a write to a read, so it
+    fails closed (documented boundary; engine-exact for the static
+    decoder: the two-call shape never resolves in node either).
 
-    Returns (registry_key_name, next_index_after_rbracket).
-    Malformed shapes fail closed via _JSExprFail. Never evals.
+    Returns (registry_key_name, next_index). Malformed shapes fail
+    closed via _JSExprFail. Never evals.
     """
     n = len(text)
-    k = _js_skip_ws(text, j + 1)
-    k2 = _js_match_kw(text, k, "Symbol")
+    k2 = _js_match_kw(text, j, "Symbol")
     if k2 is None:
         raise _JSExprFail("not a Symbol key")
     k2 = _js_skip_ws(text, k2)
@@ -4173,10 +4172,28 @@ def _js_parse_f552_symbol_for(text, j):
     k3 = _js_skip_ws(text, k3)
     if k3 >= n or text[k3] != ")":
         raise _JSExprFail("Symbol.for unterminated")
-    k3 = _js_skip_ws(text, k3 + 1)
-    if k3 >= n or text[k3] != "]":
-        raise _JSExprFail("Symbol key unterminated")
     return key, _js_skip_ws(text, k3 + 1)
+
+
+def _js_parse_f552_symbol_for(text, j):
+    """Parse `[Symbol.for('K')]` at text[j] == '[' (F552).
+
+    Symbol-keyed properties: only the shared-registry form is
+    modeled. `Symbol.for('K')` returns the same symbol on every call
+    (node v24.20.0), so a write `[Symbol.for('K')]:v` and a read
+    `[Symbol.for('K')]` provably address the same key. Bare
+    `Symbol()` creates a unique symbol per call -- a static model can
+    never match a write to a read, so it fails closed (documented
+    boundary; engine-exact for the static decoder: the two-call
+    shape never resolves in node either).
+
+    Returns (registry_key_name, next_index_after_rbracket).
+    Malformed shapes fail closed via _JSExprFail. Never evals.
+    """
+    key, k = _js_parse_symbol_for_expr(text, _js_skip_ws(text, j + 1))
+    if k >= len(text) or text[k] != "]":
+        raise _JSExprFail("Symbol key unterminated")
+    return key, _js_skip_ws(text, k + 1)
 
 
 def _js_ownkeys_order(props):
@@ -10751,9 +10768,12 @@ class _JSURLParams:
     separator, missing '=' means the empty value). .get returns the
     FIRST pair with the name (engine-exact); a missing name fails
     closed (the engine returns null, which the decoder never
-    decodes). A resolved params object only flows through the
-    _JSURLParams branch of _js_parse_postfix (.get); any other use
-    fails closed.
+    decodes). .getAll returns ALL values for the name in insertion
+    order as an array (F584, engine-exact); a missing name is the
+    empty array (the engine returns [], node-exact). A resolved
+    params object only flows through the
+    _JSURLParams branch of _js_parse_postfix (.get, .getAll -- F584);
+    any other use fails closed.
     """
     __slots__ = ("pairs",)
 
@@ -11917,15 +11937,19 @@ def _js_parse_f540_reflect_get_object(text, j, depth, state):
 
     Desugars the Reflect builtin to the F535 member read: the target
     is an object literal (parsed by _js_parse_f535_object) and KEY is
-    a string literal or `['literal']` (via _js_parse_bracket_member).
-    Data properties resolve to their parsed value; getters were
-    already evaluated at object-parse time (F535), matching the
-    engine's getter invocation (node v24.20.0 verified). A missing
-    key, a non-literal key, a method/setter (already failed closed
-    at object parse), or any extra argument fails closed
-    (documented boundary -- the method-retrieval shape
-    `Reflect.get([],'concat')` is a documented residual: the
-    resolved function reference is not a decodable value).
+    a string literal, `['literal']` (via _js_parse_bracket_member),
+    or a `Symbol.for('K')` registry-key expression (F588: the F540 x
+    F552 composition -- the symbol namespace is separate from string
+    keys, node-exact, via _js_symbol_key). Data properties resolve
+    to their parsed value; getters were already evaluated at
+    object-parse time (F535), matching the engine's getter invocation
+    (node v24.20.0 verified). A missing key, a non-literal key, a
+    bare Symbol() (unresolvable statically, F552 precedent), a
+    method/setter (already failed closed at object parse), or any
+    extra argument fails closed (documented boundary -- the
+    method-retrieval shape `Reflect.get([],'concat')` is a documented
+    residual: the resolved function reference is not a decodable
+    value).
 
     Returns (value, next_index) with the postfix chain applied.
     Malformed shapes fail closed via _JSExprFail. Never evals.
@@ -11942,6 +11966,15 @@ def _js_parse_f540_reflect_get_object(text, j, depth, state):
         key, j = _js_parse_bracket_member(text, j)
     elif j < n and text[j] in "'\"":
         key, j = _js_parse_string(text, j)
+    elif _js_match_kw(text, j, "Symbol") is not None:
+        # F588: `Symbol.for('K')` key (the F540 x F552 composition).
+        # The registry name maps to the ("symbol", name) props key;
+        # a string key can never address it and vice versa
+        # (node-exact). Bare Symbol() and non-literal registry keys
+        # fail closed inside _js_parse_symbol_for_expr (F552
+        # precedent); an unregistered name misses below.
+        _sname, j = _js_parse_symbol_for_expr(text, j)
+        key = _js_symbol_key(_sname)
     else:
         raise _JSExprFail("Reflect.get key not a literal")
     j = _js_skip_ws(text, j)
@@ -19800,9 +19833,16 @@ def _js_parse_postfix(text, i, value, depth, state):
         # returns null, which the decoder never decodes). Dot and
         # string-literal bracket forms both resolve (F563 precedent);
         # any other member fails closed.
+        # F584: `.getAll('lit')` returns ALL values for the name in
+        # insertion order as an array (engine-exact, node v24.20.0);
+        # a missing name is the empty array (the engine returns [],
+        # node-exact -- unlike .get's null, so no fail-closed here).
+        # The array flows through the normal postfix chain (.join /
+        # .slice / indexed reads); non-literal keys and extra args
+        # fail closed like the .get branch.
         if isinstance(value, _JSURLParams):
             _mname, _mk = _js_f576_member_name(text, j, "urlparams")
-            if _mname != "get":
+            if _mname not in ("get", "getAll"):
                 raise _JSExprFail("urlparams member not modeled")
             _gk = _js_skip_ws(text, _mk)
             if _gk >= len(text) or text[_gk] != "(":
@@ -19814,6 +19854,15 @@ def _js_parse_postfix(text, i, value, depth, state):
             _gk = _js_skip_ws(text, _gk)
             if _gk >= len(text) or text[_gk] != ")":
                 raise _JSExprFail("urlparams get unterminated")
+            if _mname == "getAll":
+                _gvals = [_pval for _pname, _pval in value.pairs
+                          if _pname == _gkey]
+                state["parts"] += len(_gvals)
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                state["ops"] += 1  # the getAll is obfuscation-shaped
+                value, i = _JSArr(_gvals), _gk + 1
+                continue
             _gval = None
             for _pname, _pval in value.pairs:
                 if _pname == _gkey:

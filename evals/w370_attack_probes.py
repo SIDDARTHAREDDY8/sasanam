@@ -249,12 +249,12 @@ def test_r38_f583_closed():
 
 
 @_t
-def test_r38_f584_open():
-    """F584 OPEN: URLSearchParams.getAll misses."""
-    m1 = _misses("new URLSearchParams('q=%s&q=%s').getAll('q').join('')" % (_A, _B))
-    m2 = _misses("new URLSearchParams('q=%s&q=%s&q=zz').getAll('q').slice(0,2).join('')" % (_A, _B))
+def test_r38_f584_closed():
+    """F584 CLOSED (wave-371 lane 2): URLSearchParams.getAll blocks coded."""
+    m1 = _blocked("new URLSearchParams('q=%s&q=%s').getAll('q').join('')" % (_A, _B))
+    m2 = _blocked("new URLSearchParams('q=%s&q=%s&q=zz').getAll('q').slice(0,2).join('')" % (_A, _B))
     ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
 @_t
@@ -286,12 +286,12 @@ def test_r38_f587_open():
 
 
 @_t
-def test_r38_f588_open():
-    """F588 OPEN: Reflect.get with Symbol.for keys misses."""
-    m1 = _misses("Reflect.get({[Symbol.for('c')]:'%s'},Symbol.for('c'))+'%s'" % (_A, _B))
-    m2 = _misses("Reflect.get({[Symbol.for('k')]:{c:'%s'}},Symbol.for('k')).c+'%s'" % (_A, _B))
+def test_r38_f588_closed():
+    """F588 CLOSED (wave-371 lane 2): Reflect.get Symbol.for keys block coded."""
+    m1 = _blocked("Reflect.get({[Symbol.for('c')]:'%s'},Symbol.for('c'))+'%s'" % (_A, _B))
+    m2 = _blocked("Reflect.get({[Symbol.for('k')]:{c:'%s'}},Symbol.for('k')).c+'%s'" % (_A, _B))
     ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
 @_t
