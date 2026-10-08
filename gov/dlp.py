@@ -37578,6 +37578,494 @@ class _JSF67xBody:
         self.add_text = add_text
 
 
+def _js_f723f724_match_object_head(text, j, member):
+    """Match `Object.<member>(` at text[j] (F723/F724 helper).
+
+    Returns the index just past `(` (whitespace-skipped), or None
+    when text[j] is not an `Object.<member>` head. The `member`
+    ident commits the parse: once matched, a missing `(` raises
+    _JSExprFail (fail closed on the claimed head). The i-1 guard
+    rejects a mid-identifier `Object`, engine-exact. Dot form
+    only -- `Object['create']` / `Object['setPrototypeOf']` fail
+    closed (documented residuals). Never evals.
+    """
+    n = len(text)
+    if j > 0 and text[j - 1] in _JS_IDENT_CONT:
+        return None
+    if not text.startswith("Object", j):
+        return None
+    k = j + len("Object")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        return None
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ".":
+        return None
+    k = _js_skip_ws(text, k + 1)
+    if not text.startswith(member, k):
+        return None
+    k += len(member)
+    if k < n and text[k] in _JS_IDENT_CONT:
+        return None
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("Object.%s without paren" % member)
+    return _js_skip_ws(text, k + 1)
+
+
+def _js_f723f724_parse_proto_value(text, j, env, depth, state,
+                                   allow_literal):
+    """Parse a prototype value at text[j] (F723/F724 helper).
+
+    Returns (proto, next_index): proto is a _JSObj, or None for
+    `null` (the engine's null-prototype object -- member reads
+    fail closed via _jsobj_lookup, node-exact). Accepted: a
+    var-bound _JSObj ident, `null`, `Object.prototype` (F704 --
+    modeled as an empty proto: its members are functions, never
+    string-decodable, so reads delegate to nothing and fail
+    closed, node-exact for the modeled shapes), or a nested
+    one-argument `Object.create(...)` (recursed). A literal
+    `{...}` proto is accepted only when allow_literal is true
+    (F724's setPrototypeOf statement head is disjoint from every
+    create production); otherwise it raises _JSExprFail -- the
+    one-argument literal-proto create is F673's shape and stays
+    hers. Anything else raises _JSExprFail. Never evals.
+    """
+    n = len(text)
+    if depth + 1 >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "{":
+        if not allow_literal:
+            raise _JSExprFail("F723F724 literal proto")
+        pprops, j = _js_parse_f535_object(text, j, depth + 1, state,
+                                          accessor_aware=True)
+        state["ops"] += 1  # the proto literal is obfuscation-shaped
+        return _JSObj(pprops), j
+    mk = _js_f723f724_match_object_head(text, j, "create")
+    if mk is not None:
+        # Nested one-argument create -- the `,` check below keeps
+        # F704's two-argument head disjoint.
+        sub, mk = _js_f723f724_parse_create_arg(text, mk, env,
+                                                depth + 1, state)
+        return sub, mk
+    if text.startswith("Object", j):
+        _pk = j + len("Object")
+        if (text.startswith(".prototype", _pk)
+                and (_pk + 10 >= n
+                     or text[_pk + 10] not in _JS_IDENT_CONT)):
+            return _JSObj({}), _pk + 10
+    if (text.startswith("null", j)
+            and (j + 4 >= n or text[j + 4] not in _JS_IDENT_CONT)):
+        return None, j + 4
+    if j < n and text[j] in _JS_IDENT_START:
+        name, j = _js_parse_ident(text, j)
+        if name not in env:
+            raise _JSExprFail("F723F724 unbound proto")
+        pv = env[name]
+        if not isinstance(pv, _JSObj):
+            raise _JSExprFail("F723F724 proto not an object")
+        return pv, j
+    raise _JSExprFail("F723F724 bad proto")
+
+
+def _js_f723f724_parse_create_arg(text, j, env, depth, state):
+    """Parse the argument of a one-argument `Object.create(` at text[j].
+
+    text[j] is just past `(` (whitespace-skipped). Returns
+    (proto_obj_or_None, next_index_past_`)`). A `{...}` literal
+    arg returns (None, None) -- not our shape (F673's literal-proto
+    territory; the caller falls through). A `,` after the arg
+    returns (None, None) -- F704's two-argument head, disjoint.
+    Anything else malformed raises _JSExprFail. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "{":
+        return None, None  # F673's literal-proto shape
+    proto, j = _js_f723f724_parse_proto_value(text, j, env, depth,
+                                              state,
+                                              allow_literal=False)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ",":
+        return None, None  # F704's two-argument head
+    j = _js_expect(text, j, ")")
+    return proto, j
+
+
+def _js_f723f724_parse_decl_init(text, sj, env, depth, state):
+    """Parse an F723/F724 declaration initializer at text[sj].
+
+    Returns (value, next_index) or None when the initializer is
+    not our shape. Accepted: an object literal (parsed
+    accessor-aware -- getters install _JSAccessor, evaluated at
+    literal-parse time, argument-independent) or a one-argument
+    `Object.create(...)` whose result is `_JSObj({}, proto)`
+    (own properties empty, reads delegate via _jsobj_lookup,
+    node-exact). A two-argument or literal-proto create returns
+    None (F704's / F673's shapes, disjoint). Never evals.
+    """
+    n = len(text)
+    sj = _js_skip_ws(text, sj)
+    if sj < n and text[sj] == "{":
+        pprops, sj = _js_parse_f535_object(text, sj, depth + 1,
+                                           state,
+                                           accessor_aware=True)
+        return _JSObj(pprops), sj
+    mk = _js_f723f724_match_object_head(text, sj, "create")
+    if mk is None:
+        return None
+    proto, mk = _js_f723f724_parse_create_arg(text, mk, env,
+                                              depth + 1, state)
+    if proto is None and mk is None:
+        return None  # F673's literal-proto / F704's two-arg head
+    return _JSObj({}, proto), mk
+
+
+def _js_f723f724_parse_setproto_stmt(text, sj, env, depth, state):
+    """Parse `Object.setPrototypeOf(TARGET, PROTO);` at text[sj] (F724).
+
+    Returns next_index past `;`, mutating env[TARGET].proto to the
+    parsed PROTO (last write wins, engine-exact). TARGET must be an
+    env-bound _JSObj ident (an unbound target raises -- the engine
+    throws TypeError on undefined). PROTO is parsed by
+    _js_f723f724_parse_proto_value with allow_literal=True. A
+    proto that would close a cycle over TARGET raises _JSExprFail
+    (the engine throws TypeError on cyclic prototypes; an
+    unguarded cycle would hang _jsobj_lookup). Returns None when
+    text[sj] is not an `Object.setPrototypeOf(` head. Never evals.
+    """
+    n = len(text)
+    mk = _js_f723f724_match_object_head(text, sj, "setPrototypeOf")
+    if mk is None:
+        return None
+    if depth + 1 >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    mk = _js_skip_ws(text, mk)
+    if mk >= n or text[mk] not in _JS_IDENT_START:
+        raise _JSExprFail("F724 setproto target not an ident")
+    tname, mk = _js_parse_ident(text, mk)
+    if tname not in env:
+        raise _JSExprFail("F724 setproto unbound target")
+    target = env[tname]
+    if not isinstance(target, _JSObj):
+        raise _JSExprFail("F724 setproto target not an object")
+    mk = _js_skip_ws(text, mk)
+    mk = _js_expect(text, mk, ",")
+    proto, mk = _js_f723f724_parse_proto_value(text, mk, env,
+                                               depth + 1, state,
+                                               allow_literal=True)
+    mk = _js_skip_ws(text, mk)
+    mk = _js_expect(text, mk, ")")
+    mk = _js_skip_ws(text, mk)
+    mk = _js_expect(text, mk, ";")
+    if proto is not None:
+        cur = proto
+        while cur is not None:
+            if cur is target:
+                raise _JSExprFail("F724 cyclic prototype")
+            cur = cur.proto
+    target.proto = proto
+    return mk
+
+
+def _js_parse_f723_proto_chain_iife(text, i, depth, state):
+    """Parse `(function(){DECL;+ return ADD;})()` at text[i] (F723).
+
+    Object.create prototype-chain getter reads: the decoder models
+    `Object.create` prototype reads via the F548 chain (F673,
+    CLOSED) and literal-getter sources (F664, CLOSED), but getter
+    invocation through a VAR-BOUND prototype chain escapes:
+    `(function(){var o={get x(){return 'f1';}};var
+    c=Object.create(o);return c.x+'f2';})()` and the nested twin
+    `(function(){var p={get y(){return 'f1';}};var
+    c=Object.create(p);var d=Object.create(c);return
+    d.y+'f2';})()` both node-evaluate (v24.20.0) to the exact
+    credential while the decoder produces zero variants.
+
+    Node-exact desugar: each DECL binds an accessor-aware object
+    literal or a one-argument `Object.create(BOUND)` (own props
+    empty, proto = the bound object); the return is a `+`-joined
+    additive (the F671 member-term discipline) of string literals
+    and member reads on the bound idents, resolved through the
+    F548 prototype chain (`_jsobj_lookup` unwraps accessors --
+    read-time getter invocation matches the engine because the
+    getter bodies were already evaluated at literal-parse time and
+    are argument-independent).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, multi-decl, reassignment, rebinding, non-empty
+      call args;
+    - a one-argument create with a literal proto (F673's shape) or
+      a two-argument create (F704's shape) -- both return None,
+      disjoint;
+    - an unbound or non-object proto ident, `Object['create']`,
+      a non-`(` `Object.create` (fail closed on the claimed head);
+    - a member value that is not a plain string (the F699
+      `_js_str_is_unsafe_int` guard applies at read time, F711
+      parity -- integer provenance is lost by
+      `_js_parse_canonical_int`, so unsafe-int members fail
+      closed rather than mis-decode);
+    - a bare bound ident with no member step, an unbound
+      receiver, a missing key (all inherited from the F671 term
+      discipline).
+    Residuals (documented, not silently absorbed): two-argument
+    `Object.create(BOUND, PROPS)`; `Object.setPrototypeOf` in any
+    position (F724's statement production); `Reflect.setPrototypeOf`;
+    `__proto__` assignment; non-statement (expression-position)
+    creates (the F548 factory owns those).
+    Tried after F702/F703: every accepted shape carries a
+    one-argument `Object.create(BOUND)` decl initializer, which no
+    earlier route accepts (red-first verified: 2 BREAK on the open
+    tree); a non-`return` statement after the decls returns None
+    (F724's statement shapes fall through to the F724 hook).
+    None falls through to the F724 route. The F702/F703 hook and
+    its trailing `return` are untouched (wave-379 lesson). Never
+    evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+        if k is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_expect(text, k, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        env = {}
+        saw_decl = False
+        while True:
+            _kw, m = _js_match_decl_kw(text, sj)
+            if _kw is None:
+                break
+            sj = _js_skip_ws(text, m)
+            name, sj = _js_parse_ident(text, sj)
+            if name == "arguments":
+                raise _JSExprFail("F723 binding named arguments")
+            if name in env:
+                raise _JSExprFail("F723 rebinding")
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, "=")
+            sj = _js_skip_ws(text, sj)
+            _init = _js_f723f724_parse_decl_init(text, sj, env,
+                                                 depth, state)
+            if _init is None:
+                return None  # not our initializer -- not our shape
+            val, sj = _init
+            env[name] = val
+            saw_decl = True
+            state["ops"] += 1  # each declaration is
+            # obfuscation-shaped
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, ";")
+            sj = _js_skip_ws(text, sj)
+        if not saw_decl:
+            return None
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            return None  # not our shape -- F724 may claim it
+        sj = _js_skip_ws(text, m)
+        total = None
+        while True:
+            term, sj = _js_parse_f671_member_term(text, sj, env,
+                                                 depth, state)
+            if _js_str_is_unsafe_int(term):
+                # F711 parity: integer provenance is lost, so an
+                # unsafe-int member fails closed rather than
+                # mis-decoding via float64 rounding.
+                raise _JSExprFail(
+                    "F723 unsafe-int member fails closed")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            state["ops"] += 1  # each additive term is
+            # obfuscation-shaped
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F723 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f724_setproto_iife(text, i, depth, state):
+    """Parse `(function(){DECL;+ STMT;+ return ADD;})()` at text[i] (F724).
+
+    Object.setPrototypeOf installed getter reads: the decoder has
+    no `Object.setPrototypeOf` production, so a getter installed
+    via setPrototypeOf fires on member read while the decoder
+    produces zero variants:
+    `(function(){var c={};Object.setPrototypeOf(c,{get
+    x(){return 'f1';}});return c.x+'f2';})()` and the bound-proto
+    twin `(function(){var c={};var p={get y(){return
+    'f1';}};Object.setPrototypeOf(c,p);return c.y+'f2';})()` both
+    node-evaluate (v24.20.0) to the exact credential.
+
+    Node-exact desugar: each DECL binds an accessor-aware object
+    literal or a one-argument `Object.create(...)` (the F723 decl
+    grammar); each `Object.setPrototypeOf(TARGET, PROTO);`
+    statement mutates the bound target's proto (last write wins,
+    cyclic protos fail closed -- the engine throws TypeError);
+    the return is a `+`-joined additive (the F671 member-term
+    discipline) resolved through the mutated chain via
+    `_jsobj_lookup`. A `null` PROTO models the engine's
+    null-prototype object (reads fail closed, node-exact).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue,
+      reassignment, rebinding, non-empty call args;
+    - a setPrototypeOf with an unbound/non-object target, a
+      non-object proto, `Object['setPrototypeOf']`, or a cyclic
+      proto;
+    - extra statements beyond decls and setPrototypeOf
+      statements; a missing setPrototypeOf statement (returns
+      None -- F723's shapes fall through);
+    - the F711 unsafe-int member guard (inherited).
+    Residuals (documented): `Reflect.setPrototypeOf`;
+    `__proto__` assignment; setPrototypeOf in expression position
+    (only the statement form is modeled); the setPrototypeOf
+    return value (always discarded here -- the engine returns the
+    target, which no modeled read consumes).
+    Distinct from F723 (no statements) and F704 (two-argument
+    create head). Tried after F723: every accepted shape carries
+    an `Object.setPrototypeOf(` statement head, which no earlier
+    route accepts (red-first verified: 2 BREAK on the open tree);
+    None falls through to the parenthesized-additive path. The
+    F723 hook and its trailing `return` are untouched (wave-379
+    lesson). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+        if k is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_expect(text, k, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        env = {}
+        saw_decl = False
+        saw_setproto = False
+        while True:
+            _kw, m = _js_match_decl_kw(text, sj)
+            if _kw is not None:
+                sj = _js_skip_ws(text, m)
+                name, sj = _js_parse_ident(text, sj)
+                if name == "arguments":
+                    raise _JSExprFail("F724 binding named arguments")
+                if name in env:
+                    raise _JSExprFail("F724 rebinding")
+                sj = _js_skip_ws(text, sj)
+                sj = _js_expect(text, sj, "=")
+                sj = _js_skip_ws(text, sj)
+                _init = _js_f723f724_parse_decl_init(text, sj, env,
+                                                     depth, state)
+                if _init is None:
+                    return None  # not our initializer
+                val, sj = _init
+                env[name] = val
+                saw_decl = True
+                state["ops"] += 1  # each declaration is
+                # obfuscation-shaped
+                sj = _js_skip_ws(text, sj)
+                sj = _js_expect(text, sj, ";")
+                sj = _js_skip_ws(text, sj)
+                continue
+            ns = _js_f723f724_parse_setproto_stmt(text, sj, env,
+                                                  depth, state)
+            if ns is None:
+                break
+            sj = _js_skip_ws(text, ns)
+            saw_setproto = True
+            state["ops"] += 1  # each setPrototypeOf statement is
+            # obfuscation-shaped
+        if not (saw_decl and saw_setproto):
+            return None  # not our shape -- F723's or another's
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            return None  # not our shape
+        sj = _js_skip_ws(text, m)
+        total = None
+        while True:
+            term, sj = _js_parse_f671_member_term(text, sj, env,
+                                                 depth, state)
+            if _js_str_is_unsafe_int(term):
+                # F711 parity: integer provenance is lost, so an
+                # unsafe-int member fails closed rather than
+                # mis-decoding via float64 rounding.
+                raise _JSExprFail(
+                    "F724 unsafe-int member fails closed")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            state["ops"] += 1  # each additive term is
+            # obfuscation-shaped
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F724 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
 def _js_f67x_lookup(obj, key):
     """Resolve *key* on a _JSObj holding F67x bodies (F673/F674).
 
@@ -54145,6 +54633,32 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                state)
         if _f716 is not None:
             val, i = _f716
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F723: (function(){DECL;+ return ADD;})() -- getter reads
+        #   through a var-bound Object.create prototype chain.
+        #   Tried after F702/F703: every accepted shape carries a
+        #   one-argument `Object.create(BOUND)` decl initializer,
+        #   which no earlier route accepts (F704 owns the two-arg
+        #   head, F673 the literal-proto one-arg head; red-first
+        #   verified: 2 BREAK on the open tree); None falls through
+        #   to the F724 route. The F702/F703 hook and its trailing
+        #   `return` are untouched (wave-379 lesson).
+        _f723 = _js_parse_f723_proto_chain_iife(text, i, depth,
+                                                state)
+        if _f723 is not None:
+            val, i = _f723
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F724: (function(){DECL;+ STMT;+ return ADD;})() --
+        #   Object.setPrototypeOf installed getter reads. Tried
+        #   after F723: every accepted shape carries an
+        #   `Object.setPrototypeOf(` statement head, which no
+        #   earlier route accepts (red-first verified: 2 BREAK on
+        #   the open tree); None falls through to the
+        #   parenthesized-additive path. The F723 hook and its
+        #   trailing `return` are untouched (wave-379 lesson).
+        _f724 = _js_parse_f724_setproto_iife(text, i, depth, state)
+        if _f724 is not None:
+            val, i = _f724
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")

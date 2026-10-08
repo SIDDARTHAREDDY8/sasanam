@@ -109,12 +109,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: merged footer F717-F737 open, next F738 (wave-383 lanes 1+2)."""
+    """Control: merged footer (wave-383 merge coordinator)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F738**" in text
-          and "Open findings: F717, F718, F719, F720, F721, F722, F723, F724, F725, F726, F727, F728, F729, F730, F731, F732, F733, F734, F735, F736, F737." in text)    return ("HELD" if ok else "BREAK", "footer=%s" % ok)
-
+    ok = ("Next free finding: **F740**" in text
+          and "Open findings: F725, F726, F727, F728, F729, F730, F731, F732, F733, F734, F735, F736, F737, F738, F739." in text)    return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 @_t
 def test_p9_junk_quiet():
@@ -496,28 +495,28 @@ def test_r50_f722_s2_closed():
     return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f723_s1_open():
-    """F723 OPEN (Object.create prototype-chain getter reads): miss reproduces."""
-    miss = _misses("(function(){var o={get x(){return '%s';}};var c=Object.create(o);return c.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f723_s1_closed():
+    """F723 CLOSED (wave-383 lane 6): blocks coded."""
+    ok = _blocked("(function(){var o={get x(){return '%s';}};var c=Object.create(o);return c.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f723_s2_open():
-    """F723 OPEN (Object.create prototype-chain getter reads): miss reproduces."""
-    miss = _misses("(function(){var p={get y(){return '%s';}};var c=Object.create(p);var d=Object.create(c);return d.y+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f723_s2_closed():
+    """F723 CLOSED (wave-383 lane 6): blocks coded."""
+    ok = _blocked("(function(){var p={get y(){return '%s';}};var c=Object.create(p);var d=Object.create(c);return d.y+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f724_s1_open():
-    """F724 OPEN (Object.setPrototypeOf installed getter reads): miss reproduces."""
-    miss = _misses("(function(){var c={};Object.setPrototypeOf(c,{get x(){return '%s';}});return c.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f724_s1_closed():
+    """F724 CLOSED (wave-383 lane 6): blocks coded."""
+    ok = _blocked("(function(){var c={};Object.setPrototypeOf(c,{get x(){return '%s';}});return c.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f724_s2_open():
-    """F724 OPEN (Object.setPrototypeOf installed getter reads): miss reproduces."""
-    miss = _misses("(function(){var c={};var p={get y(){return '%s';}};Object.setPrototypeOf(c,p);return c.y+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f724_s2_closed():
+    """F724 CLOSED (wave-383 lane 6): blocks coded."""
+    ok = _blocked("(function(){var c={};var p={get y(){return '%s';}};Object.setPrototypeOf(c,p);return c.y+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r50_f725_s1_open():
