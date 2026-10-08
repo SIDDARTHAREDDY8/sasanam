@@ -26565,6 +26565,325 @@ def _js_parse_f649_varbound_members_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f663_fromentries_members_iife(text, i, depth, state):
+    """Parse `(function(){DECL o=Object.fromEntries(ENTRIES);
+    return o.M(+o.M)*;})()` at text[i] (F663).
+
+    F565 (CLOSED) models Object.fromEntries as an enumeration
+    source (the Object.values twin blocks coded), but member
+    reads on a var-bound fromEntries result escape the receiver
+    model: `(function(){var o=Object.fromEntries([['a','f1'],
+    ['b','f2']]);return o.a+o.b;})()` node-evaluates to the exact
+    credential (v24.20.0) while the decoder produces zero
+    variants. Node-exact desugar: the var binds the F565
+    `_js_parse_f565_from_entries` _JSObj (literal pair lists and
+    `new Map` pair lists; duplicate keys later-wins; integer keys
+    ToPropertyKey'd to their decimal repr -- all engine-exact);
+    each `o.M` / `o['M']` term (dot-ident or bracket-string
+    member, F510 head discipline) resolves against the entries
+    props via `_jsobj_lookup`, and string literals join in the
+    additive; the `+`-joined sum is the decoded value. The inline
+    expression-level twin
+    (`Object.fromEntries(...).a+'f2'`) already blocks through the
+    F565 route's postfix member-read branch -- this parser closes
+    only the var-bound statement twin.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, reassignment of the var, multi-decl
+      (`var o=..., p=...`), non-empty call args;
+    - a binding source outside the F565 grammar (Maps built
+      from non-literals -- F565's own inline path keeps those);
+    - a member read that misses or is non-string (unbound name,
+      computed member, missing key -- the F510 string-only
+      discipline);
+    - any postfix after the additive (tight scope -- the filed
+      shape returns the sum directly).
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F663 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            raise _JSExprFail("F663 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        _f565 = _js_parse_f565_from_entries(text, sj, depth, state)
+        if _f565 is None:
+            return None  # not a fromEntries head -- not our shape
+        _obj, sj = _f565
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F663 no return")
+        sj = _js_skip_ws(text, m)
+        # `(o.M|o['M']|LIT)(+(o.M|o['M']|LIT))*` -- member reads on
+        # the bare bound ident (dot-ident or bracket-string member,
+        # F510 head discipline) plus string literals: the return is
+        # an additive chain, and literal operands are node-exact
+        # (F664's additive models the same term set).
+        parts = []
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                _lit, sj = _js_parse_string(text, sj)
+                parts.append(_lit)
+            else:
+                _rname, sj = _js_parse_ident(text, sj)
+                if _rname != oname:
+                    raise _JSExprFail("F663 return not over bound ident")
+                sj = _js_skip_ws(text, sj)
+                if sj < n and text[sj] == ".":
+                    sj = _js_skip_ws(text, sj + 1)
+                    _mem, sj = _js_parse_ident(text, sj)
+                elif sj < n and text[sj] == "[":
+                    _mem, sj = _js_parse_bracket_member(text, sj)
+                else:
+                    raise _JSExprFail("F663 member not dot/bracket")
+                _val = _jsobj_lookup(_obj, _mem)
+                if not isinstance(_val, str):
+                    raise _JSExprFail("F663 member not a string")
+                parts.append(_val)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F663 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return "".join(parts), j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f664_gopd_varbound_iife(text, i, depth, state):
+    """Parse `(function(){DECL o=OBJLIT;
+    return (LIT|Object.getOwnPropertyDescriptor(o,'KEY').get())
+    (+(LIT|Object.getOwnPropertyDescriptor(o,'KEY').get()))*;})()`
+    at text[i] (F664).
+
+    F549 (CLOSED) models descriptor-get invocation on an object
+    LITERAL target (`Object.getOwnPropertyDescriptor({get x(){
+    return 'f1';}},'x').get()+'f2'` blocks coded), but a var-bound
+    target escapes the literal-target grammar:
+    `(function(){var o={get x(){return 'f1';}};
+    return Object.getOwnPropertyDescriptor(o,'x').get()+'f2';})()`
+    node-evaluates to the exact credential (v24.20.0) while the
+    decoder produces zero variants. Node-exact desugar: the var
+    binds the accessor-aware `_js_parse_f535_object` props (the
+    getter's return grammar has no `this`, so evaluation is
+    argument-independent -- `this`-dependent bodies fail closed
+    at parse time, F549 precedent); each
+    `Object.getOwnPropertyDescriptor(o,'KEY').get()` term resolves
+    the descriptor-get to the accessor's already-evaluated value
+    (the engine invokes the getter as a plain function, zero
+    arguments); the `+`-joined sum with string-literal terms is
+    the decoded value. Note the finding's "bare-call twin blocks"
+    control is a raw-literal subexpression artifact -- the split
+    bare-call form misses on the base tree too, and this parser
+    closes it as the one-term additive.
+
+    Bounds (all fail closed -- rejected, never mis-decoded,
+    mirroring F549's terminal discipline):
+    - `.get()` on a data property (node: TypeError), `.value` on
+      an accessor (node: undefined), a missing KEY (node:
+      getOwnPropertyDescriptor returns undefined), `.get` with
+      arguments (F549 parity -- the engine ignores them, but the
+      static model stays conservative), bracket-string terminals
+      (`['get']()` -- F549 parity);
+    - a non-literal KEY, a non-`Object.getOwnPropertyDescriptor`
+      head, a target other than the bound ident;
+    - a getter value that is not a string (the F535 accessor
+      grammar can also resolve _JSObj values -- those fail
+      closed here, never mis-decoded);
+    - a named function, parameters, a directive prologue, extra
+      statements, reassignment of the var, multi-decl, non-empty
+      call args, any postfix after the additive.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F664 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            raise _JSExprFail("F664 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "{":
+            return None  # not an object-literal target
+        props, sj = _js_parse_f535_object(text, sj, depth, state,
+                                         accessor_aware=True)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F664 no return")
+        sj = _js_skip_ws(text, m)
+
+        def _f664_term(sj):
+            # One additive term: a string literal, or the
+            # descriptor-get invocation on the bound ident.
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                return _js_parse_string(text, sj)
+            if not text.startswith("Object", sj):
+                raise _JSExprFail("F664 term not modeled")
+            k = sj + len("Object")
+            if k < n and text[k] in _JS_IDENT_CONT:
+                raise _JSExprFail("F664 Objectx is not Object")
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ".":
+                raise _JSExprFail("F664 Object without dot")
+            k = _js_skip_ws(text, k + 1)
+            if not text.startswith("getOwnPropertyDescriptor", k):
+                raise _JSExprFail("F664 not gopd")
+            k = k + len("getOwnPropertyDescriptor")
+            if k < n and text[k] in _JS_IDENT_CONT:
+                raise _JSExprFail("F664 gopd plural is not gopd")
+            # The member commits the parse: malformed shapes fail
+            # closed.
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "(":
+                raise _JSExprFail("F664 gopd without paren")
+            k = _js_skip_ws(text, k + 1)
+            _tname, k = _js_parse_ident(text, k)
+            if _tname != oname:
+                raise _JSExprFail("F664 gopd target not bound ident")
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ",":
+                raise _JSExprFail("F664 gopd without key")
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] not in "'\"":
+                raise _JSExprFail("F664 gopd key not a literal")
+            _key, k = _js_parse_string(text, k)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ")":
+                raise _JSExprFail("F664 gopd unterminated")
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] != ".":
+                raise _JSExprFail("F664 gopd without terminal")
+            k = _js_skip_ws(text, k + 1)
+            if not (text.startswith("get", k)
+                    and (k + 3 >= n
+                         or text[k + 3] not in _JS_IDENT_CONT)):
+                raise _JSExprFail("F664 gopd terminal not .get()")
+            if _key not in props:
+                raise _JSExprFail("F664 gopd missing key")
+            _raw = props[_key]
+            if not isinstance(_raw, _JSAccessor):
+                # .get() on a data property: the engine throws
+                # TypeError (node v24.20.0) -- fail closed.
+                raise _JSExprFail("F664 .get on data property")
+            if not isinstance(_raw.value, str):
+                raise _JSExprFail("F664 getter value not a string")
+            k = _js_skip_ws(text, k + 3)
+            if k >= n or text[k] != "(":
+                raise _JSExprFail("F664 .get without call")
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] != ")":
+                raise _JSExprFail("F664 .get takes no args")
+            state["ops"] += 1  # the descriptor indirection is
+            # obfuscation-shaped
+            return _raw.value, k + 1
+
+        parts = []
+        while True:
+            _val, sj = _f664_term(sj)
+            parts.append(_val)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F664 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return "".join(parts), j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f612_values_varbound_iife(text, i, depth, state):
     """Parse `(function(){DECL o=ENUMSRC;return Object.values(o)<postfix>;})()`
     / `(function(){DECL o=ENUMSRC;return
@@ -36431,6 +36750,40 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                          depth, state)
         if _f656 is not None:
             val, i = _f656
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F663: (function(){DECL o=Object.fromEntries(ENTRIES);
+        #   return o.M(+o.M)*;})() -- member reads on a var-bound
+        #   fromEntries result. Tried after F656: the
+        #   `Object.fromEntries(` binding head is disjoint from every
+        #   earlier route (all require other bindings: F649 requires
+        #   structuredClone, F611 requires literal/atob/sequence
+        #   initializers, F612 requires an enumeration source that is
+        #   not fromEntries); None falls through to the
+        #   parenthesized-additive path like F656. The inline
+        #   expression-level twin already blocks through F565's
+        #   postfix member-read branch, so no previously-decoded
+        #   input changes behavior.
+        _f663 = _js_parse_f663_fromentries_members_iife(text, i, depth,
+                                                       state)
+        if _f663 is not None:
+            val, i = _f663
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F664: (function(){DECL o=OBJLIT;
+        #   return (LIT|Object.getOwnPropertyDescriptor(o,'KEY').get())
+        #   (+(LIT|Object.getOwnPropertyDescriptor(o,'KEY').get()))*;})()
+        #   -- descriptor-get invocation values in additive position
+        #   on a var-bound object target. Tried after F663: the
+        #   `Object.getOwnPropertyDescriptor(` term head in the
+        #   return is disjoint from every earlier route (F549 owns
+        #   only object-literal targets at the expression level;
+        #   the statement-IIFE routes require other bindings or
+        #   terminals); None falls through to the
+        #   parenthesized-additive path like F663. Disjoint from F649
+        #   (structuredClone binding) and F663 (fromEntries binding).
+        _f664 = _js_parse_f664_gopd_varbound_iife(text, i, depth,
+                                                 state)
+        if _f664 is not None:
+            val, i = _f664
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
