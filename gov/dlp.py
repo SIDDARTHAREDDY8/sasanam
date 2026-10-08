@@ -21575,6 +21575,119 @@ def _js_parse_f601_map_foreach_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f657_bound_map_decl(stmts, j, depth, state):
+    """Parse `var|let|const M=new Map([PAIRS]);` at stmts[j] (F657).
+
+    The Map receiver binding for the var-bound forEach twin of
+    F601. A `const` binding is engine-legal here (forEach never
+    reassigns the receiver) -- only the ACCUMULATOR must be
+    var/let (F600/F601 discipline, enforced by the shared
+    _js_parse_f6xx_accum_decl). Returns (map_name, mmap,
+    next_index) just past the `;`. Never evals.
+    """
+    m = _js_match_kw(stmts, j, "var")
+    if m is None:
+        m = _js_match_kw(stmts, j, "let")
+    if m is None:
+        m = _js_match_kw(stmts, j, "const")
+    if m is None:
+        raise _JSExprFail("F657 map decl not var/let/const")
+    j = _js_skip_ws(stmts, m)
+    mname, j = _js_parse_ident(stmts, j)
+    if mname == "arguments":
+        raise _JSExprFail("F657 map named arguments")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "=")
+    j = _js_skip_ws(stmts, j)
+    _mval = _js_parse_f563_map(stmts, j, depth, state)
+    if _mval is None:
+        raise _JSExprFail("F657 decl not new Map")
+    mmap, j = _mval
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ";")
+    return mname, mmap, j
+
+
+def _js_parse_f657_varbound_map_foreach_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const M=new Map([PAIRS]);var|let S='';M.forEach(CB);return S;})()` (F657).
+
+    The var-bound twin of F601 (CLOSED): F601's grammar requires
+    an INLINE `new Map(...)` receiver; a name-bound receiver has
+    no modeled path on the open tree. Node-exact desugar
+    (v24.20.0): the Map entries are engine-exact (F563 grammar,
+    insertion order, duplicate keys later-wins) and
+    Map.prototype.forEach calls CB once per entry with (value,
+    key, map), so the per-iteration E join is the credential.
+    The F600/F601/F602 callback grammar is reused verbatim
+    (function or arrow, `S+=E` body, one or two params, no
+    accumulator/param shadowing, no `arguments`). Returns (value,
+    next_index), or None when the head does not match or a guard
+    fails. Bounded by the part/depth budgets (F452 per-iteration
+    charge); the iife-tail wrapper charges the one op
+    (obfuscation-shaped). Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): the
+    receiver ident does not name the bound Map, the accumulator
+    shadows the map name, a reassigned map, `.keys().forEach` on
+    the bound map (the inline F600 twin only), non-literal
+    entries, a callback that is not the exact `S+=E` accumulation
+    shape, params shadowing the accumulator, non-string E
+    values, call args on the IIFE.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        mname, mmap, sj = _js_parse_f657_bound_map_decl(
+            stmts, sj, depth, state)
+        sj = _js_skip_ws(stmts, sj)
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, sj)
+        if acc == mname:
+            raise _JSExprFail("F657 accum shadows map")
+        sj = _js_skip_ws(stmts, sj)
+        recv, sj = _js_parse_ident(stmts, sj)
+        if recv != mname:
+            raise _JSExprFail("F657 receiver not bound map")
+        sj = _js_skip_ws(stmts, sj)
+        if sj >= len(stmts) or stmts[sj] != ".":
+            raise _JSExprFail("F657 no dot")
+        _mn, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj + 1))
+        if _mn != "forEach":
+            raise _JSExprFail("F657 not forEach")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "(")
+        params, E, sj = _js_parse_foreach_accum_callback(
+            stmts, sj, acc, depth, state)
+        if acc in params:
+            raise _JSExprFail("F657 param shadows accum")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        _js_parse_f6xx_return_acc(stmts, _js_skip_ws(stmts, sj), acc)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        parts = []
+        for (_kkind, _kkey), _vval in mmap.entries.items():
+            bindings = [(params[0], _js_quote_literal(_vval))]
+            if len(params) > 1:
+                bindings.append(
+                    (params[1], _js_key_literal_text(_kkind, _kkey)))
+            parts.append(_js_foreach_E_value(
+                E, bindings, depth, state))
+            state["parts"] += 1  # F452: charge per iteration
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state,
+                                        "".join(parts))
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f600_keys_foreach_iife(text, i, depth, state):
     """Parse `(function(){var|let S='';new Map([PAIRS]).keys().forEach(CB);return S;})()` (F600).
 
@@ -34411,6 +34524,17 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f600 is None:
             _f600 = _js_parse_f601_map_foreach_iife(text, i, depth,
                                                    state)
+        # F657: (function(){var|let|const M=new Map([PAIRS]);
+        #   var|let S='';M.forEach(CB);return S;})() -- the
+        #   var-bound receiver twin of F601. Tried after F601:
+        #   F601 requires the accumulator decl as the first
+        #   statement and fails closed on a leading map decl, and
+        #   this route requires a leading map decl and fails
+        #   closed on F601's accumulator-first shape, so no
+        #   previously-decoded input changes behavior.
+        if _f600 is None:
+            _f600 = _js_parse_f657_varbound_map_foreach_iife(
+                text, i, depth, state)
         if _f600 is None:
             _f600 = _js_parse_f602_set_forof_iife(text, i, depth,
                                                  state)

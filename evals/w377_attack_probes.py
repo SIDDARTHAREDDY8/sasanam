@@ -34,9 +34,10 @@ All filed shapes node-verified EXACT (v24.20.0): 12/12 CRED-EXACT,
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F644-F654 (rounds 44 + lane-1 residual), F655-F659 (this round).
+F655, F656, F658, F659, F660, F661 (F657 CLOSED by wave-378 lane 3;
+its pins flipped to closed).
 
-Closed pins (must BLOCK, else BREAK): F510, F601, F612, F619.
+Closed pins (must BLOCK, else BREAK): F510, F601, F612, F619, F657.
 
 Rides-with-documented-scope (validated, NOT filed):
 - Custom Symbol.iterator for-of accumulation -- BREAK, but F653 (OPEN,
@@ -116,11 +117,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F644-F654 closed; F655-F660 open, next F661 (wave-377 merge)."""
+    """Control: footer shows F655-F661 open minus F657 (wave-378 lane 3); next F662."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F662**" in text  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
-          and "Open findings: F655, F656, F657, F658, F659, F660, F661." in text)  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
+    ok = ("Next free finding: **F662**" in text  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662  # Wave-378 lane 3: F657 CLOSED; footer repoint open F655, F656, F658-F661 / next F662
+          and "Open findings: F655, F656, F658, F659, F660, F661." in text)  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662  # Wave-378 lane 3: F657 CLOSED; footer repoint open F655, F656, F658-F661 / next F662
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -239,16 +240,16 @@ def test_r45_f656_s2_open():
 
 @_t
 def test_r45_f657_s1_open():
-    """F657 OPEN (var-bound Map forEach): miss reproduces."""
-    miss = _misses("(function(){var m=new Map([['k','%s'],['j','%s']]);var s='';m.forEach(function(v){s+=v;});return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F657 CLOSED (var-bound Map forEach): blocks (wave-378 lane 3)."""
+    hit = _blocked("(function(){var m=new Map([['k','%s'],['j','%s']]);var s='';m.forEach(function(v){s+=v;});return s;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
 def test_r45_f657_s2_open():
-    """F657 OPEN (let-bound Map forEach arrow): miss reproduces."""
-    miss = _misses("(function(){let m=new Map([['k','%s'],['j','%s']]);let s='';m.forEach((v)=>{s+=v;});return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F657 CLOSED (let-bound Map forEach arrow): blocks (wave-378 lane 3)."""
+    hit = _blocked("(function(){let m=new Map([['k','%s'],['j','%s']]);let s='';m.forEach((v)=>{s+=v;});return s;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F658 open pins (must miss)
