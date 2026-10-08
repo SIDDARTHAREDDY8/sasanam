@@ -126,11 +126,8 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F679-F685, F699 open, next F700 (F672-F678 CLOSED wave-380 lanes 1-5; lane-4 F686->F699)."""
-    path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
-    text = open(path).read()
     ok = ("Next free finding: **F700**" in text
-          and "Open findings: F679, F680, F681, F682, F683, F684, F685, F699." in text)  # Wave-380 merge: F672-F678 (lanes 1-5) CLOSED; footer repoint open F679-F685, F699 / next F700
+          and "Open findings: F680, F681, F682, F683, F684, F685, F699." in text)  # Wave-380 merge: F672-F679 (lanes 1-6) CLOSED; footer repoint open F680-F685, F699 / next F700
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -465,55 +462,55 @@ def test_r47_f678_s2_closed():
     return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
-# ------------------------------------------------- F679 open pins (must miss)
+# ------------------------------------------------- F679 closed pins (must block)
 
 @_t
-def test_r47_f679_s1_open():
-    """F679 OPEN (cfor): miss reproduces."""
-    miss = _misses("(function(){var s='';for(var i=0;i<2;i++){s+=i===0?'%s':'%s';}return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r47_f679_s2_open():
-    """F679 OPEN (while): miss reproduces."""
-    miss = _misses("(function(){var s='';var i=0;while(i<2){s+=i===0?'%s':'%s';i++;}return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f679_s1_closed():
+    """F679 CLOSED (cfor): now blocks."""
+    ok = _blocked("(function(){var s='';for(var i=0;i<2;i++){s+=i===0?'%s':'%s';}return s;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f679=%s" % ok)
 
 
 @_t
-def test_r47_f679_s3_open():
-    """F679 OPEN (forin-guard): miss reproduces."""
-    miss = _misses("(function(){var o={x:'%s'};var s='';for(var k in o){if(k==='x'){s+=o[k];}}return s+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f679_s2_closed():
+    """F679 CLOSED (while): now blocks."""
+    ok = _blocked("(function(){var s='';var i=0;while(i<2){s+=i===0?'%s':'%s';i++;}return s;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f679=%s" % ok)
 
 
 @_t
-def test_r47_f679_s4_open():
-    """F679 OPEN (trycatch): miss reproduces."""
-    miss = _misses("(function(){var s='';try{throw '%s';}catch(e){s+=e;}s+='%s';return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f679_s3_closed():
+    """F679 CLOSED (forin-guard): now blocks."""
+    ok = _blocked("(function(){var o={x:'%s'};var s='';for(var k in o){if(k==='x'){s+=o[k];}}return s+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f679=%s" % ok)
 
 
 @_t
-def test_r47_f679_s5_open():
-    """F679 OPEN (ifelse-chain): miss reproduces."""
-    miss = _misses("(function(){var s='';if(false){s+='junk';}else if(true){s+='%s';}s+='%s';return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f679_s4_closed():
+    """F679 CLOSED (trycatch): now blocks."""
+    ok = _blocked("(function(){var s='';try{throw '%s';}catch(e){s+=e;}s+='%s';return s;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f679=%s" % ok)
 
 
 @_t
-def test_r47_f679_s6_open():
-    """F679 OPEN (forbreak): miss reproduces."""
-    miss = _misses("(function(){var s='';for(;;){s+='%s';break;}s+='%s';return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f679_s5_closed():
+    """F679 CLOSED (ifelse-chain): now blocks."""
+    ok = _blocked("(function(){var s='';if(false){s+='junk';}else if(true){s+='%s';}s+='%s';return s;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f679=%s" % ok)
 
 
 @_t
-def test_r47_f679_s7_open():
-    """F679 OPEN (dowhile-break): miss reproduces."""
-    miss = _misses("(function(){var s='';var i=0;do{s+=i===0?'%s':'%s';i++;if(i>=2){break;}}while(true);return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f679_s6_closed():
+    """F679 CLOSED (forbreak): now blocks."""
+    ok = _blocked("(function(){var s='';for(;;){s+='%s';break;}s+='%s';return s;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f679=%s" % ok)
+
+
+@_t
+def test_r47_f679_s7_closed():
+    """F679 CLOSED (dowhile-break): now blocks."""
+    ok = _blocked("(function(){var s='';var i=0;do{s+=i===0?'%s':'%s';i++;if(i>=2){break;}}while(true);return s;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f679=%s" % ok)
 
 
 # ------------------------------------------------- F680 open pins (must miss)

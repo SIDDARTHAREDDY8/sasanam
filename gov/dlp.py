@@ -21943,6 +21943,1100 @@ def _js_parse_f655_multistatement_iife(text, i, depth, state):
         return None
 
 
+class _JSF679Throw(Exception):
+    """Internal control flow for F679: `throw VAL;`.
+
+    Raised by the F679 statement simulator; caught only by the
+    enclosing F679 `try{...}catch(e){...}`. `value` is the thrown
+    string. Never escapes the F679 parser as a decode -- an
+    uncaught throw is a node-visible throw out of the IIFE, so
+    the top level converts it to _JSExprFail (fail closed, never
+    mis-decode). Never evals.
+    """
+
+    def __init__(self, value):
+        super().__init__("f679 throw")
+        self.value = value
+
+
+_JS_F679_MAX_ITERS = 32  # bound on loop iterations per F679 loop
+_JS_F679_MAX_KEYS = 64  # bound on for-in keys per F679 loop
+_JS_F679_ABSENT = object()  # sentinel for env save/restore
+_JS_F679_CMP_OPS = ("===", "!==", "==", "!=", "<=", ">=", "<", ">")
+
+
+def _js_f679_charge(state):
+    """Charge one F452 part and fail closed past the budget (F679)."""
+    state["parts"] += 1  # the statement is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("F679 too many parts")
+
+
+def _js_f679_lexset(state):
+    """The F679 lexically-scoped name set (state-carried, F679).
+
+    Tracks names currently bound by a `let`/`const` for-init,
+    a `let`/`const` for-in, or a catch parameter, so a `var`
+    re-declaration can never silently clobber a lexically-scoped
+    binding in the flat env (separate engine bindings -- the
+    flat env cannot represent this, so it fails closed). Every
+    add is paired with a finally-discard. Never evals.
+    """
+    s = state.get("_f679_lex")
+    if s is None:
+        s = set()
+        state["_f679_lex"] = s
+    return s
+
+
+def _js_f679_kind(val):
+    """Classify an F679 env value: "s" (str), "i" (int), "o" (dict).
+
+    The F679 environment stores plain Python values. A `var`
+    re-declaration (engine-hoisted assignment) can change a
+    binding's kind -- downstream kind checks then fail closed
+    (never mis-decode). Never evals.
+    """
+    if isinstance(val, dict):
+        return "o"
+    if isinstance(val, str):
+        return "s"
+    return "i"
+
+
+def _js_f679_parse_int(text, j):
+    """Parse an optionally-signed decimal integer at text[j] (F679).
+
+    Returns (int, next_index). Fails closed on empty, on
+    |v| > 2**53 (engine precision loss -- never mis-decode), and
+    on non-decimal forms. Never evals.
+    """
+    n = len(text)
+    k = j
+    if k < n and text[k] == "-":
+        k += 1
+    d0 = k
+    while k < n and text[k] in _ASCII_DIGITS:
+        k += 1
+    if k == d0:
+        raise _JSExprFail("F679 not an integer")
+    v = int(text[j:k])
+    if abs(v) > 9007199254740992:
+        raise _JSExprFail("F679 integer out of range")
+    return v, k
+
+
+def _js_f679_operand(text, j, env):
+    """Parse one F679 condition operand at text[j] (F679).
+
+    Returns (kind, value, next_index) with kind in {"b","i","s"}:
+    `true`/`false` literals, decimal integers, string literals,
+    or a bound int/string name. Unbound or object names fail
+    closed. Never evals.
+    """
+    n = len(text)
+    for kw, bv in (("true", True), ("false", False)):
+        m = _js_match_kw(text, j, kw)
+        if m is not None:
+            return "b", bv, m
+    if j < n and text[j] in "'\"":
+        v, q = _js_parse_string(text, j)
+        return "s", v, q
+    if j < n and (text[j] in _ASCII_DIGITS or text[j] == "-"):
+        v, q = _js_f679_parse_int(text, j)
+        return "i", v, q
+    name, q = _js_parse_ident(text, j)
+    if name not in env:
+        raise _JSExprFail("F679 cond unbound")
+    val, _mut = env[name]
+    kind = _js_f679_kind(val)
+    if kind == "o":
+        raise _JSExprFail("F679 cond object")
+    return kind, val, q
+
+
+def _js_f679_eval_cond(text, j, env):
+    """Evaluate a boolean condition at text[j] (F679).
+
+    Grammar: OPERAND (OP OPERAND)? with OP in
+    ===/!==/==/!=/<=/>=/</>. Both operands must share a kind;
+    strings and booleans allow only ===/!==/==/!= (engine
+    coercion for the ordered comparisons fails closed);
+    integers allow all six. Mixed kinds fail closed (engine
+    coercion -- never mis-decode). A lone operand uses engine
+    truthiness ("" -> False, 0 -> False). Returns (bool,
+    next_index). Never evals.
+    """
+    kind, aval, q = _js_f679_operand(text, j, env)
+    q = _js_skip_ws(text, q)
+    op = None
+    for cand in _JS_F679_CMP_OPS:
+        if text.startswith(cand, q):
+            op = cand
+            q += len(cand)
+            break
+    if op is None:
+        if kind == "b":
+            return aval, q
+        if kind == "s":
+            return len(aval) > 0, q
+        return aval != 0, q
+    q = _js_skip_ws(text, q)
+    bkind, bval, q = _js_f679_operand(text, q, env)
+    if bkind != kind:
+        raise _JSExprFail("F679 cond mixed kinds")
+    if kind == "i":
+        result = {"===": aval == bval, "!==": aval != bval,
+                  "==": aval == bval, "!=": aval != bval,
+                  "<": aval < bval, "<=": aval <= bval,
+                  ">": aval > bval, ">=": aval >= bval}[op]
+    else:
+        if op not in ("===", "!==", "==", "!="):
+            raise _JSExprFail("F679 cond bad op for kind")
+        result = (aval == bval) if op in ("===", "==") else (aval != bval)
+    return result, q
+
+
+def _js_f679_member_read(text, j, env):
+    """Parse `OBJ.k` / `OBJ['k']` / `OBJ[k]` at text[j] (F679).
+
+    OBJ must be an object-kind binding; the key a string literal,
+    a decimal digit string, a bound string name, or a dot ident.
+    Own properties only -- a miss fails closed (the engine would
+    walk the prototype chain, but Object.prototype carries no
+    string-valued own properties, so a string hit can only come
+    from own props -- node-exact for the accepted subset). The
+    value must be a string. Returns (value, next_index). Never
+    evals.
+    """
+    n = len(text)
+    oname, q = _js_parse_ident(text, j)
+    if oname not in env:
+        raise _JSExprFail("F679 member unbound")
+    oval, _m = env[oname]
+    if _js_f679_kind(oval) != "o":
+        raise _JSExprFail("F679 member not an object")
+    q = _js_skip_ws(text, q)
+    if q < n and text[q] == ".":
+        key, q = _js_parse_ident(text, _js_skip_ws(text, q + 1))
+    elif q < n and text[q] == "[":
+        q = _js_skip_ws(text, q + 1)
+        if q < n and text[q] in "'\"":
+            key, q = _js_parse_string(text, q)
+        elif q < n and text[q] in _ASCII_DIGITS:
+            d0 = q
+            while q < n and text[q] in _ASCII_DIGITS:
+                q += 1
+            key = text[d0:q]
+        else:
+            key, q = _js_parse_ident(text, q)
+            if key not in env:
+                raise _JSExprFail("F679 member key unbound")
+            kval, _m2 = env[key]
+            if _js_f679_kind(kval) != "s":
+                raise _JSExprFail("F679 member key not a string")
+            key = kval
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "]")
+    else:
+        raise _JSExprFail("F679 member no accessor")
+    if key not in oval:
+        raise _JSExprFail("F679 member missing")
+    v = oval[key]
+    if not isinstance(v, str):
+        raise _JSExprFail("F679 member not a string")
+    return v, q
+
+
+def _js_f679_str_branch(text, j, env):
+    """Parse one ternary branch: string literal or bound string (F679).
+
+    Returns (value, next_index). Never evals.
+    """
+    q = _js_skip_ws(text, j)
+    if q < len(text) and text[q] in "'\"":
+        return _js_parse_string(text, q)
+    name, q = _js_parse_ident(text, q)
+    if name not in env:
+        raise _JSExprFail("F679 branch unbound")
+    val, _m = env[name]
+    if _js_f679_kind(val) != "s":
+        raise _JSExprFail("F679 branch not a string")
+    return val, q
+
+
+def _js_f679_ternary_rhs(text, j, env):
+    """Parse `COND ? A : B` at text[j] (F679).
+
+    The condition is evaluated by _js_f679_eval_cond; each branch
+    is a string literal or a bound string name. Returns
+    (chosen_value, next_index). Never evals.
+    """
+    cond, q = _js_f679_eval_cond(text, j, env)
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, "?")
+    aval, q = _js_f679_str_branch(text, q, env)
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ":")
+    bval, q = _js_f679_str_branch(text, q, env)
+    return (aval if cond else bval), q
+
+
+def _js_f679_str_operand(text, j, env):
+    """Parse one F679 string additive operand at text[j] (F679).
+
+    A string literal, a bound string name, a member read on an
+    object binding (`o[k]` / `o['k']` / `o.k`), or a ternary with
+    an evaluable condition and string branches. Returns (value,
+    next_index). Never evals.
+    """
+    n = len(text)
+    q = _js_skip_ws(text, j)
+    if q < n and text[q] in "'\"":
+        return _js_parse_string(text, q)
+    if q < n and text[q] in _JS_IDENT_START:
+        rname, rq = _js_parse_ident(text, q)
+        rq2 = _js_skip_ws(text, rq)
+        if rq2 < n and text[rq2] in ".[":
+            return _js_f679_member_read(text, q, env)
+        if rq2 < n and (text[rq2] == "?"
+                        or text.startswith(_JS_F679_CMP_OPS, rq2)):
+            return _js_f679_ternary_rhs(text, q, env)
+        if rname in env and _js_f679_kind(env[rname][0]) == "s":
+            return env[rname][0], rq
+        raise _JSExprFail("F679 bad str operand")
+    raise _JSExprFail("F679 bad str operand")
+
+
+def _js_f679_sim_str_accum(text, j, env, state):
+    """Simulate one F679 string accumulation at text[j] (F679).
+
+    `NAME = ADD;` / `NAME += ADD;` where each ADD operand is a
+    string literal, a bound string name, a member read on an
+    object binding, or a ternary with an evaluable condition.
+    The name must be a mutable string binding (a `const` or
+    unbound name is an engine throw -- fail closed). Node-exact
+    (v24.20.0) for the accepted subset; everything else fails
+    closed. Returns the index just past `;`. Never evals.
+    """
+    n = len(text)
+    name, q = _js_parse_ident(text, j)
+    if name not in env:
+        raise _JSExprFail("F679 accum unbound")
+    val, mutable = env[name]
+    if _js_f679_kind(val) != "s":
+        raise _JSExprFail("F679 accum not a string")
+    if not mutable:
+        raise _JSExprFail("F679 accum const")
+    q = _js_skip_ws(text, q)
+    if q < n and text.startswith("+=", q):
+        q += 2
+        is_plus = True
+    elif (q < n and text[q] == "="
+          and not text.startswith(("==", "=>"), q)):
+        q += 1
+        is_plus = False
+    else:
+        raise _JSExprFail("F679 bad accum op")
+    rhs, q = _js_f679_str_operand(text, q, env)
+    while True:
+        q2 = _js_skip_ws(text, q)
+        if (q2 < n and text[q2] == "+"
+                and not text.startswith(("++", "+="), q2)):
+            op2, q = _js_f679_str_operand(text, q2 + 1, env)
+            if len(rhs) + len(op2) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F679 concat too long")
+            rhs = rhs + op2
+            _js_f679_charge(state)  # the extra operand is obfuscation-shaped
+        else:
+            break
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ";")
+    newval = val + rhs if is_plus else rhs
+    if len(newval) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F679 concat too long")
+    env[name] = (newval, mutable)
+    _js_f679_charge(state)
+    return q
+
+
+def _js_f679_int_update(text, j, env, state):
+    """Apply one F679 integer update at text[j] (no trailing `;`).
+
+    `NAME++` / `NAME--` / `NAME=INT` / `NAME+=INT` /
+    `NAME-=INT`. The name must be a mutable int binding (a
+    `const` binding is an engine throw -- fail closed); results
+    past 2**53 fail closed (engine precision loss). Returns the
+    next index. Never evals.
+    """
+    n = len(text)
+    name, q = _js_parse_ident(text, j)
+    if name not in env:
+        raise _JSExprFail("F679 int unbound")
+    val, mutable = env[name]
+    if _js_f679_kind(val) != "i":
+        raise _JSExprFail("F679 int not an integer")
+    if not mutable:
+        raise _JSExprFail("F679 int const")
+    q = _js_skip_ws(text, q)
+    if q < n and text.startswith("++", q):
+        newval, q = val + 1, q + 2
+    elif q < n and text.startswith("--", q):
+        newval, q = val - 1, q + 2
+    elif q < n and text.startswith("+=", q):
+        lit, q = _js_f679_parse_int(text, _js_skip_ws(text, q + 2))
+        newval = val + lit
+    elif q < n and text.startswith("-=", q):
+        lit, q = _js_f679_parse_int(text, _js_skip_ws(text, q + 2))
+        newval = val - lit
+    elif (q < n and text[q] == "="
+          and not text.startswith(("==", "=>"), q)):
+        lit, q = _js_f679_parse_int(text, _js_skip_ws(text, q + 1))
+        newval = lit
+    else:
+        raise _JSExprFail("F679 bad int update")
+    if abs(newval) > 9007199254740992:
+        raise _JSExprFail("F679 integer out of range")
+    env[name] = (newval, mutable)
+    return q
+
+
+def _js_f679_sim_int_stmt(text, j, env, state):
+    """Simulate one F679 integer statement at text[j]: the update
+    forms plus the trailing `;`. Returns the next index. Never
+    evals."""
+    q = _js_f679_int_update(text, j, env, state)
+    return _js_expect(text, q, ";")
+
+
+def _js_f679_decl(text, j, env, state, depth, nested=False):
+    """Parse one F679 declaration at text[j] (F679).
+
+    `var|let|const NAME='LIT';` (the F655 string form),
+    `var|let|const NAME=INT;` (integer), or
+    `var|let|const NAME={k:'LIT',...};` (object literal via the
+    F535 grammar -- every key a plain string, every value a
+    string). Name rules mirror F655 for the top level (fresh,
+    non-reserved, not `arguments`); multi-declarator
+    `var a=.., b=..` fails closed. With nested=True (loop
+    inits/bodies), a `var` re-declaration of an existing
+    non-lexical binding is a plain assignment (engine-hoisted,
+    node-exact -- this is what makes nested loops work); a
+    `var` re-declaration of a `const` binding or of a
+    lexically-scoped name fails closed (engine SyntaxError /
+    separate bindings). Raises _JSExprFail when text[j] is not a
+    declaration after all (the sloppy-mode soft-reserved
+    fallthrough, F655 discipline -- e.g. `let+='x';` with `let`
+    bound). Returns the index just past `;`. Never evals.
+    """
+    n = len(text)
+    kw, m = _js_match_decl_kw(text, j)
+    if kw is None:
+        raise _JSExprFail("F679 not a declaration")
+    q = _js_skip_ws(text, m)
+    name, q = _js_parse_ident(text, q)
+    if name == "arguments" or name in _F611_RESERVED:
+        raise _JSExprFail("F679 bad decl name")
+    lex = _js_f679_lexset(state)
+    reinit = False
+    if name in env:
+        if not (nested and kw == "var"):
+            raise _JSExprFail("F679 bad decl name")
+        if name in lex:
+            # A `var` re-declaration cannot clobber a
+            # lexically-scoped binding (separate engine
+            # bindings); the flat env cannot represent this --
+            # fail closed, never mis-decode.
+            raise _JSExprFail("F679 var shadows lexical")
+        reinit = True
+    q = _js_skip_ws(text, q)
+    if q >= n or text[q] != "=" or text.startswith(("==", "=>"), q):
+        raise _JSExprFail("F679 decl not initialized")
+    q = _js_skip_ws(text, q + 1)
+    if q >= n:
+        raise _JSExprFail("F679 decl no initializer")
+    if text[q] in "'\"":
+        val, q = _js_parse_string(text, q)
+    elif text[q] == "{":
+        props, q = _js_parse_f535_object(text, q, depth, state)
+        for pk, pv in props.items():
+            if not isinstance(pk, str) or not isinstance(pv, str):
+                raise _JSExprFail("F679 decl object not string-valued")
+        val = props
+    elif text[q] in _ASCII_DIGITS or text[q] == "-":
+        val, q = _js_f679_parse_int(text, q)
+    else:
+        raise _JSExprFail("F679 decl bad initializer")
+    q = _js_skip_ws(text, q)
+    if q < n and text[q] == ",":
+        raise _JSExprFail("F679 multi-declarator")
+    q = _js_expect(text, q, ";")
+    if reinit:
+        _old, omut = env[name]
+        if not omut:
+            # `var` re-declaring a `const` is an engine
+            # SyntaxError -- fail closed.
+            raise _JSExprFail("F679 redecl const")
+        env[name] = (val, omut)
+    else:
+        env[name] = (val, kw != "const")
+    _js_f679_charge(state)
+    return q
+
+
+def _js_f679_sim_throw(text, j, env):
+    """Parse `throw 'LIT';` / `throw BOUND;` at text[j] (F679) and
+    raise _JSF679Throw with the thrown string. Never returns.
+    Never evals."""
+    n = len(text)
+    q = _js_skip_ws(text, _js_match_kw(text, j, "throw"))
+    if q < n and text[q] in "'\"":
+        tval, q = _js_parse_string(text, q)
+    else:
+        tname, q = _js_parse_ident(text, q)
+        if tname not in env:
+            raise _JSExprFail("F679 throw unbound")
+        tval, _m = env[tname]
+        if _js_f679_kind(tval) != "s":
+            raise _JSExprFail("F679 throw not a string")
+    q = _js_expect(text, q, ";")
+    raise _JSF679Throw(tval)
+
+
+def _js_f679_sim_if(text, j, env, state, depth):
+    """Simulate `if(C){S}(else if(C){S})*(else{S})?` at text[j] (F679).
+
+    Node-exact (v24.20.0): the first true condition's block runs;
+    untaken blocks are skipped without executing (no env
+    mutation, no part charges). Returns the index just past the
+    statement. Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F679 too deep")
+    j = _js_skip_ws(text, _js_match_kw(text, j, "if"))
+    taken = False
+    while True:
+        j = _js_expect(text, j, "(")
+        cond, j = _js_f679_eval_cond(text, _js_skip_ws(text, j), env)
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        bs, be, j = _js_span_braced(text, j - 1)
+        if cond and not taken:
+            _js_f679_sim_inner(text, _js_skip_ws(text, bs), be, env,
+                               state, depth + 1)
+            taken = True
+        j = _js_skip_ws(text, j)
+        ek = _js_match_kw(text, j, "else")
+        if ek is None:
+            return j
+        j = _js_skip_ws(text, ek)
+        ik = _js_match_kw(text, j, "if")
+        if ik is not None:
+            j = ik
+            continue
+        j = _js_expect(text, j, "{")
+        bs, be, j = _js_span_braced(text, j - 1)
+        if not taken:
+            _js_f679_sim_inner(text, _js_skip_ws(text, bs), be, env,
+                               state, depth + 1)
+            taken = True
+        return j
+
+
+def _js_f679_sim_forin_rest(text, j, kw, name, env, state, depth):
+    """Simulate the tail of `for([var|let|const] NAME in OBJ){S}`
+    at text[j] (just past NAME) (F679).
+
+    OBJ is a `{...}` literal or a bound object; keys enumerate
+    in engine order (integer indices ascending, then string keys
+    in insertion order -- node-exact, v24.20.0). The loop
+    variable is rebound per key. `let`/`const` loop variables are
+    block-scoped (restored after); `var`/bare names keep the
+    last key (engine-exact). A `break;` exits early. More than
+    _JS_F679_MAX_KEYS keys fails closed. Returns the index just
+    past `}`. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F679 too deep")
+    j = _js_skip_ws(text, j)
+    ik = _js_match_kw(text, j, "in")
+    if ik is None:
+        raise _JSExprFail("F679 for-in without in")
+    j = _js_skip_ws(text, ik)
+    if j < n and text[j] == "{":
+        props, j = _js_parse_f535_object(text, j, depth, state)
+        for pk, pv in props.items():
+            if not isinstance(pk, str) or not isinstance(pv, str):
+                raise _JSExprFail("F679 for-in object not string-valued")
+    elif j < n and text[j] in _JS_IDENT_START:
+        oname, j = _js_parse_ident(text, j)
+        if oname not in env:
+            raise _JSExprFail("F679 for-in unbound")
+        oval, _m = env[oname]
+        if _js_f679_kind(oval) != "o":
+            raise _JSExprFail("F679 for-in not an object")
+        props = oval
+    else:
+        raise _JSExprFail("F679 for-in bad source")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    bs, be, j = _js_span_braced(text, j - 1)
+    idx_keys = []
+    str_keys = []
+    for k in props:
+        if _js_f679_is_array_index(k):
+            idx_keys.append(k)
+        else:
+            str_keys.append(k)
+    idx_keys.sort(key=int)
+    keys = idx_keys + str_keys
+    if len(keys) > _JS_F679_MAX_KEYS:
+        raise _JSExprFail("F679 for-in too many keys")
+    if name == "arguments" or name in _F611_RESERVED:
+        raise _JSExprFail("F679 for-in bad name")
+    lex = _js_f679_lexset(state)
+    if kw is None:
+        if name not in env:
+            raise _JSExprFail("F679 for-in unbound var")
+        nval, nmut = env[name]
+        if _js_f679_kind(nval) != "s" or not nmut:
+            raise _JSExprFail("F679 for-in bad var")
+        if name in lex:
+            # A bare assignment cannot clobber a lexically-scoped
+            # binding (separate engine bindings) -- fail closed.
+            raise _JSExprFail("F679 for-in clobbers lexical")
+        scoped = False
+    elif kw == "var":
+        if name in lex:
+            raise _JSExprFail("F679 for-in var shadows lexical")
+        if name in env:
+            _ov, omut = env[name]
+            if not omut:
+                # `for(var k in ...)` re-declaring a `const` is an
+                # engine SyntaxError -- fail closed.
+                raise _JSExprFail("F679 for-in redecl const")
+        scoped = False
+    else:
+        scoped = True
+    saved = env.get(name, _JS_F679_ABSENT)
+    had_lex = name in lex
+    if scoped:
+        lex.add(name)
+    try:
+        for key in keys:
+            env[name] = (key, True)
+            _js_f679_charge(state)
+            try:
+                _js_f679_sim_inner(text, _js_skip_ws(text, bs), be,
+                                   env, state, depth + 1)
+            except _JSF655Break as brk:
+                if brk.label is not None:
+                    raise
+                break
+    finally:
+        if scoped:
+            if saved is _JS_F679_ABSENT:
+                env.pop(name, None)
+            else:
+                env[name] = saved
+            if not had_lex:
+                lex.discard(name)
+    return j
+
+
+def _js_f679_is_array_index(k):
+    """True when *k* is a JS array index string (F679).
+
+    Canonical decimal, no leading zeros, < 2**32 - 1 --
+    node-exact for the for-in integer-key ordering. Never evals.
+    """
+    if not k or any(c not in _ASCII_DIGITS for c in k):
+        return False
+    if len(k) > 1 and k[0] == "0":
+        return False
+    return int(k) < 4294967295
+
+
+def _js_f679_sim_for(text, j, env, state, depth):
+    """Simulate `for(INIT;TEST;UPDATE){S}` at text[j] (F679).
+
+    INIT is empty, an integer update (`i=0;`), or a declaration
+    (`var|let i=0;` -- `let`/`const` are loop-scoped, restored
+    after). TEST is empty (infinite -- needs `break;`) or an
+    evaluable condition, re-evaluated per iteration. UPDATE is
+    empty or an integer update. Node-exact (v24.20.0) for the
+    accepted subset; the loop is bounded by
+    _JS_F679_MAX_ITERS iterations (a non-terminating shape fails
+    closed -- never mis-decode). A bare `break;` exits; a throw
+    propagates. Returns the index just past `}`. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F679 too deep")
+    j = _js_skip_ws(text, _js_match_kw(text, j, "for"))
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    scoped_name = None
+    saved = _JS_F679_ABSENT
+    lex = _js_f679_lexset(state)
+    had_lex = False
+    if j < n and text[j] == ";":
+        j += 1
+    else:
+        kw, m = _js_match_decl_kw(text, j)
+        q = _js_skip_ws(text, m) if kw is not None else j
+        if q < n and text[q] in _JS_IDENT_START:
+            nm, qq = _js_parse_ident(text, q)
+            if _js_match_kw(text, _js_skip_ws(text, qq), "in") is not None:
+                return _js_f679_sim_forin_rest(text, qq, kw, nm, env,
+                                              state, depth)
+        if kw is not None:
+            if kw != "var":
+                # `let`/`const` init is loop-scoped: pre-parse the
+                # name for restore-after (the decl itself
+                # validates; shadowing an outer name fails
+                # closed -- the flat env cannot represent the
+                # two engine bindings).
+                qn = _js_skip_ws(text, m)
+                scoped_name, _qq = _js_parse_ident(text, qn)
+                if scoped_name in env:
+                    raise _JSExprFail("F679 for shadows outer")
+                saved = env.get(scoped_name, _JS_F679_ABSENT)
+                had_lex = scoped_name in lex
+            j = _js_f679_decl(text, j, env, state, depth, nested=True)
+        else:
+            j = _js_f679_int_update(text, j, env, state)
+            j = _js_expect(text, j, ";")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ";":
+        test_start = None
+        j += 1
+    else:
+        test_start = j
+        _tv, j = _js_f679_eval_cond(text, j, env)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ";")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ")":
+        update_start = None
+        j += 1
+    else:
+        update_start = j
+        saved_env = dict(env)
+        try:
+            j = _js_f679_int_update(text, j, env, state)
+        finally:
+            env.clear()
+            env.update(saved_env)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    bs, be, j = _js_span_braced(text, j - 1)
+    if scoped_name is not None:
+        lex.add(scoped_name)
+    try:
+        iters = 0
+        while True:
+            if test_start is not None:
+                tv, _ = _js_f679_eval_cond(text, test_start, env)
+                if not tv:
+                    break
+            if iters >= _JS_F679_MAX_ITERS:
+                raise _JSExprFail("F679 loop iteration cap")
+            try:
+                _js_f679_sim_inner(text, _js_skip_ws(text, bs), be,
+                                   env, state, depth + 1)
+            except _JSF655Break as brk:
+                if brk.label is not None:
+                    raise
+                break
+            if update_start is not None:
+                _js_f679_int_update(text, update_start, env, state)
+            _js_f679_charge(state)
+            iters += 1
+    finally:
+        if scoped_name is not None:
+            if saved is _JS_F679_ABSENT:
+                env.pop(scoped_name, None)
+            else:
+                env[scoped_name] = saved
+            if not had_lex:
+                lex.discard(scoped_name)
+    return j
+
+
+def _js_f679_sim_while(text, j, env, state, depth):
+    """Simulate `while(COND){S}` at text[j] (F679).
+
+    Node-exact (v24.20.0) for the accepted subset; bounded by
+    _JS_F679_MAX_ITERS iterations (a non-terminating shape fails
+    closed). A bare `break;` exits; a throw propagates. Returns
+    the index just past `}`. Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F679 too deep")
+    j = _js_skip_ws(text, _js_match_kw(text, j, "while"))
+    j = _js_expect(text, j, "(")
+    test_start = _js_skip_ws(text, j)
+    _tv, j = _js_f679_eval_cond(text, test_start, env)
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    bs, be, j = _js_span_braced(text, j - 1)
+    iters = 0
+    while True:
+        tv, _ = _js_f679_eval_cond(text, test_start, env)
+        if not tv:
+            break
+        if iters >= _JS_F679_MAX_ITERS:
+            raise _JSExprFail("F679 loop iteration cap")
+        try:
+            _js_f679_sim_inner(text, _js_skip_ws(text, bs), be, env,
+                               state, depth + 1)
+        except _JSF655Break as brk:
+            if brk.label is not None:
+                raise
+            break
+        _js_f679_charge(state)
+        iters += 1
+    return j
+
+
+def _js_f679_sim_dowhile(text, j, env, state, depth):
+    """Simulate `do{S}while(COND);` at text[j] (F679).
+
+    Node-exact (v24.20.0) for the accepted subset: the body runs
+    at least once, then repeats while the (re-evaluated)
+    condition holds. Bounded by _JS_F679_MAX_ITERS iterations --
+    a non-terminating shape fails closed. A bare `break;` exits;
+    a throw propagates. (F655 owns the `while(false)` shape only
+    for its own statement subset and is tried first; this route
+    accepts any evaluable condition.) Returns the index just
+    past `;`. Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F679 too deep")
+    j = _js_skip_ws(text, _js_match_kw(text, j, "do"))
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    bs, be, j = _js_span_braced(text, j - 1)
+    j = _js_skip_ws(text, j)
+    wk = _js_match_kw(text, j, "while")
+    if wk is None:
+        raise _JSExprFail("F679 do without while")
+    j = _js_expect(text, _js_skip_ws(text, wk), "(")
+    test_start = _js_skip_ws(text, j)
+    _tv, j = _js_f679_eval_cond(text, test_start, env)
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    iters = 0
+    while True:
+        if iters >= _JS_F679_MAX_ITERS:
+            raise _JSExprFail("F679 loop iteration cap")
+        try:
+            _js_f679_sim_inner(text, _js_skip_ws(text, bs), be, env,
+                               state, depth + 1)
+        except _JSF655Break as brk:
+            if brk.label is not None:
+                raise
+            break
+        tv, _ = _js_f679_eval_cond(text, test_start, env)
+        _js_f679_charge(state)
+        iters += 1
+        if not tv:
+            break
+    return j
+
+
+def _js_f679_sim_trycatch(text, j, env, state, depth):
+    """Simulate `try{STMTS}catch(IDENT){STMTS}` at text[j] (F679).
+
+    Node-exact (v24.20.0) for the modeled subset: the try block
+    runs; the first `throw 'LIT'` (or bound-string throw)
+    transfers to the catch with the parameter bound to the thrown
+    string; statements before the throw execute normally. A
+    `finally` clause fails closed (F655's try-finally production
+    is disjoint -- it requires `finally` and fails closed on
+    `catch`). A break inside either block propagates to the
+    enclosing loop (there is no finally to run). The catch
+    parameter shadows for the catch block only (restored after).
+    Returns the index just past the catch `}`. Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F679 too deep")
+    j = _js_skip_ws(text, _js_match_kw(text, j, "try"))
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    tbs, tbe, j = _js_span_braced(text, j - 1)
+    j = _js_skip_ws(text, j)
+    ck = _js_match_kw(text, j, "catch")
+    if ck is None:
+        raise _JSExprFail("F679 try without catch")
+    j = _js_expect(text, _js_skip_ws(text, ck), "(")
+    cname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if cname == "arguments" or cname in _F611_RESERVED:
+        raise _JSExprFail("F679 bad catch param")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    cbs, cbe, j = _js_span_braced(text, j - 1)
+    j = _js_skip_ws(text, j)
+    if _js_match_kw(text, j, "finally") is not None:
+        raise _JSExprFail("F679 try-catch-finally")
+    lex = _js_f679_lexset(state)
+    had_lex = cname in lex
+    lex.add(cname)
+    saved = env.get(cname, _JS_F679_ABSENT)
+    try:
+        _js_f679_sim_inner(text, _js_skip_ws(text, tbs), tbe, env,
+                           state, depth + 1)
+    except _JSF679Throw as thr:
+        env[cname] = (thr.value, True)
+        _js_f679_charge(state)
+        _js_f679_sim_inner(text, _js_skip_ws(text, cbs), cbe, env,
+                           state, depth + 1)
+    finally:
+        if saved is _JS_F679_ABSENT:
+            env.pop(cname, None)
+        else:
+            env[cname] = saved
+        if not had_lex:
+            lex.discard(cname)
+    return j
+
+
+def _js_f679_sim_inner(text, j, inner_end, env, state, depth):
+    """Simulate F679 body statements from j to inner_end.
+
+    Accepts string accumulations (plain, member-read, and
+    ternary right-hand sides), integer statements, declarations,
+    if/else-if/else, for/while/do-while/for-in loops, try-catch,
+    `break;`, and `throw 'LIT';`. A break raises _JSF655Break
+    for the enclosing loop; a throw raises _JSF679Throw for the
+    enclosing try. `return`, the F655 wrapper keywords
+    (switch/with/labeled/try-finally), and anything else fail
+    closed here. `var` declarations (and `var` re-declarations,
+    which are engine-hoisted assignments) are accepted;
+    `let`/`const` declarations are block-scoped in the engine
+    and this simulator does not model block scoping, so they
+    fail closed here (a sloppy-mode binding *named* `let` still
+    falls through to the accumulation dispatch). Returns the
+    index at inner_end. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F679 too deep")
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= inner_end:
+            return j
+        bk = _js_match_kw(text, j, "break")
+        if bk is not None:
+            q = _js_skip_ws(text, bk)
+            label = None
+            if q < n and text[q] in _JS_IDENT_START:
+                label, q = _js_parse_ident(text, q)
+                q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            raise _JSF655Break(label)
+        tk = _js_match_kw(text, j, "throw")
+        if tk is not None:
+            _js_f679_sim_throw(text, j, env)
+        for wkw, wfn in (("if", _js_f679_sim_if),
+                         ("for", _js_f679_sim_for),
+                         ("while", _js_f679_sim_while),
+                         ("do", _js_f679_sim_dowhile),
+                         ("try", _js_f679_sim_trycatch)):
+            wk = _js_match_kw(text, j, wkw)
+            if wk is not None:
+                j = wfn(text, j, env, state, depth + 1)
+                break
+        else:
+            kw, m = _js_match_decl_kw(text, j)
+            if kw is not None:
+                if kw == "var":
+                    try:
+                        j = _js_f679_decl(text, j, env, state, depth,
+                                          nested=True)
+                    except _JSExprFail:
+                        # Sloppy-mode soft-reserved fallthrough
+                        # (F655 discipline): `let+='x';` with `let`
+                        # bound first matches the `let` keyword,
+                        # then fails the declaration parse -- fall
+                        # through to the accumulation dispatch
+                        # below.
+                        pass
+                    else:
+                        continue
+                # `let`/`const`: block-scoped in the engine --
+                # fail closed here (falls through to the ident
+                # dispatch, which fails on the unbound name, or
+                # handles a sloppy-mode binding named `let`).
+            if j < n and text[j] in _JS_IDENT_START:
+                name, _q = _js_parse_ident(text, j)
+                if name not in env:
+                    raise _JSExprFail("F679 stmt unbound")
+                val, _mut = env[name]
+                kind = _js_f679_kind(val)
+                if kind == "s":
+                    j = _js_f679_sim_str_accum(text, j, env, state)
+                elif kind == "i":
+                    j = _js_f679_sim_int_stmt(text, j, env, state)
+                else:
+                    raise _JSExprFail("F679 stmt on object")
+            else:
+                raise _JSExprFail("F679 bad statement")
+
+
+def _js_f679_top_stmt(text, j, inner_end, env, state, depth):
+    """Simulate ONE top-level F679 statement at text[j].
+
+    Accepts declarations (string/int/object), string and
+    integer statements, if/else-if/else, for/while/do-while/
+    for-in loops, try-catch, and `throw` (which propagates to
+    the top parser and fails closed). A `break` at top level is
+    a node SyntaxError -- fail closed. The F655 wrapper keywords
+    (switch/with({})/labeled-block/try-finally) are not accepted
+    here -- F655 owns them and is tried first. Returns the index
+    just past the statement. Never evals.
+    """
+    n = len(text)
+    if n == 0 or j >= n:
+        raise _JSExprFail("F679 statement overrun")
+    bk = _js_match_kw(text, j, "break")
+    if bk is not None:
+        raise _JSExprFail("F679 break at top level")
+    for wkw, wfn in (("if", _js_f679_sim_if),
+                     ("for", _js_f679_sim_for),
+                     ("while", _js_f679_sim_while),
+                     ("do", _js_f679_sim_dowhile),
+                     ("try", _js_f679_sim_trycatch)):
+        wk = _js_match_kw(text, j, wkw)
+        if wk is not None:
+            return wfn(text, j, env, state, depth)
+    tk = _js_match_kw(text, j, "throw")
+    if tk is not None:
+        _js_f679_sim_throw(text, j, env)
+    kw, m = _js_match_decl_kw(text, j)
+    if kw is not None:
+        try:
+            return _js_f679_decl(text, j, env, state, depth)
+        except _JSExprFail:
+            # Sloppy-mode soft-reserved fallthrough (F655
+            # discipline) -- see _js_f679_sim_inner.
+            pass
+    if j < n and text[j] in _JS_IDENT_START:
+        name, _q = _js_parse_ident(text, j)
+        if name not in env:
+            raise _JSExprFail("F679 stmt unbound")
+        val, _mut = env[name]
+        kind = _js_f679_kind(val)
+        if kind == "s":
+            return _js_f679_sim_str_accum(text, j, env, state)
+        if kind == "i":
+            return _js_f679_sim_int_stmt(text, j, env, state)
+        raise _JSExprFail("F679 stmt on object")
+    raise _JSExprFail("F679 bad statement")
+
+
+def _js_parse_f679_statement_iife(text, i, depth, state):
+    """Parse `(function(){STMT* return ADD;})()` at text[i] (F679).
+
+    Statement-body fragment accumulation beyond F655: F655
+    (CLOSED) models two-decl, decl+accum, switch-fallthrough,
+    do-while(false), with({}), labeled-block, and try-finally
+    bodies, but C-style for loops, while loops, for-in guards
+    over literal objects, try-catch value assembly, if/else-if/
+    else chains, `for(;;)`+break, and do-while+break bodies all
+    node-evaluate (v24.20.0) to the assembled credential while
+    the decoder produced zero variants. Node-exact desugar
+    (v24.20.0): statements simulate in order against a binding
+    environment holding strings, bounded integers (|v| <= 2**53),
+    and string-valued literal objects; loop bodies are bounded
+    by _JS_F679_MAX_ITERS iterations and for-in by
+    _JS_F679_MAX_KEYS keys (a non-terminating or over-budget
+    shape fails closed -- never mis-decode); the return additive
+    resolves bound string idents via the F645 string-only
+    additive grammar.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, `function*`, `async`, parameters, a
+      directive prologue, non-empty call args;
+    - non-literal/non-integer/non-object declaration
+      initializers, duplicate or reserved binding names,
+      multi-declarator `var a=.., b=..`;
+    - accumulation into `const` bindings or unbound names,
+      integer statements on string bindings and vice versa
+      (the engine throws or coerces -- the decoder never
+      decodes a throw, and coercion is outside the subset);
+    - non-evaluable conditions (mixed kinds, ordered
+      comparisons on strings/booleans, unbound names);
+    - `switch`, non-empty `with`, labeled blocks, and
+      try-finally (F655's productions -- F655 is tried first);
+    - `for-of` (F654), `for-await` (F640);
+    - getters/setters/methods/`__proto__`/spread/non-string
+      values in for-in/decl objects, non-literal join-style
+      separators, template literals, regex/division `/`, and
+      comments anywhere in the body (the `_js_span_braced`
+      boundary -- a miss, never a mis-decode).
+    Disjoint from every earlier route: F655's statement dispatch
+    fails closed on for/while/if/try-catch heads (red-first
+    verified: 7 BREAK on the open tree); F654 requires a for-of
+    head; F611 accepts exactly one declaration (it fails closed
+    on the second statement); every binding-family route
+    requires its own binding and fails closed on plain
+    sequential bodies. Tried after F655: none of the earlier
+    routes decodes any shape this accepts, so no
+    previously-decoded input changes behavior.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_f655_head(text, i)
+        if brace is None:
+            raise _JSExprFail("F679 not our head")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        env = {}
+        sj = _js_skip_ws(text, inner_start)
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj >= inner_end:
+                raise _JSExprFail("F679 body without return")
+            rk = _js_match_kw(text, sj, "return")
+            if rk is not None:
+                break
+            sj = _js_f679_top_stmt(text, sj, inner_end, env, state,
+                                  depth)
+        bindings = {nm: val for nm, (val, _mut) in env.items()
+                    if isinstance(val, str)}
+        rval, sj = _js_parse_f645_bound_additive(
+            text, _js_skip_ws(text, rk), depth, state, bindings)
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != ";":
+            raise _JSExprFail("F679 return without semicolon")
+        sj = _js_skip_ws(text, sj + 1)
+        if sj != inner_end:
+            raise _JSExprFail("F679 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return rval, j
+    except _JSExprFail:
+        return None
+    except _JSF655Break:
+        # A break that escapes to the function top level is a node
+        # SyntaxError -- fail closed, never mis-decode.
+        return None
+    except _JSF679Throw:
+        # An uncaught throw propagates out of the IIFE in the
+        # engine -- the decoder never decodes a throwing shape.
+        return None
+
+
 def _js_f662_member_access(text, j):
     """Parse `.NAME` / `['NAME']` member access at text[j] (F662).
 
@@ -43307,6 +44401,23 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                   state)
         if _f655 is not None:
             val, i = _f655
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F679: (function(){STMT* return ADD;})() -- statement-body
+        #   fragment accumulation beyond F655 (C-style for loops,
+        #   while loops, for-in guards over literal objects,
+        #   try-catch value assembly, if/else-if/else chains,
+        #   for(;;)+break, do-while+break). Tried after F655:
+        #   F655's statement dispatch fails closed on for/while/
+        #   if/try-catch heads (red-first verified: 7 BREAK on the
+        #   open tree); F654 owns for-of; F611 accepts exactly one
+        #   declaration and fails closed on the second statement;
+        #   every binding-family route requires its own binding --
+        #   none of the earlier routes decodes any shape this
+        #   accepts, so no previously-decoded input changes
+        #   behavior.
+        _f679 = _js_parse_f679_statement_iife(text, i, depth, state)
+        if _f679 is not None:
+            val, i = _f679
             return _js_parse_postfix(text, i, val, depth, state)
         # F662: (function(){[STMT;]* return ADD;})() with
         #   class-declaration fragment sources (static fields /
