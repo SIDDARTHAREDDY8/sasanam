@@ -34,9 +34,10 @@ All filed shapes node-verified EXACT (v24.20.0): 12/12 CRED-EXACT,
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F644-F654 (rounds 44 + lane-1 residual), F655-F659 (this round).
+F655, F656, F658, F659, F660, F661 (F657 CLOSED by wave-378 lane 3;
+its pins flipped to closed).
 
-Closed pins (must BLOCK, else BREAK): F510, F601, F612, F619.
+Closed pins (must BLOCK, else BREAK): F510, F601, F612, F619, F657.
 
 Rides-with-documented-scope (validated, NOT filed):
 - Custom Symbol.iterator for-of accumulation -- BREAK, but F653 (OPEN,
@@ -116,11 +117,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F655, F656, F659 closed; F657, F658, F660, F661 open, next F662 (wave-378 merge lanes 1+2)."""
+    """Control: footer shows F655, F656, F657, F659 closed; F658, F660, F661 open, next F662 (wave-378 merge lanes 1-3)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F662**" in text  # Wave-378 merge: lanes 1+2 F655, F656, F659 CLOSED
-          and "Open findings: F657, F658, F660, F661." in text)  # Wave-378 merge: lanes 1+2 F655, F656, F659 CLOSED
+    ok = ("Next free finding: **F662**" in text  # Wave-378 merge: lanes 1-3 F655, F656, F657, F659 CLOSED
+          and "Open findings: F658, F660, F661." in text)  # Wave-378 merge: lanes 1-3 F655, F656, F657, F659 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -239,16 +240,16 @@ def test_r45_f656_s2_closed():
 
 @_t
 def test_r45_f657_s1_open():
-    """F657 OPEN (var-bound Map forEach): miss reproduces."""
-    miss = _misses("(function(){var m=new Map([['k','%s'],['j','%s']]);var s='';m.forEach(function(v){s+=v;});return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F657 CLOSED (var-bound Map forEach): blocks (wave-378 lane 3)."""
+    hit = _blocked("(function(){var m=new Map([['k','%s'],['j','%s']]);var s='';m.forEach(function(v){s+=v;});return s;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
 def test_r45_f657_s2_open():
-    """F657 OPEN (let-bound Map forEach arrow): miss reproduces."""
-    miss = _misses("(function(){let m=new Map([['k','%s'],['j','%s']]);let s='';m.forEach((v)=>{s+=v;});return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F657 CLOSED (let-bound Map forEach arrow): blocks (wave-378 lane 3)."""
+    hit = _blocked("(function(){let m=new Map([['k','%s'],['j','%s']]);let s='';m.forEach((v)=>{s+=v;});return s;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F658 open pins (must miss)
