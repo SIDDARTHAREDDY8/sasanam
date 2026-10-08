@@ -76,7 +76,7 @@ import json
 import math
 import re
 import unicodedata
-from urllib.parse import parse_qsl, unquote, unquote_plus, urlparse, urlsplit
+from urllib.parse import parse_qsl, quote, unquote, unquote_plus, urlparse, urlsplit
 
 # ---------------------------------------------------------------- patterns
 
@@ -2220,7 +2220,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|atob(?![_$A-Za-z0-9])|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty|fromEntries|groupBy)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|Promise(?![_$A-Za-z0-9])|Map[ \t\n\r]*\.[ \t\n\r]*groupBy(?![_$A-Za-z0-9])|new[ \t\n\r]+Map(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|new[ \t\n\r]+Proxy(?![_$A-Za-z0-9])|new[ \t\n\r]+URLSearchParams(?![_$A-Za-z0-9])|new[ \t\n\r]+URL(?![_$A-Za-z0-9])|\(String[ \t\n\r]*\.[ \t\n\r]*raw[ \t\n\r]*`|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|atob(?![_$A-Za-z0-9])|decodeURIComponent(?![_$A-Za-z0-9])|encodeURIComponent(?![_$A-Za-z0-9])|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty|fromEntries|groupBy)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|Number(?![_$A-Za-z0-9])|Promise(?![_$A-Za-z0-9])|Map[ \t\n\r]*\.[ \t\n\r]*groupBy(?![_$A-Za-z0-9])|new[ \t\n\r]+Map(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|new[ \t\n\r]+Proxy(?![_$A-Za-z0-9])|new[ \t\n\r]+URLSearchParams(?![_$A-Za-z0-9])|new[ \t\n\r]+URL(?![_$A-Za-z0-9])|new[ \t\n\r]+TextDecoder(?![_$A-Za-z0-9])|\(String[ \t\n\r]*\.[ \t\n\r]*raw[ \t\n\r]*`|\(")
 # F536: the structuredClone anchor carries its own ident-boundary
 # lookahead so `structuredClonex(` never anchors (no wasted F512
 # total-attempt budget); the primary branch re-checks the boundary
@@ -2395,6 +2395,24 @@ def _js_parse_template_interp(text, i, depth, state):
         val, i = _js_parse_string(text, i)
     elif c == "`":
         val, i = _js_parse_template(text, i, depth, state)
+    elif c in _ASCII_DIGITS:
+        # F633: ${123n} -- BigInt literal interpolation. The engine
+        # stringifies the BigInt; _JSBigInt carries the node-exact
+        # decimal repr. Non-decimal forms and non-'n'-suffixed
+        # numbers fail closed here (the additive-literal class stays
+        # literal-only).
+        j = i
+        while j < n and text[j] in _ASCII_DIGITS:
+            j += 1
+        if not (j < n and text[j] == "n" and (
+                j + 1 >= n or text[j + 1] not in _JS_IDENT_CONT)):
+            raise _JSExprFail("non-literal interpolation")
+        if j - i > _JS_EXPR_MAX_INT_DIGITS:
+            raise _JSExprFail("bigint too big")
+        if j - i > 1 and text[i] == "0":
+            raise _JSExprFail("bigint leading zero")
+        val = _JSBigInt(str(int(text[i:j])))
+        i = j + 1
     else:
         raise _JSExprFail("non-literal interpolation")
     i = _js_skip_ws(text, i)
@@ -3301,6 +3319,26 @@ class _JSNumStr(str):
     """
 
 
+class _JSBigInt(str):
+    """Internal: a str parsed from a JS BigInt literal (F633).
+
+    Carries the node-exact decimal repr of the BigInt value: Python
+    ints are arbitrary precision, so int(digits) is exact within the
+    _JS_EXPR_MAX_INT_DIGITS bound. Leading-zero literals (007n) are
+    a SyntaxError in the engine and fail closed at parse, never
+    reaching this class. Behaves exactly like str everywhere (join,
+    len, ord, comparisons) except where a consumer explicitly
+    checks for it: the additive grammar does numeric addition when
+    BOTH operands are _JSBigInt (1n+2n === 3n in the engine,
+    v24.20.0) and string concatenation when exactly one side is a
+    _JSBigInt and the other is a plain string ('a'+1n === 'a1'); a
+    BigInt mixed with a number literal throws in the engine and
+    fails closed here. Non-decimal BigInt literals (0x10n, 0b11n,
+    0o17n) fail closed (documented residual); multiplicative BigInt
+    arithmetic is unmodeled and fails closed (documented residual).
+    """
+
+
 class _JSThunks:
     """Internal: an array literal of zero-arg arrow thunks returning
     string literals (F620).
@@ -3940,7 +3978,23 @@ def _js_parse_additive(text, i, depth, state, _forbid_template=False):
             raise _JSExprFail("too many parts")
         if len(val) + len(rhs) > _MAX_DECODE_BYTES:
             raise _JSExprFail("concat too long")
-        val = val + rhs
+        if isinstance(val, _JSBigInt) or isinstance(rhs, _JSBigInt):
+            # F633: BigInt '+' semantics, node-exact (v24.20.0).
+            # Both sides BigInt: numeric addition (1n+2n === 3n).
+            # Exactly one side BigInt and the other a PLAIN string:
+            # string concatenation ('a'+1n === 'a1'). A BigInt mixed
+            # with a number literal throws in the engine
+            # (1+2n is a TypeError) -- fail closed, never concat.
+            if isinstance(val, _JSBigInt) and isinstance(rhs, _JSBigInt):
+                val = _JSBigInt(str(int(val) + int(rhs)))
+            elif ((isinstance(val, _JSBigInt) and type(rhs) is str)
+                    or (isinstance(rhs, _JSBigInt)
+                        and type(val) is str)):
+                val = str(val) + str(rhs)
+            else:
+                raise _JSExprFail("bigint/number mix throws")
+        else:
+            val = val + rhs
         state["ops"] += 1
 
 
@@ -22152,8 +22206,127 @@ def _js_parse_f622_keys_bracket_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f624_slicebound_iife(text, i, depth, state):
+    """Parse `(function(){DECL s='LIT';return s.slice(A[,B])[+'LIT'...];})()`
+    at text[i] (F624).
 
-
+    The var-bound twin of the direct string-slice production: the
+    var binds a string literal and the return reads a trimming
+    slice off the bound ident, with an optional additive tail of
+    plain string literals (`s.slice(2)+'f2'`). Node-exact desugar
+    (v24.20.0): the slice bounds use the same F624/F466 clamping
+    (`_js_parse_slice_int` + `_js_slice_bound`); the tail
+    concatenates exactly as the engine does.
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, extra statements, reassignment
+      of the var, multi-decl (`var s=..., t=...`), non-empty call
+      args, a non-literal binding RHS;
+    - a slice receiver other than the bare bound ident;
+    - non-literal slice bounds;
+    - a non-plain-string additive tail operand (a _JSBigInt tail
+      operand would need the F633 additive semantics -- out of
+      scope here);
+    - non-BMP binding strings (the F624 direct production's UTF-16
+      scope boundary, applied identically here).
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F624 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        sname, sj = _js_parse_ident(text, sj)
+        if sname == "arguments":
+            raise _JSExprFail("F624 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] not in "'\"":
+            raise _JSExprFail("F624 binding not a string literal")
+        sval, sj = _js_parse_string(text, sj)
+        if any(ord(ch) > 0xFFFF for ch in sval):
+            raise _JSExprFail("F624 non-BMP binding")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F624 no return")
+        sj = _js_skip_ws(text, m)
+        _recv, sj = _js_parse_ident(text, sj)
+        if _recv != sname:
+            raise _JSExprFail("F624 slice receiver not the bound ident")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, sj), "slice")
+        if m is None:
+            raise _JSExprFail("F624 return not a slice")
+        sj = _js_skip_ws(text, m)
+        sj = _js_expect(text, sj, "(")
+        start, sj = _js_parse_slice_int(text, _js_skip_ws(text, sj))
+        sj = _js_skip_ws(text, sj)
+        if sj < n and text[sj] == ",":
+            end, sj = _js_parse_slice_int(text, _js_skip_ws(text, sj + 1))
+            sj = _js_skip_ws(text, sj)
+        else:
+            end = len(sval)
+        sj = _js_expect(text, sj, ")")
+        lo = _js_slice_bound(start, len(sval))
+        hi = _js_slice_bound(end, len(sval))
+        val = sval[lo:hi] if hi > lo else ""
+        # Optional additive tail of plain string literals.
+        while True:
+            q = _js_skip_ws(text, sj)
+            if q >= n or text[q] != "+":
+                break
+            rhs, q = _js_parse_primary(text, _js_skip_ws(text, q + 1),
+                                       depth, state)
+            if type(rhs) is not str:
+                raise _JSExprFail("F624 tail operand not a plain string")
+            if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F624 tail too long")
+            val = val + rhs
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1
+            sj = q
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F624 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
 def _js_parse_f616_varname_mutation_iife(text, i, depth, state):
     """Parse `(function(){DECL p=new URLSearchParams('LIT');[DECL N='LIT';]*[MUT;]*TERM})()` (F616).
 
@@ -22763,6 +22936,189 @@ def _js_parse_f617_url_searchparams_iife(text, i, depth, state):
         return _rval, j
     except _JSExprFail:
         return None
+
+
+def _js_parse_f628_uri_component(text, i, depth, state):
+    """Parse `decodeURIComponent(EXPR)` / `encodeURIComponent(EXPR)` (F628).
+
+    Node-exact codec pair (v24.20.0) for the modeled argument class:
+    the argument is an additive string expression (so fragment
+    compositions like decodeURIComponent('f1'+encodeURIComponent('f2'))
+    reduce inside-out exactly as the engine evaluates them).
+    - encodeURIComponent: percent-encodes with the engine's
+      unreserved set (A-Za-z0-9 plus -_.!~*'()). Python's
+      urllib.parse.quote with safe="-_.!~*'()" is byte-identical on
+      the modeled class, including astral characters (both encode
+      the UTF-8 bytes); lone surrogates throw in the engine and
+      fail closed here via UnicodeEncodeError.
+    - decodeURIComponent: strict percent-decode. Every '%' must be
+      followed by exactly two hex digits (the engine throws
+      URIError otherwise -- pre-validated here), then unquote with
+      errors='strict' so malformed UTF-8 fails closed instead of
+      mis-decoding. Note '+' is NOT decoded to space (unquote, not
+      unquote_plus), exactly as the engine does.
+    Non-string arguments fail closed; the result is charged to
+    _MAX_DECODE_BYTES. Returns (value, next_index), or None when
+    text[i] is not a decode/encodeURIComponent head (the caller
+    falls through). Never evals.
+    """
+    n = len(text)
+    j = _js_match_kw(text, i, "decodeURIComponent")
+    if j is not None:
+        decode = True
+    else:
+        j = _js_match_kw(text, i, "encodeURIComponent")
+        if j is None:
+            return None
+        decode = False
+    j = _js_expect(text, j, "(")
+    arg, j = _js_parse_additive(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("bad uri component call")
+    if not isinstance(arg, str):
+        raise _JSExprFail("uri component of non-string")
+    try:
+        if decode:
+            k = 0
+            while k < len(arg):
+                if arg[k] == "%":
+                    if (k + 2 >= len(arg)
+                            or arg[k + 1] not in _HEX_DIGITS
+                            or arg[k + 2] not in _HEX_DIGITS):
+                        raise _JSExprFail("decodeURIComponent bad escape")
+                    k += 3
+                else:
+                    k += 1
+            result = unquote(arg, encoding="utf-8", errors="strict")
+        else:
+            result = quote(arg, safe="-_.!~*'()")
+    except (UnicodeDecodeError, UnicodeEncodeError, ValueError):
+        raise _JSExprFail("uri component codec failure")
+    if len(result) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("uri component too long")
+    state["ops"] += 1  # the codec call is obfuscation-shaped
+    return result, j + 1
+
+
+def _js_parse_f629_textdecoder(text, i, depth, state):
+    """Parse `new TextDecoder([label]).decode(new Uint8Array([b,...]))` (F629).
+
+    Node-exact (v24.20.0) for the modeled class: the label is
+    optional and must be 'utf-8'/'utf8' (case-insensitive; any
+    other label fails closed -- the engine supports more, but the
+    decoder only models UTF-8). The byte array is a literal list
+    of integers 0..255 (negative/float/non-literal entries fail
+    closed -- the engine's ToUint8 coercion is deliberately not
+    modeled). Decoding is strict UTF-8: malformed sequences fail
+    closed (the engine would emit U+FFFD, which can never match an
+    ASCII credential -- failing closed is the honest, safe
+    choice). The byte count is charged to the part budget.
+    Returns (decoded_str, next_index), or None when text[i] is not
+    a `new TextDecoder` head (the caller falls through, failing
+    closed on `new` as before). Never evals.
+    """
+    n = len(text)
+    j = _js_match_kw(text, i, "new")
+    if j is None:
+        return None
+    j = _js_match_kw(text, _js_skip_ws(text, j), "TextDecoder")
+    if j is None:
+        return None
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        return None  # `new TextDecoder` without call -- not a value here
+    j = _js_skip_ws(text, j + 1)
+    if j < n and text[j] in "'\"":
+        label, j = _js_parse_string(text, j)
+        j = _js_skip_ws(text, j)
+    else:
+        label = "utf-8"
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("bad TextDecoder()")
+    if label.lower() not in ("utf-8", "utf8"):
+        raise _JSExprFail("TextDecoder label not modeled")
+    j = _js_skip_ws(text, j + 1)
+    j = _js_expect(text, j, ".")
+    j = _js_match_kw(text, _js_skip_ws(text, j), "decode")
+    if j is None:
+        raise _JSExprFail("TextDecoder without .decode")
+    j = _js_expect(text, j, "(")
+    k = _js_match_kw(text, _js_skip_ws(text, j), "new")
+    if k is None:
+        raise _JSExprFail("decode arg not new Uint8Array")
+    k = _js_match_kw(text, _js_skip_ws(text, k), "Uint8Array")
+    if k is None:
+        raise _JSExprFail("decode arg not Uint8Array")
+    k = _js_expect(text, k, "(")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "[":
+        raise _JSExprFail("Uint8Array arg not an array literal")
+    k += 1
+    bytevals = []
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == "]":
+        k += 1
+    else:
+        while True:
+            b, k = _js_parse_number(text, _js_skip_ws(text, k))
+            if b > 255:
+                raise _JSExprFail("byte out of range")
+            bytevals.append(b)
+            if len(bytevals) > _JS_EXPR_MAX_CODEPOINTS:
+                raise _JSExprFail("too many bytes")
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ",":
+                k += 1
+                continue
+            if k < n and text[k] == "]":
+                k += 1
+                break
+            raise _JSExprFail("bad byte array")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("bad Uint8Array()")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("bad decode()")
+    try:
+        result = bytes(bytevals).decode("utf-8")
+    except UnicodeDecodeError:
+        raise _JSExprFail("TextDecoder invalid bytes")
+    if len(result) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("TextDecoder too long")
+    state["parts"] += len(bytevals) + 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    state["ops"] += 1  # the decode call is obfuscation-shaped
+    return result, k + 1
+
+
+def _js_parse_f633_number_bigint(text, i, depth, state):
+    """Parse `Number(123n)` at text[i] (F633).
+
+    The ONLY modeled Number() argument class: a BigInt (parsed by
+    the additive grammar, so Number(1n+2n) is node-exact too).
+    Number(123n) === 123 in the engine; the result is a _JSNumStr
+    carrying the decimal repr, exactly like a number literal.
+    Any other argument class fails closed (documented residual --
+    Number() is not generally modeled). Returns (value,
+    next_index), or None when text[i] is not a `Number` head (the
+    caller falls through). Never evals.
+    """
+    n = len(text)
+    j = _js_match_kw(text, i, "Number")
+    if j is None:
+        return None
+    j = _js_expect(text, j, "(")
+    arg, j = _js_parse_additive(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("bad Number()")
+    if not isinstance(arg, _JSBigInt):
+        raise _JSExprFail("Number() only modeled for bigint")
+    state["ops"] += 1  # the call is obfuscation-shaped
+    return _JSNumStr(str(arg)), j + 1
 
 
 def _js_parse_f576_new_url(text, i, depth, state):
@@ -25691,6 +26047,15 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         # shape continues with .replace(/,/g,'')). F479: elements coerce
         # engine-exactly (null/undefined -> "", nested arrays -> their
         # toString). Any args fail closed (the filed shapes use none).
+        if isinstance(value, _JSBigInt):
+            # F633: (123n).toString() === '123' (node v24.20.0) --
+            # the _JSBigInt already carries the decimal repr; no-arg
+            # only, exactly like the array branch.
+            i = _js_skip_ws(text, i)
+            if i >= len(text) or text[i] != ")":
+                raise _JSExprFail("toString args unsupported")
+            state["ops"] += 1
+            return str(value), i + 1
         if not isinstance(value, _JSArr):
             raise _JSExprFail("toString on non-array")
         i = _js_skip_ws(text, i)
@@ -25702,6 +26067,42 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         state["ops"] += 1
         return result, i + 1
     if name == "slice":
+        if isinstance(value, str) and not isinstance(
+                value, (_JSNumStr, _JSBigInt)):
+            # F624: "lit".slice(start[,end]) -- string slice with
+            # literal numeric bounds, node-exact (v24.20.0). Bounds
+            # clamp exactly as the engine does (negative counts back
+            # from the length, out-of-range clamps at the length);
+            # non-literal bounds fail closed. Disjoint from F466's
+            # array branch (plain-str receiver vs _JSArr).
+            # Boundaries (all fail closed): non-BMP strings (the
+            # engine slices UTF-16 code units while the decoder
+            # indexes code points -- documented scope boundary);
+            # _JSNumStr/_JSBigInt receivers (the engine throws --
+            # (123).slice is not a function).
+            if any(ord(ch) > 0xFFFF for ch in value):
+                raise _JSExprFail("slice on non-BMP string")
+            i = _js_skip_ws(text, i)
+            slen = len(value)
+            if i < len(text) and text[i] == ")":
+                lo, hi, i = 0, slen, i + 1
+            else:
+                start, i = _js_parse_slice_int(text, i)
+                i = _js_skip_ws(text, i)
+                if i < len(text) and text[i] == ",":
+                    end, i = _js_parse_slice_int(text,
+                                                 _js_skip_ws(text, i + 1))
+                    i = _js_skip_ws(text, i)
+                else:
+                    end = slen
+                if i >= len(text) or text[i] != ")":
+                    raise _JSExprFail("bad slice")
+                i += 1
+                lo = _js_slice_bound(start, slen)
+                hi = _js_slice_bound(end, slen)
+            result = value[lo:hi] if hi > lo else ""
+            state["ops"] += 1
+            return result, i
         # F466: ['a','b'].slice(0,2) -- bounded array slice with
         # literal numeric bounds; negative indices and out-of-range
         # bounds clamp exactly as the engine does (node-verified).
@@ -27603,6 +28004,20 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         val, i = _js_parse_string_ctor(text, i, depth, state)
         state["ops"] += 1  # the call itself is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
+    # F628: decodeURIComponent(EXPR) / encodeURIComponent(EXPR) --
+    # fragment codec pair. None falls through (decodeURIComponentx
+    # fails closed via the ident-boundary check inside).
+    _f628 = _js_parse_f628_uri_component(text, i, depth, state)
+    if _f628 is not None:
+        val, i = _f628
+        return _js_parse_postfix(text, i, val, depth, state)
+    # F633: Number(123n) -- the only modeled Number() argument
+    # class. None falls through (Numberx fails closed via the
+    # ident-boundary check inside).
+    _f633n = _js_parse_f633_number_bigint(text, i, depth, state)
+    if _f633n is not None:
+        val, i = _f633n
+        return _js_parse_postfix(text, i, val, depth, state)
     if c == "(":
         # F488: (CALLEE)(args) -- direct constructor invocation via a
         # non-identifier callee (([].constructor)(...),
@@ -27896,6 +28311,16 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                  state)
         if _f622 is not None:
             val, i = _f622
+        # F624: (function(){DECL s='LIT';
+        #   return s.slice(A[,B])[+'LIT'...];})() -- trimming string
+        #   slice through a var-bound literal. Tried after F617:
+        #   disjoint bindings (a plain string literal, not
+        #   URLSearchParams/URL) and terminals (a .slice member on
+        #   the bound ident), so no previously-decoded input changes
+        #   behavior.
+        _f624 = _js_parse_f624_slicebound_iife(text, i, depth, state)
+        if _f624 is not None:
+            val, i = _f624
             return _js_parse_postfix(text, i, val, depth, state)
         # F586: (new Map(...)) / (new WeakRef(...)) --
         # parenthesized new-expression receivers, engine-identical
@@ -28277,6 +28702,13 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         val, i = _f576
         state["ops"] += 1  # the URL construction is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
+    # F629: new TextDecoder([label]).decode(new Uint8Array([b,...]))
+    # -- byte-assembly codec. None falls through (fails closed on
+    # `new` as before).
+    _f629 = _js_parse_f629_textdecoder(text, i, depth, state)
+    if _f629 is not None:
+        val, i = _f629
+        return _js_parse_postfix(text, i, val, depth, state)
     # F587: new Proxy(TARGET, HANDLER).member -- member-read
     # receivers over bare (unparenthesized) new-expression Proxy
     # constructions: the direct-passthrough get-trap (F535 grammar)
@@ -28449,10 +28881,30 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if text.startswith(("0x", "0X"), i):
             # Hex keeps the codepoint/count bound -- no coercion path.
             num, i = _js_parse_number(text, i)
+            if i < n and text[i] == "n":
+                # F633: 0x10n is a BigInt literal, not a hex number
+                # followed by an identifier -- the engine tokenizes
+                # it as one numeric token. Non-decimal BigInts are a
+                # documented residual: fail closed, never mis-decode.
+                raise _JSExprFail("non-decimal bigint not modeled")
             return _JSNumStr(str(num)), i
         j = i
         while j < n and text[j] in _ASCII_DIGITS:
             j += 1
+        if j < n and text[j] == "n" and (
+                j + 1 >= n or text[j + 1] not in _JS_IDENT_CONT):
+            # F633: BigInt literal -- decimal digits + 'n'. The
+            # engine parses arbitrary precision; int() normalizes
+            # the value. Leading zeros are a SyntaxError in the
+            # engine (007n throws -- legacy-octal ban), so they fail
+            # closed here rather than normalizing. The
+            # _JS_EXPR_MAX_INT_DIGITS guard below still bounds the
+            # digit count (int() conversion-limit safety).
+            if j - i > _JS_EXPR_MAX_INT_DIGITS:
+                raise _JSExprFail("bigint too big")
+            if j - i > 1 and text[i] == "0":
+                raise _JSExprFail("bigint leading zero")
+            return _JSBigInt(str(int(text[i:j]))), j + 1
         if j - i > _JS_EXPR_MAX_INT_DIGITS:  # int() digit-limit safety:
             # fail closed, not loud
             raise _JSExprFail("number too big")
