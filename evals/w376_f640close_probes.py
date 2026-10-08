@@ -342,9 +342,9 @@ def test_p3_sync_forof_stays_open():
 # ------------------------------------------------ open neighbors (must still miss)
 
 def test_p4_open_neighbors_still_miss():
-    """F644-F654 red-first shapes still BREAK (nothing absorbed)."""
+    """F644-F654 red-first shapes still BREAK (nothing absorbed; F646, F651 closed wave-377 lane 3)."""
     shapes = []
-    for fnum in (644, 645, 646, 647, 648, 649, 650, 651, 652, 653):
+    for fnum in (644, 645, 647, 648, 649, 650, 652, 653):  # Wave-377 lane 3: F646, F651 CLOSED (removed from open list)
         mod = importlib.import_module("w376_f%d_redfirst" % fnum)
         for name, payload, recovers in mod.SHAPES:
             if recovers:

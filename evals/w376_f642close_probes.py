@@ -319,10 +319,10 @@ def test_p4_f535_getter_stays_held():
 
 
 def test_p4_open_neighbors_still_miss():
-    """Open findings F644-F654 still miss (nothing absorbed)."""
+    """Open findings F644-F654 still miss (nothing absorbed; F646, F651 closed wave-377 lane 3)."""
     import importlib
     shapes = []
-    for fnum in (644, 645, 646, 647, 648, 649, 650, 651, 652, 653):
+    for fnum in (644, 645, 647, 648, 649, 650, 652, 653):  # Wave-377 lane 3: F646, F651 CLOSED (removed from open list)
         mod = importlib.import_module("w376_f%d_redfirst" % fnum)
         for name, payload, recovers in mod.SHAPES:
             if recovers:
