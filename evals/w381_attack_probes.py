@@ -167,16 +167,16 @@ def test_p1_f680_closed():
 
 @_t
 def test_r48_f686_open():
-    """F686 OPEN (ownKeys trap): miss reproduces."""
-    miss = _misses("(function(){var p=new Proxy({},{ownKeys:function(){return ['%s','%s'];},getOwnPropertyDescriptor:function(){return {enumerable:true,configurable:true};}});return Object.keys(p).join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F686 now CLOSED (wave-381, ownKeys trap): blocks."""
+    blk = _blocked("(function(){var p=new Proxy({},{ownKeys:function(){return ['%s','%s'];},getOwnPropertyDescriptor:function(){return {enumerable:true,configurable:true};}});return Object.keys(p).join('');})()" % (_A, _B))
+    return ("HELD" if blk else "BREAK", "blocked=%s" % blk)
 
 
 @_t
 def test_r48_f698_open():
     """F698 OPEN (defineProperty .get() residual): miss reproduces."""
-    miss = _misses("(function(){var o={};Object.defineProperty(o,'x',{get:function(){return '%s';}});return Object.getOwnPropertyDescriptor(o,'x').get()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    blk = _blocked("(function(){var o={};Object.defineProperty(o,'x',{get:function(){return '%s';}});return Object.getOwnPropertyDescriptor(o,'x').get()+'%s';})()" % (_A, _B))
+    return ("HELD" if blk else "BREAK", "blocked=%s" % blk)
 
 
 # ------------------------------------------------- round-49 open pins (this round)

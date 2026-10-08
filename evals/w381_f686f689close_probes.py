@@ -288,7 +288,7 @@ def test_p3_f689_bounds():
 
 @_t
 def test_p4_open_neighbors_still_miss():
-    """Open findings F687/F688/F690-F699 still miss (nothing absorbed)."""
+    """Round-48 findings F687/F688/F690-F699 now CLOSED (wave-381 lanes 2-7); they block (nothing absorbed)."""
     shapes = [
         # F687 WeakSet membership
         ("(function(){var w=new WeakSet();var k={};w.add(k);return (w.has(k)?'%s':'jx')+'%s';})()" % (_A, _B)),
@@ -304,12 +304,12 @@ def test_p4_open_neighbors_still_miss():
         ("(function(){return (new String('%s'))+'%s';})()" % (_A, _B)),
         # F698 defineProperty accessor (filed pin)
         ("(function(){var o={};Object.defineProperty(o,'x',{get:function(){return '%s';}});return Object.getOwnPropertyDescriptor(o,'x').get()+'%s';})()" % (_A, _B)),
-        # F699 >2^53 with-scope (filed red-first)
-        ("(function(){var o={x:9007199254740993};with(o){return x+'%s';}})()" % _B),
     ]
-    got = [_misses(s) for s in shapes]
-    ok = all(got)
-    return ("HELD" if ok else "BREAK", "open-neighbors=%s" % got)
+    got = [_blocked(s) for s in shapes]
+    # F699 >2^53 with-scope: fail-closed (no decode), not a coded block
+    got_f699 = _misses("(function(){var o={x:9007199254740993};with(o){return x+'%s';}})()" % _B)
+    ok = all(got) and got_f699
+    return ("HELD" if ok else "BREAK", "closed-neighbors=%s f699-miss=%s" % (got, got_f699))
 
 
 @_t

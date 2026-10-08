@@ -271,84 +271,84 @@ def test_p3_f697_undefined_valueOf_misses():
 
 @_t
 def test_p4_f686_open():
-    """F686 OPEN (proxy ownKeys): miss reproduces."""
-    miss = _misses("(function(){var p=new Proxy({},{ownKeys:function(){return ['%s','%s'];},getOwnPropertyDescriptor:function(){return {enumerable:true,configurable:true};}});return Object.keys(p).join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F686 now CLOSED (wave-381, proxy ownKeys): blocks."""
+    blk = _blocked("(function(){var p=new Proxy({},{ownKeys:function(){return ['%s','%s'];},getOwnPropertyDescriptor:function(){return {enumerable:true,configurable:true};}});return Object.keys(p).join('');})()" % (_A, _B))
+    return ("HELD" if blk else "BREAK", "blocked=%s" % blk)
 
 
 @_t
 def test_p4_f687_open():
-    """F687 OPEN (WeakSet marker): miss reproduces."""
-    miss = _misses("(function(){var w=new WeakSet();var k={};w.add(k);return (w.has(k)?'%s':'junk')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F687 now CLOSED (wave-381, WeakSet marker): blocks."""
+    blk = _blocked("(function(){var w=new WeakSet();var k={};w.add(k);return (w.has(k)?'%s':'junk')+'%s';})()" % (_A, _B))
+    return ("HELD" if blk else "BREAK", "blocked=%s" % blk)
 
 
 @_t
 def test_p4_f688_open():
-    """F688 OPEN (replaceAll fn): miss reproduces."""
-    miss = _misses("(function(){return 'ab'.replaceAll(/a|b/g,function(m){return m==='a'?'%s':'%s';});})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F688 now CLOSED (wave-381, replaceAll fn): blocks."""
+    blk = _blocked("(function(){return 'ab'.replaceAll(/a|b/g,function(m){return m==='a'?'%s':'%s';});})()" % (_A, _B))
+    return ("HELD" if blk else "BREAK", "blocked=%s" % blk)
 
 
 @_t
 def test_p4_f689_open():
-    """F689 OPEN (Symbol.iterator trap): miss reproduces."""
-    miss = _misses("(function(){var p=new Proxy([],{get:function(t,k){if(k===Symbol.iterator){return function*(){yield '%s';yield '%s';};}return t[k];}});return [...p].join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F689 now CLOSED (wave-381, Symbol.iterator trap): blocks."""
+    blk = _blocked("(function(){var p=new Proxy([],{get:function(t,k){if(k===Symbol.iterator){return function*(){yield '%s';yield '%s';};}return t[k];}});return [...p].join('');})()" % (_A, _B))
+    return ("HELD" if blk else "BREAK", "blocked=%s" % blk)
 
 
 @_t
 def test_p4_f690_open():
-    """F690 OPEN (function ctor): miss reproduces."""
-    miss = _misses("(function(){function C(){this.x='%s';}var c=new C();return c.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F690 now CLOSED (wave-381, function ctor): blocks."""
+    blk = _blocked("(function(){function C(){this.x='%s';}var c=new C();return c.x+'%s';})()" % (_A, _B))
+    return ("HELD" if blk else "BREAK", "blocked=%s" % blk)
 
 
 @_t
 def test_p4_f691_open():
-    """F691 OPEN (gopd .value): miss reproduces."""
-    miss = _misses("(function(){var o={};Object.defineProperty(o,'x',{value:'%s',enumerable:true});return Object.getOwnPropertyDescriptor(o,'x').value+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F691 now CLOSED (wave-381, gopd .value): blocks."""
+    blk = _blocked("(function(){var o={};Object.defineProperty(o,'x',{value:'%s',enumerable:true});return Object.getOwnPropertyDescriptor(o,'x').value+'%s';})()" % (_A, _B))
+    return ("HELD" if blk else "BREAK", "blocked=%s" % blk)
 
 
 @_t
 def test_p4_f692_open():
-    """F692 OPEN (super static): miss reproduces."""
-    miss = _misses("(function(){class B{static x='%s';}class D extends B{static y(){return super.x;}}return D.y()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F692 now CLOSED (wave-381, super static): blocks."""
+    blk = _blocked("(function(){class B{static x='%s';}class D extends B{static y(){return super.x;}}return D.y()+'%s';})()" % (_A, _B))
+    return ("HELD" if blk else "BREAK", "blocked=%s" % blk)
 
 
 @_t
 def test_p4_f694_open():
-    """F694 OPEN (match groups): miss reproduces."""
-    miss = _misses("(function(){var m='%s:%s'.match(/(%s):(%s)/);return m[1]+m[2];})()" % (_A, _B, _A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F694 now CLOSED (wave-381, match groups): blocks."""
+    blk = _blocked("(function(){var m='%s:%s'.match(/(%s):(%s)/);return m[1]+m[2];})()" % (_A, _B, _A, _B))
+    return ("HELD" if blk else "BREAK", "blocked=%s" % blk)
 
 
 @_t
 def test_p4_f695_open():
-    """F695 OPEN (map spread): miss reproduces."""
-    miss = _misses("(function(){return [...new Map([['k','%s']])][0][1]+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F695 now CLOSED (wave-381, map spread): blocks."""
+    blk = _blocked("(function(){return [...new Map([['k','%s']])][0][1]+'%s';})()" % (_A, _B))
+    return ("HELD" if blk else "BREAK", "blocked=%s" % blk)
 
 
 @_t
 def test_p4_f696_open():
-    """F696 OPEN (boxed String): miss reproduces."""
-    miss = _misses("(function(){return (new String('%s'))+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F696 now CLOSED (wave-381, boxed String): blocks."""
+    blk = _blocked("(function(){return (new String('%s'))+'%s';})()" % (_A, _B))
+    return ("HELD" if blk else "BREAK", "blocked=%s" % blk)
 
 
 @_t
 def test_p4_f698_open():
-    """F698 OPEN (dp-get): miss reproduces."""
-    miss = _misses("(function(){var o={};Object.defineProperty(o,'x',{get:function(){return '%s';}});return Object.getOwnPropertyDescriptor(o,'x').get()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F698 now CLOSED (wave-381, dp-get): blocks."""
+    blk = _blocked("(function(){var o={};Object.defineProperty(o,'x',{get:function(){return '%s';}});return Object.getOwnPropertyDescriptor(o,'x').get()+'%s';})()" % (_A, _B))
+    return ("HELD" if blk else "BREAK", "blocked=%s" % blk)
 
 
 @_t
 def test_p4_f699_open():
-    """F699 OPEN (>2^53 with): miss reproduces."""
+    """F699 now CLOSED (wave-381, >2^53 with): fail-closed, no decode."""
     miss = _misses("(function(){var o={x:9007199254740993};with(o){return x+'%s';}})()" % _B)
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 

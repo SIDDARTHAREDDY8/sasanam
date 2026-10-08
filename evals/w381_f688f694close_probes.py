@@ -328,11 +328,11 @@ def test_p7a_f603_f609_f464_hold():
 
 @_t
 def test_p7b_open_neighbors_still_miss():
-    """Open neighbors F686/F687/F689-F693/F695-F699 still miss (spot checks)."""
-    m1 = _misses("(function(){var p=new Proxy([],{get:function(t,k){if(k===Symbol.iterator){return function*(){yield '%s';yield '%s';};}return t[k];}});return [...p].join('');})()" % (_A, _B))
-    m2 = _misses("(function(){var w=new WeakSet();var k={};var j={};w.add(k);return (w.has(k)&&!w.has(j)?'%s':'junk')+'%s';})()" % (_A, _B))
-    m3 = _misses("(function(){var o={};Object.defineProperty(o,'x',{value:'%s',enumerable:true});return Object.getOwnPropertyDescriptor(o,'x').value+'%s';})()" % (_A, _B))
-    m4 = _misses("(function(){var {a:{b:c}={b:'%s'}}={};return c+'%s';})()" % (_A, _B))
+    """Round-48 neighbors F686/F687/F689/F691/F693 now CLOSED (wave-381); they block (spot checks)."""
+    m1 = _blocked("(function(){var p=new Proxy([],{get:function(t,k){if(k===Symbol.iterator){return function*(){yield '%s';yield '%s';};}return t[k];}});return [...p].join('');})()" % (_A, _B))
+    m2 = _blocked("(function(){var w=new WeakSet();var k={};var j={};w.add(k);return (w.has(k)&&!w.has(j)?'%s':'junk')+'%s';})()" % (_A, _B))
+    m3 = _blocked("(function(){var o={};Object.defineProperty(o,'x',{value:'%s',enumerable:true});return Object.getOwnPropertyDescriptor(o,'x').value+'%s';})()" % (_A, _B))
+    m4 = _blocked("(function(){var {a:{b:c}={b:'%s'}}={};return c+'%s';})()" % (_A, _B))
     ok = m1 and m2 and m3 and m4
     return ("HELD" if ok else "BREAK", "f689=%s f687=%s f691=%s f693=%s" % (m1, m2, m3, m4))
 

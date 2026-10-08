@@ -470,86 +470,91 @@ def _neighbor(name, payload):
     return ("HELD" if miss else "BREAK", "%s quiet=%s" % (name, miss))
 
 
+def _neighbor_blocked(name, payload):
+    blk = _blocked(payload)
+    return ("HELD" if blk else "BREAK", "%s blocked=%s" % (name, blk))
+
+
 @_t
 def test_p5_f686_open():
-    """F686 (OPEN) still misses."""
-    return _neighbor("f686",
+    """F686 now CLOSED (wave-381) -- blocks."""
+    return _neighbor_blocked("f686",
                      "(function(){var p=new Proxy({},{ownKeys:function(){return ['%s','%s'];},getOwnPropertyDescriptor:function(){return {enumerable:true,configurable:true};}});return Object.keys(p).join('');})()" % (_A, _B))
 
 
 @_t
 def test_p5_f687_open():
-    """F687 (OPEN) still misses."""
-    return _neighbor("f687",
+    """F687 now CLOSED (wave-381) -- blocks."""
+    return _neighbor_blocked("f687",
                      "(function(){var w=new WeakSet();var k={};w.add(k);return (w.has(k)?'%s':'junk')+'%s';})()" % (_A, _B))
 
 
 @_t
 def test_p5_f688_open():
-    """F688 (OPEN) still misses."""
-    return _neighbor("f688",
+    """F688 now CLOSED (wave-381) -- blocks."""
+    return _neighbor_blocked("f688",
                      "(function(){return 'ab'.replaceAll(/a|b/g,function(m){return m==='a'?'%s':'%s';});})()" % (_A, _B))
 
 
 @_t
 def test_p5_f689_open():
-    """F689 (OPEN) still misses."""
-    return _neighbor("f689",
+    """F689 now CLOSED (wave-381) -- blocks."""
+    return _neighbor_blocked("f689",
                      "(function(){var p=new Proxy([],{get:function(t,k){if(k===Symbol.iterator){return function*(){yield '%s';yield '%s';};}return t[k];}});return [...p].join('');})()" % (_A, _B))
 
 
 @_t
 def test_p5_f690_open():
-    """F690 (OPEN) still misses."""
-    return _neighbor("f690",
+    """F690 now CLOSED (wave-381) -- blocks."""
+    return _neighbor_blocked("f690",
                      "(function(){function C(){this.x='%s';}var c=new C();return c.x+'%s';})()" % (_A, _B))
 
 
 @_t
 def test_p5_f692_open():
-    """F692 (OPEN) still misses."""
-    return _neighbor("f692",
+    """F692 now CLOSED (wave-381) -- blocks."""
+    return _neighbor_blocked("f692",
                      "(function(){class B{static x='%s';}class D extends B{static y(){return super.x;}}return D.y()+'%s';})()" % (_A, _B))
 
 
 @_t
 def test_p5_f693_open():
-    """F693 (OPEN) still misses."""
-    return _neighbor("f693",
+    """F693 now CLOSED (wave-381) -- blocks."""
+    return _neighbor_blocked("f693",
                      "(function(){var {a:{b:c}={b:'%s'}}={};return c+'%s';})()" % (_A, _B))
 
 
 @_t
 def test_p5_f694_open():
-    """F694 (OPEN) still misses."""
-    return _neighbor("f694",
+    """F694 now CLOSED (wave-381) -- blocks."""
+    return _neighbor_blocked("f694",
                      "(function(){var m='%s:%s'.match(/(%s):(%s)/);return m[1]+m[2];})()" % (_A, _B, _A, _B))
 
 
 @_t
 def test_p5_f695_open():
-    """F695 (OPEN) still misses."""
-    return _neighbor("f695",
+    """F695 now CLOSED (wave-381) -- blocks."""
+    return _neighbor_blocked("f695",
                      "(function(){return [...new Map([['k','%s']])][0][1]+'%s';})()" % (_A, _B))
 
 
 @_t
 def test_p5_f696_open():
-    """F696 (OPEN) still misses."""
-    return _neighbor("f696",
+    """F696 now CLOSED (wave-381) -- blocks."""
+    return _neighbor_blocked("f696",
                      "(function(){return (new String('%s'))+'%s';})()" % (_A, _B))
 
 
 @_t
 def test_p5_f697_open():
-    """F697 (OPEN) still misses."""
-    return _neighbor("f697",
+    """F697 now CLOSED (wave-381) -- blocks."""
+    return _neighbor_blocked("f697",
                      "(function(){var o={v:'%s',valueOf:function(){return this.v;}};return o+'%s';})()" % (_A, _B))
 
 
 @_t
 def test_p5_f699_open():
-    """F699 (OPEN) still misses."""
+    """F699 now CLOSED (wave-381) -- fail-closed, no decode."""
     return _neighbor("f699",
                      "(function(){var o={x:9007199254740993};with(o){return x+'" + _B + "';}})()")
 

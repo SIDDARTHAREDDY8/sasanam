@@ -410,23 +410,23 @@ def test_p7_neighbor_f676_still_blocks():
 
 @_t
 def test_p7_neighbor_f691_still_misses():
-    """F691 (OPEN) still misses -- nothing absorbed."""
+    """F691 now CLOSED (wave-381 lane 5) -- blocks, nothing absorbed."""
     s = ("(function(){var o={};Object.defineProperty(o,'x',{value:'" + _A
          + "',enumerable:true});"
          "return Object.getOwnPropertyDescriptor(o,'x').value+'"
          + _B + "';})()")
-    ok = _misses(s)
+    ok = _blocked(s)
     return ("HELD" if ok else "BREAK", "miss=%s" % ok)
 
 
 @_t
 def test_p7_neighbor_f698_still_misses():
-    """F698 (OPEN) still misses -- nothing absorbed."""
+    """F698 now CLOSED (wave-381 lane 5) -- blocks, nothing absorbed."""
     s = ("(function(){var o={};Object.defineProperty(o,'x',{get:function(){return '"
          + _A + "';}});"
          "return Object.getOwnPropertyDescriptor(o,'x').get()+'"
          + _B + "';})()")
-    ok = _misses(s)
+    ok = _blocked(s)
     return ("HELD" if ok else "BREAK", "miss=%s" % ok)
 
 
