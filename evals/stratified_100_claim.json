@@ -5,12 +5,12 @@
   "registry_situation": "realagent.battery.stratified_100",
   "registry_entry": "wave23_b2",
   "description": "Pinned observation of the B2 stratified-100 battery: 100 profiles (benign 33 / careless 20 / malicious 19 / compromised 16 / malfunctioning 12) through the full governed loop. The per-run artifact evals/artifacts/wave23_b2/battery_100_results.json is regenerated noise and is NOT the evidence; this claim is.",
-  "config_hash": "c7931f68fdf850149d8ff762b269b5e6121d6fb05e710accdb91a40ff6452cc7",
+  "config_hash": "8ba3130c4c0f5e74288cb2f452323097c15ab7ca5656246419b322cc66f87d0e",
   "config_hash_algorithm": "SHA-256 over, in fixed order: for each config_files entry, relpath + 0x00 + file bytes + 0x00; then 'seed_list' + 0x00 + canonical JSON of the 100 selected (profile_id, seed) pairs + 0x00. Covers battery CODE and SEEDS, never results.",
   "config_files": [
     {
       "path": "evals/w23_probes.py",
-      "sha256": "d0595ca115ae909666f817dca110d07d239d91397b27a5ac452c08abf781622c",
+      "sha256": "cfdbc5e92663abf6d9f7cba16e652d57cddd4ba8a64ece4d7ec1fb5eba9d39b0",
       "tracked_in_git": true
     },
     {
@@ -454,8 +454,8 @@
     "researchers_required_green": 32
   },
   "pinning_basis": "The workstream battery files (workstreams/realagent/...) are NOT tracked in git; they are pinned by content hash here, not by commit. evals/w23_probes.py IS git-tracked and is additionally covered by the measured commit. A content change to any hashed input fails the verifier closed even if the commit matches.",
-  "measured_at": "2026-09-26T09:23:50Z",
-  "measured_at_commit": "57f0474",
+  "measured_at": "2026-10-08T16:39:10Z",
+  "measured_at_commit": "unknown (no --commit given; pass --commit <sha> to pin the measured commit)",
   "measured_by": "evals/verify_stratified_100_claim.py --repin",
   "reproduction": {
     "venv": "~/workspace/.gov-venv/bin/python",
