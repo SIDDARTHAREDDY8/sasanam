@@ -135,11 +135,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F621-F643 open, next F644 (this lane)."""
+    """Control: footer shows F640/F642/F643 open, next F644 (F641 closed wave-376 lane 2)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F644**" in text
-          and "Open findings: F640, F641, F642, F643." in text)
+    ok = ("Next free finding: **F644**" in text  # Wave-376 lane 2: F641 CLOSED
+          and "Open findings: F640, F642, F643." in text)  # Wave-376 lane 2: F641 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -236,38 +236,38 @@ def test_r43_f640_s3_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 
-# ------------------------------------------------- F641 open pins (must miss)
+# ------------------------------------------------- F641 closed pins (must block)
 
 @_t
-def test_r43_f641_s1_open():
-    """F641 OPEN (shape microtask-assembly): miss reproduces."""
-    miss = _misses("(async()=>{var p=[];queueMicrotask(()=>p.push('%s'));queueMicrotask(()=>p.push('%s'));queueMicrotask(()=>p.push('%s'));await null;return p.join('');})()"
+def test_r43_f641_s1_closed():
+    """F641 CLOSED (shape microtask-assembly): blocks coded (wave-376 lane 2)."""
+    hit = _blocked("(async()=>{var p=[];queueMicrotask(()=>p.push('%s'));queueMicrotask(()=>p.push('%s'));queueMicrotask(()=>p.push('%s'));await null;return p.join('');})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r43_f641_s2_open():
-    """F641 OPEN (shape microtask-nested): miss reproduces."""
-    miss = _misses("(async()=>{var p=[];queueMicrotask(()=>{p.push('%s');queueMicrotask(()=>p.push('%s'+'%s'));});await null;await null;return p.join('');})()"
-                   % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r43_f641_s3_open():
-    """F641 OPEN (shape microtask-promise-flush): miss reproduces."""
-    miss = _misses("(async()=>{var s='';queueMicrotask(()=>{s+='%s';});queueMicrotask(()=>{s+='%s'+'%s';});await Promise.resolve();return s;})()"
+def test_r43_f641_s2_closed():
+    """F641 CLOSED (shape microtask-nested): blocks coded (wave-376 lane 2)."""
+    hit = _blocked("(async()=>{var p=[];queueMicrotask(()=>{p.push('%s');queueMicrotask(()=>p.push('%s'+'%s'));});await null;await null;return p.join('');})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r43_f641_s4_open():
-    """F641 OPEN (shape timeout-assembly): miss reproduces."""
-    miss = _misses("(async()=>{var p=[];setTimeout(()=>p.push('%s'),0);setTimeout(()=>p.push('%s'),0);setTimeout(()=>p.push('%s'),0);await new Promise(r=>setTimeout(r,20));return p.join('');})()"
+def test_r43_f641_s3_closed():
+    """F641 CLOSED (shape microtask-promise-flush): blocks coded (wave-376 lane 2)."""
+    hit = _blocked("(async()=>{var s='';queueMicrotask(()=>{s+='%s';});queueMicrotask(()=>{s+='%s'+'%s';});await Promise.resolve();return s;})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_r43_f641_s4_closed():
+    """F641 CLOSED (shape timeout-assembly): blocks coded (wave-376 lane 2)."""
+    hit = _blocked("(async()=>{var p=[];setTimeout(()=>p.push('%s'),0);setTimeout(()=>p.push('%s'),0);setTimeout(()=>p.push('%s'),0);await new Promise(r=>setTimeout(r,20));return p.join('');})()"
+                   % (_F1, _F2, _F3))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F642 open pins (must miss)

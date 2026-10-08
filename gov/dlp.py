@@ -19426,6 +19426,605 @@ def _js_parse_f631_asyncgen_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f641_async_arrow_iife_head(text, i):
+    """Match `(async()=>{` at text[i] (F641); index past `{` or None."""
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    j = _js_skip_ws(text, j + 1)
+    _ak = _js_match_kw(text, j, "async")
+    if _ak is None:
+        return None
+    j = _js_skip_ws(text, _ak)
+    if j >= n or text[j] != "(":
+        return None
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != ")":
+        return None
+    j = _js_skip_ws(text, j + 1)
+    if j + 1 >= n or text[j] != "=" or text[j + 1] != ">":
+        return None
+    j = _js_skip_ws(text, j + 2)
+    if j >= n or text[j] != "{":
+        return None
+    return j
+
+
+def _js_f641_parse_additive(stmts, j, state):
+    """Parse `'LIT' + 'LIT' ...` at stmts[j] (F641).
+
+    Each operand must be a plain string literal; anything else
+    (identifiers, calls, templates) fails closed. Returns
+    (concatenated_value, next_index). Never evals.
+    """
+    n = len(stmts)
+    if j >= n or stmts[j] not in "'\"":
+        raise _JSExprFail("F641 additive not a string literal")
+    val, j = _js_parse_string(stmts, j)
+    parts = 1
+    while True:
+        k = _js_skip_ws(stmts, j)
+        if k >= n or stmts[k] != "+":
+            break
+        if stmts.startswith("++", k) or stmts.startswith("+=", k):
+            break
+        k = _js_skip_ws(stmts, k + 1)
+        if k >= n or stmts[k] not in "'\"":
+            raise _JSExprFail("F641 additive operand not literal")
+        v2, j = _js_parse_string(stmts, k)
+        val += v2
+        parts += 1
+        state["parts"] += 1  # F452: charge per additive operand
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+    return val, j
+
+
+def _js_f641_parse_delay(stmts, j):
+    """Parse a non-negative integer delay literal at stmts[j] (F641).
+
+    Returns (delay_ms, next_index). Non-integer or negative
+    delays fail closed (the engine clamps sub-ms delays; the
+    filed grammar is integer-only). Never evals.
+    """
+    n = len(stmts)
+    k = j
+    while k < n and stmts[k].isdigit():
+        k += 1
+    if k == j:
+        raise _JSExprFail("F641 delay not a literal")
+    if k < n and (stmts[k] == "." or stmts[k] in _JS_IDENT_CONT):
+        raise _JSExprFail("F641 delay not an integer")
+    return int(stmts[j:k]), k
+
+
+def _js_parse_f641_callback(stmts, j, acc, kind, depth, state):
+    """Parse a deferred callback at stmts[j] (F641).
+
+    Grammar: `()=>EXPR` | `()=>{STMT;...}` | `function(){STMT;...}`
+    (zero params; `async` callbacks fail closed). The body is
+    parsed into an op list: ("push", [lit, ...]) for array
+    accumulators, ("add", lit) for string accumulators, and
+    ("micro", subops) / ("timer", delay, subops) for nested
+    scheduling. A `return` inside a callback, cross-kind
+    mutation (`push` on a string accum, `+=` on an array
+    accum), non-literal operands, and non-empty params all
+    fail closed. Returns (op_list, next_index). Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, j)
+    if _js_match_kw(stmts, j, "async") is not None:
+        raise _JSExprFail("F641 async callback unmodeled")
+    fk = _js_match_kw(stmts, j, "function")
+    if fk is not None:
+        j = _js_skip_ws(stmts, fk)
+        if j >= n or stmts[j] != "(":
+            raise _JSExprFail("F641 callback not zero-arg")
+        j = _js_skip_ws(stmts, j + 1)
+        if j >= n or stmts[j] != ")":
+            raise _JSExprFail("F641 callback params unmodeled")
+        j = _js_skip_ws(stmts, j + 1)
+        if j >= n or stmts[j] != "{":
+            raise _JSExprFail("F641 callback not braced")
+        return _js_parse_f641_block(stmts, j + 1, acc, kind,
+                                    depth, state)
+    if j >= n or stmts[j] != "(":
+        raise _JSExprFail("F641 not a callback")
+    j = _js_skip_ws(stmts, j + 1)
+    if j >= n or stmts[j] != ")":
+        raise _JSExprFail("F641 callback params unmodeled")
+    j = _js_skip_ws(stmts, j + 1)
+    if j + 1 >= n or stmts[j] != "=" or stmts[j + 1] != ">":
+        raise _JSExprFail("F641 not an arrow callback")
+    j = _js_skip_ws(stmts, j + 2)
+    if j < n and stmts[j] == "{":
+        return _js_parse_f641_block(stmts, j + 1, acc, kind,
+                                    depth, state)
+    op, j = _js_parse_f641_stmt(stmts, j, acc, kind, depth, state)
+    return [op], j
+
+
+def _js_parse_f641_block(stmts, j, acc, kind, depth, state):
+    """Parse `{STMT;...}` callback-body statements to the closing `}` (F641).
+
+    Each statement is an accumulator mutation or a nested
+    scheduling call. Returns (op_list, next_index_past_}).
+    Never evals.
+    """
+    n = len(stmts)
+    ops = []
+    while True:
+        j = _js_skip_ws(stmts, j)
+        if j >= n:
+            raise _JSExprFail("F641 unterminated callback")
+        if stmts[j] == "}":
+            return ops, j + 1
+        if _js_match_kw(stmts, j, "return") is not None:
+            raise _JSExprFail("F641 return in callback")
+        op, j = _js_parse_f641_stmt(stmts, j, acc, kind, depth,
+                                     state)
+        ops.append(op)
+        j = _js_skip_ws(stmts, j)
+        if j < n and stmts[j] == ";":
+            j += 1
+
+
+def _js_parse_f641_stmt(stmts, j, acc, kind, depth, state):
+    """Parse one F641 body statement: mutation or scheduling call.
+
+    Returns (op, next_index) positioned before the trailing `;`.
+    Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, j)
+    mk = _js_match_kw(stmts, j, "queueMicrotask")
+    if mk is None:
+        mk = _js_match_kw(stmts, j, "setTimeout")
+    if mk is not None:
+        return _js_parse_f641_schedule(stmts, j, acc, kind,
+                                        depth, state)
+    return _js_parse_f641_mutation(stmts, j, acc, kind, state)
+
+
+def _js_parse_f641_schedule(stmts, j, acc, kind, depth, state):
+    """Parse `queueMicrotask(CB)` / `setTimeout(CB, DELAY)` (F641).
+
+    Returns (("micro", subops) | ("timer", delay, subops),
+    next_index) positioned before the trailing `;`. Extra
+    arguments, non-literal delays, and string-code callbacks
+    fail closed. Never evals.
+    """
+    n = len(stmts)
+    mk = _js_match_kw(stmts, j, "queueMicrotask")
+    is_timer = False
+    if mk is None:
+        mk = _js_match_kw(stmts, j, "setTimeout")
+        is_timer = True
+    j = _js_skip_ws(stmts, mk)
+    j = _js_expect(stmts, j, "(")
+    j = _js_skip_ws(stmts, j)
+    if j < n and stmts[j] in "'\"":
+        raise _JSExprFail("F641 string-code callback unmodeled")
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    subops, j = _js_parse_f641_callback(stmts, j, acc, kind,
+                                         depth + 1, state)
+    state["parts"] += 1  # F452: charge per scheduled callback
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    j = _js_skip_ws(stmts, j)
+    delay = 0
+    if is_timer:
+        if j < n and stmts[j] == ",":
+            j = _js_skip_ws(stmts, j + 1)
+            delay, j = _js_f641_parse_delay(stmts, j)
+            j = _js_skip_ws(stmts, j)
+        if j < n and stmts[j] == ",":
+            raise _JSExprFail("F641 setTimeout extra args")
+    else:
+        if j < n and stmts[j] == ",":
+            raise _JSExprFail("F641 queueMicrotask extra args")
+    j = _js_expect(stmts, j, ")")
+    if is_timer:
+        return ("timer", delay, subops), j
+    return ("micro", subops), j
+
+
+def _js_parse_f641_mutation(stmts, j, acc, kind, state):
+    """Parse `ACC.push(A[+A...],...)` / `ACC+=A[+A...]` (F641).
+
+    Array accumulators take `push` (each argument an additive
+    of string literals; zero args is a node-exact no-op);
+    string accumulators take `+=` with a literal additive.
+    Cross-kind mutation and non-literal operands fail closed.
+    Returns (("push", [lit, ...]) | ("add", lit), next_index).
+    Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, j)
+    name, j = _js_parse_ident(stmts, j)
+    if name != acc:
+        raise _JSExprFail("F641 mutation of other ident")
+    j = _js_skip_ws(stmts, j)
+    if kind == "arr":
+        if j >= n or stmts[j] != ".":
+            raise _JSExprFail("F641 array accum not push")
+        mname, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j + 1))
+        if mname != "push":
+            raise _JSExprFail("F641 array accum not push")
+        j = _js_skip_ws(stmts, j)
+        j = _js_expect(stmts, j, "(")
+        args = []
+        j = _js_skip_ws(stmts, j)
+        if j < n and stmts[j] != ")":
+            while True:
+                val, j = _js_f641_parse_additive(stmts, j, state)
+                args.append(val)
+                state["parts"] += 1  # F452: charge per push arg
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                j = _js_skip_ws(stmts, j)
+                if j < n and stmts[j] == ",":
+                    j = _js_skip_ws(stmts, j + 1)
+                    continue
+                break
+        j = _js_expect(stmts, j, ")")
+        return ("push", args), j
+    if not stmts.startswith("+=", j):
+        raise _JSExprFail("F641 string accum not +=")
+    val, j = _js_f641_parse_additive(stmts, _js_skip_ws(stmts,
+                                                        j + 2),
+                                      state)
+    return ("add", val), j
+
+
+def _js_parse_f641_await_flush(stmts, j):
+    """Parse the flush operand after `await` at stmts[j] (F641).
+
+    Kind A (microtask checkpoint): a plain literal (`await
+    null`, `await 0`, ...) or `await Promise.resolve()` with no
+    arguments or a single side-effect-free literal argument (a
+    thenable argument could queue side-effecting microtasks when
+    awaited, so non-literal arguments fail closed).
+    Kind B (timer flush): `await new Promise(P=>setTimeout(P,
+    DELAY))` / `await new Promise((P)=>setTimeout(P, DELAY))`
+    with a non-negative integer DELAY; the promise executor
+    must schedule exactly the flush timer. Anything else fails
+    closed. Returns (("awaitA",) | ("awaitB", delay),
+    next_index). Never evals.
+    """
+    n = len(stmts)
+    k = _js_skip_ws(stmts, j)
+    if k >= n:
+        raise _JSExprFail("F641 await of nothing")
+    if stmts[k] in "'\"":
+        _, k = _js_parse_string(stmts, k)
+        return ("awaitA",), k
+    nk = _js_match_kw(stmts, k, "null")
+    if nk is not None:
+        return ("awaitA",), nk
+    for _lit in ("true", "false"):
+        _lk = _js_match_kw(stmts, k, _lit)
+        if _lk is not None:
+            return ("awaitA",), _lk
+    if stmts[k].isdigit():
+        _, k = _js_f641_parse_delay(stmts, k)
+        return ("awaitA",), k
+    pk = _js_match_kw(stmts, k, "Promise")
+    if pk is not None:
+        pk = _js_skip_ws(stmts, pk)
+        if pk < n and stmts[pk] == ".":
+            _rn, pk = _js_parse_ident(stmts,
+                                      _js_skip_ws(stmts, pk + 1))
+            if _rn == "resolve":
+                pk = _js_skip_ws(stmts, pk)
+                pk = _js_expect(stmts, pk, "(")
+                pk = _js_skip_ws(stmts, pk)
+                if pk < n and stmts[pk] != ")":
+                    # A thenable argument can queue microtasks
+                    # with side effects when awaited -- only
+                    # side-effect-free literals keep the flush
+                    # a pure microtask checkpoint.
+                    if stmts[pk] in "'\"":
+                        _, pk = _js_parse_string(stmts, pk)
+                    elif _js_match_kw(stmts, pk, "null") is not None:
+                        pk = _js_match_kw(stmts, pk, "null")
+                    elif _js_match_kw(stmts, pk, "true") is not None:
+                        pk = _js_match_kw(stmts, pk, "true")
+                    elif _js_match_kw(stmts, pk, "false") is not None:
+                        pk = _js_match_kw(stmts, pk, "false")
+                    elif stmts[pk].isdigit():
+                        _, pk = _js_f641_parse_delay(stmts, pk)
+                    else:
+                        raise _JSExprFail(
+                            "F641 Promise.resolve arg not literal")
+                    pk = _js_skip_ws(stmts, pk)
+                    if pk < n and stmts[pk] == ",":
+                        raise _JSExprFail(
+                            "F641 Promise.resolve extra args")
+                pk = _js_expect(stmts, pk, ")")
+                return ("awaitA",), pk
+        raise _JSExprFail("F641 await Promise not resolve")
+    nwk = _js_match_kw(stmts, k, "new")
+    if nwk is None:
+        raise _JSExprFail("F641 await operand unmodeled")
+    k = _js_skip_ws(stmts, nwk)
+    pmk = _js_match_kw(stmts, k, "Promise")
+    if pmk is None:
+        raise _JSExprFail("F641 await new not Promise")
+    k = _js_expect(stmts, _js_skip_ws(stmts, pmk), "(")
+    k = _js_skip_ws(stmts, k)
+    paren_param = False
+    if k < n and stmts[k] == "(":
+        paren_param = True
+        k = _js_skip_ws(stmts, k + 1)
+    pname, k = _js_parse_ident(stmts, k)
+    if paren_param:
+        k = _js_expect(stmts, _js_skip_ws(stmts, k), ")")
+    k = _js_skip_ws(stmts, k)
+    if k + 1 >= n or stmts[k] != "=" or stmts[k + 1] != ">":
+        raise _JSExprFail("F641 Promise executor not arrow")
+    k = _js_skip_ws(stmts, k + 2)
+    stk = _js_match_kw(stmts, k, "setTimeout")
+    if stk is None:
+        raise _JSExprFail("F641 flush not setTimeout")
+    k = _js_expect(stmts, _js_skip_ws(stmts, stk), "(")
+    k = _js_skip_ws(stmts, k)
+    _an, k = _js_parse_ident(stmts, k)
+    if _an != pname:
+        raise _JSExprFail("F641 flush timer not the resolver")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ",")
+    delay, k = _js_f641_parse_delay(stmts, _js_skip_ws(stmts, k))
+    k = _js_skip_ws(stmts, k)
+    if k < n and stmts[k] == ",":
+        raise _JSExprFail("F641 flush setTimeout extra args")
+    k = _js_expect(stmts, k, ")")
+    k = _js_expect(stmts, _js_skip_ws(stmts, k), ")")
+    return ("awaitB", delay), k
+
+
+def _js_f641_run_ops(subops, sim):
+    """Run one F641 callback op list against the simulation (F641).
+
+    Node-exact (v24.20.0): `push` appends each literal argument
+    in order (array accumulators only); `+=` concatenates the
+    literal additive (string accumulators only); scheduling
+    appends to the microtask queue (FIFO) or the pending-timer
+    list. Mutations of a second accumulator, `this`/`arguments`
+    references, and every unlisted statement class fail closed
+    at parse time, so the simulation only sees modeled ops.
+    Never evals.
+    """
+    for op in subops:
+        t = op[0]
+        if t == "push":
+            sim["arr"].extend(op[1])
+        elif t == "add":
+            sim["s"] += op[1]
+        elif t == "micro":
+            sim["micro"].append(op[1])
+        elif t == "timer":
+            sim["timers"].append((op[1], op[2]))
+        else:
+            raise _JSExprFail("F641 unknown op")
+
+
+# Sentinel marking the awaiting function's own resumption in the
+# simulated microtask queue (F641). `await` schedules the
+# continuation as a microtask behind the already-queued
+# callbacks, so nested callbacks queued during the drain run
+# AFTER the function resumes (v17-verified) -- the drain stops
+# at the sentinel instead of draining completely.
+_F641_RESUME = object()
+
+
+def _js_parse_f641_accum_decl(stmts, j):
+    """Parse `var|let NAME=[];` / `var|let NAME='';` at stmts[j] (F641).
+
+    `const` accumulators would throw at runtime on mutation
+    (F626 precedent) and fail closed. Returns (name, kind,
+    next_index) with kind "arr" or "str". Never evals.
+    """
+    n = len(stmts)
+    m = _js_match_kw(stmts, j, "var")
+    if m is None:
+        m = _js_match_kw(stmts, j, "let")
+    if m is None:
+        raise _JSExprFail("F641 accum decl not var/let")
+    j = _js_skip_ws(stmts, m)
+    acc, j = _js_parse_ident(stmts, j)
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "=")
+    j = _js_skip_ws(stmts, j)
+    if j >= n:
+        raise _JSExprFail("F641 accum no initializer")
+    if stmts[j] == "[":
+        j = _js_skip_ws(stmts, j + 1)
+        if j >= n or stmts[j] != "]":
+            raise _JSExprFail("F641 accum not empty array")
+        kind = "arr"
+        j += 1
+    elif stmts[j] in "'\"":
+        q0 = j
+        _, j = _js_parse_string(stmts, j)
+        if stmts[q0:j] != "''" and stmts[q0:j] != '""':
+            raise _JSExprFail("F641 accum not empty string")
+        kind = "str"
+    else:
+        raise _JSExprFail("F641 accum initializer unmodeled")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ";")
+    return acc, kind, j
+
+
+def _js_parse_f641_deferred_iife(text, i, depth, state):
+    """Parse `(async()=>{var|let ACC=[]|'';(SCHED|MUT)*;AWAIT+;return TAIL;})()` (F641).
+
+    Node-exact static event-loop simulation (v24.20.0): the
+    scheduled callbacks are queued in order (microtasks FIFO,
+    timers with literal delays); each `await` flushes per its
+    kind -- a microtask checkpoint (`await` literal /
+    `Promise.resolve()`) drains the microtask queue only up to
+    the awaiting function's own resumption (the continuation is
+    a microtask queued behind the pending callbacks, so nested
+    callbacks queued during the drain run after the function
+    resumes -- v17-verified), while `await new
+    Promise(P=>setTimeout(P,DELAY))` first drains the microtask
+    queue completely (the continuation waits on a macrotask)
+    and then fires every pending timer with delay <= DELAY in
+    scheduling order
+    (microtasks always precede timers, b7/b8-verified; the
+    flush timer itself is scheduled at the await, so body
+    timers with delay <= DELAY were scheduled first and fire
+    first). A timer with delay > the flush delay or a timer
+    rescheduled during a flush fails the shape closed
+    (documented boundaries) -- the engine would leave those
+    fragments out of the returned value, and the decoder never
+    claims more than the engine returns. Scheduling after the
+    final flush is silently ignored (node-exact: those
+    callbacks run only after the function has returned, so the
+    engine excludes their fragments from the return value
+    too). The return tail is
+    `return ACC.join('SEP')` / `return ACC.join()` (array) or
+    `return ACC` (string).
+
+    The decoder cannot await (F618 precedent): the
+    deterministic flush is modeled statically. Returns
+    (value, next_index), or None when the head does not match
+    or a guard fails. Bounded by the part/depth budgets; the
+    wrapper charges one op (obfuscation-shaped). Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    sync (non-async) IIFE heads; timers flushed only by a
+    microtask checkpoint (`await null` never fires a timer,
+    b2-verified); scheduling after the return; non-literal
+    push/`+=` operands; cross-kind mutation; `async`
+    callbacks; string-code callbacks; non-empty callback
+    params; `return` inside callbacks; extra scheduling args;
+    call args on the IIFE.
+    """
+    j = _js_parse_f641_async_arrow_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        _bs, _be, j = _js_span_braced(text, j)
+        stmts = text[_bs:_be]
+        sj = _js_skip_ws(stmts, 0)
+        acc, kind, sj = _js_parse_f641_accum_decl(stmts, sj)
+        body_ops = []
+        while True:
+            sj = _js_skip_ws(stmts, sj)
+            if sj >= len(stmts):
+                raise _JSExprFail("F641 body no return")
+            rk = _js_match_kw(stmts, sj, "return")
+            if rk is not None:
+                break
+            ak = _js_match_kw(stmts, sj, "await")
+            if ak is not None:
+                fop, sj = _js_parse_f641_await_flush(
+                    stmts, ak)
+                body_ops.append(fop)
+            else:
+                op, sj = _js_parse_f641_stmt(
+                    stmts, sj, acc, kind, depth, state)
+                body_ops.append(op)
+            sj = _js_skip_ws(stmts, sj)
+            if sj < len(stmts) and stmts[sj] == ";":
+                sj += 1
+        rj = _js_skip_ws(stmts, rk)
+        _rn, rj = _js_parse_ident(stmts, rj)
+        if _rn != acc:
+            raise _JSExprFail("F641 returns other ident")
+        rj = _js_skip_ws(stmts, rj)
+        sep = None
+        if kind == "arr":
+            rj = _js_expect(stmts, rj, ".")
+            _jn, rj = _js_parse_ident(stmts,
+                                      _js_skip_ws(stmts, rj))
+            if _jn != "join":
+                raise _JSExprFail("F641 array return not join")
+            rj = _js_expect(stmts, _js_skip_ws(stmts, rj), "(")
+            rj = _js_skip_ws(stmts, rj)
+            if rj < len(stmts) and stmts[rj] != ")":
+                if stmts[rj] not in "'\"":
+                    raise _JSExprFail("F641 join sep not literal")
+                sep, rj = _js_parse_string(stmts, rj)
+                rj = _js_skip_ws(stmts, rj)
+                if rj < len(stmts) and stmts[rj] == ",":
+                    raise _JSExprFail("F641 join extra args")
+            else:
+                sep = ","
+            rj = _js_expect(stmts, rj, ")")
+        rj = _js_skip_ws(stmts, rj)
+        if rj < len(stmts) and stmts[rj] == ";":
+            rj += 1
+        if _js_skip_ws(stmts, rj) != len(stmts):
+            raise _JSExprFail("F641 trailing statements")
+        sim = {"arr": [], "s": "", "micro": [], "timers": []}
+        for _bop in body_ops:
+            _t = _bop[0]
+            if _t == "push":
+                sim["arr"].extend(_bop[1])
+            elif _t == "add":
+                sim["s"] += _bop[1]
+            elif _t == "micro":
+                sim["micro"].append(_bop[1])
+            elif _t == "timer":
+                sim["timers"].append((_bop[1], _bop[2]))
+            elif _t == "awaitA":
+                # The continuation is itself a microtask queued
+                # behind the pending callbacks: drain only up to
+                # the resume marker (v17-verified), leaving
+                # nested callbacks queued during the drain for
+                # later flushes.
+                sim["micro"].append(_F641_RESUME)
+                while sim["micro"]:
+                    _item = sim["micro"].pop(0)
+                    if _item is _F641_RESUME:
+                        break
+                    _js_f641_run_ops(_item, sim)
+            elif _t == "awaitB":
+                _f = _bop[1]
+                # Complete drain: the continuation waits on the
+                # flush TIMER (a macrotask), so every pending
+                # microtask -- including nested ones -- runs before
+                # any timer fires. No resume marker is involved.
+                while sim["micro"]:
+                    _js_f641_run_ops(sim["micro"].pop(0), sim)
+                _pending = sim["timers"]
+                sim["timers"] = []
+                for (_d, _cb) in _pending:
+                    if _d > _f:
+                        raise _JSExprFail(
+                            "F641 timer delay exceeds flush")
+                # Node-exact: timers fire in EXPIRY order (delay
+                # ascending), ties broken by scheduling order --
+                # sorted() is stable, so the pending list's
+                # scheduling order survives among equal delays.
+                for (_d, _cb) in sorted(_pending,
+                                        key=lambda _t: _t[0]):
+                    _js_f641_run_ops(_cb, sim)
+                    while sim["micro"]:
+                        _js_f641_run_ops(sim["micro"].pop(0), sim)
+                if sim["timers"]:
+                    raise _JSExprFail(
+                        "F641 timer rescheduled during flush")
+            else:
+                raise _JSExprFail("F641 unknown body op")
+        if kind == "arr":
+            val = sep.join(sim["arr"])
+        else:
+            val = sim["s"]
+        return _js_parse_f6xx_iife_tail(text, j, depth, state,
+                                        val)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f6xx_iife_head(text, i):
     """Match `(function(){` at text[i] (F600/F601/F602); returns index past `{` or None."""
     n = len(text)
@@ -30498,6 +31097,23 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f631 = _js_parse_f631_asyncgen_iife(text, i, depth, state)
         if _f631 is not None:
             val, i = _f631
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F641: (async()=>{var|let ACC=[]|'';
+        #   (queueMicrotask(CB)|setTimeout(CB,DELAY))*; await+;
+        #   return TAIL;})() -- deferred-callback fragment
+        #   assembly. The scheduled callbacks mutate the
+        #   accumulator; each await flushes per its kind
+        #   (microtask checkpoint vs setTimeout-timer flush) and
+        #   the deterministic event-loop order is simulated
+        #   statically (F618 precedent -- the decoder cannot
+        #   await). Tried after F631: the `async()=>` head is
+        #   disjoint from F631's `async function` head (which
+        #   requires the `function` keyword); None falls through
+        #   to the parenthesized-additive path like F631.
+        _f641 = _js_parse_f641_deferred_iife(text, i, depth,
+                                             state)
+        if _f641 is not None:
+            val, i = _f641
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
