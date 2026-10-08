@@ -22,13 +22,14 @@ Junk-quiet controls pass. No injection attempts this round.
 
 Known-open pins (each probe returns HELD when the miss reproduces; a literal
 BREAK verdict means the pin failed or a NEW break appeared): F595/F596
-(wave-370 merge, regression spot pins), F597-F604 (this round). F583-F594
+(wave-370 merge, regression spot pins), F597-F603 (this round; F604 CLOSED
+2026-10-07 wave-372 lane 6). F583-F594
 (round 38) are pinned by the w370 attack battery, run as the depth-1 green
 check below.
 
 Closed pins (must BLOCK, else BREAK): F535, F541, F546 (spot), F547-F552,
 F558, F560, F563, F567 (wave-369 regression), F570, F571, F573, F574, F576,
-F577, F580, F582 (wave-370 regression spot pins).
+F577, F580, F582 (wave-370 regression spot pins), F604 (wave-372 lane 6).
 
 Rides-with-documented-scope (validated, NOT filed):
 - (new WeakMap([[k,'f1']])).get(k) paren receiver -- IS F586's filed scope
@@ -367,12 +368,16 @@ def test_r39_f603_open():
 
 
 @_t
-def test_r39_f604_open():
-    """F604 OPEN: sort with localeCompare comparators misses."""
-    m1 = _misses("['%s','%s'].sort((a,b)=>b.localeCompare(a)).join('')" % (_B, _A))
-    m2 = _misses("['%s','%s'].sort((x,y)=>y.localeCompare(x)).join('')" % (_B, _A))
-    ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_p1_f604_closed():
+    """F604 CLOSED 2026-10-07 wave-372 lane 6: sort with localeCompare
+    comparators now decodes node-exactly."""
+    b1 = _blocked("['%s','%s'].sort((a,b)=>b.localeCompare(a)).join('')" % (_B, _A))
+    b2 = _blocked("['%s','%s'].sort((x,y)=>y.localeCompare(x)).join('')" % (_B, _A))
+    # ascending on ['A','B'] node-yields B+A (not the credential) --
+    # the decoder must decode it node-exactly AND stay quiet.
+    q1 = _misses("['%s','%s'].sort((a,b)=>a.localeCompare(b)).join('')" % (_A, _B))
+    ok = b1 and b2 and q1
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t

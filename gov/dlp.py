@@ -15276,11 +15276,13 @@ def _js_parse_f572_return_expr(text, j, depth, state, env):
     """Parse the F572 IIFE return EXPR at text[j] (F572).
 
     Either a weakmap chain (`_js_parse_f572_weakmap_chain`) or --
-    F593 -- `Object.assign({}, CHAIN)` where CHAIN is a weakmap
-    chain resolving to a _JSObj: the engine returns the target, a
-    shallow copy whose props are the source's (node v24.20.0 --
-    identity on props for the literal values this decoder admits,
-    so a fresh _JSObj with the same props is exact). A chain that
+    F593/F605 -- `Object.assign(TGT, SRC, ...)` where each operand is
+    an object literal or a weakmap chain resolving to a _JSObj: the
+    engine returns the target, a shallow copy whose props are the
+    sources' merged later-wins (node v24.20.0 -- identity on props
+    for the literal values this decoder admits, so a fresh _JSObj
+    with the merged props is exact; F605's non-empty targets, chain
+    targets, and extra sources verified node-exact). A chain that
     resolves to a string under Object.assign fails closed (the
     engine spreads the string into per-character indexed props of a
     plain object -- a shape this decoder cannot thread, so refusing
@@ -15304,26 +15306,47 @@ def _js_parse_f572_return_expr(text, j, depth, state, env):
             ma = _js_match_kw(text, k2, "assign")
             if (ma is not None
                     and (ma >= n or text[ma] not in _JS_IDENT_CONT)):
-                # F593: Object.assign({}, CHAIN) -- committed here;
-                # malformed shapes fail closed.
+                # F593/F605: Object.assign(TGT, SRC, ...) -- committed
+                # here; malformed shapes fail closed. F593 modeled the
+                # empty-target single-chain-source shape
+                # `Object.assign({}, CHAIN)`; F605 generalizes to the
+                # three one-token neighbors (node v24.20.0): non-empty
+                # literal targets, chain targets (swapped args), and
+                # extra literal/chain sources. Each operand is either
+                # an object literal (via _js_parse_f535_object;
+                # `__proto__` keys fail closed there) or a weakmap
+                # chain resolving to a _JSObj (string-resolving chains
+                # fail closed, F593 precedent). Merge is engine-exact
+                # later-wins (node-verified: dupes and cross-source
+                # dupes). At most 3 sources (F452: the merge is linear
+                # in sources x props); each merged prop charges parts.
                 k2 = _js_skip_ws(text, ma)
                 if k2 >= n or text[k2] != "(":
                     raise _JSExprFail("F593 assign without paren")
                 k2 = _js_skip_ws(text, k2 + 1)
-                if k2 >= n or text[k2] != "{":
-                    raise _JSExprFail("F593 assign target not empty")
-                tprops, k2 = _js_parse_f535_object(text, k2, depth, state)
-                if tprops:
-                    raise _JSExprFail("F593 assign target not empty")
-                k2 = _js_skip_ws(text, k2)
-                if k2 >= n or text[k2] != ",":
+                tprops, k2 = _js_parse_f605_assign_operand(
+                    text, k2, depth, state, env, "target")
+                merged = dict(tprops)
+                nsrc = 0
+                while True:
+                    k2 = _js_skip_ws(text, k2)
+                    if k2 >= n or text[k2] != ",":
+                        break
+                    k2 = _js_skip_ws(text, k2 + 1)
+                    nsrc += 1
+                    if nsrc > 3:
+                        raise _JSExprFail("F605 assign too many sources")
+                    sprops, k2 = _js_parse_f605_assign_operand(
+                        text, k2, depth, state, env, "source")
+                    for _sk, _sv in sprops.items():
+                        merged[_sk] = _sv
+                        state["parts"] += 1
+                        if state["parts"] > _JS_EXPR_MAX_PARTS:
+                            raise _JSExprFail("too many assign parts")
+                if nsrc == 0:
                     raise _JSExprFail("F593 assign without source")
-                val, k2 = _js_parse_f572_weakmap_chain(
-                    text, _js_skip_ws(text, k2 + 1), depth, state, env)
-                if not isinstance(val, _JSObj):
-                    raise _JSExprFail("F593 assign source not an object")
-                val = _JSObj(dict(val.props))
-                state["ops"] += 1  # the assign is obfuscation-shaped
+                val = _JSObj(merged)
+                state["ops"] += 1 + nsrc  # the assign is obfuscation-shaped
                 k2 = _js_skip_ws(text, k2)
                 if k2 >= n or text[k2] != ")":
                     raise _JSExprFail("F593 assign unterminated")
@@ -19645,6 +19668,93 @@ def _js_parse_f580_length_cmp(text, i):
     return True, i
 
 
+def _js_f604_safe_locale_str(s):
+    """True when every char of s is in [0-9a-z-] (F604).
+
+    ICU default collation agrees with code-point order on this class
+    (4M+ pairwise and 3000 array-sort node v24.20.0 differentials,
+    zero diffs), so a localeCompare comparator sort is node-exact
+    via Python's stable sorted(). Outside the class ICU diverges
+    (verified: 'A'.localeCompare('a') > 0 while 'A' < 'a' by code
+    point), so those elements fail closed. No regex is used here, so
+    the module's regex-compile call count stays at 28.
+    """
+    for c in s:
+        if not (c == "-" or "0" <= c <= "9" or "a" <= c <= "z"):
+            return False
+    return True
+
+
+def _js_parse_f605_assign_operand(text, k2, depth, state, env, what):
+    """Parse one Object.assign operand: object literal or weakmap chain.
+
+    Returns (props_dict, next_index). A chain that resolves to a string
+    fails closed (F593 precedent: the engine spreads the string into
+    per-character indexed props of a plain object -- a shape this
+    decoder cannot thread, so refusing is exact). ``what`` names the
+    operand role for the error message ("target"/"source").
+    """
+    n = len(text)
+    if k2 < n and text[k2] == "{":
+        return _js_parse_f535_object(text, k2, depth, state)
+    tval, k2 = _js_parse_f572_weakmap_chain(text, k2, depth, state, env)
+    if not isinstance(tval, _JSObj):
+        raise _JSExprFail("F605 assign %s not an object" % what)
+    return tval.props, k2
+
+
+def _js_parse_f604_locale_cmp(text, i):
+    """Parse a sort localeCompare comparator at text[i] (F604).
+
+    Recognized (node-verified, v24.20.0): `(a,b)=>a.localeCompare(b)`
+    (ascending) and `(a,b)=>b.localeCompare(a)` (descending); param
+    names free, ws-tolerant, dot form only, expression-arrow only
+    (a single member-call expression). Returns ("locale_asc" /
+    "locale_desc", next_index). Any other comparator -- duplicate
+    params (node v24.20.0 throws SyntaxError on duplicate arrow
+    params; fail-closed is the safe refusal), block-body arrows, the `a['localeCompare'](b)` bracket form,
+    localeCompare with locales/options args, and non-function args
+    (the engine throws TypeError, node-verified) -- fails closed
+    (documented scope boundary). Never evals.
+    """
+    n = len(text)
+    i = _js_skip_ws(text, i)
+    i = _js_expect(text, i, "(")
+    p, i = _js_parse_ident(text, _js_skip_ws(text, i))
+    i = _js_skip_ws(text, i)
+    i = _js_expect(text, i, ",")
+    q, i = _js_parse_ident(text, _js_skip_ws(text, i))
+    if p == q:
+        raise _JSExprFail("F604 sort comparator duplicate params")
+    i = _js_skip_ws(text, i)
+    i = _js_expect(text, i, ")")
+    i = _js_skip_ws(text, i)
+    if not text.startswith("=>", i):
+        raise _JSExprFail("F604 sort comparator without =>")
+    i = _js_skip_ws(text, i + 2)
+    r, i = _js_parse_ident(text, i)
+    i = _js_skip_ws(text, i)
+    i = _js_expect(text, i, ".")
+    i = _js_skip_ws(text, i)
+    if not text.startswith("localeCompare", i):
+        raise _JSExprFail("F604 sort comparator not localeCompare")
+    k = i + len("localeCompare")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("F604 localeCompare followed by ident char")
+    i = _js_skip_ws(text, k)
+    i = _js_expect(text, i, "(")
+    s, i = _js_parse_ident(text, _js_skip_ws(text, i))
+    i = _js_skip_ws(text, i)
+    i = _js_expect(text, i, ")")
+    if r == p and s == q:
+        mode = "locale_asc"
+    elif r == q and s == p:
+        mode = "locale_desc"
+    else:
+        raise _JSExprFail("F604 sort comparator not localeCompare order")
+    return mode, i
+
+
 def _js_apply_method(text, j, name, value, depth, state):
     """Apply .concat(...) / .repeat(...) / .join(...) / .reduce(...) /
     .reduceRight(...) / .map(...) / .filter(...) / .fill(...) /
@@ -20062,19 +20172,38 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         # (a,b)=>a.length-b.length is a consistent total preorder on
         # lengths and V8's sort is stable, so it equals Python's
         # stable sorted(key=len) on BMP-only strings (node-verified,
-        # incl. ties). Any other comparator (incl. a non-function
-        # arg -- the engine THROWS TypeError, node-verified) fails
-        # closed. Non-str elements (incl. _JSNumStr provenance
+        # incl. ties).
+        # F604: ARR.sort((a,b)=>a.localeCompare(b)) /
+        # ARR.sort((a,b)=>b.localeCompare(a)) -- node-exact
+        # (v24.20.0) on literal string arrays whose elements are all
+        # over [0-9a-z-]: ICU default collation agrees with code-point
+        # order on that class (4M+ pairwise and 3000 array-sort
+        # differentials, zero diffs), so Python's stable sorted()
+        # (ascending) / sorted(reverse=True) (descending) matches
+        # V8's stable sort exactly. Any element outside the class
+        # fails closed (ICU diverges there -- verified:
+        # 'A'.localeCompare('a') > 0 while 'A' < 'a' by code point).
+        # Any other comparator (incl. a non-function arg -- the
+        # engine THROWS TypeError, node-verified) fails closed.
+        # Non-str elements (incl. _JSNumStr provenance
         # markers, _JSNil/_JSBool, nested arrays) fail closed.
         # Checked BEFORE the "method on unjoined array" guard below.
         if not isinstance(value, _JSArr):
             raise _JSExprFail("sort on non-array")
         i = _js_skip_ws(text, i)
         if i < len(text) and text[i] == ")":
-            by_len = False
+            mode = "default"
             i += 1
         else:
-            by_len, i = _js_parse_f580_length_cmp(text, i)
+            _cmp_start = i
+            try:
+                _, i = _js_parse_f580_length_cmp(text, i)
+                mode = "by_len"
+            except _JSExprFail:
+                # Not the F580 length comparator -- try the F604
+                # localeCompare comparator (restarted from the same
+                # position; the length parse mutates no state).
+                mode, i = _js_parse_f604_locale_cmp(text, _cmp_start)
             i = _js_skip_ws(text, i)
             if i >= len(text) or text[i] != ")":
                 raise _JSExprFail("sort bad args")
@@ -20084,8 +20213,15 @@ def _js_apply_method_at(text, i, name, value, depth, state):
                 raise _JSExprFail("sort non-string element")
             if any(ord(c) > 0xFFFF for c in e):
                 raise _JSExprFail("sort astral element")
-        elements = (sorted(value.elements, key=len) if by_len
-                    else sorted(value.elements))
+            if mode in ("locale_asc", "locale_desc") \
+                    and not _js_f604_safe_locale_str(e):
+                raise _JSExprFail("sort localeCompare unsafe element")
+        if mode == "by_len":
+            elements = sorted(value.elements, key=len)
+        elif mode == "locale_desc":
+            elements = sorted(value.elements, reverse=True)
+        else:
+            elements = sorted(value.elements)
         state["ops"] += 1  # the reorder is obfuscation-shaped
         return _JSArr(elements), i
     if name == "splice":

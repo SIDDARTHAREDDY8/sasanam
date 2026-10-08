@@ -202,12 +202,13 @@ def p7_compositions():
     ]
     missed_closed = [s for s in held if not _blocked(s)]
     still_open = [
-        # F575: String.raw non-array raw object (sibling lane)
-        "String.raw({raw:{0:'%s',1:'%s',length:2}})" % (_A1, _A2),
-        # F579: Reflect.ownKeys terminal reads (sibling lane)
-        "({c:'%s'})[Reflect.ownKeys({c:'%s'})[0]]+'%s'" % (_A1, _A1, _A2),
-        # F576: URL laundering (sibling lane)
-        "new URLSearchParams('a=%s').get('a')+'%s'" % (_A1, _A2),
+        # F597: flatMap with non-array-returning callbacks (OPEN,
+        # wave-372 lane 1 backlog -- same flat family; F575/F576/F579
+        # were closed in wave-370 so their stale entries were replaced
+        # here 2026-10-07 wave-372 lane 6)
+        "[['%s'],['%s']].flatMap((x)=>x).join('')" % (_A1, _A2),
+        "['%s','%s'].flatMap((x)=>x).join('')" % (_A1, _A2),
+        "['%s','%s'].flatMap((c)=>c==='x'?'x':c).join('')" % (_A1, _A2),
     ]
     closed_open = [s for s in still_open if _blocked(s)]
     ok = not missed_closed and not closed_open
