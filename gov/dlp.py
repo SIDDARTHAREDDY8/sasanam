@@ -2109,7 +2109,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty|fromEntries|groupBy)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|Map[ \t\n\r]*\.[ \t\n\r]*groupBy(?![_$A-Za-z0-9])|new[ \t\n\r]+Map(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|new[ \t\n\r]+URLSearchParams(?![_$A-Za-z0-9])|new[ \t\n\r]+URL(?![_$A-Za-z0-9])|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty|fromEntries|groupBy)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|Map[ \t\n\r]*\.[ \t\n\r]*groupBy(?![_$A-Za-z0-9])|new[ \t\n\r]+Map(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|new[ \t\n\r]+Proxy(?![_$A-Za-z0-9])|new[ \t\n\r]+URLSearchParams(?![_$A-Za-z0-9])|new[ \t\n\r]+URL(?![_$A-Za-z0-9])|\(")
 # F536: the structuredClone anchor carries its own ident-boundary
 # lookahead so `structuredClonex(` never anchors (no wasted F512
 # total-attempt budget); the primary branch re-checks the boundary
@@ -11110,17 +11110,23 @@ def _js_parse_f535_getter_head(text, i):
 
 
 def _js_parse_f535_proxy(text, j, depth, state):
-    """Parse `new Proxy(TARGET, {get:(P1,P2)=>P1[P2]})` at text[j]
-    (F535). Returns (props, next_index).
+    """Parse `new Proxy(TARGET, HANDLER)` at text[j] (F535, extended
+    F587). Returns (props, next_index).
 
-    Only the direct-passthrough get-trap is modeled: the trap body
-    must be exactly `P1[P2]` with the arrow's own parameter names, so
-    the read resolves to TARGET's property node-exactly (the engine
-    invokes TARGET's own getter, if any, during `P1[P2]` -- the
-    resolved map already holds the getter's value). Any other trap
-    shape (method-form handlers, non-passthrough bodies,
-    extra handler keys) fails closed (documented boundary). The
-    target is an F535 object literal (data properties, getters,
+    Two handler forms are modeled, both engine-identical to the
+    target literal (node v24.20.0):
+    - the direct-passthrough get-trap `{get:(p1,p2)=>p1[p2]}` (F535):
+      the trap body must be exactly `P1[P2]` with the arrow's own
+      parameter names, so the read resolves to TARGET's property
+      node-exactly (the engine invokes TARGET's own getter, if any,
+      during `P1[P2]` -- the resolved map already holds the getter's
+      value);
+    - the empty handler `{}` (F587): every trap forwards to the
+      target, so the engine reads exactly the target's data
+      properties.
+    Any other handler shape (method-form handlers, non-passthrough
+    bodies, extra handler keys) fails closed (documented boundary).
+    The target is an F535 object literal (data properties, getters,
     nested objects). Never evals.
     """
     n = len(text)
@@ -11145,6 +11151,14 @@ def _js_parse_f535_proxy(text, j, depth, state):
     if k >= n or text[k] != "{":
         raise _JSExprFail("Proxy handler not an object")
     k = _js_skip_ws(text, k + 1)
+    if k < n and text[k] == "}":
+        # F587: the empty handler -- every trap forwards to the
+        # target, so the proxy is engine-identical to the target
+        # literal (node v24.20.0). Whitespace-tolerant.
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            raise _JSExprFail("unbalanced Proxy call")
+        return props, k + 1
     hname, k = _js_parse_ident(text, k)
     if hname != "get":
         raise _JSExprFail("only the get trap is modeled")
@@ -11363,6 +11377,42 @@ def _js_parse_f535_member_read(text, i, depth, state):
     state["ops"] += 1  # the object/Proxy construction is
                        # obfuscation-shaped
     return _JSObj(props), k + 1
+
+
+def _js_parse_f587_proxy_member(text, i, depth, state):
+    """Parse a bare `new Proxy(TARGET, HANDLER)` member-read receiver
+    at text[i] (F587).
+
+    The unparenthesized spelling: `new Proxy(T,H).member` (the
+    parenthesized spelling is the F535 path,
+    `_js_parse_f535_member_read`). HANDLER is the direct-passthrough
+    get-trap or the empty handler -- both parsed by
+    `_js_parse_f535_proxy` (F535/F587 grammar), engine-identical to
+    the target literal. Returns (_JSObj, next_index), or None when
+    text[i] is not a `new Proxy` head (the caller falls through,
+    failing closed on `new` as before). Once the head commits, a
+    malformed construction fails closed via _JSExprFail (the
+    dispatch-receiver proxy path, F489, is disjoint: it routes
+    through `_js_parse_dispatch_receiver`, never here). Never evals.
+    """
+    n = len(text)
+    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+        return None
+    j = _js_match_kw(text, i, "new")
+    if j is None:
+        return None
+    j = _js_skip_ws(text, j)
+    j2 = _js_match_kw(text, j, "Proxy")
+    if j2 is None:
+        return None
+    j = _js_skip_ws(text, j2)
+    if j >= n or text[j] != "(":
+        # The `new Proxy` head commits the parse: a malformed
+        # construction fails closed (matches the F535 paren path's
+        # fail-closed behavior).
+        raise _JSExprFail("new Proxy without paren")
+    props, k = _js_parse_f535_proxy(text, i, depth, state)
+    return _JSObj(props), k
 
 
 def _js_parse_f565_literal(text, k, what):
@@ -20979,6 +21029,19 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
     if _f576 is not None:
         val, i = _f576
         state["ops"] += 1  # the URL construction is obfuscation-shaped
+        return _js_parse_postfix(text, i, val, depth, state)
+    # F587: new Proxy(TARGET, HANDLER).member -- member-read
+    # receivers over bare (unparenthesized) new-expression Proxy
+    # constructions: the direct-passthrough get-trap (F535 grammar)
+    # or the empty handler (engine-identical target forwarding).
+    # None falls through (fails closed on `new` as before); the F489
+    # dispatch-receiver proxy path is disjoint (it routes through
+    # _js_parse_dispatch_receiver, never here).
+    _f587 = _js_parse_f587_proxy_member(text, i, depth, state)
+    if _f587 is not None:
+        val, i = _f587
+        state["ops"] += 1  # the Proxy construction is
+                           # obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("Object", i):
         # F525: Object.values(Object.getOwnPropertyDescriptors(OBJ))

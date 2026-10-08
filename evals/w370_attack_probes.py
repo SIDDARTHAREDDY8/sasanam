@@ -280,13 +280,13 @@ def test_r38_f586_closed():
 
 
 @_t
-def test_r38_f587_open():
-    """F587 OPEN: new Proxy member-read receivers miss."""
-    m1 = _misses("new Proxy({c:'%s'},{get:(t,k)=>t[k]}).c+'%s'" % (_A, _B))
-    m2 = _misses("(new Proxy({c:'%s'},{}).c)+'%s'" % (_A, _B))
-    m3 = _misses("new Proxy({c:'%s'},{}).c+'%s'" % (_A, _B))
-    ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_p1_f587_closed():
+    """F587 CLOSED (wave-371 lane 4): new Proxy member-read receivers block."""
+    h1 = _blocked("new Proxy({c:'%s'},{get:(t,k)=>t[k]}).c+'%s'" % (_A, _B))
+    h2 = _blocked("(new Proxy({c:'%s'},{}).c)+'%s'" % (_A, _B))
+    h3 = _blocked("new Proxy({c:'%s'},{}).c+'%s'" % (_A, _B))
+    ok = h1 and h2 and h3
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
 @_t
