@@ -95,11 +95,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F686-F710 open, next F711 (this lane)."""
+    """Control: footer shows F702-F712 open, next F713 (this lane)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F713**" in text
-          and "Open findings: F700, F701, F702, F703, F704, F705, F706, F707, F708, F709, F710, F711, F712." in text)  # Wave-381 merge: F686-F699 CLOSED; F700-F712 OPEN
+          and "Open findings: F702, F703, F704, F705, F706, F707, F708, F709, F710, F711, F712." in text)  # Wave-382 lane 1 (F700+F701 CLOSED): F702-F712 OPEN; merge re-verifies
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -184,30 +184,30 @@ def test_r48_f698_open():
 
 @_t
 def test_r49_f700_flatmap_suffix_open():
-    """F700 OPEN (flatMap residual (F658)): miss reproduces."""
-    miss = _misses("(function(){return ['%s','%s'].flatMap(function(f){return [f,''];}).join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F700 CLOSED 2026-10-08 wave-382 lane 1: coded refusal."""
+    blk = _blocked("(function(){return ['%s','%s'].flatMap(function(f){return [f,''];}).join('');})()" % (_A, _B))
+    return ("HELD" if blk else "BREAK", "blocked=%s" % blk)
 
 
 @_t
 def test_r49_f700_flatmap_prefix_open():
-    """F700 OPEN (flatMap residual (F658)): miss reproduces."""
-    miss = _misses("(function(){return ['%s','%s'].flatMap(function(f){return ['',f];}).join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F700 CLOSED 2026-10-08 wave-382 lane 1: coded refusal."""
+    blk = _blocked("(function(){return ['%s','%s'].flatMap(function(f){return ['',f];}).join('');})()" % (_A, _B))
+    return ("HELD" if blk else "BREAK", "blocked=%s" % blk)
 
 
 @_t
 def test_r49_f701_spread_getter_open():
-    """F701 OPEN (getter spread): miss reproduces."""
-    miss = _misses("(function(){var o={get x(){return '%s';}};return {...o}.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F701 CLOSED 2026-10-08 wave-382 lane 1: coded refusal."""
+    blk = _blocked("(function(){var o={get x(){return '%s';}};return {...o}.x+'%s';})()" % (_A, _B))
+    return ("HELD" if blk else "BREAK", "blocked=%s" % blk)
 
 
 @_t
 def test_r49_f701_spread_two_getters_open():
-    """F701 OPEN (getter spread): miss reproduces."""
-    miss = _misses("(function(){var o={get x(){return '%s';},get y(){return '%s';}};var c={...o};return c.x+c.y;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F701 CLOSED 2026-10-08 wave-382 lane 1: coded refusal."""
+    blk = _blocked("(function(){var o={get x(){return '%s';},get y(){return '%s';}};var c={...o};return c.x+c.y;})()" % (_A, _B))
+    return ("HELD" if blk else "BREAK", "blocked=%s" % blk)
 
 
 @_t

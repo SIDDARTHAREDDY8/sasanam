@@ -12107,7 +12107,19 @@ def _js_parse_f535_value(text, i, depth, state, accessor_aware=False,
     raise _JSExprFail("object value not a literal")
 
 
-def _js_parse_f557_spread(text, j, depth, state):
+def _js_f701_resolve_spread_props(props):
+    """Copy *props* with _JSAccessor values unwrapped (F701).
+
+    The engine invokes [[Get]] on the spread source's own
+    enumerable props, so an accessor resolves to its
+    already-evaluated value -- the same invocation the F535
+    parser performed at source-parse time. Never evals.
+    """
+    return {k: (v.value if isinstance(v, _JSAccessor) else v)
+            for k, v in props.items()}
+
+
+def _js_parse_f557_spread(text, j, depth, state, spread_env=None):
     """Parse `...SRC` at text[j] (the `...` at j) (F557).
 
     Spread sources: an object literal (parsed by
@@ -12120,26 +12132,47 @@ def _js_parse_f557_spread(text, j, depth, state):
     (shallow copy, node-exact); the static model never mutates
     props, so sharing cannot alias a mutation.
 
-    Anything else (variables, calls, arrays, templates) fails
-    closed (documented boundary -- never mis-decoded). Spread-nested
-    objects count toward the _JS_EXPR_MAX_DEPTH bound like
-    value-nested objects (deep spread nesting fails closed).
-    Never evals.
+    spread_env (F701): when not None, a var-bound object ident may
+    also be spread -- the name must be bound in spread_env to a
+    _JSObj. Node-exact (v24.20.0): the engine invokes [[Get]] on
+    the source's own enumerable props in order, so getters were
+    already resolved to data values when the source literal was
+    parsed (F535); _JSAccessor values (accessor-aware parses)
+    unwrap to their evaluated value, the same invocation. The
+    prototype chain is NOT copied (spread copies own props only,
+    engine-exact). Unbound idents and non-object bindings fail
+    closed (documented boundary -- never mis-decoded).
+
+    Anything else (variables when spread_env is None, calls,
+    arrays, templates) fails closed (documented boundary -- never
+    mis-decoded). Spread-nested objects count toward the
+    _JS_EXPR_MAX_DEPTH bound like value-nested objects (deep spread
+    nesting fails closed). Never evals.
     """
     n = len(text)
     k = _js_skip_ws(text, j + 3)
     if k < n and text[k] == "{":
-        sprops, k = _js_parse_f535_object(text, k, depth + 1, state)
+        sprops, k = _js_parse_f535_object(text, k, depth + 1, state,
+                                          spread_env=spread_env)
         return sprops, k
     if _js_match_kw(text, k, "Object") is not None:
         wr = _js_parse_f539_object_identity(text, k, depth, state)
         if wr is not None:
             return wr[0].props, wr[1]
+    if spread_env is not None:
+        # F701: `...NAME` where NAME is bound in spread_env to a
+        # _JSObj -- the var-bound spread-copy form.
+        sk = _js_skip_ws(text, k)
+        if sk < n and text[sk] in _JS_IDENT_START:
+            sname, sk2 = _js_parse_ident(text, sk)
+            bound = spread_env.get(sname)
+            if isinstance(bound, _JSObj):
+                return _js_f701_resolve_spread_props(bound.props), sk2
     raise _JSExprFail("spread source not a literal object")
 
 
 def _js_parse_f535_object(text, i, depth, state, accessor_aware=False,
-                          nested_arrays=False):
+                          nested_arrays=False, spread_env=None):
     """Parse `{k0:v0, ...}` at text[i] (text[i] == '{') (F535/F536).
 
     Returns (props, next_index): props maps key -> str | _JSNumStr |
@@ -12152,6 +12185,12 @@ def _js_parse_f535_object(text, i, depth, state, accessor_aware=False,
     literal values parse in the F571 stringify VALUE position only;
     all other callers keep the default (arrays fail closed). Spread
     sources stay strict regardless (documented boundary).
+    spread_env (F701): when not None, forwarded to
+    _js_parse_f557_spread so a spread element may name a
+    var-bound _JSObj from spread_env (the engine's [[Get]]-on-spread
+    is node-exact: getters were already resolved at source-parse
+    time). The default None keeps every existing caller
+    byte-identical.
     Keys: string literals, decimal integer literals, identifiers
     (`__proto__` fails closed), or F552 computed
     `[Symbol.for('K')]` registry keys (stored as ("symbol", K)
@@ -12188,7 +12227,8 @@ def _js_parse_f535_object(text, i, depth, state, accessor_aware=False,
             # spread invokes [[Get]]). Anything else fails closed.
             if not text.startswith("...", j):
                 raise _JSExprFail("object literal key not a literal")
-            sprops, j = _js_parse_f557_spread(text, j, depth, state)
+            sprops, j = _js_parse_f557_spread(text, j, depth, state,
+                                             spread_env=spread_env)
             props.update(sprops)
             state["parts"] += 1  # the spread element itself; the
                                # merged properties were already
@@ -18440,7 +18480,10 @@ def _js_parse_f671_member_term(text, j, env, depth, state):
     A term is a string literal, or a member read on the bound object
     ident (`NAME(.M | ?.M | ['M'] | ?.['M'])+`) or on an inline object
     literal (`{LIT}(.M | ?.M | ['M'] | ?.['M'])+` /
-    `({LIT})(.M | ?.M | ['M'] | ?.['M'])+`). Member reads resolve via
+    `({LIT})(.M | ?.M | ['M'] | ?.['M'])+`). An inline literal may
+    spread a var-bound object (`{...NAME}`, F701 -- the env is
+    threaded as spread_env, node-exact: the engine invokes [[Get]]
+    on spread). Member reads resolve via
     _jsobj_lookup (the F548 prototype chain); the receiver is
     provably non-null, so `?.` === `.` (the F665 normalization).
     Returns the resolved string. Raises _JSExprFail on any mismatch
@@ -18454,13 +18497,15 @@ def _js_parse_f671_member_term(text, j, env, depth, state):
     if text[j] in "'\"":
         return _js_parse_string(text, j)
     if text[j] == "{":
-        props, j = _js_parse_f535_object(text, j, depth, state)
+        props, j = _js_parse_f535_object(text, j, depth, state,
+                                         spread_env=env)
         recv = _JSObj(props)
     elif text[j] == "(":
         k = _js_skip_ws(text, j + 1)
         if k >= n or text[k] != "{":
             raise _JSExprFail("F671 paren not an object")
-        props, k = _js_parse_f535_object(text, k, depth, state)
+        props, k = _js_parse_f535_object(text, k, depth, state,
+                                         spread_env=env)
         k = _js_skip_ws(text, k)
         if k >= n or text[k] != ")":
             raise _JSExprFail("F671 paren unterminated")
@@ -35827,6 +35872,174 @@ def _js_parse_f697_toprimitive_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f701_getter_spread_iife(text, i, depth, state):
+    """Parse `(function(){DECL N={LIT};DECL N2={...N};return ADD;})()` (F701).
+
+    F471 (CLOSED) models spread-copy as a copy, and F671 (CLOSED)
+    models member reads on var-bound object literals, but neither
+    models accessor invocation on a spread copy: the F671 grammar
+    has a single declaration, and its return-term inline literals
+    fail closed on `...IDENT` spreads. The two filed shapes are
+    `(function(){var o={get x(){return 'f1';}};
+    return {...o}.x+'f2';})()` -- the inline-spread shape, which
+    closes through F671 once var-bound spreads are modeled (the
+    F701 spread_env threading) -- and the two-declaration twin
+    `(function(){var o={get x(){return 'f1';},get y(){return 'f2';}};
+    var c={...o};return c.x+c.y;})()`, which no existing grammar
+    accepts and this parser closes (node v24.20.0).
+
+    Node-exact desugar: the first var binds the parsed object
+    literal (`_js_parse_f535_object` -- getters evaluated at parse
+    time, the engine's read-time invocation; `__proto__` fails
+    closed); the second var binds `{...N}` exactly -- a spread copy
+    of the first binding's own enumerable props (getters already
+    resolved, the engine's [[Get]]-on-spread; the prototype chain
+    is not copied, engine-exact). The return is an additive
+    (`+`-joined, the F649m discipline) of string literals and
+    member reads on either bound ident (`?.` included, the F665
+    normalization -- the receivers are provably non-null).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, multi-decl (`var o=..., p=...`), non-empty call
+      args, reassignment (the grammar is constructive -- no
+      assignment production exists);
+    - a first binding outside the F535 object-literal grammar;
+    - a second binding that is not exactly `{...FIRST}` (plain
+      literals, extra keys, and spreads of other names fail
+      closed -- documented scope boundary);
+    - an unbound member receiver, a computed member, a missing key,
+      a non-string member value, or a bare bound ident with no
+      member step (the engine's "[object Object]" is never
+      decoded).
+
+    Tried after F697: F697 requires a single declaration with an
+    own coercion method and fails closed on two declarations and
+    on member-read terms; F673 requires a statement head no F701
+    shape carries (defineProperties, destructuring, Object.create,
+    computed-key second declaration, hasOwn ternary) and fails
+    closed on the `{...N}` second declaration (the filed shape
+    misses on the open tree); F671 requires a single declaration
+    and fails closed on the second `DECL`. This fails closed on
+    every shape they accept (two declarations with the
+    spread-copy second binding are required), so no
+    previously-decoded input changes behavior. Never evals.
+    Returns (value, next_index), or None when text[i] is not this
+    shape.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        # First declaration: DECL NAME={LIT};
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            return None  # not a decl -- earlier grammars own it
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            raise _JSExprFail("F701 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        props, sj = _js_parse_f535_object(text, sj, depth, state)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        # Second declaration: DECL NAME2={...NAME}; -- exactly the
+        # spread-copy form, nothing else.
+        _kw2, m2 = _js_match_decl_kw(text, sj)
+        if _kw2 is None:
+            raise _JSExprFail("F701 no second decl")
+        sj = _js_skip_ws(text, m2)
+        cname, sj = _js_parse_ident(text, sj)
+        if cname == "arguments":
+            raise _JSExprFail("F701 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "{")
+        sj = _js_skip_ws(text, sj)
+        if not text.startswith("...", sj):
+            raise _JSExprFail("F701 second decl not a spread copy")
+        sk = _js_skip_ws(text, sj + 3)
+        sname, sk = _js_parse_ident(text, sk)
+        if sname != oname:
+            raise _JSExprFail("F701 spread not of first binding")
+        sj = _js_skip_ws(text, sk)
+        sj = _js_expect(text, sj, "}")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        # Engine-exact spread copy: own enumerable props, getters
+        # already resolved to data values at first-decl parse time
+        # (the engine's [[Get]]-on-spread; _JSAccessor values unwrap
+        # defensively -- the F535 default never produces them, but
+        # the copy must hold plain values).
+        cprops = _js_f701_resolve_spread_props(props)
+        state["parts"] += 1  # the spread-copy binding itself
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        env = {oname: _JSObj(props), cname: _JSObj(cprops)}
+        # return ADD -- the F649m additive discipline (as F671).
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F701 no return")
+        sj = _js_skip_ws(text, m)
+        total = None
+        while True:
+            term, sj = _js_parse_f671_member_term(text, sj, env,
+                                                 depth, state)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            state["ops"] += 1
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F701 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f612_values_varbound_iife(text, i, depth, state):
     """Parse `(function(){DECL o=ENUMSRC;return Object.values(o)<postfix>;})()`
     / `(function(){DECL o=ENUMSRC;return
@@ -44753,6 +44966,132 @@ def _js_parse_f658_flatmap_literal_array(text, j, state):
     return _literal_array(j)
 
 
+def _js_parse_f700_flatmap_empty_sibling(text, j, state):
+    """Parse a flatMap param/empty-string-sibling callback at text[j] (F700).
+
+    F658 residual (wave-380 lane 7 modeled only the [x]-identity and
+    the ['LIT',...] constant forms): a mapping fn returning a
+    2-element array with an empty-string sibling joins to the
+    credential while the decoder produced zero variants --
+    `['f1','f2'].flatMap(function(f){return [f,''];}).join('')`
+    and the `['',f]` prefix twin (node v24.20.0).
+
+    Recognized (node-verified, v24.20.0), the F543/F597/F658
+    four-form precedent: `f=>[f,'']`, `(f)=>['',f]`,
+    `f=>{return [f,''];}`, `function(f){return ['',f];}`
+    (optional function name). Exactly one param; the returned
+    array's elements are each either the param ident or the
+    EMPTY-string literal (quote forms `''`/`""` both engine-empty),
+    with at least one of each and at least two elements total.
+    Two or more params fail closed (F658 precedent).
+
+    Disjoint from the three earlier flatMap grammars: F574 owns
+    the `[P]`-only form (tried first), F658 owns the all-literal
+    form (tried second -- `['','']` never reaches here), F597
+    requires a scalar return head (tried after). Non-empty string
+    siblings, other idents, holes, numerics, templates, and nested
+    arrays fail closed (documented scope boundary -- never
+    mis-decoded). Each element charges the F452 parts budget.
+    Returns (template, next_index): template is a list of
+    ("param",) / ("lit", "") entries. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+
+    def _sibling_array(k, param):
+        # Parse "[EL (, EL)*]" at text[k] == "["; each EL is the
+        # param ident or the empty-string literal.
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "[")
+        template = []
+        seen_param = False
+        seen_empty = False
+        while True:
+            k = _js_skip_ws(text, k)
+            if k >= n:
+                raise _JSExprFail("F700 flatMap unterminated array")
+            if text[k] in "'\"":
+                lit, k = _js_parse_string(text, k)
+                if lit != "":
+                    raise _JSExprFail("F700 flatMap non-empty sibling")
+                seen_empty = True
+                template.append(("lit", ""))
+            elif text[k] in _JS_IDENT_START:
+                name, k = _js_parse_ident(text, k)
+                if name != param:
+                    raise _JSExprFail("F700 flatMap other ident")
+                seen_param = True
+                template.append(("param",))
+            else:
+                raise _JSExprFail("F700 flatMap bad array element")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ",":
+                k += 1
+                continue
+            if k < n and text[k] == "]":
+                k += 1
+                break
+            raise _JSExprFail("F700 flatMap bad array")
+        if len(template) < 2:
+            raise _JSExprFail("F700 flatMap too few elements")
+        if not (seen_param and seen_empty):
+            raise _JSExprFail("F700 flatMap not param/empty mix")
+        return template, k
+
+    def _paren_params(k):
+        # Parse "(P)" at text[k] == "("; exactly one param.
+        k = _js_expect(text, k, "(")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ")":
+            raise _JSExprFail("F700 flatMap needs a param")
+        p, k = _js_parse_ident(text, k)
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ",":
+            raise _JSExprFail("F700 flatMap too many params")
+        return p, _js_expect(text, k, ")")
+
+    def _block_return(k, param):
+        # Parse "return [...];}" at text[k] (just past "{",
+        # the F574/F658 block grammar).
+        rk = _js_match_kw(text, _js_skip_ws(text, k), "return")
+        if rk is None:
+            raise _JSExprFail("F700 flatMap not return")
+        template, k = _sibling_array(rk, param)
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ";")
+        k = _js_expect(text, _js_skip_ws(text, k), "}")
+        return template, k
+
+    if text.startswith("function", j):
+        k = j + len("function")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F700 flatMap bad function")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            # optional function name: function f(x){...}
+            _, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+        p, k = _paren_params(k)
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "{")
+        return _block_return(k, p)
+    if j < n and text[j] == "(":
+        p, j = _paren_params(j)
+    else:
+        # bare single param: f=>[f,'']
+        p, j = _js_parse_ident(text, j)
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F700 flatMap without =>")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        return _block_return(j + 1, p)
+    return _sibling_array(j, p)
+
+
 def _js_parse_f580_length_cmp(text, i):
     """Parse a sort length comparator at text[i] (F580).
 
@@ -45405,24 +45744,41 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         # literal array and the mapped list is flattened one level.
         # Tried between F574 and F597: the three grammars are disjoint
         # on the return head (`[P]`, `[`-literal, scalar).
+        # F700: param/empty-string-sibling callbacks --
+        # (P)=>[P,''] / ['','P'] / the block/function twins
+        # (node-verified, v24.20.0); each element e maps to the
+        # template with P substituted by e and the mapped list is
+        # flattened one level. Tried between F658 and F597: the
+        # four grammars are disjoint on the return-array shape
+        # (`[P]`-only, all-literal, param/empty-mixed, scalar).
         # Checked BEFORE the "method on unjoined array" guard below.
         if not isinstance(value, _JSArr):
             raise _JSExprFail("flatMap on non-array")
         try:
             i = _js_parse_f574_flatmap_identity(text, _js_skip_ws(text, i))
             f658 = None
+            f700 = None
             f597 = None
         except _JSExprFail:
             try:
                 f658_elts, i = _js_parse_f658_flatmap_literal_array(
                     text, _js_skip_ws(text, i), state)
                 f658 = f658_elts
+                f700 = None
                 f597 = None
             except _JSExprFail:
-                kind, payload, i = _js_parse_f597_flatmap_scalar(
-                    text, _js_skip_ws(text, i))
-                f658 = None
-                f597 = (kind, payload)
+                try:
+                    f700_tpl, i = _js_parse_f700_flatmap_empty_sibling(
+                        text, _js_skip_ws(text, i), state)
+                    f658 = None
+                    f700 = f700_tpl
+                    f597 = None
+                except _JSExprFail:
+                    kind, payload, i = _js_parse_f597_flatmap_scalar(
+                        text, _js_skip_ws(text, i))
+                    f658 = None
+                    f700 = None
+                    f597 = (kind, payload)
         i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != ")":
             raise _JSExprFail("flatMap bad args")
@@ -45441,6 +45797,21 @@ def _js_apply_method_at(text, i, name, value, depth, state):
             for e in value.elements:
                 state["ops"] += 1  # per-element evaluation (F452)
                 mapped.append(_JSArr(list(f658)))
+            elements = _js_flatten_f574(mapped, 1)
+            state["ops"] += 1  # the map-flatten is obfuscation-shaped
+        elif f700 is not None:
+            # F700: each source element maps to the template with
+            # the param substituted by the element; the mapped list
+            # is flattened one level (engine-exact, node v24.20.0
+            # -- flatMap is map + flat(1), so [e,'']/[ '',e]
+            # interleave the empty string with the element).
+            mapped = []
+            for e in value.elements:
+                state["ops"] += 1  # per-element evaluation (F452)
+                row = []
+                for t in f700:
+                    row.append(e if t[0] == "param" else t[1])
+                mapped.append(_JSArr(row))
             elements = _js_flatten_f574(mapped, 1)
             state["ops"] += 1  # the map-flatten is obfuscation-shaped
         elif f597 is None:
@@ -49109,6 +49480,28 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                state)
         if _f697 is not None:
             val, i = _f697
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F701: (function(){DECL o={LIT};DECL c={...o};
+        #   return ADD;})() -- spread-copy of a var-bound object
+        #   (getter invocation on spread). The inline-spread twin
+        #   (return {...o}.x+...) closes through F671 via the F701
+        #   spread_env threading; this hook closes the
+        #   two-declaration twin. Tried after F697: F697 requires
+        #   a single declaration with an own coercion method and
+        #   fails closed on two declarations and on member-read
+        #   terms; F673 requires a statement head no F701 shape
+        #   carries and fails closed on the `{...o}` second
+        #   declaration; F671 requires a single declaration and
+        #   fails closed on the second `DECL`. This requires two
+        #   declarations with the spread-copy second binding and
+        #   fails closed on every shape they accept, so no
+        #   previously-decoded input changes behavior. None falls
+        #   through like F697. F697's hook and its trailing
+        #   `return` are untouched (wave-379 lesson).
+        _f701 = _js_parse_f701_getter_spread_iife(text, i, depth,
+                                                  state)
+        if _f701 is not None:
+            val, i = _f701
             return _js_parse_postfix(text, i, val, depth, state)
         # F681: (function(){DECL A=['LIT',..];A.splice/fill(..);*;
         # return A.join(SEP);})() -- array-mutator fragment
