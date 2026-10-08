@@ -205,16 +205,28 @@ def p7_compositions():
         "new URLSearchParams('a=%s').get('a')+'%s'" % (_A1, _A2),
         # F579: Reflect.ownKeys terminal reads (CLOSED wave-370 lane 3)
         "({c:'%s'})[Reflect.ownKeys({c:'%s'})[0]]+'%s'" % (_A1, _A1, _A2),
+        # F597: flatMap scalar callbacks (CLOSED wave-372 lane 1)
+        "['%s','%s'].flatMap((x)=>x).join('')" % (_A1, _A2),
+        # F598: stringify of derived arrays (CLOSED wave-372 lane 2)
+        "JSON.parse(JSON.stringify(Array.from(new Set(['%s','%s'])))).join('')"
+        % (_A1, _A2),
+        # F600: Map keys iteration (CLOSED wave-372 lane 4)
+        "Array.from(new Map([['a','%s']]).keys()).join('')" % _A1,
+        # F601: Map.prototype.forEach (CLOSED wave-372 lane 4)
+        "(function(){var s='';new Map([['a','%s']]).forEach(function(v){s+=v;});return s;})()"
+        % _A1,
     ]
     missed_closed = [s for s in held if not _blocked(s)]
     still_open = [
-        # F598: JSON.stringify of derived arrays (open, wave-372 lane 2)
-        "JSON.parse(JSON.stringify(Array.from(new Set(['%s','%s'])))).join('')"
+        # F595: stringify nested array values (OPEN; wave-371 footer
+        # overstatement corrected at wave-372 merge -- entry honest OPEN)
+        "JSON.parse(JSON.stringify([['%s'],['%s']])).flat().join('')"
         % (_A1, _A2),
-        # F600: Map keys iteration (open, wave-372 lane 4)
-        "Array.from(new Map([['a','%s']]).keys()).join('')" % _A1,
-        # F601: Map.prototype.forEach (open, wave-372 lane 4)
-        "new Map([['a','%s']]).forEach((v)=>v)" % _A1,
+        # F606: append-mutated params with sort/delete/has guards (OPEN,
+        # wave-372 lane 3)
+        "(function(){var p=new URLSearchParams('q=%s');"
+        "p.append('q','%s');p.sort();"
+        "return p.getAll('q').join('');})()" % (_A1, _A2),
     ]
     closed_open = [s for s in still_open if _blocked(s)]
     ok = not missed_closed and not closed_open
