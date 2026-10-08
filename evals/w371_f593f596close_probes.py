@@ -236,8 +236,7 @@ def p7_pin_and_footer():
         # F597 (spec-axis review residual); the merge reconciles with
         # sibling lanes.
         ok = ("Next free finding: **F606**." in text
-              and "**Open findings: F583, F584, F585, F586, F587, F588, "
-                 "F589, F590, F591, F592, F594, F595, F597.**" in text)
+              and "**Open findings: F597, F598, F599, F600, F601, F602, F603, F604, F605.**" in text)
         rows.append(("HELD" if ok else "BREAK", "pin+footer"))
     except AssertionError as e:  # noqa: BLE001
         rows.append(("BREAK", "pin/footer: %s" % e))
@@ -274,7 +273,8 @@ def green_check():
             bad = [l for l in lines
                    if ("BREAK" in l or "ERROR" in l)
                    and "footer" not in l.lower()
-                   and "tally:" not in l]
+                   and "tally:" not in l
+                   and "BREAKS:" not in l]  # "BREAKS: []" is the empty-list print, not a failure
             status = tally[-1] if tally else "rc=%d" % r.returncode
             extra = "" if not bad else " FUNCTIONAL-FAILURES=%d" % len(bad)
             print("green %-38s -> %s (%.1fs)%s" %

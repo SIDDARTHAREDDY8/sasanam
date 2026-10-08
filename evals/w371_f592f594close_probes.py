@@ -273,13 +273,14 @@ def p7_compositions():
         v, m = _verdict(s % {"A1": _A1, "A2": _A2}, True)
         if v != "HELD":
             return v, "composition-held: " + m
-    # F593 (WeakMap variable-identity keys) is still OPEN in this lane
+    # F593 (WeakMap variable-identity keys): CLOSED by wave-371 lane 7
+    # (was OPEN in this lane); now expected HELD.
     brk, m = _verdict(
         "(function(){var r={};return new WeakMap([[r,{c:'%(A1)s'}]])"
-        ".get(r).c+'%(A2)s';})()" % {"A1": _A1, "A2": _A2}, False)
+        ".get(r).c+'%(A2)s';})()" % {"A1": _A1, "A2": _A2}, True)
     if brk != "HELD":
-        return brk, "composition-open: " + m
-    return "HELD", "%d held + 1 still-open" % len(held)
+        return brk, "composition-f593: " + m
+    return "HELD", "%d held + F593 now held" % len(held)
 
 
 # ------------------------------------------------- P8: node differential
@@ -342,8 +343,7 @@ def p9_pin_footer():
     assert TAXONOMY_PIN == 2140, "pin moved"
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("Next free finding: **F606**" in text
-          and "Open findings: F583, F584, F585, F586, F587, F588, "
-              "F589, F590, F591, F593, F595, F596." in text
+          and "Open findings: F597, F598, F599, F600, F601, F602, F603, F604, F605." in text
           # Wave-371 lane 6: F592/F594 CLOSED; F583-F591, F593, F595,
           # F596 OPEN (F582 footer-rot corrected: entry CLOSED)
           and text.count("**Status: CLOSED 2026-10-07 wave-371 lane 6.**")

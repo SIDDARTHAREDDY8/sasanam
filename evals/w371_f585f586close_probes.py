@@ -267,8 +267,7 @@ def p9_pin_footer():
         "guac_graph.TAXONOMY_PIN=%r want 2140" % (guac_graph.TAXONOMY_PIN,)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("Next free finding: **F606**" in text
-          and "**Open findings: F583, F584, F587, F588, F589, F590, F591, "
-              "F592, F593, F594, F595, F596.**" in text
+          and "**Open findings: F597, F598, F599, F600, F601, F602, F603, F604, F605.**" in text
           # Wave-371 lane 3: F585/F586 CLOSED; F583/F584/F587-F596 OPEN
           and text.count("**Status: CLOSED 2026-10-07 wave-371 lane 3.**")
               == 2)
