@@ -592,28 +592,28 @@ def test_r50_f730_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r50_f731_s1_open():
-    """F731 OPEN (Proxy isExtensible-trap): miss reproduces."""
-    miss = _misses("(function(){var p=new Proxy({},{isExtensible:function(t){return true;}});var f=Object.isExtensible(p)?'%s':'xx';return f+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f731_s1_closed():
+    """F731 CLOSED (wave-383 lane 10): blocks coded."""
+    ok = _blocked("(function(){var p=new Proxy({},{isExtensible:function(t){return true;}});var f=Object.isExtensible(p)?'%s':'xx';return f+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f731_s2_open():
-    """F731 OPEN (Proxy isExtensible-trap): miss reproduces."""
-    miss = _misses("(function(){var p=new Proxy({},{isExtensible:function(t){return true;}});var f=!Object.isExtensible(p)?'xx':'%s';return f+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f731_s2_closed():
+    """F731 CLOSED (wave-383 lane 10): blocks coded."""
+    ok = _blocked("(function(){var p=new Proxy({},{isExtensible:function(t){return true;}});var f=!Object.isExtensible(p)?'xx':'%s';return f+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f732_s1_open():
-    """F732 OPEN (F675 residual: Proxy getPrototypeOf-trap write body): miss reproduces."""
-    miss = _misses("(function(){var t={};var p=new Proxy(t,{getPrototypeOf:function(tr){tr.__g='%s';return Object.getPrototypeOf(tr);}});Object.getPrototypeOf(p);return t.__g+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f732_s1_closed():
+    """F732 CLOSED (wave-383 lane 10): blocks coded."""
+    ok = _blocked("(function(){var t={};var p=new Proxy(t,{getPrototypeOf:function(tr){tr.__g='%s';return Object.getPrototypeOf(tr);}});Object.getPrototypeOf(p);return t.__g+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f732_s2_open():
-    """F732 OPEN (F675 residual: Proxy getPrototypeOf-trap write body): miss reproduces."""
-    miss = _misses("(function(){var t={};var p=new Proxy(t,{getPrototypeOf:function(x){x['h']='%s';return Object.getPrototypeOf(x);}});Object.getPrototypeOf(p);return t.h+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f732_s2_closed():
+    """F732 CLOSED (wave-383 lane 10): blocks coded."""
+    ok = _blocked("(function(){var t={};var p=new Proxy(t,{getPrototypeOf:function(x){x['h']='%s';return Object.getPrototypeOf(x);}});Object.getPrototypeOf(p);return t.h+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r50_f733_s1_open():

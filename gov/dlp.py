@@ -42727,6 +42727,467 @@ def _js_parse_f707_gopd_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f731_truthy_literal(text, j):
+    """Parse a truthiness-testable literal at text[j] (F731).
+
+    Returns (bool, next_index), or None when the literal form is
+    not modeled (the caller fails closed). Supports `true` /
+    `false`, string literals (truthy iff non-empty), and decimal
+    integer literals (truthy iff nonzero). Hex/octal/binary,
+    floats, and scientific forms fail closed (conservative miss,
+    never a mis-decode). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    t = _js_match_kw(text, j, "true")
+    if t is not None:
+        return True, t
+    f = _js_match_kw(text, j, "false")
+    if f is not None:
+        return False, f
+    if j < n and text[j] in "'\"":
+        s, k = _js_parse_string(text, j)
+        if not isinstance(s, str) or isinstance(s, _JSNumStr):
+            return None
+        return len(s) > 0, k
+    if j < n and text[j] in "0123456789":
+        k = j
+        while k < n and text[k] in "0123456789":
+            k += 1
+        if k < n and (text[k] in _JS_IDENT_CONT or text[k] == "."):
+            return None  # hex/float/scientific/ident-adjacent
+        return int(text[j:k]) != 0, k
+    return None
+
+
+def _js_parse_f731_isext_body_after_head(text, j, params, is_block,
+                                         depth, state):
+    """Parse the isExtensible-trap body content after the head (F731).
+
+    The modeled body returns a literal whose ToBoolean the engine
+    applies before the isExtensible invariant check: block form
+    `{return LIT;}`, concise arrow `LIT`. The modeled target is
+    always a literal (hence extensible) object, so a truthy
+    literal result is node-exactly `true`; a falsy literal throws
+    TypeError in the engine (node v24.20.0) and the decoder never
+    decodes a throw -- it fails closed. Any write, extra
+    statement, or unmodeled literal form fails closed. Returns
+    next_index. Never evals.
+    """
+    del params, depth, state
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if is_block:
+        r = _js_match_kw(text, j, "return")
+        if r is None:
+            raise _JSExprFail("F731 trap body not a return")
+        j = _js_skip_ws(text, r)
+    truthy = _js_parse_f731_truthy_literal(text, j)
+    if truthy is None:
+        raise _JSExprFail("F731 trap result not a modeled literal")
+    val, j = truthy
+    if not val:
+        raise _JSExprFail("F731 trap result falsy (engine throws)")
+    j = _js_skip_ws(text, j)
+    if is_block:
+        j = _js_expect(text, j, ";")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "}")
+    return j
+
+
+def _js_parse_f731_isext_fn(text, i, depth, state):
+    """Parse a full isExtensible-trap function value at text[i] (F731).
+
+    Returns (params, next_index). Never evals.
+    """
+    params, is_block, j = _js_parse_f675_fn_head(text, i)
+    j = _js_parse_f731_isext_body_after_head(text, j, params, is_block,
+                                             depth, state)
+    return params, j
+
+
+def _js_parse_f731_isext_method_body(text, j, params, depth, state):
+    """Parse an isExtensible method-shorthand body (F731).
+
+    Returns ((params), next_index). Never evals.
+    """
+    j = _js_parse_f731_isext_body_after_head(text, j, params, True,
+                                              depth, state)
+    return params, j
+
+
+def _js_parse_f731_handler(text, i, depth, state):
+    """Parse `{isExtensible:TRAPFN}` at text[i] (F731).
+
+    Returns (params, next_index). Never evals.
+    """
+    return _js_parse_f675_keyed_trap(text, i, "isExtensible",
+                                     _js_parse_f731_isext_fn,
+                                     _js_parse_f731_isext_method_body,
+                                     depth, state)
+
+
+def _js_parse_f731_isext_cond(text, i, wname, state):
+    """Parse `[!]Object.isExtensible(p)` at text[i] (F731).
+
+    p must be the proxy ident; the modeled trap always returns
+    `true` (anything else fails closed at the handler), so the
+    condition value is known node-exactly (v24.20.0). Returns
+    (bool, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    neg = False
+    if j < n and text[j] == "!":
+        neg = True
+        j = _js_skip_ws(text, j + 1)
+    ob = _js_match_kw(text, j, "Object")
+    if ob is None:
+        raise _JSExprFail("F731 cond not Object")
+    j = _js_skip_ws(text, ob)
+    j = _js_expect(text, j, ".")
+    j = _js_skip_ws(text, j)
+    ie = _js_match_kw(text, j, "isExtensible")
+    if ie is None:
+        raise _JSExprFail("F731 cond not isExtensible")
+    j = _js_skip_ws(text, ie)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    pname, j = _js_parse_ident(text, j)
+    if pname != wname:
+        raise _JSExprFail("F731 cond wrong proxy")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    state["ops"] += 1  # the trap-firing call is obfuscation-shaped
+    return (not neg), j
+
+
+def _js_parse_f731_ternary(text, i, wname, state):
+    """Parse `COND?'LIT':'LIT'` at text[i] (F731); returns (str, next_index).
+
+    COND is `[!]Object.isExtensible(p)` via
+    _js_parse_f731_isext_cond; the branches must be plain string
+    literals (the _JSNumStr discipline, mirroring F710). Returns the
+    selected branch. Never evals.
+    """
+    n = len(text)
+    cond, k = _js_parse_f731_isext_cond(text, i, wname, state)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "?":
+        raise _JSExprFail("F731 ternary without ?")
+    then_lit, k = _js_parse_string(text, _js_skip_ws(text, k + 1))
+    if not isinstance(then_lit, str) or isinstance(then_lit, _JSNumStr):
+        raise _JSExprFail("F731 then not a plain string")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ":":
+        raise _JSExprFail("F731 ternary without :")
+    else_lit, k = _js_parse_string(text, _js_skip_ws(text, k + 1))
+    if not isinstance(else_lit, str) or isinstance(else_lit, _JSNumStr):
+        raise _JSExprFail("F731 else not a plain string")
+    return (then_lit if cond else else_lit), k
+
+
+def _js_parse_f731_isext_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const p=new Proxy({PROPS},
+    {isExtensible:TRAPFN});var|let|const f=COND?'LIT':'LIT';
+    return f(+'LIT')*;})()` (F731).
+
+    `Object.isExtensible(p)` fires the trap; the modeled trap
+    returns a literal whose ToBoolean is `true` (the engine applies
+    ToBoolean before the isExtensible invariant check -- a falsy
+    literal throws TypeError on the literal-object target, so it
+    fails closed here), and the ternary selects its branch
+    node-exactly (v24.20.0). The proxy target's own properties are
+    provably irrelevant to the modeled read, so any literal-object
+    target is accepted.
+    Disjoint from F642 (get trap + literal binding section), F666
+    (apply/has traps), F675 (set/construct/deleteProperty/
+    getPrototypeOf traps or the revocable head), F686 (ownKeys
+    trap), F689 (Symbol.iterator get trap), F706 (defineProperty
+    trap), F707 (getOwnPropertyDescriptor trap) -- the handler key
+    `isExtensible` on a `new Proxy` head is unique to this route;
+    none of the earlier routes accepts these shapes, so no
+    previously-decoded input changes behavior. Returns (value,
+    next_index) or None. Never evals.
+    """
+    head = _js_parse_f675_iife_head(text, i)
+    if head is None:
+        return None
+    inner_start, inner_end, j = head
+    n = len(text)
+    try:
+        wname, m = _js_parse_f675_decl_ident(text, inner_start, ())
+        m = _js_parse_f675_new_proxy_head(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        if m >= n or text[m] != "{":
+            raise _JSExprFail("F731 target not an object")
+        _tprops, m = _js_parse_f535_object(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ",")
+        m = _js_skip_ws(text, m)
+        _trap, m = _js_parse_f731_handler(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        # ---- binding: var|let|const f=COND?'LIT':'LIT';
+        fname, m = _js_parse_f675_decl_ident(text, m, (wname,))
+        fval, m = _js_parse_f731_ternary(text, m, wname, state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        # ---- terminal: return f(+'LIT')*;
+        r = _js_match_kw(text, _js_skip_ws(text, m), "return")
+        if r is None:
+            raise _JSExprFail("F731 no return")
+        m = _js_skip_ws(text, r)
+        rname, m = _js_parse_ident(text, m)
+        if rname != fname:
+            raise _JSExprFail("F731 return not the bound ident")
+        # The shared F675 additive tail: literal summands only (a
+        # member summand looks up the empty tracked map and fails
+        # closed -- the filed shapes never read members here).
+        val, m = _js_parse_f675_add_tail(text, m, fval, wname, wname,
+                                         {}, depth, state)
+        return _js_parse_f675_iife_tail(text, j, m, inner_end, val,
+                                        state)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f732_gopwrite_body_after_head(text, j, params, depth,
+                                            state):
+    """Parse getPrototypeOf write-body content after the head (F732).
+
+    The body is one or more target writes `TR.KEY='LIT';` /
+    `TR['KEY']='LIT';` (TR is the trap's first param) followed by
+    `return Object.getPrototypeOf(TR);`. Each write stores the
+    literal into the tracked target (node-exact, v24.20.0); the
+    return form is the engine-valid prototype result for the filed
+    shapes (anything else fails closed). `__proto__` keys fail
+    closed (the engine would set the prototype -- proto-pollution
+    shape). Non-string write values fail closed (the F510
+    string-only discipline). Returns (writes, next_index) where
+    writes is the ordered list of (key, value) pairs. Never evals.
+    """
+    del depth
+    n = len(text)
+    if not params:
+        raise _JSExprFail("F732 trap needs a target param")
+    tr = params[0]
+    writes = []
+    while True:
+        q = _js_skip_ws(text, j)
+        if _js_match_kw(text, q, "return") is not None:
+            break
+        rname, q = _js_parse_ident(text, q)
+        if rname != tr:
+            raise _JSExprFail("F732 write not on target param")
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == ".":
+            mem, q = _js_parse_ident(text, _js_skip_ws(text, q + 1))
+        elif q < n and text[q] == "[":
+            q = _js_skip_ws(text, q + 1)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F732 write key not literal")
+            mem, q = _js_parse_string(text, q)
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "]")
+        else:
+            raise _JSExprFail("F732 write not a member")
+        if mem == "__proto__":
+            raise _JSExprFail("F732 write __proto__")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "=")
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] not in "'\"":
+            raise _JSExprFail("F732 write value not literal")
+        val, q = _js_parse_string(text, q)
+        if not isinstance(val, str) or isinstance(val, _JSNumStr):
+            raise _JSExprFail("F732 write value not a plain string")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        writes.append((mem, val))
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = q
+    if not writes:
+        raise _JSExprFail("F732 trap never writes")
+    r = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if r is None:
+        raise _JSExprFail("F732 trap body not a return")
+    j = _js_skip_ws(text, r)
+    ob = _js_match_kw(text, j, "Object")
+    if ob is None:
+        raise _JSExprFail("F732 trap return not Object")
+    j = _js_skip_ws(text, ob)
+    j = _js_expect(text, j, ".")
+    j = _js_skip_ws(text, j)
+    gp = _js_match_kw(text, j, "getPrototypeOf")
+    if gp is None:
+        raise _JSExprFail("F732 trap return not getPrototypeOf")
+    j = _js_skip_ws(text, gp)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    tname2, j = _js_parse_ident(text, j)
+    if tname2 != tr:
+        raise _JSExprFail("F732 trap return wrong target")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "}")
+    return writes, j
+
+
+def _js_parse_f732_gopwrite_fn(text, i, depth, state):
+    """Parse a full getPrototypeOf write-body trap function (F732).
+
+    Returns (writes, next_index). Never evals.
+    """
+    params, is_block, j = _js_parse_f675_fn_head(text, i)
+    if not is_block:
+        raise _JSExprFail("F732 trap not a block body")
+    return _js_parse_f732_gopwrite_body_after_head(text, j, params,
+                                                   depth, state)
+
+
+def _js_parse_f732_gopwrite_method_body(text, j, params, depth,
+                                        state):
+    """Parse a getPrototypeOf method-shorthand write body (F732).
+
+    Returns (writes, next_index). Never evals.
+    """
+    writes, j = _js_parse_f732_gopwrite_body_after_head(
+        text, j, params, depth, state)
+    return writes, j
+
+
+def _js_parse_f732_handler(text, i, depth, state):
+    """Parse `{getPrototypeOf:TRAPFN}` at text[i] (F732).
+
+    Returns (writes, next_index). Never evals.
+    """
+    return _js_parse_f675_keyed_trap(text, i, "getPrototypeOf",
+                                     _js_parse_f732_gopwrite_fn,
+                                     _js_parse_f732_gopwrite_method_body,
+                                     depth, state)
+
+
+def _js_parse_f732_gopwrite_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const t={PROPS};var|let|const p=
+    new Proxy(t,{getPrototypeOf:TRAPFN});Object.getPrototypeOf(p);
+    return t.MEM(+'LIT')*;})()` (F732).
+
+    `Object.getPrototypeOf(p)` fires the trap; the modeled write
+    body stores each literal fragment into the tracked target
+    node-exactly (v24.20.0), so the later `t.MEM` read decodes the
+    fragment. Trap writes must target keys absent from the
+    original literal: a write to a pre-existing key fails closed,
+    because a getter-origin key (value-resolved by the F535
+    parse, losing accessor provenance) would silently ignore the
+    assignment in the engine while the decoder would record it --
+    a mis-decode. Writes to keys added by earlier trap writes in
+    the same body are later-wins (node-exact). With no get trap,
+    `t.MEM` reads the target directly.
+    Disjoint from F675's getPrototypeOf route (which requires a
+    literal-object-return trap body -- this write body fails that
+    parse) and from F706 (defineProperty key) / F707
+    (getOwnPropertyDescriptor key); none of the earlier routes
+    accepts these shapes, so no previously-decoded input changes
+    behavior. Returns (value, next_index) or None. Never evals.
+    """
+    head = _js_parse_f675_iife_head(text, i)
+    if head is None:
+        return None
+    inner_start, inner_end, j = head
+    n = len(text)
+    try:
+        tname, m = _js_parse_f675_decl_ident(text, inner_start, ())
+        if m >= n or text[m] != "{":
+            raise _JSExprFail("F732 target not an object")
+        props, m = _js_parse_f535_object(text, m, depth, state)
+        # The tracked target starts as the literal data props;
+        # accessor-bearing targets fail closed (a trap write to an
+        # accessor key would invoke the setter in the engine).
+        tracked = {}
+        for k, v in props.items():
+            if not isinstance(v, str) or isinstance(v, _JSNumStr):
+                raise _JSExprFail("F732 target not data-only")
+            tracked[k] = v
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        wname, m = _js_parse_f675_decl_ident(text, m, (tname,))
+        m = _js_parse_f675_new_proxy_head(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        targ, m = _js_parse_ident(text, m)
+        if targ != tname:
+            raise _JSExprFail("F732 target not bound")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ",")
+        m = _js_skip_ws(text, m)
+        orig_keys = set(tracked)
+        writes, m = _js_parse_f732_handler(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        for k, v in writes:
+            # Trap writes must target fresh keys: a write to a key
+            # already present in the literal would silently ignore
+            # the assignment in the engine when that key came from
+            # a getter (the F535 parse value-resolves getters, so
+            # their accessor provenance is lost) -- decoding the
+            # write would mis-decode. Writes to keys added by
+            # earlier trap writes in the same body are later-wins
+            # (node-exact): they always create/overwrite data props.
+            if k in orig_keys:
+                raise _JSExprFail("F732 write overwrites literal key")
+            tracked[k] = v
+        # ---- firing statement: Object.getPrototypeOf(p);
+        ob = _js_match_kw(text, _js_skip_ws(text, m), "Object")
+        if ob is None:
+            raise _JSExprFail("F732 no firing statement")
+        m = _js_skip_ws(text, ob)
+        m = _js_expect(text, m, ".")
+        m = _js_skip_ws(text, m)
+        gp = _js_match_kw(text, m, "getPrototypeOf")
+        if gp is None:
+            raise _JSExprFail("F732 firing not getPrototypeOf")
+        m = _js_skip_ws(text, gp)
+        m = _js_expect(text, m, "(")
+        m = _js_skip_ws(text, m)
+        pname, m = _js_parse_ident(text, m)
+        if pname != wname:
+            raise _JSExprFail("F732 firing wrong proxy")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        # ---- terminal: return t.MEM(+'LIT')*;
+        r = _js_match_kw(text, _js_skip_ws(text, m), "return")
+        if r is None:
+            raise _JSExprFail("F732 no return")
+        m = _js_skip_ws(text, r)
+        recv, m = _js_parse_ident(text, m)
+        if recv != tname:
+            raise _JSExprFail("F732 terminal wrong receiver")
+        mem, m = _js_parse_f642_terminal_member(text, m)
+        if mem == "__proto__":
+            raise _JSExprFail("F732 terminal __proto__")
+        v = tracked.get(mem)
+        if not isinstance(v, str) or isinstance(v, _JSNumStr):
+            raise _JSExprFail("F732 terminal member not a string")
+        val, m = _js_parse_f675_add_tail(text, m, v, wname, tname,
+                                         tracked, depth, state)
+        return _js_parse_f675_iife_tail(text, j, m, inner_end, val,
+                                        state)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f647_nullish_right_iife(text, i, depth, state):
     """Parse `(function(){[var|let IDENT;]?return RET;})()` (F647).
 
@@ -51214,6 +51675,44 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f707 = _js_parse_f707_gopd_iife(text, i, depth, state)
         if _f707 is not None:
             val, i = _f707
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F731: (function(){var|let|const p=new Proxy({PROPS},
+        #   {isExtensible:TRAPFN});var|let|const f=
+        #   [!]Object.isExtensible(p)?'LIT':'LIT';return
+        #   f(+'LIT')*;})() -- Proxy isExtensible-trap conditional
+        #   reads: the trap result selects the ternary branch
+        #   node-exactly (the modeled trap returns a truthy
+        #   literal; a falsy literal would throw in the engine
+        #   and fails closed).
+        #   Tried after F707: F707 requires the
+        #   `getOwnPropertyDescriptor` handler key; F706 requires
+        #   `defineProperty`; F675 requires set/construct/
+        #   deleteProperty/getPrototypeOf keys or the revocable
+        #   head; F686 requires `ownKeys`; F689 requires the
+        #   Symbol.iterator get trap; F642 requires a `get` trap
+        #   and a literal binding section. The `isExtensible`
+        #   handler key is unique to this route, so no
+        #   previously-decoded input changes behavior.
+        _f731 = _js_parse_f731_isext_iife(text, i, depth, state)
+        if _f731 is not None:
+            val, i = _f731
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F732: (function(){var|let|const t={PROPS};var|let|const p=
+        #   new Proxy(t,{getPrototypeOf:TRAPFN});
+        #   Object.getPrototypeOf(p);return t.MEM(+'LIT')*;})() --
+        #   Proxy getPrototypeOf-trap target writes: the firing
+        #   statement executes the modeled write body into the
+        #   tracked target, and the later target read decodes the
+        #   fragment node-exactly. Tried after F731: F731
+        #   requires the `isExtensible` handler key; F675's
+        #   getPrototypeOf route requires a literal-object-return
+        #   trap body (this write body fails that parse); F706/
+        #   F707 require their own handler keys. None of the
+        #   earlier routes accepts these shapes, so no
+        #   previously-decoded input changes behavior.
+        _f732 = _js_parse_f732_gopwrite_iife(text, i, depth, state)
+        if _f732 is not None:
+            val, i = _f732
             return _js_parse_postfix(text, i, val, depth, state)
         # F647: (function(){[var|let IDENT;]?return RET;})() --
         # nullish-coalescing RIGHT-pick fragment assembly
