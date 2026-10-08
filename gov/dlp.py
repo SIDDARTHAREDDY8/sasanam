@@ -14927,6 +14927,7 @@ _F478_DISPATCH_NAMES = ("call", "apply", "bind")
 _JS_POSTFIX_METHOD_NAMES = (
     "concat", "repeat", "join", "reduce", "reduceRight", "map", "filter",
     "fill", "reverse", "toString", "slice", "flat", "splice", "replace",
+    "replaceAll", "matchAll", "match",
     "padStart", "padEnd", "at", "toReversed", "with", "split",
     "flatMap", "sort", "trim", "trimStart", "trimEnd",
 )
@@ -42149,7 +42150,7 @@ def _js_parse_f603_regex_literal(text, i):
 
     Returns (source, flags, next_index). The source must be
     regex-plain: literal characters (ASCII letters, digits, space,
-    underscore, hyphen, comma) with at most one level of
+    underscore, hyphen, comma, colon) with at most one level of
     capture-group parentheses; no escapes, character classes,
     quantifiers, anchors, alternations, or nested groups. For this
     subset a single leftmost search is identical in the JS and Python
@@ -42180,7 +42181,7 @@ def _js_parse_f603_regex_literal(text, i):
                 raise _JSExprFail("F603 unbalanced regex paren")
             _depth = 0
             body.append(c)
-        elif c.isascii() and (c.isalnum() or c in " _-,"):
+        elif c.isascii() and (c.isalnum() or c in " _-,:"):
             body.append(c)
         else:
             raise _JSExprFail("F603 regex char not modeled")
@@ -42298,6 +42299,345 @@ def _f603_replace_all_commas(value, rep):
         out.append(part)
         pos = end + len(part)
     return "".join(out)
+
+
+def _js_f688_peek_alternation(text, i):
+    """True when the regex literal at text[i] holds a '|' (F688).
+
+    text[i] == '/'; the body cannot hold '/' in either grammar (node
+    v24.20.0), so the first '/' after the opening is the closing
+    delimiter. Escapes are in neither grammar -- a peek routed to
+    F688 fails closed there. Never evals.
+    """
+    j = text.find("/", i + 1)
+    return j > i + 1 and "|" in text[i + 1:j]
+
+
+def _js_parse_f688_regex_literal(text, i):
+    """Parse a bounded alternation-of-literals regex `/A1|A2|.../flags` (F688).
+
+    text[i] == '/'. Each alternative is F603 regex-plain: ASCII
+    letters, digits, space, underscore, hyphen, comma, colon -- no
+    escapes, character classes, quantifiers, anchors, or capture
+    groups (parens fail closed: the replacer arg list is then exactly
+    (match, offset, string), node v24.20.0). Empty alternatives fail
+    closed (the engine's empty-match advance semantics are not
+    modeled). At least one '|' must be present -- single-literal
+    bodies belong to the F603 grammar. Returns (alternatives, flags,
+    next_index). The body cannot contain '/' in either grammar, so
+    the first '/' after the opening is the closing delimiter (node
+    v24.20.0). Hand-parsed: no new regexes. Never evals.
+    """
+    n = len(text)
+    if i >= n or text[i] != "/":
+        raise _JSExprFail("F688 regex needs literal")
+    j = i + 1
+    body = []
+    while j < n and text[j] != "/":
+        c = text[j]
+        if c == "|":
+            body.append(c)
+        elif c.isascii() and (c.isalnum() or c in " _-,:"):
+            body.append(c)
+        else:
+            raise _JSExprFail("F688 regex char not modeled")
+        j += 1
+    if j >= n:
+        raise _JSExprFail("F688 unterminated regex")
+    raw = "".join(body)
+    if not raw or "|" not in raw:
+        raise _JSExprFail("F688 not an alternation")
+    alts = raw.split("|")
+    if any(not a for a in alts):
+        raise _JSExprFail("F688 empty alternative")
+    j += 1
+    flags = []
+    while j < n and text[j].isascii() and text[j].isalpha():
+        flags.append(text[j])
+        j += 1
+    return alts, "".join(flags), j
+
+
+def _f688_alternation_first_match(value, alts):
+    """Leftmost-first match of literal alternatives in value (F688).
+
+    At each scan position the alternatives are tried left to right;
+    the first matching alternative wins (the engine's disjunction
+    order -- node v24.20.0 verified: /ab|a/ on 'ab' matches 'ab',
+    /a|ab/ matches 'a'). Alternatives are non-empty literals, so
+    there is no backtracking and no zero-width match. Returns
+    (start, end, match_text) or (None, None, None) when nothing
+    matches. Never evals.
+    """
+    n = len(value)
+    for pos in range(n + 1):
+        for a in alts:
+            if value.startswith(a, pos):
+                return pos, pos + len(a), a
+    return None, None, None
+
+
+def _f688_alternation_all_matches(value, alts):
+    """Global leftmost scan of literal alternatives in value (F688).
+
+    Returns the list of (start, end, match_text) in engine order
+    (node v24.20.0): after each match the scan resumes at the match
+    end; matches are non-empty so the scan always advances. Never
+    evals.
+    """
+    out = []
+    pos = 0
+    n = len(value)
+    while pos <= n:
+        hit = False
+        for a in alts:
+            if value.startswith(a, pos):
+                out.append((pos, pos + len(a), a))
+                pos += len(a)
+                hit = True
+                break
+        if not hit:
+            pos += 1
+    return out
+
+
+def _f603_regex_all_matches(value, body):
+    """Global leftmost scan of an F603 regex-plain body in value (F694).
+
+    The body holds literal characters plus one capture-group level
+    (accepted by _js_parse_f603_regex_literal). Returns the list of
+    (start, end, match_text, groups) in engine order (node v24.20.0):
+    the leftmost occurrence of the concatenated literal at each scan
+    position, resuming after the match end. The literal is non-empty
+    (empty-group-only bodies fail closed above), so matches are
+    non-empty and the scan always advances. Never evals.
+    """
+    literal = []
+    groups = []  # (offset_in_literal, width) per capture group
+    for c in body:
+        if c == "(":
+            groups.append([len(literal), None])
+        elif c == ")":
+            groups[-1][1] = len(literal) - groups[-1][0]
+        else:
+            literal.append(c)
+    lit = "".join(literal)
+    if not lit:
+        # Empty-group-only bodies (e.g. /()/) match the empty string
+        # everywhere; the engine's zero-width advance semantics are
+        # not modeled -- fail closed (same rationale as the F688
+        # empty-alternative bound). Without this the scan below never
+        # advances (value.find("", pos) always succeeds).
+        raise _JSExprFail("F694 empty pattern")
+    out = []
+    pos = 0
+    n = len(value)
+    while True:
+        idx = value.find(lit, pos)
+        if idx < 0:
+            return out
+        gs = [value[idx + s:idx + s + w] for s, w in groups]
+        out.append((idx, idx + len(lit), lit, gs))
+        pos = idx + len(lit)
+
+
+def _f688_apply_replace(value, matches, rep, fn_spec, state):
+    """Apply an F688 alternation replace over precomputed matches.
+
+    *matches* is the list of (start, end, match_text) from
+    _f688_alternation_first_match (single) or
+    _f688_alternation_all_matches (global), in engine order.
+    *rep* is a literal replacement string (expanded with
+    _f603_expand_dollar, node-exact for the documented subset, node
+    v24.20.0) when *fn_spec* is None, else *fn_spec* is (params, ast) for an F609
+    functional replacer, evaluated per match with the engine's
+    positional args (match, offset, string) -- there are no capture
+    groups in the F688 grammar, so offset is the second arg exactly
+    as the engine passes it. Each match is parts-charged (F452); the
+    result is length-capped. Never evals.
+    """
+    out = []
+    prev = 0
+    for start, end, match_text in matches:
+        out.append(value[prev:start])
+        if fn_spec is None:
+            out.append(_f603_expand_dollar(
+                rep, value, start, end, match_text, []))
+        else:
+            params, ast = fn_spec
+            out.append(_f609_eval_replacer(
+                params, ast, [match_text, start, value]))
+        prev = end
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("replace too many matches")
+    out.append(value[prev:])
+    result = "".join(out)
+    if len(result) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("replace too long")
+    return result
+
+
+def _js_parse_f694_index_read(text, j, name, arr, state):
+    """Parse `m[INTLIT]` at text[j] over a bound F694 match array.
+
+    *name* is the bound match binding; the index is a non-negative
+    integer literal. Out-of-bounds reads are engine-undefined and
+    fail closed (F547 discipline); non-string elements fail closed.
+    Returns (element, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    nm, j = _js_parse_ident(text, j)
+    if nm != name:
+        raise _JSExprFail("F694 return not over match binding")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F694 operand not an index read")
+    k = _js_skip_ws(text, j + 1)
+    d0 = k
+    while k < n and "0" <= text[k] <= "9":
+        k += 1
+    if k == d0:
+        raise _JSExprFail("F694 index not an integer")
+    idx = int(text[d0:k])
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "]":
+        raise _JSExprFail("F694 index bracket not closed")
+    k += 1
+    if idx >= len(arr.elements):
+        raise _JSExprFail("F694 index out of bounds")
+    elem = arr.elements[idx]
+    if not isinstance(elem, str):
+        raise _JSExprFail("F694 index over non-string element")
+    state["ops"] += 1  # the group read is obfuscation-shaped
+    return elem, k
+
+
+def _js_parse_f694_bound_additive(text, i, name, arr, state):
+    """Parse `m[INT] (+ 'LIT' | + m[INT])*` at text[i] (F694).
+
+    The return-expression grammar for the F694 match IIFE: bound
+    index reads over the match array and string literals joined by
+    `+` (string concatenation, node-exact v24.20.0). Returns
+    (value, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j < n and text[j] in "'\"":
+        val, j = _js_parse_string(text, j)
+    else:
+        val, j = _js_parse_f694_index_read(text, j, name, arr, state)
+    while True:
+        k = _js_skip_ws(text, j)
+        if k >= n or text[k] != "+":
+            return val, j
+        k = _js_skip_ws(text, k + 1)
+        if k < n and text[k] in "'\"":
+            rhs, k = _js_parse_string(text, k)
+        else:
+            rhs, k = _js_parse_f694_index_read(text, k, name, arr,
+                                               state)
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("concat too long")
+        val = val + rhs
+        state["ops"] += 1
+        j = k
+
+
+def _js_f694_has_match_call(src):
+    """True when src holds a `.match(`/`.matchAll(` call (F694).
+
+    The method name may be dot-form or a string-literal bracket form,
+    with optional whitespace before the opening paren (the engine
+    allows it). Substring-based: the real guard is that INIT
+    evaluates to a _JSArr. Never evals.
+    """
+    for name in (".match", ".matchAll", "['match']", '["match"]',
+                 "['matchAll']", '["matchAll"]'):
+        k = src.find(name)
+        while k >= 0:
+            j = k + len(name)
+            while j < len(src) and src[j] in " \t\n\r":
+                j += 1
+            if j < len(src) and src[j] == "(":
+                return True
+            k = src.find(name, k + 1)
+    return False
+
+
+def _js_parse_f694_match_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const M=INIT;return RET;})()` (F694).
+
+    The match-group fragment-reassembly IIFE: M is bound to a
+    `.match(/R/)` / `.matchAll(/R/g)` result (dot or string-literal
+    bracket form, optional whitespace before the paren; the INIT
+    additive must contain a match call and evaluate to a _JSArr --
+    the match array [full, g1, ..., gn], or the [0] element of the
+    spread matchAll result), and RET reassembles fragments via bound
+    index reads (`m[1]+m[2]`, string literals allowed).
+    Node-exact (v24.20.0): group values are the engine's captured
+    texts; out-of-bounds reads are engine-undefined and fail closed.
+
+    The body is parsed statement-sequentially (not via
+    _js_span_braced, which rejects the regex `/`); each statement
+    is consumed by its own grammar, so a `}` inside a string
+    literal cannot desync the parse. The INIT source-span check
+    keeps the production disjoint from plain array bindings (which
+    belong to other findings' lanes).
+
+    Tried after F678: every earlier route requires its own binding
+    family or statement head and fails closed on a `.match(` /
+    `.matchAll(` initializer (red-first verified: 2 BREAK on the
+    open tree), so no previously-decoded input changes behavior.
+    Returns (value, next_index), or None when the head does not
+    match. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        sj = _js_skip_ws(text, j + 1)  # head returns the '{' index
+        kw, m = _js_match_decl_kw(text, sj)
+        if kw is None:
+            raise _JSExprFail("F694 not a var decl")
+        q = _js_skip_ws(text, m)
+        name, q = _js_parse_ident(text, q)
+        if name == "arguments" or name in _F611_RESERVED:
+            raise _JSExprFail("F694 bad binding name")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "=")
+        init_start = _js_skip_ws(text, q)
+        init_val, q = _js_parse_additive(text, init_start, depth + 1,
+                                         state)
+        _init_src = text[init_start:q]
+        if not _js_f694_has_match_call(_init_src):
+            raise _JSExprFail("F694 init not a match")
+        if not isinstance(init_val, _JSArr):
+            raise _JSExprFail("F694 init not an array")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        rk = _js_match_kw(text, _js_skip_ws(text, q), "return")
+        if rk is None:
+            raise _JSExprFail("F694 body without return")
+        rval, q = _js_parse_f694_bound_additive(
+            text, _js_skip_ws(text, rk), name, init_val, state)
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == ";":
+            q += 1
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "}")
+        val, j = _js_parse_f6xx_iife_tail(text, q, depth, state,
+                                          rval)
+        return val, j
+    except _JSExprFail:
+        return None
 
 
 def _js_parse_comma_regex(text, i):
@@ -43756,26 +44096,43 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         # documented subset ($$, $&, $`, $', $n for a modeled group);
         # anything else $-shaped fails closed (documented). A regex
         # with flags outside F464's comma scope fails closed. The
-        # general regex engine is NOT modeled. Never evals.
-        if not isinstance(value, str):
+        # general regex engine is NOT modeled. (F688) A bounded
+        # alternation-of-literals regex (/A1|A2|.../ with "" or "g"
+        # flags, F603 charset per alternative, no groups) is
+        # additionally modeled: the replacement is an F609 functional
+        # replacer (evaluated per match with (match, offset, string))
+        # or a literal string ($-expanded via the F603 subset). Never
+        # evals.
+        if not isinstance(value, str) or isinstance(value, (_JSNumStr, _JSBigInt)):
             raise _JSExprFail("F603 replace on non-string")
         i = _js_skip_ws(text, i)
         _f603_is_regex = False
         _f603_comma_g = False
+        _f688_alts = None
         if i < len(text) and text[i] in "'\"":
             _pattern, i = _js_parse_string(text, i)
         elif i < len(text) and text[i] == "/":
-            _body, _flags, i = _js_parse_f603_regex_literal(text, i)
-            if _flags:
-                # F464's comma scope only; any other flagged regex
-                # fails closed (documented).
-                if _body != "," or _flags not in ("g", "i", "gi", "ig"):
-                    raise _JSExprFail("F603 replace flags not modeled")
-                _f603_comma_g = "g" in _flags
-                _pattern = ","
+            if _js_f688_peek_alternation(text, i):
+                # F688: alternation-of-literals regex -- flags "" (first
+                # match) or "g" (all matches); anything else fails
+                # closed (the engine's other flags change semantics).
+                _f688_alts, _f688_flags, i = _js_parse_f688_regex_literal(
+                    text, i)
+                if _f688_flags not in ("", "g"):
+                    raise _JSExprFail("F688 replace flags not modeled")
             else:
-                _f603_is_regex = True
-                _pattern = _body
+                _body, _flags, i = _js_parse_f603_regex_literal(text, i)
+                if _flags:
+                    # F464's comma scope only; any other flagged regex
+                    # fails closed (documented).
+                    if (_body != ","
+                            or _flags not in ("g", "i", "gi", "ig")):
+                        raise _JSExprFail("F603 replace flags not modeled")
+                    _f603_comma_g = "g" in _flags
+                    _pattern = ","
+                else:
+                    _f603_is_regex = True
+                    _pattern = _body
         else:
             raise _JSExprFail("F603 replace pattern not a literal")
         i = _js_skip_ws(text, i)
@@ -43798,7 +44155,28 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != ")":
             raise _JSExprFail("bad replace")
-        if _f603_comma_g:
+        if _f688_alts is not None:
+            # F688: fragment assembly over a bounded
+            # alternation-of-literals regex, node-exact (v24.20.0):
+            # `replace` with "g" replaces every leftmost match,
+            # without flags only the first. The replacement is an
+            # F609 functional replacer evaluated per match with the
+            # engine's (match, offset, string) args, or a literal
+            # string expanded with the F603 $-subset.
+            if _f688_flags == "g":
+                _matches = _f688_alternation_all_matches(value,
+                                                         _f688_alts)
+            else:
+                _s, _e, _m = _f688_alternation_first_match(value,
+                                                           _f688_alts)
+                _matches = [] if _s is None else [(_s, _e, _m)]
+            if _f609_fn is not None:
+                result = _f688_apply_replace(value, _matches, None,
+                                             _f609_fn, state)
+            else:
+                result = _f688_apply_replace(value, _matches, rep,
+                                             None, state)
+        elif _f603_comma_g:
             if _f609_fn is not None:
                 raise _JSExprFail(
                     "F609 comma-g function replacement not modeled")
@@ -43830,6 +44208,135 @@ def _js_apply_method_at(text, i, name, value, depth, state):
             raise _JSExprFail("replace too long")
         state["ops"] += 1
         return result, i + 1
+    if name == "replaceAll":
+        # F688: String.prototype.replaceAll with a global
+        # alternation-of-literals regex (/A1|A2|.../g, F688 grammar)
+        # or a string-literal pattern, node-exact (v24.20.0). A
+        # non-global regex throws TypeError in the engine, so it
+        # fails closed here. The replacement is an F609 functional
+        # replacer (evaluated per match with the engine's
+        # (match, offset, string) args) or a literal string
+        # ($-expanded via the F603 subset). Every match is replaced
+        # left to right; the result is length-capped. Anything else
+        # fails closed (documented scope boundary). Never evals.
+        if not isinstance(value, str) or isinstance(value, (_JSNumStr, _JSBigInt)):
+            raise _JSExprFail("F688 replaceAll on non-string")
+        i = _js_skip_ws(text, i)
+        _f688_alts = None
+        _f688_strpat = None
+        if i < len(text) and text[i] in "'\"":
+            _f688_strpat, i = _js_parse_string(text, i)
+            _f688_alts = [_f688_strpat] if _f688_strpat else None
+            if _f688_alts is None:
+                # The engine replaces every empty-string match with
+                # an advance-by-code-point loop; not modeled.
+                raise _JSExprFail("F688 replaceAll empty pattern")
+        elif i < len(text) and text[i] == "/":
+            _f688_alts, _f688_flags, i = _js_parse_f688_regex_literal(
+                text, i)
+            if _f688_flags != "g":
+                raise _JSExprFail("F688 replaceAll needs global regex")
+        else:
+            raise _JSExprFail("F688 replaceAll pattern not a literal")
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ",":
+            raise _JSExprFail("bad replaceAll")
+        _f609_fn = None
+        _rj = _js_skip_ws(text, i + 1)
+        if _f609_looks_like_fn(text, _rj):
+            try:
+                _f609_params, _f609_ast, i = _js_parse_f609_replace_fn(
+                    text, _rj)
+                _f609_fn = (_f609_params, _f609_ast)
+            except _JSExprFail:
+                _f609_fn = None
+                rep, i = _js_parse_coerced_string_arg(
+                    text, _rj, depth, state, "replaceAll replacement")
+        else:
+            rep, i = _js_parse_coerced_string_arg(
+                text, _rj, depth, state, "replaceAll replacement")
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("bad replaceAll")
+        _matches = _f688_alternation_all_matches(value, _f688_alts)
+        if _f609_fn is not None:
+            result = _f688_apply_replace(value, _matches, None,
+                                         _f609_fn, state)
+        else:
+            result = _f688_apply_replace(value, _matches, rep, None,
+                                         state)
+        state["ops"] += 1
+        return result, i + 1
+    if name == "match":
+        # F694: String.prototype.match with an F603 regex-plain
+        # literal (literal chars + one capture-group level; no
+        # alternation -- the '|' form fails closed, documented),
+        # node-exact (v24.20.0). Flags "" return the match array
+        # [full, g1, ..., gn]; flags "g" return the full matches
+        # [full1, full2, ...] (the engine discards groups); any other
+        # flags fail closed. No match is null in the engine -- the
+        # static decoder has no null value, so it fails closed. The
+        # result is a _JSArr, so var-bound index reads (m[1]) resolve
+        # engine-exactly. Matches are parts-charged (F452). Never
+        # evals.
+        if not isinstance(value, str) or isinstance(value, (_JSNumStr, _JSBigInt)):
+            raise _JSExprFail("F694 match on non-string")
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != "/":
+            raise _JSExprFail("F694 match needs regex literal")
+        _m_body, _m_flags, i = _js_parse_f603_regex_literal(text, i)
+        if _m_flags not in ("", "g"):
+            raise _JSExprFail("F694 match flags not modeled")
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("bad match")
+        i += 1
+        _mall = _f603_regex_all_matches(value, _m_body)
+        if not _mall:
+            raise _JSExprFail("F694 match no match")
+        if _m_flags == "g":
+            _elems = [_m[2] for _m in _mall]
+        else:
+            _s, _e, _full, _gs = _mall[0]
+            _elems = [_full] + _gs
+        for _ in _elems:
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("match too many parts")
+        state["ops"] += 1  # the regex extraction is obfuscation-shaped
+        return _JSArr(_elems), i
+    if name == "matchAll":
+        # F694: String.prototype.matchAll with an F603 regex-plain
+        # literal carrying the "g" flag, node-exact (v24.20.0). The
+        # engine throws TypeError without the global flag, so it
+        # fails closed here. The result is a _JSArr of _JSArr match
+        # arrays ([full, g1, ..., gn] each): the engine's
+        # `[...iter]` desugars through _js_parse_spread_copy's _JSArr
+        # path, and index reads resolve through
+        # _js_parse_indexed_array_read's nested-_JSArr pass-through.
+        # An empty match set yields [] exactly as the engine does.
+        # Matches are parts-charged (F452). Never evals.
+        if not isinstance(value, str) or isinstance(value, (_JSNumStr, _JSBigInt)):
+            raise _JSExprFail("F694 matchAll on non-string")
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != "/":
+            raise _JSExprFail("F694 matchAll needs regex literal")
+        _m_body, _m_flags, i = _js_parse_f603_regex_literal(text, i)
+        if _m_flags != "g":
+            raise _JSExprFail("F694 matchAll needs global flag")
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("bad matchAll")
+        i += 1
+        _elems = []
+        for _s, _e, _full, _gs in _f603_regex_all_matches(value,
+                                                         _m_body):
+            _elems.append(_JSArr([_full] + _gs))
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("matchAll too many parts")
+        state["ops"] += 1  # the regex extraction is obfuscation-shaped
+        return _JSArr(_elems), i
     if name == "split":
         # F564: 'f1,f2'.split(',') -- String.prototype.split with a
         # string-literal separator, returning the node-exact segment
@@ -44205,7 +44712,8 @@ def _js_parse_postfix(text, i, value, depth, state):
     """Consume chained .concat(...) / .repeat(...) / .join(...) /
     .reduce(...) / .reduceRight(...) / .map(...) / .filter(...) /
     .fill(...) / .reverse() / .toString() / .slice(...) / .flat() /
-    .splice(0,2) / .replace(...) / .padStart(...) / .padEnd(...) /
+    .splice(0,2) / .replace(...) / .replaceAll(...) / .match(...) /
+    .matchAll(...) / .padStart(...) / .padEnd(...) /
     .split(...) on *value*."""
 
     while True:
@@ -46565,6 +47073,19 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f678 = _js_parse_f678_with_iife(text, i, depth, state)
         if _f678 is not None:
             val, i = _f678
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F694: (function(){var|let|const M='LIT'.match(/R/);return
+        #   M[I]+M[J];})() / (function(){var|let|const
+        #   M=[...'LIT'.matchAll(/R/g)][0];return M[I]+M[J];})() --
+        #   regex match-group fragment reassembly. Tried after F678:
+        #   every earlier route requires its own binding family or
+        #   statement head and fails closed on a `.match(` /
+        #   `.matchAll(` initializer (red-first verified: 2 BREAK on
+        #   the open tree), so no previously-decoded input changes
+        #   behavior.
+        _f694 = _js_parse_f694_match_iife(text, i, depth, state)
+        if _f694 is not None:
+            val, i = _f694
             return _js_parse_postfix(text, i, val, depth, state)
         # F586: (new Map(...)) / (new WeakRef(...)) --
         # parenthesized new-expression receivers, engine-identical
