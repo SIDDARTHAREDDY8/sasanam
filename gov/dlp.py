@@ -26550,6 +26550,7 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                    state)
         if _f612 is not None:
             val, i = _f612
+            return _js_parse_postfix(text, i, val, depth, state)
         # F616: (function(){DECL p=new URLSearchParams('LIT');
         #   [DECL N='LIT';]*[MUT;]*TERM})() -- the F599/F606/F610
         #   statement-form mutation model with variable-bound

@@ -368,6 +368,18 @@ def p7_node_differential():
             "%d/%d node-decoder agreement" % (total - len(bad), total))
 
 
+def _round42_shapes():
+    """Filed shapes of the currently-OPEN round-42 findings (must still miss)."""
+    import importlib
+    shapes = []
+    for fnum in (621, 622, 623, 624, 625, 626, 627, 628, 629, 630, 631, 632, 633, 634):
+        mod = importlib.import_module("w374_f%d_redfirst" % fnum)
+        for name, payload, recovers in mod.SHAPES:
+            if recovers:
+                shapes.append((fnum, name, payload))
+    return shapes
+
+
 def p8_compositions():
     """Neighbor closures stay HELD; open neighbors still BREAK."""
     held = [
@@ -380,29 +392,19 @@ def p8_compositions():
         "'%s-X'.replace('X','%s')" % (_A, _B),
         # F609 (replace function) stays HELD
         "'%sXX'.replace('XX',()=>'%s')" % (_A, _B),
-        # F595/F598 (stringify nested) stay HELD
+        # F595/F598 (stringify nested) stays HELD
         "JSON.parse(JSON.stringify({a:['%s','%s']})).a.join('')"
         % (_A, _B),
     ]
     bad_held = [s for s in held if not _blocked(s)]
-    # F612-F617, F620 are OPEN (wave-373 attack round 41) -- they
-    # must still MISS (wave-305/306: closures must not absorb
-    # attack findings).
-    must_miss = [
-        # F612: var-bound Object.values/entries
-        "(function(){var o={a:'%s',b:'%s'};"
-        "return Object.values(o).join('');})()" % (_A, _B),
-        # F614: fn-expr call/apply/bind
-        "((a,b)=>a+b).call(null,'%s','%s')" % (_A, _B),
-        # F620: indexed thunk invocation
-        "(function(){var f=[()=>'%s',()=>'%s'];"
-        "return f[0]()+f[1]();})()" % (_A, _B),
-    ]
-    bad_miss = [s for s in must_miss if not _quiet(s)]
+    # F621-F634 are OPEN (attack round 42) -- they must still MISS
+    # (wave-305/306: closures must not absorb attack findings).
+    bad_miss = ["F%d/%s" % (fnum, name) for fnum, name, payload in _round42_shapes()
+                if not _quiet(payload)]
     bad = bad_held + bad_miss
     return ("HELD" if not bad else "BREAK",
-            "%d/%d compositions ok" % (len(held) + len(must_miss) - len(bad),
-                                       len(held) + len(must_miss)))
+            "%d/%d compositions ok" % (len(held) + len(_round42_shapes()) - len(bad),
+                                       len(held) + len(_round42_shapes())))
 
 
 def p9_honest_text_quiet():

@@ -272,26 +272,23 @@ def test_p4_f510_inline_still_blocked():
     return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
+def _round42_shapes():
+    """Filed shapes of the currently-OPEN round-42 findings (must still miss)."""
+    import importlib
+    shapes = []
+    for fnum in (621, 622, 623, 624, 625, 626, 627, 628, 629, 630, 631, 632, 633, 634):
+        mod = importlib.import_module("w374_f%d_redfirst" % fnum)
+        for name, payload, recovers in mod.SHAPES:
+            if recovers:
+                shapes.append((fnum, name, payload))
+    return shapes
+
+
 def test_p4_open_neighbors_still_miss():
-    """Attack findings F613-F620 still miss (nothing absorbed)."""
-    m1 = _misses("'" + _A + "'+String.raw`" + _B + "`")  # F613
-    m2 = _misses("((a,b)=>a+b).call(null,'%s','%s')" % (_A, _B))  # F614
-    m3 = _misses("((...a)=>a.join(''))(...new Map([['a','%s'],"
-                 "['b','%s']]).values())" % (_A, _B))  # F615
-    m4 = _misses("(function(){var p=new URLSearchParams('');var q='q';"
-                 "p.append(q,'%s');p.append(q,'%s');"
-                 "return p.getAll(q).join('');})()" % (_A, _B))  # F616
-    m5 = _misses("(function(){var u=new URL('http://x/?q=xx');"
-                 "u.searchParams.set('q','%s');"
-                 "return u.searchParams.get('q')+'%s';})()" % (_A, _B))  # F617
-    m6 = _misses("Promise.all([Promise.resolve('%s'),Promise.resolve('%s')])"
-                 ".then(a=>a.join(''))" % (_A, _B))  # F618
-    m7 = _misses("(function(){function* g(){yield '%s';yield '%s';}"
-                 "return [...g()].join('');})()" % (_A, _B))  # F619
-    m8 = _misses("(function(){var f=[()=>'%s',()=>'%s'];"
-                 "return f[0]()+f[1]();})()" % (_A, _B))  # F620
-    ok = m1 and m2 and m3 and m4 and m5 and m6 and m7 and m8
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    """Attack findings F621-F634 still miss (nothing absorbed)."""
+    bad = [f for fnum, name, payload in _round42_shapes() if not _misses(payload)]
+    ok = not bad
+    return ("HELD" if ok else "BREAK", "miss=%s bad=%s" % (ok, bad[:3]))
 
 
 def test_p4_sibling_iife_unchanged():

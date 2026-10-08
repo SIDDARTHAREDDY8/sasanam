@@ -192,15 +192,26 @@ def test_p4_neighbors_stay_held():
     return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
+def _round42_shapes():
+    """Filed shapes of the currently-OPEN round-42 findings (must still miss)."""
+    import importlib
+    shapes = []
+    for fnum in (621, 622, 623, 624, 625, 626, 627, 628, 629, 630, 631, 632, 633, 634):
+        mod = importlib.import_module("w374_f%d_redfirst" % fnum)
+        for name, payload, recovers in mod.SHAPES:
+            if recovers:
+                shapes.append((fnum, name, payload))
+    return shapes
+
+
 def test_p4_open_neighbors_still_miss():
-    """F615/F616/F617/F618/F619/F620 shapes still miss (not absorbed)."""
-    ok = _misses("((a,b)=>a+b).call(null,...new Map([['a','" + _A
-                 + "'],['b','" + _B + "']]).values())")  # F615
+    """F621-F634 shapes still miss (not absorbed); F614 residual stays quiet."""
+    bad = ["F%d/%s" % (fnum, name) for fnum, name, payload in _round42_shapes()
+           if not _misses(payload)]
+    ok = not bad
     ok = ok and _misses("((a,b)=>a+b).call(q,'" + _A + "','" + _B
                         + "')")  # F614 residual: non-literal thisArg
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
-
-
+    return ("HELD" if ok else "BREAK", "miss=%s bad=%s" % (ok, bad[:3]))
 def test_p4_junk_quiet():
     """Honest text unaffected: junk stays quiet."""
     ok = _misses("(function(){var s='ab';return s;})()")

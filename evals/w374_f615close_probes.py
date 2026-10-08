@@ -256,21 +256,19 @@ def p4_node_differential():
 
 
 def _open_neighbor_shapes():
-    """Filed shapes of the still-OPEN wave-374 findings (must stay BREAK).
+    """Filed shapes of the still-OPEN round-42 findings (must stay BREAK).
 
-    Imported from their red-first batteries: F612, F613, F614, F616,
-    F617, F618, F619, F620. This lane must not absorb them.
+    Imported from their red-first batteries: F621-F634. This lane must
+    not absorb them. (Wave-374 merge: F612-F620 are now CLOSED.)
     """
     import importlib
     shapes = []
-    for fnum in (612, 613, 614, 616, 617, 618, 619, 620):
-        mod = importlib.import_module("w373_f%d_redfirst" % fnum)
+    for fnum in (621, 622, 623, 624, 625, 626, 627, 628, 629, 630, 631, 632, 633, 634):
+        mod = importlib.import_module("w374_f%d_redfirst" % fnum)
         for name, payload, recovers in mod.SHAPES:
             if recovers:
                 shapes.append((fnum, name, payload))
     return shapes
-
-
 def p5_compositions():
     """Neighbor closures stay HELD; open neighbors still BREAK."""
     held = [

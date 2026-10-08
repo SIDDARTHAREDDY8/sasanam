@@ -355,23 +355,23 @@ def test_p1_f617_closed():
 
 
 @_t
-def test_r41_f618_open():
-    """F618 OPEN: Promise resolution callbacks miss."""
-    m1 = _misses("Promise.all([Promise.resolve('%s'),Promise.resolve('%s')]).then(a=>a.join(''))" % (_A, _B))
-    m2 = _misses("Promise.all([Promise.resolve('%s'),Promise.resolve('%s')]).then(([a,b])=>a+b)" % (_A, _B))
-    m3 = _misses("Promise.race([Promise.resolve('%s')]).then(v=>v+'%s')" % (_A, _B))
-    ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_p1_f618_closed():
+    """F618 CLOSED (wave-374 lane 6): Promise resolution callbacks block."""
+    b1 = _blocked("Promise.all([Promise.resolve('%s'),Promise.resolve('%s')]).then(a=>a.join(''))" % (_A, _B))
+    b2 = _blocked("Promise.all([Promise.resolve('%s'),Promise.resolve('%s')]).then(([a,b])=>a+b)" % (_A, _B))
+    b3 = _blocked("Promise.race([Promise.resolve('%s')]).then(v=>v+'%s')" % (_A, _B))
+    ok = b1 and b2 and b3
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t
-def test_r41_f619_open():
-    """F619 OPEN: generator yield/spread assembly misses."""
-    m1 = _misses("(function(){function* g(){yield '%s';yield '%s';}return [...g()].join('');})()" % (_A, _B))
-    m2 = _misses("(function(){function* g(){yield '%s';yield '%s';}var s='';for(var x of g())s+=x;return s;})()" % (_A, _B))
-    m3 = _misses("(function(){function* g(){yield '%s';yield '%s';}return Array.from(g()).join('');})()" % (_A, _B))
-    ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_p1_f619_closed():
+    """F619 CLOSED (wave-374 lane 6): generator yield/spread assembly blocks."""
+    b1 = _blocked("(function(){function* g(){yield '%s';yield '%s';}return [...g()].join('');})()" % (_A, _B))
+    b2 = _blocked("(function(){function* g(){yield '%s';yield '%s';}var s='';for(var x of g())s+=x;return s;})()" % (_A, _B))
+    b3 = _blocked("(function(){function* g(){yield '%s';yield '%s';}return Array.from(g()).join('');})()" % (_A, _B))
+    ok = b1 and b2 and b3
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t

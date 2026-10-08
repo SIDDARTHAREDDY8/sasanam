@@ -270,20 +270,16 @@ def test_p3_tag_concat_on_thunks_quiet():
 
 # ------------------------------------------------ neighbors (open stays open)
 
-def test_p4_f614_still_open():
-    """F614 (indirect .call/.apply/.bind invocation) still BREAKs."""
+def test_p4_f614_closed():
+    """F614 (indirect .call/.apply/.bind invocation) now BLOCKs (wave-374 lane 3)."""
     out = _redfirst_tally("w373_f614_redfirst.py")
-    ok = out == (3, 2)
+    ok = out == (0, 5)
     return ("HELD" if ok else "BREAK", "tally=%s" % (out,))
-
-
-def test_p4_f618_still_open():
-    """F618 (promise callbacks) still BREAKs."""
+def test_p4_f618_closed():
+    """F618 (promise callbacks) now BLOCKs (wave-374 lane 6)."""
     out = _redfirst_tally("w373_f618_redfirst.py")
-    ok = out == (3, 2)
+    ok = out == (0, 5)
     return ("HELD" if ok else "BREAK", "tally=%s" % (out,))
-
-
 def _redfirst_tally(name):
     tmp = tempfile.mkdtemp(prefix="g374-p4-", dir="/var/tmp")
     env = dict(os.environ)
@@ -313,14 +309,11 @@ def test_p5_pin_taxonomy():
 
 
 def test_p5_footer_state():
-    """Footer: F620 closed; open F612-F619; next F621 (lane-local)."""
+    """Footer: F612-F620 closed; open F621-F635; next F636 (wave-374 merge)."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("Next free finding: **F636**" in text  # Wave-374 merge: footer repoint open F621-F635 / next F636
-          and "Open findings: F612, F613, F614, F615, F616, F617, "
-              "F618, F619." in text)
+          and "Open findings: F621, F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635." in text)  # Wave-374 merge: footer repoint open F621-F635 / next F636
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
-
-
 def test_p5_no_new_regexes():
     """re.compile count stays 28."""
     n = len(re.findall(r"re\.compile", open(
