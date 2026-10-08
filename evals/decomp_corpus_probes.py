@@ -296,7 +296,7 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    if nxt != 531 or open_s != "F526, F527, F528, F529, F530":  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
+    if nxt != 672 or open_s != "F662, F663, F664, F665, F666, F667, F668, F669, F670, F671":  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F436 "
                        "open 'F436')" % (nxt, open_s))
