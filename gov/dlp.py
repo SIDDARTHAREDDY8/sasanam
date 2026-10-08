@@ -18523,6 +18523,273 @@ def _js_parse_f710_set_has_iife(text, i, depth, state):
     return val, k
 
 
+def _js_parse_f720_array_lit(text, j, state):
+    """Parse `[STR_LIT, ...]` at text[j] (F720); returns (elements, next_index).
+
+    Plain string literals only (the F494 discipline -- the _JSNumStr
+    discipline excludes numeric markers); each element charges one
+    part (F452). Duplicates are kept (membership is unaffected).
+    Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "[")
+    elems = []
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "]":
+            return elems, j + 1
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F720 array element not a string")
+        e, j = _js_parse_string(text, j)
+        if not isinstance(e, str) or isinstance(e, _JSNumStr):
+            raise _JSExprFail("F720 array element not a plain string")
+        elems.append(e)
+        state["parts"] += 1  # F452: charge per element
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j += 1
+            continue
+        if j < n and text[j] == "]":
+            return elems, j + 1
+        raise _JSExprFail("F720 array malformed")
+
+
+def _js_parse_f720_includes(text, i, env, state):
+    """Parse `[!]ARR.includes('LIT')` at text[i] (F720); returns (bool, next_index).
+
+    ARR is an inline `[STR_LIT, ...]` array literal or a name bound
+    to one in env (the ("arr", [...]) binding). The needle must be a
+    plain string literal (the _JSNumStr discipline). A second
+    fromIndex argument fails closed (unmodeled position semantics).
+
+    Array.prototype.includes uses SameValueZero -- for string
+    operands this is strict equality, node-exact (v24.20.0
+    verified). Disjoint from _js_parse_f710_set_has (`.includes`
+    vs `.has` member head; array-literal vs Set bindings). Never
+    evals.
+    """
+    n = len(text)
+    neg = False
+    k = _js_skip_ws(text, i)
+    if k < n and text[k] == "!":
+        neg = True
+        k = _js_skip_ws(text, k + 1)
+    if k < n and text[k] == "[":
+        elems, k = _js_parse_f720_array_lit(text, k, state)
+    else:
+        name, k = _js_parse_ident(text, k)
+        binding = env.get(name)
+        if binding is None or binding[0] != "arr":
+            raise _JSExprFail("F720 receiver not a bound array")
+        elems = binding[1]
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ".":
+        raise _JSExprFail("F720 not a member call")
+    mname, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+    if mname != "includes":
+        raise _JSExprFail("F720 not includes")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, "(")
+    k = _js_skip_ws(text, k)
+    needle, k = _js_parse_string(text, k)
+    if not isinstance(needle, str) or isinstance(needle, _JSNumStr):
+        raise _JSExprFail("F720 needle not a plain string")
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ",":
+        raise _JSExprFail("F720 fromIndex unsupported")
+    k = _js_expect(text, k, ")")
+    hit = needle in elems
+    return (not hit) if neg else hit, k
+
+
+def _js_parse_f720_ternary(text, i, env, state):
+    """Parse `COND?'LIT':'LIT'` at text[i] (F720); returns (str, next_index).
+
+    COND is `[!]ARR.includes('LIT')` via _js_parse_f720_includes; the
+    branches must be plain string literals (the _JSNumStr
+    discipline, mirroring F710). Returns the selected branch.
+    Never evals.
+    """
+    n = len(text)
+    cond, k = _js_parse_f720_includes(text, i, env, state)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "?":
+        raise _JSExprFail("F720 ternary without ?")
+    then_lit, k = _js_parse_string(text, _js_skip_ws(text, k + 1))
+    if not isinstance(then_lit, str) or isinstance(then_lit, _JSNumStr):
+        raise _JSExprFail("F720 then not a plain string")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ":":
+        raise _JSExprFail("F720 ternary without :")
+    else_lit, k = _js_parse_string(text, _js_skip_ws(text, k + 1))
+    if not isinstance(else_lit, str) or isinstance(else_lit, _JSNumStr):
+        raise _JSExprFail("F720 else not a plain string")
+    return (then_lit if cond else else_lit), k
+
+
+def _js_parse_f720_includes_iife(text, i, depth, state):
+    """Parse `(function(){DECL*;return ...;})()` (F720).
+
+    Array.prototype.includes membership-marker conditional reads,
+    node-exact (v24.20.0). Body grammar (all other shapes fail
+    closed), mirroring _js_parse_f710_set_has_iife:
+      - `var|const|let NAME = [STR_LIT, ...];` -- an array bound to
+        string literals (the membership domain; non-literal
+        elements fail closed).
+      - optionally `var|const|let F = COND?'LIT':'LIT';` -- the
+        conditional result bound to F (filed shape 2); branches are
+        plain string literals.
+      - `return` either `(COND?'LIT':'LIT')` (the parenthesized
+        ternary must be the additive left operand -- the engine
+        would re-associate an unparenthesized tail into the else
+        branch) or the bound F, then TAIL = `+ PRIMARY` repeated,
+        each PRIMARY a plain string (the additive concat rules;
+        non-string operands fail closed).
+      - COND = `[!]ARR.includes('LIT')` -- ARR a bound array or an
+        inline `[STR_LIT, ...]` literal; SameValueZero-exact for
+        strings.
+    Disjoint from F710 (array-literal decls vs `new Set`/`new
+    WeakSet` construction heads; `.includes` vs `.has` condition --
+    a body mixing them fails closed in each). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+    if k is None:
+        return None
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] in _JS_IDENT_START:
+        # Optional name (engine-exact; ignored).
+        try:
+            _, k = _js_parse_ident(text, k)
+        except _JSExprFail:
+            return None
+        k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        return None
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != ")":
+        return None  # params: the filed shapes take none
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "{":
+        return None
+    k = _js_skip_ws(text, k + 1)
+    env = {}
+    try:
+        while True:
+            k = _js_skip_ws(text, k)
+            kk, nk = _js_match_decl_kw(text, k)
+            if kk is None:
+                break
+            k = _js_skip_ws(text, nk)
+            name, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "=":
+                return None
+            k = _js_skip_ws(text, k + 1)
+            if k < n and text[k] == "[":
+                # Ambiguous: `var a=[...];` (array decl) vs
+                # `var f=[...].includes(...)...` (condval binding).
+                # Peek past the array literal: a `.includes(` member
+                # means condval. The peek's parts charge is
+                # discarded; the real parse below charges once.
+                saved_parts = state["parts"]
+                is_cond = False
+                try:
+                    _, kp = _js_parse_f720_array_lit(text, k, state)
+                    kp2 = _js_skip_ws(text, kp)
+                    if kp2 < n and text[kp2] == ".":
+                        mn, _ = _js_parse_ident(
+                            text, _js_skip_ws(text, kp2 + 1))
+                        is_cond = (mn == "includes")
+                except _JSExprFail:
+                    is_cond = False
+                state["parts"] = saved_parts
+                if is_cond:
+                    if name in env:
+                        return None
+                    sel, k = _js_parse_f720_ternary(text, k, env, state)
+                    env[name] = ("condval", sel)
+                else:
+                    elems, k = _js_parse_f720_array_lit(text, k, state)
+                    if name in env:
+                        return None  # rebinding: fail closed
+                    env[name] = ("arr", elems)
+            else:
+                # Conditional-result binding:
+                # `var F = COND?'LIT':'LIT';`.
+                if name in env:
+                    return None
+                sel, k = _js_parse_f720_ternary(text, k, env, state)
+                env[name] = ("condval", sel)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ";":
+                return None
+            k = _js_skip_ws(text, k + 1)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                return None
+        rk = _js_match_kw(text, k, "return")
+        if rk is None:
+            return None
+        k = _js_skip_ws(text, rk)
+        if k < n and text[k] == "(":
+            sel, k = _js_parse_f720_ternary(text, k + 1, env, state)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ")":
+                return None
+            val = sel
+            k = k + 1
+        else:
+            fname, k = _js_parse_ident(text, k)
+            fbinding = env.get(fname)
+            if fbinding is None or fbinding[0] != "condval":
+                return None
+            val = fbinding[1]
+        # TAIL: `+ PRIMARY` repeated (the additive concat rules,
+        # string-only -- the engine throws on non-string operands
+        # here, so failing closed is node-exact).
+        while True:
+            kk = _js_skip_ws(text, k)
+            if kk >= n or text[kk] != "+":
+                k = kk
+                break
+            rhs, kk = _js_parse_primary(text, kk + 1, depth, state)
+            if not isinstance(rhs, str) or isinstance(rhs, _JSNumStr):
+                return None
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                return None
+            if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+                return None
+            val = val + rhs
+            state["ops"] += 1
+            k = kk
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ";":
+            k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "}":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # invocation args: the filed shapes take none
+        k = k + 1
+    except _JSExprFail:
+        return None
+    state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+    return val, k
+
+
 def _js_f611_quote(value):
     """Quote a decoded/bound string as a JS single-quoted literal."""
     out = ["'"]
@@ -30562,6 +30829,155 @@ def _js_parse_f602_set_foreach_iife(text, i, depth, state):
                 raise _JSExprFail("too many parts")
         return _js_parse_f6xx_iife_tail(text, j, depth, state,
                                         "".join(parts))
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f719_set_forof_iife(text, i, depth, state):
+    """Parse two for-of-over-Set accumulation shapes (F719).
+
+    Shape A (var-bound twin):
+      `(function(){var|let S='';var|let|const ST=new Set([LITS]);
+      for(var|let|const X of ST){S+=X|S=X+X;}return S;})()`
+    Shape B (additive-assign twin):
+      `(function(){var|let S='';
+      for(var|let|const X of new Set([LITS])){S=S+X;}return S;})()`
+
+    The F602 residual: F602's for-of route requires the inline
+    `new Set(...)` immediately after the accumulator decl with an
+    `S+=X` body (shape A interposes a var-bound Set decl; shape B
+    uses an `S=S+X` body), and F602's forEach route requires a
+    `.forEach` call -- so both fail closed on these shapes and this
+    route is disjoint from them: no previously-decoded input
+    changes behavior.
+
+    Node-exact desugar (v24.20.0): for-of over a Set yields the
+    deduped values in insertion order (the F602 element discipline
+    via _js_parse_f602_set_elements / _js_parse_f669_set_decl --
+    plain string literals, SameValueZero first-occurrence dedup,
+    F452 per-element parts charge); `S=S+X` is engine-identical to
+    `S+=X` for the empty-string accumulator. The loop grammar
+    mirrors _js_parse_f533_forof_accum (braces optional,
+    var/let/const loopvar).
+
+    Bounds (all fail closed): a non-empty accumulator, a `const`
+    accumulator, a Set binding shadowing the accumulator, a loop
+    variable shadowing the accumulator or the Set binding, a loop
+    body other than `S+=X` / `S=S+X`, an iteration source other
+    than the bound Set (shape A) or an inline `new Set` (shape B),
+    non-string-literal Set elements, call args on the IIFE. Never
+    evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        elements = None
+        bound = None
+        m = _js_match_kw(stmts, sj, "var")
+        if m is None:
+            m = _js_match_kw(stmts, sj, "let")
+        if m is None:
+            m = _js_match_kw(stmts, sj, "const")
+        if m is not None:
+            # Shape A: a var-bound Set decl. Any non-Set decl raises
+            # (fail closed -- the shape is not one of ours).
+            stname, elements, sj = _js_parse_f669_set_decl(
+                stmts, sj, depth, state)
+            if stname == acc:
+                raise _JSExprFail("F719 Set binding shadows accum")
+            bound = stname
+            sj = _js_skip_ws(stmts, sj)
+        m = _js_match_kw(stmts, sj, "for")
+        if m is None:
+            raise _JSExprFail("F719 no for")
+        sj = _js_skip_ws(stmts, m)
+        sj = _js_expect(stmts, sj, "(")
+        sj = _js_skip_ws(stmts, sj)
+        m = _js_match_kw(stmts, sj, "var")
+        if m is None:
+            m = _js_match_kw(stmts, sj, "let")
+        if m is None:
+            m = _js_match_kw(stmts, sj, "const")
+        if m is None:
+            raise _JSExprFail("F719 loopvar not var/let/const")
+        sj = _js_skip_ws(stmts, m)
+        loopvar, sj = _js_parse_ident(stmts, sj)
+        if loopvar == acc:
+            raise _JSExprFail("F719 loopvar shadows accum")
+        if bound is not None and loopvar == bound:
+            raise _JSExprFail("F719 loopvar shadows Set binding")
+        sj = _js_skip_ws(stmts, sj)
+        m = _js_match_kw(stmts, sj, "of")
+        if m is None:
+            raise _JSExprFail("F719 no of")
+        sj = _js_skip_ws(stmts, m)
+        if bound is not None:
+            src, sj = _js_parse_ident(stmts, sj)
+            if src != bound:
+                raise _JSExprFail("F719 iterates another ident")
+        else:
+            # Shape B: the inline `new Set` -- F602 owns the
+            # inline-`S+=X` twin, so this route only takes the
+            # additive-assign body (checked below).
+            elements, sj = _js_parse_f602_set_elements(
+                stmts, sj, depth, state)
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_skip_ws(stmts, sj)
+        braced = False
+        if sj < len(stmts) and stmts[sj] == "{":
+            braced = True
+            sj = _js_skip_ws(stmts, sj + 1)
+        acc2, sj = _js_parse_ident(stmts, sj)
+        if acc2 != acc:
+            raise _JSExprFail("F719 accum mismatch")
+        sj = _js_skip_ws(stmts, sj)
+        if stmts.startswith("+=", sj):
+            # S+=X -- shape A only (F602 owns inline S+=X).
+            if bound is None:
+                raise _JSExprFail("F719 inline S+=X is F602's")
+            sj = _js_skip_ws(stmts, sj + 2)
+            v2, sj = _js_parse_ident(stmts, sj)
+            if v2 != loopvar:
+                raise _JSExprFail("F719 body reads another ident")
+        elif (sj < len(stmts) and stmts[sj] == "="
+                and not stmts.startswith("==", sj)
+                and not stmts.startswith("=>", sj)):
+            # S=S+X -- engine-identical to S+=X for the empty-string
+            # accumulator (node v24.20.0 verified).
+            sj = _js_skip_ws(stmts, sj + 1)
+            s2, sj = _js_parse_ident(stmts, sj)
+            if s2 != acc:
+                raise _JSExprFail("F719 additive-assign not accum")
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, "+")
+            sj = _js_skip_ws(stmts, sj)
+            v2, sj = _js_parse_ident(stmts, sj)
+            if v2 != loopvar:
+                raise _JSExprFail("F719 body reads another ident")
+        else:
+            raise _JSExprFail("F719 body not accum append")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        sj = _js_skip_ws(stmts, sj)
+        if braced:
+            sj = _js_expect(stmts, sj, "}")
+            sj = _js_skip_ws(stmts, sj)
+        _js_parse_f6xx_return_acc(stmts, sj, acc)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        state["parts"] += 1  # F452: charge the for-of consumption
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state,
+                                        "".join(elements))
     except _JSExprFail:
         return None
 
@@ -50702,6 +51118,21 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f600 is None:
             _f600 = _js_parse_f602_set_foreach_iife(text, i, depth,
                                                    state)
+        # F719: (function(){var|let S='';var|let|const ST=new Set([LITS]);
+        #   for(var|let|const X of ST){S+=X|S=X+X;}return S;})() /
+        #   (function(){var|let S='';
+        #   for(var|let|const X of new Set([LITS])){S=S+X;}return S;})()
+        #   -- for-of accumulation over a var-bound Set and the
+        #   additive-assign twin of the inline form (F602 residual).
+        #   Tried after F602: F602's for-of requires the inline set
+        #   immediately after the accum decl with an S+=X body and
+        #   its forEach requires a .forEach call -- both fail closed
+        #   on these shapes, and this route fails closed on F602's
+        #   (inline S+=X), so no previously-decoded input changes
+        #   behavior. None falls through like F602.
+        if _f600 is None:
+            _f600 = _js_parse_f719_set_forof_iife(text, i, depth,
+                                                 state)
         # F669: (function(){var|let|const NAME=new Set([LITS]);
         #   (NAME.add('LIT');)*return [...NAME(.values()|.keys())?]
         #   .join(SEP);})() /
@@ -50827,6 +51258,20 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f710 = _js_parse_f710_set_has_iife(text, i, depth, state)
         if _f710 is not None:
             val, i = _f710
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F720: (function(){var a=['q','k'];
+        #   var f=a.includes('k')?'f1':'xx';return f+'f2';})() /
+        #   (function(){var f=['k'].includes('k')?'f1':'xx';
+        #   return f+'f2';})() -- Array.prototype.includes
+        #   membership-marker conditional reads. Tried after F710:
+        #   disjoint decl forms (array literal vs new Set/WeakSet)
+        #   and condition heads (.includes vs .has) -- F710 fails
+        #   closed on every shape this accepts and vice versa, so no
+        #   previously-decoded input changes behavior. None falls
+        #   through like F710.
+        _f720 = _js_parse_f720_includes_iife(text, i, depth, state)
+        if _f720 is not None:
+            val, i = _f720
             return _js_parse_postfix(text, i, val, depth, state)
         # F517: (function(){var A='';var O={...};
         # for(var K in O)A+=O[K];return A})() -- for-in

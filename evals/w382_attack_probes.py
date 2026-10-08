@@ -31,9 +31,12 @@ New findings (24, all LOW, all OPEN), filed F713-F736 (attack-F713 renumbered F7
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F700-F712 (round 49 + wave-381 merge renumbers), F714-F737 (this round; attack-F713 -> F737 at merge).
+F700-F712 (round 49 + wave-381 merge renumbers), F713-F718, F721-F737
+(this round; attack-F713 -> F737 at merge; F719/F720 closed wave-383
+lane 4).
 
-Closed pins (must BLOCK, else BREAK): F686-F699 (wave-381 closures).
+Closed pins (must BLOCK, else BREAK): F686-F699 (wave-381 closures),
+F700-F712 (wave-382 closures), F719, F720 (wave-383 lane 4).
 F699 fails closed (None) by design -- its pin asserts the miss.
 F711 pins the raw-decoder mis-decode (find_credential fails closed on it).
 
@@ -448,28 +451,28 @@ def test_r50_f718_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r50_f719_s1_open():
-    """F719 OPEN (for-of accumulation over Set): miss reproduces."""
-    miss = _misses("(function(){var r='';var s=new Set(['%s','%s']);for(var x of s){r+=x;}return r;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f719_s1_closed():
+    """F719 CLOSED (wave-383 lane 4): blocks coded."""
+    ok = _blocked("(function(){var r='';var s=new Set(['%s','%s']);for(var x of s){r+=x;}return r;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f719_s2_open():
-    """F719 OPEN (for-of accumulation over Set): miss reproduces."""
-    miss = _misses("(function(){var r='';for(var x of new Set(['%s','%s'])){r=r+x;}return r;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f719_s2_closed():
+    """F719 CLOSED (wave-383 lane 4): blocks coded."""
+    ok = _blocked("(function(){var r='';for(var x of new Set(['%s','%s'])){r=r+x;}return r;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f720_s1_open():
-    """F720 OPEN (Array.prototype.includes conditional reads): miss reproduces."""
-    miss = _misses("(function(){var f=['k'].includes('k')?'%s':'xx';return f+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f720_s1_closed():
+    """F720 CLOSED (wave-383 lane 4): blocks coded."""
+    ok = _blocked("(function(){var f=['k'].includes('k')?'%s':'xx';return f+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f720_s2_open():
-    """F720 OPEN (Array.prototype.includes conditional reads): miss reproduces."""
-    miss = _misses("(function(){var a=['q','k'];var f=a.includes('k')?'%s':'xx';return f+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f720_s2_closed():
+    """F720 CLOSED (wave-383 lane 4): blocks coded."""
+    ok = _blocked("(function(){var a=['q','k'];var f=a.includes('k')?'%s':'xx';return f+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r50_f721_s1_open():
