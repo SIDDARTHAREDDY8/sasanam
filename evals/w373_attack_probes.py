@@ -27,10 +27,13 @@ Mechanism notes (verified this round):
 - F608 (OPEN) covers Set spread into call args; Map.values() is a
   different source production (F500/F505 precedent) and escapes (F615).
 - F599 (CLOSED) models literal-name mutations; variable-bound names
-  (`var q='q'`) escape the statement-form model (F616). Non-literal .get
-  on constructor strings still fails closed (control).
-- F599's residual claimed `new URL(...)` bindings fail closed; the
-  `new URL(...).searchParams` receiver production misses entirely (F617).
+  (`var q='q'`) escape the statement-form model (F616 -- CLOSED wave-374
+  lane 5). Non-literal .get on constructor strings still fails closed
+  (control).
+- F599's residual claimed `new URL(...)` bindings fail closed (INACCURATE
+  for the searchParams receiver -- corrected wave-374 lane 5); the
+  `new URL(...).searchParams` receiver production is now modeled (F617 --
+  CLOSED wave-374 lane 5).
 - Promise.all/.race .then callbacks and async-IIFE awaits assemble
   fragments invisibly (F618); sync generators via spread/for-of/Array.from
   likewise (F619); thunks invoked by index/.map/.forEach likewise (F620).
@@ -40,13 +43,14 @@ controls pass. No injection attempts.
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-   F595, F606-F611 (prior rounds), F615-F620 (this round; F612, F613, F614 closed
-   wave-374 lanes 1-3).
+   F595, F606-F611 (prior rounds), F618-F621 (this round; F612-F617 closed
+   wave-374 lanes 1-5).
    
    Closed pins (must BLOCK, else BREAK): F576, F583, F596 (older spots),
    F597, F598, F599, F600, F602, F603, F604, F605 (wave-372 closures),
    F595, F606, F607, F608, F609, F610, F611 (wave-373 closures),
-   F612 (wave-374 lane 1), F613 (wave-374 lane 2), F614 (wave-374 lane 3).
+   F612 (wave-374 lane 1), F613 (wave-374 lane 2), F614 (wave-374 lane 3),
+   F615 (wave-374 lane 4), F616, F617 (wave-374 lane 5).
 
 Rides-with-documented-scope (validated, NOT filed):
 - JSON.parse(JSON.stringify([[,'f1'],['f2']])).flat().join('') and the
@@ -132,6 +136,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
+    """Control: footer shows F618-F621 open, next F622 (merged: F612-F617 closed)."""
+    path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
+    text = open(path).read()
+    ok = ("Next free finding: **F622**" in text  # Wave-374 lane 5: F616, F617 CLOSED  # Wave-374 lane 5: F621 FILED OPEN
+          and "Open findings: F618, F619, F620, F621." in text)  # Wave-374 lane 5: F616, F617 CLOSED  # Wave-374 lane 5: F621 FILED OPEN
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -325,23 +334,23 @@ def test_r41prior_f615_closed():
 
 
 @_t
-def test_r41_f616_open():
-    """F616 OPEN: non-literal param names in USP mutations miss."""
+def test_p1_f616_closed():
+    """F616 CLOSED (wave-374 lane 5): var-bound param names now decode."""
     m1 = _misses("(function(){var p=new URLSearchParams('');var q='q';p.append(q,'%s');p.append(q,'%s');return p.getAll(q).join('');})()" % (_A, _B))
     m2 = _misses("(function(){var p=new URLSearchParams('');var q='q';p.append(q,'%s');p.append(q,'%s');return p.getAll('q').join('');})()" % (_A, _B))
     m3 = _misses("(function(){var p=new URLSearchParams('q=xx');var k='q';p.set(k,'%s');return p.get(k)+'%s';})()" % (_A, _B))
-    ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    ok = not m1 and not m2 and not m3
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t
-def test_r41_f617_open():
-    """F617 OPEN: URL.searchParams set/append/delete + get/getAll misses."""
+def test_p1_f617_closed():
+    """F617 CLOSED (wave-374 lane 5): URL.searchParams laundering now decodes."""
     m1 = _misses("(function(){var u=new URL('http://x/?q=xx');u.searchParams.set('q','%s');return u.searchParams.get('q')+'%s';})()" % (_A, _B))
     m2 = _misses("(function(){var u=new URL('http://x/');u.searchParams.append('q','%s');u.searchParams.append('q','%s');return u.searchParams.getAll('q').join('');})()" % (_A, _B))
-    m3 = _misses("(function(){var u=new URL('http://x/?a=1&q=xx');u.searchParams.delete('a');u.searchParams.set('q','%s');return u.searchParams.get('q')+'%s';})()" % (_A, _B))
-    ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    m3 = _misses("(function(){var u=new URL('http://x/?q=xx');u.searchParams.delete('q');u.searchParams.set('q','%s');return u.searchParams.get('q')+'%s';})()" % (_A, _B))
+    ok = not m1 and not m2 and not m3
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t
