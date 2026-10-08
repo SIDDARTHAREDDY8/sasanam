@@ -13354,12 +13354,19 @@ def _js_parse_f548_props_object(text, j, depth, state):
     Object.create's second argument at text[j] == '{' (F548).
 
     Returns (own_props, next_index). Each value is a descriptor
-    parsed by _js_parse_f548f550_descriptor: only `value`
-    descriptors are modeled -- a `get` descriptor fails closed
-    (documented boundary; the engine would install an accessor,
-    which the static own-property map cannot reproduce
-    node-exactly). Keys follow the F535 key grammar (`__proto__`
-    fails closed). Never evals.
+    parsed by _js_parse_f548f550_descriptor: `value` descriptors
+    install the parsed value; `get` descriptors install a
+    _JSAccessor (F704 -- the getter's return was already evaluated
+    at parse time by _js_parse_descriptor_getter, whose grammar
+    fails closed on `this`-dependent bodies, so read-time
+    invocation is argument-independent, node v24.20.0 verified;
+    the value must be a plain string, F664/F691 parity, with the
+    F699 _js_str_is_unsafe_int guard since _js_parse_canonical_int
+    returns plain str and integer provenance is lost). A
+    set-only descriptor fails closed (documented boundary; the
+    engine reads it as undefined, which is not a decodable
+    value, F550 parity). Keys follow the F535 key grammar
+    (`__proto__` fails closed). Never evals.
     """
     n = len(text)
     if depth >= _JS_EXPR_MAX_DEPTH:
@@ -13394,9 +13401,22 @@ def _js_parse_f548_props_object(text, j, depth, state):
             raise _JSExprFail("props value not a descriptor")
         dkind, dval, k = _js_parse_f548f550_descriptor(text, k, depth,
                                                        state)
-        if dkind != "value":
-            raise _JSExprFail("props getter fails closed")
-        own[pkey] = dval
+        if dkind == "get":
+            # F704: accessor descriptors install the already-
+            # evaluated getter value (unwrapped at read time by
+            # _jsobj_lookup, F549 precedent).
+            if (not isinstance(dval, str)
+                    or isinstance(dval, (_JSNumStr, _JSBigInt))
+                    or _js_str_is_unsafe_int(dval)):
+                raise _JSExprFail(
+                    "props getter value not a plain string")
+            own[pkey] = _JSAccessor(dval)
+        elif dkind == "value":
+            own[pkey] = dval
+        else:
+            # set-only: the engine reads undefined -- not a
+            # decodable value (F550 parity).
+            raise _JSExprFail("props set-only fails closed")
         state["parts"] += 1
         if state["parts"] > _JS_EXPR_MAX_PARTS:
             raise _JSExprFail("too many parts")
@@ -13422,12 +13442,17 @@ def _js_parse_f548_object_create(text, i, depth, state):
     engine, node v24.20.0 verified).
 
     PROTO: an object literal (parsed by _js_parse_f535_object), a
-    nested `Object.create(...)` (the filed nested shape), or `null`
+    nested `Object.create(...)` (the filed nested shape),
+    `Object.prototype` (F704 -- modeled as an empty proto: its
+    members are functions, never string-decodable, so reads
+    delegate to nothing and fail closed, node-exact for the
+    modeled shapes), or `null`
     (reads fail closed -- the engine yields undefined, which is not
     a decodable value). Any other proto (identifiers, calls,
     arrays, templates) fails closed (documented boundary). PROPS
     (optional): `{}` or a properties-object parsed by
-    _js_parse_f548_props_object. Dot form only (`Object['create']`
+    _js_parse_f548_props_object (`value` and `get` descriptors;
+    set-only fails closed). Dot form only (`Object['create']`
     fails closed, documented residual). Never evals.
     """
     n = len(text)
@@ -13459,11 +13484,21 @@ def _js_parse_f548_object_create(text, i, depth, state):
     elif text.startswith("Object", k):
         # Nested Object.create(...) -- the recursive call
         # re-validates the head (its i-1 guard rejects a
-        # mid-identifier `Object`, engine-exact).
-        sub = _js_parse_f548_object_create(text, k, depth + 1, state)
-        if sub is None:
-            raise _JSExprFail("create proto not an object")
-        proto, k = sub
+        # mid-identifier `Object`, engine-exact) -- or
+        # Object.prototype (F704).
+        _pk = k + len("Object")
+        if (text.startswith(".prototype", _pk)
+                and (_pk + 10 >= n
+                     or text[_pk + 10] not in _JS_IDENT_CONT)):
+            # Object.prototype carries no string-valued members
+            # the decoder models, so an empty proto is node-exact
+            # for every modeled read (v24.20.0 verified).
+            proto, k = _JSObj({}), _pk + 10
+        else:
+            sub = _js_parse_f548_object_create(text, k, depth + 1, state)
+            if sub is None:
+                raise _JSExprFail("create proto not an object")
+            proto, k = sub
     elif (text.startswith("null", k)
             and (k + 4 >= n or text[k + 4] not in _JS_IDENT_CONT)):
         proto, k = None, k + 4
@@ -35379,6 +35414,331 @@ def _js_parse_f673_object_construction_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f704_create_accessor_iife(text, i, depth, state):
+    """Parse `(function(){DECL o=Object.create(PROTO,PROPS);
+    return ADD;})()` at text[i] (F704).
+
+    F548 (CLOSED) models `Object.create` prototype reads and
+    value-descriptor PROPS, but the var-bound two-argument shape
+    escapes it: `(function(){var
+    o=Object.create(null,{x:{get:function(){return 'f1';}}});
+    return o.x+'f2';})()` and the `Object.prototype` twin
+    `(function(){var o=Object.create(Object.prototype,
+    {x:{enumerable:true,get:function(){return 'f1';}}});
+    return o.x+'f2';})()` both node-evaluate (v24.20.0) to the
+    exact credential while the decoder produces zero variants.
+    Node-exact desugar: the var binds the `_js_parse_f548_object_create`
+    result -- PROTO is `null`, an object literal, a nested
+    `Object.create`, or `Object.prototype` (F704: modeled as an
+    empty proto, node-exact for the modeled reads); PROPS is the
+    descriptor map, whose `get` descriptors install `_JSAccessor`
+    (F704 -- this-dependent getter bodies fail closed at parse,
+    so read-time invocation is argument-independent) and whose
+    `value` descriptors install plain values; the return is a
+    `+`-joined additive (the F671 member-term discipline, via
+    `_js_parse_f671_member_term`) of string literals and member
+    reads on the bound ident, resolved through the F548
+    prototype chain (`_jsobj_lookup` unwraps accessors).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, multi-decl, reassignment, non-empty call args;
+    - a binding whose initializer is not `Object.create(` (this
+      production requires the two-argument create head -- F671's
+      object-literal shapes and F673's one-argument create shape
+      are disjoint and stay theirs);
+    - a member value that is not a plain string (the F699
+      `_js_str_is_unsafe_int` guard applies at read time, F711
+      parity -- integer provenance is lost by
+      `_js_parse_canonical_int`, so unsafe-int members fail
+      closed rather than mis-decode);
+    - a bare bound ident with no member step, an unbound
+      receiver, a missing key (all inherited from the F671 term
+      discipline).
+    Tried after F673: the two-argument create head is disjoint
+    from F673's one-argument `Object.create({LIT})` shape (its
+    `)`-expectation fails closed on the `,`), and from every
+    earlier route (none accepts an `Object.create(` initializer);
+    None falls through like F673. F673's hook and its trailing
+    `return` are untouched (wave-379 lesson). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+        if k is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_expect(text, k, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F704 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            raise _JSExprFail("F704 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        _created = _js_parse_f548_object_create(text, sj, depth,
+                                               state)
+        if _created is None:
+            return None  # not a create initializer -- not our shape
+        obj, sj = _created
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F704 no return")
+        sj = _js_skip_ws(text, m)
+        env = {oname: obj}
+        total = None
+        while True:
+            term, sj = _js_parse_f671_member_term(text, sj, env,
+                                                 depth, state)
+            if _js_str_is_unsafe_int(term):
+                # F711 parity: integer provenance is lost, so an
+                # unsafe-int member fails closed rather than
+                # mis-decoding via float64 rounding.
+                raise _JSExprFail(
+                    "F704 unsafe-int member fails closed")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            state["ops"] += 1  # each additive term is
+            # obfuscation-shaped
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F704 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f705_reflect_get_iife(text, i, depth, state):
+    """Parse `(function(){DECL o=OBJLIT;return ADD;})()` at text[i]
+    (F705), where the additive carries `Reflect.get` terms.
+
+    The decoder models `Reflect.get` on Array/String-prototype
+    targets (F491) and on object-literal targets (F540), but a
+    var-bound target with an accessor escapes both:
+    `(function(){var o={get x(){return 'f1';}};
+    return Reflect.get(o,'x',{})+'f2';})()` and the two-argument
+    twin `(function(){var o={get x(){return 'f1';}};
+    return Reflect.get(o,'x')+'f2';})()` both node-evaluate
+    (v24.20.0) to the exact credential while the decoder produces
+    zero variants. Node-exact desugar: the var binds the
+    accessor-aware `_js_parse_f535_object` props (getter bodies
+    are parsed by the F535 getter grammar, which fails closed on
+    `this`-dependent bodies -- so every installed `_JSAccessor`
+    is provably receiver-independent, and the optional receiver
+    argument cannot change the decoded value); each
+    `Reflect.get(o,'KEY')` / `Reflect.get(o,'KEY',{})` term
+    resolves the key against the bound props exactly like the
+    engine's own-property lookup (data properties decode to
+    their value, accessors to the already-evaluated getter
+    value); the `+`-joined sum with string-literal terms is the
+    decoded value.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, multi-decl, reassignment, non-empty call args;
+    - a binding whose initializer is not an object literal (F664
+      owns the `Object.getOwnPropertyDescriptor` terminal, F671
+      owns plain member reads -- the `Reflect.get(` term head is
+      disjoint from both);
+    - a non-literal KEY, a missing KEY, a target other than the
+      bound ident, `Reflect['get']` (dot form only, F664/F691
+      parity), a receiver other than the empty object literal
+      (the filed `{}` twin; absent is the filed two-arg twin);
+    - a resolved value that is not a plain string (the F699
+      `_js_str_is_unsafe_int` guard applies, F664 parity);
+    - a `this`-dependent getter body (fails closed at object
+      parse -- the `_JSAccessor` can then never be
+      receiver-sensitive).
+    Tried after F674: every shape carries a `Reflect.get(`
+    return term no earlier route accepts (F491 owns only
+    Array/String-prototype and constructor targets at the
+    expression level; F540 owns only object-literal targets;
+    F664/F671/F673 fail closed on the `Reflect.get(` term head);
+    None falls through like F674. F674's hook and its trailing
+    `return` are untouched (wave-379 lesson). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+        if k is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_expect(text, k, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F705 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            raise _JSExprFail("F705 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "{":
+            return None  # not an object-literal target
+        props, sj = _js_parse_f535_object(text, sj, depth, state,
+                                         accessor_aware=True)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F705 no return")
+        sj = _js_skip_ws(text, m)
+
+        def _f705_term(sj):
+            # One additive term: a string literal, or
+            # Reflect.get(o,'KEY'[,{}]) on the bound ident.
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                return _js_parse_string(text, sj)
+            if not text.startswith("Reflect", sj):
+                raise _JSExprFail("F705 term not modeled")
+            q = sj + len("Reflect")
+            if q < n and text[q] in _JS_IDENT_CONT:
+                raise _JSExprFail("F705 Reflectx is not Reflect")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ".":
+                raise _JSExprFail("F705 Reflect without dot")
+            q = _js_skip_ws(text, q + 1)
+            if not text.startswith("get", q):
+                raise _JSExprFail("F705 not Reflect.get")
+            q2 = q + len("get")
+            if q2 < n and text[q2] in _JS_IDENT_CONT:
+                raise _JSExprFail("F705 getx is not get")
+            # The `get` member commits the parse: malformed
+            # shapes fail closed.
+            q = _js_skip_ws(text, q2)
+            if q >= n or text[q] != "(":
+                raise _JSExprFail("F705 Reflect.get without paren")
+            q = _js_skip_ws(text, q + 1)
+            _tname, q = _js_parse_ident(text, q)
+            if _tname != oname:
+                raise _JSExprFail(
+                    "F705 Reflect.get target not bound ident")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ",":
+                raise _JSExprFail("F705 Reflect.get without key")
+            q = _js_skip_ws(text, q + 1)
+            if q < n and text[q] in "'\"":
+                _key, q = _js_parse_string(text, q)
+            elif q < n and text[q] == "[":
+                _key, q = _js_parse_bracket_member(text, q)
+            else:
+                raise _JSExprFail(
+                    "F705 Reflect.get key not a literal")
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == ",":
+                # Optional receiver: only the filed empty-object
+                # literal (the getter is provably this-free, so
+                # the receiver cannot change the value; anything
+                # else fails closed, documented residual).
+                q = _js_skip_ws(text, q + 1)
+                q = _js_expect(text, q, "{")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, "}")
+                q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ")":
+                raise _JSExprFail("F705 Reflect.get unterminated")
+            if _key not in props:
+                raise _JSExprFail("F705 Reflect.get missing key")
+            _raw = props[_key]
+            _val = _raw.value if isinstance(_raw, _JSAccessor) \
+                else _raw
+            if (not isinstance(_val, str)
+                    or isinstance(_val, (_JSNumStr, _JSBigInt))
+                    or _js_str_is_unsafe_int(_val)):
+                raise _JSExprFail(
+                    "F705 Reflect.get value not a plain string")
+            state["ops"] += 1  # the Reflect.get indirection is
+            # obfuscation-shaped
+            return _val, q + 1
+
+        total = None
+        while True:
+            _val, sj = _f705_term(sj)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = _val
+            else:
+                if len(total) + len(_val) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + _val
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F705 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f674_term(text, j, oname, obj, depth, state):
     """Parse one F674 return-additive term at text[j].
 
@@ -49087,6 +49447,20 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f673 is not None:
             val, i = _f673
             return _js_parse_postfix(text, i, val, depth, state)
+        # F704: (function(){DECL o=Object.create(PROTO,PROPS);
+        #   return ADD;})() -- descriptor-map accessor reads on a
+        #   var-bound create result. Tried after F673: the
+        #   two-argument create head is disjoint from F673's
+        #   one-argument `Object.create({LIT})` shape and from every
+        #   earlier route (none accepts an `Object.create(`
+        #   initializer); None falls through to the F674 route
+        #   like F673. F673's hook and its trailing `return` are
+        #   untouched (wave-379 lesson).
+        _f704 = _js_parse_f704_create_accessor_iife(text, i, depth,
+                                                    state)
+        if _f704 is not None:
+            val, i = _f704
+            return _js_parse_postfix(text, i, val, depth, state)
         # F674: (function(){DECL o={...};return ADD;})() -- this-bound
         #   method/getter reads. Tried after F673: the object must
         #   carry >= 1 this-bound body, which every earlier object
@@ -49097,6 +49471,21 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f674 = _js_parse_f674_this_bound_iife(text, i, depth, state)
         if _f674 is not None:
             val, i = _f674
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F705: (function(){DECL o=OBJLIT;return ADD;})() --
+        # Reflect.get(o,'KEY'[,{}]) terms in the return additive.
+        # Tried after F674: the `Reflect.get(` return-term head is
+        # disjoint from every earlier route (F491 owns only
+        # Array/String-prototype and constructor targets at the
+        # expression level; F540 owns only object-literal targets;
+        # F664/F671/F673 fail closed on the `Reflect.get(` term
+        # head); None falls through to the F697 route like F674.
+        # F674's hook and its trailing `return` are untouched
+        # (wave-379 lesson).
+        _f705 = _js_parse_f705_reflect_get_iife(text, i, depth,
+                                               state)
+        if _f705 is not None:
+            val, i = _f705
             return _js_parse_postfix(text, i, val, depth, state)
         # F697: (function(){var o={...};return ADD;})() -- implicit
         #   ToPrimitive coercion of the bound object in additive
