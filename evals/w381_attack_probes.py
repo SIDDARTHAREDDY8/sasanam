@@ -18,7 +18,7 @@ New findings (11, all LOW, all OPEN), filed from F700:
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F686-F699 (round 48), F700-F710 (this round).
+F686-F699 (round 48), F700/F701/F704-F710 (round 49; F702/F703 closed wave-382 lane 2).
 
 Closed pins (must BLOCK, else BREAK): F463, F510, F535, F601, F612,
 F619, F642, F653, F655, F657, F658, F661, F662-F685 (rounds 46-48
@@ -99,7 +99,7 @@ def test_b0_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F713**" in text
-          and "Open findings: F702, F703, F704, F705, F706, F707, F708, F709, F710, F711, F712." in text)  # Wave-382 lane 1 (F700+F701 CLOSED): F702-F712 OPEN; merge re-verifies
+          and "Open findings: F704, F705, F706, F707, F708, F709, F710, F711, F712." in text)  # Wave-382 merge: lanes 1+2 (F700-F703 CLOSED)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -211,31 +211,31 @@ def test_r49_f701_spread_two_getters_open():
 
 
 @_t
-def test_r49_f702_assign_getter_open():
-    """F702 OPEN (Object.assign getter): miss reproduces."""
-    miss = _misses("(function(){var o={get x(){return '%s';}};return Object.assign({},o).x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r49_f702_assign_getter_closed():
+    """F702 CLOSED (wave-382 lane 2): blocks coded."""
+    ok = _blocked("(function(){var o={get x(){return '%s';}};return Object.assign({},o).x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t
-def test_r49_f702_assign_getter_extra_open():
-    """F702 OPEN (Object.assign getter): miss reproduces."""
-    miss = _misses("(function(){var o={get x(){return '%s';}};var c=Object.assign({z:1},o);return c.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r49_f702_assign_getter_extra_closed():
+    """F702 CLOSED (wave-382 lane 2): blocks coded."""
+    ok = _blocked("(function(){var o={get x(){return '%s';}};var c=Object.assign({z:1},o);return c.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t
-def test_r49_f703_defineGetter_open():
-    """F703 OPEN (__defineGetter__): miss reproduces."""
-    miss = _misses("(function(){var o={};o.__defineGetter__('x',function(){return '%s';});return o.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r49_f703_defineGetter_closed():
+    """F703 CLOSED (wave-382 lane 2): blocks coded."""
+    ok = _blocked("(function(){var o={};o.__defineGetter__('x',function(){return '%s';});return o.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t
-def test_r49_f703_defineGetter_two_open():
-    """F703 OPEN (__defineGetter__): miss reproduces."""
-    miss = _misses("(function(){var o={};o.__defineGetter__('a',function(){return '%s';});o.__defineGetter__('b',function(){return '%s';});return o.a+o.b;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r49_f703_defineGetter_two_closed():
+    """F703 CLOSED (wave-382 lane 2): blocks coded."""
+    ok = _blocked("(function(){var o={};o.__defineGetter__('a',function(){return '%s';});o.__defineGetter__('b',function(){return '%s';});return o.a+o.b;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t
