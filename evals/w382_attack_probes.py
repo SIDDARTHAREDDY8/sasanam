@@ -31,9 +31,9 @@ New findings (24, all LOW, all OPEN), filed F713-F736 (attack-F713 renumbered F7
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F700-F712 (round 49 + wave-381 merge renumbers), F714-F737 (this round; attack-F713 -> F737 at merge).
+F700-F712 (round 49 + wave-381 merge renumbers), F713-F726, F729-F737 (this round; attack-F713 -> F737 at merge; F727/F728 closed wave-383 lane 8).
 
-Closed pins (must BLOCK, else BREAK): F686-F699 (wave-381 closures).
+Closed pins (must BLOCK, else BREAK): F686-F699 (wave-381 closures), F727, F728 (wave-383 lane 8).
 F699 fails closed (None) by design -- its pin asserts the miss.
 F711 pins the raw-decoder mis-decode (find_credential fails closed on it).
 
@@ -108,11 +108,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F713-F737 open, next F738 (merge)."""
+    """Control: footer shows F713-F726, F729-F737 open, next F738 (wave-383 lane 8)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F738**" in text
-          and "Open findings: F713, F714, F715, F716, F717, F718, F719, F720, F721, F722, F723, F724, F725, F726, F727, F728, F729, F730, F731, F732, F733, F734, F735, F736, F737." in text)
+          and "Open findings: F713, F714, F715, F716, F717, F718, F719, F720, F721, F722, F723, F724, F725, F726, F729, F730, F731, F732, F733, F734, F735, F736, F737." in text)  # Wave-383 lane 8: F727/F728 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -544,28 +544,28 @@ def test_r50_f726_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r50_f727_s1_open():
-    """F727 OPEN (F709 residual: do-while accumulation): miss reproduces."""
-    miss = _misses("(function(){var r='';var i=0;do{r+=['%s','%s'][i];i++;}while(i<2);return r;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f727_s1_closed():
+    """F727 CLOSED (wave-383 lane 8): blocks coded."""
+    ok = _blocked("(function(){var r='';var i=0;do{r+=['%s','%s'][i];i++;}while(i<2);return r;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f727_s2_open():
-    """F727 OPEN (F709 residual: do-while accumulation): miss reproduces."""
-    miss = _misses("(function(){var r='';var i=0;do{r=r+['%s','%s'][i];i++;}while(i<2);return r;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f727_s2_closed():
+    """F727 CLOSED (wave-383 lane 8): blocks coded."""
+    ok = _blocked("(function(){var r='';var i=0;do{r=r+['%s','%s'][i];i++;}while(i<2);return r;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f728_s1_open():
-    """F728 OPEN (generator .next().value member reads): miss reproduces."""
-    miss = _misses("(function(){function* g(){yield '%s';}var it=g();return it.next().value+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f728_s1_closed():
+    """F728 CLOSED (wave-383 lane 8): blocks coded."""
+    ok = _blocked("(function(){function* g(){yield '%s';}var it=g();return it.next().value+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f728_s2_open():
-    """F728 OPEN (generator .next().value member reads): miss reproduces."""
-    miss = _misses("(function(){function* g(){yield '%s';yield '%s';}var it=g();return it.next().value+it.next().value;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f728_s2_closed():
+    """F728 CLOSED (wave-383 lane 8): blocks coded."""
+    ok = _blocked("(function(){function* g(){yield '%s';yield '%s';}var it=g();return it.next().value+it.next().value;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r50_f729_s1_open():
