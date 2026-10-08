@@ -3931,6 +3931,392 @@ def _js_parse_f712_coerce(val):
     return val
 
 
+def _js_f735f736_bound_operand(text, i, env):
+    """Parse one F735/F736 additive operand at text[i]: a string
+    literal or a bound identifier. Returns (str, next_index). An
+    unbound identifier fails closed (the engine throws
+    ReferenceError -- the decoder never decodes a throw); `this`
+    and non-string shapes fail closed. Never evals.
+    """
+    j = _js_skip_ws(text, i)
+    n = len(text)
+    if j >= n:
+        raise _JSExprFail("F735/F736 empty operand")
+    c = text[j]
+    if c in "'\"":
+        return _js_parse_string(text, j)
+    if c in _JS_IDENT_START:
+        name, k = _js_parse_ident(text, j)
+        if name not in env:
+            raise _JSExprFail("F735/F736 unbound ident")
+        return env[name], k
+    raise _JSExprFail("F735/F736 bad operand")
+
+
+def _js_f735f736_bound_additive(text, i, env, depth, state):
+    """Parse `LIT|BOUND (+ LIT|BOUND)*` at text[i] (F735/F736).
+
+    Both operands are plain strings by construction, so `+` is
+    string concatenation (node-exact, v24.20.0). Returns (value,
+    next_index). Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    n = len(text)
+    val, j = _js_f735f736_bound_operand(text, i, env)
+    while True:
+        k = _js_skip_ws(text, j)
+        if k >= n or text[k] != "+":
+            return val, j
+        rhs, j = _js_f735f736_bound_operand(text, k + 1, env)
+        if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F735/F736 concat too long")
+        val = val + rhs
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+
+
+def _js_f735f736_eval_body(text, bs, be, env, depth, state):
+    """Evaluate a nested-function body span `[bs, be)` (F735/F736).
+
+    The span is `return ADD;` with ADD a bound-operand additive
+    resolved against *env* -- the call-time environment (the
+    IIFE's string bindings with the call's parameter bindings
+    shadowing, node-exact closure semantics). Requires the
+    terminating `;` and nothing else before *be*. Returns the
+    string value. Never evals.
+    """
+    val, j = _js_f735f736_bound_additive(text, bs, env, depth,
+                                         state)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    j = _js_skip_ws(text, j)
+    if j != be:
+        raise _JSExprFail("F735/F736 trailing in body")
+    return val
+
+
+def _js_f735f736_parse_nested_fn(text, j, state):
+    """Parse `function [NAME]([p='LIT',...]){return ADD;}` at text[j]
+    (F735/F736).
+
+    Returns (name_or_None, params, body_start, body_end,
+    next_index): params is the [(pname, default_or_None)] list
+    (defaults are string literals only; a param without `=` has
+    no default), and body_start/body_end span the `return ADD;`
+    text -- evaluated lazily at call time so closures read the
+    call-time environment (node-exact). The body must be exactly
+    one `return` statement; anything else fails closed. Never
+    evals.
+    """
+    n = len(text)
+    g = _js_match_kw(text, j, "function")
+    if g is None:
+        raise _JSExprFail("F735/F736 not a function")
+    q = _js_skip_ws(text, g)
+    name = None
+    if q < n and text[q] in _JS_IDENT_START:
+        name, q = _js_parse_ident(text, q)
+    q = _js_expect(text, q, "(")
+    params = []
+    q = _js_skip_ws(text, q)
+    if not (q < n and text[q] == ")"):
+        while True:
+            q = _js_skip_ws(text, q)
+            pname, q = _js_parse_ident(text, q)
+            if pname == "arguments":
+                raise _JSExprFail("F735/F736 param named arguments")
+            default = None
+            q = _js_skip_ws(text, q)
+            if (q < n and text[q] == "="
+                    and not text.startswith(("==", "=>"), q)):
+                q = _js_skip_ws(text, q + 1)
+                if q >= n or text[q] not in "'\"":
+                    raise _JSExprFail("F735/F736 default not literal")
+                default, q = _js_parse_string(text, q)
+                state["parts"] += 1  # the default is obfuscation-shaped
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+            if any(p == pname for p, _ in params):
+                raise _JSExprFail("F735/F736 dup param")
+            params.append((pname, default))
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == ",":
+                q = q + 1
+                continue
+            break
+    q = _js_expect(text, q, ")")
+    bq = _js_skip_ws(text, q)
+    if bq >= n or text[bq] != "{":
+        raise _JSExprFail("F735/F736 body not braced")
+    inner_start, inner_end, after = _js_span_braced(text, bq)
+    rk = _js_match_kw(text, _js_skip_ws(text, inner_start), "return")
+    if rk is None:
+        raise _JSExprFail("F735/F736 body not return")
+    return name, params, _js_skip_ws(text, rk), inner_end, after
+
+
+def _js_f735f736_terminal_operand(text, i, strings, funcs, depth,
+                                  state):
+    """Parse one F735/F736 terminal operand at text[i]: a string
+    literal, a bound string identifier, or a call of a bound
+    nested function with string-literal args. Returns (str,
+    next_index).
+
+    Node-exact call semantics (v24.20.0): explicit args bind
+    positionally; a missing arg takes the parameter's default
+    (a missing arg with no default is engine `undefined` --
+    outside the string-only discipline, fail closed); extra args
+    fail closed (conservative); the body evaluates with the
+    call-time environment (outer string bindings shadowed by the
+    parameter bindings). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n:
+        raise _JSExprFail("F735/F736 empty operand")
+    c = text[j]
+    if c in "'\"":
+        return _js_parse_string(text, j)
+    if c in _JS_IDENT_START:
+        name, k = _js_parse_ident(text, j)
+        k2 = _js_skip_ws(text, k)
+        if k2 < n and text[k2] == "(":
+            if name not in funcs:
+                raise _JSExprFail("F735/F736 call of unbound")
+            params, bs, be = funcs[name]
+            args = []
+            q = _js_skip_ws(text, k2 + 1)
+            if q < n and text[q] != ")":
+                while True:
+                    q = _js_skip_ws(text, q)
+                    if q >= n or text[q] not in "'\"":
+                        raise _JSExprFail(
+                            "F735/F736 call arg not literal")
+                    arg, q = _js_parse_string(text, q)
+                    args.append(arg)
+                    state["parts"] += 1
+                    if state["parts"] > _JS_EXPR_MAX_PARTS:
+                        raise _JSExprFail("too many parts")
+                    q = _js_skip_ws(text, q)
+                    if q < n and text[q] == ",":
+                        q = q + 1
+                        continue
+                    break
+            q = _js_expect(text, q, ")")
+            if len(args) > len(params):
+                raise _JSExprFail("F735/F736 too many args")
+            call_env = dict(strings)
+            for idx, (pname, default) in enumerate(params):
+                if idx < len(args):
+                    call_env[pname] = args[idx]
+                elif default is not None:
+                    call_env[pname] = default
+                else:
+                    raise _JSExprFail(
+                        "F735/F736 missing arg without default")
+            val = _js_f735f736_eval_body(text, bs, be, call_env,
+                                        depth, state)
+            state["ops"] += 1  # the nested call is obfuscation-shaped
+            return val, q
+        if name not in strings:
+            raise _JSExprFail("F735/F736 unbound ident")
+        return strings[name], k
+    raise _JSExprFail("F735/F736 bad operand")
+
+
+def _js_f735f736_terminal_additive(text, i, strings, funcs, depth,
+                                   state):
+    """Parse the F735/F736 return-terminal additive
+    `OP (+ OP)*` at text[i], where OP is a string literal, a
+    bound string identifier, or a nested-function call. Returns
+    (value, next_index). Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    n = len(text)
+    val, j = _js_f735f736_terminal_operand(text, i, strings, funcs,
+                                           depth, state)
+    while True:
+        k = _js_skip_ws(text, j)
+        if k >= n or text[k] != "+":
+            return val, j
+        rhs, j = _js_f735f736_terminal_operand(text, k + 1, strings,
+                                               funcs, depth, state)
+        if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F735/F736 concat too long")
+        val = val + rhs
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+
+
+def _js_parse_f735f736_nested_fn_iife(text, i, depth, state):
+    """Parse `(function(){[STMT;]* return TERM;})()` with
+    nested-function fragment sources at text[i] (F735/F736).
+
+    F735 (LOW, attack round 50): nested function closure reads
+    bypass the bounded static JS-expression decoder -- the
+    decoder's IIFE-factory grammar has no nested-function
+    production: `var f='LIT';function g(){return f;}return
+    g()+'LIT';` and the `var g=function(){return f;};` twin.
+    F736 (LOW, attack round 50): default parameter reads --
+    `function h(a='LIT'){return a;}return h()+'LIT';` and
+    `function h(a='LIT',b='LIT'){return a+b;}return h('LIT');`.
+
+    Node-exact desugar (v24.20.0): statements are exactly
+    - `var|let|const X='LIT'[,'LIT'...];` -- string bindings
+      (duplicate `var` rebinds last-wins, duplicate
+      `let`/`const` fails closed -- engine-exact);
+    - `function G([p='LIT',...]){return ADD;}` -- nested function
+      declaration (name required);
+    - `var|let|const G=function([p='LIT',...]){return ADD;};` --
+      var-bound function expression (anonymous).
+    A call `G('LIT'*)` evaluates the body with the call-time
+    environment: the IIFE's string bindings shadowed by the
+    parameter bindings (explicit args bind positionally, missing
+    args take defaults). The terminal is `return TERM;` with
+    TERM a `+`-joined additive of string literals, bound string
+    idents, and nested-function calls.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - params without defaults called with missing args (engine
+      `undefined`), non-literal defaults or call args, rest /
+      destructuring params, duplicate param names;
+    - nested-function bodies that are not exactly `return ADD;`
+      (extra statements, no `;`), bodies reading unbound idents
+      (engine ReferenceError), `this` / `arguments` in bodies,
+      bodies calling (nested) functions;
+    - named function expressions, generator / async functions,
+      arrow functions, `new`, method calls, extra call args;
+    - function or binding redeclaration (a string binding may
+      not shadow a function name and vice versa);
+    - forward references (statements process in order);
+    - non-`;`-terminated statements, trailing statements after
+      the return.
+    Tried after F712: every earlier route requires its own
+    binding family or statement head and fails closed on a
+    `function` declaration/expression statement (red-first
+    verified: 2 BREAK each on the open tree), so no
+    previously-decoded input changes behavior. Returns (value,
+    next_index), or None when text[i] is not this shape. Never
+    evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_f655_head(text, i)
+        if brace is None:
+            raise _JSExprFail("F735/F736 not our head")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        strings = {}
+        funcs = {}
+        sj = _js_skip_ws(text, inner_start)
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj >= inner_end:
+                raise _JSExprFail("F735/F736 body without return")
+            rk = _js_match_kw(text, sj, "return")
+            if rk is not None:
+                break
+            fk = _js_match_kw(text, sj, "function")
+            dk, dnext = _js_match_decl_kw(text, sj)
+            if fk is not None:
+                name, params, bs, be, q = _js_f735f736_parse_nested_fn(
+                    text, sj, state)
+                if name is None:
+                    raise _JSExprFail("F735/F736 anonymous nested fn")
+                if name in funcs or name in strings:
+                    raise _JSExprFail("F735/F736 fn redeclared")
+                funcs[name] = (params, bs, be)
+                sj = q
+            elif dk is not None:
+                q = _js_skip_ws(text, dnext)
+                vname, q = _js_parse_ident(text, q)
+                if vname == "arguments":
+                    raise _JSExprFail(
+                        "F735/F736 binding named arguments")
+                q = _js_skip_ws(text, q)
+                if not (q < n and text[q] == "="
+                        and not text.startswith(("==", "=>"), q)):
+                    raise _JSExprFail("F735/F736 bad decl")
+                q = _js_skip_ws(text, q + 1)
+                if q < n and text[q] in "'\"":
+                    names = [vname]
+                    lits = []
+                    lit, q = _js_parse_string(text, q)
+                    lits.append(lit)
+                    while True:
+                        qq = _js_skip_ws(text, q)
+                        if qq >= n or text[qq] != ",":
+                            break
+                        qq = _js_skip_ws(text, qq + 1)
+                        nm2, qq = _js_parse_ident(text, qq)
+                        if nm2 == "arguments":
+                            raise _JSExprFail(
+                                "F735/F736 binding named arguments")
+                        qq = _js_skip_ws(text, qq)
+                        if not (qq < n and text[qq] == "="
+                                and not text.startswith(("==", "=>"),
+                                                        qq)):
+                            raise _JSExprFail("F735/F736 bad decl")
+                        qq = _js_skip_ws(text, qq + 1)
+                        if qq >= n or text[qq] not in "'\"":
+                            raise _JSExprFail(
+                                "F735/F736 decl RHS not literal")
+                        lit2, qq = _js_parse_string(text, qq)
+                        names.append(nm2)
+                        lits.append(lit2)
+                        q = qq
+                    q = _js_expect(text, q, ";")
+                    for nm2, lit2 in zip(names, lits):
+                        if nm2 in funcs:
+                            raise _JSExprFail(
+                                "F735/F736 string shadows fn")
+                        if nm2 in strings and dk != "var":
+                            raise _JSExprFail(
+                                "F735/F736 let/const rebind")
+                        strings[nm2] = lit2  # dup var: last wins
+                        state["parts"] += 1
+                        if state["parts"] > _JS_EXPR_MAX_PARTS:
+                            raise _JSExprFail("too many parts")
+                elif _js_match_kw(text, q, "function") is not None:
+                    name2, params, bs, be, q = (
+                        _js_f735f736_parse_nested_fn(text, q, state))
+                    if name2 is not None:
+                        raise _JSExprFail("F735/F736 named fn expr")
+                    q = _js_expect(text, q, ";")
+                    if vname in funcs or vname in strings:
+                        raise _JSExprFail(
+                            "F735/F736 fn-expr redeclared")
+                    funcs[vname] = (params, bs, be)
+                else:
+                    raise _JSExprFail("F735/F736 decl RHS not modeled")
+                sj = q
+            else:
+                raise _JSExprFail("F735/F736 bad statement")
+        sj = _js_skip_ws(text, rk)
+        total, sj = _js_f735f736_terminal_additive(
+            text, sj, strings, funcs, depth, state)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F735/F736 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f712_map_iter_iife(text, i, depth, state):
     """Parse `(function(){[DECL M=new Map([[...]]);]* return ADD;})()`
     with var-bound Map iteration reads at text[i] (F712).
@@ -56416,6 +56802,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f712 = _js_parse_f712_map_iter_iife(text, i, depth, state)
         if _f712 is not None:
             val, i = _f712
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F735/F736: (function(){[STMT;]* return TERM;})() with
+        #   nested-function fragment sources -- `function
+        #   G(){return ADD;}` declarations / `var G=function(){...};`
+        #   bindings (F735: closure reads of outer string bindings)
+        #   and default-parameter reads (F736: `function
+        #   H(a='LIT',...){return ADD;}` called with literal args).
+        #   Tried after F712: every earlier route requires its own
+        #   binding family or statement head and fails closed on a
+        #   `function` declaration/expression statement (red-first
+        #   verified: 2 BREAK each on the open tree), so no
+        #   previously-decoded input changes behavior.
+        _f735f736 = _js_parse_f735f736_nested_fn_iife(text, i, depth,
+                                                      state)
+        if _f735f736 is not None:
+            val, i = _f735f736
             return _js_parse_postfix(text, i, val, depth, state)
         # F696: (new String('LIT')) / (new String()) --
         # parenthesized boxed-String construction, engine-identical
