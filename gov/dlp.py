@@ -17314,6 +17314,211 @@ def _js_parse_f578_defineprop_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f599_params_mutation_iife(text, i, depth, state):
+    """Parse `(function(){DECL p=new URLSearchParams('LIT');[MUT;]*return p.getAll('K')<postfix>;})()` at text[i] (F599).
+
+    Statement-form URLSearchParams mutations: F576 models `.get` on
+    constructor strings and F584 models `.getAll` on constructor
+    strings, but a var-bound params object mutated by `.append`/`.set`
+    statements before the terminal read is a different production --
+    the constructor-string model never sees the appended pairs.
+    Node-exact desugar (v24.20.0):
+    - `var|const|let p=new URLSearchParams('LIT')` binds p to the
+      _JSURLParams over the form-urlencoded pairs (F576's parse --
+      urllib.parse.parse_qsl, node-identical);
+    - `p.append('N','V');` appends the (N, V) pair (engine-exact);
+    - `p.set('N','V');` replaces the first N-pair's value and drops
+      every other N-pair, or appends when N is absent
+      (engine-exact, node v24.20.0);
+    - `return p.getAll('K')` + the normal postfix chain: F584's
+      getAll (all K-values in insertion order as a _JSArr; a missing
+      name is the empty array, node-exact) flowing through
+      _js_parse_postfix (.join / .slice / indexed reads). The return
+      value must be a string to be decodable (a bare getAll yields
+      an array, which is not a decodable value).
+    The invocation must be exactly `()`.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a `new URL(...)` binding (searchParams mutation is out of
+      scope -- documented), a non-literal constructor arg;
+    - mutation members other than append/set (sort/delete/has/...
+      reorder or remove pairs the model cannot see -- the whole
+      shape fails closed rather than mis-decode; documented
+      residual);
+    - non-literal mutation names/values, extra mutation args, a
+      receiver other than the bare bound ident, a missing `;`;
+    - a named function, parameters, a directive prologue, extra
+      statements, reassignment of the var, non-empty call args.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_skip_ws(text, j + 1)
+    if not text.startswith("function", k):
+        return None
+    k2 = k + len("function")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        return None  # functionx -- not our shape
+    if k2 < n and text[k2] in _JS_IDENT_START:
+        return None  # named function -- not our shape
+    try:
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F599 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        pname, sj = _js_parse_ident(text, sj)
+        if pname == "arguments":
+            raise _JSExprFail("F599 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        _pv = _js_parse_f576_new_url(text, sj, depth, state)
+        if _pv is None or not isinstance(_pv[0], _JSURLParams):
+            # A `new URL(...)` binding (searchParams mutation) or a
+            # non-URL head is out of scope -- fail closed.
+            raise _JSExprFail("F599 binding not URLSearchParams")
+        _pv, sj = _pv
+        pairs = list(_pv.pairs)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        # Zero or more `p.append('N','V');` / `p.set('N','V');`
+        # mutation statements. Every iteration consumes input, so
+        # the loop is bounded; each statement charges the parts
+        # budget (F452).
+        while True:
+            save = sj
+            q = _js_skip_ws(text, sj)
+            try:
+                rname, q = _js_parse_ident(text, q)
+            except _JSExprFail:
+                break
+            if rname != pname:
+                break
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] not in ".[":
+                break
+            try:
+                _mname, q = _js_f576_member_name(text, q, "f599")
+            except _JSExprFail:
+                break
+            if _mname not in ("append", "set"):
+                # sort/delete/has/... are unmodeled mutations --
+                # fail the whole shape closed rather than
+                # mis-decode (documented residual).
+                raise _JSExprFail("F599 member not append/set")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != "(":
+                raise _JSExprFail("F599 mutation without paren")
+            q = _js_skip_ws(text, q + 1)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F599 mutation name not a literal")
+            _mn, q = _js_parse_string(text, q)
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ",":
+                raise _JSExprFail("F599 mutation arity")
+            q = _js_skip_ws(text, q + 1)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F599 mutation value not a literal")
+            _mv, q = _js_parse_string(text, q)
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ")":
+                raise _JSExprFail("F599 mutation unterminated")
+            q = _js_skip_ws(text, q + 1)
+            if q >= n or text[q] != ";":
+                raise _JSExprFail("F599 mutation without semicolon")
+            if _mname == "append":
+                pairs.append((_mn, _mv))
+            else:
+                # Engine-exact set (node v24.20.0): the first pair
+                # with the name takes the new value; every other
+                # pair with the name is removed; a missing name
+                # appends.
+                _seen = False
+                _np = []
+                for _pn, _pvv in pairs:
+                    if _pn != _mn:
+                        _np.append((_pn, _pvv))
+                    elif not _seen:
+                        _seen = True
+                        _np.append((_pn, _mv))
+                if not _seen:
+                    _np.append((_mn, _mv))
+                pairs = _np
+            state["parts"] += 1  # the mutation is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = q + 1
+        # return p.getAll('K')<postfix>;
+        q = _js_skip_ws(text, sj)
+        rk = _js_match_kw(text, q, "return")
+        if rk is None:
+            raise _JSExprFail("F599 body not return")
+        q = _js_skip_ws(text, rk)
+        rname, q = _js_parse_ident(text, q)
+        if rname != pname:
+            raise _JSExprFail("F599 returns another ident")
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] not in ".[":
+            raise _JSExprFail("F599 return not a member read")
+        _mname, q = _js_f576_member_name(text, q, "f599")
+        if _mname != "getAll":
+            # `.get` returns only the first value and cannot
+            # assemble a credential from fragments (a full value in
+            # one literal is already caught by the raw scan); a
+            # bare getAll yields an array, not a decodable value.
+            raise _JSExprFail("F599 return not getAll")
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] != "(":
+            raise _JSExprFail("F599 getAll without paren")
+        q = _js_skip_ws(text, q + 1)
+        if q >= n or text[q] not in "'\"":
+            raise _JSExprFail("F599 getAll key not a literal")
+        _gkey, q = _js_parse_string(text, q)
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] != ")":
+            raise _JSExprFail("F599 getAll unterminated")
+        _gvals = [_pval for _pname2, _pval in pairs
+                  if _pname2 == _gkey]
+        state["parts"] += len(_gvals)
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        q = _js_skip_ws(text, q + 1)
+        # The getAll array flows through the normal postfix chain
+        # (F584 precedent: .join / .slice / indexed reads); the
+        # return value must be a string to be decodable.
+        _rval, q = _js_parse_postfix(text, q, _JSArr(_gvals), depth,
+                                     state)
+        if not isinstance(_rval, str):
+            raise _JSExprFail("F599 return not a string")
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] != ";":
+            raise _JSExprFail("F599 return without semicolon")
+        q = _js_skip_ws(text, q + 1)
+        if q != inner_end:
+            raise _JSExprFail("F599 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return _rval, j
+    except _JSExprFail:
+        return None
+
+
 def _js_f592_member_join(objlit_text, member, depth, state):
     """Join the `MEMBER` reads of a for-in over an object literal (F592).
 
@@ -21687,6 +21892,18 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f578 = _js_parse_f578_defineprop_iife(text, i, depth, state)
         if _f578 is not None:
             val, i = _f578
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F599: (function(){DECL p=new URLSearchParams('LIT');
+        #   [p.append('N','V');|p.set('N','V');]*return
+        #   p.getAll('K')<postfix>;})() -- statement-form
+        #   URLSearchParams mutations. None falls through like F578;
+        #   disjoint from F578 (the binding is `new URLSearchParams`,
+        #   not an object literal) and from every earlier IIFE route
+        #   (none binds a URLSearchParams), so no previously-decoded
+        #   input changes behavior.
+        _f599 = _js_parse_f599_params_mutation_iife(text, i, depth, state)
+        if _f599 is not None:
+            val, i = _f599
             return _js_parse_postfix(text, i, val, depth, state)
         # F586: (new Map(...)) / (new WeakRef(...)) --
         # parenthesized new-expression receivers, engine-identical
