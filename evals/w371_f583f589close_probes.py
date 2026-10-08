@@ -267,10 +267,7 @@ def p5_compositions():
         "['%s','%s'].map(s=>s).join('')" % (_A, _B),
         # general .map projection over nested pair arrays (node-exact)
         "[['%s','x'],['%s','y']].map(e=>e[0]).join('')" % (_A, _B),
-    ]
-    bad_held = [s for s in held if not _blocked(s)]
-    # open neighbors (real filed shapes) must still miss
-    open_neigh = [
+        # Wave-371 merge: sibling lanes closed these; moved from open_neigh
         # F584: URLSearchParams.getAll
         "new URLSearchParams('q=%s&q=%s').getAll('q').join('')" % (_A, _B),
         # F585: structuredClone of Map
@@ -281,9 +278,6 @@ def p5_compositions():
         "new Proxy({c:'%s'},{}).c+'%s'" % (_A, _B),
         # F588: Reflect.get with Symbol.for keys
         "Reflect.get({[Symbol.for('c')]:'%s'},Symbol.for('c'))+'%s'" % (_A, _B),
-        # F590: directive prologue in Reflect.apply.call target
-        "Reflect.apply.call(null,function(){\"use strict\";var a=arguments;return a[0]+a[1];},null,['%s','%s'])"
-        % (_A, _B),
         # F591: defineProperty arrow getter
         "Object.defineProperty({},'c',{get:()=>'%s'}).c+'%s'" % (_A, _B),
         # F592: for-in over object literal
@@ -298,6 +292,13 @@ def p5_compositions():
         # F594: for-in over bare arguments
         "(function(){var s='';for(var k in arguments){s+=arguments[k];}return s;})('%s','%s')"
         % (_A, _B),
+        # F590: directive prologue in Reflect.apply.call target
+        "Reflect.apply.call(null,function(){\"use strict\";var a=arguments;return a[0]+a[1];},null,['%s','%s'])"
+        % (_A, _B),
+    ]
+    bad_held = [s for s in held if not _blocked(s)]
+    # open neighbors (real filed shapes) must still miss
+    open_neigh = [
         # F595: stringify nested array values
         "JSON.parse(JSON.stringify([['%s'],['%s']])).flat().join('')" % (_A, _B),
     ]
