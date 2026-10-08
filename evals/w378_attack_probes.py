@@ -4,7 +4,7 @@
 Filed 2026-10-08 (local node validation on v24.20.0 + 2 gpt-4o-mini calls,
 hints only; every filed shape hand-crafted and node-verified).
 
-New findings (8, all LOW; F662-F666, F668-F671 OPEN, F667 CLOSED wave-379 lane 5), filed from F662:
+    New findings (10, all LOW; F662-F671 all CLOSED wave-379 lanes 1-7), filed from F662:
 - F662: class fragment sources -- static fields, static blocks, static
   getters, instance fields (4 shapes, one mechanism).
 - F663: Object.fromEntries-sourced member reads (1 shape; the
@@ -20,7 +20,7 @@ New findings (8, all LOW; F662-F666, F668-F671 OPEN, F667 CLOSED wave-379 lane 5
 - F668: custom tag-function templates beyond String.raw (2 shapes).
 - F668: custom tag-function templates beyond String.raw (2 shapes; CLOSED wave-379 lane 6).
 - F669: builtin-iterable spread consumption ([...set], [...map.values()];
-  F653 models custom iterators, F602 covers Set for-of/forEach) (2 shapes).
+  CLOSED 2026-10-08 wave-379 lane 7) (2 shapes).
 - F670: Proxy get-trap non-concise function forms (arrow block-body,
   function expression, method shorthand; F642 models only the
   concise-arrow form) (3 shapes; found while pinning the F642 control).
@@ -56,7 +56,7 @@ literal BREAK verdict means the pin failed or a NEW break appeared):
 F655-F661 (round 45 + lane-4 residual + merge audit), F662-F671 (this round).
 
 Closed pins (must BLOCK, else BREAK): F463, F510, F535, F612, F619,
-F642, F653.
+F642, F653, F669.
 
 Rides-with-documented-scope (validated, NOT filed):
 - `(function(){var s=('jx','f1');return s+'f2';})()` label-twin of F655's
@@ -133,11 +133,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F669 open, next F672 (wave-379 merge: lanes 1-6 merged)."""
+    """Control: footer shows no open findings, next F672 (wave-379 merge: lanes 1-7 merged)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F672**" in text
-          and "Open findings: F669." in text)
+          and "Open findings: none." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -332,20 +332,20 @@ def test_r46_f668_s2_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
-# ------------------------------------------------- F669 open pins (must miss)
+# ------------------------------------------------- F669 closed pins (must block)
 
 @_t
-def test_r46_f669_s1_open():
-    """F669 OPEN (Set spread): miss reproduces."""
-    miss = _misses("(function(){var st=new Set(['%s','%s']);return [...st].join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f669_s1_closed():
+    """F669 CLOSED: var-bound Set spread consume still blocks."""
+    ok = _blocked("(function(){var st=new Set(['%s','%s']);return [...st].join('');})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f669-s1=%s" % ok)
 
 
 @_t
-def test_r46_f669_s2_open():
-    """F669 OPEN (Map values spread): miss reproduces."""
-    miss = _misses("(function(){var m=new Map();m.set('a','%s');m.set('b','%s');return [...m.values()].join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f669_s2_closed():
+    """F669 CLOSED: var-bound Map .set mutations, .values spread still blocks."""
+    ok = _blocked("(function(){var m=new Map();m.set('a','%s');m.set('b','%s');return [...m.values()].join('');})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f669-s2=%s" % ok)
 
 
 @_t
