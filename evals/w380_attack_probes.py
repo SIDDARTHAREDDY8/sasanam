@@ -116,7 +116,7 @@ def test_b0_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F700**" in text
-          and "Open findings: F687, F688, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text)  # Wave-381 lane 1: F686+F689 CLOSED
+          and "Open findings: F688, F690, F691, F692, F693, F694, F696, F697, F698, F699." in text)  # Wave-381 merge: lanes 1+2 (F686, F687, F689, F695 CLOSED)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -289,16 +289,16 @@ def test_r48_f686_Reflect_ownKeys_closed():
     return ("HELD" if ok else "BREAK", "f686=%s" % ok)
 
 @_t
-def test_r48_f687_has_ternary_open():
-    """F687 OPEN (has-ternary): miss reproduces."""
-    miss = _misses("(function(){var w=new WeakSet();var k={};w.add(k);return (w.has(k)?'%s':'junk')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f687_has_ternary_closed():
+    """F687 CLOSED 2026-10-08 wave-381 lane 2 (has-ternary): blocks coded."""
+    ok = _blocked("(function(){var w=new WeakSet();var k={};w.add(k);return (w.has(k)?'%s':'junk')+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r48_f687_two_key_guard_open():
-    """F687 OPEN (two-key-guard): miss reproduces."""
-    miss = _misses("(function(){var w=new WeakSet();var k={};var j={};w.add(k);return (w.has(k)&&!w.has(j)?'%s':'junk')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f687_two_key_guard_closed():
+    """F687 CLOSED 2026-10-08 wave-381 lane 2 (two-key-guard): blocks coded."""
+    ok = _blocked("(function(){var w=new WeakSet();var k={};var j={};w.add(k);return (w.has(k)&&!w.has(j)?'%s':'junk')+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r48_f688_replaceAll_fn_open():
@@ -385,22 +385,22 @@ def test_r48_f694_matchAll_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r48_f695_pair_value_open():
-    """F695 OPEN (pair-value): miss reproduces."""
-    miss = _misses("(function(){return [...new Map([['k','%s']])][0][1]+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f695_pair_value_closed():
+    """F695 CLOSED 2026-10-08 wave-381 lane 2 (pair-value): blocks coded."""
+    ok = _blocked("(function(){return [...new Map([['k','%s']])][0][1]+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r48_f695_pair_key_open():
-    """F695 OPEN (pair-key): miss reproduces."""
-    miss = _misses("(function(){return [...new Map([['%s','junk']])][0][0]+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f695_pair_key_closed():
+    """F695 CLOSED 2026-10-08 wave-381 lane 2 (pair-key): blocks coded."""
+    ok = _blocked("(function(){return [...new Map([['%s','junk']])][0][0]+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r48_f695_arrayfrom_pair_open():
-    """F695 OPEN (arrayfrom-pair): miss reproduces."""
-    miss = _misses("(function(){return Array.from(new Map([['k','%s']]))[0][1]+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f695_arrayfrom_pair_closed():
+    """F695 CLOSED 2026-10-08 wave-381 lane 2 (arrayfrom-pair): blocks coded."""
+    ok = _blocked("(function(){return Array.from(new Map([['k','%s']]))[0][1]+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r48_f696_plus_coerce_open():
