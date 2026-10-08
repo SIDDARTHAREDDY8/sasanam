@@ -23669,6 +23669,385 @@ def _js_parse_f639_nested_values_varbound_iife(text, i, depth, state):
         return _rval, j
     except _JSExprFail:
         return None
+
+
+def _js_parse_f642_bound_operand(text, i, bindings):
+    """Parse one F642 additive operand at text[i]: a string literal or
+    a bound identifier (F616-style string bindings). Returns (str,
+    next_index). An unbound identifier fails closed (the engine throws
+    ReferenceError -- the decoder never decodes a throw); `this` and
+    non-string shapes fail closed. Never evals.
+    """
+    j = _js_skip_ws(text, i)
+    if j >= len(text):
+        raise _JSExprFail("F642 empty operand")
+    c = text[j]
+    if c in "'\"":
+        return _js_parse_string(text, j)
+    if c in _JS_IDENT_START:
+        name, k = _js_parse_ident(text, j)
+        if name not in bindings:
+            raise _JSExprFail("F642 unbound ident")
+        return bindings[name], k
+    raise _JSExprFail("F642 bad operand")
+
+
+def _js_parse_f642_bound_additive(text, i, depth, state, bindings):
+    """Parse `LIT|BOUND (+ LIT|BOUND)*` at text[i] (F642).
+
+    Both operands are plain strings by construction, so `+` is
+    string concatenation (node-exact, v24.20.0). Returns (value,
+    next_index). Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    n = len(text)
+    val, j = _js_parse_f642_bound_operand(text, i, bindings)
+    while True:
+        k = _js_skip_ws(text, j)
+        if k >= n or text[k] != "+":
+            return val, j
+        rhs, j = _js_parse_f642_bound_operand(text, k + 1, bindings)
+        if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F642 concat too long")
+        val = val + rhs
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+
+
+def _js_parse_f642_getter_body(text, i, bindings, depth, state):
+    """Parse `get NAME(){return ADD;}` at text[i] (F642).
+
+    Returns (name, value, next_index). NAME is a plain identifier
+    (computed heads and string-literal heads fail closed -- the
+    terminal reads `.NAME`, keeping the head/terminal pair tight);
+    the body is exactly `return ADD` with ADD a bound-operand
+    additive. Never evals.
+    """
+    n = len(text)
+    g = _js_match_kw(text, i, "get")
+    if g is None:
+        raise _JSExprFail("F642 not a getter")
+    gk = _js_skip_ws(text, g)
+    if gk >= n or text[gk] not in _JS_IDENT_START:
+        raise _JSExprFail("F642 computed getter head")
+    gname, gk = _js_parse_ident(text, gk)
+    gk = _js_skip_ws(text, gk)
+    if gk >= n or text[gk] != "(":
+        raise _JSExprFail("F642 getter head not a getter")
+    gk = _js_skip_ws(text, gk + 1)
+    if gk >= n or text[gk] != ")":
+        raise _JSExprFail("F642 getter takes args")
+    gk = _js_skip_ws(text, gk + 1)
+    gk = _js_expect(text, gk, "{")
+    gk = _js_skip_ws(text, gk)
+    m = _js_match_kw(text, gk, "return")
+    if m is None:
+        raise _JSExprFail("F642 getter body not return")
+    gk = _js_skip_ws(text, m)
+    val, gk = _js_parse_f642_bound_additive(text, gk, depth, state,
+                                           bindings)
+    gk = _js_skip_ws(text, gk)
+    if gk < n and text[gk] == ";":
+        gk = _js_skip_ws(text, gk + 1)
+    gk = _js_expect(text, gk, "}")
+    return gname, val, gk
+
+
+def _js_parse_f642_proxy_trap(text, i, bindings, depth, state):
+    """Parse `{get:(P1,P2)=>ADD}` / `{get:P=>ADD}` at text[i] (F642).
+
+    The handler is exactly one `get` property whose value is an
+    arrow with an expression body ADD over bound operands; the
+    params are plain identifiers (a parenthesized list or a single
+    bare ident -- the trap receives (target, key) but the filed
+    body ignores them, closure captures the bindings). Returns
+    (value, next_index). Block-body arrows, non-ident params, and
+    extra handler properties fail closed. Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, i, "{")
+    j = _js_skip_ws(text, j)
+    g = _js_match_kw(text, j, "get")
+    if g is None:
+        raise _JSExprFail("F642 handler not a get trap")
+    j = _js_skip_ws(text, g)
+    j = _js_expect(text, j, ":")
+    j = _js_skip_ws(text, j)
+    # arrow params: `(P1,P2)` or a single bare ident (`t=>...`)
+    if j < n and text[j] == "(":
+        j = _js_skip_ws(text, j + 1)
+        if j < n and text[j] != ")":
+            while True:
+                j = _js_skip_ws(text, j)
+                if j >= n or text[j] not in _JS_IDENT_START:
+                    raise _JSExprFail("F642 trap param not ident")
+                _, j = _js_parse_ident(text, j)
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == ",":
+                    j = j + 1
+                    continue
+                break
+        j = _js_expect(text, j, ")")
+    elif j < n and text[j] in _JS_IDENT_START:
+        _, j = _js_parse_ident(text, j)
+    else:
+        raise _JSExprFail("F642 trap params")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F642 trap not an arrow")
+    j = _js_skip_ws(text, j + 2)
+    val, j = _js_parse_f642_bound_additive(text, j, depth, state,
+                                          bindings)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "}")
+    return val, j
+
+
+def _js_parse_f642_terminal_member(text, i):
+    """Parse `.MEM` / `['MEM']` at text[i] (F642). Returns (name,
+    next_index). Numeric brackets fail closed. Never evals.
+    """
+    n = len(text)
+    if i >= n:
+        raise _JSExprFail("F642 no terminal member")
+    if text[i] == ".":
+        j = _js_skip_ws(text, i + 1)
+        if j >= n or text[j] not in _JS_IDENT_START:
+            raise _JSExprFail("F642 bad terminal member")
+        return _js_parse_ident(text, j)
+    if text[i] == "[":
+        return _js_parse_bracket_member(text, i)
+    raise _JSExprFail("F642 terminal not a member")
+
+
+def _js_parse_f642_getter_varbound_iife(text, i, depth, state):
+    """Parse `(function(){[DECL X='LIT'(,X='LIT')*;]+WRAPPER;TERM})()` (F642).
+
+    Getter bodies with var-bound fragment operands: the decoder
+    models object-literal getters whose bodies concatenate literals
+    (F535, expression-level), but when the additive operands are
+    var-bound identifiers the getter body was invisible. Three
+    wrappers share the minimal mechanism -- the getter body / trap
+    body is the laundering site, the Proxy/WeakRef are wrappers
+    (finding's own distinctness note):
+    - `var o={get s(){return ADD;}};` ... `return o.s;`
+    - `var p=new Proxy({},{get:(t,k)=>ADD});` ... `return p.M;`
+    - `var w=new WeakRef({get s(){return ADD;}});` ... `return w.deref().s;`
+    with ADD = `LIT|BOUND (+ LIT|BOUND)*` resolved against the
+    IIFE's binding section (F616-style: `var|const|let X='LIT'`
+    declarators, comma-separated per statement, string-literal RHS
+    only; duplicate `var` rebinds last-wins, duplicate `let`/`const`
+    fails closed -- engine-exact; `arguments` and the wrapper ident
+    may not be bound). Node-exact desugar (v24.20.0): reading `o.s`
+    invokes the getter; reading any `p.M` invokes the get trap with
+    (target, key), which the filed body ignores; `w.deref().s`
+    derefs then invokes the getter. At least one binding is
+    required (the all-literal forms belong to the F535 route, which
+    keeps decoding them unchanged).
+
+    Disjointness: tried after F639. F578/F599/F606/F610/F612/F621/
+    F616/F617/F622/F624/F626/F639 require URLSearchParams/URL/
+    enumeration/defineProperty bindings and fail closed on
+    getter/Proxy/WeakRef wrappers; F611 requires a single
+    declaration with a direct return (no wrapper statement);
+    F586 owns `(new Map`/`(new WeakRef` grouped receivers as
+    primaries, not statement-IIFE wrappers. None of the earlier
+    routes accepts these shapes, so no previously-decoded input
+    changes behavior.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - no binding section (all-literal getter keeps the F535 route);
+    - unbound identifiers in ADD (engine ReferenceError), `this`,
+      non-string operands, non-literal binding RHS, missing `=`;
+    - computed/string-literal getter heads, setters, method
+      shorthand, multi-property objects, getter bodies that are not
+      exactly `return ADD`;
+    - Proxy targets other than `{}`, extra handler properties,
+      block-body trap arrows, non-ident trap params;
+    - WeakRef targets other than the getter object literal;
+    - terminal member mismatch (getter name vs read name),
+      `w.deref` with arguments, extra statements, named functions,
+      parameters, a directive prologue, non-empty call args.
+    - non-ASCII string literals (pre-existing engine-wide boundary:
+      even a bare non-ASCII literal produces no variant on this
+      tree; not introduced by this route).
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_skip_ws(text, j + 1)
+    if not text.startswith("function", k):
+        return None
+    k2 = k + len("function")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        return None  # functionx -- not our shape
+    if k2 < n and text[k2] in _JS_IDENT_START:
+        return None  # named function -- not our shape
+    try:
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        # ---- binding section: [DECL X='LIT'(,X='LIT')*;]+
+        bindings = {}
+        bound_any = False
+        while True:
+            kw, m = _js_match_decl_kw(text, sj)
+            if kw is None:
+                break
+            m2 = _js_skip_ws(text, m)
+            # wrapper decl peek: `var o={` / `var p=new` -- not a
+            # binding; stop the section without consuming
+            _pname, _pm = _js_parse_ident(text, m2)
+            _pm = _js_skip_ws(text, _pm)
+            _pm = _js_expect(text, _pm, "=")
+            _pm = _js_skip_ws(text, _pm)
+            if _pm >= n or text[_pm] not in "'\"":
+                break  # the wrapper declaration
+            m = m2
+            seen_stmt = set()
+            while True:
+                m = _js_skip_ws(text, m)
+                name, m = _js_parse_ident(text, m)
+                if name == "arguments":
+                    raise _JSExprFail("F642 binding named arguments")
+                m = _js_skip_ws(text, m)
+                m = _js_expect(text, m, "=")
+                m = _js_skip_ws(text, m)
+                if m >= n or text[m] not in "'\"":
+                    raise _JSExprFail("F642 binding RHS not a literal")
+                lit, m = _js_parse_string(text, m)
+                if name in seen_stmt or name in bindings:
+                    if kw != "var":
+                        raise _JSExprFail("F642 let/const rebind")
+                    # duplicate `var` rebinds, last wins
+                bindings[name] = lit
+                seen_stmt.add(name)
+                bound_any = True
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                m = _js_skip_ws(text, m)
+                if m < n and text[m] == ",":
+                    m = m + 1
+                    continue
+                break
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, ";")
+            sj = _js_skip_ws(text, m)
+        if not bound_any:
+            raise _JSExprFail("F642 no bindings")
+        # ---- wrapper statement: DECL W = WRAPPERSRC ;
+        kw, m = _js_match_decl_kw(text, sj)
+        if kw is None:
+            raise _JSExprFail("F642 no wrapper decl")
+        m = _js_skip_ws(text, m)
+        wname, m = _js_parse_ident(text, m)
+        if wname in bindings:
+            raise _JSExprFail("F642 wrapper ident bound")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "=")
+        m = _js_skip_ws(text, m)
+        if m >= n:
+            raise _JSExprFail("F642 empty wrapper")
+        if text[m] == "{":
+            # object-literal getter wrapper: exactly one getter prop
+            m = _js_skip_ws(text, m + 1)
+            gname, val, m = _js_parse_f642_getter_body(text, m,
+                                                      bindings, depth,
+                                                      state)
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, "}")
+            kind = "getter"
+        elif text.startswith("new", m) and (
+                m + 3 >= n or text[m + 3] not in _JS_IDENT_CONT):
+            nm = _js_skip_ws(text, m + 3)
+            pk = _js_match_kw(text, nm, "Proxy")
+            wk = _js_match_kw(text, nm, "WeakRef")
+            if pk is not None:
+                m = _js_skip_ws(text, pk)
+                m = _js_expect(text, m, "(")
+                m = _js_skip_ws(text, m)
+                m = _js_expect(text, m, "{")
+                m = _js_skip_ws(text, m)
+                m = _js_expect(text, m, "}")
+                m = _js_skip_ws(text, m)
+                m = _js_expect(text, m, ",")
+                m = _js_skip_ws(text, m)
+                val, m = _js_parse_f642_proxy_trap(text, m, bindings,
+                                                   depth, state)
+                m = _js_skip_ws(text, m)
+                m = _js_expect(text, m, ")")
+                kind = "proxy"
+                gname = None
+            elif wk is not None:
+                m = _js_skip_ws(text, wk)
+                m = _js_expect(text, m, "(")
+                m = _js_skip_ws(text, m + 1)  # object-literal `{`
+                gname, val, m = _js_parse_f642_getter_body(
+                    text, m, bindings, depth, state)
+                m = _js_skip_ws(text, m)
+                m = _js_expect(text, m, "}")  # object-literal close
+                m = _js_skip_ws(text, m)
+                m = _js_expect(text, m, ")")  # WeakRef close
+                kind = "weakref"
+            else:
+                raise _JSExprFail("F642 wrapper not modeled")
+        else:
+            raise _JSExprFail("F642 wrapper not modeled")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        # ---- terminal: return ...;
+        m = _js_skip_ws(text, m)
+        r = _js_match_kw(text, m, "return")
+        if r is None:
+            raise _JSExprFail("F642 no return")
+        m = _js_skip_ws(text, r)
+        tname, m = _js_parse_ident(text, m)
+        if tname != wname:
+            raise _JSExprFail("F642 terminal wrong ident")
+        m = _js_skip_ws(text, m)
+        if kind == "weakref":
+            # return w.deref().s;
+            if m >= n or text[m] != ".":
+                raise _JSExprFail("F642 weakref terminal")
+            dname, m = _js_parse_ident(text, m + 1)
+            if dname != "deref":
+                raise _JSExprFail("F642 weakref terminal not deref")
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, "(")
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, ")")
+            m = _js_skip_ws(text, m)
+        mem, m = _js_parse_f642_terminal_member(text, m)
+        if kind in ("getter", "weakref") and mem != gname:
+            raise _JSExprFail("F642 terminal member mismatch")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        m = _js_skip_ws(text, m)
+        if m != inner_end:
+            raise _JSExprFail("F642 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f616_varname_mutation_iife(text, i, depth, state):
     """Parse `(function(){DECL p=new URLSearchParams('LIT');[DECL X='LIT';]*[MUT;]*TERM})()` (F616).
 
@@ -30376,6 +30755,24 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                           state)
         if _f639 is not None:
             val, i = _f639
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F642: (function(){[DECL X='LIT'(,X='LIT')*;]+
+        #   var o={get s(){return ADD;}};return o.s; /
+        #   var p=new Proxy({},{get:(t,k)=>ADD});return p.M; /
+        #   var w=new WeakRef({get s(){return ADD;}});return w.deref().s;
+        #   })() -- getter bodies / Proxy get-traps / WeakRef-deref
+        #   getters with var-bound additive operands. Tried after
+        #   F639: every earlier route requires URLSearchParams/URL/
+        #   enumeration/defineProperty bindings or a direct return
+        #   (F611), and fails closed on getter/Proxy/WeakRef
+        #   wrappers; the F535 expression-level getter route owns
+        #   only the all-literal bodies (this parser requires at
+        #   least one binding), so no previously-decoded input
+        #   changes behavior.
+        _f642 = _js_parse_f642_getter_varbound_iife(text, i, depth,
+                                                    state)
+        if _f642 is not None:
+            val, i = _f642
             return _js_parse_postfix(text, i, val, depth, state)
         # F586: (new Map(...)) / (new WeakRef(...)) --
         # parenthesized new-expression receivers, engine-identical
