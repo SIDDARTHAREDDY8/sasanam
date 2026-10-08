@@ -39088,6 +39088,7 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f662 = _js_parse_f662_class_iife(text, i, depth, state)
         if _f662 is not None:
             val, i = _f662
+            return _js_parse_postfix(text, i, val, depth, state)
         # F667: (function(){[DECL S='LIT';]*[DECL S={LIT};]
         #   with(S|{LIT}){return ADD;}})() -- with-statement scope
         #   resolution: bare identifier reads inside the with body
@@ -39245,6 +39246,7 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                 state)
         if _f671 is not None:
             val, i = _f671
+            return _js_parse_postfix(text, i, val, depth, state)
         # F668: (function(){function NAME(s){return ADD;}
         #   return NAME`T`;})() and the var-bound function-expression
         #   twin -- custom tag-function templates. Tried after F661:
