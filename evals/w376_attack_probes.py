@@ -46,9 +46,10 @@ All filed shapes node-verified EXACT (v24.20.0): 30/30 CRED-EXACT,
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F640-F643 (round 43), F644-F653 (this round).
+F640-F643 (round 43), F645-F653 (this round; F644 closed wave-377 lane 1).
 
-Closed pins (must BLOCK, else BREAK): F510, F536, F545, F599, F601, F612.
+Closed pins (must BLOCK, else BREAK): F510, F536, F545, F599, F601, F612,
+F644.
 
 Rides-with-documented-scope (validated, NOT filed):
 - Ternary `(true?'f1':'x')+'f2'` -- BREAK, but general conditional
@@ -152,8 +153,8 @@ def test_b0_footer_state():
     """Control: footer shows F640-F653 open, next F654 (this lane)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F655**" in text  # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
-          and "Open findings: F644, F645, F646, F647, F648, F649, F650, F651, F652, F653, F654." in text)  # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
+    ok = ("Next free finding: **F655**" in text  # Wave-377 lane 1: F644 CLOSED; open F645-F654 (next F655)
+          and "Open findings: F645, F646, F647, F648, F649, F650, F651, F652, F653, F654." in text)  # Wave-377 lane 1: F644 CLOSED; open F645-F654 (next F655)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -325,30 +326,30 @@ def test_r43_f643_s3_closed():
                    % (",".join(str(b) for b in (_F1 + _F2).encode("latin-1")), _F3))
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
-# ------------------------------------------------- F644 open pins (must miss)
+# ------------------------------------------------- F644 closed pins (wave-377 lane 1, must block)
 
 @_t
-def test_r44_f644_s1_open():
-    """F644 OPEN (shape destructure-object-shorthand): miss reproduces."""
-    miss = _misses("(function(){var {a,b}={a:'%s',b:'%s%s'};return a+b;})()"
+def test_r44_f644_s1_closed():
+    """F644 CLOSED (wave-377 lane 1) (shape destructure-object-shorthand): now blocked."""
+    hit = _blocked("(function(){var {a,b}={a:'%s',b:'%s%s'};return a+b;})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r44_f644_s2_open():
-    """F644 OPEN (shape destructure-object-rename): miss reproduces."""
-    miss = _misses("(function(){var {a:x,b:y}={a:'%s',b:'%s%s'};return x+y;})()"
-                   % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r44_f644_s3_open():
-    """F644 OPEN (shape destructure-array-literal): miss reproduces."""
-    miss = _misses("(function(){var [a,b]=['%s','%s%s'];return a+b;})()"
+def test_r44_f644_s2_closed():
+    """F644 CLOSED (wave-377 lane 1) (shape destructure-object-rename): now blocked."""
+    hit = _blocked("(function(){var {a:x,b:y}={a:'%s',b:'%s%s'};return x+y;})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_r44_f644_s3_closed():
+    """F644 CLOSED (wave-377 lane 1) (shape destructure-array-literal): now blocked."""
+    hit = _blocked("(function(){var [a,b]=['%s','%s%s'];return a+b;})()"
+                   % (_F1, _F2, _F3))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F645 open pins (must miss)

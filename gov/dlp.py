@@ -17343,6 +17343,233 @@ def _js_parse_args_laundered_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f644_string_array(text, i, state):
+    """Parse `[lit (, lit)*]` at text[i] -- string literals only (F644).
+
+    The F644 array-destructure source grammar: every element must be a
+    single- or double-quoted string literal via _js_parse_string.
+    Holes, template literals, numeric/additive/nested elements, and
+    trailing commas fail closed (documented scope boundary -- the
+    filed shapes use plain string-literal fragments; the decoder
+    never guesses a value). Each element charges the F430 part
+    budget. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i + 1)
+    elements = []
+    if j < n and text[j] == "]":
+        return elements, j + 1
+    while True:
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("f644 array element not a string")
+        frag, j = _js_parse_string(text, j)
+        elements.append(frag)
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("unterminated f644 array")
+        if text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            continue
+        if text[j] == "]":
+            return elements, j + 1
+        raise _JSExprFail("bad f644 array")
+
+
+def _js_split_f644_destructure_literal_decl(stmts, depth, state):
+    """Split `(var|const|let) PAT=LITSRC;` from *stmts* (F644).
+
+    *stmts* is the inner text of a function body. PAT is a 1-2
+    element destructuring pattern of plain identifiers -- object
+    form `{a,b}` (shorthand) / `{a:x,b:y}` (rename; identifier keys
+    only) or array form `[a,b]` -- and LITSRC is a literal source:
+    an object literal of string-literal values (F510 grammar via
+    _js_parse_object_literal_keys_values) for object patterns, or a
+    string-literal array (F644 grammar above) for array patterns.
+
+    Returns (names, raws, body_expr) where names are the bound
+    identifiers in order and raws the parallel list of re-quoted
+    string-literal texts (the F558 round-trip: decoded values
+    re-quoted single-quoted, `\\` and `'` escaped, so _js_parse_string
+    decodes them back losslessly, node-exact). The single `return
+    EXPR;` body follows via _js_require_single_return.
+
+    Bounds (all fail closed, never mis-decoded): holes, defaults,
+    rest elements, nested patterns, string/numeric pattern keys,
+    duplicate names or keys, a bound name of `arguments`, named
+    functions, non-empty params, non-literal sources, a source
+    missing a pattern key, or an array source shorter than the
+    pattern (node coerces to `undefined` -- the decoder never
+    guesses). Object sources with duplicate keys bind the later
+    value (node-exact, inherited from the F510 literal parser).
+    Raises _JSExprFail on any other shape. Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, 0)
+    for kw in ("var", "const", "let"):
+        m = _js_match_kw(stmts, j, kw)
+        if m is not None:
+            break
+    else:
+        raise _JSExprFail("f644 decl not var/const/let")
+    j = _js_skip_ws(stmts, m)
+    if j < n and stmts[j] == "{":
+        # Object pattern: {a,b} / {a:x,b:y}, identifier keys only.
+        pairs = []
+        j = _js_skip_ws(stmts, j + 1)
+        while True:
+            j = _js_skip_ws(stmts, j)
+            key, j = _js_parse_ident(stmts, j)
+            j = _js_skip_ws(stmts, j)
+            if j < n and stmts[j] == ":":
+                j = _js_skip_ws(stmts, j + 1)
+                name, j = _js_parse_ident(stmts, j)
+            else:
+                name = key
+            pairs.append((key, name))
+            j = _js_skip_ws(stmts, j)
+            if j < n and stmts[j] == ",":
+                j = _js_skip_ws(stmts, j + 1)
+                continue
+            if j < n and stmts[j] == "}":
+                j += 1
+                break
+            raise _JSExprFail("f644 bad object pattern")
+        if not 1 <= len(pairs) <= 2:
+            raise _JSExprFail("f644 pattern arity")
+        if len(set(p[1] for p in pairs)) != len(pairs):
+            raise _JSExprFail("f644 duplicate names")
+        if len(set(p[0] for p in pairs)) != len(pairs):
+            raise _JSExprFail("f644 duplicate keys")
+        if any(p[1] == "arguments" for p in pairs):
+            raise _JSExprFail("f644 name is arguments")
+        j = _js_skip_ws(stmts, j)
+        j = _js_expect(stmts, j, "=")
+        j = _js_skip_ws(stmts, j)
+        if j >= n or stmts[j] != "{":
+            raise _JSExprFail("f644 object source not a literal")
+        keys, vals, j = _js_parse_object_literal_keys_values(stmts, j,
+                                                             depth, state)
+        srcmap = dict(zip(keys, vals))
+        names = []
+        raws = []
+        for key, name in pairs:
+            if key not in srcmap:
+                raise _JSExprFail("f644 key missing from source")
+            names.append(name)
+            raws.append("'" + srcmap[key].replace("\\", "\\\\").replace(
+                "'", "\\'") + "'")
+    elif j < n and stmts[j] == "[":
+        # Array pattern: [a,b], positional binding.
+        names = []
+        j = _js_skip_ws(stmts, j + 1)
+        while True:
+            j = _js_skip_ws(stmts, j)
+            name, j = _js_parse_ident(stmts, j)
+            names.append(name)
+            j = _js_skip_ws(stmts, j)
+            if j < n and stmts[j] == ",":
+                j = _js_skip_ws(stmts, j + 1)
+                continue
+            if j < n and stmts[j] == "]":
+                j += 1
+                break
+            raise _JSExprFail("f644 bad array pattern")
+        if not 1 <= len(names) <= 2:
+            raise _JSExprFail("f644 pattern arity")
+        if len(set(names)) != len(names):
+            raise _JSExprFail("f644 duplicate names")
+        if "arguments" in names:
+            raise _JSExprFail("f644 name is arguments")
+        j = _js_skip_ws(stmts, j)
+        j = _js_expect(stmts, j, "=")
+        j = _js_skip_ws(stmts, j)
+        if j >= n or stmts[j] != "[":
+            raise _JSExprFail("f644 array source not a literal")
+        elems, j = _js_parse_f644_string_array(stmts, j, state)
+        if len(elems) < len(names):
+            raise _JSExprFail("f644 array source too short")
+        raws = ["'" + e.replace("\\", "\\\\").replace("'", "\\'") + "'"
+                for e in elems[:len(names)]]
+    else:
+        raise _JSExprFail("f644 decl not a pattern")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ";")
+    body_expr = _js_require_single_return(stmts[j:])
+    state["parts"] += len(names)  # the destructure binding is
+    # obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return names, raws, body_expr
+
+
+def _js_parse_f644_destructure_literal_iife(text, i, depth, state):
+    """Parse `(function(){DECL PAT=LITSRC;return BODY})()` at text[i] (F644).
+
+    Object/array-pattern destructuring of a LITERAL source: the
+    F524/F545 binding mechanism -- one `var|const|let` destructuring
+    declaration, a single `return EXPR;` -- but the source is an
+    object literal / array literal of string literals instead of
+    `arguments` (F524/F545 model only `arguments` sources). The IIFE
+    is anonymous with empty params and empty call args (the filed
+    shapes); anything else fails closed.
+
+    Desugar: the pattern names bind the literal values via
+    _js_bind_destructure_arguments and the rewritten body is parsed
+    by the additive grammar at depth+1, so every downstream decoder,
+    bound, and fail-closed rule applies unchanged (node v24.20.0
+    verified). Returns (value, next_index), or None when the head
+    does not match or a guard fails (the caller falls through to
+    fail-closed paths). Bounded by the part/depth budgets; the IIFE
+    wrapper charges one op (obfuscation-shaped). Never evals.
+    """
+    if not _js_peek_arguments_iife_head(text, i):
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, i)
+        j = _js_expect(text, j, "(")
+        # The 'function' keyword (peek verified it and its trailing
+        # boundary); named functions fail the empty-param expect
+        # below (F516 precedent -- fail closed).
+        j = _js_skip_ws(text, j) + len("function")
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        # F560: skip a leading directive prologue ('use strict'; ...)
+        # before the destructuring declaration (node-exact:
+        # directives are inert string-literal statements).
+        stmts = stmts[_js_skip_directive_prologue(stmts, state):]
+        names, raws, body_expr = _js_split_f644_destructure_literal_decl(
+            stmts, depth, state)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")  # the filed shapes take no args
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        rewritten = _js_bind_destructure_arguments(
+            body_expr, raws, names, list(range(len(names))))
+        val, k = _js_parse_additive(rewritten, 0, depth + 1, state)
+        k = _js_skip_ws(rewritten, k)
+        if k != len(rewritten):
+            raise _JSExprFail("f644 body trailing junk")
+        if not isinstance(val, str):
+            raise _JSExprFail("f644 destructure body not a string")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f529_keys_head(text, j, alias):
     """Parse `Object.keys(a)` / `Object['keys'](a)` at text[j] (F529).
 
@@ -31601,6 +31828,16 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f516 = _js_parse_args_laundered_iife(text, i, depth, state)
         if _f516 is not None:
             val, i = _f516
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F644: (function(){DECL PAT=LITSRC;return BODY})() --
+        # object/array-pattern destructuring of a LITERAL source
+        # (F524/F545 model only `arguments` sources, which this
+        # grammar rejects at the source check, so the two routes
+        # are disjoint); None falls through like F516.
+        _f644 = _js_parse_f644_destructure_literal_iife(text, i, depth,
+                                                        state)
+        if _f644 is not None:
+            val, i = _f644
             return _js_parse_postfix(text, i, val, depth, state)
         # F572: (function(){var k={};var m=new WeakMap([[k,'lit']]);
         # return m.get(k);})() -- WeakMap set/get threading through
