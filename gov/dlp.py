@@ -34571,6 +34571,379 @@ def _js_parse_f691f698_descriptor_iife(text, i, depth, state):
     except _JSExprFail:
         return None
 
+_F702F703_MAX_INSTALLS = 8
+
+
+def _js_parse_f702f703_assign_getter_iife(text, i, depth, state):
+    """Parse `(function(){DECL;* return ADD;})()` at text[i] (F702/F703).
+
+    Getter-installation residuals: the decoder models Object.assign
+    copies of literal sources (F539) and literal-getter member reads,
+    but two getter-installation shapes escape:
+
+    - F702: `Object.assign` with a VAR-BOUND source whose literal
+      carries getters:
+      `(function(){var o={get x(){return 'f1';}};
+      return Object.assign({},o).x+'f2';})()` and the bound-copy
+      twin `(function(){var o={get x(){return 'f1';}};
+      var c=Object.assign({z:1},o);return c.x+'f2';})()`.
+      Node-exact (v24.20.0): `Object.assign` reads each source's
+      [[Get]], so a source getter is invoked at assign time and the
+      target receives a DATA property holding the return value; the
+      F535 literal grammar already resolves getters to their
+      evaluated values, so merging a bound source's props is
+      engine-exact (the target's own getters are likewise
+      value-resolved, which matches the engine: assign [[Set]]s on
+      the target, never [[Get]]s).
+    - F703: the legacy `__defineGetter__` API:
+      `(function(){var o={};o.__defineGetter__('x',
+      function(){return 'f1';});return o.x+'f2';})()`.
+      Node-exact: the call installs an accessor on the bound
+      object; the later member read invokes the getter. The getter
+      body must be a single `return 'LIT';` -- this-dependent or
+      non-literal bodies fail closed.
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (shared F654 head parser); no
+      params, no name, no async.
+    - declarations: `var|let|const NAME={LITOBJ};` (F535 literal
+      grammar), `var|let|const NAME={};`,
+      `var|let|const NAME=Object.assign({LITOBJ}, SRC, ...);`
+      (the target is an object literal; each SRC is a bound ident
+      or an object literal; later sources win, node-exact).
+    - install statements: `NAME.__defineGetter__('KEY',
+      function(){return 'LIT';});` on a bound object; `__proto__`
+      keys, re-installs (node-verified: later install wins; modeling
+      redefinition is a documented residual, failed closed),
+      non-literal keys, non-function getters, getters with parameters,
+      and non-literal getter returns all fail closed.
+    - return: `TERM (+ TERM)*;` where TERM is a string literal, a
+      bound member read `o.MEM`, or an inline
+      `Object.assign(TGT, SRC, ...).MEM`. A read must resolve to a
+      plain string (numbers, objects, and arrays fail closed; the
+      F699 `_js_str_is_unsafe_int` guard applies since
+      `_js_parse_canonical_int` returns plain str and integer
+      provenance is lost); a missing key fails closed (the engine
+      yields undefined).
+    - disjointness: the body must contain at least one
+      `Object.assign` (decl or return term) or at least one
+      `__defineGetter__` install -- pure literal/member shapes
+      belong to earlier routes and return None here.
+    - exactly `()` invocation; no trailing statements after the
+      return inside the body.
+
+    Tried after F685: every accepted shape carries an
+    `Object.assign` with a var-bound source or a
+    `__defineGetter__` statement head, which no earlier route
+    accepts (red-first verified: BREAK on the open tree); only
+    previously fail-closed inputs are newly decoded. Returns
+    (value, next_index), or None when text[i] is not this shape.
+    Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        bindings = {}
+        ninstall = 0
+        saw_assign = [False]
+
+        def _f702f703_assign(sj):
+            # Parse `Object.assign(TGT, SRC, ...)` at sj (sj at the
+            # 'O' of Object). The target is an object literal; each
+            # source is a bound object ident or an object literal.
+            # Returns (merged_props, next_index). Node-exact merge:
+            # target props first, then each source's [[Get]]-read
+            # props in order, later-wins (the F535 grammar already
+            # resolved source getters to their invoked values).
+            if not text.startswith("Object", sj):
+                raise _JSExprFail("F702/F703 not Object")
+            q = sj + len("Object")
+            if q < n and text[q] in _JS_IDENT_CONT:
+                raise _JSExprFail("F702/F703 Objectx is not Object")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ".":
+                raise _JSExprFail("F702/F703 Object without dot")
+            q = _js_skip_ws(text, q + 1)
+            if not text.startswith("assign", q):
+                raise _JSExprFail("F702/F703 not assign")
+            q = q + len("assign")
+            if q < n and text[q] in _JS_IDENT_CONT:
+                raise _JSExprFail("F702/F703 assignx is not assign")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != "(":
+                raise _JSExprFail("F702/F703 assign without paren")
+            q = _js_skip_ws(text, q + 1)
+            if q >= n or text[q] != "{":
+                raise _JSExprFail(
+                    "F702/F703 assign target not an object literal")
+            tprops, q = _js_parse_f535_object(text, q, depth, state)
+            merged = dict(tprops)
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ",":
+                raise _JSExprFail("F702/F703 assign needs a source")
+            while True:
+                q = _js_skip_ws(text, q + 1)
+                if q < n and text[q] == "{":
+                    sprops, q = _js_parse_f535_object(text, q, depth,
+                                                      state)
+                else:
+                    sname, q = _js_parse_ident(text, q)
+                    if sname not in bindings \
+                            or bindings[sname][0] != "obj":
+                        raise _JSExprFail(
+                            "F702/F703 assign source unbound")
+                    sprops = bindings[sname][1].props
+                merged.update(sprops)
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                q = _js_skip_ws(text, q)
+                if q < n and text[q] == ",":
+                    continue
+                if q < n and text[q] == ")":
+                    saw_assign[0] = True
+                    state["ops"] += 1  # the assign call is
+                    # obfuscation-shaped
+                    return merged, q + 1
+                raise _JSExprFail("F702/F703 assign unterminated")
+
+        def _f702f703_define_getter(sj):
+            # Parse `o.__defineGetter__('K',
+            # function(){return 'LIT';});` at sj. The receiver must
+            # be a bound object; installs an accessor holding the
+            # already-evaluated return value (F549/F698 precedent --
+            # the engine invokes the getter at read time with the
+            # receiver as `this`, and the return grammar has no
+            # `this`). Returns next_index past the `;`.
+            oname, q = _js_parse_ident(text, sj)
+            if oname not in bindings or bindings[oname][0] != "obj":
+                raise _JSExprFail(
+                    "F702/F703 defineGetter unbound target")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ".":
+                raise _JSExprFail(
+                    "F702/F703 defineGetter without dot")
+            q = _js_skip_ws(text, q + 1)
+            if not text.startswith("__defineGetter__", q):
+                raise _JSExprFail("F702/F703 not defineGetter")
+            q = q + len("__defineGetter__")
+            if q < n and text[q] in _JS_IDENT_CONT:
+                raise _JSExprFail("F702/F703 defineGetterx")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "(")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail(
+                    "F702/F703 defineGetter key not a literal")
+            key, q = _js_parse_string(text, q)
+            if key == "__proto__":
+                raise _JSExprFail("__proto__ key fails closed")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ",":
+                raise _JSExprFail(
+                    "F702/F703 defineGetter without getter")
+            q = _js_skip_ws(text, q + 1)
+            if _js_match_kw(text, q, "function") is None:
+                raise _JSExprFail(
+                    "F702/F703 getter not a function")
+            q = _js_skip_ws(text, q + len("function"))
+            q = _js_expect(text, q, "(")
+            q = _js_expect(text, q, ")")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "{")
+            q = _js_skip_ws(text, q)
+            if _js_match_kw(text, q, "return") is None:
+                raise _JSExprFail(
+                    "F702/F703 getter body not a return")
+            q = _js_skip_ws(text, q + len("return"))
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail(
+                    "F702/F703 getter value not a literal")
+            gval, q = _js_parse_string(text, q)
+            if _js_str_is_unsafe_int(gval):
+                raise _JSExprFail(
+                    "F702/F703 unsafe int getter value")
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == ";":
+                q = q + 1
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "}")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ")")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            obj = bindings[oname][1]
+            if key in obj.props:
+                # Re-installation: the engine redefines (configurable
+                # accessors -- node-verified, later wins). Modeling
+                # redefinition is a documented residual; failing
+                # closed here is the conservative choice (a miss,
+                # never a mis-decode; F698 parity).
+                raise _JSExprFail(
+                    "F702/F703 getter redefinition fails closed")
+            obj.props[key] = _JSAccessor(gval)
+            return _js_skip_ws(text, q)
+
+        def _f702f703_strvalue(mval):
+            # A decoded member must be a plain string (F676/F691
+            # parity); the F699 guard applies.
+            if isinstance(mval, _JSAccessor):
+                mval = mval.value
+            if not isinstance(mval, str) \
+                    or isinstance(mval, (_JSNumStr, _JSBigInt)):
+                raise _JSExprFail(
+                    "F702/F703 member not a plain string")
+            if _js_str_is_unsafe_int(mval):
+                raise _JSExprFail("F702/F703 unsafe int member")
+            return mval
+
+        while True:
+            kw, q = _js_match_decl_kw(text, sj)
+            if kw is not None:
+                q = _js_skip_ws(text, q)
+                name, q = _js_parse_ident(text, q)
+                if name == "arguments" or name in _F611_RESERVED:
+                    raise _JSExprFail(
+                        "F702/F703 reserved binding name")
+                if name in bindings:
+                    raise _JSExprFail("F702/F703 duplicate binding")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, "=")
+                q = _js_skip_ws(text, q)
+                if q < n and text[q] == "{":
+                    props, q = _js_parse_f535_object(text, q, depth,
+                                                     state)
+                    bindings[name] = ("obj", _JSObj(props))
+                elif text.startswith("Object", q):
+                    _e = q + len("Object")
+                    if _e < n and text[_e] in _JS_IDENT_CONT:
+                        raise _JSExprFail("F702/F703 decl Objectx")
+                    merged, q = _f702f703_assign(q)
+                    bindings[name] = ("obj", _JSObj(merged))
+                else:
+                    raise _JSExprFail("F702/F703 bad decl init")
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, ";")
+                sj = _js_skip_ws(text, q)
+                continue
+            # Peek for an `IDENT.__defineGetter__` statement; any
+            # other statement ends the declaration scan (the
+            # `return` check below then fails closed).
+            _pk = None
+            if sj < n and text[sj] in _JS_IDENT_START:
+                try:
+                    _pk, _pq = _js_parse_ident(text, sj)
+                except _JSExprFail:
+                    _pk = None
+            _is_dg = False
+            if _pk is not None:
+                _pr = _js_skip_ws(text, _pq)
+                if _pr < n and text[_pr] == ".":
+                    _pr2 = _js_skip_ws(text, _pr + 1)
+                    if text.startswith("__defineGetter__", _pr2):
+                        _e = _pr2 + len("__defineGetter__")
+                        if not (_e < n
+                                and text[_e] in _JS_IDENT_CONT):
+                            _is_dg = True
+            if not _is_dg:
+                break
+            sj = _f702f703_define_getter(sj)
+            ninstall += 1
+            if ninstall > _F702F703_MAX_INSTALLS:
+                raise _JSExprFail("F702/F703 too many installs")
+            state["ops"] += 1  # the install call is
+            # obfuscation-shaped
+        if not bindings and ninstall == 0:
+            # A bare `return` body belongs to earlier routes.
+            return None
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            return None
+        sj = _js_skip_ws(text, m)
+
+        def _f702f703_term(sj):
+            # One additive term: a string literal, a bound member
+            # read `o.MEM`, or an inline
+            # `Object.assign(TGT, SRC, ...).MEM`.
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                return _js_parse_string(text, sj)
+            if text.startswith("Object", sj):
+                _e = sj + len("Object")
+                if _e < n and text[_e] in _JS_IDENT_CONT:
+                    raise _JSExprFail("F702/F703 term Objectx")
+                merged, q = _f702f703_assign(sj)
+                q = _js_skip_ws(text, q)
+                if q >= n or text[q] != ".":
+                    raise _JSExprFail(
+                        "F702/F703 assign term needs a member")
+                q = _js_skip_ws(text, q + 1)
+                mname, q = _js_parse_ident(text, q)
+                if mname not in merged:
+                    # The engine yields undefined -- fail closed,
+                    # never a credential decode.
+                    raise _JSExprFail(
+                        "F702/F703 assign member missing")
+                return _f702f703_strvalue(merged[mname]), q
+            oname, q = _js_parse_ident(text, sj)
+            if oname not in bindings or bindings[oname][0] != "obj":
+                raise _JSExprFail("F702/F703 term unbound")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ".":
+                raise _JSExprFail("F702/F703 term needs a member")
+            q = _js_skip_ws(text, q + 1)
+            mname, q = _js_parse_ident(text, q)
+            mval = _jsobj_lookup(bindings[oname][1], mname)
+            if mval is None:
+                raise _JSExprFail("F702/F703 member missing")
+            return _f702f703_strvalue(mval), q
+
+        parts = []
+        while True:
+            _val, sj = _f702f703_term(sj)
+            parts.append(_val)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("concat too long")
+        if not saw_assign[0] and ninstall == 0:
+            # Disjointness: without an assign or an install this
+            # body belongs to an earlier route -- do not claim it.
+            return None
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F702/F703 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
 
 class _JSF67xBody:
     """A this-bound method/getter body (F673/F674).
@@ -49146,6 +49519,21 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f685 = _js_parse_f685_arrow_args_iife(text, i, depth, state)
         if _f685 is not None:
             return _f685
+        # F702/F703: (function(){DECL;* return ADD;})() -- getter
+        #   invocation on Object.assign with var-bound sources
+        #   (F702) and the legacy __defineGetter__ API (F703).
+        #   Tried after F685: every accepted shape carries an
+        #   Object.assign with a var-bound source or a
+        #   __defineGetter__ statement head, which no earlier route
+        #   accepts (red-first verified: BREAK on the open tree);
+        #   None falls through to the parenthesized-additive path.
+        #   The F685 hook and its trailing `return` are untouched
+        #   (wave-379 lesson).
+        _f702f703 = _js_parse_f702f703_assign_getter_iife(
+            text, i, depth, state)
+        if _f702f703 is not None:
+            val, i = _f702f703
+            return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
         val, i = _js_parse_additive(text, i + 1, depth + 1, state,
