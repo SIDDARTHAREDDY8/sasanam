@@ -438,20 +438,16 @@ def test_p6_closed_neighbors_still_block():
 
 
 def test_p6_open_neighbors_still_miss():
-    """Open findings not absorbed by these closures."""
-    shapes = [
-        # F621: Object.assign mutated-target reads
-        "(function(){var t={};Object.assign(t,{a:'%s',b:'%s'});return Object.values(t).join('');})()",
-        # F639: nested var-bound values() paths
-        "(function(){var o={x:{p:'%s'},y:{q:'%s'}};return Object.values(o.x).concat(Object.values(o.y)).join('');})()",
-        # F636: bind-on-bound-function chains
-        "((a)=>(a+'%s')).bind(null,'%s').bind(null)()",
-        # F623: values() on fromEntries results
-        "Object.values(Object.fromEntries([['a','%s'],['b','%s']])).join('')",
-    ]
-    args = [(_A, _B), (_A, _B), (_B, _A), (_A, _B)]
-    ok = all(_misses(s % a) for s, a in zip(shapes, args))
-    return ("HELD" if ok else "BREAK", "all=%s" % ok)
+    """Open findings (F640-F643) not absorbed by these closures."""
+    import importlib
+    shapes = []
+    for fnum in (640, 641, 642, 643):
+        mod = importlib.import_module("w375_f%d_redfirst" % fnum)
+        for name, payload, recovers in mod.SHAPES:
+            if recovers:
+                shapes.append(payload)
+    ok = all(_misses(s) for s in shapes)
+    return ("HELD" if ok else "BREAK", "all=%s n=%d" % (ok, len(shapes)))
 
 
 def test_p6_junk_quiet():

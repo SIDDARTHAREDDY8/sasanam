@@ -347,7 +347,7 @@ FOOTER_OPEN = (
                "F578", "F579", "F580", "F581",
                "F582"
                )  # Wave-367 merge; wave-368 lane 1: F537/F538/F542 CLOSED
-FOOTER_NEXT = "F640"  # Wave-371 merge: F583-F596 CLOSED (lanes 1-7); F597-F605 OPEN (next F606)  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
+FOOTER_NEXT = "F644"  # Wave-371 merge: F583-F596 CLOSED (lanes 1-7); F597-F605 OPEN (next F606)  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
 
 
 def p4_pin_and_footer():

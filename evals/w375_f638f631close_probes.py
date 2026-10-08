@@ -404,7 +404,7 @@ def p7_node_differential():
 
 
 def p8_compositions():
-    """F618/F619 stay HELD; still-open findings still miss."""
+    """F618/F619 stay HELD; still-open findings (F640-F643) still miss."""
     held_shapes = [
         # F618 (CLOSED) still blocks
         "Promise.all([Promise.resolve('%s'),Promise.resolve('%s')])"
@@ -415,21 +415,27 @@ def p8_compositions():
         "return [...g()].join('');})()" % (_A, _B),
         "(function(){function* g(){yield '%s';yield '%s';}"
         "var s='';for(var x of g())s+=x;return s;})()" % (_A, _B),
-    ]
-    miss_shapes = [
-        # F621 (OPEN): assign-mutated target reads
+        # F621, F625, F636, F639 (CLOSED wave-375 merge) now block
         "(function(){var t={};Object.assign(t,{a:'%s',b:'%s'});"
         "return Object.values(t).join('');})()" % (_A, _B),
-        # F625 (OPEN): Map entries()/keys() spreads
         "(function(){var m=new Map([['%s','%s']]);"
         "return [...m.entries()].map(e=>e[1]).join('');})()" % (_A, _B),
-        # F636 (OPEN): bind-on-bound chains
         "((a)=>(a+'%s')).bind(null,'%s').bind(null)()" % (_B, _A),
-        # F639 (OPEN): nested var-bound values() paths
         "(function(){var o={x:{p:'%s'},y:{q:'%s'}};"
         "return Object.values(o.x).concat(Object.values(o.y)).join('');})()"
         % (_A, _B),
     ]
+    miss_shapes = [
+        # F640-F643 (OPEN, attack round 43) still miss -- shapes from
+        # their red-first batteries
+    ]
+    # F640: sync generator with computed method name
+    import importlib
+    for fnum in (640, 641, 642, 643):
+        mod = importlib.import_module("w375_f%d_redfirst" % fnum)
+        for name, payload, recovers in mod.SHAPES:
+            if recovers:
+                miss_shapes.append(payload)
     bad = [s for s in held_shapes if not _blocked(s)]
     bad += [s for s in miss_shapes if not _quiet(s)]
     return ("HELD" if not bad else "BREAK",

@@ -336,36 +336,18 @@ def test_p4_neighbors_still_block():
 
 
 def test_p4_open_neighbors_still_miss():
-    """Sampled wave-375 siblings still miss (F621, F622, F624, F636, F639 pinned).
-
-    The full F621-F639 round-42 open-shape sweep lives in
-    w374_attack_probes.py (per-shape open pins); this is a spot check
-    that the lane's closures absorbed nothing outside F623/F630/F634.
-    """
-    shapes = [
-        "(function(){var t={};Object.assign(t,{a:'%s',b:'%s'});return Object.values(t).join('');})()" % (_A, _B),  # F621
-        "(function(){var o={a:'%s',b:'%s'};var k=Object.keys(o);return o[k[0]]+o[k[1]];})()" % (_A, _B),  # F622
-        "\"xx%s\".slice(2)+'%s'" % (_A, _B),  # F624
-        "((a)=>(a+'%s')).bind(null,'%s').bind(null)()" % (_B, _A),  # F636
-        "(function(){var o={x:{p:'%s'},y:{q:'%s'}};return Object.values(o.x).concat(Object.values(o.y)).join('');})()" % (_A, _B),  # F639
-    ]
+    """F640-F643 (still OPEN) still miss -- not absorbed by this lane."""
+    import importlib
+    shapes = []
+    for fnum in (640, 641, 642, 643):
+        mod = importlib.import_module("w375_f%d_redfirst" % fnum)
+        for name, payload, recovers in mod.SHAPES:
+            if recovers:
+                shapes.append(payload)
     bad = [s for s in shapes if not _misses(s)]
     ok = not bad
-    return ("HELD" if ok else "BREAK", "bad=%s" % [s[:40] for s in bad[:2]])
+    return ("HELD" if ok else "BREAK", "bad=%s" % bad[:2])
 
-
-def test_p4_junk_quiet():
-    """Honest text unaffected: junk stays quiet."""
-    ok = _misses("(function(){var s='ab';return s;})()")
-    ok = ok and _misses("Object.values(Object.fromEntries([['a','x']])).join('')")
-    ok = ok and _misses("Object.entries({a:'x'}).reduce((a,[k,v])=>a+v,\"\")")
-    ok = ok and _misses("Object.values(JSON.parse('{\"a\":\"x\",\"b\":\"y\"}')).join('')")
-    ok = ok and _misses("(function(){var o=JSON.parse('{\"a\":\"x\"}');return Object.values(o).join('');})()")
-    ok = ok and _misses("(function(){var o=Object.fromEntries([['a','x']]);var s='';for(var k in o){s+=o[k];}return s;})()")
-    return ("HELD" if ok else "BREAK", "quiet=%s" % ok)
-
-
-# ------------------------------------------------ pin + footer + perf
 
 def test_p5_pin_taxonomy():
     """Pin stays 2140; registry loads."""

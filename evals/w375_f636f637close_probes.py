@@ -316,33 +316,19 @@ def test_p4_neighbors_stay_held():
 
 
 def _open_shapes():
-    """Filed shapes of the currently-OPEN findings (must still miss)."""
+    """Filed shapes of the currently-OPEN findings (must still miss).
+
+    F640-F643 (attack round 43). F621-F639 are all CLOSED on the merged
+    tree (wave-375 merge); their shapes now block.
+    """
     import importlib
     shapes = []
-    for fnum in (621, 622, 623, 624, 625, 626, 627, 628, 629, 630,
-                 631, 632, 633, 634, 638, 639):
-        mod = importlib.import_module("w374_f%d_redfirst" % fnum)
+    for fnum in (640, 641, 642, 643):
+        mod = importlib.import_module("w375_f%d_redfirst" % fnum)
         for name, payload, recovers in mod.SHAPES:
             if recovers:
                 shapes.append((fnum, name, payload))
-    # F635 (lane-5 hybrid, renumbered F621->F635 at merge) has no
-    # standalone red-first; shapes from its FINDINGS.md entry.
-    f635 = [
-        ("(function(){var u=new URL('http://x/');var q='q';"
-         "u.searchParams.append(q,'f1');u.searchParams.append(q,'f2');"
-         "return u.searchParams.getAll(q).join('');})()"),
-        ("(function(){var u=new URL('http://x/?q=xx');var k='q';"
-         "u.searchParams.set(k,'f1');"
-         "return u.searchParams.get(k)+'f2';})()"),
-        ("(function(){var u=new URL('http://x/?q=xx');var k='q';"
-         "u.searchParams.delete(k);u.searchParams.set(k,'f1');"
-         "return u.searchParams.get(k)+'f2';})()"),
-    ]
-    for i, payload in enumerate(f635):
-        shapes.append((635, "hybrid-%d" % i, payload))
     return shapes
-
-
 def test_p4_open_neighbors_still_miss():
     """F621-F635, F638, F639 shapes still miss (not absorbed)."""
     bad = ["F%d/%s" % (fnum, name)

@@ -381,22 +381,20 @@ def test_p4_f510_inline_still_blocks():
     return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
-def test_p4_f639_still_misses():
-    """F639 (nested var-bound paths, OPEN) still misses -- not absorbed."""
-    ok = _misses("(function(){var o={x:{p:'%s'},y:{q:'%s'}};"
+def test_p4_f639_now_blocks():
+    """F639 (CLOSED wave-375 lane 9) now blocks -- not absorbed."""
+    ok = _blocked("(function(){var o={x:{p:'%s'},y:{q:'%s'}};"
                  "return Object.values(o.x).concat(Object.values(o.y))"
                  ".join('');})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
-def test_p4_f622_still_misses():
-    """F622 (OPEN) still misses -- not absorbed."""
-    ok = _misses("(function(){var o={a:'%s',b:'%s'};var k=Object.keys(o);"
+def test_p4_f622_now_blocks():
+    """F622 (CLOSED wave-375 lane 2) now blocks -- not absorbed."""
+    ok = _blocked("(function(){var o={a:'%s',b:'%s'};var k=Object.keys(o);"
                  "return o[k[0]]+o[k[1]];})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
-
-# ------------------------------------------------ pin + footer + perf
 
 def test_p5_pin_taxonomy():
     """Taxonomy pin is 2140."""
@@ -406,12 +404,10 @@ def test_p5_pin_taxonomy():
 
 
 def test_p5_footer_state():
-    """Footer: F621 closed this lane; open F622-F639; next F640."""
+    """Footer: F621-F639 closed (wave-375 merge); open F640-F643; next F644."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F644**" in text  # Wave-375 lane 1: F621 CLOSED
-          and "Open findings: F622, F623, F624, F625, F626, F627, F628, "
-              "F629, F630, F631, F632, F633, F634, F635, F636, F637, "
-              "F638, F639." in text)  # Wave-375 lane 1: F621 CLOSED
+    ok = ("Next free finding: **F644**" in text  # Wave-375 merge: F621-F639 CLOSED
+          and "Open findings: F640, F641, F642, F643." in text)  # Wave-375 merge: F621-F639 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

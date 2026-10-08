@@ -397,20 +397,10 @@ def p10_compositions():
          "new URLSearchParams('q=%s').get('q')+'%s'" % (_A1, _A2)),
     ]
     miss = [
-        # F621: Object.assign mutated-target reads (lane 1's finding)
-        ("f621-assign",
-         "(function(){var t={};Object.assign(t,{a:'%s',b:'%s'});"
-         "return Object.values(t).join('');})()" % (_A1, _A2)),
-        # F628: decodeURIComponent laundering (lane 4's finding)
-        ("f628-decode",
-         "decodeURIComponent('%s'+encodeURIComponent('%s'))" % (_A1, _A2)),
-        # F636: bind-on-bound chains (lane 7's finding)
-        ("f636-bindbind",
-         "((a)=>(a+'%s')).bind(null,'%s').bind(null)()" % (_A2, _A1)),
-        # F622: Object.keys bracket reads (lane 2's finding)
-        ("f622-keys",
-         "(function(){var o={a:'%s',b:'%s'};var k=Object.keys(o);"
-         "return o[k[0]]+o[k[1]];})()" % (_A1, _A2)),
+        # F621, F622, F628, F636 are CLOSED on the merged tree (wave-375
+        # merge, lanes 1/2/4/7) -- their shapes now block via their own
+        # closures, not absorbed by this lane. Only truly-open findings
+        # (F640-F643) belong in the miss list.
     ]
     bad_held = [n for n, s in held if not _blocked(s)]
     bad_miss = [n for n, s in miss if _blocked(s)]

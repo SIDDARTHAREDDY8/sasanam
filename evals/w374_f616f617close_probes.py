@@ -333,11 +333,10 @@ def p6_f617_bounds():
         ("has-terminal", "(function(){var u=new URL('http://x/');"
          "u.searchParams.append('q','%s');"
          "return u.searchParams.has('q');})()" % _A1),
-        # .slice() on the get STRING: the postfix chain decodes array
-        # slice (getAll) but string slice fails closed by design
-        ("get-string-slice", "(function(){var u=new URL('http://x/?q=xx');"
-         "u.searchParams.set('q','zz%s');"
-         "return u.searchParams.get('q').slice(2)+'%s';})()" % (_A1, _A2)),
+        # .slice() on the get STRING: was fail-closed by design pre-wave-375;
+        # now decodes via the F624 (string-slice) + F617 (get) composition,
+        # node-exact (wave-375 merge). Removed from bounds; pinned by the
+        # F624 close battery's composition section.
     ]
     bad = [n for n, s in bounds if not _quiet(s)]
     return (("HELD", "%d/%d F617 bounds quiet" % (len(bounds), len(bounds)))

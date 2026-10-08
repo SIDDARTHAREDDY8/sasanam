@@ -222,16 +222,16 @@ def p4_node_differential():
 
 
 def _open_neighbor_shapes():
-    """Filed shapes of the still-OPEN round-42/merge findings.
+    """Filed shapes of the still-OPEN findings.
 
-    F621-F624, F626-F639 must still BREAK (F625 is this lane --
-    excluded). This lane must not absorb them.
+    F640-F643 (attack round 43) must still BREAK. F621-F639 are all
+    CLOSED on the merged tree (wave-375 merge); their shapes now block
+    and are pinned by their own close batteries.
     """
     import importlib
     shapes = []
-    for fnum in (621, 622, 623, 624, 626, 627, 628, 629, 630, 631,
-                 632, 633, 634, 636, 637, 638, 639):
-        mod = importlib.import_module("w374_f%d_redfirst" % fnum)
+    for fnum in (640, 641, 642, 643):
+        mod = importlib.import_module("w375_f%d_redfirst" % fnum)
         for name, payload, recovers in mod.SHAPES:
             if recovers:
                 shapes.append((fnum, name, payload))

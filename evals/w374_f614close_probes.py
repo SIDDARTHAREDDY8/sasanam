@@ -193,11 +193,15 @@ def test_p4_neighbors_stay_held():
 
 
 def _round42_shapes():
-    """Filed shapes of the currently-OPEN round-42 findings (must still miss)."""
+    """Filed shapes of the currently-OPEN findings (must still miss).
+
+    F621-F639 all CLOSED on the merged tree (wave-375 merge); only
+    F640-F643 (attack round 43) remain open.
+    """
     import importlib
     shapes = []
-    for fnum in (621, 622, 623, 624, 625, 626, 627, 628, 629, 630, 631, 632, 633, 634):
-        mod = importlib.import_module("w374_f%d_redfirst" % fnum)
+    for fnum in (640, 641, 642, 643):
+        mod = importlib.import_module("w375_f%d_redfirst" % fnum)
         for name, payload, recovers in mod.SHAPES:
             if recovers:
                 shapes.append((fnum, name, payload))
@@ -205,7 +209,7 @@ def _round42_shapes():
 
 
 def test_p4_open_neighbors_still_miss():
-    """F621-F634 shapes still miss (not absorbed); F614 residual stays quiet."""
+    """F640-F643 shapes still miss (not absorbed); F614 residual stays quiet."""
     bad = ["F%d/%s" % (fnum, name) for fnum, name, payload in _round42_shapes()
            if not _misses(payload)]
     ok = not bad

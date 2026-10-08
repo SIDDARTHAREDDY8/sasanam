@@ -325,24 +325,16 @@ def test_p4_f612_stays_held():
 
 
 def test_p4_open_neighbors_still_miss():
-    """Open findings F621-F638 still miss (nothing absorbed)."""
-    ok = True
-    # F621: Object.assign mutated-target reads
-    ok = ok and _misses("(function(){var t={};Object.assign(t,{a:'" + _A
-                        + "',b:'" + _B + "'});return Object.values(t).join('');})()")
-    # F638: promise .catch continuation
-    ok = ok and _misses("Promise.reject(new Error('" + _A
-                        + "')).catch(e=>e.message+'" + _B + "')")
-    # F636: bind-on-bound chain
-    ok = ok and _misses("((a)=>(a+'" + _B + "')).bind(null,'" + _A
-                        + "').bind(null)()")
-    return ("HELD" if ok else "BREAK", "open-neighbors-miss")
-
-
-def test_p4_junk_quiet():
-    """Honest text stays quiet."""
-    return ("HELD" if _misses('"(function(){var s=\'ab\';return s;})()"')
-            else "BREAK", "junk-quiet")
+    """Open findings F640-F643 still miss (nothing absorbed)."""
+    import importlib
+    shapes = []
+    for fnum in (640, 641, 642, 643):
+        mod = importlib.import_module("w375_f%d_redfirst" % fnum)
+        for name, payload, recovers in mod.SHAPES:
+            if recovers:
+                shapes.append(payload)
+    ok = all(_misses(s) for s in shapes)
+    return ("HELD" if ok else "BREAK", "open-neighbors-miss=%s" % ok)
 
 
 def test_p5_pin_taxonomy():

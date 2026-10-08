@@ -30334,6 +30334,7 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                  state)
         if _f622 is not None:
             val, i = _f622
+            return _js_parse_postfix(text, i, val, depth, state)
         # F624: (function(){DECL s='LIT';
         #   return s.slice(A[,B])[+'LIT'...];})() -- trimming string
         #   slice through a var-bound literal. Tried after F617:
@@ -30344,6 +30345,7 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f624 = _js_parse_f624_slicebound_iife(text, i, depth, state)
         if _f624 is not None:
             val, i = _f624
+            return _js_parse_postfix(text, i, val, depth, state)
         # F626: (function(){DECL p=new URLSearchParams('LIT');
         #   DECL s='LIT';LOOP return s;})() -- URLSearchParams
         #   iteration protocols (for-of over p / p.entries() /
@@ -30358,6 +30360,7 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                      state)
         if _f626 is not None:
             val, i = _f626
+            return _js_parse_postfix(text, i, val, depth, state)
         # F639: (function(){DECL o=NESTED;return TERM;})() --
         # Object.values/Object.entries through a var-bound
         # intermediate with MEMBER-ACCESS paths on the intermediate

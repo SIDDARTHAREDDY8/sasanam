@@ -324,10 +324,10 @@ def test_r42_f629_closed():
 
 
 @_t
-def test_r42_f631_open():
-    """F631 OPEN: async generator for-await miss."""
-    miss = _misses("(async function(){async function* g(){yield '%s';yield '%s';}var s='';for await (var x of g()){s+=x;}return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r42_f631_closed():
+    """F631 CLOSED (wave-375 lane 8): async generator for-await blocks."""
+    hit = _blocked("(async function(){async function* g(){yield '%s';yield '%s';}var s='';for await (var x of g()){s+=x;}return s;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
@@ -417,10 +417,11 @@ def test_p1_f630_s2_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r42_f631_s2_open():
-    """F631 OPEN (shape asyncgen-next): miss reproduces."""
-    miss = _misses("(async function(){async function* g(){yield '%s';}var it=g();var a=await it.next();return a.value+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r42_f631_s2_closed():
+    """F631 CLOSED (wave-375 lane 8, shape asyncgen-next): blocks."""
+    hit = _blocked("(async function(){async function* g(){yield '%s';}var it=g();var a=await it.next();return a.value+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
 
 @_t
 def test_p1_f632_s2_closed():

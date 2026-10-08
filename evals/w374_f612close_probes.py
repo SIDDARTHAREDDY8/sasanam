@@ -281,17 +281,16 @@ def test_p4_f510_inline_still_blocked():
 
 
 def _round42_shapes():
-    """Filed shapes of the currently-OPEN round-42 findings (must still miss).
+    """Filed shapes of the currently-OPEN findings (must still miss).
 
-    F621 dropped: CLOSED 2026-10-08 wave-375 lane 1 (its shapes now block).
-    F622, F632 dropped: CLOSED 2026-10-08 wave-375 lane 2 (their shapes now block).
-    F623, F630, F634 dropped: CLOSED 2026-10-08 wave-375 lane 3 (their shapes now block).
+    F621-F639 all CLOSED on the merged tree (wave-375 merge, lanes 1-9);
+    their shapes now block. Only F640-F643 (attack round 43) remain open.
     """
     import importlib
     shapes = []
-    # Wave-375 merge lanes 1/10, 2/10, 3/10: F621, F622, F632, F623, F630, F634 CLOSED -- dropped from the still-open set.
-    for fnum in (624, 625, 626, 627, 628, 629, 631, 633):
-        mod = importlib.import_module("w374_f%d_redfirst" % fnum)
+    # Wave-375 merge: F621-F639 CLOSED -- dropped from the still-open set.
+    for fnum in (640, 641, 642, 643):
+        mod = importlib.import_module("w375_f%d_redfirst" % fnum)
         for name, payload, recovers in mod.SHAPES:
             if recovers:
                 shapes.append((fnum, name, payload))
