@@ -341,7 +341,7 @@ def p8_node_differential():
 def p9_pin_footer():
     assert TAXONOMY_PIN == 2140, "pin moved"
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F597**" in text
+    ok = ("Next free finding: **F606**" in text
           and "Open findings: F583, F584, F585, F586, F587, F588, "
               "F589, F590, F591, F593, F595, F596." in text
           # Wave-371 lane 6: F592/F594 CLOSED; F583-F591, F593, F595,

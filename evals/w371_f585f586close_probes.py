@@ -266,7 +266,7 @@ def p9_pin_footer():
     assert guac_graph.TAXONOMY_PIN == 2140, \
         "guac_graph.TAXONOMY_PIN=%r want 2140" % (guac_graph.TAXONOMY_PIN,)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F597**" in text
+    ok = ("Next free finding: **F606**" in text
           and "**Open findings: F583, F584, F587, F588, F589, F590, F591, "
               "F592, F593, F594, F595, F596.**" in text
           # Wave-371 lane 3: F585/F586 CLOSED; F583/F584/F587-F596 OPEN

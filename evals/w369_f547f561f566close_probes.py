@@ -453,8 +453,8 @@ def p12_pin_footer():
         os.path.join(REPO_ROOT, "gov", "dlp.py")).read())) == 28, \
         "re.compile count moved"
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F597**" in text  # Wave-369 lane 1: F547/F561/F566 CLOSED
-          and "**Open findings: F582, F583, F584, F585, F586, F587, F588, F589, F590, F591, F592, F593, F594, F595, F596.**" in text  # Wave-369 lane 1: F547/F561/F566 CLOSED; wave-370 lane 4: F573/F578 CLOSED
+    ok = ("Next free finding: **F606**" in text  # Wave-369 lane 1: F547/F561/F566 CLOSED
+          and "**Open findings: F597, F598, F599, F600, F601, F602, F603, F604, F605.**" in text  # Wave-369 lane 1: F547/F561/F566 CLOSED; wave-370 lane 4: F573/F578 CLOSED
           and "Status: CLOSED 2026-10-07 wave-369 lane 1." in text)
     return ("HELD" if ok else "BREAK",
             "pin=%s footer=%s" % (TAXONOMY_PIN, ok))

@@ -311,8 +311,8 @@ def p4_pin_and_footer():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     assert "F522" in text and "F525" in text, "F522/F525 missing from FINDINGS.md"
     assert "Status: CLOSED 2026-10-07 wave-365 lane 2" in text, "close status missing"
-    assert "Open findings: F582, F583, F584, F585, F586, F587, F588, F589, F590, F591, F592, F593, F594, F595, F596." in text, "lane-local footer wrong"  # Wave-367 merge: F537-F546 open, next F547; was: Wave-366 lane 3: F528, F529 CLOSED locally  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
-    assert "Next free finding: **F597**" in text, "next-free wrong"  # Wave-367 merge: F537-F546 open, next F547  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+    assert "Open findings: F597, F598, F599, F600, F601, F602, F603, F604, F605." in text, "lane-local footer wrong"  # Wave-367 merge: F537-F546 open, next F547; was: Wave-366 lane 3: F528, F529 CLOSED locally  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+    assert "Next free finding: **F606**" in text, "next-free wrong"  # Wave-367 merge: F537-F546 open, next F547  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
     return ("HELD", "pin=2140; F522/F525 closed; footer open F526,F527,F530/next F531")
 
 

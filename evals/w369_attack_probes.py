@@ -147,8 +147,8 @@ def test_b0_footer_state():
     """Control: footer shows F582 open, next F583 (wave-370 merge)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F597**" in text  # Wave-370 merge: F570-F581 CLOSED
-          and "Open findings: F582, F583, F584, F585, F586, F587, F588, F589, F590, F591, F592, F593, F594, F595, F596." in text)  # Wave-370 merge: F582 OPEN
+    ok = ("Next free finding: **F606**" in text  # Wave-370 merge: F570-F581 CLOSED
+          and "Open findings: F597, F598, F599, F600, F601, F602, F603, F604, F605." in text)  # Wave-370 merge: F582 OPEN
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

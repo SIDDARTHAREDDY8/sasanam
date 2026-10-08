@@ -337,8 +337,8 @@ def p7_pin_and_footer():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     # Lane-local footer: wave-370 lane 3 closes F572/F579; the merge
     # reconciles with sibling lanes.
-    ok = ("Next free finding: **F597**." in text
-          and "**Open findings: F582, F583, F584, F585, F586, F587, F588, F589, F590, F591, F592, F593, F594, F595, F596.**" in text
+    ok = ("Next free finding: **F606**." in text
+          and "**Open findings: F597, F598, F599, F600, F601, F602, F603, F604, F605.**" in text
           and "**Status: CLOSED 2026-10-07 wave-370 lane 3.**" in text)
     return [("HELD" if ok else "BREAK",
              "pin=%s footer=%s" % (TAXONOMY_PIN, ok))]

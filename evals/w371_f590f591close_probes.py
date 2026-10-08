@@ -310,7 +310,7 @@ def p6_pin_and_footer():
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as fh:
         text = fh.read()
     footer_ok = (text.count("CLOSED 2026-10-07 wave-371 lane 5") >= 2
-                 and "Next free finding: **F597**" in text
+                 and "Next free finding: **F606**" in text
                  and "Open findings: F582, F583, F584, F585, F586, F587, "
                       "F588, F589, F592, F593, F594, F595, F596." in text)
     detail = "pin=%s codes=%d; footer-closed=%s" % (

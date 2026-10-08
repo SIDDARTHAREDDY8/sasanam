@@ -235,7 +235,7 @@ def p7_pin_and_footer():
         # Lane-local footer: wave-371 lane 7 closes F593/F596 and files
         # F597 (spec-axis review residual); the merge reconciles with
         # sibling lanes.
-        ok = ("Next free finding: **F598**." in text
+        ok = ("Next free finding: **F606**." in text
               and "**Open findings: F583, F584, F585, F586, F587, F588, "
                  "F589, F590, F591, F592, F594, F595, F597.**" in text)
         rows.append(("HELD" if ok else "BREAK", "pin+footer"))

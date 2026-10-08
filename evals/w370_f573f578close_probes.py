@@ -81,8 +81,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 TAXONOMY_PIN = 2140  # Wave-370: watcher merge moved 2135 -> 2140
 
-FOOTER_OPEN = "F570-F572, F574-F577, F579-F582"
-FOOTER_NEXT = "F583"
+FOOTER_OPEN = "F597, F598, F599, F600, F601, F602, F603, F604, F605"  # Wave-371 merge: F583-F596 CLOSED (lanes 1-7); F597-F605 OPEN (next F606)
+FOOTER_NEXT = "F606"  # Wave-371 merge: F583-F596 CLOSED (lanes 1-7); F597-F605 OPEN (next F606)
 
 
 def hit(payload):
