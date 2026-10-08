@@ -296,27 +296,27 @@ def test_r43_f642_s3_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 
-# ------------------------------------------------- F643 open pins (must miss)
+# ------------------------------------------------- F643 closed pins (must block)
 
 @_t
-def test_r43_f643_s1_open():
-    """F643 OPEN (shape fromcharcode-u8-spread): miss reproduces."""
-    miss = _misses("String.fromCharCode(...new Uint8Array([%s]))+'%s'" % (_U8, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r43_f643_s2_open():
-    """F643 OPEN (shape fromcharcode-u8-apply): miss reproduces."""
-    miss = _misses("String.fromCharCode.apply(null,new Uint8Array([%s]))+'%s'" % (_U8, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r43_f643_s1_closed():
+    """F643 CLOSED (shape fromcharcode-u8-spread): now blocks."""
+    hit = _blocked("String.fromCharCode(...new Uint8Array([%s]))+'%s'" % (_U8, _F3))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r43_f643_s3_open():
-    """F643 OPEN (shape fromcodepoint-u8-spread): miss reproduces."""
-    miss = _misses("String.fromCodePoint(...new Uint8Array([%s]))+'%s'" % (_U8, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r43_f643_s2_closed():
+    """F643 CLOSED (shape fromcharcode-u8-apply): now blocks."""
+    hit = _blocked("String.fromCharCode.apply(null,new Uint8Array([%s]))+'%s'" % (_U8, _F3))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_r43_f643_s3_closed():
+    """F643 CLOSED (shape fromcodepoint-u8-spread): now blocks."""
+    hit = _blocked("String.fromCodePoint(...new Uint8Array([%s]))+'%s'" % (_U8, _F3))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ---------------------------------------------------------------- green check
