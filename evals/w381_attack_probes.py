@@ -95,11 +95,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F686-F710 open, next F711 (this lane)."""
+    """Control: footer shows F700-F709, F712 open, next F713 (this lane)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F713**" in text
-          and "Open findings: F700, F701, F702, F703, F704, F705, F706, F707, F708, F709, F710, F711, F712." in text)  # Wave-381 merge: F686-F699 CLOSED; F700-F712 OPEN
+          and "Open findings: F700, F701, F702, F703, F704, F705, F706, F707, F708, F709, F712." in text)  # Wave-382 lane 6: F710, F711 CLOSED; open F700-F709, F712 / next F713
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -323,17 +323,17 @@ def test_r49_f709_while_plus_eq_open():
 
 
 @_t
-def test_r49_f710_set_has_open():
-    """F710 OPEN (Set.has (F687 residual)): miss reproduces."""
-    miss = _misses("(function(){var s=new Set(['k']);var f=s.has('k')?'%s':'xx';return f+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r49_f710_set_has_closed():
+    """F710 CLOSED (Set.has (F687 residual)): coded refusal."""
+    blocked = _blocked("(function(){var s=new Set(['k']);var f=s.has('k')?'%s':'xx';return f+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
-def test_r49_f710_set_has_q_open():
-    """F710 OPEN (Set.has (F687 residual)): miss reproduces."""
-    miss = _misses("(function(){var s=new Set(['q']);return (s.has('q')?'%s':'xx')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r49_f710_set_has_q_closed():
+    """F710 CLOSED (Set.has (F687 residual)): coded refusal."""
+    blocked = _blocked("(function(){var s=new Set(['q']);return (s.has('q')?'%s':'xx')+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 

@@ -54,7 +54,9 @@ def main():
             breaks += 1
             continue
         # BREAK = node-inexact decode; HELD = fail-closed or exact.
-        is_break = got != want
+        # (got None means the decoder fails closed -- the F711
+        # close-when -- not a mis-decode.)
+        is_break = got is not None and got != want
         print("%s: %s (got %r)" % (name,
                                    "BREAK(mis-decode)" if is_break else "HELD",
                                    got))

@@ -11888,13 +11888,20 @@ def _jsobj_lookup(obj, key):
     Returns the stored value (unwrapping _JSAccessor), or None when
     the key resolves nowhere. Getters were already evaluated at
     literal-parse time, matching the engine's read-time invocation
-    (node v24.20.0). Never evals.
+    (node v24.20.0). Raises _JSExprFail when the resolved value is
+    a _JSNumStr (F711: only integer literals above 2**53 are
+    wrapped, at parse -- the engine's float64 diverges from the
+    canonical text there, so any read would mis-decode; fail
+    closed). Never evals.
     """
     cur = obj
     while cur is not None:
         if key in cur.props:
             v = cur.props[key]
-            return v.value if isinstance(v, _JSAccessor) else v
+            v = v.value if isinstance(v, _JSAccessor) else v
+            if isinstance(v, _JSNumStr):
+                raise _JSExprFail("F711 unsafe integer member read")
+            return v
         cur = cur.proto
     return None
 
@@ -12096,7 +12103,17 @@ def _js_parse_f535_value(text, i, depth, state, accessor_aware=False,
     if c in "'\"":
         return _js_parse_string(text, i)
     if c == "-" or c in _ASCII_DIGITS:
-        return _js_parse_canonical_int(text, i, "object value")
+        v, j = _js_parse_canonical_int(text, i, "object value")
+        if _js_str_is_unsafe_int(v):
+            # F711: integer literals above 2**53 lose integer
+            # provenance as plain str, and the engine's float64
+            # rounds them -- emitting the canonical text would
+            # mis-decode (node v24.20.0). Mark number-literal
+            # provenance via _JSNumStr so member reads fail closed;
+            # small ints and quoted strings stay plain str
+            # (node-exact).
+            return _JSNumStr(v), j
+        return v, j
     if c == "{":
         props, j = _js_parse_f535_object(text, i, depth + 1, state,
                                          accessor_aware=accessor_aware,
@@ -17852,6 +17869,281 @@ def _js_parse_f687_weakset_iife(text, i, depth, state):
         # string-only -- the engine throws on non-string operands
         # here, so failing closed is node-exact).
         k = k + 1
+        while True:
+            kk = _js_skip_ws(text, k)
+            if kk >= n or text[kk] != "+":
+                k = kk
+                break
+            rhs, kk = _js_parse_primary(text, kk + 1, depth, state)
+            if not isinstance(rhs, str) or isinstance(rhs, _JSNumStr):
+                return None
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                return None
+            if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+                return None
+            val = val + rhs
+            state["ops"] += 1
+            k = kk
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ";":
+            k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "}":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # invocation args: the filed shapes take none
+        k = k + 1
+    except _JSExprFail:
+        return None
+    state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+    return val, k
+
+
+def _js_parse_f710_set_has(text, i, env, state):
+    """Parse `[!]s.has('LIT')` at text[i] (F710); returns (bool, next_index).
+
+    s must be Set-bound in *env*; the argument must be a string
+    literal. Set keys are SameValueZero -- for string keys the
+    static literal set is exact (node v24.20.0). Anything else
+    fails closed. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    neg = False
+    if j < n and text[j] == "!":
+        neg = True
+        j = _js_skip_ws(text, j + 1)
+    sname, j = _js_parse_ident(text, j)
+    sbinding = env.get(sname)
+    if sbinding is None or sbinding[0] != "set":
+        raise _JSExprFail("F710 has() on non-Set")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("F710 has without member")
+    mname, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+    if mname != "has":
+        raise _JSExprFail("F710 Set member not has")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("F710 has without paren")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail("F710 has key not a string literal")
+    key, j = _js_parse_string(text, j)
+    if not isinstance(key, str) or isinstance(key, _JSNumStr):
+        raise _JSExprFail("F710 has key not a plain string")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("F710 has unterminated")
+    state["ops"] += 1  # the has() call is obfuscation-shaped
+    val = key in sbinding[1]
+    return (not val) if neg else val, j + 1
+
+
+def _js_parse_f710_ternary(text, i, env, state):
+    """Parse `COND?'LIT':'LIT'` at text[i] (F710); returns (str, next_index).
+
+    COND is `[!]s.has('LIT')` via _js_parse_f710_set_has; the
+    branches must be plain string literals (the _JSNumStr
+    discipline, mirroring F687). Returns the selected branch.
+    Never evals.
+    """
+    n = len(text)
+    cond, k = _js_parse_f710_set_has(text, i, env, state)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "?":
+        raise _JSExprFail("F710 ternary without ?")
+    then_lit, k = _js_parse_string(text, _js_skip_ws(text, k + 1))
+    if not isinstance(then_lit, str) or isinstance(then_lit, _JSNumStr):
+        raise _JSExprFail("F710 then not a plain string")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ":":
+        raise _JSExprFail("F710 ternary without :")
+    else_lit, k = _js_parse_string(text, _js_skip_ws(text, k + 1))
+    if not isinstance(else_lit, str) or isinstance(else_lit, _JSNumStr):
+        raise _JSExprFail("F710 else not a plain string")
+    return (then_lit if cond else else_lit), k
+
+
+def _js_parse_f710_set_has_iife(text, i, depth, state):
+    """Parse `(function(){DECL*;return ...;})()` (F710).
+
+    Set membership-marker conditional reads, node-exact
+    (v24.20.0). Body grammar (all other shapes fail closed):
+      - `var|const|let NAME = new Set();` -- an empty Set, or
+        `var|const|let NAME = new Set([STR_LIT, ...]);` -- a Set
+        bound to string literals (the constructor iterable;
+        duplicate literals collapse SameValueZero-exact, node
+        v24.20.0). Non-literal elements fail closed.
+      - optionally `var|const|let F = COND?'LIT':'LIT';` -- the
+        conditional result bound to F (filed shape 1); branches
+        are plain string literals.
+      - `return` either `(COND?'LIT':'LIT')` (the parenthesized
+        ternary must be the additive left operand -- the engine
+        would re-associate an unparenthesized tail into the else
+        branch) or the bound F, then TAIL = `+ PRIMARY` repeated,
+        each PRIMARY a plain string (the additive concat rules;
+        non-string operands fail closed -- the engine throws
+        there).
+      - COND = `[!]s.has('LIT')` -- s Set-bound, literal key; the
+        static literal set is SameValueZero-exact for strings.
+    Statement-form `s.add(...)` is out of scope (fails closed;
+    the filed shapes build membership via the constructor).
+    Disjoint from F687 (`new Set` vs `new WeakSet` head -- a body
+    mixing both fails closed in each). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+    if k is None:
+        return None
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] in _JS_IDENT_START:
+        # Optional name (engine-exact; ignored).
+        try:
+            _, k = _js_parse_ident(text, k)
+        except _JSExprFail:
+            return None
+        k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        return None
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != ")":
+        return None  # params: the filed shapes take none
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "{":
+        return None
+    k = _js_skip_ws(text, k + 1)
+    env = {}
+    try:
+        while True:
+            k = _js_skip_ws(text, k)
+            kk, nk = _js_match_decl_kw(text, k)
+            if kk is None:
+                break
+            k = _js_skip_ws(text, nk)
+            name, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "=":
+                return None
+            k = _js_skip_ws(text, k + 1)
+            if (text.startswith("new", k)
+                    and (k + 3 >= n
+                         or text[k + 3] not in _JS_IDENT_CONT)):
+                # Set construction head. A WeakSet head is not this
+                # production (F687 owns it) -- fail the whole parse
+                # so the shapes stay disjoint.
+                wk = _js_match_kw(text, _js_skip_ws(text, k + 3),
+                                  "WeakSet")
+                if wk is not None:
+                    return None
+                sk = _js_match_kw(text, _js_skip_ws(text, k + 3),
+                                  "Set")
+                if sk is None:
+                    return None
+                sk = _js_skip_ws(text, sk)
+                if sk >= n or text[sk] != "(":
+                    return None
+                sk = _js_skip_ws(text, sk + 1)
+                members = set()
+                if sk < n and text[sk] == ")":
+                    sk = sk + 1
+                elif sk < n and text[sk] == "[":
+                    sk = _js_skip_ws(text, sk + 1)
+                    while True:
+                        sk = _js_skip_ws(text, sk)
+                        if sk < n and text[sk] == "]":
+                            sk = sk + 1
+                            break
+                        if sk >= n or text[sk] not in "'\"":
+                            # A condval-bound ident is also a known
+                            # literal (node-exact); anything else
+                            # fails closed.
+                            try:
+                                ename, sk2 = _js_parse_ident(text, sk)
+                            except _JSExprFail:
+                                raise _JSExprFail(
+                                    "F710 Set element not a string literal")
+                            ebinding = env.get(ename)
+                            if (ebinding is None
+                                    or ebinding[0] != "condval"):
+                                raise _JSExprFail(
+                                    "F710 Set element not a known literal")
+                            elem = ebinding[1]
+                            sk = sk2
+                        else:
+                            elem, sk = _js_parse_string(text, sk)
+                            if (not isinstance(elem, str)
+                                    or isinstance(elem, _JSNumStr)):
+                                raise _JSExprFail(
+                                    "F710 Set element not a plain string")
+                        members.add(elem)
+                        state["parts"] += 1  # F452: charge per element
+                        if state["parts"] > _JS_EXPR_MAX_PARTS:
+                            raise _JSExprFail("too many parts")
+                        sk = _js_skip_ws(text, sk)
+                        if sk < n and text[sk] == ",":
+                            sk = _js_skip_ws(text, sk + 1)
+                            continue
+                        if sk < n and text[sk] == "]":
+                            sk = sk + 1
+                            break
+                        raise _JSExprFail("F710 Set array malformed")
+                    sk = _js_skip_ws(text, sk)
+                    if sk >= n or text[sk] != ")":
+                        raise _JSExprFail("F710 Set unterminated")
+                    sk = sk + 1
+                else:
+                    return None
+                if name in env:
+                    return None  # rebinding: fail closed (filed
+                    # shapes bind once)
+                env[name] = ("set", members)
+                k = sk
+            else:
+                # Conditional-result binding:
+                # `var F = COND?'LIT':'LIT';` (filed shape 1). The
+                # trailing `;` is consumed by the common tail below.
+                if name in env:
+                    return None
+                sel, k = _js_parse_f710_ternary(text, k, env, state)
+                env[name] = ("condval", sel)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ";":
+                return None
+            k = _js_skip_ws(text, k + 1)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                return None
+        rk = _js_match_kw(text, k, "return")
+        if rk is None:
+            return None
+        k = _js_skip_ws(text, rk)
+        if k < n and text[k] == "(":
+            sel, k = _js_parse_f710_ternary(text, k + 1, env, state)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ")":
+                return None
+            val = sel
+            k = k + 1
+        else:
+            fname, k = _js_parse_ident(text, k)
+            fbinding = env.get(fname)
+            if fbinding is None or fbinding[0] != "condval":
+                return None
+            val = fbinding[1]
+        # TAIL: `+ PRIMARY` repeated (the additive concat rules,
+        # string-only -- the engine throws on non-string operands
+        # here, so failing closed is node-exact).
         while True:
             kk = _js_skip_ws(text, k)
             if kk >= n or text[kk] != "+":
@@ -48169,6 +48461,17 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f687 = _js_parse_f687_weakset_iife(text, i, depth, state)
         if _f687 is not None:
             val, i = _f687
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F710: (function(){var s=new Set(['k']);
+        # return (s.has('k')?'f1':'xx')+'f2';})() -- Set
+        # membership-marker conditional reads via Set.has on
+        # string-literal keys. Tried after F687: disjoint heads
+        # (new Set vs new WeakSet -- a body mixing both fails closed
+        # in each), so no previously-decoded input changes behavior.
+        # None falls through like F687.
+        _f710 = _js_parse_f710_set_has_iife(text, i, depth, state)
+        if _f710 is not None:
+            val, i = _f710
             return _js_parse_postfix(text, i, val, depth, state)
         # F517: (function(){var A='';var O={...};
         # for(var K in O)A+=O[K];return A})() -- for-in
