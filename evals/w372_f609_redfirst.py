@@ -23,8 +23,13 @@ SHAPES = [
     ('replace-fn-regex-pattern',
      '"\'%(A1)sXX\'.replace(/XX/,()=>\'%(A2)s\')"'
      % {"A1": A1, "A2": A2}, True),
+    # Correction (wave-373 lane 5): the filed shape used off===5, but
+    # node v24.20.0 puts the 'XX' match at offset 9 (A1 is 9 chars), so
+    # off===5 takes the else branch and node yields A1 only -- the
+    # shape as filed never recovered the credential. off===9 is the
+    # node-exact args-using twin (verified: node yields A1+A2).
     ('replace-fn-uses-args',
-     '"\'%(A1)sXX\'.replace(\'XX\',(m,off)=>off===5?\'%(A2)s\':\'\')"'
+     '"\'%(A1)sXX\'.replace(\'XX\',(m,off)=>off===9?\'%(A2)s\':\'\')"'
      % {"A1": A1, "A2": A2}, True),
 ]
 

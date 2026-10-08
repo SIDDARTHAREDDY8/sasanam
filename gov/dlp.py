@@ -20766,6 +20766,204 @@ def _js_parse_f574_flatmap_identity(text, j):
     return _single_elem_array(j, p)
 
 
+def _js_parse_f609_replace_fn(text, j):
+    """Parse a String.replace function-valued replacement at text[j] (F609).
+
+    Recognized (node-verified, v24.20.0), F543/F597 four-form precedent:
+    - `()=>EXPR`, `(P)=>EXPR`, `P=>EXPR`, `(P1,P2)=>EXPR`
+    - block-body twins `()=>{return EXPR;}` etc. (the `;` is optional,
+      node ASI)
+    - `function(){return EXPR;}`, `function(P){return EXPR;}`,
+      `function(P1,P2){return EXPR;}` (optional function name)
+    EXPR grammar (node-exact, never evals):
+    - a string literal, a numeric literal, or a callback param
+    - `P==='lit'` / `'lit'===P` / `P===N` / `N===P` (strict only)
+    - `COND ? A : B` where COND is the === comparison above and A/B
+      are literals or params
+    At most 2 params (the replacer's first two positional args:
+    match, then offset for group-less patterns or p1 when the
+    pattern has a capture group); 3+ params fail closed. Duplicate
+    param names are rejected in arrow form (node throws SyntaxError,
+    v24.20.0) and shadow left-to-right in `function` form (node
+    sloppy-mode semantics). Anything else fails closed (documented
+    scope boundary): concatenation, template literals, `==`/`!==`,
+    method calls, unknown names, non-=== conditions, nested ternaries.
+    Never evals.
+    Returns (params, ast, next_index). AST nodes: ("lit", v),
+    ("param", name), ("eq", pname, lit), ("tern", cond, then, els).
+    """
+    n = len(text)
+
+    def _f609_param_list(k):
+        k = _js_skip_ws(text, k)
+        params = []
+        if k < n and text[k] == ")":
+            return params, k + 1
+        while True:
+            p, k = _js_parse_ident(text, k)
+            params.append(p)
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ",":
+                k = _js_skip_ws(text, k + 1)
+                continue
+            if k < n and text[k] == ")":
+                return params, k + 1
+            raise _JSExprFail("F609 bad replacer params")
+
+    def _f609_atom(k, params):
+        # string literal | numeric literal | callback param
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in "'\"":
+            v, k = _js_parse_string(text, k)
+            return ("lit", v), k
+        if k < n and (text[k] in _ASCII_DIGITS
+                      or text.startswith(("0x", "0X"), k)):
+            v, k = _js_parse_number(text, k)
+            return ("lit", v), k
+        name, k = _js_parse_ident(text, k)
+        if name not in params:
+            raise _JSExprFail("F609 replacer uses unknown name")
+        return ("param", name), k
+
+    def _f609_return_expr(k, params):
+        node, k = _f609_atom(k, params)
+        k = _js_skip_ws(text, k)
+        if text.startswith("===", k):
+            # strict only: == / !== fail closed (documented)
+            right, k = _f609_atom(_js_skip_ws(text, k + 3), params)
+            if node[0] == "param" and right[0] == "lit":
+                node = ("eq", node[1], right[1])
+            elif node[0] == "lit" and right[0] == "param":
+                node = ("eq", right[1], node[1])
+            else:
+                raise _JSExprFail("F609 === needs param vs literal")
+            k = _js_skip_ws(text, k)
+        if k < n and text[k] == "?":
+            if node[0] != "eq":
+                raise _JSExprFail("F609 ternary needs === condition")
+            then, k = _f609_atom(_js_skip_ws(text, k + 1), params)
+            k = _js_expect(text, k, ":")
+            els, k = _f609_atom(k, params)
+            node = ("tern", node, then, els)
+        return node, k
+
+    def _f609_block_body(k, params, what):
+        # `{return EXPR;}` / `{return EXPR}` at text[k] (node ASI makes
+        # the `;` optional); returns (ast, next_index).
+        rk = _js_match_kw(text, _js_skip_ws(text, k), "return")
+        if rk is None:
+            raise _JSExprFail("F609 %s without return" % what)
+        ast, k = _f609_return_expr(rk, params)
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ";":
+            k += 1
+            k = _js_skip_ws(text, k)
+        return ast, _js_expect(text, k, "}")
+
+    j = _js_skip_ws(text, j)
+    if text.startswith("function", j):
+        k = j + len("function")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F609 bad function keyword")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            _, k = _js_parse_ident(text, k)  # optional name
+            k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "(")
+        params, k = _f609_param_list(k)
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "{")
+        # `function` form: duplicate params shadow left-to-right
+        # (node sloppy-mode semantics, v24.20.0 verified).
+        ast, k = _f609_block_body(k, params, "function")
+    else:
+        if j < n and text[j] == "(":
+            params, j = _f609_param_list(_js_skip_ws(text, j + 1))
+        else:
+            p, j = _js_parse_ident(text, j)
+            params = [p]
+        if len(set(params)) != len(params):
+            # node throws SyntaxError on duplicate arrow params.
+            raise _JSExprFail("F609 duplicate arrow params")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail("F609 replacer without =>")
+        j = _js_skip_ws(text, j + 2)
+        if j < n and text[j] == "{":
+            ast, k = _f609_block_body(j + 1, params, "arrow")
+        else:
+            ast, k = _f609_return_expr(j, params)
+    if len(params) > 2:
+        raise _JSExprFail("F609 replacer too many params")
+    return params, ast, k
+
+
+def _f609_looks_like_fn(text, j):
+    """True when text[j] plausibly starts a replacer function (F609).
+
+    `function` keyword (guarded), `(`, or a bare identifier followed
+    by `=>`. The `(` case is tried speculatively: a parenthesized
+    non-function (e.g. `('lit')`) fails the function parse and falls
+    back to the string-arg path. No regex added (module compile-call
+    count stays at 28). Never evals.
+    """
+    n = len(text)
+    if j >= n:
+        return False
+    if text.startswith("function", j):
+        k = j + len("function")
+        return k >= n or text[k] not in _JS_IDENT_CONT
+    if text[j] == "(":
+        return True
+    if text[j] in _JS_IDENT_START:
+        k = j + 1
+        while k < n and text[k] in _JS_IDENT_CONT:
+            k += 1
+        k = _js_skip_ws(text, k)
+        return text.startswith("=>", k)
+    return False
+
+
+def _f609_eval_replacer(params, ast, arg_values):
+    """Evaluate an F609 replacer AST node-exactly (v24.20.0).
+
+    Params bind positionally to the engine's replacer argument list
+    (match, p1..pn, offset, string); duplicate names shadow
+    left-to-right, matching the engine's scoping for the `function`
+    form (arrow duplicates are rejected at parse: node throws
+    SyntaxError). The return value is inserted LITERALLY -- node does
+    not $-expand function return values ('XX'.replace('XX',()=>'$$')
+    is '$$', node-verified). `===` is strict (type-and-value). The
+    single bounded call is covered by the replace branch's op charge
+    (F452). Never evals.
+    """
+    bound = {}
+    for p, v in zip(params, arg_values):
+        bound[p] = v
+
+    def _val(node):
+        kind = node[0]
+        if kind == "lit":
+            return node[1]
+        if kind == "param":
+            return bound[node[1]]
+        if kind == "eq":
+            _, pname, lit = node
+            a, b = bound[pname], lit
+            return type(a) is type(b) and a == b
+        if kind == "tern":
+            _, cond, then, els = node
+            return _val(then) if _val(cond) else _val(els)
+        raise _JSExprFail("F609 bad replacer AST")
+
+    out = _val(ast)
+    if isinstance(out, bool):
+        # Unreachable: the return grammar has no boolean source, but
+        # fail closed rather than mis-coerce if that ever changes.
+        raise _JSExprFail("F609 replacer returned non-string")
+    return out if isinstance(out, str) else str(out)
+
+
 def _js_parse_f597_flatmap_scalar(text, j):
     """Parse a flatMap scalar-returning callback at text[j] (F597).
 
@@ -21641,6 +21839,15 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         #      (literal chars; one capture-group level; no escapes,
         #      classes, quantifiers, anchors) replaces its first match;
         #  (c) F464's /,/[gi] comma scope, unchanged.
+        #  (d) F609: a FUNCTION-valued replacement (replacer callback),
+        #      modeled node-exactly for the filed grammar: the replacer
+        #      is called once per modeled match with the engine's
+        #      positional args (match, p1..pn, offset, string) and its
+        #      return value is inserted LITERALLY (node does not
+        #      $-expand function return values). /,/[gi] with a
+        #      function replacement fails closed (documented residual):
+        #      the comma scope is defined for string replacements
+        #      only.
         # The replacement's $-patterns expand node-exactly for the
         # documented subset ($$, $&, $`, $', $n for a modeled group);
         # anything else $-shaped fails closed (documented). A regex
@@ -21670,32 +21877,51 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != ",":
             raise _JSExprFail("bad replace")
-        rep, i = _js_parse_coerced_string_arg(
-            text, _js_skip_ws(text, i + 1), depth, state, "replace replacement")
+        _f609_fn = None
+        _rj = _js_skip_ws(text, i + 1)
+        if _f609_looks_like_fn(text, _rj):
+            try:
+                _f609_params, _f609_ast, i = _js_parse_f609_replace_fn(
+                    text, _rj)
+                _f609_fn = (_f609_params, _f609_ast)
+            except _JSExprFail:
+                _f609_fn = None
+                rep, i = _js_parse_coerced_string_arg(
+                    text, _rj, depth, state, "replace replacement")
+        else:
+            rep, i = _js_parse_coerced_string_arg(
+                text, _rj, depth, state, "replace replacement")
         i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != ")":
             raise _JSExprFail("bad replace")
         if _f603_comma_g:
+            if _f609_fn is not None:
+                raise _JSExprFail(
+                    "F609 comma-g function replacement not modeled")
             result = _f603_replace_all_commas(value, rep)
-        elif _f603_is_regex:
-            start, end, groups = _f603_regex_first_match(value, _pattern)
-            if start is None:
-                result = value
-            else:
-                result = (value[:start]
-                          + _f603_expand_dollar(rep, value, start, end,
-                                                value[start:end], groups)
-                          + value[end:])
         else:
-            idx = value.find(_pattern)
-            if idx < 0:
+            # The modeled match span, or None when the pattern misses:
+            # (start, end, match_text, groups).
+            if _f603_is_regex:
+                start, end, groups = _f603_regex_first_match(value, _pattern)
+                span = None if start is None else (
+                    start, end, value[start:end], groups)
+            else:
+                idx = value.find(_pattern)
+                span = None if idx < 0 else (
+                    idx, idx + len(_pattern), _pattern, [])
+            if span is None:
                 result = value
             else:
-                end = idx + len(_pattern)
-                result = (value[:idx]
-                          + _f603_expand_dollar(rep, value, idx, end,
-                                                _pattern, [])
-                          + value[end:])
+                start, end, match_text, groups = span
+                if _f609_fn is not None:
+                    _rep = _f609_eval_replacer(
+                        _f609_fn[0], _f609_fn[1],
+                        [match_text] + groups + [start, value])
+                else:
+                    _rep = _f603_expand_dollar(rep, value, start, end,
+                                              match_text, groups)
+                result = value[:start] + _rep + value[end:]
         if len(result) > _MAX_DECODE_BYTES:
             raise _JSExprFail("replace too long")
         state["ops"] += 1
