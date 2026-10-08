@@ -128,8 +128,8 @@ def test_b0_footer_state():
     """Control: footer shows open F612-F619, next F621 (wave-374 lane 7: F620 CLOSED)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F622**" in text  # Wave-373 merge: lanes 1-6 footer repoint  # Wave-373 merge: footer repoint open F612-F620 / next F621
-          and "Open findings: F621." in text)  # Wave-373 merge: lanes 1-6 (F595, F606-F611 CLOSED)  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED  # Wave-374 lane 4: F615 CLOSED
+    ok = ("Next free finding: **F636**" in text  # Wave-373 merge: lanes 1-6 footer repoint  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 merge: footer repoint open F621-F635 / next F636
+          and "Open findings: F621, F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635." in text)  # Wave-373 merge: lanes 1-6 (F595, F606-F611 CLOSED)  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED  # Wave-374 lane 4: F615 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

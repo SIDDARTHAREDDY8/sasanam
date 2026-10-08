@@ -150,8 +150,8 @@ def test_b0_footer_state():
     """Control: footer shows F606-F611 open, next F612 (wave-373 lane 1)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F621**" in text  # Wave-371 lane 8 (attack round 39): F583-F596 OPEN (base); F597-F604 filed OPEN (next F605)  # Wave-372 lane 1: F597 CLOSED (next F606)  # Wave-372 merge: footer repoint next F612  # Wave-373 merge: footer repoint open F612-F620 / next F621
-          and "Open findings: F612, F614, F615, F616, F617, F618, F619, F620." in text)  # Wave-371 lane 8 (attack round 39): F583-F596 OPEN (base); F597-F604 filed OPEN (next F605)  # Wave-372 lane 1: F597 CLOSED (next F606)  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 4: F608 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED
+    ok = ("Next free finding: **F636**" in text  # Wave-371 lane 8 (attack round 39): F583-F596 OPEN (base); F597-F604 filed OPEN (next F605)  # Wave-372 lane 1: F597 CLOSED (next F606)  # Wave-372 merge: footer repoint next F612  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 merge: footer repoint open F621-F635 / next F636
+          and "Open findings: F621, F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635." in text)  # Wave-371 lane 8 (attack round 39): F583-F596 OPEN (base); F597-F604 filed OPEN (next F605)  # Wave-372 lane 1: F597 CLOSED (next F606)  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 4: F608 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

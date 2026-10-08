@@ -453,8 +453,8 @@ def p12_pin_footer():
         os.path.join(REPO_ROOT, "gov", "dlp.py")).read())) == 28, \
         "re.compile count moved"
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F621**" in text  # Wave-369 lane 1: F547/F561/F566 CLOSED  # Wave-372 merge: footer repoint next F612  # Wave-373 merge: footer repoint open F612-F620 / next F621
-          and "**Open findings: F612, F614, F615, F616, F617, F618, F619, F620.**" in text  # Wave-369 lane 1: F547/F561/F566 CLOSED; wave-370 lane 4: F573/F578 CLOSED  # Wave-372 lane 1: F597 CLOSED  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 4: F608 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED
+    ok = ("Next free finding: **F636**" in text  # Wave-369 lane 1: F547/F561/F566 CLOSED  # Wave-372 merge: footer repoint next F612  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 merge: footer repoint open F621-F635 / next F636
+          and "**Open findings: F621, F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635.**" in text  # Wave-369 lane 1: F547/F561/F566 CLOSED; wave-370 lane 4: F573/F578 CLOSED  # Wave-372 lane 1: F597 CLOSED  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 4: F608 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636
           and "Status: CLOSED 2026-10-07 wave-369 lane 1." in text)
     return ("HELD" if ok else "BREAK",
             "pin=%s footer=%s" % (TAXONOMY_PIN, ok))

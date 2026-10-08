@@ -327,9 +327,9 @@ def p9_pin_and_footer():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     if text.count("CLOSED 2026-10-07 wave-367 lane 4") < 2:
         return ("BREAK", "F535/F536 CLOSED entries missing")
-    if "**Open findings: F612, F614, F615, F616, F617, F618, F619, F620.**" not in text:  # Wave-369 merge: lanes 1-5 (F547-F557,F565) CLOSED  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 4: F608 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED
+    if "**Open findings: F621, F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635.**" not in text:  # Wave-369 merge: lanes 1-5 (F547-F557,F565) CLOSED  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 4: F608 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636
         return ("BREAK", "lane-local footer wrong")
-    if "Next free finding: **F621**" not in text:  # Wave-369 lane 2 local: F548/F549/F550 CLOSED (merge finalizes)  # Wave-372 merge: footer repoint next F612  # Wave-373 merge: footer repoint open F612-F620 / next F621
+    if "Next free finding: **F636**" not in text:  # Wave-369 lane 2 local: F548/F549/F550 CLOSED (merge finalizes)  # Wave-372 merge: footer repoint next F612  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 merge: footer repoint open F621-F635 / next F636
         return ("BREAK", "next-free footer wrong")
     return ("HELD", "pin 2140; 28 re.compile; F535/F536 CLOSED; "
             "footer F547,F551-F569/next F570 (wave-369 lane 2)")
