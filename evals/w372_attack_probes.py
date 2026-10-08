@@ -39,7 +39,7 @@ All filed shapes node-verified EXACT (v24.20.0): 15/15 CRED-EXACT,
 
 Known-open pins (each probe returns HELD when the miss reproduces; a literal
 BREAK verdict means the pin failed or a NEW break appeared): F597-F605
-(round 39), F607, F610, F611 (round 40; F608 CLOSED wave-373 lane 4, F609 CLOSED wave-373 lane 5).
+(round 39), F607, F610 (round 40; F608 CLOSED wave-373 lane 4, F609 CLOSED wave-373 lane 5, F611 CLOSED wave-373 lane 6).
 F583-F596 are pinned CLOSED by the
 wave-371 spot pins below; earlier waves are pinned by the w371 attack
 battery, run as the depth-1 green check below.
@@ -125,11 +125,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F611 open, next F612 (wave-373 lanes 1-5)."""
+    """Control: footer shows open none, next F612 (wave-373 lanes 1-6: F595, F606-F611 CLOSED)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F612**" in text  # Wave-373 merge: lanes 1-5 footer repoint
-          and "Open findings: F611." in text)  # Wave-373 merge: lanes 1-5 (F595, F606-F610 CLOSED)
+    ok = ("Next free finding: **F612**" in text  # Wave-373 merge: lanes 1-6 footer repoint
+          and "Open findings: none." in text)  # Wave-373 merge: lanes 1-6 (F595, F606-F611 CLOSED)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -335,13 +335,13 @@ def test_p1_f610_closed():
 
 
 @_t
-def test_r40_f611_open():
-    """F611 OPEN: base64 runs decoding to credential fragments miss."""
-    m1 = _misses("atob('eG94Yi0wMTIz')+'%s'" % _B)
-    m2 = _misses("(function(){var b=atob('eG94Yi0wMTIz');return b+'%s';})()" % _B)
-    m3 = _misses("(function(){var m=new WeakMap();var k={};m.set(k,atob('eG94Yi0wMTIz'));return m.get(k)+'%s';})()" % _B)
-    ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_p1_f611_closed():
+    """F611 CLOSED 2026-10-08 wave-373 lane 6: atob fragment shapes block."""
+    h1 = not _misses("atob('eG94Yi0wMTIz')+'%s'" % _B)
+    h2 = not _misses("(function(){var b=atob('eG94Yi0wMTIz');return b+'%s';})()" % _B)
+    h3 = not _misses("(function(){var m=new WeakMap();var k={};m.set(k,atob('eG94Yi0wMTIz'));return m.get(k)+'%s';})()" % _B)
+    ok = h1 and h2 and h3
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
 # ---------------------------------------------------------------- green check
