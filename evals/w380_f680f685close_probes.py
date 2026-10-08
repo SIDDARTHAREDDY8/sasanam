@@ -319,8 +319,8 @@ def test_p10b_footer():
     here = os.path.dirname(os.path.abspath(__file__))
     with open(os.path.join(here, "FINDINGS.md")) as f:
         text = f.read()
-    want_open = "F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699"
-    want_next = "F700"  # Wave-380 merge: F672-F685 CLOSED; footer repoint
+    want_open = "F700, F701, F702, F703, F704, F705, F706, F707, F708, F709, F710, F711, F712"
+    want_next = "F713"  # Wave-380 merge: F672-F685 CLOSED; footer repoint
     ok = want_open in text and ("Next free finding: **%s**" % want_next) in text
     return ("HELD" if ok else "BREAK", "footer-ok" if ok else "footer-stale")
 

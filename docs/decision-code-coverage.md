@@ -1,10 +1,10 @@
 # Decision-code coverage table (generated)
 
-Generated: 2026-10-08T11:52:54Z UTC · registry pin: 2140 · base: wave-343 merge (+3 ownership-* codes, 2129/2135 behaviorally probed; 5 fault-injection residuals: tool-crashed, tool-timed-out, preexec_child_died, post-rotation, offline-verify-internal)
+Generated: 2026-10-08T16:01:19Z UTC · registry pin: 2143 · base: wave-343 merge (+3 ownership-* codes, 2129/2135 behaviorally probed; 5 fault-injection residuals: tool-crashed, tool-timed-out, preexec_child_died, post-rotation, offline-verify-internal)
 
 Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code counts as covered when its literal string appears quoted in at least one ``.py`` file under ``tests/`` or ``evals/``. Production ``emit()`` call sites do not count.
 
-**Covered: 2135 / 2140** · **Gaps: 5**
+**Covered: 2138 / 2143** · **Gaps: 5**
 
 | code | domain | severity | covered | asserted in |
 | ---- | ------ | -------- | ------- | ----------- |
@@ -1714,6 +1714,9 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `seeded-denial-not-authorization` | seeded_denial | high | yes | evals/w231_seed_probes.py, tests/test_seeded_denials.py |
 | `seeded-denial-refused` | seeded_denial | medium | yes | tests/test_seeded_denials.py |
 | `self_delegation` | approval | high | yes | evals/w22_probes.py, tests/test_approvals_d1.py, tests/test_delegation_primitive.py |
+| `seqgate-chain-blocked` | toolcall | high | yes | evals/w381_seqgate_probes.py |
+| `seqgate-config-invalid` | toolcall | high | yes | evals/w381_seqgate_probes.py |
+| `seqgate-state-overflow` | toolcall | high | yes | evals/w381_seqgate_probes.py |
 | `sessbind-domain-mismatch` | sessbind | high | yes | evals/w269_sessbind_probes.py, evals/w270_redteam_probes.py, tests/test_session_binding.py |
 | `sessbind-ehd-mismatch` | sessbind | high | yes | evals/w269_sessbind_probes.py, evals/w270_redteam_probes.py, tests/test_session_binding.py |
 | `sessbind-malformed` | sessbind | medium | yes | evals/w269_sessbind_probes.py, evals/w270_redteam_probes.py, evals/w271_redteam_probes.py (+1) |

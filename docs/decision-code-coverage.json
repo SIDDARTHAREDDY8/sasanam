@@ -1,7 +1,7 @@
 {
- "generated": "2026-10-08T11:52:54Z",
- "pin": 2140,
- "covered": 2135,
+ "generated": "2026-10-08T16:01:19Z",
+ "pin": 2143,
+ "covered": 2138,
  "gaps": [
   "offline-verify-internal",
   "post-rotation",
@@ -17610,6 +17610,33 @@
     "evals/w22_probes.py",
     "tests/test_approvals_d1.py",
     "tests/test_delegation_primitive.py"
+   ]
+  },
+  {
+   "code": "seqgate-chain-blocked",
+   "domain": "toolcall",
+   "severity": "high",
+   "covered": true,
+   "files": [
+    "evals/w381_seqgate_probes.py"
+   ]
+  },
+  {
+   "code": "seqgate-config-invalid",
+   "domain": "toolcall",
+   "severity": "high",
+   "covered": true,
+   "files": [
+    "evals/w381_seqgate_probes.py"
+   ]
+  },
+  {
+   "code": "seqgate-state-overflow",
+   "domain": "toolcall",
+   "severity": "high",
+   "covered": true,
+   "files": [
+    "evals/w381_seqgate_probes.py"
    ]
   },
   {
