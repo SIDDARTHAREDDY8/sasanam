@@ -122,11 +122,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F597-F611 open, next F612 (wave-372 lane 7)."""
+    """Control: footer shows F595-F610 open, next F612 (wave-373 lane 6)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F612**" in text  # Wave-372 lane 7 (attack round 40): F597-F605 OPEN (base); F607-F611 filed OPEN (next F612)
-          and "Open findings: F595, F606, F607, F608, F609, F610, F611." in text)  # Wave-372 merge: footer open F606-F611 / next F612
+    ok = ("Next free finding: **F612**" in text  # Wave-373 lane 6: F611 CLOSED
+          and "Open findings: F595, F606, F607, F608, F609, F610." in text)  # Wave-373 lane 6: footer open F595-F610 / next F612
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -325,13 +325,13 @@ def test_r40_f610_open():
 
 
 @_t
-def test_r40_f611_open():
-    """F611 OPEN: base64 runs decoding to credential fragments miss."""
-    m1 = _misses("atob('eG94Yi0wMTIz')+'%s'" % _B)
-    m2 = _misses("(function(){var b=atob('eG94Yi0wMTIz');return b+'%s';})()" % _B)
-    m3 = _misses("(function(){var m=new WeakMap();var k={};m.set(k,atob('eG94Yi0wMTIz'));return m.get(k)+'%s';})()" % _B)
-    ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_p1_f611_closed():
+    """F611 CLOSED 2026-10-08 wave-373 lane 6: atob fragment shapes block."""
+    h1 = not _misses("atob('eG94Yi0wMTIz')+'%s'" % _B)
+    h2 = not _misses("(function(){var b=atob('eG94Yi0wMTIz');return b+'%s';})()" % _B)
+    h3 = not _misses("(function(){var m=new WeakMap();var k={};m.set(k,atob('eG94Yi0wMTIz'));return m.get(k)+'%s';})()" % _B)
+    ok = h1 and h2 and h3
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
 # ---------------------------------------------------------------- green check

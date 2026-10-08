@@ -553,6 +553,117 @@ def _try_b64_decode(run, min_payload=24):
         return None
 
 
+_B64_ATOB_WS = " \t\n\f\r"  # ASCII whitespace the engine strips (F611)
+_B64_ATOB_ALPHA = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+)  # strict atob alphabet: base64url chars throw (F611)
+
+
+def _js_f611_atob_decode(lit):
+    """Decode an atob() argument, node-exact (v24.20.0, F611).
+
+    The engine's forgiving-base64 decode: strip ASCII whitespace,
+    then strictly validate (standard base64 alphabet only -- '-'
+    and '_' throw InvalidCharacterError; '=' only as 1-2 trailing
+    padding chars; length % 4 != 1). The decoded bytes become the
+    binary string (each byte a code point, latin-1) -- no
+    printable-ASCII gate: the engine returns binary strings and
+    only credential-shaped assemblies can block downstream, so a
+    fragment alone is harmless. Returns the decoded str, or None
+    when the engine throws (fail closed). Bounded by
+    _MAX_DECODE_BYTES. Never evals.
+    """
+    s = "".join(c for c in lit if c not in _B64_ATOB_WS)
+    if not s:
+        return ""  # node: atob('') / atob('   ') -> ''
+    if len(s) % 4 == 1:
+        return None  # node throws InvalidCharacterError
+    body = s.rstrip("=")
+    pad = len(s) - len(body)
+    if pad > 2 or "=" in body:
+        return None  # misplaced padding: node throws
+    for c in body:
+        if c not in _B64_ATOB_ALPHA:
+            return None  # non-alphabet char: node throws
+    if not body:
+        return None  # node: atob('==') / atob('=') throws
+    s = body + "=" * (-len(body) % 4)
+    try:
+        raw = base64.b64decode(s, validate=True)
+    except Exception:
+        return None
+    if len(raw) > _MAX_DECODE_BYTES:
+        return None
+    return raw.decode("latin-1")  # binary string, engine-exact
+
+
+def _js_parse_f611_atob(text, k):
+    """Parse `atob('LIT')` at text[k] (F611); returns (decoded, next).
+
+    The call is the engine's base64 decode over a single string
+    literal argument (ws-tolerant around the paren and arg, both
+    quote styles). Decoded via _js_f611_atob_decode (node-exact,
+    v24.20.0); an undecodable argument fails closed (the engine
+    throws). Extra arguments are SKIPPED node-exactly -- the engine
+    ignores them (verified v24.20.0: atob('eG94','x') decodes the
+    first argument); the skip is paren-balanced and string-aware,
+    so a paren inside an extra arg's string cannot desync it.
+    Template literals anywhere in the skipped span fail closed.
+    The fragment value flows into the caller's composition
+    (additive concatenation, var bindings, WeakMap values). Never
+    evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, k + len("atob"))
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("atob without paren")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] not in "'\"":
+        raise _JSExprFail("atob arg not a string literal")
+    lit, k = _js_parse_string(text, k)
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ",":
+        # Node ignores extra arguments: skip balanced to the
+        # call's closing paren (string-aware; template fails
+        # closed). A `]`/`}` at depth 0 is malformed (node throws
+        # SyntaxError) -- fail closed.
+        q = None
+        pdepth = 0
+        m = k
+        while m < n:
+            c = text[m]
+            if q is not None:
+                if c == "\\":
+                    m += 2
+                    continue
+                if c == q:
+                    q = None
+            elif c in "'\"":
+                q = c
+            elif c == "`":
+                raise _JSExprFail("atob extra arg has template")
+            elif c in "([{":
+                pdepth += 1
+            elif c in ")]}":
+                if pdepth == 0:
+                    if c != ")":
+                        raise _JSExprFail("atob args malformed")
+                    break
+                pdepth -= 1
+            m += 1
+        else:
+            raise _JSExprFail("atob args unterminated")
+        if q is not None or pdepth != 0:
+            raise _JSExprFail("atob args malformed")
+        k = m
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("atob without close paren")
+    decoded = _js_f611_atob_decode(lit)
+    if decoded is None:
+        raise _JSExprFail("atob arg not strict base64")
+    return decoded, k + 1
+
+
 def _b64_fixpoint_variants(text):
     """Bounded base64 decode-until-fixpoint variants (F439).
 
@@ -2109,7 +2220,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty|fromEntries|groupBy)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|Map[ \t\n\r]*\.[ \t\n\r]*groupBy(?![_$A-Za-z0-9])|new[ \t\n\r]+Map(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|new[ \t\n\r]+Proxy(?![_$A-Za-z0-9])|new[ \t\n\r]+URLSearchParams(?![_$A-Za-z0-9])|new[ \t\n\r]+URL(?![_$A-Za-z0-9])|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|atob(?![_$A-Za-z0-9])|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty|fromEntries|groupBy)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|Map[ \t\n\r]*\.[ \t\n\r]*groupBy(?![_$A-Za-z0-9])|new[ \t\n\r]+Map(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|new[ \t\n\r]+Proxy(?![_$A-Za-z0-9])|new[ \t\n\r]+URLSearchParams(?![_$A-Za-z0-9])|new[ \t\n\r]+URL(?![_$A-Za-z0-9])|\(")
 # F536: the structuredClone anchor carries its own ident-boundary
 # lookahead so `structuredClonex(` never anchors (no wasted F512
 # total-attempt budget); the primary branch re-checks the boundary
@@ -15244,11 +15355,25 @@ def _js_parse_f572_weakmap_new(text, j, depth, state, env):
 def _js_parse_f572_weakmap_value(text, k, depth, state):
     """Parse one WeakMap value literal at text[k] (F572/F593).
 
-    A string literal or an object literal (F593: the engine stores
-    the reference unchanged). Returns (value, next_index) with
-    value a str or _JSObj. Anything else fails closed. Never evals.
+    A string literal, an object literal (F593: the engine stores
+    the reference unchanged), or an atob('LIT') call (F611: the
+    engine decodes the base64 argument -- the decoded fragment
+    value is stored, node-exact v24.20.0). Returns (value,
+    next_index) with value a str or _JSObj. Anything else fails
+    closed. Never evals.
     """
     n = len(text)
+    if text.startswith("atob", k) and (k + 4 >= n
+                                       or text[k + 4] not in _JS_IDENT_CONT):
+        # F611: atob('LIT') value -- the fragment decodes through
+        # the shared node-exact atob parser; a non-literal argument
+        # or undecodable literal fails closed (the engine throws).
+        try:
+            val, k = _js_parse_f611_atob(text, k)
+        except _JSExprFail:
+            raise _JSExprFail("WeakMap atob value undecodable")
+        state["ops"] += 1  # the decode call is obfuscation-shaped
+        return val, k
     if k >= n or text[k] not in "'\"{":
         raise _JSExprFail("WeakMap value not a literal")
     if text[k] == "{":
@@ -15591,6 +15716,209 @@ def _js_parse_f572_weakmap_iife(text, i, depth, state):
         k = _js_skip_ws(text, k)
         if k < n and text[k] == ";":
             k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "}":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # invocation args: the filed shapes take none
+        k = k + 1
+    except _JSExprFail:
+        return None
+    state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+    return val, k
+
+
+def _js_f611_quote(value):
+    """Quote a decoded/bound string as a JS single-quoted literal."""
+    out = ["'"]
+    for c in value:
+        o = ord(c)
+        if c == "\\":
+            out.append("\\\\")
+        elif c == "'":
+            out.append("\\'")
+        elif o < 0x20:
+            out.append("\\x%02x" % o)
+        else:
+            out.append(c)
+    out.append("'")
+    return "".join(out)
+
+
+# Reserved words that can never be a binding name (node throws
+# SyntaxError in sloppy and strict mode alike, v24.20.0 verified) --
+# accepting one would decode text the engine rejects (F611).
+_F611_RESERVED = frozenset(
+    "break case catch class const continue debugger default delete do else"
+    " enum export extends finally for function if import in instanceof new"
+    " return super switch this throw try typeof var void while with".split()
+)
+
+
+def _js_parse_f611_varbound_iife(text, i, depth, state):
+    """Parse `(function(){DECL NAME=INIT;return EXPR;})()` (F611).
+
+    The IIFE declares exactly one binding initialized to a string
+    literal or an atob('LIT') call (the F611 fragment source,
+    node-exact v24.20.0), then returns an expression over the bound
+    name. The return expression is rewritten by substituting the
+    bound name (value positions only -- never inside string
+    literals, never property names, via _js_ident_tokens, the F501
+    discipline) with the quoted value, then parsed by the normal
+    additive grammar -- so every downstream decoder, bound, and
+    fail-closed rule applies unchanged.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - the initializer is not a string literal or atob('LIT');
+    - more than one declarator, a missing `;`, reassignment or
+      rebinding of the bound name in the return expression;
+    - a template literal anywhere in the rewritten scope;
+    - invocation with arguments.
+    Disjoint from every earlier IIFE route (none accepts a plain
+    value-initialized var binding), so no previously-decoded input
+    changes behavior. Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+        if k is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            # Optional name (engine-exact; ignored).
+            _, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # params: the filed shapes take none
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "{":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        _kw, k = _js_match_decl_kw(text, k)
+        if _kw is None:
+            return None
+        k = _js_skip_ws(text, k)
+        name, k = _js_parse_ident(text, k)
+        if name in _F611_RESERVED:
+            return None  # node throws SyntaxError; never decode
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "=" or text[k + 1:k + 2] in ("=", ">"):
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if text.startswith("atob", k) and (k + 4 >= n
+                                           or text[k + 4]
+                                           not in _JS_IDENT_CONT):
+            # F611: the atob fragment initializer -- the decoded
+            # fragment is the bound value.
+            init_val, k = _js_parse_f611_atob(text, k)
+            state["ops"] += 1  # the decode call is obfuscation-shaped
+        elif k < n and text[k] in "'\"":
+            init_val, k = _js_parse_string(text, k)
+        else:
+            return None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ",":
+            return None  # one declarator only
+        if k >= n or text[k] != ";":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        rk = _js_match_kw(text, k, "return")
+        if rk is None:
+            return None
+        # Capture the return expression: scan to the terminating
+        # `;` at depth 0, respecting string literals.
+        e = _js_skip_ws(text, rk)
+        q = None
+        pdepth = 0
+        m = e
+        while m < n:
+            c = text[m]
+            if q is not None:
+                if c == "\\":
+                    m += 2
+                    continue
+                if c == q:
+                    q = None
+            elif c in "'\"":
+                q = c
+            elif c == "`":
+                return None  # template in return expr: fail closed
+            elif c in "([{":
+                pdepth += 1
+            elif c in ")]}":
+                pdepth -= 1
+                if pdepth < 0:
+                    return None
+            elif c == ";" and pdepth == 0:
+                break
+            m += 1
+        else:
+            return None
+        if q is not None or pdepth != 0:
+            return None
+        expr_text = text[e:m]
+        # Reassignment/rebinding guard (F495/F501 discipline).
+        try:
+            toks = _js_ident_tokens(expr_text)
+        except _JSExprFail:
+            return None
+        _rn = len(expr_text)
+        for tname, ts, te in toks:
+            if tname != name:
+                continue
+            jj = te
+            while jj < _rn and expr_text[jj] in " \t\n\r":
+                jj += 1
+            nxt2 = expr_text[jj:jj + 2]
+            nxt1 = expr_text[jj:jj + 1]
+            if nxt1 == "=" and nxt2 not in ("==", "=>"):
+                return None
+            if nxt2 in ("+=", "-=", "*=", "/=", "%=", "++", "--"):
+                return None
+            pp = ts - 1
+            while pp >= 0 and expr_text[pp] in " \t\n\r":
+                pp -= 1
+            if pp >= 1 and expr_text[pp - 1:pp + 1] in ("++", "--"):
+                return None
+        # Substitute value-position uses with the quoted value
+        # (never inside literals -- _js_ident_tokens skips those;
+        # never property names -- preceded by `.`/`$`/word char).
+        quoted = _js_f611_quote(init_val)
+        out = []
+        pos = 0
+        for tname, ts, te in toks:
+            if tname != name:
+                continue
+            if ts > 0 and (expr_text[ts - 1] in _JS_IDENT_CONT
+                           or expr_text[ts - 1] in ".$"):
+                continue
+            out.append(expr_text[pos:ts])
+            out.append(quoted)
+            pos = te
+        out.append(expr_text[pos:])
+        rewritten = "".join(out)
+        try:
+            val, rend = _js_parse_additive(rewritten, 0, depth + 1,
+                                           state)
+        except _JSExprFail:
+            return None
+        if rend != len(rewritten):
+            return None
+        k = _js_skip_ws(text, m + 1)
         if k >= n or text[k] != "}":
             return None
         k = _js_skip_ws(text, k + 1)
@@ -23108,6 +23436,18 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f577 is not None:
             val, i = _f577
             return _js_parse_postfix(text, i, val, depth, state)
+        # F611: (function(){var|const|let NAME='LIT'|atob('LIT');
+        #   return EXPR;})() -- single value-bound IIFE whose
+        #   initializer is a string literal or an atob fragment
+        #   decode. Tried after F577: the exact single-declaration
+        #   grammar is disjoint from every earlier route (all of
+        #   which require arguments forms, WeakMap/object bindings,
+        #   or multi-statement bodies); None falls through to the
+        #   parenthesized-additive path like F577.
+        _f611 = _js_parse_f611_varbound_iife(text, i, depth, state)
+        if _f611 is not None:
+            val, i = _f611
+            return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
         val, i = _js_parse_additive(text, i + 1, depth + 1, state,
@@ -23298,6 +23638,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _jobj = _js_f541_json_value(_jval, state)
         state["ops"] += 1  # the parse call is obfuscation-shaped
         return _js_parse_postfix(text, _jk + 1, _jobj, depth, state)
+    if text.startswith("atob", i):
+        # F611: atob('LIT') -- base64 decode, node-exact (v24.20.0).
+        # The fragment value feeds the concatenation composer, so
+        # fragment-then-concatenate assembly (atob('frag')+'frag2')
+        # decodes exactly like the engine evaluates it. Only a
+        # single string-literal argument; the ident-boundary check
+        # keeps atobx failing closed (F567 guards the left edge at
+        # the scan call sites). A non-literal argument, extra
+        # arguments, or an undecodable literal fail closed
+        # (documented scope boundaries -- the engine throws).
+        _ak = i + len("atob")
+        if _ak < len(text) and text[_ak] in _JS_IDENT_CONT:
+            raise _JSExprFail("atobx is not atob")
+        _aval, _ak = _js_parse_f611_atob(text, i)
+        state["ops"] += 1  # the decode call is obfuscation-shaped
+        return _js_parse_postfix(text, _ak, _aval, depth, state)
     if text.startswith("Reflect", i):
         # F468: Reflect.construct(Array, <argsArray>) reflection-API
         # factory -- desugars to the fragment list. F469:
@@ -24111,7 +24467,8 @@ def _try_js_expr_decode(text, start):
     Returns (decoded, end_index), or None when the run at *start* is not
     a decodable expression. Handles quoted-string '+' concatenation,
     template literals (F457: literal-only ${...} interpolation),
-    String.fromCharCode(...),
+    String.fromCharCode(...), atob('...') (F611: node-exact base64
+    decode -- the fragment value feeds the concatenation composer),
     .concat(...) / .repeat(...) postfix calls, array-literal .join(sep)
     (F434), (F437) .reduce(...) / .reduceRight(...) array-assembly
     plus identity .map(...) / constant-true .filter(...) passthroughs,
