@@ -34,7 +34,7 @@ Zero new re.compile (28 stays).
 Conventions: module-level staging, depth-1 green check honoring
 GOV_SKIP_GREEN=1 (unique-suffixed TMPDIRs), fresh /var/tmp/g380-*
 TMPDIRs, no in-repo git in self-pins, concatenation-constructed
-credentials, pin 2140, $0-spend-by-construction (evals-only: no
+credentials, pin 2143, $0-spend-by-construction (evals-only: no  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 realmodel_harness / ModelDriver / provider refs).
 """
 import os
@@ -51,7 +51,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2140
+TAXONOMY_PIN = 2143  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 from gov.dlp import find_credential  # noqa: E402
 import gov.dlp as _dlp  # noqa: E402
@@ -415,9 +415,9 @@ _t("test_p4_composition", lambda: _hit(
 # ------------------------------------------------ pin + footer
 
 def test_p5_pin_and_footer():
-    """Pin 2140; lane-local footer: open F672, F675-F685 / next F686."""
+    """Pin 2143; lane-local footer: open F672, F675-F685 / next F686."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     from gov.decision_codes import TAXONOMY  # noqa: E402
-    ok = TAXONOMY_PIN == 2140
+    ok = TAXONOMY_PIN == 2143  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ok and "Next free finding: **F700**" in text
     ok = ok and ("Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text)

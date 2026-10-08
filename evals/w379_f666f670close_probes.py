@@ -42,7 +42,7 @@ Fix (gov/dlp.py, zero new re.compile):
 Conventions: module-level staging, depth-1 green check honoring
 GOV_SKIP_GREEN=1 (unique-suffixed TMPDIRs), fresh /var/tmp/g379-*
 TMPDIRs, no in-repo git in self-pins, concatenation-constructed
-credentials, pin 2140, $0-spend-by-construction.
+credentials, pin 2143, $0-spend-by-construction.  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 """
 import os
 
@@ -62,7 +62,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2140  # no new decision codes this lane
+TAXONOMY_PIN = 2143  # no new decision codes this lane; Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -514,8 +514,8 @@ def test_p5_junk_quiet():
 
 @_t
 def test_p6_pin_footer():
-    """Pin 2140; lane-local footer (open F662-F665, F667-F669, F671 / next F672)."""
-    ok = (TAXONOMY_PIN == 2140 and len(TAXONOMY) > 0)
+    """Pin 2143; lane-local footer (open F662-F665, F667-F669, F671 / next F672)."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    ok = (TAXONOMY_PIN == 2143 and len(TAXONOMY) > 0)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ok and ("Next free finding: **F700**" in text)  # Wave-379 lane 4: F666, F670 CLOSED; open F662-F665, F667-F669, F671 / next F672
     ok = ok and ("Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text)  # Wave-379 lane 4: F666, F670 CLOSED; open F662-F665, F667-F669, F671 / next F672

@@ -37,7 +37,7 @@ from gov import dlp  # noqa: E402
 _A1 = "xoxb-" + "0123"          # len 9
 _A2 = "456789" + "abcdef"       # len 12
 
-TAXONOMY_PIN = 2140  # Wave-372 merge: pin 2140
+TAXONOMY_PIN = 2143  # Wave-372 merge: pin 2143; Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
 def _blocked(payload):
@@ -216,10 +216,11 @@ def p5_node_differential():
 
 # ------------------------------------------------------------- P6: pin/footer
 def p6_pin_footer():
-    assert TAXONOMY_PIN == 2140, "pin moved"
+    assert TAXONOMY_PIN == 2143, "pin moved"  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     from gov import guac_graph  # noqa: E402
-    assert guac_graph.TAXONOMY_PIN == 2140, \
-        "guac_graph.TAXONOMY_PIN=%r want 2140" % (guac_graph.TAXONOMY_PIN,)
+    # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    assert guac_graph.TAXONOMY_PIN == 2143, \
+        "guac_graph.TAXONOMY_PIN=%r want 2143" % (guac_graph.TAXONOMY_PIN,)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("Next free finding: **F700**" in text  # Wave-373 lane 3: footer next F612  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672
           and "Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text  # Wave-373 lane 3: F607 closed  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672  # Wave-379 lane 6: F668 CLOSED (lane-local)

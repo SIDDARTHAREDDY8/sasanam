@@ -46,7 +46,7 @@ b64 prefix / double-backslash (closed shapes or bogus).
 Conventions: module-level staging, depth-1 green check honoring
 GOV_SKIP_GREEN=1 (pid-suffixed TMPDIRs), fresh /var/tmp/g350-*
 TMPDIRs, no in-repo git in self-pins, concatenation-constructed
-credentials, pin 2140, $0-spend-by-construction.
+credentials, pin 2143, $0-spend-by-construction.  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 """
 import os
 
@@ -64,7 +64,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2140  # no new decision codes this round; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+TAXONOMY_PIN = 2143  # no new decision codes this round; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402

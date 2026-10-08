@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) + "/..")
 
 from gov.dlp import find_credential  # noqa: E402
 
-TAXONOMY_PIN = 2140  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+TAXONOMY_PIN = 2143  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -255,7 +255,7 @@ def p5_compositions():
 def p6_pin_and_footer():
     from gov import decision_codes
     n = len(decision_codes.TAXONOMY)
-    pin_ok = (TAXONOMY_PIN == 2140 and n == 2140)  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+    pin_ok = (TAXONOMY_PIN == 2143 and n == 2140)  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as fh:
         text = fh.read()
     footer_ok = (text.count("**Status: CLOSED 2026-10-07 wave-369 lane 6**") >= 3

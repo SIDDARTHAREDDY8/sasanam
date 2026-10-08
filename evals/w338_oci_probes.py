@@ -26,7 +26,7 @@ P7  Harbor caveat (documented, tested): replica without replicated
     registry-supplied "verified" badge is never an input to any verdict.
 P8  Predicate-type annotation: extracted from the sealed VSA statement;
     explicit override honored.
-P9  Pin/taxonomy honesty (2140/2140/0 sorted-unique on raw literals;
+P9  Pin/taxonomy honesty (2143/2143/0 sorted-unique on raw literals;  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     new codes registered) + footer state (open none / next F430).
 P10 Green check (depth-1): tests/test_oci_referrer.py as a child.
 
@@ -51,7 +51,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2140  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+TAXONOMY_PIN = 2143  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 FOOTER_OPEN = (
                "F570", "F571", "F572", "F573",
                "F574", "F575", "F576", "F577",
@@ -404,7 +404,7 @@ def _p9():
     assert "Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text, "footer open findings"  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 4: F608 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672  # Wave-379 lane 6: F668 CLOSED (lane-local)
     assert FOOTER_OPEN == ("F595, F606, F607, F609, F610, F611", "F595, F606, F607, F609, F610, F611", "F595, F606, F607, F609, F610, F611", "F595, F606, F607, F609, F610, F611", "F595, F606, F607, F609, F610, F611") and FOOTER_NEXT == "F595, F606, F607, F609, F610, F611"  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint  # Wave-373 lane 4: F608 CLOSED
     _held("P9-pin-taxonomy",
-          "2140/2140/0 sorted-unique; 4 oci-* codes registered "
+          "2143/2143/0 sorted-unique; 4 oci-* codes registered "  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
           "(+oci-bundle-not-verifiable +oci-registry-onboarding-refused); "
           "footer open none / next F430")
 

@@ -30,7 +30,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2140  # 2135 base + 5 watcher-v1 codes (additive)
+TAXONOMY_PIN = 2143  # 2135 base + 5 watcher-v1 codes (additive); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 from gov import vendor_watch as vw  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -94,8 +94,8 @@ def _approve_all(store, source):
 
 @_t
 def test_p0_pin_taxonomy():
-    """Taxonomy pin 2140; all five watcher codes registered."""
-    ok = (TAXONOMY_PIN == 2140 and len(TAXONOMY) == 2140
+    """Taxonomy pin 2143; all five watcher codes registered."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    ok = (TAXONOMY_PIN == 2143 and len(TAXONOMY) == 2143  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
           and all(c in TAXONOMY for c in _WATCHER_CODES)
           and all(TAXONOMY[c]["domain"] == "vendor-watch"
                   for c in _WATCHER_CODES))

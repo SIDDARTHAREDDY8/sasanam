@@ -79,7 +79,7 @@ A2 = "456789" + "abcdef"
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-TAXONOMY_PIN = 2140  # Wave-370: watcher merge moved 2135 -> 2140
+TAXONOMY_PIN = 2143  # Wave-370: watcher merge moved 2135 -> 2140; Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 FOOTER_OPEN = "F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699"  # Wave-378 merge: F655-F661 CLOSED; F662-F671 filed OPEN (next F672)  # Wave-371 merge: F583-F596 CLOSED (lanes 1-7); F597-F605 OPEN (next F606)  # Wave-372 merge: footer repoint  # Wave-373 lane 4: F608 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-379 lane 6: F668 CLOSED (lane-local)  # Wave-379 merge: F662-F671 CLOSED (lanes 1-7); F672-F685 filed OPEN (next F686)
 FOOTER_NEXT = "F700"  # Wave-378 merge: F655-F661 CLOSED; F662-F671 filed OPEN (next F672)  # Wave-371 merge: F583-F596 CLOSED (lanes 1-7); F597-F605 OPEN (next F606)  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-379 merge: F662-F671 CLOSED (lanes 1-7); F672-F685 filed OPEN (next F686)
@@ -311,7 +311,7 @@ def p8_node_differential():
 
 
 def p9_pin_footer():
-    """Pin 2140 and the lane-local footer hold."""
+    """Pin 2143 and the lane-local footer hold."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     import re
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     with open(path) as f:
@@ -322,9 +322,9 @@ def p9_pin_footer():
         r"F579, F580, F581, F582\.\*\*")
     if not footer_re.search(text):
         return "BREAK", "footer mismatch"
-    if TAXONOMY_PIN != 2140:
+    if TAXONOMY_PIN != 2143:  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
         return "BREAK", "pin drift"
-    return "HELD", "pin 2140, footer open %s / next %s" % (
+    return "HELD", "pin 2143, footer open %s / next %s" % (  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
         "F570, F571, F572, F574, F575, F576, F577, F579, F580, F581, F582",
         FOOTER_NEXT)
 

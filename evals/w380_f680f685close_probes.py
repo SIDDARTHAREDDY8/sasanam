@@ -12,7 +12,7 @@ Closes the small-shape family filed in attack round 47:
 - F685 (arrow arguments): var f=()=>arguments[N]; return f()+...;
 
 Each probe prints HELD (blocks/decodes) or BREAK (miss). Exit 1 on any BREAK.
-TAXONOMY_PIN = 2140. Lane-local footer: open F672-F679, next F686.
+TAXONOMY_PIN = 2143. Lane-local footer: open F672-F679, next F686.  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 Deployment mode is set at module level (wave-95 lesson). No in-repo git
 subprocess (wave-224 lesson). No paid harness calls (evals-only).
@@ -33,7 +33,7 @@ from gov.dlp import find_credential  # noqa: E402
 _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
 
-TAXONOMY_PIN = 2140  # Wave-380 lane 7: pin 2140.
+TAXONOMY_PIN = 2143  # Wave-380 lane 7: pin 2143.; Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 results = []
 

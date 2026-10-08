@@ -22,11 +22,11 @@ hostile input.
   J  provenance verifier (1): input_closure_digest
   K  quorum policy (2): canonical_link_body, make_link_record
   L  egress launcher (1): spawn_failed
-  P0 pin/taxonomy honesty (2140/2140/0 sorted-unique, footer state).
+  P0 pin/taxonomy honesty (2143/2143/0 sorted-unique, footer state).  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
   PZ green check (depth-1): adjacent suites as children with
      GOV_SKIP_GREEN=1.
 
-Base: 1a800558 (wave-343 merge). Pin 2140, footer open F436 / next F437.
+Base: 1a800558 (wave-343 merge). Pin 2143, footer open F436 / next F437.  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 No gov/ changes in this lane. Findings: none filed (all
 probes HELD on the base; a genuine BREAK would be filed as F432+).
@@ -58,7 +58,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO not in sys.path:
     sys.path.insert(0, REPO)
 
-PIN = 2140  #Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+PIN = 2143  #Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 FOOTER_OPEN = (
                "F570", "F571", "F572", "F573",
                "F574", "F575", "F576", "F577",

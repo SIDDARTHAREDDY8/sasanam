@@ -80,7 +80,7 @@ import probe_lines
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Pin moves 1841 -> 1851: +8 witness-log-* +2 evidence-bundle-witness-*.
-TAXONOMY_PIN = 2140  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+TAXONOMY_PIN = 2143  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
 from gov import witness_log as wl
@@ -298,7 +298,7 @@ def p_pin_taxonomy():
     if len(new) != 10:
         return _record("pin-taxonomy", "BREAK",
                        "want 10 new witness codes, got %d" % len(new))
-    _record("pin-taxonomy", "HELD", "2140/2140/0 sorted, +10 witness codes")
+    _record("pin-taxonomy", "HELD", "2143/2143/0 sorted, +10 witness codes")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
 

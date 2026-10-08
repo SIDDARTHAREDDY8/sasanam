@@ -32,7 +32,7 @@ seam and the coded refusal is asserted), never tautologies:
       unknown_delegatee_agent
   G14 agent cards: malformed-signature-entry
   G15 egress launcher: wall_proof_unreadable
-  P0  pin/taxonomy honesty (2140/2140/0 sorted-unique, footer state).
+  P0  pin/taxonomy honesty (2143/2143/0 sorted-unique, footer state).  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
   PZ  green check (depth-1): adjacent suites as children with
       GOV_SKIP_GREEN=1.
 
@@ -59,7 +59,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "tests"))
 
-TAXONOMY_PIN = 2140  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+TAXONOMY_PIN = 2143  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 _results = []
 
@@ -851,9 +851,10 @@ def run_pin_footer_probes():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
-    if len(lits) == TAXONOMY_PIN == 2140 and len(set(lits)) == 2140 \
+    # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    if len(lits) == TAXONOMY_PIN == 2143 and len(set(lits)) == 2143 \
             and lits == sorted(lits):
-        _held("P0a", "taxonomy 2140/2140/0 sorted-unique literals")
+        _held("P0a", "taxonomy 2143/2143/0 sorted-unique literals")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     else:
         _break("P0a", "literals %d, unique %d, sorted=%s"
                % (len(lits), len(set(lits)), lits == sorted(lits)))

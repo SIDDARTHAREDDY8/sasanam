@@ -16024,6 +16024,44 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
     },
+    'seqgate-chain-blocked': {
+        "domain": 'toolcall',
+        "code": 'seqgate-chain-blocked',
+        "human": 'toolcall: the behavioral fetch->decrypt->read->egress '
+                 'chain completed -- an untrusted fetch was followed by a '
+                 'decrypt/decode/execute transform and a sensitive read, '
+                 'then an egress to a host unrelated to the fetch origin '
+                 '(the Adversa/Copilot-CLI class: encrypted fetched '
+                 'payloads defeat content inspection, so the observable '
+                 'tool-call sequence -- not the payload -- is the block); '
+                 'refused fail-closed before the egress executes',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'seqgate-config-invalid': {
+        "domain": 'toolcall',
+        "code": 'seqgate-config-invalid',
+        "human": 'toolcall: a behavioral sequence-gate document was '
+                 'refused at compile time (unknown format, bad tool/host '
+                 'names, empty role, or overlapping tool roles); the gate '
+                 'never compiles an ambiguous declaration',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'seqgate-state-overflow': {
+        "domain": 'toolcall',
+        "code": 'seqgate-state-overflow',
+        "human": 'toolcall: the behavioral sequence gate refused because '
+                 'its declared per-session bounds were exceeded (history '
+                 'longer than the scan bound, or more distinct untrusted '
+                 'fetch hosts than the host bound); over-bound input is '
+                 'refused fail-closed, never silently allowed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'sessbind-domain-mismatch': {
         "domain": 'sessbind',
         "code": 'sessbind-domain-mismatch',

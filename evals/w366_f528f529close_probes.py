@@ -74,7 +74,7 @@ sys.path.insert(0, REPO_ROOT)
 
 from gov import dlp  # noqa: E402
 
-TAXONOMY_PIN = 2140  # Wave-366 lane 3; pin stays 2135; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+TAXONOMY_PIN = 2143  # Wave-366 lane 3; pin stays 2135; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 # Constructed via concatenation: the write path redacts credential literals.
 _A1 = "xoxb-" + "0123"
@@ -308,9 +308,9 @@ def p5_compositions():
 
 
 def p6_pin_and_footer():
-    """Pin stays 2140; no new regexes; F528/F529 CLOSED in FINDINGS;
+    """Pin stays 2143; no new regexes; F528/F529 CLOSED in FINDINGS;  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     lane-local footer."""
-    if TAXONOMY_PIN != 2140:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+    if TAXONOMY_PIN != 2143:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
         return ("BREAK", "pin moved: %s" % TAXONOMY_PIN)
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     if len(re.findall(r"re\.compile\(", src)) != 28:
@@ -323,7 +323,7 @@ def p6_pin_and_footer():
         return ("BREAK", "lane-local footer wrong")
     if "Next free finding: **F700**" not in text:  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint next F612  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672
         return ("BREAK", "next-free footer wrong")
-    return ("HELD", "pin 2140; 28 re.compile; F528/F529 CLOSED; "
+    return ("HELD", "pin 2143; 28 re.compile; F528/F529 CLOSED; "  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
             "footer F531,F533,F535,F536/next F537")
 
 

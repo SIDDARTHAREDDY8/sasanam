@@ -390,10 +390,10 @@ def p20():
     missing = [c for c in vp._VERDICTS if c not in codes]
     if missing:
         return _break("codes missing from TAXONOMY: %s" % missing)
-    if len(dc.TAXONOMY) != 2140:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+    if len(dc.TAXONOMY) != 2143:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
         return _break("TAXONOMY len %d, expected 2131" % len(dc.TAXONOMY))
     from gov import guac_graph
-    if guac_graph.TAXONOMY_PIN != 2140:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+    if guac_graph.TAXONOMY_PIN != 2143:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
         return _break("TAXONOMY_PIN is %r" % (guac_graph.TAXONOMY_PIN,))

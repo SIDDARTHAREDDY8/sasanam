@@ -20,7 +20,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2140  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+TAXONOMY_PIN = 2143  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
 _results = []
@@ -476,7 +476,7 @@ def _p14():
 # P15: regressions -- pin taxonomy + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P15-pin-taxonomy-2140-sorted")
+@probe("P15-pin-taxonomy-2143-sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
 def _p15():
@@ -484,12 +484,12 @@ def _p15():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == TAXONOMY_PIN == 2140#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+    ok = (len(lits) == TAXONOMY_PIN == 2143#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
           and lits == sorted(lits) and len(set(lits)) == len(lits))
     if ok:
-        _held("P15-pin-taxonomy-2140-sorted", "2140/2140/0 sorted")
+        _held("P15-pin-taxonomy-2143-sorted", "2143/2143/0 sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     else:
-        _break("P15-pin-taxonomy-2140-sorted",
+        _break("P15-pin-taxonomy-2143-sorted",  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
                "got %d literals" % (len(lits),))

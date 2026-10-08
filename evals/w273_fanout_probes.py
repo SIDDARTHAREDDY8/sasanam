@@ -245,8 +245,8 @@ def red_c02_pin():
     # Wave-316 re-pin: 1700 -> 1888 (wave-315 merge pin; +10 vsa-packet-*
     # codes). Expectation pin only -- taxonomy pin value itself is the
     # lane lead's job.
-    if len(codes) == 2140 and len(set(codes)) == 2140:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
-        situation("c02", "pin 2140/2140/0", "HELD")
+    if len(codes) == 2143 and len(set(codes)) == 2143:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+        situation("c02", "pin 2143/2143/0", "HELD")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
     else:

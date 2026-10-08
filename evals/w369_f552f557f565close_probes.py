@@ -106,7 +106,7 @@ _A1 = "xoxb-" + "0123"
 _A2 = "456789" + "abcdef"
 _CRED = _A1 + _A2
 
-TAXONOMY_PIN = 2140  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+TAXONOMY_PIN = 2143  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
 def _blocked(payload):
@@ -452,11 +452,12 @@ def p6_no_regression():
 
 # ------------------------------------------------------------- P7: pin and footer
 def p7_pin_and_footer():
-    assert TAXONOMY_PIN == 2140, "pin moved"  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+    assert TAXONOMY_PIN == 2143, "pin moved"  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     from gov import guac_graph  # noqa: E402
     # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
-    assert guac_graph.TAXONOMY_PIN == 2140, \
-        "guac_graph.TAXONOMY_PIN=%r want 2140" % (guac_graph.TAXONOMY_PIN,)
+    # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    assert guac_graph.TAXONOMY_PIN == 2143, \
+        "guac_graph.TAXONOMY_PIN=%r want 2143" % (guac_graph.TAXONOMY_PIN,)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     # Lane-local footer: wave-369 lane 5 closes F552/F557/F565; the
     # merge reconciles with sibling lanes.

@@ -51,7 +51,7 @@ Closure (gov/dlp.py):
 Conventions: module-level staging, depth-1 green check honoring
 GOV_SKIP_GREEN=1 (unique-suffixed TMPDIRs), fresh /var/tmp/g378-*
 TMPDIRs, no in-repo git in self-pins, concatenation-constructed
-credentials, pin 2140, $0-spend-by-construction (evals-only: no
+credentials, pin 2143, $0-spend-by-construction (evals-only: no  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 realmodel_harness / ModelDriver / provider refs).
 """
 import os
@@ -67,7 +67,7 @@ from gov.dlp import find_credential  # noqa: E402
 import gov.dlp as _dlp  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TAXONOMY_PIN = 2140
+TAXONOMY_PIN = 2143  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 # Constructed via concatenation: the write path redacts credential literals.
 _A = "xoxb-" + "0123"
@@ -533,13 +533,13 @@ def test_p7_f659_in_additive():
 # ------------------------------------------------ p8: pin + footer
 
 def test_p8_pin_and_footer():
-    """Pin 2140; lane-local footer: open F662-F671 / next F672."""
+    """Pin 2143; lane-local footer: open F662-F671 / next F672."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     ok_pin = False
     footer = None
     with open(path) as fh:
         for line in fh:
-            if "TAXONOMY_PIN = 2140" in line or "pin 2140" in line:
+            if "TAXONOMY_PIN = 2143" in line or "pin 2143" in line:  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
                 ok_pin = True
             if line.startswith("Next free finding:"):
                 footer = line.strip()

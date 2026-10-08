@@ -28,7 +28,7 @@ engine writes the scope object). Both hooked after F667.
 Conventions: module-level staging, depth-1 green check honoring
 GOV_SKIP_GREEN=1 (unique-suffixed TMPDIRs), fresh /var/tmp/g380-*
 TMPDIRs, no in-repo git in self-pins, concatenation-constructed
-credentials, pin 2140, $0-spend-by-construction.
+credentials, pin 2143, $0-spend-by-construction.  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 """
 import os
 
@@ -48,7 +48,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2140  # no new decision codes this lane
+TAXONOMY_PIN = 2143  # no new decision codes this lane; Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -400,8 +400,8 @@ def test_p6_junk_quiet():
 
 @_t
 def test_p7_pin_footer():
-    """Pin 2140; merge footer (F672-F676, F678 closed; lane-4 F686->F699; open F677, F679-F685, F699 / next F700)."""
-    ok = (TAXONOMY_PIN == 2140 and len(TAXONOMY) > 0)
+    """Pin 2143; merge footer (F672-F676, F678 closed; lane-4 F686->F699; open F677, F679-F685, F699 / next F700)."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    ok = (TAXONOMY_PIN == 2143 and len(TAXONOMY) > 0)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ok and ("Next free finding: **F700**" in text)
     ok = ok and ("Open findings: F677, F679, F680, F681, F682, F683, F684, F685, F699." in text)

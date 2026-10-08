@@ -75,7 +75,7 @@ A1 = "xoxb-" + "0123"
 A2 = "4567" + "89abcdef"
 CRED = A1 + A2
 
-TAXONOMY_PIN = 2140  # Wave-355: F473 closed; F475 filed; no new decision codes; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+TAXONOMY_PIN = 2143  # Wave-355: F473 closed; F475 filed; no new decision codes; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
 def _hit(payload):
@@ -205,7 +205,7 @@ def p6_noreg():
 def p7_pin_and_footer():
     import gov.decision_codes as dc
     codes = sorted(dc.TAXONOMY.keys())
-    ok = (len(codes) == TAXONOMY_PIN == 2140 and  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+    ok = (len(codes) == TAXONOMY_PIN == 2143 and  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
           codes == sorted(set(codes)))
     t = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     # Multiple historical footers exist; the live one is the LAST match.
