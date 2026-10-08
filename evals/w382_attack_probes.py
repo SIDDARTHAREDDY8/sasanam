@@ -31,10 +31,10 @@ New findings (24, all LOW, all OPEN), filed F713-F736 (attack-F713 renumbered F7
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F700-F712 (round 49 + wave-381 merge renumbers), F735, F736, F737 (this round).
+F700-F712 (round 49 + wave-381 merge renumbers),  (this round).
 
-Closed pins (must BLOCK, else BREAK): F686-F712 (wave-381/382 closures), F713-F734 (wave-383 lanes 1-11).
-F699 fails closed (None) by design -- its pin asserts the miss.
+Closed pins (must BLOCK, else BREAK): F686-F712 (wave-381/382 closures), F713, F714, F715, F716, F717, F718, F719, F720, F721, F722, F723, F724, F725, F726, F727, F728, F729, F730, F731, F732, F733, F734, F735, F736, F737 (wave-383 lanes).
+F699 fails closed (None) by design -- its pin asserts the miss.F699 fails closed (None) by design -- its pin asserts the miss.
 F711 pins the raw-decoder mis-decode (find_credential fails closed on it).
 
 Rides-with-documented-scope (validated, NOT filed):
@@ -376,16 +376,16 @@ def test_r49_f711_bracket_misdecode_closed():
 
 
 @_t
-def test_r50_f737_s1_open():
-    """F737 OPEN (Proxy setPrototypeOf-trap fragment writes; filed as F713): miss reproduces."""
-    miss = _misses("(function(){var t={};var p=new Proxy(t,{setPrototypeOf:function(tr,pr){tr.__p='%s';return true;}});Object.setPrototypeOf(p,{});return t.__p+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f737_s1_closed():
+    """F737 CLOSED (wave-383 lane 13; filed as F713): blocks coded."""
+    blk = _blocked("(function(){var t={};var p=new Proxy(t,{setPrototypeOf:function(tr,pr){tr.__p='%s';return true;}});Object.setPrototypeOf(p,{});return t.__p+'%s';})()" % (_A, _B))
+    return ("HELD" if blk else "BREAK", "blocked=%s" % blk)
 
 @_t
-def test_r50_f737_s2_open():
-    """F737 OPEN (Proxy setPrototypeOf-trap fragment writes; filed as F713): miss reproduces."""
-    miss = _misses("(function(){var t={};var p=new Proxy(t,{setPrototypeOf:function(tg,pt){tg['k']='%s';return true;}});Object.setPrototypeOf(p,[]);return t.k+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f737_s2_closed():
+    """F737 CLOSED (wave-383 lane 13; filed as F713): blocks coded."""
+    blk = _blocked("(function(){var t={};var p=new Proxy(t,{setPrototypeOf:function(tg,pt){tg['k']='%s';return true;}});Object.setPrototypeOf(p,[]);return t.k+'%s';})()" % (_A, _B))
+    return ("HELD" if blk else "BREAK", "blocked=%s" % blk)
 
 @_t
 def test_r50_f714_s1_closed():
