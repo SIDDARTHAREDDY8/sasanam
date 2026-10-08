@@ -224,7 +224,7 @@ FOOTER_OPEN = (  # Wave-369 merge: F547-F557,F560,F562,F563,F565 CLOSED (lanes 1
                "F578", "F579", "F580", "F581",
                "F582"
                )  # Wave-369 merge
-FOOTER_NEXT = "F612"  # Wave-371 merge: F583-F596 CLOSED (lanes 1-7); F597-F605 OPEN (next F606)
+FOOTER_NEXT = "F621"  # Wave-371 merge: F583-F596 CLOSED (lanes 1-7); F597-F605 OPEN (next F606)  # Wave-373 merge: footer repoint open F612-F620 / next F621
 
 
 def p1_f539_filed_held():
