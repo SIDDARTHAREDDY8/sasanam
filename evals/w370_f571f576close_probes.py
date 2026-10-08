@@ -60,7 +60,7 @@ def p0_pin_footer():
     assert TAXONOMY_PIN == 2140, "pin moved"
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("Next free finding: **F621**" in text  # Wave-372 merge: footer repoint next F612  # Wave-373 merge: footer repoint open F612-F620 / next F621
-          and "Open findings: F612, F613, F614, F615, F616, F617, F618, F619, F620." in text)  # Wave-373 lane 1: F595 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621
+          and "Open findings: F612, F614, F615, F616, F617, F618, F619, F620." in text)  # Wave-373 lane 1: F595 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

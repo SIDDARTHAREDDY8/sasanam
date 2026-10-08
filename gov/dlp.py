@@ -2220,7 +2220,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|atob(?![_$A-Za-z0-9])|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty|fromEntries|groupBy)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|Map[ \t\n\r]*\.[ \t\n\r]*groupBy(?![_$A-Za-z0-9])|new[ \t\n\r]+Map(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|new[ \t\n\r]+Proxy(?![_$A-Za-z0-9])|new[ \t\n\r]+URLSearchParams(?![_$A-Za-z0-9])|new[ \t\n\r]+URL(?![_$A-Za-z0-9])|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|atob(?![_$A-Za-z0-9])|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty|fromEntries|groupBy)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|Map[ \t\n\r]*\.[ \t\n\r]*groupBy(?![_$A-Za-z0-9])|new[ \t\n\r]+Map(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|new[ \t\n\r]+Proxy(?![_$A-Za-z0-9])|new[ \t\n\r]+URLSearchParams(?![_$A-Za-z0-9])|new[ \t\n\r]+URL(?![_$A-Za-z0-9])|\(String[ \t\n\r]*\.[ \t\n\r]*raw[ \t\n\r]*`|\(")
 # F536: the structuredClone anchor carries its own ident-boundary
 # lookahead so `structuredClonex(` never anchors (no wasted F512
 # total-attempt budget); the primary branch re-checks the boundary
@@ -2265,7 +2265,10 @@ _JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoin
 # `String.raw(` and `String.raw.call(` (ws-tolerant, so
 # `String . raw (` / `String.raw . call (` reach _js_parse_string_raw);
 # the tag form `String.raw`...`` keeps anchoring via the backtick
-# character class. F504: the Reflect bracket-member class gains
+# character class, and F613 adds the `\(String.raw`` ` alternative so
+# a parenthesized tag ((String.raw`f1`)+'f2') is reached at the group
+# paren -- the inner parse then routes through _js_parse_primary's
+# F613 tag branch. F504: the Reflect bracket-member class gains
 # backtick and nested-bracket (so `Reflect[`apply`](` /
 # `Reflect[['apply'][0]](` reach _js_parse_reflect_call),
 # literal-alternation only. The added groups are alternations of character-class-bounded literals: matching stays
@@ -2524,6 +2527,55 @@ def _js_parse_tag_template(text, i, state):
         out.append(c)
         total += 1
         i += 1
+        if total > _JS_EXPR_MAX_LITERAL:
+            raise _JSExprFail("literal too long")
+        if total > _MAX_DECODE_BYTES:
+            raise _JSExprFail("template too long")
+
+
+def _js_parse_raw_tag_template(text, i, state):
+    """Parse the raw text of a literal-only `...` tag template at text[i] (F613).
+
+    The RAW-text twin of _js_parse_tag_template: String.raw`...` returns
+    the template's raw strings (escapes uninterpreted), not the cooked
+    value. For a literal-only template the raw value is exactly the
+    source characters between the backticks, so a backslash escape
+    contributes BOTH characters (node v24.20.0: String.raw`a\\nb` ===
+    "a\\\\nb"), unlike the cooked twin which decodes them. ${...}
+    interpolation fails closed -- the same discipline as the cooked
+    twin (the substitution form keeps its existing anchor-at-backtick
+    cooked handling, the F463 control). Bounds match
+    _js_parse_tag_template; no new regexes; never evals.
+    """
+    if text[i] != "`":
+        raise _JSExprFail("not a template")
+    i += 1  # consume the opening backtick
+    n = len(text)
+    out = []
+    total = 0
+    while True:
+        if i >= n:
+            raise _JSExprFail("unterminated template")
+        c = text[i]
+        if c == "`":
+            return "".join(out), i + 1
+        if c == "$" and i + 1 < n and text[i + 1] == "{":
+            raise _JSExprFail("tag interpolation unsupported")
+        if c == "\\":
+            if i + 1 >= n:
+                raise _JSExprFail("bad escape")
+            # Raw: the engine does not interpret escapes in the raw
+            # strings -- both characters are kept literally.
+            out.append("\\")
+            out.append(text[i + 1])
+            i += 2
+            total += 2
+        else:
+            if ord(c) < 0x20 and c not in "\t\n\r":
+                raise _JSExprFail("control char")
+            out.append(c)
+            i += 1
+            total += 1
         if total > _JS_EXPR_MAX_LITERAL:
             raise _JSExprFail("literal too long")
         if total > _MAX_DECODE_BYTES:
@@ -2873,10 +2925,11 @@ def _js_parse_string_raw(text, i, depth, state):
     extra subs dropped). Only string-literal substitutions are
     modeled; non-literal substitutions fail closed (documented).
 
-    The tag form `` String.raw`...` `` is excluded by the caller
-    (_js_parse_primary never routes a backtick here); it keeps its
-    F463/F457 handling -- the tag form is the coded-refusal control
-    and must keep its existing behavior.
+    The tag form `` String.raw`...` `` is parsed by the caller
+    (_js_parse_primary routes a following backtick to
+    _js_parse_raw_tag_template, F613); it keeps its F463/F457
+    handling when the scan anchors at the backtick itself -- the
+    leading-position and substitution forms are unchanged controls.
 
     Returns (interleaved_string, next_index); the caller applies the
     postfix chain and the ops charge. Never evals.
@@ -24508,12 +24561,19 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("String", i):
         # F493: String.raw({raw:[...]}) / String.raw.call(R, {raw:[...]})
-        # -- the call form of String.raw. The tag form String.raw`...`
-        # is explicitly NOT routed here: it falls through to the
-        # F463/F457 template handling (the tag form is the
-        # coded-refusal control and must keep its existing behavior;
-        # routing it into the call-form parser would rely on
-        # exception recovery to preserve it).
+        # -- the call form of String.raw. F613: the tag form
+        # String.raw`...` is parsed here too (not merely anchored via
+        # the backtick) so it decodes in every operand position --
+        # 'f1'+String.raw`f2` (RHS of +), (String.raw`f1`)+'f2'
+        # (parenthesized, reached via the F613 anchor alternative),
+        # [String.raw`f1`,String.raw`f2`].join('') (array elements).
+        # The tag returns the template's RAW strings (escapes
+        # uninterpreted), node-exact via _js_parse_raw_tag_template;
+        # ${...} interpolation fails closed (the substitution form
+        # keeps its existing anchor-at-backtick cooked handling, the
+        # F463 control). The ws-tolerant, ident-bounded tag match
+        # mirrors the F493 call-form guards (Stringx / String.rawx
+        # fail closed).
         _sj = _js_skip_ws(text, i + len("String"))
         if not (_sj < len(text) and text[_sj] in _JS_IDENT_CONT):
             if _sj < len(text) and text[_sj] == ".":
@@ -24522,12 +24582,18 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                     _re = _rk + len("raw")
                     if _re >= len(text) or text[_re] not in _JS_IDENT_CONT:
                         _rq = _js_skip_ws(text, _re)
-                        if not (_rq < len(text) and text[_rq] == "`"):
-                            val, i = _js_parse_string_raw(text, i, depth,
-                                                          state)
-                            state["ops"] += 1  # the call is obfuscation-shaped
+                        if _rq < len(text) and text[_rq] == "`":
+                            # F613: tag form -- raw strings, node-exact.
+                            val, i = _js_parse_raw_tag_template(text, _rq,
+                                                                state)
+                            state["ops"] += 1  # the tag is obfuscation-shaped
                             return _js_parse_postfix(text, i, val, depth,
                                                      state)
+                        val, i = _js_parse_string_raw(text, i, depth,
+                                                      state)
+                        state["ops"] += 1  # the call is obfuscation-shaped
+                        return _js_parse_postfix(text, i, val, depth,
+                                                 state)
     if text.startswith("String", i):
         # F477: String(x) constructor -- engine-exact String()
         # coercion for the modeled argument classes (parsed string
@@ -25831,6 +25897,10 @@ def _try_js_expr_decode(text, start):
     Returns (decoded, end_index), or None when the run at *start* is not
     a decodable expression. Handles quoted-string '+' concatenation,
     template literals (F457: literal-only ${...} interpolation),
+    String.raw`...` tag templates in every operand position (F613:
+    the tag returns the template's raw strings node-exactly --
+    leading, RHS-of-+, parenthesized, and array-element positions;
+    ${...} interpolation fails closed),
     String.fromCharCode(...), atob('...') (F611: node-exact base64
     decode -- the fragment value feeds the concatenation composer),
     .concat(...) / .repeat(...) postfix calls, array-literal .join(sep)

@@ -461,7 +461,7 @@ def p7_pin_and_footer():
     # Lane-local footer: wave-369 lane 5 closes F552/F557/F565; the
     # merge reconciles with sibling lanes.
     ok = ("Next free finding: **F621**" in text  # Wave-369 lane 5: F552/F557/F565 CLOSED; F547-F551, F553-F556, F558-F564, F566-F569 OPEN (next F570)  # Wave-372 merge: footer repoint next F612  # Wave-373 merge: footer repoint open F612-F620 / next F621
-          and "**Open findings: F612, F613, F614, F615, F616, F617, F618, F619, F620.**" in text  # Wave-369 lane 5: F552/F557/F565 CLOSED (next F570); wave-370 lane 4: F573/F578 CLOSED; wave-371 lane 2: F584, F588 CLOSED (F582 footer-stale corrected)  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 4: F608 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621
+          and "**Open findings: F612, F614, F615, F616, F617, F618, F619, F620.**" in text  # Wave-369 lane 5: F552/F557/F565 CLOSED (next F570); wave-370 lane 4: F573/F578 CLOSED; wave-371 lane 2: F584, F588 CLOSED (F582 footer-stale corrected)  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 4: F608 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED
           and "**Status: CLOSED 2026-10-07 wave-369 lane 5.**" in text)
     return ("HELD" if ok else "BREAK",
             "pin=%s footer=%s" % (TAXONOMY_PIN, ok))
