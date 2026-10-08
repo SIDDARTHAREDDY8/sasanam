@@ -243,19 +243,21 @@ def test_p2_variants():
 
 
 def test_p3_bounds():
-    """Boundaries: decoder must miss (never mis-decode)."""
+    """Boundaries: decoder must miss (never mis-decode).
+
+    NOTE (wave-380 lane 1): the "method", "computed",
+    "instance-getter", and "class-expr" shapes below were F662
+    fail-closed bounds; F672 (wave-380 lane 1) now models those
+    productions node-exactly, so they decode -- see
+    test_p3b_f672_absorbed. Honest absorption of documented
+    residuals, not a regression.
+    """
     cases = [
-        ("method", "(function(){class C{static m(){return '" + _A
-         + "';}}return C.m()+'" + _B + "';})()"),
         ("extends", "(function(){class C extends Object{static x='" + _A
          + "';}return C.x+'" + _B + "';})()"),
         ("constructor", "(function(){class C{constructor(){this.x='" + _A
          + "';}}return new C().x+'" + _B + "';})()"),
         ("private", "(function(){class C{#x='qx';static y='f2';}return C.y;})()"),
-        ("computed", "(function(){class C{static ['x']='" + _A
-         + "';}return C.x+'" + _B + "';})()"),
-        ("instance-getter", "(function(){class C{get x(){return '" + _A
-         + "';}}return new C().x+'" + _B + "';})()"),
         ("nonlit-field", "(function(){class C{static x=y;}return C.x;})()"),
         ("uninit-read", "(function(){class C{static x;}return C.x+'" + _B
          + "';})()"),
@@ -265,8 +267,6 @@ def test_p3_bounds():
          + "';}return C?.x+'" + _B + "';})()"),
         ("anonymous", "(function(){return (class{static x='" + _A
          + "';}).x+'" + _B + "';})()"),
-        ("class-expr", "(function(){var K=class C{static x='" + _A
-         + "';};return K.x+'" + _B + "';})()"),
         ("block-decl", "(function(){let s='';class C{static{let t='" + _A
          + "';s=t;}}return s;})()"),
         ("block-return", "(function(){let s='';class C{static{return '" + _A
@@ -321,6 +321,40 @@ def test_p3_bounds():
     ]
     bad = [n for n, p in cases
            if not (_decode_exact(p) is None and _misses(p))]
+    ok = not bad
+    return ("HELD" if ok else "BREAK", "bad=%s" % (bad,))
+
+
+def _decode_exact_f672(js):
+    """Exact decoded value via the F672 IIFE parser (internal seam)."""
+    state = {"ops": 0, "parts": 0, "depth": 0}
+    r = _dlp._js_parse_f672_class_iife(js, 0, 0, state)
+    if r is None:
+        return None
+    val, _ = r
+    return val if isinstance(val, str) else None
+
+
+def test_p3b_f672_absorbed():
+    """F672-absorbed ex-bounds: decode node-exactly (wave-380 lane 1).
+
+    These four shapes were F662 fail-closed bounds; F672 models the
+    underlying productions (methods, computed members, instance
+    getters, class expressions) node-exactly, so they now decode to
+    the credential. Honest absorption of documented residuals.
+    """
+    cases = [
+        ("method", "(function(){class C{static m(){return '" + _A
+         + "';}}return C.m()+'" + _B + "';})()"),
+        ("computed", "(function(){class C{static ['x']='" + _A
+         + "';}return C.x+'" + _B + "';})()"),
+        ("instance-getter", "(function(){class C{get x(){return '" + _A
+         + "';}}return new C().x+'" + _B + "';})()"),
+        ("class-expr", "(function(){var K=class C{static x='" + _A
+         + "';};return K.x+'" + _B + "';})()"),
+    ]
+    bad = [n for n, p in cases
+           if not (_decode_exact_f672(p) == _CRED and _blocked(p))]
     ok = not bad
     return ("HELD" if ok else "BREAK", "bad=%s" % (bad,))
 
@@ -478,14 +512,14 @@ def test_p7_node_differential():
 
 
 def test_p8_pin_footer():
-    """Pin 2140; merged footer: open F672-F685, next F686 (wave-379 merge)."""
+    """Pin 2140; lane-local footer: open F673-F685, next F686 (F672 CLOSED wave-380 lane 1)."""
     import re
     p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                      "FINDINGS.md")
     text = open(p, encoding="utf-8").read()
     ok = (TAXONOMY_PIN == 2140 and len(dc.TAXONOMY) > 0
           and "Next free finding: **F686**." in text
-          and "Open findings: F672, F673, F674, F675, F676, F677, F678, F679, F680, F681, F682, F683, F684, F685."
+          and "Open findings: F673, F674, F675, F676, F677, F678, F679, F680, F681, F682, F683, F684, F685."  # Wave-380 lane 1: F672 CLOSED; footer repoint open F673-F685 / next F686
           in text)
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 
