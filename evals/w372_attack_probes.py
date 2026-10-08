@@ -126,7 +126,7 @@ def test_b0_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F612**" in text  # Wave-372 lane 7 (attack round 40): F597-F605 OPEN (base); F607-F611 filed OPEN (next F612)
-          and "Open findings: F597, F598, F599, F600, F601, F602, F603, F604, F605, F607, F608, F609, F610, F611." in text)  # Wave-372 lane 7 (attack round 40): F597-F605 OPEN (base); F607-F611 filed OPEN (next F612)
+          and "Open findings: F606, F607, F608, F609, F610, F611." in text)  # Wave-372 merge: footer open F606-F611 / next F612
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -198,94 +198,94 @@ def test_p1_f576_closed():
 # ----------------------------------------- open pins, round 39 (must miss)
 
 @_t
-def test_r39_f597_open():
-    """F597 OPEN: flatMap with non-array-returning callbacks misses."""
-    m1 = _misses("[['%s'],['%s']].flatMap((x)=>x).join('')" % (_A, _B))
-    m2 = _misses("['%s','%s'].flatMap((x)=>x).join('')" % (_A, _B))
-    m3 = _misses("['%s','%s'].flatMap((c)=>c==='x'?'x':c).join('')" % (_A, _B))
-    ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_r39_f597_closed():
+    """F597 CLOSED by wave-372 lane 1: flatMap scalar callbacks now block."""
+    h1 = not _misses("[['%s'],['%s']].flatMap((x)=>x).join('')" % (_A, _B))
+    h2 = not _misses("['%s','%s'].flatMap((x)=>x).join('')" % (_A, _B))
+    h3 = not _misses("['%s','%s'].flatMap((c)=>c==='x'?'x':c).join('')" % (_A, _B))
+    ok = h1 and h2 and h3
+    return ("HELD" if ok else "BREAK", "held=%s" % ok)
 
 
 @_t
-def test_r39_f598_open():
-    """F598 OPEN: JSON.stringify of derived arrays misses."""
-    m1 = _misses("JSON.parse(JSON.stringify(Array.from(new Set(['%s','%s'])))).join('')" % (_A, _B))
-    m2 = _misses("JSON.parse(JSON.stringify([...new Set(['%s','%s'])]))).join('')" % (_A, _B))
-    m3 = _misses("JSON.parse(JSON.stringify(Array.from(new Map([['a','%s'],['b','%s']]).values()))).join('')" % (_A, _B))
-    ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_r39_f598_closed():
+    """F598 CLOSED by wave-372 lane 2: stringify of derived arrays now blocks."""
+    h1 = not _misses("JSON.parse(JSON.stringify(Array.from(new Set(['%s','%s'])))).join('')" % (_A, _B))
+    h2 = not _misses(("JSON.parse(JSON.stringify(" + "[...new Set(['%s','%s'])]" + ")).join('')") % (_A, _B))
+    h3 = not _misses("JSON.parse(JSON.stringify(Array.from(new Map([['a','%s'],['b','%s']]).values()))).join('')" % (_A, _B))
+    ok = h1 and h2 and h3
+    return ("HELD" if ok else "BREAK", "held=%s" % ok)
 
 
 @_t
-def test_r39_f599_open():
-    """F599 OPEN: URLSearchParams.append then getAll misses."""
-    m1 = _misses("(function(){var p=new URLSearchParams('q=%s');p.append('q','%s');return p.getAll('q').join('');})()" % (_A, _B))
-    m2 = _misses("(function(){var p=new URLSearchParams('');p.append('q','%s');p.append('q','%s');return p.getAll('q').join('');})()" % (_A, _B))
-    ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_r39_f599_closed():
+    """F599 CLOSED by wave-372 lane 3: USP append/set then getAll now blocks."""
+    h1 = not _misses("(function(){var p=new URLSearchParams('q=%s');p.append('q','%s');return p.getAll('q').join('');})()" % (_A, _B))
+    h2 = not _misses("(function(){var p=new URLSearchParams('');p.append('q','%s');p.append('q','%s');return p.getAll('q').join('');})()" % (_A, _B))
+    ok = h1 and h2
+    return ("HELD" if ok else "BREAK", "held=%s" % ok)
 
 
 @_t
-def test_r39_f600_open():
-    """F600 OPEN: Map keys iteration reads miss."""
-    m1 = _misses("Array.from(new Map([['%s',1],['%s',2]]).keys()).join('')" % (_A, _B))
-    m2 = _misses("[...new Map([['%s',1],['%s',2]]).keys()].join('')" % (_A, _B))
-    m3 = _misses("(function(){var s='';new Map([['%s',1],['%s',2]]).keys().forEach(function(k){s+=k;});return s;})()" % (_A, _B))
-    ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_r39_f600_closed():
+    """F600 CLOSED by wave-372 lane 4: Map keys iteration now blocks."""
+    h1 = not _misses("Array.from(new Map([['%s',1],['%s',2]]).keys()).join('')" % (_A, _B))
+    h2 = not _misses("[...new Map([['%s',1],['%s',2]]).keys()].join('')" % (_A, _B))
+    h3 = not _misses("(function(){var s='';new Map([['%s',1],['%s',2]]).keys().forEach(function(k){s+=k;});return s;})()" % (_A, _B))
+    ok = h1 and h2 and h3
+    return ("HELD" if ok else "BREAK", "held=%s" % ok)
 
 
 @_t
-def test_r39_f601_open():
-    """F601 OPEN: Map.prototype.forEach reads miss."""
-    m1 = _misses("(function(){var s='';new Map([['a','%s'],['b','%s']]).forEach(function(v){s+=v;});return s;})()" % (_A, _B))
-    m2 = _misses("(function(){var s='';new Map([['a','%s'],['b','%s']]).forEach((v)=>{s+=v;});return s;})()" % (_A, _B))
-    ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_r39_f601_closed():
+    """F601 CLOSED by wave-372 lane 4: Map.forEach now blocks."""
+    h1 = not _misses("(function(){var s='';new Map([['a','%s'],['b','%s']]).forEach(function(v){s+=v;});return s;})()" % (_A, _B))
+    h2 = not _misses("(function(){var s='';new Map([['a','%s'],['b','%s']]).forEach((v)=>{s+=v;});return s;})()" % (_A, _B))
+    ok = h1 and h2
+    return ("HELD" if ok else "BREAK", "held=%s" % ok)
 
 
 @_t
-def test_r39_f602_open():
-    """F602 OPEN: Set iteration reads miss."""
-    m1 = _misses("(function(){var s='';for(var x of new Set(['%s','%s'])){s+=x;}return s;})()" % (_A, _B))
-    m2 = _misses("(function(){var s='';var st=new Set(['%s','%s']);st.forEach(function(x){s+=x;});return s;})()" % (_A, _B))
-    ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_r39_f602_closed():
+    """F602 CLOSED by wave-372 lane 4: Set iteration now blocks."""
+    h1 = not _misses("(function(){var s='';for(var x of new Set(['%s','%s'])){s+=x;}return s;})()" % (_A, _B))
+    h2 = not _misses("(function(){var s='';var st=new Set(['%s','%s']);st.forEach(function(x){s+=x;});return s;})()" % (_A, _B))
+    ok = h1 and h2
+    return ("HELD" if ok else "BREAK", "held=%s" % ok)
 
 
 @_t
-def test_r39_f603_open():
-    """F603 OPEN: String.prototype.replace laundering misses."""
-    m1 = _misses("'%sX'.replace('X','%s')" % (_A, _B))
-    m2 = _misses("'%sXX'.replace('XX','%s')" % (_A, _B))
-    m3 = _misses("'X%s'.replace('X','%s')" % (_B, _A))
-    ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_r39_f603_closed():
+    """F603 CLOSED by wave-372 lane 5: String.replace literal patterns now block."""
+    h1 = not _misses("'%sX'.replace('X','%s')" % (_A, _B))
+    h2 = not _misses("'%sXX'.replace('XX','%s')" % (_A, _B))
+    h3 = not _misses("'X%s'.replace('X','%s')" % (_B, _A))
+    ok = h1 and h2 and h3
+    return ("HELD" if ok else "BREAK", "held=%s" % ok)
 
 
 @_t
-def test_r39_f604_open():
-    """F604 OPEN: sort with localeCompare comparators misses."""
-    m1 = _misses("['%s','%s'].sort((a,b)=>b.localeCompare(a)).join('')" % (_B, _A))
-    m2 = _misses("['%s','%s'].sort((x,y)=>y.localeCompare(x)).join('')" % (_B, _A))
-    ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_r39_f604_closed():
+    """F604 CLOSED by wave-372 lane 6: localeCompare sort now blocks."""
+    h1 = not _misses("['%s','%s'].sort((a,b)=>b.localeCompare(a)).join('')" % (_B, _A))
+    h2 = not _misses("['%s','%s'].sort((x,y)=>y.localeCompare(x)).join('')" % (_B, _A))
+    ok = h1 and h2
+    return ("HELD" if ok else "BREAK", "held=%s" % ok)
 
 
 @_t
-def test_r39_f605_open():
-    """F605 OPEN (wave-371 lane 7): Object.assign neighbor variants miss."""
-    m1 = _misses("(function(){var r={};var m=new WeakMap([[r,{c:'%s'}]]);return Object.assign({x:1},m.get(r)).c+'%s';})()" % (_A, _B))
-    m2 = _misses("(function(){var r={};var m=new WeakMap([[r,{c:'%s'}]]);return Object.assign({},m.get(r),{d:1}).c+'%s';})()" % (_A, _B))
-    ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_r39_f605_closed():
+    """F605 CLOSED by wave-372 lane 6: Object.assign neighbor variants now block."""
+    h1 = not _misses("(function(){var r={};var m=new WeakMap([[r,{c:'%s'}]]);return Object.assign({x:1},m.get(r)).c+'%s';})()" % (_A, _B))
+    h2 = not _misses("(function(){var r={};var m=new WeakMap([[r,{c:'%s'}]]);return Object.assign({},m.get(r),{d:1}).c+'%s';})()" % (_A, _B))
+    ok = h1 and h2
+    return ("HELD" if ok else "BREAK", "held=%s" % ok)
 
 
 # ----------------------------------------- open pins, round 40 (must miss)
 
 @_t
-def test_r40_f606_open():
+def test_r40_f607_open():
     """F607 OPEN: filter with non-trivial predicates misses."""
     m1 = _misses("['%s','%s','xx'].filter(x=>x!=='xx').join('')" % (_A, _B))
     m2 = _misses("['%s','xx','%s'].filter(function(x){return x!=='xx';}).join('')" % (_A, _B))
@@ -295,7 +295,7 @@ def test_r40_f606_open():
 
 
 @_t
-def test_r40_f607_open():
+def test_r40_f608_open():
     """F608 OPEN: Set spread into call arguments misses."""
     m1 = _misses("((...a)=>a.join(''))(...new Set(['%s','%s']))" % (_A, _B))
     m2 = _misses("((a,b)=>a+b)(...new Set(['%s','%s']))" % (_A, _B))
@@ -305,7 +305,7 @@ def test_r40_f607_open():
 
 
 @_t
-def test_r40_f608_open():
+def test_r40_f609_open():
     """F609 OPEN: String.replace with function replacements misses."""
     m1 = _misses("'%sXX'.replace('XX',()=>'%s')" % (_A, _B))
     m2 = _misses("'%sXX'.replace(/XX/,()=>'%s')" % (_A, _B))
@@ -315,7 +315,7 @@ def test_r40_f608_open():
 
 
 @_t
-def test_r40_f609_open():
+def test_r40_f610_open():
     """F610 OPEN: URLSearchParams.set then .get misses."""
     m1 = _misses("(function(){var p=new URLSearchParams('q=xx');p.set('q','%s');return p.get('q')+'%s';})()" % (_A, _B))
     m2 = _misses("(function(){var p=new URLSearchParams('');p.set('q','%s');return p.get('q')+'%s';})()" % (_A, _B))
@@ -325,7 +325,7 @@ def test_r40_f609_open():
 
 
 @_t
-def test_r40_f610_open():
+def test_r40_f611_open():
     """F611 OPEN: base64 runs decoding to credential fragments miss."""
     m1 = _misses("atob('eG94Yi0wMTIz')+'%s'" % _B)
     m2 = _misses("(function(){var b=atob('eG94Yi0wMTIz');return b+'%s';})()" % _B)

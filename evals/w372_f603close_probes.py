@@ -81,8 +81,8 @@ def test_b0_footer_state():
     """Control: lane-local footer -- open F597-F602, F604, F605 / next F606."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F606**" in text
-          and "Open findings: F597, F598, F599, F600, F601, F602, F604, F605." in text)
+    ok = ("Next free finding: **F612**" in text  # Wave-372 merge: footer repoint next F612
+          and "Open findings: F606, F607, F608, F609, F610, F611." in text)  # Wave-372 merge: footer repoint open F606-F611 / next F612
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

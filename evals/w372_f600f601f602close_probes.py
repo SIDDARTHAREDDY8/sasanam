@@ -252,25 +252,32 @@ def p5_compositions():
         "Object.keys({'%s':1,'%s':1}).join('')" % (_A, _B),
         # F494 (Set spread) stays HELD
         "[...new Set(['%s','%s'])].join('')" % (_A, _B),
+        # F597 (flatMap scalar) CLOSED wave-372 lane 1 -- moved from open
+        "['%s','%s'].flatMap((x)=>x).join('')" % (_A, _B),
+        # F598 (stringify derived) CLOSED wave-372 lane 2 -- moved from open
+        "JSON.parse(JSON.stringify(Array.from(new Set(['%s','%s'])))).join('')"
+        % (_A, _B),
+        # F599 (USP append) CLOSED wave-372 lane 3 -- moved from open
+        "(function(){var p=new URLSearchParams('q=%s');p.append('q','%s');"
+        "return p.getAll('q').join('');})()" % (_A, _B),
     ]
     bad_held = [s for s in held if not _blocked(s)]
     # open neighbors: decoder must still MISS (BREAK = still open)
     # (exact filed shapes from FINDINGS.md)
     open_cases = [
-        # F597: flatMap with non-array-returning callbacks
-        "['%s','%s'].flatMap((x)=>x).join('')" % (_A, _B),
-        # F598: stringify of derived (non-literal) arrays
-        "JSON.parse(JSON.stringify(Array.from(new Set(['%s','%s'])))).join('')"
-        % (_A, _B),
-        # F599: URLSearchParams.append statement-form mutations
-        "(function(){var p=new URLSearchParams('q=%s');p.append('q','%s');"
+        # F606: USP append-mutated sort guard (OPEN, wave-372 lane 3)
+        "(function(){var p=new URLSearchParams('q=%s');"
+        "p.append('q','%s');p.sort();"
         "return p.getAll('q').join('');})()" % (_A, _B),
+        # F607: filter with non-trivial predicates (OPEN, wave-372 lane 7)
+        "['%s','%s','xx'].filter(x=>x!=='xx').join('')" % (_A, _B),
     ]
     bad_open = [s for s in open_cases if _blocked(s)]
     bad = bad_held + ["absorbed:" + s[:40] for s in bad_open]
     return ("HELD" if not bad else "BREAK",
             "%d/%d compositions ok" % (len(held) + len(open_cases) - len(bad),
                                        len(held) + len(open_cases)))
+
 
 
 def p6_honest_text_quiet():
@@ -292,8 +299,8 @@ def p7_pin_and_footer():
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as fh:
         text = fh.read()
     footer_ok = ("CLOSED 2026-10-07 wave-372 lane 4" in text
-                 and "Open findings: F597, F598, F599, F603, F604, F605." in text
-                 and "Next free finding: **F606**" in text)
+                 and "Open findings: F606, F607, F608, F609, F610, F611." in text  # Wave-372 merge: footer repoint open F606-F611 / next F612
+                 and "Next free finding: **F612**" in text)  # Wave-372 merge: footer repoint next F612
     detail = "pin=%s codes=%d; footer-closed=%s" % (
         TAXONOMY_PIN, n, footer_ok)
     return (("HELD", detail) if (pin_ok and footer_ok)

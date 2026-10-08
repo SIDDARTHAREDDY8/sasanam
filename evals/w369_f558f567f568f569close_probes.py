@@ -347,7 +347,7 @@ def p6_pin_and_footer():
         text = fh.read()
     footer_ok = ("CLOSED 2026-10-07 wave-369 lane 7" in text
                  and text.count("CLOSED 2026-10-07 wave-369 lane 7") >= 4
-                 and "Next free finding: **F606**" in text)
+                 and "Next free finding: **F612**" in text)  # Wave-372 merge: footer repoint next F612
     detail = "pin=%s codes=%d; footer-closed=%s" % (
         TAXONOMY_PIN, n, footer_ok)
     return ("HELD", detail) if (pin_ok and footer_ok) \

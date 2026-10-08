@@ -211,10 +211,10 @@ def p7_compositions():
         "JSON.parse(JSON.stringify(Array.from(new Set(['%s','%s'])))).join('')"
         % (_A1, _A2),
         # F600: Map keys iteration (CLOSED wave-372 lane 4)
-        "Array.from(new Map([['a','%s']]).keys()).join('')" % _A1,
+        "Array.from(new Map([['%s',1],['%s',2]]).keys()).join('')" % (_A1, _A2),
         # F601: Map.prototype.forEach (CLOSED wave-372 lane 4)
-        "(function(){var s='';new Map([['a','%s']]).forEach(function(v){s+=v;});return s;})()"
-        % _A1,
+        "(function(){var s='';new Map([['a','%s'],['b','%s']]).forEach(function(v){s+=v;});return s;})()"
+        % (_A1, _A2),
     ]
     missed_closed = [s for s in held if not _blocked(s)]
     still_open = [
@@ -292,9 +292,9 @@ def p9_pin_footer():
     assert guac_graph.TAXONOMY_PIN == 2140, \
         "guac_graph.TAXONOMY_PIN=%r want 2140" % (guac_graph.TAXONOMY_PIN,)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F606**" in text
-          and "**Open findings: F598, F599, F600, F601, F602, F603, F604, F605.**"
-              in text  # Wave-370 lane 5: F574/F580 CLOSED; rest OPEN (next F583)  # Wave-372 lane 1: F597 CLOSED; rest OPEN (next F606)
+    ok = ("Next free finding: **F612**" in text  # Wave-372 merge: footer repoint next F612
+          and "**Open findings: F606, F607, F608, F609, F610, F611.**"
+              in text  # Wave-372 merge: footer repoint open F606-F611
           and "**Status: CLOSED 2026-10-07 wave-370 lane 5." in text)
     return ("HELD" if ok else "BREAK",
             "pin=%s footer=%s" % (TAXONOMY_PIN, ok))

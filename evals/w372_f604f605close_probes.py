@@ -279,9 +279,9 @@ def p7_pin_and_footer():
         text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
         # Lane-local footer: wave-372 lane 6 closes F604/F605; the
         # merge reconciles with sibling lanes.
-        ok = ("Next free finding: **F606**." in text
-              and "**Open findings: F597, F598, F599, F600, F601, F602, "
-              "F603.**" in text)
+        ok = ("Next free finding: **F612**." in text  # Wave-372 merge: footer repoint next F612
+              and "**Open findings: F606, F607, F608, F609, F610, F611.**"
+              in text)  # Wave-372 merge: footer repoint open F606-F611
         rows.append(("HELD" if ok else "BREAK", "pin+footer"))
     except AssertionError as e:  # noqa: BLE001
         rows.append(("BREAK", "pin/footer: %s" % e))

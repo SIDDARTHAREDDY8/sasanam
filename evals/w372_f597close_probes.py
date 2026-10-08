@@ -204,8 +204,8 @@ def p6_pin_footer():
     assert guac_graph.TAXONOMY_PIN == 2140, \
         "guac_graph.TAXONOMY_PIN=%r want 2140" % (guac_graph.TAXONOMY_PIN,)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F606**" in text
-          and "**Open findings: F598, F599, F600, F601, F602, F603, F604, F605.**"
+    ok = ("Next free finding: **F612**" in text  # Wave-372 merge: footer repoint next F612
+          and "**Open findings: F606, F607, F608, F609, F610, F611.**"  # Wave-372 merge: footer repoint
               in text
           and "**Status: CLOSED 2026-10-07 wave-372 lane 1." in text)
     return ("HELD" if ok else "BREAK",

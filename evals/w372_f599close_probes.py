@@ -42,8 +42,8 @@ _CRED = _A1 + _A2
 
 TAXONOMY_PIN = 2140  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
-FOOTER_OPEN = "F597, F598, F600, F601, F602, F603, F604, F605, F606"
-FOOTER_NEXT = "F607"
+FOOTER_OPEN = "F606, F607, F608, F609, F610, F611"  # Wave-372 merge: footer repoint
+FOOTER_NEXT = "F612"  # Wave-372 merge: footer repoint
 
 
 def _blocked(payload):

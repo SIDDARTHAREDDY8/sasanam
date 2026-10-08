@@ -319,9 +319,9 @@ def p6_pin_and_footer():
     if text.count("CLOSED 2026-10-07 wave-366 lane 3") < 2:
         return ("BREAK", "F528/F529 CLOSED entries missing")
     # Wave-367 merge: F537-F546 open, next F547.
-    if "Open findings: F597, F598, F599, F600, F601, F602, F603, F604, F605." not in text:  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+    if "Open findings: F606, F607, F608, F609, F610, F611." not in text:  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint open F606-F611 / next F612
         return ("BREAK", "lane-local footer wrong")
-    if "Next free finding: **F606**" not in text:  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+    if "Next free finding: **F612**" not in text:  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint next F612
         return ("BREAK", "next-free footer wrong")
     return ("HELD", "pin 2140; 28 re.compile; F528/F529 CLOSED; "
             "footer F531,F533,F535,F536/next F537")
