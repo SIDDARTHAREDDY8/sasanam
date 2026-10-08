@@ -258,21 +258,25 @@ def test_r38_f584_closed():
 
 
 @_t
-def test_r38_f585_open():
-    """F585 OPEN: structuredClone of Map misses."""
-    m1 = _misses("structuredClone(new Map([['c','%s']])).get('c')+'%s'" % (_A, _B))
-    m2 = _misses("structuredClone(new Map([['a','%s'],['b','%s']])).get('a')+structuredClone(new Map([['a','%s'],['b','%s']])).get('b')" % (_A, _B, _A, _B))
+def test_r38_f585_closed():
+    """F585 CLOSED (wave-371 lane 3): structuredClone of Map blocks."""
+    m1 = _blocked("structuredClone(new Map([['c','%s']])).get('c')+'%s'"
+                  % (_A, _B))
+    m2 = _blocked("structuredClone(new Map([['a','%s'],['b','%s']])).get('a')"
+                  "+structuredClone(new Map([['a','%s'],['b','%s']])).get('b')"
+                  % (_A, _B, _A, _B))
     ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
 @_t
-def test_r38_f586_open():
-    """F586 OPEN: parenthesized new-expression receivers miss."""
-    m1 = _misses("(new Map([['c','%s']])).get('c')+'%s'" % (_A, _B))
-    m2 = _misses("(new WeakRef({c:'%s'})).deref().c+'%s'" % (_A, _B))
+def test_r38_f586_closed():
+    """F586 CLOSED (wave-371 lane 3): parenthesized new-expression
+    receivers block."""
+    m1 = _blocked("(new Map([['c','%s']])).get('c')+'%s'" % (_A, _B))
+    m2 = _blocked("(new WeakRef({c:'%s'})).deref().c+'%s'" % (_A, _B))
     ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
 @_t

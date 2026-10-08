@@ -11185,6 +11185,145 @@ def _js_parse_f535_proxy(text, j, depth, state):
     return props, k + 1
 
 
+def _js_parse_f586_weakref_new(text, j, depth, state):
+    """Parse `new WeakRef(OBJLIT)` at text[j] WITHOUT the `.deref()`
+    tail (F586).
+
+    The filed shape `(new WeakRef(OBJ)).deref()` puts the deref call
+    outside the grouping paren, so the F539 parser (which consumes
+    `.deref()` itself) cannot be reused. The referent object literal
+    is parsed by `_js_parse_f535_object`; deref is the identity on
+    the referent (node v24.20.0), so the value is the _JSObj --
+    `.deref()` itself is consumed by the caller after the grouping
+    close paren. Returns (_JSObj, next_index), or None when text[j]
+    is not a `new WeakRef` head. Never evals.
+    """
+    n = len(text)
+    if j > 0 and text[j - 1] in _JS_IDENT_CONT:
+        return None
+    k = _js_match_kw(text, j, "new")
+    if k is None:
+        return None
+    k = _js_skip_ws(text, k)
+    k2 = _js_match_kw(text, k, "WeakRef")
+    if k2 is None:
+        return None
+    k = _js_skip_ws(text, k2)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("WeakRef without paren")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "{":
+        raise _JSExprFail("WeakRef target not an object literal")
+    props, k = _js_parse_f535_object(text, k, depth, state)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("WeakRef without close paren")
+    return _JSObj(props), k + 1
+
+
+def _js_parse_f586_deref(text, j):
+    """Consume `.deref()` at text[j] with no arguments (F586).
+
+    Mirrors the F539 deref contract: the member must name `deref`
+    and take no arguments (the engine throws otherwise). Returns the
+    index just past the call. Never evals.
+    """
+    n = len(text)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("WeakRef needs .deref()")
+    j = _js_skip_ws(text, j + 1)
+    j2 = _js_match_kw(text, j, "deref")
+    if j2 is None:
+        raise _JSExprFail("WeakRef member not deref")
+    j = _js_skip_ws(text, j2)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("deref without paren")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("deref takes no arguments")
+    return j + 1
+
+
+def _js_parse_f586_grouped_new(text, i, depth, state, _no_guard=False):
+    """Parse `(new Map(...))` / `(new WeakRef(...))` at text[i]
+    == '(' (F586).
+
+    The engine treats a parenthesized new-expression as the value
+    itself, so the parenthesized spelling is engine-identical to the
+    unparenthesized F563/F539 forms (node v24.20.0 verified). The
+    inner expression is exactly the F563 literal-Map construction
+    (string-literal keys/values, later-wins) or the F539
+    `new WeakRef(OBJLIT)` referent; nested grouping parens
+    `((new Map(...)))` recurse depth-bounded. A grouped WeakRef
+    requires `.deref()` after the OUTERMOST close paren (the filed
+    shape puts it there); the flag propagates through nesting. The
+    member chain after the close paren (and deref) resolves through
+    the _JSMap / _JSObj branches of _js_parse_postfix, exactly as
+    the unparen forms do.
+
+    _no_guard: skip the grouping-paren guard. Only for callers that
+    supply the paren themselves in a modeled-call argument position
+    (F585: structuredClone's argument paren) -- there the `(` is the
+    modeled builtin's own arg paren, so the call-arg misread the
+    guard protects against cannot arise.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - grouping parens only (the F535 guard, whitespace-tolerant):
+      a `(` preceded (past whitespace) by an identifier char, `)`,
+      or `]` opens a call's argument list, not a grouping paren --
+      decoding it would misread `fn(new Map(...)).get('c')` (the
+      `.get` reads the CALL's unknown result) as a Map read.
+    - the inner head must be `new Map`, `new WeakRef`, or another
+      grouping paren (any other head -- including `new Proxy`,
+      owned by F535 -- returns None so the caller falls through).
+    - a missing close paren returns None (the
+      parenthesized-additive fallback fails closed on it as before);
+      a grouped WeakRef without the outer `.deref()` fails closed
+      (a bare WeakRef is not a decodable value, F539 precedent).
+
+    Returns (value, next_index, need_deref), or None when text[i]
+    is not this shape. Never evals.
+    """
+    n = len(text)
+    # Grouping parens only (the F535 guard, whitespace-tolerant: the
+    # engine allows whitespace between a callee and its argument
+    # paren, so `fn (new Map(...))` is still a call). A `(` preceded
+    # (past whitespace) by an identifier char, `)`, or `]` opens a
+    # call's argument list, not a grouping paren -- decoding it would
+    # misread `fn(new Map(...)).get('c')` (the `.get` reads the CALL's
+    # unknown result) as a Map read.
+    _p = i - 1
+    while not _no_guard and _p >= 0 and text[_p] in " \t\n\r":
+        _p -= 1
+    if not _no_guard and _p >= 0 and (text[_p] in _JS_IDENT_CONT
+                                      or text[_p] in (")", "]")):
+        return None
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    j = _js_skip_ws(text, i + 1)
+    _need_deref = False
+    if j < n and text[j] == "(":
+        inner = _js_parse_f586_grouped_new(text, j, depth + 1, state)
+        if inner is None:
+            return None
+        val, j, _need_deref = inner
+    else:
+        _m = _js_parse_f563_map(text, j, depth, state)
+        if _m is not None:
+            val, j = _m
+        else:
+            _w = _js_parse_f586_weakref_new(text, j, depth, state)
+            if _w is None:
+                return None
+            val, j = _w
+            _need_deref = True
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        return None
+    state["ops"] += 1  # the grouping paren is obfuscation-shaped
+    return val, j + 1, _need_deref
+
+
 def _js_parse_f535_member_read(text, i, depth, state):
     """Parse `(OBJ).member` / `(new Proxy(T,H)).member` at text[i]
     == '(' (F535).
@@ -20568,6 +20707,21 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f578 is not None:
             val, i = _f578
             return _js_parse_postfix(text, i, val, depth, state)
+        # F586: (new Map(...)) / (new WeakRef(...)) --
+        # parenthesized new-expression receivers, engine-identical
+        # to the unparenthesized F563/F539 forms. Tried before F535:
+        # F535's member-read raises on `new`-but-not-Proxy, and the
+        # shapes are disjoint (F535 owns `(new Proxy`, F586 owns
+        # `(new Map` / `(new WeakRef`), so no previously-decoded
+        # input changes behavior. A grouped WeakRef needs its
+        # `.deref()` after the outermost close paren (the filed
+        # shape); the flag propagates through nested parens.
+        _f586 = _js_parse_f586_grouped_new(text, i, depth, state)
+        if _f586 is not None:
+            val, i, _need_deref = _f586
+            if _need_deref:
+                i = _js_parse_f586_deref(text, i)
+            return _js_parse_postfix(text, i, val, depth, state)
         # F535: (OBJ_LITERAL).member / (new Proxy(T, H)).member --
         # statically-resolved member reads on object literals. None
         # falls through to the parenthesized-additive path (which
@@ -20681,6 +20835,13 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # args (data properties, getters, nested objects) -- every
         # other arg class fails closed (documented boundary). The
         # ident-boundary check keeps structuredClonex failing closed.
+        # F585: structuredClone(new Map(LITENTRIES)) -- the engine
+        # deep-copies the Map (a fresh Map with cloned entries), so
+        # the result is a fresh _JSMap (dict-copied: no aliasing with
+        # the source; values are strings in the F563 grammar, so the
+        # copy is a true deep copy) that the F563 .get model resolves
+        # against. Only literal Maps (the F563 grammar) -- every other
+        # arg class fails closed (documented boundary).
         _sk = i + len("structuredClone")
         if _sk < len(text) and text[_sk] in _JS_IDENT_CONT:
             raise _JSExprFail("structuredClonex is not structuredClone")
@@ -20688,15 +20849,41 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _sk >= len(text) or text[_sk] != "(":
             raise _JSExprFail("structuredClone needs a call")
         _sk = _js_skip_ws(text, _sk + 1)
-        if _sk >= len(text) or text[_sk] != "{":
+        if _sk < len(text) and text[_sk] == "{":
+            _sprops, _sk = _js_parse_f535_object(text, _sk, depth, state)
+            _sk = _js_skip_ws(text, _sk)
+            if _sk >= len(text) or text[_sk] != ")":
+                raise _JSExprFail("unbalanced structuredClone")
+            state["ops"] += 1  # the clone call is obfuscation-shaped
+            return _js_parse_postfix(text, _sk + 1,
+                                     _JSObj(_js_f535_deepcopy(_sprops)),
+                                     depth, state)
+        _mval = None
+        if _sk < len(text) and text[_sk] == "(":
+            # F585 x F586: structuredClone((new Map(...))) -- the
+            # parenthesized-argument spelling; the paren is
+            # structuredClone's own arg paren, so the F586
+            # grouping guard is bypassed (_no_guard). A grouped
+            # WeakRef arg fails closed (the engine throws
+            # DataCloneError on structuredClone(new WeakRef())).
+            _g586 = _js_parse_f586_grouped_new(text, _sk, depth, state,
+                                               _no_guard=True)
+            if _g586 is not None:
+                _gmval, _sk, _need_deref = _g586
+                if not _need_deref and isinstance(_gmval, _JSMap):
+                    _mval = _gmval
+        else:
+            _sm = _js_parse_f563_map(text, _sk, depth, state)
+            if _sm is not None:
+                _mval, _sk = _sm
+        if _mval is None:
             raise _JSExprFail("structuredClone arg not an object")
-        _sprops, _sk = _js_parse_f535_object(text, _sk, depth, state)
         _sk = _js_skip_ws(text, _sk)
         if _sk >= len(text) or text[_sk] != ")":
             raise _JSExprFail("unbalanced structuredClone")
         state["ops"] += 1  # the clone call is obfuscation-shaped
         return _js_parse_postfix(text, _sk + 1,
-                                 _JSObj(_js_f535_deepcopy(_sprops)),
+                                 _JSMap(dict(_mval.entries)),
                                  depth, state)
     if text.startswith("JSON", i):
         # F541: JSON.parse('LITERAL') -- deserializing-builtin
@@ -21482,6 +21669,60 @@ def _js_resolve_value_bindings(text):
     return "".join(out).lstrip(" \t\n\r")
 
 
+def _js_f586_shift_ok(text, s):
+    """Whether the `(` just left of a `new`-anchor match may open a
+    grouping paren around a parenthesized new-expression receiver
+    (F586).
+
+    True only when text[s-1] == '(' (a candidate grouping paren --
+    the F535 guard excludes a call's argument paren: preceded by an
+    identifier char, `)`, or `]`) AND the anchor at *s* is a
+    `new Map` / `new WeakRef` head (the F586 shapes). Narrow by
+    construction: the plain decode at *s* is always attempted first
+    by the caller, so this only fires where the plain decode failed
+    closed. Never evals.
+    """
+    if s <= 0 or text[s - 1] != "(":
+        return False
+    p = s - 1
+    _q = p - 1
+    while _q >= 0 and text[_q] in " \t\n\r":
+        _q -= 1
+    if _q >= 0 and (text[_q] in _JS_IDENT_CONT
+                    or text[_q] in (")", "]")):
+        return False  # a call's argument paren, not a grouping paren
+                      # (whitespace-tolerant: `fn (...)` is a call)
+    j = _js_match_kw(text, s, "new")
+    if j is None:
+        return False
+    j = _js_skip_ws(text, j)
+    return (_js_match_kw(text, j, "Map") is not None
+            or _js_match_kw(text, j, "WeakRef") is not None)
+
+
+def _try_js_expr_decode_f586(text, s):
+    """Decode one JS expression at match position *s*, retrying at the
+    grouping paren for parenthesized new-expression receivers (F586).
+
+    Returns (decoded, end, eff_start) -- eff_start is s-1 when the
+    parenthesized form decoded, else s -- or None. The plain decode
+    at *s* is always attempted first, so no previously-decodable
+    input changes its variant; the paren retry only fires where the
+    plain decode failed closed (the F586 shapes: the `new`-anchor
+    parse fails at the grouping close-paren in _js_parse_postfix).
+    The splice [eff_start:end] is always balanced (the F586 parse
+    consumes its own close paren). Never evals.
+    """
+    r = _try_js_expr_decode(text, s)
+    if r is not None:
+        return r[0], r[1], s
+    if _js_f586_shift_ok(text, s):
+        r = _try_js_expr_decode(text, s - 1)
+        if r is not None:
+            return r[0], r[1], s - 1
+    return None
+
+
 def _try_js_expr_decode(text, start):
     """Strict static decode of one JS string expression (F430).
 
@@ -21631,18 +21872,18 @@ def _try_js_expr_decode_all(text):
         if text[s] in _JS_IDENT_START and not _js_left_boundary_ok(text, s):
             continue  # F567: identifier-suffixed anchor -- node throws
                       # ReferenceError; the decoder stays quiet.
-        r = _try_js_expr_decode(text, s)
+        r = _try_js_expr_decode_f586(text, s)
         if r is None:
             continue  # F452: fail closed -- no variant produced, so
                       # no ITEM budget consumed; copy verbatim below
-        decoded, end = r
-        if end <= s:
+        decoded, end, _eff = r
+        if end <= _eff:
             continue  # defensive: never retreat
         if attempts >= _MAX_WHOLETEXT_ITEMS:
             break
         attempts += 1  # F452: only decode-producing attempts count
                        # against the item budget
-        out.append(text[pos:s])
+        out.append(text[pos:_eff])
         out.append(decoded)
         pos = end
     out.append(text[pos:])
@@ -21785,10 +22026,10 @@ def _decode_layer(text):
                 not _js_left_boundary_ok(text, m.start()):
             continue  # F567: identifier-suffixed anchor -- node throws
                       # ReferenceError; the decoder stays quiet.
-        r = _try_js_expr_decode(text, m.start())
+        r = _try_js_expr_decode_f586(text, m.start())
         if r is not None:
-            decoded, end = r
-            _add(text[:m.start()] + decoded + text[end:])
+            decoded, end, _eff = r
+            _add(text[:_eff] + decoded + text[end:])
     # Escaped-backslash productions (F441): collapse doubled
     # backslashes and decode the exposed escapes -- models the first
     # pass of a real double-unicode_escape parser stack. This whole-
