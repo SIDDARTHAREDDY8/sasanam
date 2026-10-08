@@ -30947,6 +30947,127 @@ def _js_parse_f669_map_values_spread_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f713_join_tail(stmts, q, values, state):
+    """Parse `].join(SEP)(+'LIT')*;` at stmts[q], end-of-body (F713).
+
+    Like `_js_parse_f669_spread_join` but the join is NOT the
+    terminal: an additive tail of plain string literals may follow
+    (the F713 filed shapes append `+'f2'`). `.join` takes a
+    string-literal separator or no argument ("," default,
+    node-exact). Returns (joined, next_index) at end-of-body.
+    Never evals.
+    """
+    n = len(stmts)
+    q = _js_expect(stmts, q, "]")
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, ".")
+    mname, q = _js_parse_ident(stmts, _js_skip_ws(stmts, q))
+    if mname != "join":
+        raise _JSExprFail("F713 return not join")
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, "(")
+    q = _js_skip_ws(stmts, q)
+    if q < n and stmts[q] == ")":
+        sep = ","
+        q += 1
+    elif q < n and stmts[q] in "'\"":
+        sep, q = _js_parse_string(stmts, q)
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ")")
+    else:
+        raise _JSExprFail("F713 join separator not a literal")
+    result = sep.join(values)
+    q = _js_skip_ws(stmts, q)
+    while q < n and stmts[q] == "+":
+        q = _js_skip_ws(stmts, q + 1)
+        if q >= n or stmts[q] not in "'\"":
+            raise _JSExprFail("F713 tail not a string literal")
+        tail, q = _js_parse_string(stmts, q)
+        if isinstance(tail, _JSNumStr):
+            raise _JSExprFail("F713 tail not a plain string")
+        result += tail
+        state["parts"] += 1  # the additive tail is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+    q = _js_skip_ws(stmts, q)
+    if q < n and stmts[q] == ";":
+        q += 1
+    if _js_skip_ws(stmts, q) != len(stmts):
+        raise _JSExprFail("F713 trailing statements")
+    if len(result) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F713 join too long")
+    state["ops"] += 1  # the spread-consume join is obfuscation-shaped
+    return result, q
+
+
+def _js_parse_f713_map_spread_join_tail_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const NAME=new Map([[K,V],...]);(NAME.set(K,V);)*return [...NAME(.values()|.keys())?].join(SEP)(+'LIT')*;})()` (F713).
+
+    F669 residual: F669's `_js_parse_f669_map_values_spread_iife`
+    requires the join to be the return terminal and fails closed on
+    bare Map spreads; the filed shapes append an additive tail
+    (`+'f2'`) after the join, and the bare-spread twin spreads the
+    literal Map directly. Node-exact desugar (v24.20.0):
+    - decl: `var|let|const NAME=new Map([[K,V],...]);` (literal
+      ctor, the F494 kid discipline) or `new Map();` with
+      `.set(K,V);` tails -- shared `_js_parse_f669_map_decl` /
+      `_js_parse_f669_map_sets`.
+    - spread: `[...NAME.values()]` / `[...NAME.keys()]` iterate in
+      insertion order (later-wins, F494); a BARE `[...NAME]`
+      yields [k,v] pair arrays, each stringifying node-exactly as
+      `k + ',' + v` (Array.prototype.toString joins the pair with
+      ","; numeric keys stringify canonically via _JSNumStr's str).
+    - terminal: `.join(SEP)` (string-literal SEP or no-arg ",")
+      then zero or more `+'LIT'` additive tail elements, then `;`
+      end-of-body.
+    Returns (value, next_index), or None on mismatch/guard
+    failure. Never evals.
+
+    Bounds (all fail closed): non-literal keys/values,
+    reassignment or extra statements, `.set` on another ident,
+    unmodeled members, spread of another ident, mixed spreads, a
+    non-`join` terminal, non-literal separators or tail elements,
+    call args on the IIFE.
+    Disjoint from F669 (tried after it): F669 requires the join
+    terminal with no tail and fails closed on bare spreads; this
+    route requires the F713 tail-or-bare shape and fails closed on
+    F669's exact terminal (the tail loop accepts zero elements, but
+    F669's parser wins those shapes first, so no
+    previously-decoded input changes behavior).
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        name, pairs, sj = _js_parse_f669_map_decl(stmts, sj, depth,
+                                                  state)
+        pairs, sj = _js_parse_f669_map_sets(stmts, sj, name, pairs,
+                                            depth, state)
+        member, sj = _js_parse_f669_spread_head(
+            stmts, sj, name, ("values", "keys"), True)
+        if member == "keys":
+            values = [str(k) for _kid, k, _v in pairs]
+        elif member == "values":
+            values = [v for _kid, _k, v in pairs]
+        elif member is None:
+            # Bare spread: each [k,v] pair stringifies as k+','+v
+            # (node v24.20.0: Array.prototype.toString on the pair).
+            values = [str(k) + "," + v for _kid, k, v in pairs]
+        else:
+            raise _JSExprFail("F713 map spread not values/keys")
+        value, sj = _js_parse_f713_join_tail(stmts, sj, values,
+                                             state)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, value)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f681_mutator_iife(text, i, depth, state):
     """Parse `(function(){DECL NAME=['LIT',...];STMT*;
     return NAME.join(SEP);})()` (F681).
@@ -40473,6 +40594,263 @@ def _js_parse_f666_has_trap_iife(text, i, depth, state):
         j = _js_expect(text, j, ")")
         state["ops"] += 1  # the iife wrapper is obfuscation-shaped
         return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f714_block_body(text, j, params):
+    """Parse a has-trap block body at text[j] (F714).
+
+    *j* is just after the opening `{`; *params* are the trap's
+    declared params. The body must be exactly `return true;`,
+    `return false;`, or `return IDENT==='LIT';` (IDENT the second
+    param). Returns (True | False | ("eq", lit), next_index) just
+    after the closing `}`. Never evals.
+    """
+    n = len(text)
+    m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if m is None:
+        raise _JSExprFail("F714 has body not return")
+    j = _js_skip_ws(text, m)
+    if text.startswith("true", j) and (j + 4 >= n
+                                       or text[j+4] not in _JS_IDENT_CONT):
+        j = _js_skip_ws(text, j + 4)
+        j = _js_expect(text, j, ";")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "}")
+        return True, j
+    if text.startswith("false", j) and (j + 5 >= n
+                                        or text[j+5] not in _JS_IDENT_CONT):
+        j = _js_skip_ws(text, j + 5)
+        j = _js_expect(text, j, ";")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "}")
+        return False, j
+    lit, j = _js_parse_f666_compare_expr(text, j, params)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "}")
+    return ("eq", lit), j
+
+
+def _js_parse_f714_trap_body(text, i, depth):
+    """Parse a has-trap function value at text[i] (F714).
+
+    Accepts the `key:FN` function forms (function expression,
+    concise/block-body arrows) whose body follows the F714
+    discipline (constant true/false or key-param `==='LIT'`).
+    Returns (True | False | ("eq", lit), next_index). Never evals.
+    """
+    del depth
+    params, is_block, j = _js_parse_f675_fn_head(text, i)
+    if not is_block:
+        j = _js_skip_ws(text, j)
+        n = len(text)
+        if text.startswith("true", j) and (j + 4 >= n
+                                           or text[j+4] not in _JS_IDENT_CONT):
+            return True, j + 4
+        if text.startswith("false", j) and (j + 5 >= n
+                                            or text[j+5] not in _JS_IDENT_CONT):
+            return False, j + 5
+        lit, j = _js_parse_f666_compare_expr(text, j, params)
+        return ("eq", lit), j
+    return _js_parse_f714_block_body(text, j, params)
+
+
+def _js_parse_f714_has_trap(text, i, depth):
+    """Parse `{has:TRAP}` / `{has(P){...}}` at text[i] (F714).
+
+    Exactly one handler key (`has`); the trap body follows the
+    F714 discipline (constant true/false or key-param `==='LIT'`).
+    Returns (trap_result, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, _js_skip_ws(text, i), "{")
+    j = _js_skip_ws(text, j)
+    h = _js_match_kw(text, j, "has")
+    if h is None:
+        raise _JSExprFail("F714 handler not a has trap")
+    j = _js_skip_ws(text, h)
+    if j < n and text[j] == ":":
+        res, j = _js_parse_f714_trap_body(text, j + 1, depth)
+    elif j < n and text[j] == "(":
+        # method shorthand: has(P){...}
+        params, j = _js_parse_f6xx_trap_params(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "{")
+        res, j = _js_parse_f714_block_body(text, j, params)
+    else:
+        raise _JSExprFail("F714 has trap not a function")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "}")
+    return res, j
+
+
+def _js_parse_f714_has_trap_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const p=new Proxy({},{has:TRAP});var|let|const f=('KEY' in p)?'A':'B';return f(+'LIT')*;})()` (F714).
+
+    F666 residual: F666's `_js_parse_f666_has_trap_iife` requires
+    the `in`-ternary as the DIRECT return terminal and only models
+    the `return IDENT==='LIT';` trap body; the filed shapes bind
+    the ternary to `f` first (`var f=('x' in p)?'f1':'xx';return
+    f+'f2';`) and use constant `return true;` trap bodies, so
+    F666 fails them closed. Node-exact desugar (v24.20.0):
+    - `var|let|const p = new Proxy({}, {has:TRAP});` -- the target
+      is the empty object literal; the handler carries exactly the
+      `has` key (`key:FN` or method-shorthand form).
+    - the trap body is `return true;` (always present), `return
+      false;` (always absent), or `return K==='LIT';` with K the
+      trap's second param (present iff the tested key === LIT).
+    - `var|let|const f = ('KEY' in p)?'A':'B';` -- `'KEY' in p`
+      invokes the trap with the tested key; the selected branch
+      (plain string literals) binds to f.
+    - `return f(+'LIT')*;` -- the bound value plus an additive
+      tail of plain string literals, then `;` end-of-body.
+    Returns (value, next_index), or None on mismatch/guard
+    failure. Never evals.
+
+    Bounds (all fail closed): a non-`{}` target, extra handler
+    keys, non-function traps, other trap bodies (comparisons on
+    other params, non-strict operators, truthy-but-not-`true`
+    returns), a non-literal `in` key, the `in` test on another
+    ident, non-literal branches, extra statements, reassignment,
+    call args on the IIFE.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)  # all indexes below are into stmts, not text
+        sj = _js_skip_ws(stmts, 0)
+        # ---- wrapper: var|let|const p=new Proxy({},{has:TRAP});
+        kw, m = _js_match_decl_kw(stmts, sj)
+        if kw is None:
+            raise _JSExprFail("F714 no proxy decl")
+        m = _js_skip_ws(stmts, m)
+        pname, m = _js_parse_ident(stmts, m)
+        if pname == "arguments" or pname in _F611_RESERVED:
+            raise _JSExprFail("F714 proxy name reserved")
+        m = _js_skip_ws(stmts, m)
+        m = _js_expect(stmts, m, "=")
+        m = _js_skip_ws(stmts, m)
+        if not (stmts.startswith("new", m)
+                and (m + 3 >= n or stmts[m + 3] not in _JS_IDENT_CONT)):
+            raise _JSExprFail("F714 wrapper not new")
+        m = _js_skip_ws(stmts, m + 3)
+        pk = _js_match_kw(stmts, m, "Proxy")
+        if pk is None:
+            raise _JSExprFail("F714 wrapper not Proxy")
+        m = _js_skip_ws(stmts, pk)
+        m = _js_expect(stmts, m, "(")
+        m = _js_skip_ws(stmts, m)
+        m = _js_expect(stmts, m, "{")
+        m = _js_skip_ws(stmts, m)
+        m = _js_expect(stmts, m, "}")
+        m = _js_skip_ws(stmts, m)
+        m = _js_expect(stmts, m, ",")
+        trap, m = _js_parse_f714_has_trap(stmts, _js_skip_ws(stmts, m),
+                                          depth)
+        m = _js_skip_ws(stmts, m)
+        m = _js_expect(stmts, m, ")")
+        m = _js_skip_ws(stmts, m)
+        m = _js_expect(stmts, m, ";")
+        state["parts"] += 1  # the proxy wrapper is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        sj = _js_skip_ws(stmts, m)
+        # ---- var|let|const f=('KEY' in p)?'A':'B';
+        kw, m = _js_match_decl_kw(stmts, sj)
+        if kw is None:
+            raise _JSExprFail("F714 no cond decl")
+        m = _js_skip_ws(stmts, m)
+        fname, m = _js_parse_ident(stmts, m)
+        if fname == "arguments" or fname in _F611_RESERVED:
+            raise _JSExprFail("F714 cond name reserved")
+        m = _js_skip_ws(stmts, m)
+        m = _js_expect(stmts, m, "=")
+        m = _js_skip_ws(stmts, m)
+        m = _js_expect(stmts, m, "(")
+        m = _js_skip_ws(stmts, m)
+        if m >= n or stmts[m] not in "'\"":
+            raise _JSExprFail("F714 in-key not a literal")
+        key, m = _js_parse_string(stmts, m)
+        if isinstance(key, _JSNumStr):
+            raise _JSExprFail("F714 in-key not a plain string")
+        m = _js_skip_ws(stmts, m)
+        ik = _js_match_kw(stmts, m, "in")
+        if ik is None:
+            raise _JSExprFail("F714 cond not in-operator")
+        m = _js_skip_ws(stmts, ik)
+        oname, m = _js_parse_ident(stmts, m)
+        if oname != pname:
+            raise _JSExprFail("F714 in-test on another ident")
+        m = _js_skip_ws(stmts, m)
+        m = _js_expect(stmts, m, ")")
+        m = _js_skip_ws(stmts, m)
+        m = _js_expect(stmts, m, "?")
+        m = _js_skip_ws(stmts, m)
+        if m >= n or stmts[m] not in "'\"":
+            raise _JSExprFail("F714 then not a literal")
+        then_lit, m = _js_parse_string(stmts, m)
+        if isinstance(then_lit, _JSNumStr):
+            raise _JSExprFail("F714 then not a plain string")
+        m = _js_skip_ws(stmts, m)
+        m = _js_expect(stmts, m, ":")
+        m = _js_skip_ws(stmts, m)
+        if m >= n or stmts[m] not in "'\"":
+            raise _JSExprFail("F714 else not a literal")
+        else_lit, m = _js_parse_string(stmts, m)
+        if isinstance(else_lit, _JSNumStr):
+            raise _JSExprFail("F714 else not a plain string")
+        m = _js_skip_ws(stmts, m)
+        m = _js_expect(stmts, m, ";")
+        # node-exact guard evaluation (v24.20.0)
+        if trap is True:
+            condval = True
+        elif trap is False:
+            condval = False
+        else:
+            _kind, tlit = trap
+            condval = (key == tlit)
+        fval = then_lit if condval else else_lit
+        state["parts"] += 1  # the in-ternary is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        sj = _js_skip_ws(stmts, m)
+        # ---- return f(+'LIT')*;
+        r = _js_match_kw(stmts, sj, "return")
+        if r is None:
+            raise _JSExprFail("F714 no return")
+        m = _js_skip_ws(stmts, r)
+        rname, m = _js_parse_ident(stmts, m)
+        if rname != fname:
+            raise _JSExprFail("F714 return not the cond binding")
+        value = fval
+        m = _js_skip_ws(stmts, m)
+        while m < n and stmts[m] == "+":
+            m = _js_skip_ws(stmts, m + 1)
+            if m >= n or stmts[m] not in "'\"":
+                raise _JSExprFail("F714 tail not a string literal")
+            tail, m = _js_parse_string(stmts, m)
+            if isinstance(tail, _JSNumStr):
+                raise _JSExprFail("F714 tail not a plain string")
+            value += tail
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        m = _js_skip_ws(stmts, m)
+        m = _js_expect(stmts, m, ";")
+        if _js_skip_ws(stmts, m) != len(stmts):
+            raise _JSExprFail("F714 trailing statements")
+        if len(value) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F714 result too long")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, value)
     except _JSExprFail:
         return None
 
@@ -50722,6 +51100,18 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             _f600 = _js_parse_f669_map_values_spread_iife(text, i,
                                                           depth,
                                                           state)
+        # F713: (function(){var|let|const NAME=new Map([[K,V],...]);
+        #   (NAME.set(K,V);)*return [...NAME(.values()|.keys())?]
+        #   .join(SEP)(+'LIT')*;})() -- literal-Map spread-join with
+        #   an additive tail, and the bare-spread twin. Tried after
+        #   F669: F669 requires the join terminal with no tail and
+        #   fails closed on bare spreads; this route accepts the
+        #   tail-or-bare shapes F669 rejects. F669 wins its exact
+        #   terminal first, so no previously-decoded input changes
+        #   behavior.
+        if _f600 is None:
+            _f600 = _js_parse_f713_map_spread_join_tail_iife(
+                text, i, depth, state)
         if _f600 is not None:
             val, i = _f600
             return _js_parse_postfix(text, i, val, depth, state)
@@ -51105,6 +51495,21 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f666h = _js_parse_f666_has_trap_iife(text, i, depth, state)
         if _f666h is not None:
             val, i = _f666h
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F714: (function(){var|let|const p=new Proxy({},
+        #   {has:TRAP});var|let|const f=('KEY' in p)?'A':'B';return
+        #   f(+'LIT')*;})() -- Proxy has-trap with the in-ternary
+        #   bound to a variable first. Tried after F666: F666
+        #   requires the in-ternary as the direct return terminal
+        #   and only the `return IDENT==='LIT';` trap body (these
+        #   shapes bind the ternary to f and use constant
+        #   `return true;` bodies); F666's binding section breaks on
+        #   the `var f=(` statement, so none of the earlier routes
+        #   accepts these shapes -- no previously-decoded input
+        #   changes behavior.
+        _f714 = _js_parse_f714_has_trap_iife(text, i, depth, state)
+        if _f714 is not None:
+            val, i = _f714
             return _js_parse_postfix(text, i, val, depth, state)
         # F675: set/construct/deleteProperty/getPrototypeOf/
         #   revocable Proxy traps --
