@@ -10119,6 +10119,185 @@ def _js_parse_f556_bound_arrow_call(text, i, depth, state):
     return _js_f556_apply(params, body, args), k
 
 
+def _js_parse_f614_additive_body(text, j, params, state):
+    """Parse `operand (+ operand)*` at text[j] (F614).
+
+    The F556 additive body (declared-param and string-literal
+    operands, `+` concatenation), with one extension: the whole body
+    may be wrapped in a single pair of parentheses -- the F614 filed
+    bind shape is `((a)=>(a+'f2'))` (node v24.20.0: grouping parens
+    are engine-identical). Nested/wrapped-once-more parens,
+    templates, member access, calls, `this`, nested functions, and
+    undeclared names fail closed via the F556 body grammar (rejected,
+    never mis-decoded). Never evals.
+    """
+    n = len(text)
+    if j < n and text[j] == "(":
+        ops, j = _js_parse_f556_additive_body(text, j + 1, params, state)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ")":
+            raise _JSExprFail("F614 body paren not closed")
+        return ops, j + 1
+    return _js_parse_f556_additive_body(text, j, params, state)
+
+
+def _js_parse_f614_fn_target(text, j, depth, state):
+    """Parse `(p1, p2) => BODY` or `function(p1, p2){return BODY}` at
+    text[j] (F614).
+
+    Mirrors _js_parse_f556_fn_target (F519 param grammar: ASCII
+    identifiers, no duplicates, no `...rest` -- the rest-param arrow
+    stays with F577's disjoint route) except the body is the F614
+    additive body, which admits a single grouping-paren wrap around
+    the operand chain (the filed `((a)=>(a+'f2'))` bind shape).
+    Returns (params, body_operands, next_index). `function*`
+    (generator) and `async` fail closed -- the target peek never
+    routes them here. Never evals.
+    """
+    n = len(text)
+    if j < n and text[j] == "(":
+        params, j = _js_parse_fn_params(text, j)
+        j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail("F614 arrow without =>")
+        body, j = _js_parse_f614_additive_body(text, j + 2, params, state)
+        return params, body, j
+    if text.startswith("function", j):
+        k = j + len("function")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F614 functionx")
+        if k < n and text[k] == "*":
+            raise _JSExprFail("F614 generator target")
+        j = _js_skip_ws(text, k)
+        if j < n and text[j] in _JS_IDENT_START:
+            # Optional name (engine-exact; ignored).
+            _, j = _js_parse_ident(text, j)
+            j = _js_skip_ws(text, j)
+        params, j = _js_parse_fn_params(text, j)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "{":
+            raise _JSExprFail("F614 function without brace")
+        j = _js_skip_ws(text, j + 1)
+        if not text.startswith("return", j):
+            raise _JSExprFail("F614 function without return")
+        k = j + len("return")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F614 returnx")
+        body, j = _js_parse_f614_additive_body(text, k, params, state)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ";":
+            j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != "}":
+            raise _JSExprFail("F614 function without close brace")
+        return params, body, j + 1
+    raise _JSExprFail("F614 target not a function")
+
+
+def _js_parse_f614_fnexpr_dispatch(text, i, depth, state):
+    """Parse `((FN)).call(BT, lit, ...)` / `.apply(BT, [lit, ...])` /
+    `.bind(BT, lit, ...)(call, ...)` at text[i] (F614), text[i] == '('.
+
+    Indirect invocation of a FUNCTION-EXPRESSION receiver (F478
+    models prototype-method receivers only; F482 the bracket-string
+    dispatch member). Node-exact desugar (v24.20.0): `.call(thisArg,
+    args...)` invokes FN with args in order; `.apply(thisArg,
+    [args])` spreads the array; `.bind(thisArg, bound...)(call...)`
+    fills params bound-then-call (the F556 arity precedent). The
+    thisArg is parsed and discarded -- arrow functions ignore their
+    receiver and the modeled bodies never reference `this`
+    (node-verified, the F483/F556 precedent). The dispatch member
+    accepts the dot form, the F482 bracket-string form, and the F490
+    `?.` form (all engine-identical, node v24.20.0 verified).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - the receiver must be an arrow or function expression with the
+      F614 additive body (param/literal operands, one optional
+      grouping-paren wrap); anything else returns None and the
+      caller falls through to the previous routes unchanged.
+    - every call arg must be a string literal (F556 grammar);
+      numeric, template, additive, identifier, and spread args fail
+      closed; `.apply`'s array admits the F519/F544 literal-or-spread
+      form.
+    - fewer args than params fails closed (the F519 arity-mismatch
+      precedent: a referenced slot coerces to `undefined` in node, and
+      a body that ignores the unfilled param still carries its
+      credential literals in the clear, where the raw credential scan
+      fires -- fail-safe either way, never mis-decoded).
+      extras are dropped engine-exactly.
+    - `.bind` requires the immediate invocation parens; a bound
+      function with no call is not a decodable value (F483/F556).
+    - a non-literal thisArg fails closed via _js_parse_ignored_value
+      (documented residual).
+    Returns (value, next_index) or None. On any failure the state
+    budgets (parts/ops) are restored, so a rejected dispatch never
+    starves later routes. Never evals.
+    """
+    n = len(text)
+    if i >= n or text[i] != "(":
+        return None
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        params, body, k = _js_parse_f614_fn_target(
+            text, _js_skip_ws(text, i + 1), depth, state)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ")":
+            raise _JSExprFail("F614 target without close paren")
+        k = _js_skip_ws(text, k + 1)
+        bd = _js_peek_dispatch_call(text, k)
+        if bd is None:
+            return None
+        dname, paren = bd
+        p = _js_skip_ws(text, paren + 1)
+        _, p = _js_parse_ignored_value(text, p, depth, state)
+        p = _js_skip_ws(text, p)
+        if dname == "call":
+            if p < n and text[p] == ",":
+                args, p = _js_parse_string_literal_list(
+                    text, _js_skip_ws(text, p + 1), state, ")")
+            elif p < n and text[p] == ")":
+                args, p = [], p + 1
+            else:
+                raise _JSExprFail("F614 bad call dispatch")
+        elif dname == "apply":
+            if p >= n or text[p] != ",":
+                raise _JSExprFail("F614 apply without args array")
+            p = _js_skip_ws(text, p + 1)
+            if p >= n or text[p] != "[":
+                raise _JSExprFail("F614 apply argsArray not an array")
+            args, p = _js_parse_f519_apply_args_array(text, p + 1, state)
+            p = _js_skip_ws(text, p)
+            if p >= n or text[p] != ")":
+                raise _JSExprFail("F614 apply dispatch not closed")
+            p += 1
+        else:  # bind
+            if p < n and text[p] == ",":
+                bound, p = _js_parse_string_literal_list(
+                    text, _js_skip_ws(text, p + 1), state, ")")
+            elif p < n and text[p] == ")":
+                bound, p = [], p + 1
+            else:
+                raise _JSExprFail("F614 bad bind dispatch")
+            p = _js_skip_ws(text, p)
+            if p >= n or text[p] != "(":
+                # A bound function with no immediate call is not a
+                # decodable value (F483/F556 precedent).
+                return None
+            callargs, p = _js_parse_string_literal_list(text, p + 1,
+                                                        state, ")")
+            args = bound + callargs
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+    if len(args) < len(params):
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+    args = args[:len(params)]
+    state["ops"] += 1  # the fn-expr dispatch is obfuscation-shaped
+    return _js_f556_apply(params, body, args), p
+
+
 def _js_parse_f542_delegation(text, i, params):
     """Parse `Reflect.apply(P1,P2,P3)` at text[i] (F542); returns next.
 
@@ -24844,6 +25023,20 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f556 = _js_parse_f556_bound_arrow_call(text, i, depth, state)
         if _f556 is not None:
             val, i = _f556
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F614: ((FN)).call(BT, lit, ...)/.apply(BT, [lit, ...])/
+        # .bind(BT, lit, ...)(call, ...) -- indirect invocation of a
+        # function-expression receiver (F478 models prototype-method
+        # receivers only; F482 the bracket-string dispatch member).
+        # Tried after F556: F556's exact `.bind` route wins on
+        # non-parenthesized bodies (the grammars are disjoint -- F556
+        # rejects parenthesized bodies, F614 accepts them); `.call`
+        # and `.apply` on fn-expr receivers have no other route, and
+        # neither has the `...rest`-param head that F577 owns. None
+        # falls through to the F577/F608 routes below.
+        _f614 = _js_parse_f614_fnexpr_dispatch(text, i, depth, state)
+        if _f614 is not None:
+            val, i = _f614
             return _js_parse_postfix(text, i, val, depth, state)
         # F577: ((...A)=>BODY)(lit, ...) / ((...A)=>BODY).call(T, lit,
         # ...) -- arrow-IIFE rest-parameter bindings. None falls

@@ -21,7 +21,7 @@ Mechanism notes (verified this round):
 - F463 (CLOSED) models the String.raw tag only in the leading-primary
   position; RHS-of-+, parenthesized, array-element, and template-interp
   positions escape (F613). Leading and substitution forms block coded.
-- F478/F482 (OPEN) cover .call/.apply/.bind on prototype-method (dot and
+- F478/F482 (CLOSED, waves 357/359) cover .call/.apply/.bind on prototype-method (dot and
   bracket) receivers; function-expression receivers escape (F614).
 - F608 (OPEN) covers Set spread into call args; Map.values() is a
   different source production (F500/F505 precedent) and escapes (F615).
@@ -39,12 +39,13 @@ controls pass. No injection attempts.
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F595, F606-F611 (prior rounds), F613-F620 (this round; F612 closed
-wave-374 lane 1).
-
-Closed pins (must BLOCK, else BREAK): F576, F583, F596 (older spots),
-F597, F598, F599, F600, F602, F603, F604, F605 (wave-372 closures),
-F612 (wave-374 lane 1).
+   F595, F606-F611 (prior rounds), F615-F620 (this round; F612, F613, F614 closed
+   wave-374 lanes 1-3).
+   
+   Closed pins (must BLOCK, else BREAK): F576, F583, F596 (older spots),
+   F597, F598, F599, F600, F602, F603, F604, F605 (wave-372 closures),
+   F595, F606, F607, F608, F609, F610, F611 (wave-373 closures),
+   F612 (wave-374 lane 1), F613 (wave-374 lane 2), F614 (wave-374 lane 3).
 
 Rides-with-documented-scope (validated, NOT filed):
 - JSON.parse(JSON.stringify([[,'f1'],['f2']])).flat().join('') and the
@@ -130,11 +131,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F614-F620 open, next F621 (merged: F612+F613 closed)."""
+    """Control: footer shows F615-F620 open, next F621 (merged: F612/F613/F614 closed)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F621**" in text  # Wave-373 merge: attack round 41 filed F612-F620  # Wave-374 lane 2: F613 CLOSED
-          and "Open findings: F614, F615, F616, F617, F618, F619, F620." in text)  # Wave-373 merge: F595, F606-F611 CLOSED  # Wave-374 lane 1: F612 CLOSED  # Wave-374 lane 2: F613 CLOSED
+    ok = ("Next free finding: **F621**" in text  # Wave-373 merge: attack round 41 filed F612-F620  # Wave-374 lane 2: F613 CLOSED  # Wave-374 lane 3: F614 CLOSED
+          and "Open findings: F615, F616, F617, F618, F619, F620." in text)  # Wave-373 merge: F595, F606-F611 CLOSED  # Wave-374 lane 1: F612 CLOSED  # Wave-374 lane 2: F613 CLOSED  # Wave-374 lane 3: F614 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -307,13 +308,13 @@ def test_p1_f613_closed():
 
 
 @_t
-def test_r41_f614_open():
-    """F614 OPEN: .call/.apply/.bind on function expressions misses."""
-    m1 = _misses("((a,b)=>a+b).apply(null,['%s','%s'])" % (_A, _B))
-    m2 = _misses("((a,b)=>a+b).call(null,'%s','%s')" % (_A, _B))
-    m3 = _misses("((a)=>(a+'%s')).bind(null,'%s')()" % (_B, _A))
-    ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_p1_f614_closed():
+    """F614 CLOSED (wave-374 lane 3): fn-expr .call/.apply/.bind blocks."""
+    h1 = _blocked("((a,b)=>a+b).apply(null,['%s','%s'])" % (_A, _B))
+    h2 = _blocked("((a,b)=>a+b).call(null,'%s','%s')" % (_A, _B))
+    h3 = _blocked("((a)=>(a+'%s')).bind(null,'%s')()" % (_B, _A))
+    ok = h1 and h2 and h3
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
 @_t
