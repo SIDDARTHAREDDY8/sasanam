@@ -22,11 +22,12 @@ node-verified EXACT (v24.20.0): 20/20 CRED-EXACT, 20/20 decoder-miss.
 Junk-quiet controls pass. No injection attempts this round.
 
 Known-open pins (each probe returns HELD when the miss reproduces; a literal
-BREAK verdict means the pin failed or a NEW break appeared): F595
-(wave-370 merge, regression spot pin; F596 CLOSED by wave-371 lane 7),
-F597-F605 (this round; CLOSED by
+BREAK verdict means the pin failed or a NEW break appeared): F597-F605
+(this round; CLOSED by
 wave-372 lanes 1-6: F597 lane 1, F598 lane 2, F599 lane 3, F600-F602 lane 4,
-F603 lane 5, F604-F605 lane 6). F583-F594
+F603 lane 5, F604-F605 lane 6). F595 (wave-370 merge, regression spot pin;
+CLOSED by wave-373 lane 1) and F596 (CLOSED by wave-371 lane 7) are now
+closed pins. F583-F594
 (round 38) are pinned by the w370 attack battery, run as the depth-1 green
 check below.
 
@@ -146,11 +147,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F597-F599/F603-F605 open, next F606 (wave-372 lane 4)."""
+    """Control: footer shows F606-F611 open, next F612 (wave-373 lane 1)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F612**" in text  # Wave-371 lane 8 (attack round 39): F583-F596 OPEN (base); F597-F604 filed OPEN (next F605)  # Wave-372 lane 1: F597 CLOSED (next F606)  # Wave-372 merge: footer repoint next F612
-          and "Open findings: F595, F606, F607, F608, F609, F610, F611." in text)  # Wave-371 lane 8 (attack round 39): F583-F596 OPEN (base); F597-F604 filed OPEN (next F605)  # Wave-372 lane 1: F597 CLOSED (next F606)  # Wave-372 merge: footer repoint open F606-F611 / next F612
+          and "Open findings: F606, F607, F608, F609, F610, F611." in text)  # Wave-371 lane 8 (attack round 39): F583-F596 OPEN (base); F597-F604 filed OPEN (next F605)  # Wave-372 lane 1: F597 CLOSED (next F606)  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 1: F595 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -403,11 +404,13 @@ def test_p1_f604_closed():
 
 @_t
 def test_r39_f595_open():
-    """F595 OPEN (wave-370 merge): stringify nested array values still miss."""
-    m1 = _misses("JSON.parse(JSON.stringify({a:['%s','%s']})).a.join('')" % (_A, _B))
-    m2 = _misses("JSON.parse(JSON.stringify([['%s'],['%s']])).flat().join('')" % (_A, _B))
-    ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    """F595 CLOSED by wave-373 lane 1: stringify nested array values now held."""
+    # Wave-373 merge: lane 1 closed F595; the attack-lane "still open"
+    # expectation is superseded.
+    h1 = not _misses("JSON.parse(JSON.stringify({a:['%s','%s']})).a.join('')" % (_A, _B))
+    h2 = not _misses("JSON.parse(JSON.stringify([['%s'],['%s']])).flat().join('')" % (_A, _B))
+    ok = h1 and h2
+    return ("HELD" if ok else "BREAK", "held=%s" % ok)
 
 
 @_t

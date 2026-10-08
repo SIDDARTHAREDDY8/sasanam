@@ -5810,6 +5810,61 @@ def _js_parse_string_literal_array(text, i, state):
         raise _JSExprFail("bad Reflect args")
 
 
+def _js_parse_f595_json_array(text, i, depth, state):
+    """Parse `[` ELT (`,` ELT)* `]` at text[i] (text[i] == '[') (F595).
+
+    JSON-literal array elements: string literals ('...', "...", or `...`
+    templates via _js_parse_template, mirroring
+    _js_parse_string_literal_array's element classes) or nested arrays
+    (recursive, depth-bounded by _JS_EXPR_MAX_DEPTH). Used ONLY in the
+    F571 stringify VALUE position: the flat form is element-identical
+    to _js_parse_string_literal_array (which it replaces there), and
+    the nested form was previously fail-closed there -- so no
+    previously-decoded input changes behavior. Numerics, objects,
+    and non-literal elements fail closed (documented boundary --
+    consistent with the F468 element classes this mirrors). The
+    `in_array` guard is preserved: an outer array-literal context
+    still fails closed as before. Element count charges the F430
+    parts budget. Never evals.
+    """
+    n = len(text)
+    if state.get("in_array"):
+        raise _JSExprFail("Array inside array literal")
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F595 array too deep")
+    j = _js_skip_ws(text, i + 1)
+    elements = []
+    if j < n and text[j] == "]":
+        return _JSArr(elements), j + 1
+    while True:
+        if j >= n:
+            raise _JSExprFail("unterminated F595 array")
+        c = text[j]
+        if c in "'\"`":
+            if c == "`":
+                frag, j = _js_parse_template(text, j, 0, state)
+            else:
+                frag, j = _js_parse_string(text, j)
+            elements.append(frag)
+        elif c == "[":
+            sub, j = _js_parse_f595_json_array(text, j, depth + 1, state)
+            elements.append(sub)
+        else:
+            raise _JSExprFail("F595 array element not a literal")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("unterminated F595 array")
+        if text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            continue
+        if text[j] == "]":
+            return _JSArr(elements), j + 1
+        raise _JSExprFail("bad F595 array")
+
+
 def _js_parse_reflect_construct(text, i, depth, state):
     """Parse 'Reflect.construct(Array, <argsArray>)' at text[i] (F468).
 
@@ -11023,15 +11078,21 @@ def _js_symbol_key(name):
     return ("symbol", name)
 
 
-def _js_parse_f535_value(text, i, depth, state, accessor_aware=False):
+def _js_parse_f535_value(text, i, depth, state, accessor_aware=False,
+                         nested_arrays=False):
     """Parse one F535 object-literal value at text[i] (F535/F536).
 
-    Returns (str | _JSObj, next_index). Values: string literals,
-    canonical decimal integers (the literal text is already the
-    engine's decimal repr -- `042`/`0x10`/`1e3` are engine-different
-    and fail closed), or nested object literals (depth-bounded).
-    Arrays, template literals, booleans, null, and non-canonical
-    numbers fail closed (documented boundary). Never evals.
+    Returns (str | _JSNumStr | _JSObj | _JSArr, next_index). Values:
+    string literals, canonical decimal integers (the literal text is
+    already the engine's decimal repr -- `042`/`0x10`/`1e3` are
+    engine-different and fail closed), or nested object literals
+    (depth-bounded). Arrays, template literals, booleans, null, and
+    non-canonical numbers fail closed (documented boundary) -- unless
+    nested_arrays is True (F595, the F571 stringify VALUE position
+    only), in which case an array literal value parses via
+    _js_parse_f595_json_array (JSON-literal arrays, depth-bounded).
+    All other callers keep the default and arrays fail closed there
+    (F535/F536 boundary preserved). Never evals.
 
     accessor_aware (F549): propagated to nested object parses so
     getter-ness survives at every level.
@@ -11046,8 +11107,11 @@ def _js_parse_f535_value(text, i, depth, state, accessor_aware=False):
         return _js_parse_canonical_int(text, i, "object value")
     if c == "{":
         props, j = _js_parse_f535_object(text, i, depth + 1, state,
-                                         accessor_aware=accessor_aware)
+                                         accessor_aware=accessor_aware,
+                                         nested_arrays=nested_arrays)
         return _JSObj(props), j
+    if c == "[" and nested_arrays:
+        return _js_parse_f595_json_array(text, i, depth + 1, state)
     raise _JSExprFail("object value not a literal")
 
 
@@ -11082,14 +11146,20 @@ def _js_parse_f557_spread(text, j, depth, state):
     raise _JSExprFail("spread source not a literal object")
 
 
-def _js_parse_f535_object(text, i, depth, state, accessor_aware=False):
+def _js_parse_f535_object(text, i, depth, state, accessor_aware=False,
+                          nested_arrays=False):
     """Parse `{k0:v0, ...}` at text[i] (text[i] == '{') (F535/F536).
 
-    Returns (props, next_index): props maps key -> str | _JSObj.
+    Returns (props, next_index): props maps key -> str | _JSNumStr |
+    _JSObj | _JSArr (array values only when nested_arrays=True, F595).
     (accessor_aware (F549): getters resolve to _JSAccessor(VAL)
     instead of VAL, preserving the data-vs-accessor distinction the
     getOwnPropertyDescriptor builtin needs. All other callers use
     the default (plain evaluated values).)
+    nested_arrays (F595): propagated to _js_parse_f535_value so array
+    literal values parse in the F571 stringify VALUE position only;
+    all other callers keep the default (arrays fail closed). Spread
+    sources stay strict regardless (documented boundary).
     Keys: string literals, decimal integer literals, identifiers
     (`__proto__` fails closed), or F552 computed
     `[Symbol.for('K')]` registry keys (stored as ("symbol", K)
@@ -11193,7 +11263,8 @@ def _js_parse_f535_object(text, i, depth, state, accessor_aware=False):
                     raise _JSExprFail("object literal needs colon")
                 val, j = _js_parse_f535_value(text, _js_skip_ws(text, k + 1),
                                               depth, state,
-                                              accessor_aware=accessor_aware)
+                                              accessor_aware=accessor_aware,
+                                              nested_arrays=nested_arrays)
                 props[key] = val
                 state["parts"] += 1
                 if state["parts"] > _JS_EXPR_MAX_PARTS:
@@ -22682,9 +22753,10 @@ def _js_parse_f571_stringify_call(text, j, depth, state):
     """Parse `JSON.stringify(VALUE)` at text[j] (F571).
 
     Returns the node-exact JSON text of VALUE. VALUE is a JSON-literal
-    input: a string literal, an array of string literals
-    (_js_parse_string_literal_array), or an object literal
-    (_js_parse_f535_object, default mode); plus the F598 derived-array
+    input: a string literal, a JSON-literal array of string literals
+    and/or nested arrays (_js_parse_f595_json_array, F595), or an
+    object literal (_js_parse_f535_object, default mode; F595 allows
+    array values via nested_arrays=True); plus the F598 derived-array
     forms -- `Array.from(new Set([...]))` and
     `Array.from(new Map([[k,v],...]).values())` (via
     _js_parse_array_from, F508/F494; the `from` member only --
@@ -22725,9 +22797,17 @@ def _js_parse_f571_stringify_call(text, j, depth, state):
             if not isinstance(val, _JSArr):
                 raise _JSExprFail("F598 spread copy not an array")
         else:
-            val, k = _js_parse_string_literal_array(text, k, state)
+            # F595: JSON-literal arrays -- string literals, or nested
+            # arrays of string literals (recursive, depth-bounded).
+            # The flat form is element-identical to the previous
+            # _js_parse_string_literal_array grammar; the nested form
+            # was previously fail-closed here.
+            val, k = _js_parse_f595_json_array(text, k, depth, state)
     elif c == "{":
-        props, k = _js_parse_f535_object(text, k, depth, state)
+        # F595: object values may be JSON-literal arrays
+        # (nested_arrays=True, stringify VALUE position only).
+        props, k = _js_parse_f535_object(text, k, depth, state,
+                                         nested_arrays=True)
         val = _JSObj(props)
     elif text.startswith("Array", k):
         # F598: Array.from(new Set([...])) /

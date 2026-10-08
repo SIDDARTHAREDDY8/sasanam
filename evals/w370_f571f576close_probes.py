@@ -60,8 +60,7 @@ def p0_pin_footer():
     assert TAXONOMY_PIN == 2140, "pin moved"
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("Next free finding: **F612**" in text  # Wave-372 merge: footer repoint next F612
-          and "Open findings: F570, F572, F573, F574, F575, F577, F578, "
-               "F579, F580, F581, F582." in text)
+          and "Open findings: F606, F607, F608, F609, F610, F611." in text)  # Wave-373 lane 1: F595 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -211,9 +210,11 @@ def p7_compositions():
         ("F563", "new Map([['c','%s']]).get('c')+'%s'" % (_A1, _A2)),
         ("F539", "new WeakRef({c:'%s'}).deref().c+'%s'" % (_A1, _A2)),
         ("F551", "String.raw({raw:['','','']},'%s','%s')" % (_A1, _A2)),
-    ]
-    # Open neighbors still BREAK (no accidental closes).
-    open_ = [
+        # Wave-373 lane 1: F570-F582 closed in wave-370 (verified push
+        # ec2773b2), but this battery's open-neighbor list was never
+        # flipped (wave-305/306 debt -- the shapes all decode on the
+        # current tree, proven by the pre-existing p7 BREAK). They join
+        # the held list; the open list is empty.
         ("F570", "Reflect.apply(function(){\"use strict\";var a=arguments;"
                  "return a[0]+a[1];},null,['%s','%s'])" % (_A1, _A2)),
         ("F572", "(function(){var k={};var m=new WeakMap();m.set(k,'%s');"
@@ -235,6 +236,10 @@ def p7_compositions():
         ("F582", "Reflect.apply((a,b)=>a+b,null,['%s','%s','junk'])"
                  % (_A1, _A2)),
     ]
+    # No open neighbors remain in this battery's scope (F570-F582 closed
+    # wave-370; F595 closed wave-373 lane 1). Empty by design: a future
+    # open neighbor re-pins here.
+    open_ = []
     # honest URLSearchParams read with no credential stays quiet
     honest_quiet = _quiet("new URLSearchParams('a=b').get('a')")
     bad_held = [n for n, s in held if not _blocked(s)]
