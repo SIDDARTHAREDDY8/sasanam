@@ -276,7 +276,8 @@ def _round42_shapes():
     """Filed shapes of the currently-OPEN round-42 findings (must still miss)."""
     import importlib
     shapes = []
-    for fnum in (621, 622, 623, 624, 625, 626, 627, 628, 629, 630, 631, 632, 633, 634):
+    # Wave-375 lane 2: F622, F632 CLOSED -- dropped from the still-open set.
+    for fnum in (621, 623, 624, 625, 626, 627, 628, 629, 630, 631, 633, 634):
         mod = importlib.import_module("w374_f%d_redfirst" % fnum)
         for name, payload, recovers in mod.SHAPES:
             if recovers:
@@ -285,8 +286,9 @@ def _round42_shapes():
 
 
 def test_p4_open_neighbors_still_miss():
-    """Attack findings F621-F634 still miss (nothing absorbed)."""
-    bad = [f for fnum, name, payload in _round42_shapes() if not _misses(payload)]
+    """Still-open round-42 findings still miss (nothing absorbed)."""
+    bad = [(fnum, name) for fnum, name, payload in _round42_shapes()
+           if not _misses(payload)]  # Wave-375 lane 2: latent NameError fixed (`f` -> fnum/name)
     ok = not bad
     return ("HELD" if ok else "BREAK", "miss=%s bad=%s" % (ok, bad[:3]))
 
@@ -324,8 +326,8 @@ def test_p5_pin_taxonomy():
 def test_p5_footer_state():
     """Footer: F612 closed; open F613-F620; next F621 (lane-local)."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F640**" in text  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
-          and "Open findings: F621, F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635, F636, F637, F638, F639." in text)  # Wave-374 lane 1: F612 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
+    ok = ("Next free finding: **F640**" in text  # Wave-375 lane 2: F622, F632 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
+          and "Open findings: F621, F623, F624, F625, F626, F627, F628, F629, F630, F631, F633, F634, F635, F636, F637, F638, F639." in text)  # Wave-375 lane 2: F622, F632 CLOSED  # Wave-374 lane 1: F612 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

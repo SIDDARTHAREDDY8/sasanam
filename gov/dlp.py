@@ -19151,23 +19151,36 @@ def _js_span_balanced_braces(text, i):
 
 
 def _js_split_forin_accum(text, a, b):
-    """Split the for-in accumulation statements in text[a:b] (F517/F592).
+    """Split the for-in accumulation statements in text[a:b] (F517/F592/F632).
 
     The exact modeled shape (ws-tolerant):
         var ACC='';
         var OBJ={...};
-        for(var K in OBJ)ACC+=OBJ[K](.MEM)?;
+    or (F632: the two independent declarations in either order --
+    engine-identical, node v24.20.0 verified):
+        var OBJ={...};
+        var ACC='';
+    then:
+        for(var K in OBJ)ACC+=OBJ[K](.MEM|['MEM'])?(||OBJ[K](.MEM|['MEM'])?)*;
         return ACC;
     The loop body braces are optional (engine-identical, node
     v24.20.0 verified -- the F529 alias grammar already models
     this; F592 extends it to the object-literal source). The body
-    may read `OBJ[K]` (F517) or `OBJ[K].MEM` with a single dot
-    identifier member (F592: the nested-object twin -- each
-    enumerated value must be an object for the read to resolve;
-    see the F592 desugar). Returns (acc_ident, obj_ident,
-    key_ident, objlit_text, member) where member is None or the
-    member ident string. Any other statement, extra statement, or
-    shape mismatch fails closed. Never evals.
+    may read `OBJ[K]` (F517), `OBJ[K].MEM` with a single dot
+    identifier member or `OBJ[K]['MEM']` with a bracket-string
+    member (F592: the nested-object twin -- each enumerated value
+    must be an object for the read to resolve; F632: the bracket
+    form is engine-identical to the dot form for identifier names,
+    node v24.20.0 verified; see the F592 desugar), or a `||` chain
+    of such member reads on the same indexed value (F632:
+    `s+=o[k].p||o[k].q` -- the compound member-expression twin;
+    each operand re-reads `OBJ[K]`, engine-exact). Returns (acc_ident,
+    obj_ident, key_ident, objlit_text, member, or_members) where
+    member is None or the single member ident string (F517/F592)
+    and or_members is None or the non-empty `||`-chain member list
+    (F632; the first element is the initial member read). Any other
+    statement, extra statement, or shape mismatch fails closed.
+    Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, a)
@@ -19175,36 +19188,70 @@ def _js_split_forin_accum(text, a, b):
         raise _JSExprFail("forin empty body")
     m = _js_match_kw(text, j, "var")
     if m is None:
-        raise _JSExprFail("forin accum not var")
+        raise _JSExprFail("forin first decl not var")
     j = _js_skip_ws(text, m)
-    acc, j = _js_parse_ident(text, j)
+    first, j = _js_parse_ident(text, j)
     j = _js_skip_ws(text, j)
     j = _js_expect(text, j, "=")
     j = _js_skip_ws(text, j)
-    if j >= n or text[j] not in "'\"":
-        raise _JSExprFail("forin accum not a string")
-    q0 = j
-    _, j = _js_parse_string(text, j)
-    if text[q0:j] != "''" and text[q0:j] != '""':
-        raise _JSExprFail("forin accum not empty")
-    j = _js_skip_ws(text, j)
-    j = _js_expect(text, j, ";")
-    j = _js_skip_ws(text, j)
-    m = _js_match_kw(text, j, "var")
-    if m is None:
-        raise _JSExprFail("forin obj not var")
-    j = _js_skip_ws(text, m)
-    obj, j = _js_parse_ident(text, j)
-    if obj == acc:
-        raise _JSExprFail("forin obj shadows accum")
-    j = _js_skip_ws(text, j)
-    j = _js_expect(text, j, "=")
-    j = _js_skip_ws(text, j)
-    if j >= n or text[j] != "{":
-        raise _JSExprFail("forin obj not a literal")
-    lit_start = j
-    j = _js_span_balanced_braces(text, j)
-    objlit_text = text[lit_start:j]
+    acc = None
+    obj = None
+    objlit_text = None
+    if j < n and text[j] in "'\"":
+        # Accumulator-first order (the F517/F592 filed shape).
+        acc = first
+        q0 = j
+        _, j = _js_parse_string(text, j)
+        if text[q0:j] != "''" and text[q0:j] != '""':
+            raise _JSExprFail("forin accum not empty")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ";")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "var")
+        if m is None:
+            raise _JSExprFail("forin obj not var")
+        j = _js_skip_ws(text, m)
+        obj, j = _js_parse_ident(text, j)
+        if obj == acc:
+            raise _JSExprFail("forin obj shadows accum")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "=")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "{":
+            raise _JSExprFail("forin obj not a literal")
+        lit_start = j
+        j = _js_span_balanced_braces(text, j)
+        objlit_text = text[lit_start:j]
+    elif j < n and text[j] == "{":
+        # F632: object-first order. The two declarations are
+        # independent, so the order is engine-identical (node
+        # v24.20.0 verified); the F632 filed shapes declare the
+        # object first.
+        obj = first
+        lit_start = j
+        j = _js_span_balanced_braces(text, j)
+        objlit_text = text[lit_start:j]
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ";")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "var")
+        if m is None:
+            raise _JSExprFail("forin accum not var")
+        j = _js_skip_ws(text, m)
+        acc, j = _js_parse_ident(text, j)
+        if acc == obj:
+            raise _JSExprFail("forin accum shadows obj")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "=")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("forin accum not a string")
+        q0 = j
+        _, j = _js_parse_string(text, j)
+        if text[q0:j] != "''" and text[q0:j] != '""':
+            raise _JSExprFail("forin accum not empty")
+    else:
+        raise _JSExprFail("forin first decl not accum-or-obj")
     j = _js_skip_ws(text, j)
     j = _js_expect(text, j, ";")
     j = _js_skip_ws(text, j)
@@ -19256,14 +19303,64 @@ def _js_split_forin_accum(text, a, b):
     j = _js_skip_ws(text, j)
     j = _js_expect(text, j, "]")
     j = _js_skip_ws(text, j)
-    # F592: an optional single dot-identifier member read on the
-    # indexed value (`s+=o[k].v`); anything else (a call, a deeper
-    # chain, a computed member) fails closed.
+    # F592: an optional single member read on the indexed value
+    # (`s+=o[k].v` -- dot identifier; F632: `s+=o[k]['v']` --
+    # bracket-string, engine-identical for identifier names, node
+    # v24.20.0 verified); anything else (a call, a deeper chain)
+    # fails closed.
     member = None
+    or_members = None
     if j < b and text[j] == ".":
         j = _js_skip_ws(text, j + 1)
         member, j = _js_parse_ident(text, j)
         j = _js_skip_ws(text, j)
+    elif j < b and text[j] == "[":
+        # F632: the bracket-string member form. Engine-identical to
+        # the dot form for the identifier names
+        # `_js_parse_bracket_member` accepts (node v24.20.0
+        # verified); it flows through the same single-member path
+        # as the dot form.
+        member, j = _js_parse_bracket_member(text, j)
+        j = _js_skip_ws(text, j)
+    if member is not None:
+        # F632: a `||` chain of member reads on the same indexed
+        # value (`s+=o[k].p||o[k].q`). Each operand re-reads
+        # `OBJ[KEY]`; `||=` (logical assignment) is engine-different
+        # and fails closed here.
+        j2 = _js_skip_ws(text, j)
+        if j2 < b and text.startswith("||", j2) \
+                and not text.startswith("||=", j2):
+            or_members = [member]
+            member = None
+            j = j2
+            while True:
+                j = _js_skip_ws(text, j + 2)
+                obj4, j = _js_parse_ident(text, j)
+                if obj4 != obj:
+                    raise _JSExprFail("F632 or reads another object")
+                j = _js_skip_ws(text, j)
+                j = _js_expect(text, j, "[")
+                key3, j = _js_parse_ident(text, _js_skip_ws(text, j))
+                if key3 != keyvar:
+                    raise _JSExprFail("F632 or indexes another key")
+                j = _js_skip_ws(text, j)
+                j = _js_expect(text, j, "]")
+                j = _js_skip_ws(text, j)
+                if j < b and text[j] == ".":
+                    j = _js_skip_ws(text, j + 1)
+                    mname, j = _js_parse_ident(text, j)
+                elif j < b and text[j] == "[":
+                    mname, j = _js_parse_bracket_member(text, j)
+                else:
+                    raise _JSExprFail("F632 or operand not a read")
+                or_members.append(mname)
+                j = _js_skip_ws(text, j)
+                j2 = j
+                if j2 < b and text.startswith("||", j2) \
+                        and not text.startswith("||=", j2):
+                    j = j2
+                    continue
+                break
     j = _js_expect(text, j, ";")
     j = _js_skip_ws(text, j)
     if braced:
@@ -19282,7 +19379,7 @@ def _js_split_forin_accum(text, a, b):
     j = _js_skip_ws(text, j)
     if j != b:
         raise _JSExprFail("forin trailing statements")
-    return acc, obj, keyvar, objlit_text, member
+    return acc, obj, keyvar, objlit_text, member, or_members
 
 
 def _js_parse_f578_defineprop_stmt(text, sj, oname, depth, state):
@@ -19863,12 +19960,169 @@ def _js_f592_member_join(objlit_text, member, depth, state):
     return "".join(out)
 
 
+# Member names that resolve through Object.prototype in the engine
+# (node v24.20.0). A for-in OR-chain member read of one of these
+# names does NOT yield undefined for a missing own property -- the
+# engine returns the prototype's member (a function or object,
+# always truthy) -- so the static "missing means falsy" model
+# would mis-decode. F632 fails these names closed (documented);
+# every other absent name is engine-exactly undefined.
+_JS_F632_PROTO_MEMBERS = (
+    "__proto__", "constructor", "hasOwnProperty", "isPrototypeOf",
+    "propertyIsEnumerable", "toLocaleString", "toString", "valueOf",
+    "__defineGetter__", "__defineSetter__", "__lookupGetter__",
+    "__lookupSetter__",
+)
+
+
+def _js_scan_f632_numeric_zero(text, members):
+    """Detect a numeric `0` property value under a chain-member name
+    (F632 helper).
+
+    String-aware scan of an object-literal text: returns True when
+    `<member> : 0` (key as a bare identifier or a quoted string)
+    appears with a standalone numeric zero outside string/template
+    literals. The F535 value grammar coerces numeric literals to
+    strings, so a numeric `0` would otherwise be mis-modeled as the
+    truthy string `'0'` (the engine's numeric `0` is falsy and falls
+    through the `||` chain); the caller fails the OR-chain closed
+    instead (documented boundary -- rejected, never mis-decoded).
+    Only a standalone `0` matters: every other canonical integer is
+    truthy in the engine exactly like its non-empty string coercion,
+    and non-canonical numerals fail closed in the literal grammar.
+    Longer numerals (`10`), quoted contents (`'a:0'`), and member
+    names that merely prefix a longer identifier never match. Never
+    evals.
+    """
+    n = len(text)
+    i = 0
+    while i < n:
+        c = text[i]
+        if c in "'\"":
+            try:
+                _, i = _js_parse_string(text, i)
+            except _JSExprFail:
+                i += 1
+            continue
+        if c == "`":
+            i += 1
+            while i < n and text[i] != "`":
+                if text[i] == "\\":
+                    i += 1
+                i += 1
+            i += 1
+            continue
+        matched_len = 0
+        for m in members:
+            # Bare-identifier key.
+            if text.startswith(m, i) and not (
+                    i > 0 and text[i - 1] in _JS_IDENT_CONT) and not (
+                    i + len(m) < n
+                    and text[i + len(m)] in _JS_IDENT_CONT):
+                matched_len = len(m)
+                break
+            # Quoted key.
+            for q in ("'", '"'):
+                qq = q + m + q
+                if text.startswith(qq, i) and not (
+                        i > 0 and text[i - 1] in _JS_IDENT_CONT):
+                    matched_len = len(qq)
+                    break
+            if matched_len:
+                break
+        if not matched_len:
+            i += 1
+            continue
+        j = _js_skip_ws(text, i + matched_len)
+        if j >= n or text[j] != ":":
+            i += 1
+            continue
+        j = _js_skip_ws(text, j + 1)
+        if j < n and text[j] == "0" and not (
+                j + 1 < n and text[j + 1] in _ASCII_DIGITS):
+            return True
+        i = j if j > i else i + 1
+    return False
+
+
+def _js_f632_or_join(objlit_text, members, depth, state):
+    """Join the `||`-chained member reads of a for-in over an object
+    literal (F632).
+
+    Desugars `for(var K in O)S+=O[K].M1||O[K].M2[||...]` over a
+    literal object O: each enumerated value's member chain is
+    evaluated with the engine's short-circuit `||` semantics (node
+    v24.20.0 verified) -- the first truthy operand wins; when every
+    operand is falsy the last operand's value is appended (missing
+    reads as the string "undefined", the engine's ToString of
+    undefined, exactly as F592's single-member convention). Per
+    operand, the F592 member discipline applies: a missing own
+    property (and any read on a primitive string value, which the
+    engine boxes) is falsy; a present string is truthy iff
+    non-empty; a present non-string value fails closed (the
+    decoder's string domain cannot model it -- documented). A
+    numeric `0` property value under a chain-member name fails the
+    whole chain closed (the F535 value grammar coerces numbers to
+    strings, losing the engine's falsy-`0`; detected by a
+    string-aware scan -- documented boundary). Member names
+    resolving through Object.prototype fail closed via
+    `_JS_F632_PROTO_MEMBERS` (documented). The literal is parsed by
+    `_js_parse_f535_object` (its per-property part budget applies),
+    so getters/`__proto__`/computed keys fail closed there as
+    before. Symbol keys are skipped by for-in (node v24.20.0), as
+    in F592. Returns the joined string. Never evals.
+    """
+    if _js_scan_f632_numeric_zero(objlit_text, members):
+        raise _JSExprFail("F632 numeric zero member fails closed")
+    props, _ = _js_parse_f535_object(objlit_text, 0, depth, state)
+    out = []
+    for key in _js_ownkeys_order(props):
+        if not isinstance(key, str):
+            continue  # for-in skips symbol keys (node v24.20.0)
+        v = props[key]
+        if isinstance(v, _JSObj):
+            def _lookup(m, _v=v):
+                return _jsobj_lookup(_v, m)
+        elif isinstance(v, str):
+            # primitive values box: ('x').m is undefined for every
+            # data member name (node-exact); prototype members fail
+            # closed before this point.
+            def _lookup(m):
+                return None
+        else:
+            raise _JSExprFail("F632 value not an object or string")
+        last = None
+        resolved = None
+        for m in members:
+            if m in _JS_F632_PROTO_MEMBERS:
+                raise _JSExprFail("F632 prototype member fails closed")
+            mv = _lookup(m)
+            last = mv
+            if isinstance(mv, str):
+                if mv != "":
+                    resolved = mv
+                    break  # truthy: short-circuit, engine-exact
+                # empty string: falsy, fall through to next operand
+            elif mv is None:
+                continue  # missing: falsy, fall through
+            else:
+                raise _JSExprFail("F632 member value not a string")
+        if resolved is None:
+            # Every operand falsy: the engine appends the last
+            # operand's value (ToString); a missing last operand is
+            # undefined -> "undefined".
+            resolved = last if isinstance(last, str) else "undefined"
+        out.append(resolved)
+    return "".join(out)
+
+
 def _js_parse_forin_accum_iife(text, i, depth, state):
-    """Parse a for-in accumulation IIFE at text[i] (F517/F592).
+    """Parse a for-in accumulation IIFE at text[i] (F517/F592/F632).
 
     The exact modeled shape (ws-tolerant):
         (function(){var A='';var O={...};
-         for(var K in O){A+=O[K](.MEM)?;}return A})()
+         for(var K in O){A+=O[K](.MEM|['MEM'])?
+         (||O[K](.MEM|['MEM'])?)*;}return A})()
 
     Desugars the for-in accumulation idiom: the accumulator starts
     as the empty string and appends each enumerated value in
@@ -19888,11 +20142,16 @@ def _js_parse_forin_accum_iife(text, i, depth, state):
     single `.MEM` member read on the indexed value (the nested
     twin -- resolved by `_js_f592_member_join` over the F535
     object parse; a missing member or a primitive value reads as
-    the string "undefined", node-exact). The IIFE must be
-    anonymous with zero params and zero call args. Returns
-    (value, next_index), or None when the head does not match or a
-    guard fails. Bounded by the part/depth budgets; the wrapper
-    charges one op (obfuscation-shaped). Never evals.
+    the string "undefined", node-exact). F632 adds the compound
+    member-expression twin (node v24.20.0 verified): a `||` chain
+    of member reads on the same indexed value
+    (`s+=o[k].p||o[k].q`, dot or bracket-string members --
+    resolved by `_js_f632_or_join` with the engine's short-circuit
+    `||` semantics; prototype-chain member names fail closed).
+    The IIFE must be anonymous with zero params and zero call args.
+    Returns (value, next_index), or None when the head does not
+    match or a guard fails. Bounded by the part/depth budgets; the
+    wrapper charges one op (obfuscation-shaped). Never evals.
     """
     if not _js_peek_arguments_iife_head(text, i):
         return None
@@ -19911,7 +20170,7 @@ def _js_parse_forin_accum_iife(text, i, depth, state):
         # is exactly the prior behavior.
         _ps = _js_skip_directive_prologue(text[inner_start:inner_end],
                                           state)
-        _, _, _, objlit_text, member = _js_split_forin_accum(
+        _, _, _, objlit_text, member, or_members = _js_split_forin_accum(
             text, inner_start + _ps, inner_end)
         j = _js_skip_ws(text, j)
         j = _js_expect(text, j, ")")
@@ -19921,7 +20180,15 @@ def _js_parse_forin_accum_iife(text, i, depth, state):
         j = _js_expect(text, j, ")")
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
-        if member is not None:
+        if or_members is not None:
+            # F632: the `||` chain of member reads desugars over
+            # the F535 object parse directly (a text desugar would
+            # depend on callback grammars this path cannot
+            # assume); the F592 single-member path below is
+            # untouched.
+            val = _js_f632_or_join(objlit_text, or_members, depth,
+                                   state)
+        elif member is not None:
             # F592: the nested-member read desugars over the F535
             # object parse directly (a `.map(x=>x.v)` text desugar
             # would depend on callback grammars this path cannot
@@ -20874,6 +21141,270 @@ def _js_parse_f612_values_varbound_iife(text, i, depth, state):
         j = _js_expect(text, j, ")")
         state["ops"] += 1  # the iife wrapper is obfuscation-shaped
         return _rval, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f622_keys_call(text, sj, oname):
+    """Parse `Object.keys(o)` / `Object['keys'](o)` on the bare bound
+    ident *oname* at text[sj] (F622 helper).
+
+    The F517 `_js_parse_object_keys` model handles Object.keys on
+    inline enumeration sources; here the argument is the var-bound
+    intermediate, so only the call shape is validated -- the ordered
+    keys/values come from the enumeration-source parse the caller
+    already performed. Returns the index just after `)`. Raises
+    _JSExprFail on any mismatch. Never evals.
+    """
+    n = len(text)
+    if not text.startswith("Object", sj):
+        raise _JSExprFail("F622 not Object.keys")
+    q = sj + len("Object")
+    if q < n and text[q] in _JS_IDENT_CONT:
+        raise _JSExprFail("F622 Objectx")
+    q = _js_skip_ws(text, q)
+    if q < n and text[q] == "[":
+        # F480: Object['keys'] -- bracket-string member access,
+        # engine-identical to the dot form (node v24.20.0 verified).
+        _mname, q = _js_parse_bracket_member(text, q)
+        if _mname != "keys":
+            raise _JSExprFail("F622 member not keys")
+    elif q < n and text[q] == ".":
+        q = _js_skip_ws(text, q + 1)
+        m = _js_match_kw(text, q, "keys")
+        if m is None:
+            raise _JSExprFail("F622 member not keys")
+        q = m
+    else:
+        raise _JSExprFail("F622 no member")
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, "(")
+    q = _js_skip_ws(text, q)
+    _arg, q = _js_parse_ident(text, q)
+    if _arg != oname:
+        raise _JSExprFail("F622 keys arg not the bound ident")
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ")")
+    return q
+
+
+def _js_parse_f622_keys_bracket_iife(text, i, depth, state):
+    """Parse the two F622 statement IIFEs at text[i]:
+
+        (function(){DECL o=ENUMSRC;DECL k=Object.keys(o);
+         return o[k[<int>]](+o[k[<int>]])*;})()
+        (function(){DECL o=ENUMSRC;
+         return Object.keys(o).map(k=>o[k]).join('');})()
+
+    F612 (CLOSED) covers Object.values/Object.entries through
+    var-bound intermediates and F535 (CLOSED) covers literal-key
+    member reads, but enumerating the keys and reading back through
+    COMPUTED brackets escapes both: the key list is data, not
+    syntax. Node-exact desugars (v24.20.0):
+
+    - the var binds a parsed enumeration source (F510's exact
+      grammar -- `_js_parse_enumeration_source`, so integer-index
+      keys order ascending first and string keys in insertion
+      order, engine-identical); `Object.keys(o)` is the ordered
+      key list, so `o[k[<int>]]` resolves positionally to the
+      aligned ordered value;
+    - shape 2's `.map(k=>o[k])` reads each enumerated key back
+      through the bound object (the callback param may be bare or
+      parenthesized, engine-identical), and `.join('')` requires
+      the empty separator (any other separator fails closed).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, reassignment of the vars, multi-decl
+      (`var o=..., p=...`), non-empty call args;
+    - a binding source outside the F510 enumeration-source grammar;
+    - the Object.keys call reading any ident but the bound one;
+    - a bracket index that is not a small non-negative decimal
+      integer in range of the key list;
+    - a non-string value at a referenced position (the literal
+      source grammar already rejects non-string values; the
+      per-position check covers the wrapper/rebuild branches);
+    - a map callback whose body is not exactly `o[<param>]`, or a
+      `.join` with a non-empty separator;
+    - the keys-list binding shadowing the object binding or
+      `arguments`.
+
+    Disjointness: tried after F617. F612 requires a `return
+    Object.values/entries` terminal, F616/F617 require URL
+    bindings, and no earlier parser accepts a `DECL
+    k=Object.keys(<bound>);` second statement or a
+    `Object.keys(<bound>).map(k=><bound>[<param>])` terminal with a
+    non-identity callback (the F517 postfix map only models
+    identity callbacks), so no previously-decoded input changes
+    behavior. Returns (value, next_index), or None when text[i] is
+    not this shape. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_skip_ws(text, j + 1)
+    if not text.startswith("function", k):
+        return None
+    k2 = k + len("function")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        return None  # functionx -- not our shape
+    if k2 < n and text[k2] in _JS_IDENT_START:
+        return None  # named function -- not our shape
+    try:
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F622 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            raise _JSExprFail("F622 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        keys, vals, sj = _js_parse_enumeration_source(text, sj, depth,
+                                                      state)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        m = _js_match_kw(text, sj, "return")
+        if m is not None:
+            # Shape 2: `return
+            # Object.keys(o).map(k=>o[k]).join('');`.
+            sj = _js_skip_ws(text, m)
+            sj = _js_parse_f622_keys_call(text, sj, oname)
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, ".")
+            sj = _js_skip_ws(text, sj)
+            mm = _js_match_kw(text, sj, "map")
+            if mm is None:
+                raise _JSExprFail("F622 return not keys-map")
+            sj = _js_skip_ws(text, mm)
+            sj = _js_expect(text, sj, "(")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "(":
+                pname, sj = _js_parse_ident(text,
+                                            _js_skip_ws(text, sj + 1))
+                sj = _js_skip_ws(text, sj)
+                sj = _js_expect(text, sj, ")")
+            else:
+                pname, sj = _js_parse_ident(text, sj)
+            sj = _js_skip_ws(text, sj)
+            if not text.startswith("=>", sj):
+                raise _JSExprFail("F622 map callback not an arrow")
+            sj = _js_skip_ws(text, sj + 2)
+            _o2, sj = _js_parse_ident(text, sj)
+            if _o2 != oname:
+                raise _JSExprFail("F622 map body reads another object")
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, "[")
+            _p2, sj = _js_parse_ident(text, _js_skip_ws(text, sj))
+            if _p2 != pname:
+                raise _JSExprFail("F622 map body indexes another param")
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, "]")
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, ")")
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, ".")
+            sj = _js_skip_ws(text, sj)
+            mj = _js_match_kw(text, sj, "join")
+            if mj is None:
+                raise _JSExprFail("F622 keys-map without join")
+            sj = _js_skip_ws(text, mj)
+            sj = _js_expect(text, sj, "(")
+            sj = _js_skip_ws(text, sj)
+            if sj >= n or text[sj] not in "'\"":
+                raise _JSExprFail("F622 join separator not a string")
+            _sep, sj = _js_parse_string(text, sj)
+            if _sep != "":
+                raise _JSExprFail("F622 join separator not empty")
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, ")")
+            for _v in vals:
+                if not isinstance(_v, str):
+                    raise _JSExprFail("F622 non-string value")
+            rval = "".join(vals)
+        else:
+            # Shape 1: a second declaration binding the keys list,
+            # then `return o[k[<int>]](+o[k[<int>]])*;`.
+            _kw2, m2 = _js_match_decl_kw(text, sj)
+            if _kw2 is None:
+                raise _JSExprFail("F622 second decl not var/const/let")
+            sj = _js_skip_ws(text, m2)
+            kname, sj = _js_parse_ident(text, sj)
+            if kname in ("arguments", oname):
+                raise _JSExprFail("F622 keys binding shadows")
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, "=")
+            sj = _js_skip_ws(text, sj)
+            sj = _js_parse_f622_keys_call(text, sj, oname)
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, ";")
+            sj = _js_skip_ws(text, sj)
+            m = _js_match_kw(text, sj, "return")
+            if m is None:
+                raise _JSExprFail("F622 no return")
+            sj = _js_skip_ws(text, m)
+            parts = []
+            while True:
+                _o3, sj = _js_parse_ident(text, sj)
+                if _o3 != oname:
+                    raise _JSExprFail("F622 term reads another object")
+                sj = _js_skip_ws(text, sj)
+                sj = _js_expect(text, sj, "[")
+                _k3, sj = _js_parse_ident(text, _js_skip_ws(text, sj))
+                if _k3 != kname:
+                    raise _JSExprFail("F622 term indexes another list")
+                sj = _js_skip_ws(text, sj)
+                sj = _js_expect(text, sj, "[")
+                sj = _js_skip_ws(text, sj)
+                dstart = sj
+                while sj < n and text[sj] in "0123456789":
+                    sj += 1
+                if sj == dstart or sj - dstart > 6:
+                    raise _JSExprFail("F622 index not a small int")
+                idx = int(text[dstart:sj])
+                if idx >= len(keys):
+                    raise _JSExprFail("F622 index out of range")
+                sj = _js_skip_ws(text, sj)
+                sj = _js_expect(text, sj, "]")
+                sj = _js_skip_ws(text, sj)
+                sj = _js_expect(text, sj, "]")
+                _vv = vals[idx]
+                if not isinstance(_vv, str):
+                    raise _JSExprFail("F622 non-string value")
+                parts.append(_vv)
+                sj = _js_skip_ws(text, sj)
+                if sj < n and text[sj] == "+":
+                    sj = _js_skip_ws(text, sj + 1)
+                    continue
+                break
+            rval = "".join(parts)
+        state["ops"] += 1  # the Object.keys call is obfuscation-shaped
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F622 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return rval, j
     except _JSExprFail:
         return None
 
@@ -26578,6 +27109,23 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                      state)
         if _f617 is not None:
             val, i = _f617
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F622: (function(){DECL o=ENUMSRC;DECL k=Object.keys(o);
+        #   return o[k[<int>]](+o[k[<int>]])*;})() /
+        #   (function(){DECL o=ENUMSRC;
+        #   return Object.keys(o).map(k=>o[k]).join('');})() --
+        #   key-enumeration with computed bracket reads on a
+        #   var-bound object. Tried after F617: disjoint bindings
+        #   (an F510 enumeration source, not URLSearchParams) and
+        #   terminals (Object.keys reads, not get/getAll/if-guard);
+        #   F612 requires a return Object.values/entries terminal
+        #   and fails closed on these shapes, and the F517 postfix
+        #   map only models identity callbacks, so no
+        #   previously-decoded input changes behavior.
+        _f622 = _js_parse_f622_keys_bracket_iife(text, i, depth,
+                                                 state)
+        if _f622 is not None:
+            val, i = _f622
             return _js_parse_postfix(text, i, val, depth, state)
         # F586: (new Map(...)) / (new WeakRef(...)) --
         # parenthesized new-expression receivers, engine-identical
