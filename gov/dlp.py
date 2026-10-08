@@ -23394,6 +23394,281 @@ def _js_parse_f624_slicebound_iife(text, i, depth, state):
         return val, j
     except _JSExprFail:
         return None
+
+
+def _js_f639_enumerate_obj(props):
+    """Engine-exact Object.keys/Object.values order for a _JSObj props map (F639).
+
+    Returns (keys, vals). Integer-index keys ascending numerically
+    first, then string keys in insertion order -- the same rule as
+    _js_order_object_keys (F510), node v24.20.0. Symbol keys
+    (("symbol", K) tuples) are skipped: the engine never enumerates
+    them via Object.values/Object.entries. Every value must be a
+    str; anything else raises _JSExprFail (the F510 string-only
+    discipline applied to the nested objects this production
+    models). Never evals.
+    """
+    int_keys = sorted(
+        (k for k in props
+         if isinstance(k, str) and _js_is_integer_index_key(k)),
+        key=int)
+    str_keys = [k for k in props
+                if isinstance(k, str)
+                and not _js_is_integer_index_key(k)]
+    keys = int_keys + str_keys
+    vals = [props[k] for k in keys]
+    for _v in vals:
+        if not isinstance(_v, str):
+            raise _JSExprFail("F639 nested object value not a string")
+    return keys, vals
+
+
+def _js_parse_f639_nested_term(text, j, oname, props, depth, state):
+    """Parse one `Object.values(o.M)` / `Object.entries(o.M).map(P=>P[0|1])` term (F639).
+
+    `o` is the var-bound ident (must equal oname); M is a dot-ident
+    or bracket-string member resolved in the bound object's props.
+    The resolved value must be a _JSObj (a nested object literal);
+    its properties are enumerated engine-exactly via
+    _js_f639_enumerate_obj. The entries twin requires F517's
+    mandatory .map projection (unprojected pairs are not modeled).
+    Returns (_JSArr, next_index). Raises _JSExprFail on any
+    mismatch. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    # `Object.values` / `Object.entries` (dot or bracket-string
+    # member, F510 head discipline).
+    if not text.startswith("Object", j):
+        raise _JSExprFail("F639 term not Object.*")
+    q = j + len("Object")
+    if q < n and text[q] in _JS_IDENT_CONT:
+        raise _JSExprFail("F639 Objectx")
+    q = _js_skip_ws(text, q)
+    if q < n and text[q] == "[":
+        _mname, q = _js_parse_bracket_member(text, q)
+        if _mname not in ("values", "entries"):
+            raise _JSExprFail("F639 member not values/entries")
+        member = _mname
+    elif q < n and text[q] == ".":
+        q = _js_skip_ws(text, q + 1)
+        m = _js_match_kw(text, q, "values")
+        if m is not None:
+            member = "values"
+        else:
+            m = _js_match_kw(text, q, "entries")
+            if m is None:
+                raise _JSExprFail("F639 member not values/entries")
+            member = "entries"
+        q = m
+    else:
+        raise _JSExprFail("F639 no member")
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, "(")
+    q = _js_skip_ws(text, q)
+    _arg, q = _js_parse_ident(text, q)
+    if _arg != oname:
+        raise _JSExprFail("F639 call arg not the bound ident")
+    q = _js_skip_ws(text, q)
+    # Member-access path on the bound ident: `.M`, `['M']`, `["M"]`.
+    # A bare ident (F612's shape) is NOT this production.
+    if q < n and text[q] == ".":
+        q = _js_skip_ws(text, q + 1)
+        _mem, q = _js_parse_ident(text, q)
+    elif q < n and text[q] == "[":
+        _mem, q = _js_parse_bracket_member(text, q)
+    else:
+        raise _JSExprFail("F639 no nested member path")
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ")")
+    _nested = props.get(_mem)
+    if not isinstance(_nested, _JSObj):
+        raise _JSExprFail("F639 member not a nested object")
+    _keys, _vals = _js_f639_enumerate_obj(_nested.props)
+    if member == "entries":
+        # F517's mandatory projection grammar.
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ".")
+        q = _js_skip_ws(text, q)
+        m = _js_match_kw(text, q, "map")
+        if m is None:
+            raise _JSExprFail("F639 entries without map projection")
+        q = _js_skip_ws(text, m)
+        q = _js_expect(text, q, "(")
+        kind, q = _js_parse_entries_projection(text, q)
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ")")
+        arr = _JSArr(_vals if kind == "vals" else _keys)
+    else:
+        arr = _JSArr(_vals)
+    state["ops"] += 1  # the values/entries call is
+                       # obfuscation-shaped
+    return arr, q
+
+
+def _js_parse_f639_summand(text, j, oname, props, depth, state):
+    """Parse one F639 summand: nested_term (.concat(nested_term))* postfix (F639).
+
+    `.concat` composes array-valued nested terms before the single
+    postfix tail (node v24.20.0: Array.prototype.concat with an
+    array argument appends its elements). Returns (value,
+    next_index). Raises _JSExprFail on any mismatch. Never evals.
+    """
+    n = len(text)
+    arr, j = _js_parse_f639_nested_term(text, j, oname, props, depth,
+                                       state)
+    while True:
+        q = _js_skip_ws(text, j)
+        if not text.startswith(".concat", q):
+            break
+        qc = q + len(".concat")
+        if qc < n and text[qc] in _JS_IDENT_CONT:
+            break  # .concatx -- not our shape
+        qc = _js_skip_ws(text, qc)
+        if qc >= n or text[qc] != "(":
+            raise _JSExprFail("F639 .concat without paren")
+        _tarr, qc = _js_parse_f639_nested_term(text, qc + 1, oname,
+                                              props, depth, state)
+        qc = _js_skip_ws(text, qc)
+        qc = _js_expect(text, qc, ")")
+        arr = _JSArr(arr.elements + _tarr.elements)
+        state["ops"] += 1  # the concat is obfuscation-shaped
+        j = qc
+    return _js_parse_postfix(text, j, arr, depth, state)
+
+
+def _js_parse_f639_additive(text, j, oname, props, depth, state):
+    """Parse the F639 return additive: summands joined by `+` (F639).
+
+    Each summand is a `.concat`-composed nested-term chain with one
+    postfix tail. `+` operands must both be strings (node-exact: the
+    filed shapes `.join('')` each side before adding); anything
+    else fails closed (the engine's array-toString coercion on `+`
+    is a documented residual). Returns (value, next_index). Never
+    evals.
+    """
+    n = len(text)
+    val, j = _js_parse_f639_summand(text, j, oname, props, depth,
+                                   state)
+    while True:
+        q = _js_skip_ws(text, j)
+        if q >= n or text[q] != "+":
+            break
+        if q + 1 < n and text[q + 1] in "+=":
+            break  # ++ / += are not our shape
+        _rval, q2 = _js_parse_f639_summand(text, q + 1, oname, props,
+                                          depth, state)
+        if not isinstance(val, str) or not isinstance(_rval, str):
+            raise _JSExprFail("F639 + on non-strings")
+        val = val + _rval
+        j = q2
+    return val, j
+
+
+def _js_parse_f639_nested_values_varbound_iife(text, i, depth, state):
+    """Parse `(function(){DECL o=NESTED;return TERM;})()` (F639).
+
+    F612 (CLOSED) resolves Object.values/Object.entries through a
+    var-bound intermediate, but only when the call argument is the
+    bare bound ident. Member-access paths on the intermediate
+    (`Object.values(o.x)`) escape. Node-exact desugar (v24.20.0):
+    the var binds an object literal (F535 grammar) whose values are
+    ALL nested object literals; each nested object is enumerated
+    with the F510 string-only discipline
+    (`_js_f639_enumerate_obj` -- integer-index keys ascending
+    first, then string keys in insertion order; symbol keys skipped
+    engine-exactly). The return is an additive of nested terms:
+    `Object.values(o.M)` / `Object.entries(o.M).map(P=>P[0|1])`
+    terms composed by `.concat(...)` before a single postfix tail,
+    or `+`-joined string summands (each side `.join('')`d first --
+    node-exact; `+` on non-strings fails closed). The invocation
+    must be exactly `()`.
+
+    Disjointness: tried after F617 (in the statement-IIFE chain).
+    F612 fails closed on every shape this accepts (it requires the
+    bare bound ident as the call argument); F599/F606/F610/F616/F617
+    all require URLSearchParams/URL bindings. This parser fails
+    closed on F612's own shapes (no member path after the ident),
+    so no previously-decoded input changes behavior.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, reassignment of the var, multi-decl
+      (`var o=..., p=...`), non-empty call args;
+    - a binding source that is not an object literal, or whose
+      values are not all nested objects (mixed string/object
+      values, JSON.parse, non-literal constructions);
+    - nested objects with non-string values (numbers, nested
+      objects, getters resolve via F535 -- a non-str value fails
+      the term closed);
+    - a member path that misses the bound object, or resolves to a
+      non-object value;
+    - a bare `Object.entries(o.M)` without the mandatory .map
+      projection (F517 discipline);
+    - `.concat` with a non-term argument, `+` on non-string
+      operands, `++`/`+=`.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_skip_ws(text, j + 1)
+    if not text.startswith("function", k):
+        return None
+    k2 = k + len("function")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        return None  # functionx -- not our shape
+    if k2 < n and text[k2] in _JS_IDENT_START:
+        return None  # named function -- not our shape
+    try:
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F639 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            raise _JSExprFail("F639 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        props, sj = _js_parse_f535_object(text, sj, depth, state)
+        if not props or any(not isinstance(_v, _JSObj)
+                            for _v in props.values()):
+            raise _JSExprFail("F639 source not all nested objects")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F639 no return")
+        sj = _js_skip_ws(text, m)
+        _rval, sj = _js_parse_f639_additive(text, sj, oname, props,
+                                           depth, state)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F639 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return _rval, j
+    except _JSExprFail:
+        return None
 def _js_parse_f616_varname_mutation_iife(text, i, depth, state):
     """Parse `(function(){DECL p=new URLSearchParams('LIT');[DECL X='LIT';]*[MUT;]*TERM})()` (F616).
 
@@ -30083,6 +30358,21 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                      state)
         if _f626 is not None:
             val, i = _f626
+        # F639: (function(){DECL o=NESTED;return TERM;})() --
+        # Object.values/Object.entries through a var-bound
+        # intermediate with MEMBER-ACCESS paths on the intermediate
+        # (Object.values(o.x)), composed by .concat(...) or
+        # +-joined string summands. F612 (CLOSED) requires the bare
+        # bound ident as the call argument, so it fails closed on
+        # every shape this accepts; F599/F606/F610/F616/F617 all
+        # require URLSearchParams/URL bindings. Tried after F617:
+        # this parser fails closed on F612's own shapes (no member
+        # path), so no previously-decoded input changes behavior.
+        _f639 = _js_parse_f639_nested_values_varbound_iife(text, i,
+                                                          depth,
+                                                          state)
+        if _f639 is not None:
+            val, i = _f639
             return _js_parse_postfix(text, i, val, depth, state)
         # F586: (new Map(...)) / (new WeakRef(...)) --
         # parenthesized new-expression receivers, engine-identical
