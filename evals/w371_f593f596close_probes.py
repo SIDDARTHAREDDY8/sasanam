@@ -236,7 +236,7 @@ def p7_pin_and_footer():
         # F597 (spec-axis review residual); the merge reconciles with
         # sibling lanes.
         ok = ("Next free finding: **F612**." in text  # Wave-372 merge: footer repoint next F612
-              and "**Open findings: F595, F606, F607, F608, F609, F610, F611.**" in text)  # Wave-372 merge: footer repoint open F606-F611 / next F612
+              and "**Open findings: F595, F606, F608, F609, F610, F611.**" in text)  # Wave-372 merge: footer repoint open F606-F611 / next F612
         rows.append(("HELD" if ok else "BREAK", "pin+footer"))
     except AssertionError as e:  # noqa: BLE001
         rows.append(("BREAK", "pin/footer: %s" % e))

@@ -8463,7 +8463,7 @@ def _js_parse_reflect_apply_bound_slice(text, i, depth, state):
 
 
 def _js_utf16_len(s):
-    """UTF-16 code-unit length of a Python str (F537).
+    """UTF-16 code-unit length of a Python str (F537 / F607).
 
     Node-exact for the `.length` property (v24.20.0): astral
     characters count 2 ('\U00010000'.length === 2). Never evals.
@@ -8472,7 +8472,7 @@ def _js_utf16_len(s):
 
 
 def _js_parse_f537_length_cmp_body(text, i, p):
-    """Parse `p.length OP K` at text[i] (F537); returns (spec, next).
+    """Parse `p.length OP K` at text[i] (F537 / F607); returns (spec, next).
 
     p is the callback's declared parameter. OP is one of <,<=,>,>=;
     K is a non-negative integer literal (the _js_parse_number
@@ -20619,6 +20619,19 @@ def _js_parse_truthy_body(text, i, p):
                               all-string arrays; a non-plain-str element
                               makes the predicate undecidable, so the
                               apply site fails closed (F475/F479)
+      ("neq", lit)         -- x!==LIT for a non-empty literal (F607):
+                              keep every element that is not exactly
+                              the literal -- but ONLY over all-string
+                              arrays; a non-plain-str element fails
+                              closed (node keeps numbers under !==
+                              against a string, e.g. 1!=='1', which the
+                              str model cannot reproduce)
+      ("plencmp", op, k)   -- x.length OP K via the F607/F537 grammar
+                              (OP in <,<=,>,>=; K a literal int):
+                              keep elements whose UTF-16 .length
+                              satisfies the comparison -- but ONLY over
+                              all-string arrays; a non-plain-str element
+                              fails closed (F475/F479)
       ("all",)             -- constant-true: keep every element
       ("all-null",)        -- x!==null / x!==undefined / x!=null (F467):
                               keep every element except _JSNil (F479;
@@ -20634,8 +20647,12 @@ def _js_parse_truthy_body(text, i, p):
 
     Recognized truthiness forms (F447):
       p!==''    -- strict neq against the empty-string literal
+      p!=='LIT' -- strict neq against a non-empty literal (F607):
+                   keep elements not exactly the literal
       !!p       -- double negation
       p.length>0  -- property-length form (spec ("plen",); F475)
+      p.length OP K -- length comparison (F607/F537 grammar, spec
+                       ("plencmp", op, k); OP in <,<=,>,>=; K literal)
       p         -- bare identity (truthiness over parsed strings)
     Recognized constant-true forms (F467):
       p!==null | p!==undefined | p!=null
@@ -20652,13 +20669,14 @@ def _js_parse_truthy_body(text, i, p):
     Parsed array elements are string literals or _JSNumStr (numbers
     coerced at parse, F475); the only falsy string value is "", so
     every truthiness form above drops exactly the falsy elements --
-    except the type-dependent forms (x.length>0, x.match(...),
-    x.charCodeAt(...)), which fail closed at the apply site when any
-    element is a _JSNumStr (node: (1).length is undefined so the
-    comparison is false; (1).match/(1).charCodeAt throw). Anything else
-    fails closed: !== against a
-    non-empty literal, p!=undefined, p!==0, p!=='a', p==null /
-    p===null, length!=0 or length>=1, single negation (!p drops the
+    except the type-dependent forms (x.length>0 / x.length OP K,
+    x.match(...), x.charCodeAt(...), x!==LIT), which fail closed at the
+    apply site when any element is not a plain string (node:
+    (1).length is undefined so the comparison is false; (1).match/
+    (1).charCodeAt throw; 1!=='1' is true while the str model would
+    drop the element). Anything else fails closed: p!=undefined,
+    p!==0, p==null / p===null, loose != against a string literal,
+    ==/=== comparisons, x.length!=0, single negation (!p drops the
     truthy elements, not a bypass), block-body arrows, other member
     access, match with flags/escapes/negations/multi-range classes/
     string args, .test/.includes/.search, charCodeAt with no/extra/
@@ -20682,10 +20700,14 @@ def _js_parse_truthy_body(text, i, p):
         if op == "!==":
             k = _js_skip_ws(text, j + 3)
             if k < n and text[k] in ("'", '"'):
-                # Strict neq against the empty-string literal only.
-                if k + 1 >= n or text[k + 1] != text[k]:
-                    raise _JSExprFail("not a truthiness test")
-                return ("truthy",), k + 2
+                # Strict neq against a string literal. The empty-string
+                # literal is the F447 truthiness form; a non-empty
+                # literal (F607) selects fragments -- keep every element
+                # that is not exactly the literal.
+                lit, k = _js_parse_string(text, k)
+                if lit == "":
+                    return ("truthy",), k
+                return ("neq", lit), k
         # F467: constant-true null comparison (shadow guard inside).
         # F479: returns ("all-null",) rather than ("all",) -- over
         # all-string arrays it keeps every element, but _JSNil elements
@@ -20695,17 +20717,26 @@ def _js_parse_truthy_body(text, i, p):
     if j < n and text[j] == ".":
         m, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
         if m == "length":
+            # F607: p.length OP K. The F447 >0 form keeps its legacy
+            # ("plen",) spec (behavior-identical, pinned by
+            # w355 p3_pin_plen_spec_split); every other bound/operator
+            # goes through the F537 node-exact length-comparison
+            # grammar (UTF-16 .length, <,<=,>,>=, literal bound),
+            # returning ("plencmp", op, k).
             j = _js_skip_ws(text, j)
-            if j >= n or text[j] != ">":
-                raise _JSExprFail("not a truthiness test")
-            j = _js_skip_ws(text, j + 1)
-            if j >= n or text[j] != "0":
-                raise _JSExprFail("not a truthiness test")
-            if j + 1 < n and text[j + 1] in "0123456789":
-                raise _JSExprFail("not a truthiness test")  # >01 is >1
-            # F475: the property-length form gets its own spec so the
-            # apply site can fail closed on mixed-type arrays.
-            return ("plen",), j + 1
+            if j < n and text[j] == ">":
+                k0 = _js_skip_ws(text, j + 1)
+                if (k0 < n and text[k0] == "0"
+                        and not (k0 + 1 < n
+                                 and text[k0 + 1] in "0123456789")):
+                    # F475: the property-length form gets its own spec
+                    # so the apply site can fail closed on mixed-type
+                    # arrays.
+                    return ("plen",), k0 + 1
+            # i is the body start here (arrow: just after "=>";
+            # function form: just after "return"), so the F537 body
+            # parser can re-parse p.length OP K from the top.
+            return _js_parse_f537_length_cmp_body(text, i, p)
         if m not in ("match", "charCodeAt"):
             raise _JSExprFail("not a truthiness test")
         # F470: method-call-result predicates. The F467 shadow guard
@@ -20768,6 +20799,10 @@ def _js_index_cmp(idx, op, k):
     node-verified), k the literal bound. Semantics are exact per the
     engine: ['p','q','zz'].filter((x,i)=>i<2) -> ['p','q'],
     (x,i)=>i!==2 -> ['p','q'], (x,i)=>i>0 -> ['q','zz'].
+
+    Also reused by the F607 ("plencmp", op, k) filter branch, where idx
+    carries a UTF-16 .length instead of a positional index -- the
+    comparison semantics are identical (op in <,<=,>,>=).
     """
     if op == "<":
         return idx < k
@@ -20790,6 +20825,10 @@ def _js_parse_filter_callback(text, i):
     Boolean (F443 -- bare identifier only, never Boolean(...) which is
     a call, not a function reference) |
     s=>s!=='' | s=>!!s | s=>s.length>0 | s=>s |
+    s=>s!=='zz' (F607 -- strict neq against a non-empty literal: keep
+    elements not exactly the literal) |
+    s=>s.length>2 | s=>s.length>=1 (F607/F537 grammar -- keep elements
+    whose UTF-16 .length satisfies the comparison) |
     function(s){return s;} (F447 -- truthiness predicates) |
     s=>s!==null | s=>s!==undefined | s=>s!=null |
     function(s){return s!==null;} (F467 -- constant-true null
@@ -20815,7 +20854,11 @@ def _js_parse_filter_callback(text, i):
     and the F447 truthiness forms (drop exactly the falsy elements --
     for parsed string elements, the empty string), ("plen",) for the
     F447 x.length>0 form (same as truthy over all-string arrays, but
-    F475-fail-closed on mixed-type arrays),
+    F475-fail-closed on mixed-type arrays), ("neq", lit) for F607
+    x!==LIT (keep elements not exactly the literal, F475/F479-
+    fail-closed on mixed-type arrays), ("plencmp", op, k) for F607
+    x.length OP K (node-exact UTF-16 length comparison, OP in
+    <,<=,>,>=, F475/F479-fail-closed on mixed-type arrays),
     ("match", lo, hi) for F470 (keep elements containing a char in the
     class range), ("ccmp", idx, op, k) for F470 (keep elements whose
     UTF-16 code unit at idx satisfies OP k), or
@@ -20824,8 +20867,9 @@ def _js_parse_filter_callback(text, i):
     JS Boolean(x) coerces to boolean; every F447 form is provably
     equivalent to the same empty-string test over parsed strings.
 
-    Fail-closed (documented): !== against a non-empty literal, !=undefined,
-    !==0, !=='a', ==null / ===null (constant-false over strings, not a
+    Fail-closed (documented): !=undefined, !==0 (F607: !== against a
+    string literal is now modeled -- !==0 against numbers still fails
+    closed), ==null / ===null (constant-false over strings, not a
     bypass), loose != against anything but null, ===/==/!= index
     comparisons, non-literal bounds, index
     arithmetic, body references to the element param, three-param
@@ -21621,7 +21665,11 @@ def _js_filter_spec_apply(spec, elements):
     value-based dispatch apply: ("truthy",) drops exactly the falsy
     elements (F479: _JSNil dropped, _JSBool keeps its value, nested
     arrays kept); ("all-null",) drops _JSNil; ("plen",) drops empty
-    strings (F475/F479 fail-closed on mixed-type arrays); ("index",),
+    strings (F475/F479 fail-closed on mixed-type arrays); ("neq", lit)
+    drops elements exactly equal to the literal (F607; F475/F479
+    fail-closed on mixed-type arrays); ("plencmp", op, k) keeps
+    elements whose UTF-16 .length satisfies OP k (F607; F475/F479
+    fail-closed on mixed-type arrays); ("index",),
     ("match",), ("ccmp",) apply their comparisons; ("all",) keeps
     everything. Never evals.
     """
@@ -21649,6 +21697,30 @@ def _js_filter_spec_apply(spec, elements):
         if _js_has_nonstr_element(elements):
             raise _JSExprFail("mixed-type array under length filter")
         elements = [e for e in elements if e != ""]
+    elif spec[0] == "neq":
+        # F607: p!==LIT (non-empty literal) -- keep every element
+        # that is not exactly the literal. Over plain strings != is
+        # engine-exact; any non-plain-str element fails closed
+        # (F475/F479: node keeps numbers under !== against a string,
+        # e.g. 1!=='1' is true, while the str model would drop the
+        # element -- undecidable, never decode).
+        if _js_has_nonstr_element(elements):
+            raise _JSExprFail("mixed-type array under neq filter")
+        _, lit = spec
+        elements = [e for e in elements if e != lit]
+    elif spec[0] == "plencmp":
+        # F607: p.length OP K via the F537 grammar (node-exact UTF-16
+        # .length; OP in <,<=,>,>=). The F537 bound-filter site
+        # handles this spec itself; this branch serves the shared
+        # .filter path (direct and F483 dispatch). Mixed-type arrays
+        # fail closed (F475/F479: (1).length is undefined in the
+        # engine, so the comparison is false -- the str model cannot
+        # reproduce that).
+        if _js_has_nonstr_element(elements):
+            raise _JSExprFail("mixed-type array under plencmp filter")
+        _, op, kk = spec
+        elements = [e for e in elements
+                    if _js_index_cmp(_js_utf16_len(e), op, kk)]
     elif spec[0] == "index":
         _, op, k = spec
         elements = [e for idx, e in enumerate(elements)
@@ -21823,7 +21895,11 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         # x.charCodeAt(IDX) OP K keeps elements whose UTF-16 code unit
         # at IDX satisfies the comparison (empty/short strings are
         # NaN, dropped) -- both F475-fail-closed on _JSNumStr elements
-        # (the engine throws on (1).match / (1).charCodeAt). Any other
+        # (the engine throws on (1).match / (1).charCodeAt); (F607)
+        # x!=='zz' keeps elements not exactly the literal (spec
+        # ("neq", lit)) and x.length OP K keeps elements whose UTF-16
+        # .length satisfies the comparison (spec ("plencmp", op, k)) --
+        # both F475/F479-fail-closed on mixed-type arrays. Any other
         # predicate fails closed.
         if not isinstance(value, _JSArr):
             raise _JSExprFail("filter on non-array")
