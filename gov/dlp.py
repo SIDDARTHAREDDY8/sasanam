@@ -41449,6 +41449,248 @@ def _js_parse_f647_term(text, j, undef_ident, depth, state, saw):
     return val, q
 
 
+def _js_parse_f737_setproto_body_after_head(text, j, params, is_block,
+                                            depth, state):
+    """Parse setPrototypeOf-trap body content after the head (F737).
+
+    The body is `(TRIDENT.MEM='LIT'; | TRIDENT['LIT']='LIT';)+
+    return true;` with TRIDENT the trap's first param (the engine
+    fires the trap with (target, proto)). Each write stores a
+    literal fragment into the tracked target (engine [[Set]] --
+    node-exact, v24.20.0); `return true` is required (a falsy trap
+    return makes Object.setPrototypeOf throw TypeError in the
+    engine). `__proto__` fails closed on the write (the engine
+    changes the prototype instead of creating an own data prop).
+    A write over an accessor-valued target prop is silently
+    ignored (this grammar is always sloppy mode -- a 'use strict'
+    prologue fails the body parse -- and the object grammar fails
+    closed on setters, so any parsed accessor is getter-only;
+    node-exact, v24.20.0). Only block bodies are modeled; concise
+    arrows fail closed (documented residual). F452 parts are
+    charged per write. Returns (writes, next_index): writes maps
+    member -> literal. Never evals.
+    """
+    del depth
+    n = len(text)
+    if not is_block:
+        raise _JSExprFail("F737 setproto concise arrow unmodeled")
+    if len(params) < 2:
+        raise _JSExprFail("F737 setproto trap needs 2 params")
+    trident = params[0]
+    writes = {}
+    j = _js_skip_ws(text, j)
+    while True:
+        r = _js_match_kw(text, j, "return")
+        if r is not None:
+            j = _js_skip_ws(text, r)
+            break
+        name, q = _js_parse_ident(text, j)
+        if name != trident:
+            raise _JSExprFail("F737 setproto write wrong receiver")
+        mem, q = _js_parse_f642_terminal_member(text, q)
+        if mem == "__proto__":
+            raise _JSExprFail("F737 setproto __proto__ write")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "=")
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] not in "'\"":
+            raise _JSExprFail("F737 setproto write not a literal")
+        lit, q = _js_parse_string(text, q)
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        writes[mem] = lit
+        state["parts"] += 1  # each trap write is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("F737 too many parts")
+        j = q
+        j = _js_skip_ws(text, j)
+    t = _js_match_kw(text, j, "true")
+    if t is None:
+        raise _JSExprFail("F737 setproto return not true")
+    j = _js_skip_ws(text, t)
+    j = _js_expect(text, j, ";")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "}")
+    return writes, j
+
+
+def _js_parse_f737_setproto_fn(text, i, depth, state):
+    """Parse a full setPrototypeOf-trap function value at text[i]
+    (F737). Accepts the `function(tr,pr){...}` and `(tr,pr)=>{...}`
+    block forms via the shared F675 head (node-exact, v24.20.0 --
+    the same four-form idiom as F642/F666/F670); concise arrows
+    fail closed in the body parser. Returns (writes, next_index).
+    Never evals.
+    """
+    params, is_block, j = _js_parse_f675_fn_head(text, i)
+    writes, j = _js_parse_f737_setproto_body_after_head(text, j, params,
+                                                        is_block, depth,
+                                                        state)
+    return writes, j
+
+
+def _js_parse_f737_setproto_method_body(text, j, params, depth, state):
+    """Method-shorthand body for a setPrototypeOf trap (F737).
+
+    `setPrototypeOf(tr,pr){...}` -- always a block body in the
+    engine (node-exact, v24.20.0); delegates to the block-form
+    body parser. Returns (writes, next_index). Never evals.
+    """
+    writes, j = _js_parse_f737_setproto_body_after_head(text, j, params,
+                                                        True, depth,
+                                                        state)
+    return writes, j
+
+
+def _js_parse_f737_proto_arg(text, m):
+    """Span the PROTO argument of Object.setPrototypeOf (F737).
+
+    The engine fires the trap for any object-or-null proto (node
+    v24.20.0); the actual value never feeds the later read (the
+    read is on the target's own props), so the literal is spanned
+    and ignored. Accepts `{...}`, `[...]` (balanced,
+    string-aware), or `null`. Anything else fails closed. Returns
+    next_index. Never evals.
+    """
+    n = len(text)
+    m = _js_skip_ws(text, m)
+    if m < n and text[m] == "{":
+        _s, _e, m = _js_span_braced(text, m)
+        return m
+    if m < n and text[m] == "[":
+        depth = 0
+        k = m
+        while k < n:
+            c = text[k]
+            if c in "'\"":
+                k = _js_skip_quoted(text, k)
+                continue
+            if c == "`" or c == "/":
+                raise _JSExprFail("F737 proto template/regex")
+            if c == "[":
+                depth += 1
+            elif c == "]":
+                depth -= 1
+                if depth == 0:
+                    return k + 1
+            k += 1
+        raise _JSExprFail("F737 proto unterminated")
+    nl = _js_match_kw(text, m, "null")
+    if nl is not None:
+        return nl
+    raise _JSExprFail("F737 proto not a literal")
+
+
+def _js_parse_f737_setproto_trap_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const t={PROPS};var|let|const p=
+    new Proxy(t,{setPrototypeOf:SPFN});Object.setPrototypeOf(p,
+    PROTO);return t.MEM(+'LIT')*;})()` (F737).
+
+    Object.setPrototypeOf(p,PROTO) fires the setPrototypeOf trap;
+    the modeled body writes literal fragment(s) to the bound
+    target (engine [[Set]] -- node-exact, v24.20.0) and must
+    `return true` (a falsy trap return throws in the engine). The
+    PROTO value is ignored (it never feeds the read). The
+    terminal reads members off the TARGET ident (no get trap, so
+    a proxy read would fall through identically) against the
+    initial props plus the trap writes (a write over an
+    accessor-valued prop is silently ignored -- sloppy-mode
+    [[Set]] on a getter-only accessor, node-exact). `__proto__`
+    fails closed on write and read. The target object is parsed
+    accessor_aware (F549) so data-vs-accessor overwrites stay
+    node-exact. Disjoint from the F675 traps by the
+    `setPrototypeOf` handler key and the Object.setPrototypeOf
+    statement -- none of the earlier routes accepts these shapes.
+    Never evals. Returns (value, next_index) or None.
+    """
+    head = _js_parse_f675_iife_head(text, i)
+    if head is None:
+        return None
+    inner_start, inner_end, j = head
+    n = len(text)
+    try:
+        tname, m = _js_parse_f675_decl_ident(text, inner_start, ())
+        if m >= n or text[m] != "{":
+            raise _JSExprFail("F737 setproto target not an object")
+        props, m = _js_parse_f535_object(text, m, depth, state,
+                                         accessor_aware=True)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        wname, m = _js_parse_f675_decl_ident(text, m, (tname,))
+        m = _js_parse_f675_new_proxy_head(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        targ, m = _js_parse_ident(text, m)
+        if targ != tname:
+            raise _JSExprFail("F737 setproto target not bound")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ",")
+        m = _js_skip_ws(text, m)
+        writes, m = _js_parse_f675_keyed_trap(
+            text, m, "setPrototypeOf", _js_parse_f737_setproto_fn,
+            _js_parse_f737_setproto_method_body, depth, state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        # ---- fire: Object.setPrototypeOf(p,PROTO);
+        ob = _js_match_kw(text, _js_skip_ws(text, m), "Object")
+        if ob is None:
+            raise _JSExprFail("F737 setproto not Object")
+        m = _js_skip_ws(text, ob)
+        m = _js_expect(text, m, ".")
+        m = _js_skip_ws(text, m)
+        sp = _js_match_kw(text, m, "setPrototypeOf")
+        if sp is None:
+            raise _JSExprFail("F737 setproto not setPrototypeOf")
+        m = _js_skip_ws(text, sp)
+        m = _js_expect(text, m, "(")
+        m = _js_skip_ws(text, m)
+        pname, m = _js_parse_ident(text, m)
+        if pname != wname:
+            raise _JSExprFail("F737 setproto wrong receiver")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ",")
+        m = _js_parse_f737_proto_arg(text, m)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        # ---- apply trap writes to the tracked target
+        tracked = dict(props)
+        for mem, lit in writes.items():
+            old = tracked.get(mem)
+            if isinstance(old, _JSAccessor):
+                # Sloppy-mode silent ignore: the engine drops a
+                # [[Set]] on a getter-only accessor (setters fail
+                # closed in the object grammar, so any parsed
+                # accessor is getter-only); the getter's resolved
+                # value survives. Node-exact, v24.20.0.
+                continue
+            tracked[mem] = lit
+        # ---- terminal: return (t|p).MEM(+'LIT')*;
+        r = _js_match_kw(text, _js_skip_ws(text, m), "return")
+        if r is None:
+            raise _JSExprFail("F737 setproto no return")
+        m = _js_skip_ws(text, r)
+        recv, m = _js_parse_ident(text, m)
+        if recv != wname and recv != tname:
+            raise _JSExprFail("F737 setproto terminal wrong receiver")
+        mem, m = _js_parse_f642_terminal_member(text, m)
+        if mem == "__proto__":
+            raise _JSExprFail("F737 setproto __proto__ read")
+        v = tracked.get(mem)
+        if isinstance(v, _JSAccessor):
+            v = v.value  # getter already evaluated at parse time
+        if not isinstance(v, str):
+            raise _JSExprFail("F737 setproto member not a string")
+        val, m = _js_parse_f675_add_tail(text, m, v, wname, tname,
+                                         tracked, depth, state)
+        return _js_parse_f675_iife_tail(text, j, m, inner_end, val,
+                                        state)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f686_ownkeys_body(text, j, state):
     """Parse `{return ['L1',...];}` ownKeys-trap body content (F686).
 
@@ -51151,6 +51393,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                state)
         if _f675r is not None:
             val, i = _f675r
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F737: (function(){var|let|const t={...};var|let|const p=
+        #   new Proxy(t,{setPrototypeOf:SPFN});
+        #   Object.setPrototypeOf(p,PROTO);return
+        #   t.MEM(+'LIT')*;})() -- setPrototypeOf-trap fragment
+        #   writes into the bound target. Tried after F675: F675
+        #   requires set/construct/deleteProperty/getPrototypeOf
+        #   keys or the revocable head (this requires the
+        #   setPrototypeOf key plus the Object.setPrototypeOf
+        #   fire statement). None of the earlier routes accepts
+        #   these shapes, so no previously-decoded input changes
+        #   behavior.
+        _f737 = _js_parse_f737_setproto_trap_iife(text, i, depth,
+                                                  state)
+        if _f737 is not None:
+            val, i = _f737
             return _js_parse_postfix(text, i, val, depth, state)
         # F686: (function(){var|let|const p=new Proxy({},
         #   {ownKeys:OFN,getOwnPropertyDescriptor:GFN});TERM})() --

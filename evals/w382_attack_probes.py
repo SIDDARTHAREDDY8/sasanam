@@ -31,9 +31,9 @@ New findings (24, all LOW, all OPEN), filed F713-F736 (attack-F713 renumbered F7
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F700-F712 (round 49 + wave-381 merge renumbers), F714-F737 (this round; attack-F713 -> F737 at merge).
+F700-F712 (round 49 + wave-381 merge renumbers; closed wave-382), F713-F736 (this round, open). F737 (this round; attack-F713 -> F737 at merge) closed wave-383 lane 13.
 
-Closed pins (must BLOCK, else BREAK): F686-F699 (wave-381 closures).
+Closed pins (must BLOCK, else BREAK): F686-F699 (wave-381 closures), F700-F712 (wave-382 closures), F737 (wave-383 lane 13).
 F699 fails closed (None) by design -- its pin asserts the miss.
 F711 pins the raw-decoder mis-decode (find_credential fails closed on it).
 
@@ -376,16 +376,16 @@ def test_r49_f711_bracket_misdecode_closed():
 
 
 @_t
-def test_r50_f737_s1_open():
-    """F737 OPEN (Proxy setPrototypeOf-trap fragment writes; filed as F713): miss reproduces."""
-    miss = _misses("(function(){var t={};var p=new Proxy(t,{setPrototypeOf:function(tr,pr){tr.__p='%s';return true;}});Object.setPrototypeOf(p,{});return t.__p+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f737_s1_closed():
+    """F737 CLOSED (wave-383 lane 13; filed as F713): blocks coded."""
+    blk = _blocked("(function(){var t={};var p=new Proxy(t,{setPrototypeOf:function(tr,pr){tr.__p='%s';return true;}});Object.setPrototypeOf(p,{});return t.__p+'%s';})()" % (_A, _B))
+    return ("HELD" if blk else "BREAK", "blocked=%s" % blk)
 
 @_t
-def test_r50_f737_s2_open():
-    """F737 OPEN (Proxy setPrototypeOf-trap fragment writes; filed as F713): miss reproduces."""
-    miss = _misses("(function(){var t={};var p=new Proxy(t,{setPrototypeOf:function(tg,pt){tg['k']='%s';return true;}});Object.setPrototypeOf(p,[]);return t.k+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f737_s2_closed():
+    """F737 CLOSED (wave-383 lane 13; filed as F713): blocks coded."""
+    blk = _blocked("(function(){var t={};var p=new Proxy(t,{setPrototypeOf:function(tg,pt){tg['k']='%s';return true;}});Object.setPrototypeOf(p,[]);return t.k+'%s';})()" % (_A, _B))
+    return ("HELD" if blk else "BREAK", "blocked=%s" % blk)
 
 @_t
 def test_r50_f714_s1_open():
