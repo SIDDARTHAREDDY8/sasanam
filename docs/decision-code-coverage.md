@@ -1,10 +1,10 @@
 # Decision-code coverage table (generated)
 
-Generated: 2026-10-07T11:02:26Z UTC · registry pin: 2135 · base: wave-343 merge (+3 ownership-* codes, 2129/2135 behaviorally probed; 5 fault-injection residuals: tool-crashed, tool-timed-out, preexec_child_died, post-rotation, offline-verify-internal)
+Generated: 2026-10-08T11:52:54Z UTC · registry pin: 2140 · base: wave-343 merge (+3 ownership-* codes, 2129/2135 behaviorally probed; 5 fault-injection residuals: tool-crashed, tool-timed-out, preexec_child_died, post-rotation, offline-verify-internal)
 
 Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code counts as covered when its literal string appears quoted in at least one ``.py`` file under ``tests/`` or ``evals/``. Production ``emit()`` call sites do not count.
 
-**Covered: 2130 / 2135** · **Gaps: 5**
+**Covered: 2135 / 2140** · **Gaps: 5**
 
 | code | domain | severity | covered | asserted in |
 | ---- | ------ | -------- | ------- | ----------- |
@@ -2028,6 +2028,11 @@ Rule (Bernstein #5569, ADAPT): no row claims coverage without a test. A code cou
 | `upload_failed` | platform | medium | yes | evals/w35_probes.py, tests/test_f110_platform_egress.py |
 | `uri-host-invalid` | uri-normalize | high | yes | evals/w247_uri_normalize_probes.py, tests/test_uri_normalize.py |
 | `uri-host-unparseable` | uri-normalize | high | yes | evals/w247_uri_normalize_probes.py, tests/test_uri_normalize.py |
+| `vendor-artifact-new` | vendor-watch | medium | yes | evals/wv1_watcher_probes.py, tests/test_vendor_watch.py |
+| `vendor-artifact-removed` | vendor-watch | medium | yes | evals/wv1_watcher_probes.py |
+| `vendor-hash-drift` | vendor-watch | high | yes | evals/wv1_watcher_probes.py, tests/test_vendor_watch.py |
+| `vendor-update-detected` | vendor-watch | medium | yes | evals/wv1_watcher_probes.py, tests/test_vendor_watch.py |
+| `vendor-update-unverifiable` | vendor-watch | high | yes | evals/wv1_watcher_probes.py, tests/test_vendor_watch.py |
 | `verifier-input-malformed` | authority | medium | yes | evals/w243_verifier_failclosed_probes.py, evals/w245_registry_adversary_probes.py, tests/test_advisory_binding.py (+3) |
 | `verifier-malformed` | authorization_receipt | medium | yes | evals/w343_covgap5_probes.py |
 | `verify-artifactsfrom-empty` | verify | high | yes | evals/w238_bundle_verify_probes.py, tests/test_bundle_verify_invariant.py |

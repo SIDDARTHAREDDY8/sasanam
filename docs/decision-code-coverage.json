@@ -1,7 +1,7 @@
 {
- "generated": "2026-10-07T11:02:26Z",
- "pin": 2135,
- "covered": 2130,
+ "generated": "2026-10-08T11:52:54Z",
+ "pin": 2140,
+ "covered": 2135,
  "gaps": [
   "offline-verify-internal",
   "post-rotation",
@@ -20852,6 +20852,55 @@
    "files": [
     "evals/w247_uri_normalize_probes.py",
     "tests/test_uri_normalize.py"
+   ]
+  },
+  {
+   "code": "vendor-artifact-new",
+   "domain": "vendor-watch",
+   "severity": "medium",
+   "covered": true,
+   "files": [
+    "evals/wv1_watcher_probes.py",
+    "tests/test_vendor_watch.py"
+   ]
+  },
+  {
+   "code": "vendor-artifact-removed",
+   "domain": "vendor-watch",
+   "severity": "medium",
+   "covered": true,
+   "files": [
+    "evals/wv1_watcher_probes.py"
+   ]
+  },
+  {
+   "code": "vendor-hash-drift",
+   "domain": "vendor-watch",
+   "severity": "high",
+   "covered": true,
+   "files": [
+    "evals/wv1_watcher_probes.py",
+    "tests/test_vendor_watch.py"
+   ]
+  },
+  {
+   "code": "vendor-update-detected",
+   "domain": "vendor-watch",
+   "severity": "medium",
+   "covered": true,
+   "files": [
+    "evals/wv1_watcher_probes.py",
+    "tests/test_vendor_watch.py"
+   ]
+  },
+  {
+   "code": "vendor-update-unverifiable",
+   "domain": "vendor-watch",
+   "severity": "high",
+   "covered": true,
+   "files": [
+    "evals/wv1_watcher_probes.py",
+    "tests/test_vendor_watch.py"
    ]
   },
   {
