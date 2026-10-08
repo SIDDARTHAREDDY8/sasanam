@@ -295,31 +295,31 @@ def test_r49_f707_gopd_trap_reflect_open():
 
 
 @_t
-def test_r49_f708_map_get_open():
-    """F708 OPEN (Map.get): miss reproduces."""
-    miss = _misses("(function(){var m=new Map([['k','%s']]);return m.get('k')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r49_f708_map_get_closed():
+    """F708 CLOSED (Map.get): now blocks coded."""
+    ok = _blocked("(function(){var m=new Map([['k','%s']]);return m.get('k')+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f708=%s" % ok)
 
 
 @_t
-def test_r49_f708_map_get_keyvar_open():
-    """F708 OPEN (Map.get): miss reproduces."""
-    miss = _misses("(function(){var m=new Map();m.set('k','%s');var k='k';return m.get(k)+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r49_f708_map_get_keyvar_closed():
+    """F708 CLOSED (Map.get keyvar): now blocks coded."""
+    ok = _blocked("(function(){var m=new Map();m.set('k','%s');var k='k';return m.get(k)+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f708=%s" % ok)
 
 
 @_t
-def test_r49_f709_for_plus_eq_open():
-    """F709 OPEN (loop += accum): miss reproduces."""
-    miss = _misses("(function(){var r='';for(var i=0;i<2;i++){r+=['%s','%s'][i];}return r;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r49_f709_for_plus_eq_closed():
+    """F709 CLOSED (loop += accum): now blocks coded."""
+    ok = _blocked("(function(){var r='';for(var i=0;i<2;i++){r+=['%s','%s'][i];}return r;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f709=%s" % ok)
 
 
 @_t
-def test_r49_f709_while_plus_eq_open():
-    """F709 OPEN (loop += accum): miss reproduces."""
-    miss = _misses("(function(){var r='';var i=0;while(i<2){r+=['%s','%s'][i];i++;}return r;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r49_f709_while_plus_eq_closed():
+    """F709 CLOSED (loop += accum): now blocks coded."""
+    ok = _blocked("(function(){var r='';var i=0;while(i<2){r+=['%s','%s'][i];i++;}return r;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f709=%s" % ok)
 
 
 @_t

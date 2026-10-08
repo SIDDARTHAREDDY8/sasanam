@@ -23546,6 +23546,422 @@ def _js_f679_top_stmt(text, j, inner_end, env, state, depth):
     raise _JSExprFail("F679 bad statement")
 
 
+def _js_f708_map_key(stmts, j, strenv):
+    """Parse a Map.get/Map.set key at stmts[j] (F708).
+
+    A string literal, a bound string name, or a canonical decimal
+    integer literal (the _JSMap postfix branch's ("s",key) /
+    ("n",key) SameValueZero discipline). Integers beyond 2**53
+    fail closed (F699 discipline -- the engine's float64 diverges
+    from the canonical text). Returns (kid, next_index). Never
+    evals.
+    """
+    n = len(stmts)
+    q = _js_skip_ws(stmts, j)
+    if q < n and stmts[q] in "'\"":
+        key, q = _js_parse_string(stmts, q)
+        return ("s", key), q
+    if q < n and stmts[q] in _ASCII_DIGITS:
+        lit, q = _js_parse_canonical_int(stmts, q, "F708")
+        if _js_str_is_unsafe_int(lit):
+            raise _JSExprFail("F708 key beyond 2**53")
+        return ("n", lit), q
+    if q < n and stmts[q] in _JS_IDENT_START:
+        name, q = _js_parse_ident(stmts, q)
+        if name not in strenv:
+            raise _JSExprFail("F708 key unbound")
+        return ("s", strenv[name]), q
+    raise _JSExprFail("F708 bad key")
+
+
+def _js_parse_f708_map_get_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const M=new Map([PAIRS]);(M.set(K,V);|var|let|const K='LIT';)*return M.get(KEY)(+'LIT')*;})()` (F708).
+
+    Node-exact desugar (v24.20.0): the var-bound Map holds the
+    literal entries (later-wins on duplicate keys, SameValueZero
+    identity -- the ("s",key)/("n",key) entries discipline shared
+    with F563/F657); `.set` statements mutate it engine-exactly
+    (a set with the receiver rebound, a non-string value, or a
+    non-literal key fails closed); `M.get(KEY)` resolves through
+    the entries and the value flows through the normal postfix
+    chain with an additive literal tail (the F610 return
+    discipline). Returns (value, next_index), or None when the
+    head does not match or a guard fails. F452 parts charging per
+    set/get; the iife-tail wrapper charges the one op
+    (obfuscation-shaped). Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): the
+    map name rebound or shadowed, a `.set` on another receiver, a
+    missing key (the engine yields undefined -- never decoded), a
+    non-string get value, a key expression that is not a string
+    literal / bound string name / canonical safe int, any
+    statement that is not a set / key-decl / the get return, call
+    args on the IIFE.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        mname, mmap, sj = _js_parse_f657_bound_map_decl(
+            stmts, sj, depth, state)
+        entries = dict(mmap.entries)
+        strenv = {}
+        while True:
+            q = _js_skip_ws(stmts, sj)
+            if _js_match_kw(stmts, q, "return") is not None:
+                break
+            # `M.set(K,V);` mutation statement.
+            sname, q2 = _js_parse_ident(stmts, q)
+            q2 = _js_skip_ws(stmts, q2)
+            if (sname == mname and q2 < len(stmts)
+                    and stmts[q2] == "."):
+                _mn, q2 = _js_parse_ident(
+                    stmts, _js_skip_ws(stmts, q2 + 1))
+                if _mn != "set":
+                    raise _JSExprFail("F708 map member not set")
+                q2 = _js_skip_ws(stmts, q2)
+                q2 = _js_expect(stmts, q2, "(")
+                kid, q2 = _js_f708_map_key(stmts, q2, strenv)
+                q2 = _js_skip_ws(stmts, q2)
+                q2 = _js_expect(stmts, q2, ",")
+                q2 = _js_skip_ws(stmts, q2)
+                if q2 >= len(stmts) or stmts[q2] not in "'\"":
+                    raise _JSExprFail("F708 set value not a string")
+                sval, q2 = _js_parse_string(stmts, q2)
+                q2 = _js_skip_ws(stmts, q2)
+                q2 = _js_expect(stmts, q2, ")")
+                q2 = _js_skip_ws(stmts, q2)
+                q2 = _js_expect(stmts, q2, ";")
+                entries[kid] = sval  # later wins, node-exact
+                state["parts"] += 1  # the mutation is
+                # obfuscation-shaped
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                sj = q2
+                continue
+            # `var|let|const K='LIT';` key binding.
+            m = _js_match_kw(stmts, q, "var")
+            if m is None:
+                m = _js_match_kw(stmts, q, "let")
+            if m is None:
+                m = _js_match_kw(stmts, q, "const")
+            if m is None:
+                raise _JSExprFail("F708 bad middle statement")
+            q2 = _js_skip_ws(stmts, m)
+            kname, q2 = _js_parse_ident(stmts, q2)
+            if kname in (mname, "arguments"):
+                raise _JSExprFail("F708 key shadows map")
+            q2 = _js_skip_ws(stmts, q2)
+            q2 = _js_expect(stmts, q2, "=")
+            q2 = _js_skip_ws(stmts, q2)
+            if q2 >= len(stmts) or stmts[q2] not in "'\"":
+                raise _JSExprFail("F708 key not a string")
+            kval, q2 = _js_parse_string(stmts, q2)
+            q2 = _js_skip_ws(stmts, q2)
+            q2 = _js_expect(stmts, q2, ";")
+            strenv[kname] = kval
+            sj = q2
+        # `return M.get(KEY)(+'LIT')*;`
+        q = _js_skip_ws(stmts, sj)
+        rk = _js_match_kw(stmts, q, "return")
+        if rk is None:
+            raise _JSExprFail("F708 body not return")
+        q = _js_skip_ws(stmts, rk)
+        rname, q = _js_parse_ident(stmts, q)
+        if rname != mname:
+            raise _JSExprFail("F708 returns another ident")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ".")
+        _mn, q = _js_parse_ident(stmts, _js_skip_ws(stmts, q))
+        if _mn != "get":
+            raise _JSExprFail("F708 return not get")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, "(")
+        kid, q = _js_f708_map_key(stmts, q, strenv)
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ")")
+        if kid not in entries:
+            # The engine yields undefined -- never decoded.
+            raise _JSExprFail("F708 get of missing key")
+        gval = entries[kid]
+        if not isinstance(gval, str) or isinstance(gval, _JSNumStr):
+            raise _JSExprFail("F708 get value not a string")
+        state["parts"] += 1  # the get is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        state["ops"] += 1
+        # The get string flows through the normal postfix chain;
+        # the return value must be a string to be decodable.
+        rval, q = _js_parse_postfix(stmts, q, gval, depth, state)
+        if not isinstance(rval, str):
+            raise _JSExprFail("F708 return not a string")
+        # Additive tail of string literals only.
+        while True:
+            t = _js_skip_ws(stmts, q)
+            if t >= len(stmts) or stmts[t] != "+":
+                break
+            t = _js_skip_ws(stmts, t + 1)
+            if t >= len(stmts) or stmts[t] not in "'\"":
+                raise _JSExprFail("F708 additive tail not a literal")
+            _tail, t = _js_parse_string(stmts, t)
+            if len(rval) + len(_tail) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("concat too long")
+            rval = rval + _tail
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1
+            q = t
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ";")
+        if _js_skip_ws(stmts, q) != len(stmts):
+            raise _JSExprFail("F708 trailing statements")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        return None
+
+
+def _js_f709_int(stmts, j):
+    """Parse a canonical safe integer literal at stmts[j] (F709).
+
+    Optional leading `-`, canonical digits (no leading zeros),
+    |n| <= 2**53 (F699 discipline -- the engine's float64 diverges
+    beyond it). Returns (int_value, next_index). Never evals.
+    """
+    n = len(stmts)
+    q = _js_skip_ws(stmts, j)
+    neg = False
+    if q < n and stmts[q] == "-":
+        neg = True
+        q += 1
+    if q >= n or stmts[q] not in _ASCII_DIGITS:
+        raise _JSExprFail("F709 bad int")
+    d0 = q
+    while q < n and stmts[q] in _ASCII_DIGITS:
+        q += 1
+    digits = stmts[d0:q]
+    if len(digits) > 1 and digits[0] == "0":
+        raise _JSExprFail("F709 non-canonical int")
+    if _js_str_is_unsafe_int(("-" if neg else "") + digits):
+        raise _JSExprFail("F709 int beyond 2**53")
+    return (-int(digits) if neg else int(digits)), q
+
+
+def _js_f709_indexed_accum(stmts, j, acc, iname, depth, state):
+    """Parse `ACC+=['LIT',...][INAME];` at stmts[j] (F709).
+
+    The array is a literal string array (every element a plain
+    str -- the F434 additive element grammar may fold literals,
+    which stays node-exact); the index is exactly the loop
+    counter ident. Returns (elements, next_index). Never evals.
+    """
+    n = len(stmts)
+    q = _js_skip_ws(stmts, j)
+    aname, q = _js_parse_ident(stmts, q)
+    if aname != acc:
+        raise _JSExprFail("F709 accum mismatch")
+    q = _js_skip_ws(stmts, q)
+    if q >= n or not stmts.startswith("+=", q):
+        raise _JSExprFail("F709 not plus-equals")
+    q = _js_skip_ws(stmts, q + 2)
+    if q >= n or stmts[q] != "[":
+        raise _JSExprFail("F709 accum rhs not an array")
+    arr, q = _js_parse_array(stmts, q, depth, state)
+    elems = arr.elements
+    for e in elems:
+        if not isinstance(e, str) or isinstance(e, _JSNumStr):
+            raise _JSExprFail("F709 array element not a string")
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, "[")
+    iname2, q = _js_parse_ident(stmts, _js_skip_ws(stmts, q))
+    if iname2 != iname:
+        raise _JSExprFail("F709 index not the counter")
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, "]")
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, ";")
+    return elems, q
+
+
+def _js_parse_f709_loop_accum_iife(text, i, depth, state):
+    """Parse counted-loop `+=` accumulation over a literal string array (F709).
+
+    `(function(){var|let R='';for(var|let I=INIT;I<BOUND;I++){R+=['LIT',...][I];}return R;})()`
+    and the while twin
+    `(function(){var|let R='';var|let I=INIT;while(I<BOUND){R+=['LIT',...][I];I++;}return R;})()`.
+
+    Node-exact desugar (v24.20.0): the counter runs the exact
+    integer sequence; each iteration appends the array element at
+    the counter. An out-of-bounds index yields engine `undefined`
+    -- never decoded, fail closed. `<=` bounds are modeled;
+    anything else fails closed. Returns (value, next_index), or
+    None when the head does not match or a guard fails. Bounded:
+    at most _JS_F679_MAX_ITERS iterations, F452 per-iteration
+    part charge, _MAX_DECODE_BYTES on the result. Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-canonical or unsafe (>2**53) init/bound, a `<=`-other
+    comparison, a non-`I++` update, an index that is not exactly
+    the counter ident, a non-literal array, a non-string element,
+    an out-of-bounds index, extra body statements, an
+    accum/counter name collision, call args on the IIFE.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, sj)
+        # Optional counter decl (the while twin declares it up
+        # front; the for twin declares it in the head -- a
+        # counter decl followed by a `for` head fails closed).
+        iname = None
+        init = None
+        q = _js_skip_ws(stmts, sj)
+        m = _js_match_kw(stmts, q, "var")
+        if m is None:
+            m = _js_match_kw(stmts, q, "let")
+        is_while_twin = m is not None
+        if is_while_twin:
+            q = _js_skip_ws(stmts, m)
+            iname, q = _js_parse_ident(stmts, q)
+            if iname in (acc, "arguments"):
+                raise _JSExprFail("F709 counter shadows accum")
+            q = _js_skip_ws(stmts, q)
+            q = _js_expect(stmts, q, "=")
+            init, q = _js_f709_int(stmts, q)
+            q = _js_skip_ws(stmts, q)
+            q = _js_expect(stmts, q, ";")
+            sj = q
+        # Loop head.
+        q = _js_skip_ws(stmts, sj)
+        fk = _js_match_kw(stmts, q, "for")
+        if fk is not None:
+            if is_while_twin:
+                raise _JSExprFail("F709 counter decl before for")
+            q = _js_skip_ws(stmts, fk)
+            q = _js_expect(stmts, q, "(")
+            q = _js_skip_ws(stmts, q)
+            m = _js_match_kw(stmts, q, "var")
+            if m is None:
+                m = _js_match_kw(stmts, q, "let")
+            if m is None:
+                raise _JSExprFail("F709 for init not var/let")
+            q = _js_skip_ws(stmts, m)
+            iname, q = _js_parse_ident(stmts, q)
+            if iname in (acc, "arguments"):
+                raise _JSExprFail("F709 counter shadows accum")
+            q = _js_skip_ws(stmts, q)
+            q = _js_expect(stmts, q, "=")
+            init, q = _js_f709_int(stmts, q)
+            q = _js_skip_ws(stmts, q)
+            q = _js_expect(stmts, q, ";")
+            cname, q = _js_parse_ident(stmts, _js_skip_ws(stmts, q))
+            if cname != iname:
+                raise _JSExprFail("F709 cond not the counter")
+            q = _js_skip_ws(stmts, q)
+            if stmts.startswith("<=", q):
+                le, q = True, q + 2
+            elif q < len(stmts) and stmts[q] == "<":
+                le, q = False, q + 1
+            else:
+                raise _JSExprFail("F709 cond not </<=")
+            bound, q = _js_f709_int(stmts, q)
+            q = _js_skip_ws(stmts, q)
+            q = _js_expect(stmts, q, ";")
+            uname, q = _js_parse_ident(stmts, _js_skip_ws(stmts, q))
+            if uname != iname:
+                raise _JSExprFail("F709 update not the counter")
+            q = _js_skip_ws(stmts, q)
+            if not stmts.startswith("++", q):
+                raise _JSExprFail("F709 update not ++")
+            q += 2
+            if q < len(stmts) and stmts[q] == "+":
+                # `i+++...` -- not the plain `i++` form.
+                raise _JSExprFail("F709 update not plain ++")
+            q = _js_skip_ws(stmts, q)
+            q = _js_expect(stmts, q, ")")
+            # Body: `{R+=ARR[I];}`.
+            q = _js_skip_ws(stmts, q)
+            q = _js_expect(stmts, q, "{")
+            elems, q = _js_f709_indexed_accum(stmts, q, acc, iname, depth, state)
+            q = _js_skip_ws(stmts, q)
+            q = _js_expect(stmts, q, "}")
+        else:
+            wk = _js_match_kw(stmts, q, "while")
+            if wk is None or not is_while_twin:
+                raise _JSExprFail("F709 not a counted loop")
+            q = _js_skip_ws(stmts, wk)
+            q = _js_expect(stmts, q, "(")
+            cname, q = _js_parse_ident(stmts, _js_skip_ws(stmts, q))
+            if cname != iname:
+                raise _JSExprFail("F709 cond not the counter")
+            q = _js_skip_ws(stmts, q)
+            if stmts.startswith("<=", q):
+                le, q = True, q + 2
+            elif q < len(stmts) and stmts[q] == "<":
+                le, q = False, q + 1
+            else:
+                raise _JSExprFail("F709 cond not </<=")
+            bound, q = _js_f709_int(stmts, q)
+            q = _js_skip_ws(stmts, q)
+            q = _js_expect(stmts, q, ")")
+            # Body: `{R+=ARR[I];I++;}`.
+            q = _js_skip_ws(stmts, q)
+            q = _js_expect(stmts, q, "{")
+            elems, q = _js_f709_indexed_accum(stmts, q, acc, iname, depth, state)
+            uname, q = _js_parse_ident(stmts, _js_skip_ws(stmts, q))
+            if uname != iname:
+                raise _JSExprFail("F709 update not the counter")
+            q = _js_skip_ws(stmts, q)
+            if not stmts.startswith("++", q):
+                raise _JSExprFail("F709 update not ++")
+            q += 2
+            if q < len(stmts) and stmts[q] == "+":
+                raise _JSExprFail("F709 update not plain ++")
+            q = _js_skip_ws(stmts, q)
+            q = _js_expect(stmts, q, ";")
+            q = _js_skip_ws(stmts, q)
+            q = _js_expect(stmts, q, "}")
+        # `return R;` through end of body.
+        _js_parse_f6xx_return_acc(stmts, _js_skip_ws(stmts, q), acc)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        # Node-exact simulation (v24.20.0): the counter runs the
+        # exact integer sequence; each iteration appends the
+        # element at the counter.
+        parts = []
+        c = init
+        iters = 0
+        while (c <= bound) if le else (c < bound):
+            if iters >= _JS_F679_MAX_ITERS:
+                raise _JSExprFail("F709 too many iterations")
+            if c < 0 or c >= len(elems):
+                # Engine `undefined` -- never decoded.
+                raise _JSExprFail("F709 index out of bounds")
+            parts.append(elems[c])
+            state["parts"] += 1  # F452: charge per iteration
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            c += 1
+            iters += 1
+        rval = "".join(parts)
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F709 concat too long")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f679_statement_iife(text, i, depth, state):
     """Parse `(function(){STMT* return ADD;})()` at text[i] (F679).
 
@@ -48601,6 +49017,34 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f679 = _js_parse_f679_statement_iife(text, i, depth, state)
         if _f679 is not None:
             val, i = _f679
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F708: (function(){var|let|const M=new Map([PAIRS]);
+        #   (M.set(K,V);|var|let|const K='LIT';)*return
+        #   M.get(KEY)(+'LIT')*;})() -- Map.get fragment reads on
+        #   var-bound maps. Tried after F679: F679's statement
+        #   simulation has no Map production and fails closed on
+        #   `new Map` decls (red-first verified: 2 BREAK on the
+        #   open tree); F657 requires a forEach call; F669 requires
+        #   a spread-consume return; every earlier route requires
+        #   its own binding family and fails closed on a leading
+        #   Map decl, so no previously-decoded input changes
+        #   behavior.
+        _f708 = _js_parse_f708_map_get_iife(text, i, depth, state)
+        if _f708 is not None:
+            val, i = _f708
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F709: (function(){var|let R='';for(var|let I=INIT;I<BOUND;I++)
+        #   {R+=['LIT',...][I];}return R;})() and the while twin --
+        #   counted-loop += accumulation over a literal string
+        #   array. Tried after F679: F679's string-operand grammar
+        #   has no literal-array-index production and fails closed
+        #   on `R+=['LIT',...][I]` (red-first verified: 2 BREAK on
+        #   the open tree); every other earlier route requires its
+        #   own binding family or statement head, so no
+        #   previously-decoded input changes behavior.
+        _f709 = _js_parse_f709_loop_accum_iife(text, i, depth, state)
+        if _f709 is not None:
+            val, i = _f709
             return _js_parse_postfix(text, i, val, depth, state)
         # F662: (function(){[STMT;]* return ADD;})() with
         #   class-declaration fragment sources (static fields /
