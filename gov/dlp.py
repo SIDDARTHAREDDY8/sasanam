@@ -25363,6 +25363,330 @@ def _js_parse_f709_loop_accum_iife(text, i, depth, state):
         return None
 
 
+def _js_f727_accum_stmt(stmts, j, acc, iname, depth, state):
+    """Parse the F727 do-while body accumulation statement.
+
+    `ACC+=['LIT',...][INAME];` or the plain-concat twin
+    `ACC=ACC+['LIT',...][INAME];` at stmts[j]. The array is a
+    literal string array (every element a plain str -- the F434
+    additive element grammar may fold literals, which stays
+    node-exact); the index is exactly the loop counter ident.
+    Returns (elements, next_index). Never evals.
+    """
+    n = len(stmts)
+    q = _js_skip_ws(stmts, j)
+    aname, q = _js_parse_ident(stmts, q)
+    if aname != acc:
+        raise _JSExprFail("F727 accum mismatch")
+    q = _js_skip_ws(stmts, q)
+    if stmts.startswith("+=", q):
+        q = _js_skip_ws(stmts, q + 2)
+    elif q < n and stmts[q] == "=":
+        q = _js_skip_ws(stmts, q + 1)
+        rname, q = _js_parse_ident(stmts, q)
+        if rname != acc:
+            raise _JSExprFail("F727 accum rhs not the accum")
+        q = _js_skip_ws(stmts, q)
+        if q >= n or stmts[q] != "+":
+            raise _JSExprFail("F727 accum rhs not plus")
+        q = _js_skip_ws(stmts, q + 1)
+    else:
+        raise _JSExprFail("F727 not an accum stmt")
+    if q >= n or stmts[q] != "[":
+        raise _JSExprFail("F727 accum rhs not an array")
+    arr, q = _js_parse_array(stmts, q, depth, state)
+    elems = arr.elements
+    for e in elems:
+        if not isinstance(e, str) or isinstance(e, _JSNumStr):
+            raise _JSExprFail("F727 array element not a string")
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, "[")
+    iname2, q = _js_parse_ident(stmts, _js_skip_ws(stmts, q))
+    if iname2 != iname:
+        raise _JSExprFail("F727 index not the counter")
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, "]")
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, ";")
+    return elems, q
+
+
+def _js_parse_f727_dowhile_accum_iife(text, i, depth, state):
+    """Parse do-while `+=` accumulation over a literal string array (F727).
+
+    `(function(){var|let R='';var|let I=INIT;do{R+=['LIT',...][I];I++;}while(I<BOUND);return R;})()`
+    and the plain-concat twin
+    `(function(){var|let R='';var|let I=INIT;do{R=R+['LIT',...][I];I++;}while(I<BOUND);return R;})()`.
+
+    F709 (filed round 49) covers the for twin and the while
+    twin; do-while executes the body once before the first
+    condition check (node v24.20.0), so the simulation below runs
+    the body first and checks the condition after each round.
+    Node-exact desugar: the counter runs the exact integer
+    sequence starting at INIT; each iteration appends the array
+    element at the counter. An out-of-bounds index yields engine
+    `undefined` -- never decoded, fail closed. `<=` bounds are
+    modeled; anything else fails closed. Returns (value,
+    next_index), or None when the head does not match or a guard
+    fails. Bounded: at most _JS_F679_MAX_ITERS iterations, F452
+    per-iteration part charge, _MAX_DECODE_BYTES on the result.
+    Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-canonical or unsafe (>2**53) init/bound, a non-</<=
+    comparison, a non-`I++` update, an index that is not exactly
+    the counter ident, a non-literal array, a non-string element,
+    an out-of-bounds index, extra body statements, an
+    accum/counter name collision, call args on the IIFE.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, sj)
+        # Counter decl: `var|let I=INIT;`.
+        q = _js_skip_ws(stmts, sj)
+        m = _js_match_kw(stmts, q, "var")
+        if m is None:
+            m = _js_match_kw(stmts, q, "let")
+        if m is None:
+            raise _JSExprFail("F727 counter decl not var/let")
+        q = _js_skip_ws(stmts, m)
+        iname, q = _js_parse_ident(stmts, q)
+        if iname in (acc, "arguments"):
+            raise _JSExprFail("F727 counter shadows accum")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, "=")
+        init, q = _js_f709_int(stmts, q)
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ";")
+        # `do{` body `}`.
+        q = _js_skip_ws(stmts, q)
+        dk = _js_match_kw(stmts, q, "do")
+        if dk is None:
+            raise _JSExprFail("F727 not do-while")
+        q = _js_skip_ws(stmts, dk)
+        q = _js_expect(stmts, q, "{")
+        elems, q = _js_f727_accum_stmt(stmts, q, acc, iname, depth, state)
+        uname, q = _js_parse_ident(stmts, _js_skip_ws(stmts, q))
+        if uname != iname:
+            raise _JSExprFail("F727 update not the counter")
+        q = _js_skip_ws(stmts, q)
+        if not stmts.startswith("++", q):
+            raise _JSExprFail("F727 update not ++")
+        q += 2
+        if q < len(stmts) and stmts[q] == "+":
+            # `i+++...` -- not the plain `i++` form.
+            raise _JSExprFail("F727 update not plain ++")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ";")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, "}")
+        # `while(I<BOUND);`.
+        q = _js_skip_ws(stmts, q)
+        wk = _js_match_kw(stmts, q, "while")
+        if wk is None:
+            raise _JSExprFail("F727 no while tail")
+        q = _js_skip_ws(stmts, wk)
+        q = _js_expect(stmts, q, "(")
+        cname, q = _js_parse_ident(stmts, _js_skip_ws(stmts, q))
+        if cname != iname:
+            raise _JSExprFail("F727 cond not the counter")
+        q = _js_skip_ws(stmts, q)
+        if stmts.startswith("<=", q):
+            le, q = True, q + 2
+        elif q < len(stmts) and stmts[q] == "<":
+            le, q = False, q + 1
+        else:
+            raise _JSExprFail("F727 cond not </<=")
+        bound, q = _js_f709_int(stmts, q)
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ")")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ";")
+        # `return R;` through end of body.
+        _js_parse_f6xx_return_acc(stmts, _js_skip_ws(stmts, q), acc)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        # Node-exact do-while simulation (v24.20.0): the body
+        # runs once before the first condition check; the
+        # counter runs the exact integer sequence.
+        parts = []
+        c = init
+        iters = 0
+        while True:
+            if iters >= _JS_F679_MAX_ITERS:
+                raise _JSExprFail("F727 too many iterations")
+            if c < 0 or c >= len(elems):
+                # Engine `undefined` -- never decoded.
+                raise _JSExprFail("F727 index out of bounds")
+            parts.append(elems[c])
+            state["parts"] += 1  # F452: charge per iteration
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            c += 1
+            iters += 1
+            if not ((c <= bound) if le else (c < bound)):
+                break
+        rval = "".join(parts)
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F727 concat too long")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f728_nextvalue_iife(text, i, depth, state):
+    """Parse direct `.next().value` reads on a declared generator (F728).
+
+    `(function(){function* G(){yield 'LIT';...;return 'LIT'?;}var|let|const IT=G();return ADD;})()`
+    where ADD is a string-only additive of `'LIT'` and
+    `IT.next().value` terms.
+
+    F677 (CLOSED wave-380) models sequenced `.next()` reads only
+    through var-bound result idents (`R=IT.next();` statements
+    consumed as `R.value` terms); F656 (CLOSED) models the single
+    `G.next().value` read on an invoked generator *expression*.
+    Neither decodes `.next().value` read directly on the call
+    result of a declared generator's iterator (red-first verified:
+    2 BREAK on the open tree).
+
+    Node-exact desugar (v24.20.0): the n-th `IT.next()` call
+    delivers yields[n-1] as `{value, done:false}`; the call after
+    the last yield delivers the trailing return value as
+    `{value, done:true}`; any later call delivers `undefined` --
+    the decoder refuses that coded (fail closed, never
+    mis-decoded). `.next()` takes no arguments; only `.value` is
+    read. Returns (value, next_index), or None when the head does
+    not match or a guard fails. Bounded: at most 16 `.next()`
+    calls, F452 parts charged per call, _MAX_DECODE_BYTES on the
+    result. Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-declaration generator head (anonymous or expression
+    form), a non-literal yield, a non-empty `.next()` argument
+    list, a member other than `.value`, a second iterator
+    binding, a rebound iterator name, a `.next()` call past
+    exhaustion, extra statements, `arguments` bindings, call
+    args on the IIFE.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        k = _js_skip_ws(stmts, 0)
+        fk = _js_match_kw(stmts, k, "function")
+        if fk is None:
+            raise _JSExprFail("F728 not a generator decl")
+        k = _js_skip_ws(stmts, fk)
+        if k >= n or stmts[k] != "*":
+            raise _JSExprFail("F728 not a generator")
+        k = _js_skip_ws(stmts, k + 1)
+        if k >= n or stmts[k] not in _JS_IDENT_START:
+            raise _JSExprFail("F728 generator not named")
+        gname, k = _js_parse_ident(stmts, k)
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "(")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, ")")
+        k = _js_expect(stmts, k, "{")
+        yields, ret, k = _js_parse_f677_nextseq_body(stmts, k, state)
+        # `var|let|const IT=G();`
+        k = _js_skip_ws(stmts, k)
+        dk = (_js_match_kw(stmts, k, "var")
+              or _js_match_kw(stmts, k, "let")
+              or _js_match_kw(stmts, k, "const"))
+        if dk is None:
+            raise _JSExprFail("F728 iter decl not var/let/const")
+        k = _js_skip_ws(stmts, dk)
+        itname, k = _js_parse_ident(stmts, k)
+        if itname in (gname, "arguments"):
+            raise _JSExprFail("F728 iter shadows")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "=")
+        g2, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+        if g2 != gname:
+            raise _JSExprFail("F728 iter not the generator")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "(")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, ")")
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == ";":
+            k += 1
+        # `return ADD;` -- ADD is a string-only additive of
+        # `'LIT'` and `IT.next().value` terms.
+        k = _js_skip_ws(stmts, k)
+        rk = _js_match_kw(stmts, k, "return")
+        if rk is None:
+            raise _JSExprFail("F728 no return")
+        k = _js_skip_ws(stmts, rk)
+        parts = []
+        calls = 0
+        while True:
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] in "'\"":
+                v, k = _js_parse_string(stmts, k)
+                parts.append(v)
+            elif k < n and stmts[k] in _JS_IDENT_START:
+                rn, k = _js_parse_ident(stmts, k)
+                if rn != itname:
+                    raise _JSExprFail("F728 additive unknown ident")
+                k = _js_skip_ws(stmts, k)
+                k = _js_expect(stmts, k, ".")
+                nm, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+                if nm != "next":
+                    raise _JSExprFail("F728 not .next()")
+                k = _js_call_empty_parens(stmts, k)
+                k = _js_skip_ws(stmts, k)
+                k = _js_expect(stmts, k, ".")
+                vm, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+                if vm != "value":
+                    raise _JSExprFail("F728 not .value")
+                if calls >= 16:
+                    raise _JSExprFail("F728 too many next calls")
+                state["parts"] += 1  # F452: charge per next call
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                if calls < len(yields):
+                    parts.append(yields[calls])
+                elif calls == len(yields) and ret is not None:
+                    parts.append(ret)
+                else:
+                    # Engine `undefined` -- never decoded.
+                    raise _JSExprFail("F728 next past exhaustion")
+                calls += 1
+            else:
+                raise _JSExprFail("F728 additive bad term")
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] == "+":
+                k = _js_skip_ws(stmts, k + 1)
+                continue
+            break
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == ";":
+            k += 1
+        k = _js_skip_ws(stmts, k)
+        if k != n:
+            raise _JSExprFail("F728 trailing junk")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        rval = "".join(parts)
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F728 concat too long")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f679_statement_iife(text, i, depth, state):
     """Parse `(function(){STMT* return ADD;})()` at text[i] (F679).
 
@@ -54624,6 +54948,23 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f709 is not None:
             val, i = _f709
             return _js_parse_postfix(text, i, val, depth, state)
+        # F727: (function(){var|let R='';var|let I=INIT;
+        #   do{R+=['LIT',...][I];I++;}while(I<BOUND);return R;})()
+        #   and the plain-concat twin
+        #   `do{R=R+['LIT',...][I];I++;}while(I<BOUND);` -- do-while
+        #   accumulation over a literal string array. Tried after
+        #   F709: F709 covers only the for twin and the while twin
+        #   (its head grammar requires `for` or `while`); F679's
+        #   statement simulation has no literal-array-index
+        #   production and fails closed on `R+=['LIT',...][I]`
+        #   (red-first verified: 2 BREAK on the open tree); every
+        #   other earlier route requires its own binding family or
+        #   statement head, so no previously-decoded input changes
+        #   behavior.
+        _f727 = _js_parse_f727_dowhile_accum_iife(text, i, depth, state)
+        if _f727 is not None:
+            val, i = _f727
+            return _js_parse_postfix(text, i, val, depth, state)
         # F662: (function(){[STMT;]* return ADD;})() with
         #   class-declaration fragment sources (static fields /
         #   static blocks / static getters / instance fields).
@@ -55055,6 +55396,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f677n = _js_parse_f677_nextseq_iife(text, i, depth, state)
         if _f677n is not None:
             val, i = _f677n
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F728: (function(){function* G(){yield 'LIT';...;
+        #   return 'LIT'?;}var|let|const IT=G();return ADD;})()
+        #   where ADD is a string-only additive of `'LIT'` and
+        #   `IT.next().value` terms -- direct `.next().value`
+        #   reads on a declared generator's iterator. Tried after
+        #   F677: F677's nextseq requires var-bound `.next()`
+        #   result idents (`R=IT.next();` statements); F656's
+        #   bound form requires the invoked generator-expression
+        #   head and a single read; neither decodes a direct
+        #   `IT.next().value` postfix read (red-first verified:
+        #   2 BREAK on the open tree), so no previously-decoded
+        #   input changes behavior.
+        _f728 = _js_parse_f728_nextvalue_iife(text, i, depth, state)
+        if _f728 is not None:
+            val, i = _f728
             return _js_parse_postfix(text, i, val, depth, state)
         # F663: (function(){DECL o=Object.fromEntries(ENTRIES);
         #   return o.M(+o.M)*;})() -- member reads on a var-bound
