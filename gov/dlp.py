@@ -26291,6 +26291,537 @@ def _js_parse_f642_getter_varbound_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f647_nullish_left(text, j, undef_ident):
+    """Parse the nullish LEFT of a `(LEFT ?? RIGHT)` group at text[j] (F647).
+
+    LEFT is one of: the `null` keyword, `void EXPR` with a
+    trivially-parseable EXPR (`0`, `(0)`, a numeric or string
+    literal -- `void` always yields undefined in the engine), the
+    `undefined` keyword (all ident-boundary checked), or the IIFE's
+    declared uninitialized ident (*undef_ident*; None when the
+    IIFE has no declaration). Every other LEFT fails closed: a
+    non-nullish LEFT (0, "", false, an initialized var) picks LEFT
+    in the engine, so decoding it as a RIGHT-pick would
+    mis-decode -- those shapes are documented residuals. Returns
+    next_index. Raises _JSExprFail on mismatch. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "null")
+    if m is not None:
+        return m
+    m = _js_match_kw(text, j, "undefined")
+    if m is not None:
+        return m
+    m = _js_match_kw(text, j, "void")
+    if m is not None:
+        # `void EXPR` is always undefined in the engine (it
+        # evaluates and discards EXPR). Only trivially-parseable
+        # EXPR forms are modeled: `0`, `(0)`, a numeric literal, or
+        # a string literal -- anything else fails closed.
+        q = _js_skip_ws(text, m)
+        if q < n and text[q] == "(":
+            q = _js_skip_ws(text, q + 1)
+            if q < n and text[q] == "0" and (q + 1 >= n
+                                             or (text[q + 1]
+                                                 not in _JS_IDENT_CONT
+                                                 and text[q + 1] != ".")):
+                q = _js_skip_ws(text, q + 1)
+                if q < n and text[q] == ")":
+                    return q + 1
+            raise _JSExprFail("F647 void paren form")
+        if q < n and text[q] in "'\"":
+            _, q = _js_parse_string(text, q)
+            return q
+        if q < n and (text[q].isdigit() or (text[q] == "."
+                                            and q + 1 < n
+                                            and text[q + 1].isdigit())):
+            while q < n and (text[q].isdigit() or text[q] == "."):
+                q += 1
+            if q < n and text[q] in _JS_IDENT_CONT:
+                raise _JSExprFail("F647 void numeric ident-cont")
+            return q
+        raise _JSExprFail("F647 void without operand")
+    try:
+        name, q = _js_parse_ident(text, j)
+    except _JSExprFail:
+        raise _JSExprFail("F647 nullish LEFT not modeled")
+    if undef_ident is not None and name == undef_ident:
+        return q
+    raise _JSExprFail("F647 nullish LEFT not modeled")
+
+
+def _js_parse_f647_group(text, j, undef_ident, depth, state):
+    """Parse one `(NULLISH ?? FRAG)` group at text[j] (F647).
+
+    The `??` picks RIGHT exactly when LEFT is nullish (node
+    v24.20.0): LEFT is parsed by _js_parse_f647_nullish_left
+    (`null` / `void 0` / `undefined` / the declared uninitialized
+    ident). FRAG is the plain additive grammar -- `??` binds
+    looser than `+` in the engine, so an additive RIGHT is
+    engine-exact; `&&` / `||` / `??` inside FRAG are a SyntaxError
+    in the engine (unparenthesized mixing) and fail closed here
+    because the additive grammar never parses them. FRAG must be a
+    plain str (a BigInt RIGHT is a documented residual). Returns
+    (frag_value, next_index). Raises _JSExprFail on mismatch.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    j = _js_parse_f647_nullish_left(text, j, undef_ident)
+    j = _js_skip_ws(text, j)
+    # `??` (not `?.`, not a ternary `?`): the F490 peek discipline.
+    if not (j + 1 < n and text[j] == "?" and text[j + 1] == "?"):
+        raise _JSExprFail("F647 no ??")
+    if j + 2 < n and (text[j + 2] in _JS_IDENT_CONT
+                      or text[j + 2] == "?"):
+        raise _JSExprFail("F647 ?? followed by ?/ident")
+    j = _js_skip_ws(text, j + 2)
+    frag, j = _js_parse_additive(text, j, depth, state)
+    if type(frag) is not str:
+        raise _JSExprFail("F647 RIGHT not a plain string")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    state["ops"] += 1  # the ?? pick is obfuscation-shaped
+    return frag, j
+
+
+def _js_parse_f647_term(text, j, undef_ident, depth, state, saw):
+    """Parse one F647 return-expression term at text[j].
+
+    A term is an F647 `(NULLISH ?? FRAG)` group (tried first;
+    appends to *saw* on success) or a plain primary (the pre-change
+    behavior for non-?? groups). The term value must be a plain
+    str (F624 tail discipline). On group failure the state counters
+    are restored before the primary fallback. Raises _JSExprFail.
+    Never evals.
+    """
+    n = len(text)
+    q = _js_skip_ws(text, j)
+    if q < n and text[q] == "(":
+        sp, so = state["parts"], state["ops"]
+        try:
+            val, q2 = _js_parse_f647_group(text, q, undef_ident, depth,
+                                           state)
+            saw.append(True)
+            return val, q2
+        except _JSExprFail:
+            state["parts"], state["ops"] = sp, so
+    val, q = _js_parse_primary(text, j, depth, state)
+    if type(val) is not str:
+        raise _JSExprFail("F647 term not a plain string")
+    return val, q
+
+
+def _js_parse_f647_nullish_right_iife(text, i, depth, state):
+    """Parse `(function(){[var|let IDENT;]?return RET;})()` (F647).
+
+    Nullish-coalescing RIGHT-pick fragment assembly: F490 (CLOSED)
+    models `(LEFT ?? RIGHT)` only when LEFT is a method reference
+    (provably non-null, so `??` picks LEFT); the nullish-LEFT
+    branch -- `null`, `void <trivial>`, `undefined`, or a
+    declared-but-uninitialized `var`/`let` ident -- picks RIGHT
+    and had no modeled path. The optional declaration binds exactly one
+    uninitialized ident (`const` without an initializer is a
+    SyntaxError in the engine, so it fails closed; an initialized
+    binding is a documented residual). RET is `TERM (+ TERM)*`
+    where TERM is an F647 group or a plain primary; at least one
+    group is required (the group-free shapes belong to earlier
+    routes, which keep decoding them unchanged).
+
+    Disjointness: tried after F642. Every earlier statement-IIFE
+    route fails closed on these shapes (the additive grammar
+    cannot parse `null`/`void`/`,` keywords or `??`, and the F490
+    hook requires a method-reference LEFT); the `??`-group check
+    rejects non-`??` parens, so no previously-decoded input
+    changes behavior.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a non-nullish LEFT (0, "", false, an initialized var, an
+      undeclared ident -- engine ReferenceError);
+    - `const` declarations, initialized bindings, multi-decl,
+      reassignment, extra statements, named functions, parameters,
+      a directive prologue, non-empty call args;
+    - `&&` / `||` / nested `??` inside FRAG (engine SyntaxError
+      unparenthesized);
+    - a non-string FRAG (BigInt RIGHT), non-string tail operands.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_skip_ws(text, j + 1)
+    if not text.startswith("function", k):
+        return None
+    k2 = k + len("function")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        return None  # functionx -- not our shape
+    if k2 < n and text[k2] in _JS_IDENT_START:
+        return None  # named function -- not our shape
+    try:
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        # Optional single uninitialized declaration.
+        undef_ident = None
+        dkw, m = _js_match_decl_kw(text, sj)
+        if dkw is not None:
+            if dkw == "const":
+                raise _JSExprFail("F647 const without initializer")
+            m = _js_skip_ws(text, m)
+            name, m = _js_parse_ident(text, m)
+            if name == "arguments":
+                raise _JSExprFail("F647 binding named arguments")
+            m = _js_skip_ws(text, m)
+            if m < n and text[m] == "=":
+                raise _JSExprFail("F647 initialized binding")
+            m = _js_expect(text, m, ";")
+            undef_ident = name
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = m
+        # `return RET;` -- RET is TERM (+ TERM)*.
+        m = _js_match_kw(text, _js_skip_ws(text, sj), "return")
+        if m is None:
+            raise _JSExprFail("F647 no return")
+        sj = _js_skip_ws(text, m)
+        saw = []
+        val, sj = _js_parse_f647_term(text, sj, undef_ident, depth,
+                                      state, saw)
+        while True:
+            q = _js_skip_ws(text, sj)
+            if q >= n or text[q] != "+":
+                break
+            rhs, q = _js_parse_f647_term(text, _js_skip_ws(text, q + 1),
+                                         undef_ident, depth, state,
+                                         saw)
+            if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F647 tail too long")
+            val = val + rhs
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1
+            sj = q
+        if not saw:
+            raise _JSExprFail("F647 no ?? group")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F647 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f652_group(text, j, declared, env, depth, state, saw):
+    """Parse one `(OP (, OP)+)` comma-sequence group at text[j] (F652).
+
+    The comma operator evaluates each operand left-to-right and
+    takes the last (node v24.20.0). Operands are parsed by
+    _js_parse_f652_operand: assignments bind the declared ident in
+    *env*, ident reads resolve through *env*, string literals pass
+    through, and parenthesized sub-groups recurse. At least two
+    operands are required (a lone paren group is not a sequence).
+    Appends to *saw* on success. Returns (last_operand_value,
+    next_index). Raises _JSExprFail on mismatch. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    val, j = _js_parse_f652_operand(text, j, declared, env, depth,
+                                    state, saw)
+    nops = 1
+    while True:
+        q = _js_skip_ws(text, j)
+        if q >= n or text[q] != ",":
+            break
+        val, j = _js_parse_f652_operand(text, _js_skip_ws(text, q + 1),
+                                        declared, env, depth, state,
+                                        saw)
+        nops += 1
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+    if nops < 2:
+        raise _JSExprFail("F652 not a sequence")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    state["ops"] += 1  # the comma sequence is obfuscation-shaped
+    saw.append(True)
+    return val, j
+
+
+def _js_parse_f652_operand(text, j, declared, env, depth, state, saw):
+    """Parse one comma-sequence operand at text[j] (F652).
+
+    An operand is `IDENT = ADDENV` (an assignment binding a
+    declared ident; `==`/`===` comparisons fail closed -- they are
+    not assignments), a parenthesized sub-sequence (recursed), a
+    string literal, or an env-resolved additive (`PE (+ PE)*`
+    over literals, bound idents, and sub-groups). Every operand
+    value is a plain str. Raises _JSExprFail on mismatch. Never
+    evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "(":
+        return _js_parse_f652_group(text, j, declared, env, depth,
+                                    state, saw)
+    if j < n and text[j] in "'\"":
+        lit, q = _js_parse_string(text, j)
+        return lit, q
+    name, q = _js_parse_ident(text, j)
+    if name not in declared:
+        raise _JSExprFail("F652 operand ident not declared")
+    r = _js_skip_ws(text, q)
+    if r < n and text[r] == "=" and not (r + 1 < n
+                                         and text[r + 1] == "="):
+        val, q2 = _js_parse_f652_addenv(text, _js_skip_ws(text, r + 1),
+                                        declared, env, depth, state,
+                                        saw)
+        env[name] = val
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        state["ops"] += 1
+        return val, q2
+    return _js_parse_f652_addenv(text, j, declared, env, depth, state,
+                                 saw)
+
+
+def _js_parse_f652_addenv(text, j, declared, env, depth, state, saw):
+    """Parse `PE (+ PE)*` with env-resolved identifiers (F652).
+
+    PE is a string literal, a bound-ident read (declared and
+    assigned -- reading an unassigned ident fails closed), or a
+    parenthesized sub-sequence. Plain-str concatenation only
+    (F624 tail discipline). Raises _JSExprFail on mismatch. Never
+    evals.
+    """
+    n = len(text)
+    val, j = _js_parse_f652_pe(text, j, declared, env, depth, state,
+                                saw)
+    while True:
+        q = _js_skip_ws(text, j)
+        if q >= n or text[q] != "+":
+            break
+        rhs, q = _js_parse_f652_pe(text, _js_skip_ws(text, q + 1),
+                                   declared, env, depth, state, saw)
+        if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F652 concat too long")
+        val = val + rhs
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        state["ops"] += 1
+        j = q
+    return val, j
+
+
+def _js_parse_f652_pe(text, j, declared, env, depth, state, saw):
+    """Parse one env-additive primary at text[j] (F652).
+
+    A string literal, a declared-and-assigned ident read, or a
+    parenthesized sub-sequence (recursed). Template literals,
+    numerics, and unbound idents fail closed. Returns
+    (value, next_index). Raises _JSExprFail on mismatch. Never
+    evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "(":
+        return _js_parse_f652_group(text, j, declared, env, depth,
+                                    state, saw)
+    if j < n and text[j] in "'\"":
+        return _js_parse_string(text, j)
+    name, q = _js_parse_ident(text, j)
+    if name not in declared or name not in env:
+        raise _JSExprFail("F652 ident not bound")
+    return env[name], q
+
+
+def _js_parse_f652_term(text, j, declared, env, depth, state, saw):
+    """Parse one F652 return-expression term at text[j].
+
+    A term is an F652 comma-sequence group (tried first), a
+    parenthesized env-additive (for nested groups under `+`, e.g.
+    `((x='f1',x)+(y='f2',y))`), or a plain primary (the pre-change
+    behavior for other groups). The term value must be a plain
+    str. On each failed attempt the state counters are restored
+    before the next fallback. Raises _JSExprFail. Never evals.
+    """
+    n = len(text)
+    q = _js_skip_ws(text, j)
+    if q < n and text[q] == "(":
+        sp, so = state["parts"], state["ops"]
+        try:
+            return _js_parse_f652_group(text, q, declared, env,
+                                        depth, state, saw)
+        except _JSExprFail:
+            state["parts"], state["ops"] = sp, so
+        try:
+            qq = _js_expect(text, q, "(")
+            val, qq = _js_parse_f652_addenv(text, qq, declared, env,
+                                            depth, state, saw)
+            qq = _js_skip_ws(text, qq)
+            qq = _js_expect(text, qq, ")")
+            return val, qq
+        except _JSExprFail:
+            state["parts"], state["ops"] = sp, so
+    val, q = _js_parse_primary(text, j, depth, state)
+    if type(val) is not str:
+        raise _JSExprFail("F652 term not a plain string")
+    return val, q
+
+
+def _js_parse_f652_sequence_iife(text, i, depth, state):
+    """Parse `(function(){(var|let) A(,B)*;return RET;})()` (F652).
+
+    Comma/sequence expressions in additive position: the decoder
+    models `||` and `&&` in the additive grammar, but the comma
+    operator (evaluating each operand left-to-right, taking the
+    last) had no modeled path. The declaration section binds one
+    or more uninitialized idents (`const` is a SyntaxError
+    uninitialized, so it fails closed; initialized bindings fail
+    closed); assignments inside the sequence bind them in *env*,
+    and reads resolve through *env* -- an undeclared ident is a
+    ReferenceError in the engine, so it fails closed here (the
+    codebase's conservative ident discipline). RET is
+    `TERM (+ TERM)*` where TERM is an F652 group or a plain
+    primary; at least one sequence group is required (the
+    group-free shapes belong to earlier routes, which keep
+    decoding them unchanged).
+
+    Disjointness: tried after F647. Every earlier statement-IIFE
+    route fails closed on these shapes (the additive grammar
+    cannot parse `,`/assignment groups, and the declaration is
+    uninitialized so no binding route accepts it); the sequence
+    check requires a top-level comma, so no previously-decoded
+    input changes behavior.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - assignments to undeclared idents, reads of unassigned
+      idents, `==`/`===` in operand position (not assignments);
+    - template-literal / numeric operands, non-string operand
+      values;
+    - `const` declarations, initialized bindings, duplicate `let`
+      idents, reassignment outside the sequence, extra statements,
+      named functions, parameters, a directive prologue,
+      non-empty call args.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_skip_ws(text, j + 1)
+    if not text.startswith("function", k):
+        return None
+    k2 = k + len("function")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        return None  # functionx -- not our shape
+    if k2 < n and text[k2] in _JS_IDENT_START:
+        return None  # named function -- not our shape
+    try:
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        # Declaration section: (var|let) A(,B)*; -- uninitialized.
+        dkw, m = _js_match_decl_kw(text, sj)
+        if dkw is None or dkw == "const":
+            raise _JSExprFail("F652 no var/let declaration")
+        declared = []
+        while True:
+            m = _js_skip_ws(text, m)
+            name, m = _js_parse_ident(text, m)
+            if name == "arguments":
+                raise _JSExprFail("F652 binding named arguments")
+            if name in declared and dkw == "let":
+                raise _JSExprFail("F652 duplicate let ident")
+            if name not in declared:
+                declared.append(name)
+            m = _js_skip_ws(text, m)
+            if m < n and text[m] == "=":
+                raise _JSExprFail("F652 initialized binding")
+            if m < n and text[m] == ",":
+                m = _js_skip_ws(text, m + 1)
+                continue
+            break
+        m = _js_expect(text, m, ";")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        sj = m
+        # `return RET;` -- RET is TERM (+ TERM)* over the env.
+        m = _js_match_kw(text, _js_skip_ws(text, sj), "return")
+        if m is None:
+            raise _JSExprFail("F652 no return")
+        sj = _js_skip_ws(text, m)
+        env = {}
+        saw = []
+        val, sj = _js_parse_f652_term(text, sj, declared, env, depth,
+                                      state, saw)
+        while True:
+            q = _js_skip_ws(text, sj)
+            if q >= n or text[q] != "+":
+                break
+            rhs, q = _js_parse_f652_term(text, _js_skip_ws(text, q + 1),
+                                         declared, env, depth, state,
+                                         saw)
+            if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F652 tail too long")
+            val = val + rhs
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1
+            sj = q
+        if not saw:
+            raise _JSExprFail("F652 no sequence group")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F652 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f616_varname_mutation_iife(text, i, depth, state):
     """Parse `(function(){DECL p=new URLSearchParams('LIT');[DECL X='LIT';]*[MUT;]*TERM})()` (F616).
 
@@ -33072,6 +33603,34 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                     state)
         if _f642 is not None:
             val, i = _f642
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F647: (function(){[var|let IDENT;]?return RET;})() --
+        # nullish-coalescing RIGHT-pick fragment assembly
+        # (`(null??'f1')`, `(void 0??'f1')`, `(undefined??'f1')`,
+        # or `(z??'f1')` with a declared-but-uninitialized z).
+        # Tried after F642: every earlier statement-IIFE route
+        # fails closed on these shapes (the additive grammar
+        # cannot parse `null`/`void`/unbound-idents or `??`, and
+        # the F490 hook requires a method-reference LEFT); the
+        # group parser requires the `??`, and at least one group
+        # is required, so no previously-decoded input changes
+        # behavior.
+        _f647 = _js_parse_f647_nullish_right_iife(text, i, depth,
+                                                  state)
+        if _f647 is not None:
+            val, i = _f647
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F652: (function(){(var|let) A(,B)*;return RET;})() --
+        # comma/sequence expressions in additive position
+        # (`(x='f1',x)`, `(x='f1',y='f2',x+y)`). Tried after F647:
+        # F647 requires a `??` group (it fails closed on every
+        # shape this accepts -- the nullish-LEFT check rejects
+        # assignments), and this requires a top-level comma plus
+        # an uninitialized declaration section, so the grammars
+        # are disjoint; None falls through like F647.
+        _f652 = _js_parse_f652_sequence_iife(text, i, depth, state)
+        if _f652 is not None:
+            val, i = _f652
             return _js_parse_postfix(text, i, val, depth, state)
         # F586: (new Map(...)) / (new WeakRef(...)) --
         # parenthesized new-expression receivers, engine-identical

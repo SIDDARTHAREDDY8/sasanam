@@ -147,11 +147,11 @@ def test_p0_pin_taxonomy():
     ok = TAXONOMY_PIN == 2140 and len(TAXONOMY) > 0
     return ("HELD" if ok else "BREAK", "pin=%s" % TAXONOMY_PIN)
 def test_b0_footer_state():
-    """Control: footer shows F644, F645, F646, F651 closed (merge lanes 1-3); F647-F650, F652-F654 open, next F655."""
+    """Control: footer shows F644, F645, F646, F647, F651, F652 closed (merge lanes 1-4); F648-F650, F653, F654, F660 open, next F655."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F655**" in text  # Wave-377 merge lanes 1-3: F644, F645, F646, F651 CLOSED; open F647-F650, F652-F654 (next F655)
-          and "Open findings: F647, F648, F649, F650, F652, F653, F654." in text)  # Wave-377 merge lanes 1-3: F644, F645, F646, F651 CLOSED; open F647-F650, F652-F654 (next F655)
+    ok = ("Next free finding: **F655**" in text  # Wave-377 merge lanes 1-4: F644-F647, F651, F652 CLOSED; open F648-F650, F653, F654 (next F655)
+          and "Open findings: F648, F649, F650, F653, F654, F660." in text)  # Wave-377 merge lanes 1-4: F644-F647, F651, F652 CLOSED; F660 filed OPEN; open F648-F650, F653, F654, F660 (next F655)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
@@ -402,30 +402,30 @@ def test_r44_f646_s3_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
-# ------------------------------------------------- F647 open pins (must miss)
+# ------------------------------------------------- F647 closed pins (must block; wave-377 lane 4)
 
 @_t
-def test_r44_f647_s1_open():
-    """F647 OPEN (shape nullish-null-left): miss reproduces."""
-    miss = _misses("(function(){return (null??'%s')+'%s%s';})()"
+def test_r44_f647_s1_closed():
+    """F647 CLOSED (shape nullish-null-left): blocks (wave-377 lane 4)."""
+    hit = _blocked("(function(){return (null??'%s')+'%s%s';})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r44_f647_s2_open():
-    """F647 OPEN (shape nullish-void-left): miss reproduces."""
-    miss = _misses("(function(){return (void 0??'%s')+'%s%s';})()"
-                   % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r44_f647_s3_open():
-    """F647 OPEN (shape nullish-undef-var): miss reproduces."""
-    miss = _misses("(function(){var z;return (z??'%s')+'%s%s';})()"
+def test_r44_f647_s2_closed():
+    """F647 CLOSED (shape nullish-void-left): blocks (wave-377 lane 4)."""
+    hit = _blocked("(function(){return (void 0??'%s')+'%s%s';})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_r44_f647_s3_closed():
+    """F647 CLOSED (shape nullish-undef-var): blocks (wave-377 lane 4)."""
+    hit = _blocked("(function(){var z;return (z??'%s')+'%s%s';})()"
+                   % (_F1, _F2, _F3))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F648 open pins (must miss)
@@ -532,30 +532,30 @@ def test_r44_f651_s3_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
-# ------------------------------------------------- F652 open pins (must miss)
+# ------------------------------------------------- F652 closed pins (must block; wave-377 lane 4)
 
 @_t
-def test_r44_f652_s1_open():
-    """F652 OPEN (shape comma-assign-read): miss reproduces."""
-    miss = _misses("(function(){var x;return (x='%s',x)+'%s%s';})()"
+def test_r44_f652_s1_closed():
+    """F652 CLOSED (shape comma-assign-read): blocks (wave-377 lane 4)."""
+    hit = _blocked("(function(){var x;return (x='%s',x)+'%s%s';})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r44_f652_s2_open():
-    """F652 OPEN (shape comma-multi): miss reproduces."""
-    miss = _misses("(function(){var x,y;return (x='%s',y='%s%s',x+y);})()"
-                   % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r44_f652_s3_open():
-    """F652 OPEN (shape comma-nested-additive): miss reproduces."""
-    miss = _misses("(function(){var x,y;return ((x='%s',x)+(y='%s%s',y));})()"
+def test_r44_f652_s2_closed():
+    """F652 CLOSED (shape comma-multi): blocks (wave-377 lane 4)."""
+    hit = _blocked("(function(){var x,y;return (x='%s',y='%s%s',x+y);})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_r44_f652_s3_closed():
+    """F652 CLOSED (shape comma-nested-additive): blocks (wave-377 lane 4)."""
+    hit = _blocked("(function(){var x,y;return ((x='%s',x)+(y='%s%s',y));})()"
+                   % (_F1, _F2, _F3))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F653 open pins (must miss)
