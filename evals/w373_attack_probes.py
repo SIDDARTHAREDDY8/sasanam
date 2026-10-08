@@ -140,8 +140,8 @@ def test_b0_footer_state():
     """Control: footer shows F621-F635 open, next F636 (wave-374 merge final)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F636**" in text  # Wave-374 merge: F621-F634 FILED OPEN, F635 renumbered
-          and "Open findings: F621, F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635." in text)  # Wave-374 merge: F621-F634 FILED OPEN, F635 renumbered
+    ok = ("Next free finding: **F640**" in text  # Wave-374 merge: F621-F634 FILED OPEN, F635 renumbered  # Wave-374 merge: footer repoint open F621-F639 / next F640
+          and "Open findings: F621, F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635, F636, F637, F638, F639." in text)  # Wave-374 merge: F621-F634 FILED OPEN, F635 renumbered  # Wave-374 merge: footer repoint open F621-F639 / next F640
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
