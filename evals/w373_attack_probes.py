@@ -215,69 +215,69 @@ def test_p1_f605_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
-# --------------------------------------- open pins, prior rounds (must miss)
+# --------------------------- closed pins, prior rounds (must block)
 
 @_t
-def test_r41prior_f595_open():
-    """F595 OPEN: stringify of nested array values misses."""
-    m1 = _misses("JSON.parse(JSON.stringify({a:['%s','%s']})).a.join('')" % (_A, _B))
-    m2 = _misses("JSON.parse(JSON.stringify([['%s'],['%s']])).flat().join('')" % (_A, _B))
+def test_r41prior_f595_closed():
+    """F595 CLOSED 2026-10-08 wave-373 lane 1: stringify nested arrays block."""
+    m1 = _blocked("JSON.parse(JSON.stringify({a:['%s','%s']})).a.join('')" % (_A, _B))
+    m2 = _blocked("JSON.parse(JSON.stringify([['%s'],['%s']])).flat().join('')" % (_A, _B))
     ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
-
-
-@_t
-def test_r41prior_f606_open():
-    """F606 OPEN: USP unmodeled mutation statements miss."""
-    m1 = _misses("(function(){var p=new URLSearchParams('q=%s');p.append('q','%s');p.sort();return p.getAll('q').join('');})()" % (_A, _B))
-    m2 = _misses("(function(){var p=new URLSearchParams('a=1&q=%s');p.append('q','%s');p.delete('a');return p.getAll('q').join('');})()" % (_A, _B))
-    ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    return ("HELD" if ok else "BREAK", "block=%s" % ok)
 
 
 @_t
-def test_r41prior_f607_open():
-    """F607 OPEN: filter with non-trivial predicates misses."""
-    m1 = _misses("['%s','%s','xx'].filter(x=>x!=='xx').join('')" % (_A, _B))
-    m2 = _misses("['%s','%s',''].filter(x=>x.length>2).join('')" % (_A, _B))
+def test_r41prior_f606_closed():
+    """F606 CLOSED 2026-10-08 wave-373 lane 2: USP mutation guards block."""
+    m1 = _blocked("(function(){var p=new URLSearchParams('q=%s');p.append('q','%s');p.sort();return p.getAll('q').join('');})()" % (_A, _B))
+    m2 = _blocked("(function(){var p=new URLSearchParams('a=1&q=%s');p.append('q','%s');p.delete('a');return p.getAll('q').join('');})()" % (_A, _B))
     ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    return ("HELD" if ok else "BREAK", "block=%s" % ok)
 
 
 @_t
-def test_r41prior_f608_open():
-    """F608 OPEN: Set spread into call arguments misses."""
-    m1 = _misses("((...a)=>a.join(''))(...new Set(['%s','%s']))" % (_A, _B))
-    m2 = _misses("((a,b)=>a+b)(...new Set(['%s','%s']))" % (_A, _B))
+def test_r41prior_f607_closed():
+    """F607 CLOSED 2026-10-08 wave-373 lane 3: filter predicates block."""
+    m1 = _blocked("['%s','%s','xx'].filter(x=>x!=='xx').join('')" % (_A, _B))
+    m2 = _blocked("['%s','%s',''].filter(x=>x.length>2).join('')" % (_A, _B))
     ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    return ("HELD" if ok else "BREAK", "block=%s" % ok)
 
 
 @_t
-def test_r41prior_f609_open():
-    """F609 OPEN: String.replace with function replacements misses."""
-    m1 = _misses("'%sXX'.replace('XX',()=>'%s')" % (_A, _B))
-    m2 = _misses("'%sXX'.replace(/XX/,()=>'%s')" % (_A, _B))
+def test_r41prior_f608_closed():
+    """F608 CLOSED 2026-10-08 wave-373 lane 4: Set spread args block."""
+    m1 = _blocked("((...a)=>a.join(''))(...new Set(['%s','%s']))" % (_A, _B))
+    m2 = _blocked("((a,b)=>a+b)(...new Set(['%s','%s']))" % (_A, _B))
     ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    return ("HELD" if ok else "BREAK", "block=%s" % ok)
 
 
 @_t
-def test_r41prior_f610_open():
-    """F610 OPEN: URLSearchParams.set then .get misses."""
-    m1 = _misses("(function(){var p=new URLSearchParams('q=xx');p.set('q','%s');return p.get('q')+'%s';})()" % (_A, _B))
-    m2 = _misses("(function(){var p=new URLSearchParams('');p.set('q','%s');return p.get('q')+'%s';})()" % (_A, _B))
+def test_r41prior_f609_closed():
+    """F609 CLOSED 2026-10-08 wave-373 lane 5: replace function block."""
+    m1 = _blocked("'%sXX'.replace('XX',()=>'%s')" % (_A, _B))
+    m2 = _blocked("'%sXX'.replace(/XX/,()=>'%s')" % (_A, _B))
     ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    return ("HELD" if ok else "BREAK", "block=%s" % ok)
 
 
 @_t
-def test_r41prior_f611_open():
-    """F611 OPEN: base64 fragment runs miss."""
-    m1 = _misses("atob('eG94Yi0wMTIz')+'%s'" % _B)
-    m2 = _misses("(function(){var b=atob('eG94Yi0wMTIz');return b+'%s';})()" % _B)
+def test_r41prior_f610_closed():
+    """F610 CLOSED 2026-10-08 wave-373 lane 2: USP set-then-get block."""
+    m1 = _blocked("(function(){var p=new URLSearchParams('q=xx');p.set('q','%s');return p.get('q')+'%s';})()" % (_A, _B))
+    m2 = _blocked("(function(){var p=new URLSearchParams('');p.set('q','%s');return p.get('q')+'%s';})()" % (_A, _B))
     ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    return ("HELD" if ok else "BREAK", "block=%s" % ok)
+
+
+@_t
+def test_r41prior_f611_closed():
+    """F611 CLOSED 2026-10-08 wave-373 lane 6: atob fragments block."""
+    m1 = _blocked("atob('eG94Yi0wMTIz')+'%s'" % _B)
+    m2 = _blocked("(function(){var b=atob('eG94Yi0wMTIz');return b+'%s';})()" % _B)
+    ok = m1 and m2
+    return ("HELD" if ok else "BREAK", "block=%s" % ok)
 
 # ----------------------------------------- open pins, round 41 (must miss)
 
