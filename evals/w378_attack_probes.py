@@ -131,11 +131,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F666-F670 open, next F672 (wave-379 merge: lanes 1-3 merged)."""
+    """Control: footer shows F667-F669 open, next F672 (wave-379 merge: lanes 1-4 merged)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F672**" in text
-          and "Open findings: F666, F667, F668, F669, F670." in text)
+          and "Open findings: F667, F668, F669." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -285,17 +285,17 @@ def test_p1_f665_plain_dot_twin_closed():
 # ------------------------------------------------- F666 open pins (must miss)
 
 @_t
-def test_r46_f666_s1_open():
-    """F666 OPEN (Proxy apply trap): miss reproduces."""
-    miss = _misses("(function(){var p=new Proxy(function(){},{apply:function(){return '%s';}});return p()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r46_f666_s1_closed():
+    """F666 CLOSED (wave-379 lane 4): Proxy apply trap now blocks."""
+    ok = _blocked("(function(){var p=new Proxy(function(){},{apply:function(){return '%s';}});return p()+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f666-closed=%s" % ok)
 
 
 @_t
-def test_r46_f666_s2_open():
-    """F666 OPEN (Proxy has trap): miss reproduces."""
-    miss = _misses("(function(){var p=new Proxy({},{has:function(t,k){return k==='x';}});var o={x:'%s'};return ('x' in p?o.x:'junk')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r46_f666_s2_closed():
+    """F666 CLOSED (wave-379 lane 4): Proxy has trap now blocks."""
+    ok = _blocked("(function(){var p=new Proxy({},{has:function(t,k){return k==='x';}});var o={x:'%s'};return ('x' in p?o.x:'junk')+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f666-closed=%s" % ok)
 
 
 # ------------------------------------------------- F667 open pins (must miss)
@@ -354,24 +354,24 @@ def test_p1_f669_arrayfrom_twin_closed():
 
 
 @_t
-def test_r46_f670_s1_open():
-    """F670 OPEN (Proxy get trap, arrow block body): miss reproduces."""
-    miss = _misses("(function(){var a='%s',b='%s';var p=new Proxy({},{get:(t,k)=>{return a+b;}});return p.anything;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r46_f670_s1_closed():
+    """F670 CLOSED (wave-379 lane 4): get trap arrow block body now blocks."""
+    ok = _blocked("(function(){var a='%s',b='%s';var p=new Proxy({},{get:(t,k)=>{return a+b;}});return p.anything;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f670-closed=%s" % ok)
 
 
 @_t
-def test_r46_f670_s2_open():
-    """F670 OPEN (Proxy get trap, function expression): miss reproduces."""
-    miss = _misses("(function(){var a='%s',b='%s';var p=new Proxy({},{get:function(t,k){return a+b;}});return p.anything;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r46_f670_s2_closed():
+    """F670 CLOSED (wave-379 lane 4): get trap function expression now blocks."""
+    ok = _blocked("(function(){var a='%s',b='%s';var p=new Proxy({},{get:function(t,k){return a+b;}});return p.anything;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f670-closed=%s" % ok)
 
 
 @_t
-def test_r46_f670_s3_open():
-    """F670 OPEN (Proxy get trap, method shorthand): miss reproduces."""
-    miss = _misses("(function(){var a='%s',b='%s';var p=new Proxy({},{get(t,k){return a+b;}});return p.anything;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r46_f670_s3_closed():
+    """F670 CLOSED (wave-379 lane 4): get trap method shorthand now blocks."""
+    ok = _blocked("(function(){var a='%s',b='%s';var p=new Proxy({},{get(t,k){return a+b;}});return p.anything;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f670-closed=%s" % ok)
 
 
 # ------------------------------------------------- F671 pins (CLOSED wave-379 lane 3)
