@@ -11,8 +11,8 @@ New findings (24, all LOW, all OPEN), filed F713-F736 (attack-F713 renumbered F7
 - F718: Reflect.has conditional reads.
 - F719: for-of accumulation over Set.
 - F720: Array.prototype.includes conditional reads.
-- F721: Array.prototype.indexOf conditional reads.
-- F722: Map.prototype.has conditional reads.
+- F721: Array.prototype.indexOf conditional reads (CLOSED wave-383 lane 5).
+- F722: Map.prototype.has conditional reads (CLOSED wave-383 lane 5).
 - F723: Object.create prototype-chain getter reads.
 - F724: Object.setPrototypeOf installed getter reads.
 - F725: __lookupGetter__ legacy API reads.
@@ -31,8 +31,10 @@ New findings (24, all LOW, all OPEN), filed F713-F736 (attack-F713 renumbered F7
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F700-F712 (round 49 + wave-381 merge renumbers), F721, F722, F723, F724, F725, F726, F727, F728, F729, F730, F731, F732, F733, F734, F735, F736, F737 (this round).
+F700-F712 (round 49 + wave-381 merge renumbers), F723, F724, F725, F726, F727, F728, F729, F730, F731, F732, F733, F734, F735, F736, F737 (this round).
 
+Closed pins (must BLOCK, else BREAK): F686-F712 (wave-381/382 closures), F713, F714, F715, F716, F717, F718, F719, F720, F721, F722 (wave-383 lanes).
+F699 fails closed (None) by design -- its pin asserts the miss.
 Closed pins (must BLOCK, else BREAK): F686-F712 (wave-381/382 closures), F713, F714, F715, F716, F717, F718, F719, F720 (wave-383 lanes).
 F699 fails closed (None) by design -- its pin asserts the miss.F711 pins the raw-decoder mis-decode (find_credential fails closed on it).
 
@@ -470,28 +472,28 @@ def test_r50_f720_s2_closed():
     return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f721_s1_open():
-    """F721 OPEN (Array.prototype.indexOf conditional reads): miss reproduces."""
-    miss = _misses("(function(){var f=['k'].indexOf('k')===0?'%s':'xx';return f+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f721_s1_closed():
+    """F721 CLOSED (wave-383 lane 5): blocks coded."""
+    ok = _blocked("(function(){var f=['k'].indexOf('k')===0?'%s':'xx';return f+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f721_s2_open():
-    """F721 OPEN (Array.prototype.indexOf conditional reads): miss reproduces."""
-    miss = _misses("(function(){var f=['a','k'].indexOf('k')>0?'%s':'xx';return f+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f721_s2_closed():
+    """F721 CLOSED (wave-383 lane 5): blocks coded."""
+    ok = _blocked("(function(){var f=['a','k'].indexOf('k')>0?'%s':'xx';return f+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f722_s1_open():
-    """F722 OPEN (Map.prototype.has conditional reads): miss reproduces."""
-    miss = _misses("(function(){var m=new Map([['k',1]]);var f=m.has('k')?'%s':'xx';return f+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f722_s1_closed():
+    """F722 CLOSED (wave-383 lane 5): blocks coded."""
+    ok = _blocked("(function(){var m=new Map([['k',1]]);var f=m.has('k')?'%s':'xx';return f+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f722_s2_open():
-    """F722 OPEN (Map.prototype.has conditional reads): miss reproduces."""
-    miss = _misses("(function(){var m=new Map();m.set('k',1);var f=m.has('k')?'%s':'xx';return f+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f722_s2_closed():
+    """F722 CLOSED (wave-383 lane 5): blocks coded."""
+    ok = _blocked("(function(){var m=new Map();m.set('k',1);var f=m.has('k')?'%s':'xx';return f+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r50_f723_s1_open():

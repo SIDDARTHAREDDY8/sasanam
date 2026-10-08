@@ -18790,6 +18790,501 @@ def _js_parse_f720_includes_iife(text, i, depth, state):
     return val, k
 
 
+def _js_parse_f721_indexof_cond(text, i, state):
+    """Parse `['LIT',...].indexOf('LIT') CMP INT` at text[i] (F721).
+
+    Returns (bool, next_index). The array must be an inline
+    literal of plain string literals (bound arrays fail closed --
+    the filed shapes are inline-only); the search key must be a
+    plain string literal; the comparison target must be a
+    canonical decimal integer (F535/F565 grammar -- `042`/`0x10`/
+    `1e3` fail closed). indexOf over string literals is
+    SameValueZero-exact (node v24.20.0), so the comparison is
+    computed exactly. Two-arg indexOf (fromIndex) fails closed.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F721 not an array literal")
+    elems = []
+    j = _js_skip_ws(text, j + 1)
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "]":
+            j = j + 1
+            break
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F721 array element not a string literal")
+        elem, j = _js_parse_string(text, j)
+        if not isinstance(elem, str) or isinstance(elem, _JSNumStr):
+            raise _JSExprFail("F721 array element not a plain string")
+        elems.append(elem)
+        state["parts"] += 1  # F452: charge per element
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = j + 1
+            continue
+        if j < n and text[j] == "]":
+            j = j + 1
+            break
+        raise _JSExprFail("F721 array malformed")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("F721 no member")
+    mname, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+    if mname != "indexOf":
+        raise _JSExprFail("F721 member not indexOf")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail("F721 search key not a string literal")
+    key, j = _js_parse_string(text, j)
+    if not isinstance(key, str) or isinstance(key, _JSNumStr):
+        raise _JSExprFail("F721 search key not a plain string")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("F721 indexOf takes one arg")
+    j = j + 1
+    j = _js_skip_ws(text, j)
+    op = None
+    for cand in ("===", "!==", "==", "!=", ">=", "<=", ">", "<"):
+        if text.startswith(cand, j):
+            op = cand
+            j = j + len(cand)
+            break
+    if op is None:
+        raise _JSExprFail("F721 no comparison")
+    j = _js_skip_ws(text, j)
+    lit, j = _js_parse_canonical_int(text, j, "F721")
+    num = int(lit)
+    try:
+        idx = elems.index(key)
+    except ValueError:
+        idx = -1
+    if op == "===" or op == "==":
+        cond = idx == num
+    elif op == "!==" or op == "!=":
+        cond = idx != num
+    elif op == ">":
+        cond = idx > num
+    elif op == ">=":
+        cond = idx >= num
+    elif op == "<":
+        cond = idx < num
+    else:
+        cond = idx <= num
+    state["ops"] += 1  # the indexOf call is obfuscation-shaped
+    return cond, j
+
+
+def _js_parse_f721_ternary(text, i, state):
+    """Parse `COND?'LIT':'LIT'` at text[i] (F721); returns (str, next_index).
+
+    COND is `['LIT',...].indexOf('LIT') CMP INT` via
+    _js_parse_f721_indexof_cond; the branches must be plain
+    string literals (the _JSNumStr discipline, mirroring F710).
+    Returns the selected branch. Never evals.
+    """
+    n = len(text)
+    cond, k = _js_parse_f721_indexof_cond(text, i, state)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "?":
+        raise _JSExprFail("F721 ternary without ?")
+    then_lit, k = _js_parse_string(text, _js_skip_ws(text, k + 1))
+    if not isinstance(then_lit, str) or isinstance(then_lit, _JSNumStr):
+        raise _JSExprFail("F721 then not a plain string")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ":":
+        raise _JSExprFail("F721 ternary without :")
+    else_lit, k = _js_parse_string(text, _js_skip_ws(text, k + 1))
+    if not isinstance(else_lit, str) or isinstance(else_lit, _JSNumStr):
+        raise _JSExprFail("F721 else not a plain string")
+    return (then_lit if cond else else_lit), k
+
+
+def _js_parse_f721_indexof_iife(text, i, depth, state):
+    """Parse `(function(){DECL*;return ...;})()` (F721).
+
+    Array.prototype.indexOf conditional reads, node-exact
+    (v24.20.0). Body grammar (all other shapes fail closed):
+      - `var|const|let F = COND?'LIT':'LIT';` -- the conditional
+        result bound to F (filed shapes); branches are plain
+        string literals.
+      - `return` either `(COND?'LIT':'LIT')` (the parenthesized
+        ternary must be the additive left operand -- the engine
+        would re-associate an unparenthesized tail into the else
+        branch) or the bound F, then TAIL = `+ PRIMARY` repeated,
+        each PRIMARY a plain string (the additive concat rules;
+        non-string operands fail closed -- the engine throws
+        there).
+      - COND = `['LIT',...].indexOf('LIT') CMP INT` -- inline
+        literal array only (a bound array fails closed); the
+        index is computed SameValueZero-exactly and the
+        comparison evaluated exactly.
+    Disjoint from F710 (its COND head is an identifier
+    `s.has(...)`; F721's COND head is `[` -- F710's ident parse
+    raises on `[`, so F710 returns None and falls through here).
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+    if k is None:
+        return None
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] in _JS_IDENT_START:
+        # Optional name (engine-exact; ignored).
+        try:
+            _, k = _js_parse_ident(text, k)
+        except _JSExprFail:
+            return None
+        k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        return None
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != ")":
+        return None  # params: the filed shapes take none
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "{":
+        return None
+    k = _js_skip_ws(text, k + 1)
+    env = {}
+    try:
+        while True:
+            k = _js_skip_ws(text, k)
+            kk, nk = _js_match_decl_kw(text, k)
+            if kk is None:
+                break
+            k = _js_skip_ws(text, nk)
+            name, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "=":
+                return None
+            k = _js_skip_ws(text, k + 1)
+            if name in env:
+                return None
+            sel, k = _js_parse_f721_ternary(text, k, state)
+            env[name] = ("condval", sel)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ";":
+                return None
+            k = _js_skip_ws(text, k + 1)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                return None
+        rk = _js_match_kw(text, k, "return")
+        if rk is None:
+            return None
+        k = _js_skip_ws(text, rk)
+        if k < n and text[k] == "(":
+            sel, k = _js_parse_f721_ternary(text, k + 1, state)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ")":
+                return None
+            val = sel
+            k = k + 1
+        else:
+            fname, k = _js_parse_ident(text, k)
+            fbinding = env.get(fname)
+            if fbinding is None or fbinding[0] != "condval":
+                return None
+            val = fbinding[1]
+        # TAIL: `+ PRIMARY` repeated (the additive concat rules,
+        # string-only -- the engine throws on non-string operands
+        # here, so failing closed is node-exact).
+        while True:
+            kk = _js_skip_ws(text, k)
+            if kk >= n or text[kk] != "+":
+                k = kk
+                break
+            rhs, kk = _js_parse_primary(text, kk + 1, depth, state)
+            if not isinstance(rhs, str) or isinstance(rhs, _JSNumStr):
+                return None
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                return None
+            if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+                return None
+            val = val + rhs
+            state["ops"] += 1
+            k = kk
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ";":
+            k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "}":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # invocation args: the filed shapes take none
+        k = k + 1
+    except _JSExprFail:
+        return None
+    state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+    return val, k
+
+
+def _js_parse_f722_map_has(text, i, mname, entries, strenv, state):
+    """Parse `[!]MNAME.has(KEY)` at text[i] (F722); returns (bool, next_index).
+
+    MNAME must name the bound Map; KEY goes through the F708 key
+    discipline (string literal, bound string name, or canonical
+    safe int -- unsafe ints fail closed per F699). Membership is
+    the entries dict (SameValueZero ("s",key)/("n",key) kids,
+    later-wins, the F563/F657/F708 discipline), node-exact
+    (v24.20.0). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    neg = False
+    if j < n and text[j] == "!":
+        neg = True
+        j = _js_skip_ws(text, j + 1)
+    rname, j = _js_parse_ident(text, j)
+    if rname != mname:
+        raise _JSExprFail("F722 has() on another receiver")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("F722 has without member")
+    mname2, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+    if mname2 != "has":
+        raise _JSExprFail("F722 Map member not has")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    kid, j = _js_f708_map_key(text, j, strenv)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    state["ops"] += 1  # the has() call is obfuscation-shaped
+    val = kid in entries
+    return (not val) if neg else val, j
+
+
+def _js_parse_f722_ternary(text, i, mname, entries, strenv, state):
+    """Parse `COND?'LIT':'LIT'` at text[i] (F722); returns (str, next_index).
+
+    COND is `[!]MNAME.has(KEY)` via _js_parse_f722_map_has; the
+    branches must be plain string literals (the _JSNumStr
+    discipline, mirroring F710). Returns the selected branch.
+    Never evals.
+    """
+    n = len(text)
+    cond, k = _js_parse_f722_map_has(text, i, mname, entries, strenv, state)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "?":
+        raise _JSExprFail("F722 ternary without ?")
+    then_lit, k = _js_parse_string(text, _js_skip_ws(text, k + 1))
+    if not isinstance(then_lit, str) or isinstance(then_lit, _JSNumStr):
+        raise _JSExprFail("F722 then not a plain string")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ":":
+        raise _JSExprFail("F722 ternary without :")
+    else_lit, k = _js_parse_string(text, _js_skip_ws(text, k + 1))
+    if not isinstance(else_lit, str) or isinstance(else_lit, _JSNumStr):
+        raise _JSExprFail("F722 else not a plain string")
+    return (then_lit if cond else else_lit), k
+
+
+def _js_parse_f722_map_has_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const M=new Map([PAIRS]);(M.set(K,V);|var|let|const K='LIT';|var|let|const F=COND?'LIT':'LIT';)*return ((COND?'LIT':'LIT')|F)(+STR)*;})()` (F722).
+
+    Map membership-marker conditional reads, node-exact
+    (v24.20.0). The var-bound Map uses the shared F563 literal
+    construction with `_keys_only=True` (the F600 precedent --
+    values are unobservable through `.has()`, so numeric and
+    other literal values are accepted and discarded, node-exact;
+    later-wins, SameValueZero); `.set(K,V)` mutations follow the
+    F708 discipline (later wins; values discarded, unobservable);
+    `var|let|const K='LIT';` key bindings feed the F708 key
+    grammar; `[!]M.has(KEY)` resolves through the entries and the
+    ternary selects the fragment branch. Returns
+    (value, next_index), or None when the head does not match or
+    a guard fails. F452 parts charging per set/key/decl/tail;
+    the iife-tail wrapper charges the one op
+    (obfuscation-shaped). Never evals.
+
+    Disjoint from F708 (its return is `M.get(KEY)` -- F722's
+    return is a ternary or a ternary-bound name, never `.get(`;
+    F708 is tried first, so get-bodies never reach here) and
+    from F712 (its return is iteration reads, not a ternary).
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    the map name rebound or shadowed, a `.set` on another
+    receiver, a non-literal set value, a has() key that is not a
+    string literal / bound string name / canonical safe int
+    (unsafe ints fail closed per F699), any statement that is
+    not a set / key-decl / ternary-decl / the ternary return,
+    call args on the IIFE.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        # `var|let|const M=new Map([PAIRS]);` -- the F657 decl
+        # shape, but keys-only (F600 precedent): values are
+        # unobservable through `.has()`, so any parsed literal
+        # value is accepted and discarded.
+        m = _js_match_kw(stmts, sj, "var")
+        if m is None:
+            m = _js_match_kw(stmts, sj, "let")
+        if m is None:
+            m = _js_match_kw(stmts, sj, "const")
+        if m is None:
+            raise _JSExprFail("F722 map decl not var/let/const")
+        sj = _js_skip_ws(stmts, m)
+        mname, sj = _js_parse_ident(stmts, sj)
+        if mname == "arguments":
+            raise _JSExprFail("F722 map named arguments")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "=")
+        sj = _js_skip_ws(stmts, sj)
+        _mval = _js_parse_f563_map(stmts, sj, depth, state,
+                                   _keys_only=True)
+        if _mval is None:
+            raise _JSExprFail("F722 decl not new Map")
+        mmap, sj = _mval
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        entries = dict(mmap.entries)
+        strenv = {}
+        env = {}
+        while True:
+            q = _js_skip_ws(stmts, sj)
+            if _js_match_kw(stmts, q, "return") is not None:
+                break
+            # `M.set(K,V);` mutation statement (the F708
+            # discipline: later wins, string values only).
+            sname, q2 = _js_parse_ident(stmts, q)
+            q2 = _js_skip_ws(stmts, q2)
+            if (sname == mname and q2 < len(stmts)
+                    and stmts[q2] == "."):
+                _mn, q2 = _js_parse_ident(
+                    stmts, _js_skip_ws(stmts, q2 + 1))
+                if _mn != "set":
+                    raise _JSExprFail("F722 map member not set")
+                q2 = _js_skip_ws(stmts, q2)
+                q2 = _js_expect(stmts, q2, "(")
+                kid, q2 = _js_f708_map_key(stmts, q2, strenv)
+                q2 = _js_skip_ws(stmts, q2)
+                q2 = _js_expect(stmts, q2, ",")
+                q2 = _js_skip_ws(stmts, q2)
+                # The set value is unobservable through `.has()`
+                # (keys-only, the F600 precedent): any string or
+                # canonical-int literal is accepted and discarded.
+                if q2 < len(stmts) and stmts[q2] in "'\"":
+                    _, q2 = _js_parse_string(stmts, q2)
+                elif (q2 < len(stmts)
+                        and (stmts[q2] in _ASCII_DIGITS
+                             or stmts[q2] == "-")):
+                    _, q2 = _js_parse_canonical_int(stmts, q2, "F722")
+                else:
+                    raise _JSExprFail("F722 set value not a literal")
+                q2 = _js_skip_ws(stmts, q2)
+                q2 = _js_expect(stmts, q2, ")")
+                q2 = _js_skip_ws(stmts, q2)
+                q2 = _js_expect(stmts, q2, ";")
+                entries[kid] = None  # later wins, node-exact
+                state["parts"] += 1  # the mutation is
+                # obfuscation-shaped
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                sj = q2
+                continue
+            # `var|let|const K='LIT';` key binding or
+            # `var|let|const F=COND?'LIT':'LIT';` ternary binding.
+            m = _js_match_kw(stmts, q, "var")
+            if m is None:
+                m = _js_match_kw(stmts, q, "let")
+            if m is None:
+                m = _js_match_kw(stmts, q, "const")
+            if m is None:
+                raise _JSExprFail("F722 bad middle statement")
+            q2 = _js_skip_ws(stmts, m)
+            kname, q2 = _js_parse_ident(stmts, q2)
+            if (kname in (mname, "arguments") or kname in env
+                    or kname in strenv):
+                raise _JSExprFail("F722 key shadows map")
+            q2 = _js_skip_ws(stmts, q2)
+            q2 = _js_expect(stmts, q2, "=")
+            q2 = _js_skip_ws(stmts, q2)
+            if q2 < len(stmts) and stmts[q2] in "'\"":
+                kval, q2 = _js_parse_string(stmts, q2)
+                if not isinstance(kval, str) or isinstance(
+                        kval, _JSNumStr):
+                    raise _JSExprFail("F722 key not a plain string")
+                q2 = _js_skip_ws(stmts, q2)
+                q2 = _js_expect(stmts, q2, ";")
+                strenv[kname] = kval
+            else:
+                sel, q2 = _js_parse_f722_ternary(
+                    stmts, q2, mname, entries, strenv, state)
+                q2 = _js_skip_ws(stmts, q2)
+                q2 = _js_expect(stmts, q2, ";")
+                env[kname] = ("condval", sel)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = q2
+        # `return (COND?'LIT':'LIT')` or `return F`, then the
+        # additive `+ PRIMARY` tail (string-only, the F710
+        # discipline).
+        q = _js_skip_ws(stmts, sj)
+        rk = _js_match_kw(stmts, q, "return")
+        if rk is None:
+            raise _JSExprFail("F722 body not return")
+        q = _js_skip_ws(stmts, rk)
+        if q < len(stmts) and stmts[q] == "(":
+            sel, q = _js_parse_f722_ternary(
+                stmts, q + 1, mname, entries, strenv, state)
+            q = _js_skip_ws(stmts, q)
+            q = _js_expect(stmts, q, ")")
+            val = sel
+        else:
+            fname, q = _js_parse_ident(stmts, q)
+            fbinding = env.get(fname)
+            if fbinding is None or fbinding[0] != "condval":
+                raise _JSExprFail("F722 returns non-condval")
+            val = fbinding[1]
+        while True:
+            t = _js_skip_ws(stmts, q)
+            if t >= len(stmts) or stmts[t] != "+":
+                q = t
+                break
+            rhs, q = _js_parse_primary(stmts, t + 1, depth, state)
+            if not isinstance(rhs, str) or isinstance(rhs, _JSNumStr):
+                raise _JSExprFail("F722 tail not a string")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F722 decode too long")
+            val = val + rhs
+            state["ops"] += 1
+        q = _js_skip_ws(stmts, q)
+        if q < len(stmts) and stmts[q] == ";":
+            q = _js_skip_ws(stmts, q + 1)
+        if q != len(stmts):
+            raise _JSExprFail("F722 trailing text")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
 def _js_f611_quote(value):
     """Quote a decoded/bound string as a JS single-quoted literal."""
     out = ["'"]
@@ -52447,7 +52942,9 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f718 = _js_parse_f718_reflect_has_iife(text, i, depth,
                                                state)
         if _f718 is not None:
-            val, i = _f718        # F720: (function(){var a=['q','k'];
+            val, i = _f718
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F720: (function(){var a=['q','k'];
         #   var f=a.includes('k')?'f1':'xx';return f+'f2';})() /
         #   (function(){var f=['k'].includes('k')?'f1':'xx';
         #   return f+'f2';})() -- Array.prototype.includes
@@ -52459,7 +52956,34 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   through like F710.
         _f720 = _js_parse_f720_includes_iife(text, i, depth, state)
         if _f720 is not None:
-            val, i = _f720            return _js_parse_postfix(text, i, val, depth, state)
+            val, i = _f720
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F721: (function(){var f=['k'].indexOf('k')===0?'f1':'xx';
+        # return f+'f2';})() -- Array.prototype.indexOf
+        # membership-marker conditional reads via indexOf on
+        # inline literal arrays. Tried after F710: disjoint COND
+        # heads (F710's COND is `ident.has(...)`, F721's is
+        # `[...]...` -- F710's ident parse raises on `[`, so
+        # F710 returns None and falls through here), so no
+        # previously-decoded input changes behavior. None falls
+        # through like F710.
+        _f721 = _js_parse_f721_indexof_iife(text, i, depth, state)
+        if _f721 is not None:
+            val, i = _f721
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F722: (function(){var m=new Map([['k',1]]);
+        # var f=m.has('k')?'f1':'xx';return f+'f2';})() -- Map
+        # membership-marker conditional reads via Map.has on
+        # var-bound Maps. Tried after F721: disjoint returns
+        # (F708's return is `M.get(KEY)` and is tried earlier;
+        # F722's return is a ternary or a ternary-bound name, and
+        # F712's return is iteration reads), so no
+        # previously-decoded input changes behavior. None falls
+        # through like F721.
+        _f722 = _js_parse_f722_map_has_iife(text, i, depth, state)
+        if _f722 is not None:
+            val, i = _f722
+            return _js_parse_postfix(text, i, val, depth, state)
         # F517: (function(){var A='';var O={...};
         # for(var K in O)A+=O[K];return A})() -- for-in
         # accumulation; None falls through like F509.
