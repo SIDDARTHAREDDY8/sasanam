@@ -31597,6 +31597,109 @@ def _js_parse_f597_flatmap_scalar(text, j):
     return kind, payload, k
 
 
+def _js_parse_f658_flatmap_literal_array(text, j, state):
+    """Parse a flatMap literal-array-returning callback at text[j] (F658).
+
+    Recognized (node-verified, v24.20.0), F543/F597 four-form precedent:
+    - `()=>['LIT',...]`, `x=>['LIT',...]`, `(x)=>['LIT',...]`
+    - `()=>{return ['LIT',...];}`, `x=>{return ['LIT',...];}` (block
+      twins; the `;` is required, matching the F574 grammar)
+    - `function(){return ['LIT',...];}`,
+      `function(x){return ['LIT',...];}` (optional function name)
+    Zero or one param; the callback must IGNORE its param -- the
+    return is a plain literal array, so the param can never flow into
+    the result (engine-exact: node evaluates the callback per element
+    but the constant return makes the param inert). Two or more params
+    fail closed. Quote-literals only in the returned array -- holes,
+    templates, numeric elements, nested arrays, ident/template
+    elements all fail closed (documented scope boundary). The empty
+    array `[]` is allowed (the engine filters it, node-verified).
+    Each element is charged to the part budget (F452). The F574
+    identity grammar (`x=>[x]`) is tried first and is disjoint on
+    `[`-ident vs `[`-literal; the F597 scalar grammar is tried after
+    and requires a scalar (ident-led) return head, so all three
+    flatMap callback grammars are pairwise disjoint. Never evals.
+    Returns (elements_list, next_index).
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+
+    def _literal_array(k):
+        # Parse "['LIT' (, 'LIT')*]" at text[k] (quote-literals only).
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "[")
+        elements = []
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == "]":
+            return elements, k + 1
+        while True:
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] not in "'\"":
+                raise _JSExprFail("F658 flatMap return not string literal")
+            lit, k = _js_parse_string(text, k)
+            elements.append(lit)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ",":
+                k += 1
+                continue
+            if k < n and text[k] == "]":
+                return elements, k + 1
+            raise _JSExprFail("F658 flatMap bad literal array")
+
+    def _paren_params(k):
+        # Parse "()" / "(P)" at text[k] == "("; 0 or 1 params. Two or
+        # more params fail closed.
+        k = _js_expect(text, k, "(")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ")":
+            return k + 1
+        _, k = _js_parse_ident(text, k)
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ",":
+            raise _JSExprFail("F658 flatMap too many params")
+        return _js_expect(text, k, ")")
+
+    def _block_return(k):
+        # Parse "return [...];}" at text[k] (just past "{", F574 grammar).
+        rk = _js_match_kw(text, _js_skip_ws(text, k), "return")
+        if rk is None:
+            raise _JSExprFail("F658 flatMap not return")
+        elements, k = _literal_array(rk)
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ";")
+        k = _js_expect(text, _js_skip_ws(text, k), "}")
+        return elements, k
+
+    if text.startswith("function", j):
+        k = j + len("function")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F658 flatMap bad function")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            # optional function name: function f(x){...}
+            _, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+        k = _paren_params(k)
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "{")
+        return _block_return(k)
+    if j < n and text[j] == "(":
+        j = _paren_params(j)
+    else:
+        # bare single param: x=>[...]
+        _, j = _js_parse_ident(text, j)
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F658 flatMap without =>")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        return _block_return(j + 1)
+    return _literal_array(j)
+
+
 def _js_parse_f580_length_cmp(text, i):
     """Parse a sort length comparator at text[i] (F580).
 
@@ -32215,16 +32318,30 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         # The F574 grammar is tried first; the two are disjoint on
         # `[` vs scalar after the return. Non-`===` comparisons,
         # extra callback params, and template literals fail closed.
+        # F658: literal-array-returning callbacks -- (P)=>['LIT',...]
+        # and the block/function twins (node-verified, v24.20.0);
+        # flatMap is map + flat(1), so each element maps to the same
+        # literal array and the mapped list is flattened one level.
+        # Tried between F574 and F597: the three grammars are disjoint
+        # on the return head (`[P]`, `[`-literal, scalar).
         # Checked BEFORE the "method on unjoined array" guard below.
         if not isinstance(value, _JSArr):
             raise _JSExprFail("flatMap on non-array")
         try:
             i = _js_parse_f574_flatmap_identity(text, _js_skip_ws(text, i))
+            f658 = None
             f597 = None
         except _JSExprFail:
-            kind, payload, i = _js_parse_f597_flatmap_scalar(
-                text, _js_skip_ws(text, i))
-            f597 = (kind, payload)
+            try:
+                f658_elts, i = _js_parse_f658_flatmap_literal_array(
+                    text, _js_skip_ws(text, i), state)
+                f658 = f658_elts
+                f597 = None
+            except _JSExprFail:
+                kind, payload, i = _js_parse_f597_flatmap_scalar(
+                    text, _js_skip_ws(text, i))
+                f658 = None
+                f597 = (kind, payload)
         i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != ")":
             raise _JSExprFail("flatMap bad args")
@@ -32234,7 +32351,18 @@ def _js_apply_method_at(text, i, name, value, depth, state):
                 raise _JSExprFail("flatMap over hole/marker")
             if not isinstance(e, (str, _JSArr)):
                 raise _JSExprFail("flatMap over non-string element")
-        if f597 is None:
+        if f658 is not None:
+            # F658: each source element maps to the same literal
+            # array; the mapped list is flattened one level
+            # (engine-exact, node v24.20.0 -- the empty-array return
+            # filters, repeated elements concatenate).
+            mapped = []
+            for e in value.elements:
+                state["ops"] += 1  # per-element evaluation (F452)
+                mapped.append(_JSArr(list(f658)))
+            elements = _js_flatten_f574(mapped, 1)
+            state["ops"] += 1  # the map-flatten is obfuscation-shaped
+        elif f597 is None:
             elements = list(value.elements)  # identity: net no-op
             state["ops"] += 1  # the map-flatten is obfuscation-shaped
         else:

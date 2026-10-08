@@ -116,11 +116,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F644-F654 closed; F655-F660 open, next F661 (wave-377 merge)."""
+    """Control: footer shows F658 CLOSED (wave-378 lane 4); open F655-657, F659-661, next F662."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F662**" in text  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
-          and "Open findings: F655, F656, F657, F658, F659, F660, F661." in text)  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
+    ok = ("Next free finding: **F662**" in text  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662  # Wave-378 lane 4: F658 CLOSED; footer repoint open F655-F657, F659-F661 / next F662
+          and "Open findings: F655, F656, F657, F659, F660, F661." in text)  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662  # Wave-378 lane 4: F658 CLOSED; footer repoint open F655-F657, F659-F661 / next F662
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -251,20 +251,20 @@ def test_r45_f657_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 
-# ------------------------------------------------- F658 open pins (must miss)
+# ------------------------------------------------- F658 closed pins (must block)
 
 @_t
-def test_r45_f658_s1_open():
-    """F658 OPEN (flatMap function callback): miss reproduces."""
-    miss = _misses("['x'].flatMap(function(){return ['%s','%s'];}).join('')" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r45_f658_s1_closed():
+    """F658 CLOSED (flatMap function callback): blocks coded."""
+    ok = _blocked("['x'].flatMap(function(){return ['%s','%s'];}).join('')" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocks=%s" % ok)
 
 
 @_t
-def test_r45_f658_s2_open():
-    """F658 OPEN (flatMap arrow callback): miss reproduces."""
-    miss = _misses("['x'].flatMap(()=>['%s','%s']).join('')" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r45_f658_s2_closed():
+    """F658 CLOSED (flatMap arrow callback): blocks coded."""
+    ok = _blocked("['x'].flatMap(()=>['%s','%s']).join('')" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocks=%s" % ok)
 
 
 # ------------------------------------------------- F659 open pins (must miss)
