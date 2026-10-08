@@ -40238,6 +40238,561 @@ def _js_parse_f689_symiter_iife(text, i, depth, state):
         return None
 
 
+_F706_DESC_FIELDS = ("value", "writable", "get", "set", "enumerable",
+                     "configurable")
+# Standard property-descriptor fields (F706). The engine applies
+# ToPropertyDescriptor to the descriptor argument before invoking
+# the defineProperty trap, so the trap's `de` parameter carries
+# ONLY these fields -- any non-standard member (e.g. `value2`) is
+# absent in the engine (node v24.20.0 verified:
+# `de.value2||'f9'` with descriptor `{value2:'f1'}` writes `'f9'`).
+# Of the six, only `value` is modeled in the fallback: it passes
+# through unconverted, while the engine applies ToBoolean (or the
+# get/set callability check) to the rest -- decoding those raw
+# literals would mis-decode, so they fail closed (spec-review fix,
+# 2026-10-08). Never evals.
+
+
+def _js_parse_f706_dp_rhs(text, j, params):
+    """Parse the defineProperty-trap write RHS at text[j] (F706).
+
+    `TR[PR]` is already consumed. The RHS is a string literal
+    (`tr[pr]='f1'`) or a descriptor-fallback `de.M||'LIT'` where
+    `de` is the trap's third param and M a dot-accessed ident.
+    Returns (kind, payload, next_index): kind 'lit' -> payload is
+    the string; kind 'fallback' -> payload is (member, lit).
+    Longer `||` chains and non-literal fallbacks fail closed.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        lit, j = _js_parse_string(text, j)
+        return "lit", lit, j
+    dname, j = _js_parse_ident(text, j)
+    if len(params) < 3 or dname != params[2]:
+        raise _JSExprFail("F706 fallback not on descriptor param")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("F706 fallback not dot member")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] not in _JS_IDENT_START:
+        raise _JSExprFail("F706 fallback bad member")
+    mem, j = _js_parse_ident(text, j)
+    j = _js_skip_ws(text, j)
+    if not text.startswith("||", j):
+        raise _JSExprFail("F706 fallback not ||")
+    j = _js_skip_ws(text, j + 2)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail("F706 fallback default not a literal")
+    lit, j = _js_parse_string(text, j)
+    return "fallback", (mem, lit), j
+
+
+def _js_parse_f706_dp_body_after_head(text, j, params, is_block):
+    """Parse defineProperty-trap body content after the head (F706).
+
+    Block form `{TR[PR]=RHS;return true;}` only -- the write plus
+    the required truthy return (a trap that returns falsy makes
+    `Object.defineProperty` throw in the engine, so only
+    `return true` is modeled). Returns (kind, payload,
+    next_index) just after `}`. Never evals.
+    """
+    n = len(text)
+    if not is_block:
+        raise _JSExprFail("F706 trap not a block")
+    if len(params) not in (2, 3):
+        raise _JSExprFail("F706 trap param count")
+    j = _js_skip_ws(text, j)
+    t0, j = _js_parse_ident(text, j)
+    if t0 != params[0]:
+        raise _JSExprFail("F706 write not on target param")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "[")
+    j = _js_skip_ws(text, j)
+    t1, j = _js_parse_ident(text, j)
+    if t1 != params[1]:
+        raise _JSExprFail("F706 write not on key param")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "]")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "=")
+    kind, payload, j = _js_parse_f706_dp_rhs(text, j, params)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    j = _js_skip_ws(text, j)
+    r = _js_match_kw(text, j, "return")
+    if r is None:
+        raise _JSExprFail("F706 trap no return")
+    j = _js_skip_ws(text, r)
+    t = _js_match_kw(text, j, "true")
+    if t is None:
+        raise _JSExprFail("F706 trap return not true")
+    j = _js_skip_ws(text, t)
+    j = _js_expect(text, j, ";")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "}")
+    return kind, payload, j
+
+
+def _js_parse_f706_dp_fn(text, i, depth, state):
+    """Parse a full defineProperty-trap function value (F706).
+
+    Returns ((kind, payload), next_index). Never evals.
+    """
+    params, is_block, j = _js_parse_f675_fn_head(text, i)
+    kind, payload, j = _js_parse_f706_dp_body_after_head(
+        text, j, params, is_block)
+    return (kind, payload), j
+
+
+def _js_parse_f706_dp_method_body(text, j, params, depth, state):
+    """Parse method-shorthand defineProperty-trap body (F706).
+
+    `defineProperty(TR,PR,DE){TR[PR]=RHS;return true;}`.
+    Returns ((kind, payload), next_index). Never evals.
+    """
+    kind, payload, j = _js_parse_f706_dp_body_after_head(
+        text, j, params, True)
+    return (kind, payload), j
+
+
+def _js_parse_f706_handler(text, i, depth, state):
+    """Parse `{defineProperty:DPFN}` at text[i] (F706).
+
+    Returns ((kind, payload), next_index). Never evals.
+    """
+    return _js_parse_f675_keyed_trap(text, i, "defineProperty",
+                                     _js_parse_f706_dp_fn,
+                                     _js_parse_f706_dp_method_body,
+                                     depth, state)
+
+
+def _js_parse_f706_dp_stmt(text, m, wname, tracked, trap, depth,
+                           state):
+    """Parse `(Object|Reflect).defineProperty(p,'X',{DESC});` (F706).
+
+    Fires the modeled trap: evaluates the write RHS against DESC
+    and stores into tracked[X]. The fallback form `de.M||'LIT'`
+    is node-exact (v24.20.0) only for M == 'value': `value` is the
+    one standard field ToPropertyDescriptor passes through
+    unconverted. Non-standard members are stripped by
+    ToPropertyDescriptor, so de.M is absent in the engine and the
+    fallback fires. The other standard fields
+    (writable/enumerable/configurable/get/set) fail closed: the
+    engine applies ToBoolean (or the get/set callability check),
+    so the raw literal is not what the trap sees and decoding it
+    would mis-decode (spec-review fix, 2026-10-08).
+    `__proto__` keys fail closed (the engine would set the
+    prototype -- proto-pollution shape). Returns next_index.
+    Never evals.
+    """
+    n = len(text)
+    m = _js_skip_ws(text, m)
+    head, m = _js_parse_ident(text, m)
+    if head != "Object" and head != "Reflect":
+        raise _JSExprFail("F706 stmt head")
+    m = _js_skip_ws(text, m)
+    m = _js_expect(text, m, ".")
+    m = _js_skip_ws(text, m)
+    meth, m = _js_parse_ident(text, m)
+    if meth != "defineProperty":
+        raise _JSExprFail("F706 stmt not defineProperty")
+    m = _js_skip_ws(text, m)
+    m = _js_expect(text, m, "(")
+    m = _js_skip_ws(text, m)
+    preceiver, m = _js_parse_ident(text, m)
+    if preceiver != wname:
+        raise _JSExprFail("F706 stmt wrong proxy")
+    m = _js_skip_ws(text, m)
+    m = _js_expect(text, m, ",")
+    m = _js_skip_ws(text, m)
+    if m >= n or text[m] not in "'\"":
+        raise _JSExprFail("F706 stmt key not literal")
+    key, m = _js_parse_string(text, m)
+    if key == "__proto__":
+        raise _JSExprFail("F706 stmt __proto__")
+    m = _js_skip_ws(text, m)
+    m = _js_expect(text, m, ",")
+    m = _js_skip_ws(text, m)
+    if m >= n or text[m] != "{":
+        raise _JSExprFail("F706 stmt descriptor not an object")
+    desc, m = _js_parse_f535_object(text, m, depth, state)
+    m = _js_skip_ws(text, m)
+    m = _js_expect(text, m, ")")
+    m = _js_skip_ws(text, m)
+    m = _js_expect(text, m, ";")
+    kind, payload = trap
+    if kind == "lit":
+        wval = payload
+    else:
+        mem, lit = payload
+        if mem == "value":
+            # `value` is the one standard field ToPropertyDescriptor
+            # passes through unconverted, so the raw literal member
+            # is what the trap sees (node v24.20.0 verified).
+            dv = desc.get(mem)
+            if isinstance(dv, str) and not isinstance(dv, _JSNumStr):
+                wval = dv if dv != "" else lit
+            elif dv is None:
+                wval = lit
+            else:
+                raise _JSExprFail("F706 fallback non-string")
+        elif mem in _F706_DESC_FIELDS:
+            # writable/enumerable/configurable/get/set: the engine
+            # applies ToBoolean (or the get/set callability check)
+            # in ToPropertyDescriptor, so the raw literal is NOT
+            # what the trap sees (spec-review fix 2026-10-08:
+            # {writable:'f1'} decodes 'truef2' in the engine, and
+            # {get:'f1'} throws TypeError) -- fail closed rather
+            # than mis-decode.
+            raise _JSExprFail("F706 fallback non-value field")
+        else:
+            # Non-standard fields are stripped by
+            # ToPropertyDescriptor: de.M is absent in the engine,
+            # so the fallback fires (node v24.20.0 verified).
+            wval = lit
+    tracked[key] = wval
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return m
+
+
+def _js_parse_f706_dp_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const t={PROPS};var|let|const p=
+    new Proxy(t,{defineProperty:DPFN});((Object|Reflect).
+    defineProperty(p,'X',{DESC});)+return (p|t).MEM(+'LIT')*;})()`
+    (F706).
+
+    The defineProperty trap fires on each `Object.defineProperty`
+    invocation, executing the modeled `TR[PR]=RHS` write into the
+    tracked target (node-exact, v24.20.0); with no get trap,
+    `(p|t).MEM` reads fall through to the target. The tracked
+    target starts as the literal PROPS and accumulates each trap
+    write. Disjoint from F642 (get trap + literal binding
+    section), F666 (apply/has traps), F675 (set/construct/
+    deleteProperty/getPrototypeOf traps or the revocable head),
+    F686 (ownKeys trap), F689 (Symbol.iterator get trap), and
+    F691/F698 (defineProperty installs on a plain object, no
+    Proxy) -- the handler key `defineProperty` on a `new Proxy`
+    head is unique to this route; none of the earlier routes
+    accepts these shapes, so no previously-decoded input changes
+    behavior. Returns (value, next_index) or None. Never evals.
+    """
+    head = _js_parse_f675_iife_head(text, i)
+    if head is None:
+        return None
+    inner_start, inner_end, j = head
+    n = len(text)
+    try:
+        tname, m = _js_parse_f675_decl_ident(text, inner_start, ())
+        if m >= n or text[m] != "{":
+            raise _JSExprFail("F706 target not an object")
+        props, m = _js_parse_f535_object(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        wname, m = _js_parse_f675_decl_ident(text, m, (tname,))
+        m = _js_parse_f675_new_proxy_head(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        targ, m = _js_parse_ident(text, m)
+        if targ != tname:
+            raise _JSExprFail("F706 target not bound")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ",")
+        trap, m = _js_parse_f706_handler(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        # ---- statements: ((Object|Reflect).defineProperty(p,'X',{DESC});)+
+        tracked = dict(props)
+        nstmts = 0
+        while True:
+            q = _js_skip_ws(text, m)
+            if _js_match_kw(text, q, "return") is not None:
+                break
+            m = _js_parse_f706_dp_stmt(text, m, wname, tracked,
+                                       trap, depth, state)
+            nstmts += 1
+        if nstmts == 0:
+            raise _JSExprFail("F706 no defineProperty statements")
+        # ---- terminal: return (p|t).MEM(+'LIT')*;
+        r = _js_match_kw(text, _js_skip_ws(text, m), "return")
+        if r is None:
+            raise _JSExprFail("F706 no return")
+        m = _js_skip_ws(text, r)
+        recv, m = _js_parse_ident(text, m)
+        if recv != wname and recv != tname:
+            raise _JSExprFail("F706 terminal wrong receiver")
+        mem, m = _js_parse_f642_terminal_member(text, m)
+        if mem == "__proto__":
+            raise _JSExprFail("F706 terminal __proto__")
+        v = tracked.get(mem)
+        if not isinstance(v, str) or isinstance(v, _JSNumStr):
+            raise _JSExprFail("F706 terminal member not a string")
+        val, m = _js_parse_f675_add_tail(text, m, v, wname, tname,
+                                         tracked, depth, state)
+        return _js_parse_f675_iife_tail(text, j, m, inner_end, val,
+                                        state)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f707_gopd_object(text, j, params, state):
+    """Parse the getOwnPropertyDescriptor-trap return object (F707).
+
+    `{value:TR[PR],configurable:true}` -- a data descriptor whose
+    value is the target's member read. `configurable:true` is
+    REQUIRED (node v24.20.0 verified): the engine's
+    getOwnPropertyDescriptor-trap invariant rejects a descriptor
+    reported non-configurable when the target's property is
+    configurable (all our literal-object targets are), so a
+    missing or non-true `configurable` throws TypeError in the
+    engine -- decoding it would mis-decode. Extra
+    data-descriptor members (`enumerable`/`writable`) with
+    true/false/null/undefined/string-literal values are tolerated
+    (they affect neither the `.value` read nor the invariant);
+    `get`/`set` or any other member fails closed (accessor
+    descriptors are F698 territory). Returns next_index. Never
+    evals.
+    """
+    del state
+    n = len(text)
+    j = _js_expect(text, j, "{")
+    seen_value = False
+    seen_config_true = False
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "}":
+            j += 1
+            break
+        key, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ":")
+        j = _js_skip_ws(text, j)
+        if key == "value":
+            t0, j = _js_parse_ident(text, j)
+            if t0 != params[0]:
+                raise _JSExprFail("F707 value not on target param")
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, "[")
+            j = _js_skip_ws(text, j)
+            t1, j = _js_parse_ident(text, j)
+            if t1 != params[1]:
+                raise _JSExprFail("F707 value not on key param")
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, "]")
+            seen_value = True
+        elif key == "configurable":
+            k = _js_match_kw(text, j, "true")
+            if k is None:
+                raise _JSExprFail("F707 configurable not true")
+            j = k
+            seen_config_true = True
+        elif key in ("enumerable", "writable"):
+            matched = False
+            for kw in ("true", "false", "null", "undefined"):
+                k = _js_match_kw(text, j, kw)
+                if k is not None:
+                    j = k
+                    matched = True
+                    break
+            if not matched:
+                if j < n and text[j] in "'\"":
+                    _, j = _js_parse_string(text, j)
+                    matched = True
+            if not matched:
+                raise _JSExprFail("F707 flag not a literal")
+        else:
+            raise _JSExprFail("F707 unexpected member")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = j + 1
+            continue
+        if j < n and text[j] == "}":
+            j += 1
+            break
+        raise _JSExprFail("F707 bad descriptor")
+    if not seen_value:
+        raise _JSExprFail("F707 no value member")
+    if not seen_config_true:
+        raise _JSExprFail("F707 configurable not true")
+    return j
+
+
+def _js_parse_f707_gopd_body_after_head(text, j, params, is_block,
+                                        depth, state):
+    """Parse gopd-trap body content after the head (F707).
+
+    Block form `return {value:TR[PR],...};`; concise arrow
+    `=>({value:TR[PR],...})`. Returns next_index. Never evals.
+    """
+    n = len(text)
+    if len(params) != 2:
+        raise _JSExprFail("F707 trap needs 2 params")
+    j = _js_skip_ws(text, j)
+    if is_block:
+        r = _js_match_kw(text, j, "return")
+        if r is None:
+            raise _JSExprFail("F707 body not return")
+        j = _js_skip_ws(text, r)
+        j = _js_parse_f707_gopd_object(text, j, params, state)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ";")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "}")
+    else:
+        if j >= n or text[j] != "(":
+            raise _JSExprFail("F707 concise not parenthesized")
+        j = _js_parse_f707_gopd_object(text, j + 1, params, state)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+    return j
+
+
+def _js_parse_f707_gopd_fn(text, i, depth, state):
+    """Parse a full getOwnPropertyDescriptor-trap function (F707).
+
+    Returns (True, next_index). Never evals.
+    """
+    params, is_block, j = _js_parse_f675_fn_head(text, i)
+    j = _js_parse_f707_gopd_body_after_head(text, j, params,
+                                            is_block, depth, state)
+    return True, j
+
+
+def _js_parse_f707_gopd_method_body(text, j, params, depth, state):
+    """Parse method-shorthand gopd-trap body (F707).
+
+    `getOwnPropertyDescriptor(TR,PR){return {value:TR[PR],...};}`.
+    Returns (True, next_index). Never evals.
+    """
+    j = _js_parse_f707_gopd_body_after_head(text, j, params, True,
+                                            depth, state)
+    return True, j
+
+
+def _js_parse_f707_handler(text, i, depth, state):
+    """Parse `{getOwnPropertyDescriptor:GFN}` at text[i] (F707).
+
+    Returns (True, next_index). Never evals.
+    """
+    return _js_parse_f675_keyed_trap(
+        text, i, "getOwnPropertyDescriptor",
+        _js_parse_f707_gopd_fn, _js_parse_f707_gopd_method_body,
+        depth, state)
+
+
+def _js_parse_f707_gopd_terminal(text, m, wname, tname, tracked,
+                                 depth, state):
+    """Parse `(Object|Reflect).getOwnPropertyDescriptor(p,'X').value`
+    at text[m] (F707), then the additive tail.
+
+    Node-exact (v24.20.0): the call invokes the trap with
+    (target, key); the trap's data descriptor carries
+    `value: target[key]`, so `.value` is the tracked target's
+    member. Returns (value, next_index). Never evals.
+    """
+    n = len(text)
+    m = _js_skip_ws(text, m)
+    head, m = _js_parse_ident(text, m)
+    if head != "Object" and head != "Reflect":
+        raise _JSExprFail("F707 terminal head")
+    m = _js_skip_ws(text, m)
+    m = _js_expect(text, m, ".")
+    m = _js_skip_ws(text, m)
+    meth, m = _js_parse_ident(text, m)
+    if meth != "getOwnPropertyDescriptor":
+        raise _JSExprFail("F707 terminal not gopd")
+    m = _js_skip_ws(text, m)
+    m = _js_expect(text, m, "(")
+    m = _js_skip_ws(text, m)
+    recv, m = _js_parse_ident(text, m)
+    if recv != wname:
+        raise _JSExprFail("F707 terminal wrong proxy")
+    m = _js_skip_ws(text, m)
+    m = _js_expect(text, m, ",")
+    m = _js_skip_ws(text, m)
+    if m >= n or text[m] not in "'\"":
+        raise _JSExprFail("F707 terminal key not literal")
+    key, m = _js_parse_string(text, m)
+    if key == "__proto__":
+        raise _JSExprFail("F707 terminal __proto__")
+    m = _js_skip_ws(text, m)
+    m = _js_expect(text, m, ")")
+    m = _js_skip_ws(text, m)
+    m = _js_expect(text, m, ".")
+    m = _js_skip_ws(text, m)
+    vmeth, m = _js_parse_ident(text, m)
+    if vmeth != "value":
+        raise _JSExprFail("F707 terminal not .value")
+    v = tracked.get(key)
+    if not isinstance(v, str) or isinstance(v, _JSNumStr):
+        raise _JSExprFail("F707 terminal member not a string")
+    return _js_parse_f675_add_tail(text, m, v, wname, tname,
+                                   tracked, depth, state)
+
+
+def _js_parse_f707_gopd_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const t={PROPS};var|let|const p=
+    new Proxy(t,{getOwnPropertyDescriptor:GFN});return (Object|
+    Reflect).getOwnPropertyDescriptor(p,'X').value(+'LIT')*;})()`
+    (F707).
+
+    The gopd call invokes the trap with (target, key); the
+    trap's data descriptor carries `value: target[key]`, so
+    `.value` reads the tracked target's member node-exactly
+    (v24.20.0). With no get trap, additive-tail `(p|t).MEM`
+    reads fall through to the target. Disjoint from F642 (get
+    trap + literal binding section), F666 (apply/has traps),
+    F675 (set/construct/deleteProperty/getPrototypeOf traps or
+    the revocable head), F686 (ownKeys trap -- the two-key
+    handler fails this single-key parse), F689 (Symbol.iterator
+    get trap), and F691 (data-descriptor `.value` reads on a
+    plain object, no Proxy) -- the handler key
+    `getOwnPropertyDescriptor` on a `new Proxy` head is unique
+    to this route; none of the earlier routes accepts these
+    shapes, so no previously-decoded input changes behavior.
+    Returns (value, next_index) or None. Never evals.
+    """
+    head = _js_parse_f675_iife_head(text, i)
+    if head is None:
+        return None
+    inner_start, inner_end, j = head
+    n = len(text)
+    try:
+        tname, m = _js_parse_f675_decl_ident(text, inner_start, ())
+        if m >= n or text[m] != "{":
+            raise _JSExprFail("F707 target not an object")
+        props, m = _js_parse_f535_object(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        wname, m = _js_parse_f675_decl_ident(text, m, (tname,))
+        m = _js_parse_f675_new_proxy_head(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        targ, m = _js_parse_ident(text, m)
+        if targ != tname:
+            raise _JSExprFail("F707 target not bound")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ",")
+        _gopd, m = _js_parse_f707_handler(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        r = _js_match_kw(text, _js_skip_ws(text, m), "return")
+        if r is None:
+            raise _JSExprFail("F707 no return")
+        tracked = dict(props)
+        val, m = _js_parse_f707_gopd_terminal(text, r, wname, tname,
+                                              tracked, depth, state)
+        return _js_parse_f675_iife_tail(text, j, m, inner_end, val,
+                                        state)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f647_nullish_right_iife(text, i, depth, state):
     """Parse `(function(){[var|let IDENT;]?return RET;})()` (F647).
 
@@ -48523,6 +49078,39 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f689 = _js_parse_f689_symiter_iife(text, i, depth, state)
         if _f689 is not None:
             val, i = _f689
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F706: (function(){var|let|const t={PROPS};var|let|const p=
+        #   new Proxy(t,{defineProperty:DPFN});((Object|Reflect).
+        #   defineProperty(p,'X',{DESC});)+return (p|t).MEM(+'LIT')*;})()
+        #   -- Proxy defineProperty-trap fragment writes: each
+        #   defineProperty invocation fires the trap, executing the
+        #   modeled `TR[PR]=RHS` write into the tracked target.
+        #   Tried after F689: F689 requires a `get` trap key with a
+        #   Symbol.iterator body; F686 requires the `ownKeys` key;
+        #   F675 requires set/construct/deleteProperty/
+        #   getPrototypeOf keys; F642 requires a `get` trap and a
+        #   literal binding section. The `defineProperty` handler
+        #   key is unique to this route, so no previously-decoded
+        #   input changes behavior.
+        _f706 = _js_parse_f706_dp_iife(text, i, depth, state)
+        if _f706 is not None:
+            val, i = _f706
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F707: (function(){var|let|const t={PROPS};var|let|const p=
+        #   new Proxy(t,{getOwnPropertyDescriptor:GFN});return
+        #   (Object|Reflect).getOwnPropertyDescriptor(p,'X').value
+        #   (+'LIT')*;})() -- Proxy getOwnPropertyDescriptor-trap
+        #   descriptor reads: the gopd call invokes the trap, whose
+        #   data descriptor carries `value: target[key]`. Tried
+        #   after F706: F706 requires the `defineProperty` handler
+        #   key; F686's two-key ownKeys/gOPD handler fails this
+        #   single-key parse; F691 reads descriptors on a plain
+        #   object with no Proxy. None of the earlier routes accepts
+        #   these shapes, so no previously-decoded input changes
+        #   behavior.
+        _f707 = _js_parse_f707_gopd_iife(text, i, depth, state)
+        if _f707 is not None:
+            val, i = _f707
             return _js_parse_postfix(text, i, val, depth, state)
         # F647: (function(){[var|let IDENT;]?return RET;})() --
         # nullish-coalescing RIGHT-pick fragment assembly
