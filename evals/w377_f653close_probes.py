@@ -389,7 +389,7 @@ def test_p3_loopvar_shadows_accum():
 # ------------------------------------------------ open neighbors (must still miss)
 
 def test_p4_open_neighbors_still_miss():
-    """F644-F652 + F654 stay BREAK -- the closure absorbs nothing."""
+    """F644-F652 + F654 are CLOSED at the wave-377 merge: they now block -- the closure absorbs nothing."""
     shapes = [
         # F644 destructuring of literal sources
         "(function(){var {a,b}={a:'%s',b:'%s%s'};return a+b;})()",
@@ -419,9 +419,9 @@ def test_p4_open_neighbors_still_miss():
         "return s;})()",
     ]
     bad = [s for s in shapes
-           if not _misses(s % (_A, _B, _B))]
+           if not _blocked(s % (_A, _B, _B))]
     return ("HELD" if not bad else "BREAK",
-            "%d/%d still miss" % (len(shapes) - len(bad), len(shapes)))
+            "%d/%d now block" % (len(shapes) - len(bad), len(shapes)))
 
 
 # ------------------------------------------------ closed neighbors (must still hold)
@@ -613,7 +613,7 @@ def test_p9_perf():
 # ------------------------------------------------ pin + footer
 
 def test_p10_pin_and_footer():
-    """Pin 2140; lane-local footer: open F644-F652, F654 / next F655."""
+    """Pin 2140; merge footer: open F655-F660 / next F661."""
     import gov.decision_codes as _dc  # noqa: E402
     ok_pin = (TAXONOMY_PIN == 2140
               and len(_dc.TAXONOMY) == TAXONOMY_PIN)
@@ -623,8 +623,8 @@ def test_p10_pin_and_footer():
             if line.startswith("Next free finding:"):
                 footer = line.strip()
     ok_footer = (footer is not None
-                 and "Next free finding: **F655**" in footer
-                 and "F644" in footer and "F654" in footer)
+                 and "Next free finding: **F662**" in footer  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
+                 and "Open findings: F655, F656, F657, F658, F659, F660, F661." in footer)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
     ok = ok_pin and ok_footer
     return ("HELD" if ok else "BREAK",
             "pin=%s footer=%s" % (ok_pin, ok_footer))

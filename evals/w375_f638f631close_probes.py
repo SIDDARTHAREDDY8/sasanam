@@ -405,7 +405,7 @@ def p7_node_differential():
 
 def p8_compositions():
     """F618/F619/F621/F625/F636/F639/F640/F641/F642/F643/F654 stay HELD;
-    still-open findings (F644-F653) still miss."""
+    F644-F653 CLOSED at the wave-377 merge: their shapes now block too."""
     held_shapes = [
         # F618 (CLOSED) still blocks
         "Promise.all([Promise.resolve('%s'),Promise.resolve('%s')])"
@@ -438,13 +438,14 @@ def p8_compositions():
         # their red-first batteries (F654 CLOSED wave-377 lane 8,
         # promoted to held below)
     ]
-    # F641-F643: still open
+    # F644-F653 CLOSED at the wave-377 merge: promote their red-first
+    # shapes from miss to held (wave-305/306 class).
     import importlib
     for fnum in (644, 645, 646, 647, 648, 649, 650, 651, 652, 653):
         mod = importlib.import_module("w376_f%d_redfirst" % fnum)
         for name, payload, recovers in mod.SHAPES:
             if recovers:
-                miss_shapes.append(payload)
+                held_shapes.append(payload)
     # F641 (CLOSED 2026-10-08 wave-376 lane 2) now blocks -- shapes from
     # its red-first battery move from miss_shapes to held_shapes
     # (wave-305/306 class: a probe that demonstrated the BREAK must assert
@@ -497,8 +498,8 @@ def p10_pin_and_footer():
                  and "CLOSED 2026-10-08 wave-376 lane 1" in text  # F640 CLOSED
                  and "CLOSED 2026-10-08 wave-376 lane 2" in text  # F641 CLOSED
                  and "CLOSED 2026-10-08 wave-377 lane 8" in text  # F654 CLOSED
-                 and "Open findings: F644, F645, F646, F647, F648, F649, F650, F651, F652, F653." in text  # merge intermediate # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655) # Wave-377 lane 8: F654 CLOSED; F644-F653 OPEN
-                 and "Next free finding: **F655**" in text)  # merge intermediate # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
+                 and "Open findings: F655, F656, F657, F658, F659, F660, F661." in text  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
+                 and "Next free finding: **F662**" in text)  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
     detail = "pin=%s codes=%d; footer-closed=%s" % (
         TAXONOMY_PIN, n, footer_ok)
     return (("HELD", detail) if (pin_ok and footer_ok)

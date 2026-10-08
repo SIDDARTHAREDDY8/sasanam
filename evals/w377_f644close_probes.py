@@ -349,40 +349,27 @@ def test_p4_junk_quiet():
 
 
 def test_p4_open_neighbors_still_miss():
-    """Open neighbors F645-F654 still miss (nothing absorbed)."""
-    shapes = [
-        "(function(s='" + _F1 + "',t='" + _F2 + _F3 + "'){return s+t;})()",
-        "(function(){var p=[];['" + _F1 + "','" + _F2 + _F3
-        + "'].forEach(function(x){p.push(x)});return p.join('');})()",
-        "(null??'" + _F1 + "')+'" + _F2 + _F3,
-        "(function(){var p=new URLSearchParams();p.append('k','" + _F1
-        + "');p.append('k','" + _F2 + _F3 + "');return p.getAll('k').join('');})()",
-        "(function(){var o=structuredClone({a:'" + _F1 + "'});return o.a;})()",
-        "(function(){var o={...{a:'" + _F1 + "'}};return o.a;})()",
-        "(function(){var s='';for (const x of ['" + _F1 + "','" + _F2 + _F3
-        + "'].entries()) s+=x[1];return s;})()",
-        "(function(){var t=('" + _F1 + "','" + _F2 + _F3
-        + "');return t;})()",
-        "(function(){var o={[Symbol.iterator]:function*(){yield '" + _F1
-        + "';yield '" + _F2 + _F3 + "';}};return [...o].join('');})()",
-        "(function(){var s='';for (const x of ['" + _F1 + "','" + _F2
-        + _F3 + "']) s+=x;return s;})()",
-    ]
-    missed = sum(1 for s in shapes if _misses(s))
-    ok = missed == len(shapes)
-    return ("HELD" if ok else "BREAK", "missed %d/%d" % (missed, len(shapes)))
+    """Former open neighbors F645-F654 are CLOSED at the wave-377 merge: their red-first filed shapes now block (nothing absorbed)."""
+    import importlib
+    bad = []
+    for fnum in (645, 646, 647, 648, 649, 650, 651, 652, 653, 654):
+        mod = importlib.import_module("w376_f%d_redfirst" % fnum)
+        for name, payload, recovers in mod.SHAPES:
+            if recovers and find_credential(payload) is None:
+                bad.append("f%d:%s" % (fnum, name))
+    ok = not bad
+    return ("HELD" if ok else "BREAK", "blocked=%s" % (bad or "all"))
 
 
 # ------------------------------------------------ pin + footer
 
 def test_p5_pin_and_footer():
-    """Pin 2140; lane-local footer: open F645-F654 / next F655."""
+    """Pin 2140; merge footer: open F655-F660 / next F661."""
     from gov.decision_codes import TAXONOMY  # noqa: E402
     ok = TAXONOMY_PIN == 2140
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and "Next free finding: **F655**" in text
-    ok = ok and ("Open findings: F645, F646, F647, F648, F649, F650, F651, "
-                 "F652, F653, F654." in text)
+    ok = ok and "Next free finding: **F662**" in text  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
+    ok = ok and ("Open findings: F655, F656, F657, F658, F659, F660, F661." in text)  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
     ok = ok and "**Status: CLOSED 2026-10-08 wave-377 lane 1.**" in text
     return ("HELD" if ok else "BREAK", "ok=%s" % ok)
 

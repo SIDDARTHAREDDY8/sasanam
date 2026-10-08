@@ -314,17 +314,17 @@ def _redfirst_tally(path):
 
 
 def test_p4_open_neighbors_still_miss():
-    """F644-F647, F649-F654 red-firsts still BREAK (nothing absorbed)."""
+    """F644-F647, F649-F654 CLOSED at the wave-377 merge: their red-firsts now show 0 BREAK (nothing absorbed)."""
     bad = []
     for f in ("f644", "f645", "f646", "f647", "f649", "f650",
               "f651", "f652", "f653", "f654"):
         path = os.path.join(REPO_ROOT, "evals",
                             "w376_%s_redfirst.py" % f)
         breaks, held = _redfirst_tally(path)
-        if breaks == 0:
+        if breaks != 0:
             bad.append(f)
     ok = not bad
-    return ("HELD" if ok else "BREAK", "still-open=%s" % (bad or "all"))
+    return ("HELD" if ok else "BREAK", "now-closed=%s" % (bad or "all"))
 
 
 # ------------------------------------------------ p5 closed neighbors still held
@@ -441,7 +441,7 @@ def test_p8_junk_quiet():
 # ------------------------------------------------ p9 pin + footer
 
 def test_p9_pin_and_footer():
-    """Pin 2140; lane-local footer: open F644-F647, F649-F654 / next F655."""
+    """Pin 2140; merge footer: open F655-F660 / next F661."""
     lines = open(os.path.join(REPO_ROOT, "evals",
                               "FINDINGS.md"), encoding="utf-8").read()
     ok_pin = TAXONOMY_PIN == 2140
@@ -451,11 +451,9 @@ def test_p9_pin_and_footer():
     open_seg = (" " + last.split("Open findings:")[-1]
                 if "Open findings:" in last else "")
     live_list = open_seg.split("#")[0]  # history comments may name F648
-    ok_foot = ("**F655**" in last
-               and "F644, F645, F646, F647" in live_list
-               and "F649, F650, F651, F652, F653, F654" in live_list
-               and "F648" not in live_list
-               and "Wave-377 lane 5: F648 CLOSED" in open_seg)  # history kept
+    ok_foot = ("**F661**" in last
+               and "F655, F656, F657, F658, F659, F660" in live_list
+               and "Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN" in open_seg)  # history kept
     ok = ok_pin and ok_foot
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 

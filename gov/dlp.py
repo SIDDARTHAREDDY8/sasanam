@@ -34591,6 +34591,7 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                   state)
         if _f645 is not None:
             val, i = _f645
+            return _js_parse_postfix(text, i, val, depth, state)
         # F649: (function(){DECL o=structuredClone({LIT});
         #   return o.M(+o.M)*;})() -- member reads through a
         #   var-bound structuredClone intermediate. Tried after
@@ -34783,6 +34784,7 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f652 = _js_parse_f652_sequence_iife(text, i, depth, state)
         if _f652 is not None:
             val, i = _f652
+            return _js_parse_postfix(text, i, val, depth, state)
         # F654: (function(){var|let S='';for (var|let|const X of SRC)
         #   {S+=X;}return S;})() / the push/join twin
         #   (function(){var|let|const P=[];for (var|let|const X of SRC)

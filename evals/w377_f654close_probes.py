@@ -335,15 +335,15 @@ def test_p5_f517_still_blocks():
 # ------------------------------------------------ open neighbors (must still miss)
 
 def test_p4_open_neighbors_still_miss():
-    """F644-F653 red-first shapes still BREAK (nothing absorbed)."""
+    """F644-F653 CLOSED at the wave-377 merge: their red-first shapes now block (nothing absorbed)."""
     shapes = []
     for fnum in (644, 645, 646, 647, 648, 649, 650, 651, 652, 653):
         mod = importlib.import_module("w376_f%d_redfirst" % fnum)
         for name, payload, recovers in mod.SHAPES:
             if recovers:
                 shapes.append(payload)
-    ok = all(_misses(s) for s in shapes)
-    return ("HELD" if ok else "BREAK", "open-neighbors-miss=%s" % ok)
+    ok = all(_blocked(s) for s in shapes)
+    return ("HELD" if ok else "BREAK", "closed-neighbors-block=%s" % ok)
 
 
 # ------------------------------------------------ junk-quiet control
@@ -363,11 +363,12 @@ def test_p7_pin_taxonomy():
 
 
 def test_p8_lane_footer():
-    """Lane-local footer: open F644-F653, next F655."""
+    """Merge footer: F644-F654 closed; open F655-F660 / next F661."""
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as f:
         text = f.read()
     ok = ("**Status: CLOSED 2026-10-08 wave-377 lane 8.**" in text  # Wave-377 lane 8: F654 CLOSED
-          and "Open findings: F644, F645, F646, F647, F648, F649, F650, F651, F652, F653." in text)  # Wave-377 lane 8: F654 CLOSED; F644-F653 OPEN
+          and "Open findings: F655, F656, F657, F658, F659, F660, F661." in text  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
+          and "Next free finding: **F662**." in text)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

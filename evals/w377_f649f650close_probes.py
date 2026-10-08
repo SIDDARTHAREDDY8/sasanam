@@ -356,57 +356,66 @@ def _open_still_misses(modname):
     return False
 
 
-def test_p4_open_f644_still_misses():
-    """F644 destructuring still open."""
-    ok = _open_still_misses("w376_f644_redfirst")
+def _closed_now_blocks(modname):
+    """Every filed shape of a CLOSED finding's red-first now blocks."""
+    m = importlib.import_module("evals." + modname)
+    for _name, payload, recovers in m.SHAPES:
+        if recovers and find_credential(payload) is None:
+            return False
+    return True
+
+
+def test_p4_closed_f644_now_blocks():
+    """F644 CLOSED at wave-377 merge: destructuring now blocks."""
+    ok = _closed_now_blocks("w376_f644_redfirst")
     return ("HELD" if ok else "BREAK", "miss=%s" % ok)
 
 
-def test_p4_open_f645_still_misses():
-    """F645 default-params still open."""
-    ok = _open_still_misses("w376_f645_redfirst")
+def test_p4_closed_f645_now_blocks():
+    """F645 CLOSED at wave-377 merge: default-params now blocks."""
+    ok = _closed_now_blocks("w376_f645_redfirst")
     return ("HELD" if ok else "BREAK", "miss=%s" % ok)
 
 
-def test_p4_open_f646_still_misses():
-    """F646 Array.forEach still open."""
-    ok = _open_still_misses("w376_f646_redfirst")
+def test_p4_closed_f646_now_blocks():
+    """F646 CLOSED at wave-377 merge: Array.forEach now blocks."""
+    ok = _closed_now_blocks("w376_f646_redfirst")
     return ("HELD" if ok else "BREAK", "miss=%s" % ok)
 
 
-def test_p4_open_f647_still_misses():
-    """F647 nullish RIGHT-pick still open."""
-    ok = _open_still_misses("w376_f647_redfirst")
+def test_p4_closed_f647_now_blocks():
+    """F647 CLOSED at wave-377 merge: nullish RIGHT-pick now blocks."""
+    ok = _closed_now_blocks("w376_f647_redfirst")
     return ("HELD" if ok else "BREAK", "miss=%s" % ok)
 
 
-def test_p4_open_f648_still_misses():
-    """F648 USP no-arg ctor still open."""
-    ok = _open_still_misses("w376_f648_redfirst")
+def test_p4_closed_f648_now_blocks():
+    """F648 CLOSED at wave-377 merge: USP no-arg ctor now blocks."""
+    ok = _closed_now_blocks("w376_f648_redfirst")
     return ("HELD" if ok else "BREAK", "miss=%s" % ok)
 
 
-def test_p4_open_f651_still_misses():
-    """F651 Array.entries/values/keys for-of still open."""
-    ok = _open_still_misses("w376_f651_redfirst")
+def test_p4_closed_f651_now_blocks():
+    """F651 CLOSED at wave-377 merge: Array.entries/values/keys for-of now blocks."""
+    ok = _closed_now_blocks("w376_f651_redfirst")
     return ("HELD" if ok else "BREAK", "miss=%s" % ok)
 
 
-def test_p4_open_f652_still_misses():
-    """F652 comma/sequence still open."""
-    ok = _open_still_misses("w376_f652_redfirst")
+def test_p4_closed_f652_now_blocks():
+    """F652 CLOSED at wave-377 merge: comma/sequence now blocks."""
+    ok = _closed_now_blocks("w376_f652_redfirst")
     return ("HELD" if ok else "BREAK", "miss=%s" % ok)
 
 
-def test_p4_open_f653_still_misses():
-    """F653 Symbol.iterator still open."""
-    ok = _open_still_misses("w376_f653_redfirst")
+def test_p4_closed_f653_now_blocks():
+    """F653 CLOSED at wave-377 merge: Symbol.iterator now blocks."""
+    ok = _closed_now_blocks("w376_f653_redfirst")
     return ("HELD" if ok else "BREAK", "miss=%s" % ok)
 
 
-def test_p4_open_f654_still_misses():
-    """F654 sync for-of still open."""
-    ok = _open_still_misses("w376_f654_redfirst")
+def test_p4_closed_f654_now_blocks():
+    """F654 CLOSED at wave-377 merge: sync for-of now blocks."""
+    ok = _closed_now_blocks("w376_f654_redfirst")
     return ("HELD" if ok else "BREAK", "miss=%s" % ok)
 
 
@@ -464,10 +473,10 @@ def test_p7_pin_taxonomy_2140_sorted():
 
 
 def test_p7_footer_lane_local():
-    """Lane-local footer: open F644-F648, F651-F654 / next F655."""
+    """Merge footer: F644-F654 closed; open F655-F661 / next F662."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    want = "Next free finding: **F655**. **Open findings: F644, F645, F646, F647, F648, F651, F652, F653, F654.**"
-    ok = want in text
+    want = "Next free finding: **F662**. **Open findings: F655, F656, F657, F658, F659, F660, F661.**"  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
+    ok = want in text  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

@@ -336,20 +336,26 @@ def test_p3_number_default():
 # ------------------------------------------------ neighbors (still miss / still hold)
 
 def test_p4_f644_still_misses():
-    """F644 OPEN (destructuring of literal sources) still misses."""
-    miss = _misses("(function(){var {a,b}={a:'%s',b:'%s'};return a+b;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F644 CLOSED (wave-377 lane 1): destructuring of literal sources now blocks."""
+    hit = _blocked("(function(){var {a,b}={a:'%s',b:'%s'};return a+b;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 def test_p4_f646_still_misses():
-    """F646 OPEN (Array.forEach accumulation) still misses."""
-    miss = _misses("(function(){var s='';['%s','%s'].forEach(function(x){s+=x;});return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F646 CLOSED (wave-377 lane 3): Array.forEach accumulation now blocks."""
+    hit = _blocked("(function(){var s='';['%s','%s'].forEach(function(x){s+=x;});return s;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 def test_p4_f652_still_misses():
-    """F652 OPEN (comma expressions) still misses."""
-    miss = _misses("(function(){var s=('x','%s');return s+'%s';})()" % (_A, _B))
+    """F652 CLOSED (wave-377 lane 4): additive-position comma expressions now block."""
+    hit = _blocked("(function(){var x;return (x='%s',x)+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+def test_p4_f661_still_misses():
+    """F661 OPEN (filed at wave-377 merge): declaration-position comma sequences still miss."""
+    miss = _misses("(function(){var s=('jx','%s');return s+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 
@@ -419,11 +425,11 @@ def test_p7_node_exact():
 # ------------------------------------------------ pin + footer
 
 def test_p8_pin_and_footer():
-    """Pin 2140 and lane-local footer (open F644, F646-F654; next F655)."""
+    """Pin 2140 and merge footer (open F655-F660; next F661)."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     pin_ok = TAXONOMY_PIN == 2140
-    next_ok = "Next free finding: **F655**" in text  # Wave-377 lane 2
-    open_ok = "Open findings: F644, F646, F647, F648, F649, F650, F651, F652, F653, F654." in text  # Wave-377 lane 2
+    next_ok = "Next free finding: **F662**" in text  # Wave-377 lane 2  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
+    open_ok = "Open findings: F655, F656, F657, F658, F659, F660, F661." in text  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
     closed_ok = "**Status: CLOSED 2026-10-08 wave-377 lane 2.**" in text
     ok = pin_ok and next_ok and open_ok and closed_ok
     return ("HELD" if ok else "BREAK",

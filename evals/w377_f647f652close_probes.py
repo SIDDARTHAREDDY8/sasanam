@@ -223,7 +223,7 @@ def test_p3_f652_bounds():
 # ------------------------------------------------ open neighbors still miss
 
 def test_p4_open_neighbors_still_miss():
-    """F648-F650/F653/F654/F660 stay open (nothing absorbed)."""
+    """F644-F654 CLOSED at the wave-377 merge: their shapes now block (nothing absorbed); F660 stays open."""
     shapes = [
         "(function(){var {a,b}={a:'%s',b:'%s%s'};return a+b;})()",
         "(function(s='%s',t='%s%s'){return s+t;})()",
@@ -238,12 +238,23 @@ def test_p4_open_neighbors_still_miss():
         "(function(){var x;return (x='%s',x)+'%s%s'+x;})()",
         "(function(){var z;return (z??'%s')+'%s%s'+z;})()",
     ]
+    # Last two shapes are F660 (OPEN); the rest are F644-F654 (CLOSED at merge).
+    # F661 (OPEN, filed at merge): declaration-position comma sequences -- see w377_f661_redfirst.py.
+    open_shapes = shapes[-2:]
+    closed_shapes = shapes[:-2]
+    f661_shapes = ["(function(){var s=('jx','%s');return s+'%s%s';})()" % (_F1, _F2, _F3)]
     ok = True
-    for s in shapes:
+    for s in closed_shapes:
+        n = s.count("%s")
+        args = (_F1, _F2, _F3)[:n]
+        ok = ok and _blocked(s % args)
+    for s in open_shapes:
         n = s.count("%s")
         args = (_F1, _F2, _F3)[:n]
         ok = ok and _misses(s % args)
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    for s in f661_shapes:
+        ok = ok and _misses(s)
+    return ("HELD" if ok else "BREAK", "ok=%s" % ok)
 
 
 # ------------------------------------------------ composition
@@ -312,12 +323,12 @@ def test_p7_node_differential():
 # ------------------------------------------------ pin + footer
 
 def test_p8_pin_footer():
-    """Pin 2140 and lane-local footer (open F648-F650, F653, F654, F660; next F655)."""
+    """Pin 2140 and merge footer (open F655-F660; next F661)."""
     import gov.decision_codes as dc
     ok = (TAXONOMY_PIN == 2140 and len(dc.TAXONOMY) > 0)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and ("Next free finding: **F655**" in text)  # Wave-377 merge lanes 1-4: F644-F647, F651, F652 CLOSED (next F655)
-    ok = ok and ("Open findings: F648, F649, F650, F653, F654, F660." in text)  # Wave-377 merge lanes 1-4: F644-F647, F651, F652 CLOSED; F660 filed OPEN
+    ok = ok and ("Next free finding: **F662**" in text)  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
+    ok = ok and ("Open findings: F655, F656, F657, F658, F659, F660, F661." in text)  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
     ok = ok and (_dlp is not None)
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 

@@ -501,71 +501,71 @@ def test_p7_f640_still_blocks():
 
 # ------------------------------------------------ open neighbors (must still miss)
 
-def test_p8_f644_still_open():
-    """F644 destructuring still misses (not absorbed)."""
-    ok = _misses("(function(){var {a,b}={a:'%s',b:'%s'};"
+def test_p8_f644_still_closed():
+    """F644 CLOSED at wave-377 merge: destructuring now blocks."""
+    ok = _blocked("(function(){var {a,b}={a:'%s',b:'%s'};"
                  "return a+b;})()" % (_F1, _F23))
-    return ("HELD" if ok else "BREAK", "quiet=%s" % ok)
+    return ("HELD" if ok else "BREAK", "blocks=%s" % ok)
 
 
-def test_p8_f645_still_open():
-    """F645 default params still miss."""
-    ok = _misses("(function(s='%s',t='%s'){return s+t;})()"
+def test_p8_f645_still_closed():
+    """F645 CLOSED at wave-377 merge: default params now block."""
+    ok = _blocked("(function(s='%s',t='%s'){return s+t;})()"
                  % (_F1, _F23))
-    return ("HELD" if ok else "BREAK", "quiet=%s" % ok)
+    return ("HELD" if ok else "BREAK", "blocks=%s" % ok)
 
 
-def test_p8_f647_still_open():
-    """F647 nullish RIGHT-pick still misses."""
-    ok = _misses("(function(){return (null??'%s')+'%s';})()"
+def test_p8_f647_still_closed():
+    """F647 CLOSED at wave-377 merge: nullish RIGHT-pick now blocks."""
+    ok = _blocked("(function(){return (null??'%s')+'%s';})()"
                  % (_F1, _F23))
-    return ("HELD" if ok else "BREAK", "quiet=%s" % ok)
+    return ("HELD" if ok else "BREAK", "blocks=%s" % ok)
 
 
-def test_p8_f648_still_open():
-    """F648 USP no-arg ctor still misses."""
-    ok = _misses("(function(){var p=new URLSearchParams();"
+def test_p8_f648_still_closed():
+    """F648 CLOSED at wave-377 merge: USP no-arg ctor now blocks."""
+    ok = _blocked("(function(){var p=new URLSearchParams();"
                  "p.append('q','%s');p.append('q','%s');"
                  "return p.getAll('q').join('');})()" % (_F1, _F23))
-    return ("HELD" if ok else "BREAK", "quiet=%s" % ok)
+    return ("HELD" if ok else "BREAK", "blocks=%s" % ok)
 
 
-def test_p8_f649_still_open():
-    """F649 structuredClone var-bound members still miss."""
-    ok = _misses("(function(){var o=structuredClone({a:'%s',"
+def test_p8_f649_still_closed():
+    """F649 CLOSED at wave-377 merge: structuredClone var-bound members now block."""
+    ok = _blocked("(function(){var o=structuredClone({a:'%s',"
                  "b:'%s'});return o.a+o.b;})()" % (_F1, _F23))
-    return ("HELD" if ok else "BREAK", "quiet=%s" % ok)
+    return ("HELD" if ok else "BREAK", "blocks=%s" % ok)
 
 
-def test_p8_f650_still_open():
-    """F650 object-spread enumeration still misses."""
-    ok = _misses("(function(){var o={...{a:'%s'},...{b:'%s'}};"
+def test_p8_f650_still_closed():
+    """F650 CLOSED at wave-377 merge: object-spread enumeration now blocks."""
+    ok = _blocked("(function(){var o={...{a:'%s'},...{b:'%s'}};"
                  "return Object.values(o).join('');})()" % (_F1, _F23))
-    return ("HELD" if ok else "BREAK", "quiet=%s" % ok)
+    return ("HELD" if ok else "BREAK", "blocks=%s" % ok)
 
 
-def test_p8_f652_still_open():
-    """F652 comma expressions still miss."""
-    ok = _misses("(function(){var x;return (x='%s',x)+'%s';})()"
+def test_p8_f652_still_closed():
+    """F652 CLOSED at wave-377 merge: comma expressions now block."""
+    ok = _blocked("(function(){var x;return (x='%s',x)+'%s';})()"
                  % (_F1, _F23))
-    return ("HELD" if ok else "BREAK", "quiet=%s" % ok)
+    return ("HELD" if ok else "BREAK", "blocks=%s" % ok)
 
 
-def test_p8_f653_still_open():
-    """F653 custom Symbol.iterator for-of still misses."""
-    ok = _misses("(function(){var fr=['%s','%s'];var o={i:0};"
+def test_p8_f653_still_closed():
+    """F653 CLOSED at wave-377 merge: custom Symbol.iterator for-of now blocks."""
+    ok = _blocked("(function(){var fr=['%s','%s'];var o={i:0};"
                  "o[Symbol.iterator]=function(){var self=this;return{"
                  "next:function(){return self.i<2?{value:fr[self.i++],"
                  "done:false}:{done:true};}};};var s='';"
                  "for(var x of o){s+=x;}return s;})()" % (_F1, _F23))
-    return ("HELD" if ok else "BREAK", "quiet=%s" % ok)
+    return ("HELD" if ok else "BREAK", "blocks=%s" % ok)
 
 
-def test_p8_f654_still_open():
-    """F654 sync for-of still misses."""
-    ok = _misses("(function(){var s='';for (const x of ['%s','%s','%s'])"
+def test_p8_f654_still_closed():
+    """F654 CLOSED at wave-377 merge: sync for-of now blocks."""
+    ok = _blocked("(function(){var s='';for (const x of ['%s','%s','%s'])"
                  " s+=x; return s;})()" % (_F1, _F2, _F3))
-    return ("HELD" if ok else "BREAK", "quiet=%s" % ok)
+    return ("HELD" if ok else "BREAK", "blocks=%s" % ok)
 
 
 # ------------------------------------------------ pin + footer
@@ -578,10 +578,10 @@ def test_p9_pin_taxonomy_2140_sorted():
 
 
 def test_p9_footer_state():
-    """Lane-local footer: F646+F651 closed; open F644,F645,F647-F650,F652-F654; next F655."""
+    """Merge footer: F644-F654 closed; open F655-F660; next F661."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F655**" in text  # Wave-377 lane 3: F646, F651 CLOSED
-          and "Open findings: F644, F645, F647, F648, F649, F650, F652, F653, F654." in text)  # Wave-377 lane 3: F646, F651 CLOSED
+    ok = ("Next free finding: **F662**" in text  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
+          and "Open findings: F655, F656, F657, F658, F659, F660, F661." in text)  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -695,15 +695,15 @@ def main():
     _t("p7_f632_still_blocks", test_p7_f632_still_blocks)
     _t("p7_f622_still_blocks", test_p7_f622_still_blocks)
     _t("p7_f640_still_blocks", test_p7_f640_still_blocks)
-    _t("p8_f644_still_open", test_p8_f644_still_open)
-    _t("p8_f645_still_open", test_p8_f645_still_open)
-    _t("p8_f647_still_open", test_p8_f647_still_open)
-    _t("p8_f648_still_open", test_p8_f648_still_open)
-    _t("p8_f649_still_open", test_p8_f649_still_open)
-    _t("p8_f650_still_open", test_p8_f650_still_open)
-    _t("p8_f652_still_open", test_p8_f652_still_open)
-    _t("p8_f653_still_open", test_p8_f653_still_open)
-    _t("p8_f654_still_open", test_p8_f654_still_open)
+    _t("p8_f644_still_closed", test_p8_f644_still_closed)
+    _t("p8_f645_still_closed", test_p8_f645_still_closed)
+    _t("p8_f647_still_closed", test_p8_f647_still_closed)
+    _t("p8_f648_still_closed", test_p8_f648_still_closed)
+    _t("p8_f649_still_closed", test_p8_f649_still_closed)
+    _t("p8_f650_still_closed", test_p8_f650_still_closed)
+    _t("p8_f652_still_closed", test_p8_f652_still_closed)
+    _t("p8_f653_still_closed", test_p8_f653_still_closed)
+    _t("p8_f654_still_closed", test_p8_f654_still_closed)
     _t("p9_pin_taxonomy_2140_sorted", test_p9_pin_taxonomy_2140_sorted)
     _t("p9_footer_state", test_p9_footer_state)
     _t("p9_re_compile_28", test_p9_re_compile_28)

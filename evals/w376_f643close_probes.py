@@ -259,7 +259,7 @@ def test_p3_newx_ident():
 # ------------------------------------------------ open neighbors still miss
 
 def test_p4_open_neighbors_still_miss():
-    """F644-F654 red-first shapes still miss (nothing absorbed; F646, F651 closed wave-377 lane 3)."""
+    """F644-F654 red-first shapes CLOSED at wave-377 merge: now block (nothing absorbed)."""
     import importlib
     shapes = []
     for fnum in (644, 645, 647, 648, 649, 650, 652, 653):  # Wave-377 lane 3: F646, F651 CLOSED (removed from open list)
@@ -271,8 +271,8 @@ def test_p4_open_neighbors_still_miss():
     for name, payload, recovers in mod654.SHAPES:
         if recovers:
             shapes.append(payload)
-    ok = all(_misses(s) for s in shapes)
-    return ("HELD" if ok else "BREAK", "open-neighbors-miss=%s" % ok)
+    ok = all(_blocked(s) for s in shapes)
+    return ("HELD" if ok else "BREAK", "closed-neighbors-block=%s" % ok)
 
 
 # ------------------------------------------------ composition (still holds)
@@ -385,8 +385,8 @@ def test_p7_pin_taxonomy():
 def test_p7_footer_state():
     """Footer: F643 closed; open F640, F641, F642; next F644."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F655**" in text  # Wave-376 lane 4: F643 CLOSED # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
-          and "Open findings: F644, F645, F646, F647, F648, F649, F650, F651, F652, F653, F654." in text)  # Wave-376 lane 4: F643 CLOSED # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
+    ok = ("Next free finding: **F662**" in text  # Wave-376 lane 4: F643 CLOSED # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
+          and "Open findings: F655, F656, F657, F658, F659, F660, F661." in text)  # Wave-376 lane 4: F643 CLOSED # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
