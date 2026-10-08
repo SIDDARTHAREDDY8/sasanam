@@ -299,7 +299,7 @@ def p7_pin_and_footer():
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as fh:
         text = fh.read()
     footer_ok = ("CLOSED 2026-10-07 wave-372 lane 4" in text
-                 and "Open findings: F595, F606, F607, F608, F609, F610, F611." in text  # Wave-372 merge: footer repoint open F606-F611 / next F612
+                 and "Open findings: F595, F606, F608, F609, F610, F611." in text  # Wave-372 merge: footer repoint open F606-F611 / next F612
                  and "Next free finding: **F612**" in text)  # Wave-372 merge: footer repoint next F612
     detail = "pin=%s codes=%d; footer-closed=%s" % (
         TAXONOMY_PIN, n, footer_ok)

@@ -92,8 +92,8 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2140  # Wave-354: F469 closed, no new decision codes; pin unchanged 2135; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
-FOOTER_OPEN = "F595, F606, F607, F608, F609, F610, F611"    # Wave-369 merge: F547-F569 CLOSED; F570-F582 OPEN (next F583) # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-355 lanes 1+2: F473, F474 CLOSED; open none / next F475 (merge intermediate)  # Wave-354: next free finding after F469 closure  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-354 lane 1: F469 CLOSED locally (merge finalizes tree-wide)  # Wave-355 lane 3: F475 filed + CLOSED  # Wave-355 lane 3: F475 FILED + CLOSED (merge intermediate)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480)  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint
-FOOTER_NEXT = "F606"  # Wave-371 merge: F583-F596 CLOSED (lanes 1-7); F597-F605 OPEN (next F606)
+FOOTER_OPEN = "F595, F606, F608, F609, F610, F611"    # Wave-369 merge: F547-F569 CLOSED; F570-F582 OPEN (next F583) # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-355 lanes 1+2: F473, F474 CLOSED; open none / next F475 (merge intermediate)  # Wave-354: next free finding after F469 closure  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-354 lane 1: F469 CLOSED locally (merge finalizes tree-wide)  # Wave-355 lane 3: F475 filed + CLOSED  # Wave-355 lane 3: F475 FILED + CLOSED (merge intermediate)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480)  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint  # Wave-373 lane 3: F607 CLOSED locally (merge finalizes tree-wide)
+FOOTER_NEXT = "F612"  # Wave-371 merge: F583-F596 CLOSED (lanes 1-7); F597-F605 OPEN (next F606)  # Wave-373 lane 3: next F612 (F607 CLOSED locally)
 
 
 from gov import dlp  # noqa: E402
@@ -236,15 +236,32 @@ def p3_pin_value_mixed():
 
 def p3_pin_target_fails():
     # Non-concat targets: no variant (fail closed).
+    # (Wave-373 maintenance: Reflect.apply([].concat,...) moved out --
+    # the wave-355/F473 array-receiver concat modeling decodes it
+    # node-exactly and blocks credential instances; see
+    # p3_pin_concat_target_now_handled.)
     for expr in ("Reflect.apply(Math.max,[],[['f1']])",
                  "Reflect.apply(Array.prototype.push,[],[['f1']])",
                  "Reflect.apply(concat,[],[['f1']])",
-                 "Reflect.apply(Array,['f1'],[['f2']])",
-                 "Reflect.apply([].concat,[],[['f1']])"):
+                 "Reflect.apply(Array,['f1'],[['f2']])"):
         r = dlp._try_js_expr_decode(expr + ".join('')", 0)
         if r is not None:
             return False
     return True
+
+
+def p3_pin_concat_target_now_handled():
+    # Wave-373 maintenance (stale since wave-355/F473): [].concat as a
+    # Reflect.apply target now decodes node-exactly (v24.20.0: 'f1')
+    # and blocks credential instances coded.
+    r = dlp._try_js_expr_decode("Reflect.apply([].concat,[],[['f1']])"
+                                ".join('')", 0)
+    if r is None or r[0] != "f1":
+        return False
+    _a1 = "xoxb-" + "0123"
+    _a2 = "456789" + "abcdef"
+    return dlp.find_credential("Reflect.apply([].concat,[],[['%s','%s']])"
+                               ".join('')" % (_a1, _a2)) is not None
 
 
 def p3_pin_third_arg_fails():
@@ -447,6 +464,7 @@ _PROBES = [
     ("p3-pin-value-thisarg", p3_pin_value_thisarg),
     ("p3-pin-value-mixed", p3_pin_value_mixed),
     ("p3-pin-target-fails", p3_pin_target_fails),
+    ("p3-pin-concat-target-now-handled", p3_pin_concat_target_now_handled),
     ("p3-pin-third-arg-fails", p3_pin_third_arg_fails),
     ("p3-pin-thisarg-fails", p3_pin_thisarg_fails),
     ("p3-pin-argclass-fails", p3_pin_argclass_fails),

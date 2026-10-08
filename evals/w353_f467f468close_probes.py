@@ -32,8 +32,10 @@ Neighbor dispositions (node-verified, documented here and in the
 FINDINGS.md closure notes):
 - x!==null / x!==undefined / x!=null -- modeled (constant-true).
 - function(x){return x!==null;} -- modeled (rides with F467's scope note).
-- x!=undefined / x!==0 / x!=='a' / x==null / x===null / x!==nullx --
+- x!=undefined / x!==0 / x==null / x===null / x!==nullx --
   fail closed (documented scope boundary: rejected, never mis-decoded).
+  (Wave-373/F607: x!=='a' -- strict neq against a non-empty literal --
+  is now modeled node-exactly; see p3_pin_f607_neq_now_handled.)
 - x==null is constant-FALSE over strings, not a bypass; fails closed.
 - Reflect.construct(Array,['a','b']) / (Array,Array.of(...)) /
   (Array,Array('a','b')) -- modeled; desugars to the fragment list.
@@ -100,9 +102,9 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2140  # Wave-353: F467+F468 closed, no new decision codes; pin unchanged 2135; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
-FOOTER_OPEN = "F595, F606, F607, F608, F609, F610, F611"    # Wave-369 merge: F547-F569 CLOSED; F570-F582 OPEN (next F583) # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-353 lane 4: F467+F468 CLOSED locally (merge finalizes tree-wide); wave-352 merge: F454-F460 CLOSED, F461-F468 filed OPEN (next F469)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 lane 1: F469 CLOSED locally (merge finalizes tree-wide)  # Wave-354: F470 CLOSED  # Wave-354 lane 3: F471 CLOSED  # Wave-354 lane 4: F472 CLOSED  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 lane 1: F476 CLOSED  # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480)  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint
+FOOTER_OPEN = "F595, F606, F608, F609, F610, F611"    # Wave-369 merge: F547-F569 CLOSED; F570-F582 OPEN (next F583) # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-353 lane 4: F467+F468 CLOSED locally (merge finalizes tree-wide); wave-352 merge: F454-F460 CLOSED, F461-F468 filed OPEN (next F469)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 lane 1: F469 CLOSED locally (merge finalizes tree-wide)  # Wave-354: F470 CLOSED  # Wave-354 lane 3: F471 CLOSED  # Wave-354 lane 4: F472 CLOSED  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 lane 1: F476 CLOSED  # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480)  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint
 
-FOOTER_NEXT = "F606"  # Wave-371 merge: F583-F596 CLOSED (lanes 1-7); F597-F605 OPEN (next F606)
+FOOTER_NEXT = "F612"  # Wave-371 merge: F583-F596 CLOSED (lanes 1-7); F597-F605 OPEN (next F606)
 
 
 from gov import dlp  # noqa: E402
@@ -265,7 +267,10 @@ def p3_pin_f468_of_value():
 
 def p3_pin_f467_scope_fails():
     # Out-of-scope comparisons fail closed: no decode variant at all.
-    for body in ("x=>x!==0", "x=>x!=='a'", "x=>x!=undefined",
+    # (Wave-373/F607: x=>x!=='a' moved out -- strict neq against a
+    # non-empty literal is now modeled node-exactly; see
+    # p3_pin_f607_neq_now_handled.)
+    for body in ("x=>x!==0", "x=>x!=undefined",
                  "x=>x==null", "x=>x===null", "x=>x!==nullx",
                  "x=>x!=nullx"):
         r = dlp._try_js_expr_decode("['f1','f2'].filter(" + body
@@ -273,6 +278,14 @@ def p3_pin_f467_scope_fails():
         if r is not None:
             return False
     return True
+
+
+def p3_pin_f607_neq_now_handled():
+    # Wave-373 (F607): strict neq against a non-empty literal is now
+    # modeled node-exactly (spec ("neq", lit)) -- ['f1','f2'] keeps
+    # both elements since neither equals 'a'.
+    r = dlp._try_js_expr_decode("['f1','f2'].filter(x=>x!=='a').join('')", 0)
+    return r is not None and r[0] == "f1f2"
 
 
 def p3_pin_f467_shadow_fails():
@@ -460,6 +473,7 @@ _PROBES = [
     ("p3-pin-f468-value", p3_pin_f468_value),
     ("p3-pin-f468-of-value", p3_pin_f468_of_value),
     ("p3-pin-f467-scope-fails", p3_pin_f467_scope_fails),
+    ("p3-pin-f607-neq-now-handled", p3_pin_f607_neq_now_handled),
     ("p3-pin-f467-shadow-fails", p3_pin_f467_shadow_fails),
     ("p3-pin-f468-target-fails", p3_pin_f468_target_fails),
     ("p3-pin-f468-apply-quiet", p3_pin_f468_apply_quiet),

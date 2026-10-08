@@ -36,10 +36,11 @@ parameter, no other statements) + '}'. Red-first verified
 (w349_f448_redfirst.py: BREAK -> HELD).
 
 Honest fail-closed residuals (documented, not findings): F447 loose
-x!='', !== vs non-empty literals, x.length!=0 / x.length>=1,
-block-body arrows; F448 block bodies
+x!='', x.length!=0, block-body arrows; F448 block bodies
 with extra statements, parenthesized return values, double
-semicolons. All probed against node v24.20.0: they fail closed with
+semicolons. (Wave-373/F607: !== vs non-empty literals and
+x.length>=1 are now modeled node-exactly -- see
+p4_neq_plencmp_now_handled.) All probed against node v24.20.0: they fail closed with
 zero overblocking. Also newly handled as a documented extension:
 bare-param constant-true x=>true (semantically identical to
 (s)=>true).
@@ -95,8 +96,8 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 TAXONOMY_PIN = 2140  # Wave-350: F447+F448 closed, no new decision codes; pin unchanged 2135; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
-FOOTER_OPEN = "F595, F606, F607, F608, F609, F610, F611"    # Wave-369 merge: F547-F569 CLOSED; F570-F582 OPEN (next F583) # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-352 merge (4/5): F454-F460 CLOSED; open none (next F461)  # Wave-352 merge (3/5): F454-F457 CLOSED; F458-F460 OPEN (next F461)  # Wave-352 merge (2/5): F456+F457 CLOSED; F458-F460 still OPEN (next F461)  # Wave-351 lane 3: F453 CLOSED (ws-b64 outer composes via fixpoint seed)  # Wave-350: F447+F448 CLOSED locally (merge finalizes tree-wide); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461); wave-352 lane 1: F454+F455 CLOSED locally  # Wave-352 lane 4: F458-F460 CLOSED (merge finalizes tree-wide); Wave-351 lane 3: F453 CLOSED (ws-b64 outer composes via fixpoint seed)  # Wave-350: F447+F448 CLOSED locally (merge finalizes tree-wide); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 lane 2: F463 CLOSED, F469 filed OPEN (next F470)  # Wave-353 lane 2 renumber: F469->F472 (attack lane committed F469-F471 first, e79af076); footer next F473  # Wave-353 lane 4: F467+F468 CLOSED locally (merge finalizes tree-wide)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354: F470 CLOSED  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480)  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint
-FOOTER_NEXT = "F606"  # Wave-371 merge: F583-F596 CLOSED (lanes 1-7); F597-F605 OPEN (next F606)
+FOOTER_OPEN = "F595, F606, F608, F609, F610, F611"    # Wave-369 merge: F547-F569 CLOSED; F570-F582 OPEN (next F583) # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-352 merge (4/5): F454-F460 CLOSED; open none (next F461)  # Wave-352 merge (3/5): F454-F457 CLOSED; F458-F460 OPEN (next F461)  # Wave-352 merge (2/5): F456+F457 CLOSED; F458-F460 still OPEN (next F461)  # Wave-351 lane 3: F453 CLOSED (ws-b64 outer composes via fixpoint seed)  # Wave-350: F447+F448 CLOSED locally (merge finalizes tree-wide); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461); wave-352 lane 1: F454+F455 CLOSED locally  # Wave-352 lane 4: F458-F460 CLOSED (merge finalizes tree-wide); Wave-351 lane 3: F453 CLOSED (ws-b64 outer composes via fixpoint seed)  # Wave-350: F447+F448 CLOSED locally (merge finalizes tree-wide); wave-350 merge: F446-F450 CLOSED, F451(hex-ws)+F452(attempt-budget) OPEN, closure-lane F451->F453 OPEN (next F454); wave-351 merge: F451-F453 CLOSED, F454-F460 filed OPEN (next F461)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 lane 2: F463 CLOSED, F469 filed OPEN (next F470)  # Wave-353 lane 2 renumber: F469->F472 (attack lane committed F469-F471 first, e79af076); footer next F473  # Wave-353 lane 4: F467+F468 CLOSED locally (merge finalizes tree-wide)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354: F470 CLOSED  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480)  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint
+FOOTER_NEXT = "F612"  # Wave-371 merge: F583-F596 CLOSED (lanes 1-7); F597-F605 OPEN (next F606)
 
 from gov import dlp  # noqa: E402
 from gov.dlp import find_credential  # noqa: E402
@@ -227,18 +228,28 @@ def p4_failclosed_residuals_quiet():
     # (Wave-354: function(x){return x!=='';} / return x.length>0; /
     # return !!x; moved out -- the F470 function-form unification now
     # decodes them node-exactly; see
-    # p4_function_form_truthiness_now_handled.)
+    # p4_function_form_truthiness_now_handled. Wave-373 (F607):
+    # x!=='zz' / x.length>=1 moved out -- the F607 neq/plencmp specs
+    # now decode them node-exactly; see p4_neq_plencmp_now_handled.)
     residuals = [
         _ARR + ".filter(x=>x!='').join('')",          # loose !=
-        _ARR + ".filter(x=>x!=='zz').join('')",       # neq vs non-empty
         _ARR + ".filter(x=>x.length!=0).join('')",
-        _ARR + ".filter(x=>x.length>=1).join('')",
         _ARR + ".filter(x=>{return !!x;}).join('')",  # block-body arrow
         _ARR2 + ".map(x=>{var y=1; return x;}).join('')",
         _ARR2 + ".map(x=>{return (x);}).join('')",
         _ARR2 + ".map(x=>{return x;;}).join('')",
     ]
     return all(find_credential(p) is None for p in residuals)
+
+
+def p4_neq_plencmp_now_handled():
+    # Wave-373 (F607): x!==LIT (non-empty literal) and x.length OP K
+    # are now modeled node-exactly (specs ("neq", lit) /
+    # ("plencmp", op, k)), so they block coded.
+    return (find_credential(_ARR + ".filter(x=>x!=='zz').join('')")
+            == "dlp-slack-token"
+            and find_credential(_ARR + ".filter(x=>x.length>=1).join('')")
+            == "dlp-slack-token")
 
 
 def p4_function_form_truthiness_now_handled():
@@ -412,6 +423,7 @@ _PROBES = [
     ("p4-failclosed-residuals-quiet", p4_failclosed_residuals_quiet),
     ("p4-function-form-truthiness-now-handled",
      p4_function_form_truthiness_now_handled),
+    ("p4-neq-plencmp-now-handled", p4_neq_plencmp_now_handled),
     ("p4-single-negation-not-bypass", p4_single_negation_not_bypass),
     ("p4-junk-never-manufactures-credential",
      p4_junk_never_manufactures_credential),

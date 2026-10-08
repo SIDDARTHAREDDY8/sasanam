@@ -38,12 +38,13 @@ All filed shapes node-verified EXACT (v24.20.0): 15/15 CRED-EXACT,
 
 Known-open pins (each probe returns HELD when the miss reproduces; a literal
 BREAK verdict means the pin failed or a NEW break appeared): F597-F605
-(round 39), F607-F611 (this round). F583-F596 are pinned CLOSED by the
+(round 39), F608-F611 (this round; F607 CLOSED by wave-373 lane 3).
+F583-F596 are pinned CLOSED by the
 wave-371 spot pins below; earlier waves are pinned by the w371 attack
 battery, run as the depth-1 green check below.
 
 Closed pins (must BLOCK, else BREAK): F583, F585, F587, F589, F591, F593,
-F594, F596 (wave-371 spot), F576 (regression spot).
+F594, F596 (wave-371 spot), F576 (regression spot), F607 (wave-373 lane 3).
 
 Rides-with-documented-scope (validated, NOT filed):
 - (function(){var p=new URLSearchParams();p.set('k','f1');p.append('k','f2');return p.getAll('k').join('');})()
@@ -122,11 +123,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F597-F611 open, next F612 (wave-372 lane 7)."""
+    """Control: footer shows F595/F606/F608-F611 open, next F612 (wave-373 lane 3: F607 CLOSED)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F612**" in text  # Wave-372 lane 7 (attack round 40): F597-F605 OPEN (base); F607-F611 filed OPEN (next F612)
-          and "Open findings: F595, F606, F607, F608, F609, F610, F611." in text)  # Wave-372 merge: footer open F606-F611 / next F612
+    ok = ("Next free finding: **F612**" in text  # Wave-373 lane 3: F607 CLOSED locally; next still F612
+          and "Open findings: F595, F606, F608, F609, F610, F611." in text)  # Wave-373 lane 3: F607 CLOSED locally (merge finalizes tree-wide)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -285,13 +286,13 @@ def test_r39_f605_closed():
 # ----------------------------------------- open pins, round 40 (must miss)
 
 @_t
-def test_r40_f607_open():
-    """F607 OPEN: filter with non-trivial predicates misses."""
-    m1 = _misses("['%s','%s','xx'].filter(x=>x!=='xx').join('')" % (_A, _B))
-    m2 = _misses("['%s','xx','%s'].filter(function(x){return x!=='xx';}).join('')" % (_A, _B))
-    m3 = _misses("['%s','%s',''].filter(x=>x.length>2).join('')" % (_A, _B))
-    ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_p1_f607_closed():
+    """F607 CLOSED (wave-373 lane 3): filter predicate shapes block."""
+    b1 = not _misses("['%s','%s','xx'].filter(x=>x!=='xx').join('')" % (_A, _B))
+    b2 = not _misses("['%s','xx','%s'].filter(function(x){return x!=='xx';}).join('')" % (_A, _B))
+    b3 = not _misses("['%s','%s',''].filter(x=>x.length>2).join('')" % (_A, _B))
+    ok = b1 and b2 and b3
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t
