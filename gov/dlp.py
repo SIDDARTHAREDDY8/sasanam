@@ -2220,7 +2220,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|atob(?![_$A-Za-z0-9])|decodeURIComponent(?![_$A-Za-z0-9])|encodeURIComponent(?![_$A-Za-z0-9])|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty|fromEntries|groupBy)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|Symbol(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|Number(?![_$A-Za-z0-9])|Promise(?![_$A-Za-z0-9])|Map[ \t\n\r]*\.[ \t\n\r]*groupBy(?![_$A-Za-z0-9])|new[ \t\n\r]+Map(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|new[ \t\n\r]+Proxy(?![_$A-Za-z0-9])|new[ \t\n\r]+URLSearchParams(?![_$A-Za-z0-9])|new[ \t\n\r]+URL(?![_$A-Za-z0-9])|new[ \t\n\r]+TextDecoder(?![_$A-Za-z0-9])|\(String[ \t\n\r]*\.[ \t\n\r]*raw[ \t\n\r]*`|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|atob(?![_$A-Za-z0-9])|decodeURIComponent(?![_$A-Za-z0-9])|encodeURIComponent(?![_$A-Za-z0-9])|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty|fromEntries|groupBy)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|Symbol(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|Number(?![_$A-Za-z0-9])|Promise(?![_$A-Za-z0-9])|Map[ \t\n\r]*\.[ \t\n\r]*groupBy(?![_$A-Za-z0-9])|new[ \t\n\r]+Map(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|new[ \t\n\r]+Proxy(?![_$A-Za-z0-9])|new[ \t\n\r]+URLSearchParams(?![_$A-Za-z0-9])|new[ \t\n\r]+URL(?![_$A-Za-z0-9])|new[ \t\n\r]+TextDecoder(?![_$A-Za-z0-9])|new[ \t\n\r]+String(?![_$A-Za-z0-9])|\(String[ \t\n\r]*\.[ \t\n\r]*raw[ \t\n\r]*`|\(")
 # F536: the structuredClone anchor carries its own ident-boundary
 # lookahead so `structuredClonex(` never anchors (no wasted F512
 # total-attempt budget); the primary branch re-checks the boundary
@@ -12518,6 +12518,203 @@ def _js_parse_f535_member_read(text, i, depth, state):
     state["ops"] += 1  # the object/Proxy construction is
                        # obfuscation-shaped
     return _JSObj(props), k + 1
+
+
+def _js_parse_f696_new_string(text, i, depth, state):
+    """Parse `new String('LIT')` / `new String()` at text[i] (F696).
+
+    Boxed-String construction: the engine's `new String('LIT')`
+    creates a String exotic object whose primitive value is the
+    argument. In every coercion position the decoder models ('+'
+    concatenation, spread iteration, index reads, .length, and the
+    modeled string methods), the engine ToPrimitive-coerces the box
+    to exactly that primitive value (node v24.20.0), so the parser
+    unwraps to the plain str immediately -- the unmodeled
+    distinctions (typeof / === / instanceof) have no decoder
+    grammar, making the unwrap node-exact within the modeled
+    surface. An immediately-following `.valueOf()` / `.toString()`
+    call is consumed as the unboxing step (engine-identical on
+    boxed and primitive receivers); any other member is left for
+    the normal postfix chain, which handles it against the
+    primitive value exactly as the engine does.
+
+    Grammar (all fail closed): `new` + `String`
+    (ident-boundary checked) + `(` + zero args ('' -- the engine's
+    empty-box value) or exactly one string-literal arg + `)`.
+    Non-literal args, extra args, and template-literal args fail
+    closed (documented residuals). Returns (str, next_index), or
+    None when text[i] is not a `new String` head (the caller falls
+    through, failing closed on `new` as before). Never evals.
+    """
+    n = len(text)
+    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+        return None
+    j = _js_match_kw(text, i, "new")
+    if j is None:
+        return None
+    j = _js_skip_ws(text, j)
+    js = _js_match_kw(text, j, "String")
+    if js is None:
+        return None
+    j = _js_skip_ws(text, js)
+    if j >= n or text[j] != "(":
+        return None
+    j = _js_skip_ws(text, j + 1)
+    if j < n and text[j] == ")":
+        lit, j = "", j + 1
+        charged = False
+    elif j < n and text[j] in "'\"":
+        try:
+            lit, j = _js_parse_string(text, j)
+        except _JSExprFail:
+            return None
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ")":
+            return None
+        j += 1
+        charged = True
+    else:
+        return None
+    # Optional immediate unboxing call: .valueOf() / .toString().
+    # Any other member (e.g. .length) is left for the postfix
+    # chain, which resolves it against the primitive value.
+    k = _js_skip_ws(text, j)
+    if k < n and text[k] == ".":
+        mk = _js_skip_ws(text, k + 1)
+        try:
+            mname, mk = _js_parse_ident(text, mk)
+        except _JSExprFail:
+            mname = None
+        if mname in ("valueOf", "toString"):
+            mk = _js_skip_ws(text, mk)
+            if mk < n and text[mk] == "(":
+                me = _js_skip_ws(text, mk + 1)
+                if me < n and text[me] == ")":
+                    j = me + 1
+    if charged:
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+    if len(lit) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("boxed string too long")
+    return lit, j
+
+
+def _js_parse_f696_grouped_new(text, i, depth, state):
+    """Parse `(new String('LIT'))` at text[i] == '(' (F696).
+
+    The engine treats a parenthesized new-expression as the value
+    itself, so the parenthesized spelling is engine-identical to
+    the unparenthesized F696 form (node v24.20.0 verified). The
+    inner expression is exactly the `_js_parse_f696_new_string`
+    grammar (one string-literal arg or empty); nested grouping
+    parens fall through (the parenthesized-additive fallback
+    re-enters this route on the inner paren, depth-bounded).
+
+    Bounds (all fail closed): grouping parens only (the F586
+    guard, whitespace-tolerant -- a `(` preceded past whitespace
+    by an identifier char, `)`, or `]` opens a call's argument
+    list, not a grouping paren); the inner head must be
+    `new String` (any other head returns None so the caller falls
+    through); a missing close paren returns None. Returns (str,
+    next_index), or None. Never evals.
+    """
+    n = len(text)
+    _p = i - 1
+    while _p >= 0 and text[_p] in " \t\n\r":
+        _p -= 1
+    if _p >= 0 and (text[_p] in _JS_IDENT_CONT
+                    or text[_p] in (")", "]")):
+        return None
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    j = _js_skip_ws(text, i + 1)
+    r = _js_parse_f696_new_string(text, j, depth + 1, state)
+    if r is None:
+        return None
+    val, j = r
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        return None
+    return val, j + 1
+
+
+def _js_parse_f696_boxed_iife(text, i, depth, state):
+    """Parse `(function(){return (new String('LIT'))+ADD;})()` (F696).
+
+    Boxed-String IIFE: the body is a single `return` whose additive
+    chain opens with a `new String('LIT')` head -- grouped
+    `(new String('LIT'))`, bare `new String('LIT')`, or either with
+    an immediate `.valueOf()` / `.toString()` unboxing call (node
+    v24.20.0). The F509 route rejects `new` in bound bodies ("new
+    in bound body"), so this production is disjoint from F509 by
+    construction: every shape accepted here fails F509 closed, and
+    no previously-decoded input changes behavior.
+
+    Grammar (all fail closed): `(function(){return BODY;})()`
+    (ws-tolerant, optional trailing `;`, anonymous zero-parameter
+    -- the `_js_peek_args_binding_iife` head); BODY must open with
+    the `new String` head (textual gate; anything else returns None
+    so the caller falls through to F509 and friends) and is then
+    parsed by the normal additive grammar at depth+1, so every
+    downstream decoder, bound, and fail-closed rule applies
+    unchanged; the invocation is `()` exactly (call args fail
+    closed, documented residual). Returns (value, next_index), or
+    None. Never evals.
+    """
+    n = len(text)
+    if not _js_peek_args_binding_iife(text, i):
+        return None
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j) + len("function")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        rk = _js_match_kw(text, _js_skip_ws(text, inner_start), "return")
+        if rk is None:
+            return None
+        rk = _js_skip_ws(text, rk)
+        # The body must open with the F696 boxed-String head:
+        # `(new String` (grouped) or `new String` (bare).
+        hb = rk
+        if hb < n and text[hb] == "(":
+            hb = _js_skip_ws(text, hb + 1)
+        hb = _js_match_kw(text, hb, "new")
+        if hb is None:
+            return None
+        hb = _js_match_kw(text, _js_skip_ws(text, hb), "String")
+        if hb is None:
+            return None
+        be = inner_end
+        while be > rk and text[be - 1] in " \t\n\r":
+            be -= 1
+        if be > rk and text[be - 1] == ";":
+            be -= 1
+            while be > rk and text[be - 1] in " \t\n\r":
+                be -= 1
+        body_expr = text[rk:be]
+        val, k = _js_parse_additive(body_expr, 0, depth + 1, state)
+        k = _js_skip_ws(body_expr, k)
+        if k != len(body_expr):
+            raise _JSExprFail("f696 body trailing junk")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ")":
+            raise _JSExprFail("f696 call args not modeled")
+        j += 1
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
 
 
 def _js_parse_f587_proxy_member(text, i, depth, state):
@@ -25401,6 +25598,9 @@ def _js_parse_f667_with_iife(text, i, depth, state):
                     k: v for k, v in props.items()
                     if isinstance(k, str) and isinstance(v, str)
                     and not isinstance(v, _JSNumStr)
+                    and not _js_str_is_unsafe_int(v)  # F699: >2^53
+                    # int literals mis-decode (float64 rounding);
+                    # fail closed (F676/F678 precedent)
                 }
                 if scope_name is not None:
                     raise _JSExprFail("F667 two scope objects")
@@ -25423,6 +25623,9 @@ def _js_parse_f667_with_iife(text, i, depth, state):
                 k: v for k, v in props.items()
                 if isinstance(k, str) and isinstance(v, str)
                 and not isinstance(v, _JSNumStr)
+                and not _js_str_is_unsafe_int(v)  # F699: >2^53
+                # int literals mis-decode (float64 rounding);
+                # fail closed (F676/F678 precedent)
             }
         else:
             sname, j = _js_parse_ident(text, j)
@@ -44808,6 +45011,17 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _pmc = _js_parse_paren_member_call(text, i, depth, state)
         if _pmc is not None:
             return _pmc
+        # F696: (function(){return (new String('LIT'))+ADD;})() /
+        # (function(){return new String('LIT').valueOf()+ADD;})() --
+        # boxed-String IIFE. Tried before F509: F509's body rewrite
+        # rejects `new` in bound bodies ("new in bound body"), so
+        # every shape accepted here fails F509 closed and the two
+        # routes are disjoint; None falls through to F509 like
+        # _pmc, so no previously-decoded input changes behavior.
+        _f696i = _js_parse_f696_boxed_iife(text, i, depth, state)
+        if _f696i is not None:
+            val, i = _f696i
+            return _js_parse_postfix(text, i, val, depth, state)
         # F509: (function(){return BODY})(lit, ...) -- call-site
         # argument binding for the bare `arguments` object; None falls
         # through to the parenthesized-additive path below (which
@@ -45480,6 +45694,26 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f678 is not None:
             val, i = _f678
             return _js_parse_postfix(text, i, val, depth, state)
+        # F696: (new String('LIT')) / (new String()) --
+        # parenthesized boxed-String construction, engine-identical
+        # to the unparenthesized form (node v24.20.0). Tried before
+        # F586/F535: F535's member-read raises on `new`-but-not-Proxy
+        # (never None), and the shapes are disjoint (F535 owns
+        # `(new Proxy`, F586 owns `(new Map` / `(new WeakRef`), so
+        # no previously-decoded input changes behavior.
+        _f696g = _js_parse_f696_grouped_new(text, i, depth, state)
+        if _f696g is not None:
+            val, i = _f696g
+            state["ops"] += 1  # the boxing is obfuscation-shaped
+            val, i = _js_parse_postfix(text, i, val, depth, state)
+            _jk = _js_skip_ws(text, i)
+            if _jk < len(text) and text[_jk] in ".[":
+                # The postfix chain ended on an unmodeled member
+                # step (.length, [0]) -- splicing the partial string
+                # would mis-decode. Fail closed (`?` left for the
+                # F490 nullish pick).
+                raise _JSExprFail("f696 unmodeled member step")
+            return val, i
         # F586: (new Map(...)) / (new WeakRef(...)) --
         # parenthesized new-expression receivers, engine-identical
         # to the unparenthesized F563/F539 forms. Tried before F535:
@@ -46182,6 +46416,26 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         state["ops"] += 1  # the Proxy construction is
                            # obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
+    # F696: new String('LIT') / new String() -- boxed-String
+    # construction, unwrapped to the primitive value (node-exact
+    # within the modeled surface, v24.20.0). None falls through
+    # (fails closed on `new` as before); disjoint from the earlier
+    # `new` routes (none accepts a `String` head), so no
+    # previously-decoded input changes behavior.
+    _f696 = _js_parse_f696_new_string(text, i, depth, state)
+    if _f696 is not None:
+        val, i = _f696
+        state["ops"] += 1  # the boxing is obfuscation-shaped
+        val, i = _js_parse_postfix(text, i, val, depth, state)
+        _jk = _js_skip_ws(text, i)
+        if _jk < len(text) and text[_jk] in ".[":
+            # The postfix chain ended on an unmodeled member step
+            # (.length, [0]) -- splicing the partial string would
+            # mis-decode (the engine yields a number/element, not
+            # the partial text). Fail closed. `?` is left alone:
+            # the paren branch's F490 nullish pick owns `??`.
+            raise _JSExprFail("f696 unmodeled member step")
+        return val, i
     if text.startswith("Object", i):
         # F525: Object.values(Object.getOwnPropertyDescriptors(OBJ))
         # .map(D=>D.value) -- descriptor-value enumeration

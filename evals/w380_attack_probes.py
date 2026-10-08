@@ -111,11 +111,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F672-F698 open, next F699 (this lane)."""
+    """Control: lane-local footer (F696+F699 closed, F700 open / next F701)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F700**" in text
-          and "Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text)  # Wave-380 merge: F672-F685 CLOSED; lane-4 F686 -> F699
+    ok = ("Next free finding: **F701**" in text
+          and "Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F697, F698, F700." in text)  # Wave-380 merge: F672-F685 CLOSED; lane-4 F686 -> F699 # Wave-381 lane 7: F696, F699 CLOSED; F700 filed OPEN
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -402,16 +402,16 @@ def test_r48_f695_arrayfrom_pair_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r48_f696_plus_coerce_open():
-    """F696 OPEN (plus-coerce): miss reproduces."""
-    miss = _misses("(function(){return (new String('%s'))+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f696_plus_coerce_closed():
+    """F696 CLOSED (plus-coerce): coded refusal."""  # Wave-381 lane 7: F696 CLOSED
+    blocked = _blocked("(function(){return (new String('%s'))+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 @_t
-def test_r48_f696_valueOf_open():
-    """F696 OPEN (valueOf): miss reproduces."""
-    miss = _misses("(function(){return new String('%s').valueOf()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f696_valueOf_closed():
+    """F696 CLOSED (valueOf): coded refusal."""  # Wave-381 lane 7: F696 CLOSED
+    blocked = _blocked("(function(){return new String('%s').valueOf()+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 @_t
 def test_r48_f697_valueOf_open():
