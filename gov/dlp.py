@@ -28341,16 +28341,119 @@ def _js_parse_f642_getter_body(text, i, bindings, depth, state):
     return gname, val, gk
 
 
-def _js_parse_f642_proxy_trap(text, i, bindings, depth, state):
-    """Parse `{get:(P1,P2)=>ADD}` / `{get:P=>ADD}` at text[i] (F642).
+def _js_parse_f6xx_trap_params(text, i):
+    """Parse trap params `(P1, P2, ...)` or a single bare ident at
+    text[i] (F642/F666/F670).
 
-    The handler is exactly one `get` property whose value is an
-    arrow with an expression body ADD over bound operands; the
-    params are plain identifiers (a parenthesized list or a single
-    bare ident -- the trap receives (target, key) but the filed
-    body ignores them, closure captures the bindings). Returns
-    (value, next_index). Block-body arrows, non-ident params, and
-    extra handler properties fail closed. Never evals.
+    Returns (names, next_index). Plain idents only; defaults, rest,
+    and destructuring fail closed. A param literally named `async`
+    is a sync arrow's ordinary parameter (node-verified:
+    `(async)=>x` is sync); true async arrows (`async()=>x`,
+    `async t=>x`) never present `=>` directly after the bare
+    `async`, so the caller's `=>` check fails them closed. Never
+    evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    names = []
+    if j < n and text[j] == "(":
+        j = _js_skip_ws(text, j + 1)
+        if j < n and text[j] != ")":
+            while True:
+                j = _js_skip_ws(text, j)
+                if j >= n or text[j] not in _JS_IDENT_START:
+                    raise _JSExprFail("F642 trap param not ident")
+                name, j = _js_parse_ident(text, j)
+                names.append(name)
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == ",":
+                    j = j + 1
+                    continue
+                break
+        j = _js_expect(text, j, ")")
+    elif j < n and text[j] in _JS_IDENT_START:
+        name, j = _js_parse_ident(text, j)
+        names.append(name)
+    else:
+        raise _JSExprFail("F642 trap params")
+    return names, j
+
+
+def _js_parse_f6xx_additive_fn(text, i, bindings, depth, state):
+    """Parse a trap function value with an additive body at text[i]
+    (F642/F666-apply/F670).
+
+    Four node-exact forms (v24.20.0), all ignoring their params and
+    returning ADD (`LIT|BOUND (+ LIT|BOUND)*`, F642 discipline):
+    - `(P)=>ADD` / `P=>ADD` (concise arrow -- the F642 filed form)
+    - `(P)=>{return ADD;}` / `P=>{return ADD;}` (block-body arrow)
+    - `function[NAME](P){return ADD;}` (function expression)
+    (Method shorthand `{get(P){return ADD;}}` is the fourth form;
+    it is parsed caller-side and shares this function's body
+    grammar.)
+    `async` arrows/functions, generators, and non-return block
+    bodies fail closed (the engine would produce a Promise or
+    throw, never the plain string -- decoding them would
+    mis-decode). Returns (value, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if (text.startswith("function", j)
+            and (j + 8 >= n or text[j + 8] not in _JS_IDENT_CONT)):
+        j = _js_skip_ws(text, j + 8)
+        if j < n and text[j] in _JS_IDENT_START:
+            _, j = _js_parse_ident(text, j)  # optional name
+            j = _js_skip_ws(text, j)
+        _, j = _js_parse_f6xx_trap_params(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "{")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "return")
+        if m is None:
+            raise _JSExprFail("F670 trap body not return")
+        j = _js_skip_ws(text, m)
+        val, j = _js_parse_f642_bound_additive(text, j, depth, state,
+                                               bindings)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ";":
+            j = _js_skip_ws(text, j + 1)
+        j = _js_expect(text, j, "}")
+        return val, j
+    _, j = _js_parse_f6xx_trap_params(text, j)
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F642 trap not an arrow")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        j = _js_skip_ws(text, j + 1)
+        m = _js_match_kw(text, j, "return")
+        if m is None:
+            raise _JSExprFail("F670 trap body not return")
+        j = _js_skip_ws(text, m)
+        val, j = _js_parse_f642_bound_additive(text, j, depth, state,
+                                               bindings)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ";":
+            j = _js_skip_ws(text, j + 1)
+        j = _js_expect(text, j, "}")
+        return val, j
+    val, j = _js_parse_f642_bound_additive(text, j, depth, state,
+                                           bindings)
+    return val, j
+
+
+def _js_parse_f642_proxy_trap(text, i, bindings, depth, state):
+    """Parse `{get:TRAP}` / `{get(P){return ADD;}}` at text[i]
+    (F642; generalized 2026-10-08 wave-379 lane 4 for F670).
+
+    TRAP is one of four node-exact function forms (v24.20.0), all
+    ignoring their params and returning ADD over bound operands:
+    concise arrow `(P)=>ADD` / `P=>ADD` (the F642 filed form),
+    block-body arrow `(P)=>{return ADD;}`, function expression
+    `function[NAME](P){return ADD;}`, and method shorthand
+    `get(P){return ADD;}` (no colon). Params are plain idents;
+    `async`/generators/non-return bodies fail closed. Returns
+    (value, next_index). Never evals.
     """
     n = len(text)
     j = _js_expect(text, i, "{")
@@ -28359,33 +28462,27 @@ def _js_parse_f642_proxy_trap(text, i, bindings, depth, state):
     if g is None:
         raise _JSExprFail("F642 handler not a get trap")
     j = _js_skip_ws(text, g)
-    j = _js_expect(text, j, ":")
-    j = _js_skip_ws(text, j)
-    # arrow params: `(P1,P2)` or a single bare ident (`t=>...`)
-    if j < n and text[j] == "(":
-        j = _js_skip_ws(text, j + 1)
-        if j < n and text[j] != ")":
-            while True:
-                j = _js_skip_ws(text, j)
-                if j >= n or text[j] not in _JS_IDENT_START:
-                    raise _JSExprFail("F642 trap param not ident")
-                _, j = _js_parse_ident(text, j)
-                j = _js_skip_ws(text, j)
-                if j < n and text[j] == ",":
-                    j = j + 1
-                    continue
-                break
-        j = _js_expect(text, j, ")")
-    elif j < n and text[j] in _JS_IDENT_START:
-        _, j = _js_parse_ident(text, j)
+    if j < n and text[j] == ":":
+        val, j = _js_parse_f6xx_additive_fn(text, j + 1, bindings,
+                                           depth, state)
+    elif j < n and text[j] == "(":
+        # method shorthand: get(P){return ADD;}
+        _, j = _js_parse_f6xx_trap_params(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "{")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "return")
+        if m is None:
+            raise _JSExprFail("F670 method body not return")
+        j = _js_skip_ws(text, m)
+        val, j = _js_parse_f642_bound_additive(text, j, depth, state,
+                                               bindings)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ";":
+            j = _js_skip_ws(text, j + 1)
+        j = _js_expect(text, j, "}")
     else:
-        raise _JSExprFail("F642 trap params")
-    j = _js_skip_ws(text, j)
-    if not text.startswith("=>", j):
-        raise _JSExprFail("F642 trap not an arrow")
-    j = _js_skip_ws(text, j + 2)
-    val, j = _js_parse_f642_bound_additive(text, j, depth, state,
-                                          bindings)
+        raise _JSExprFail("F642 trap not a function")
     j = _js_skip_ws(text, j)
     j = _js_expect(text, j, "}")
     return val, j
@@ -28451,7 +28548,8 @@ def _js_parse_f642_getter_varbound_iife(text, i, depth, state):
       shorthand, multi-property objects, getter bodies that are not
       exactly `return ADD`;
     - Proxy targets other than `{}`, extra handler properties,
-      block-body trap arrows, non-ident trap params;
+      non-ident trap params, `async`/generator traps, non-return
+      trap bodies;
     - WeakRef targets other than the getter object literal;
     - terminal member mismatch (getter name vs read name),
       `w.deref` with arguments, extra statements, named functions,
@@ -28621,6 +28719,555 @@ def _js_parse_f642_getter_varbound_iife(text, i, depth, state):
         m = _js_skip_ws(text, m)
         if m != inner_end:
             raise _JSExprFail("F642 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f666_compare_expr(text, j, params):
+    """Parse `IDENT==='LIT'` at text[j] (F666 has-trap body).
+
+    IDENT must be the trap's second parameter (the has-trap key:
+    `has(target, key)`); comparing any other ident fails closed
+    (the engine would compare a different value). The operator is
+    exactly `===` and the right side a string literal -- node-exact
+    (v24.20.0). Returns (literal, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if len(params) < 2:
+        raise _JSExprFail("F666 has trap needs key param")
+    name, j = _js_parse_ident(text, j)
+    if name != params[1]:
+        raise _JSExprFail("F666 has compare not on key param")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("===", j):
+        raise _JSExprFail("F666 has compare not strict")
+    j = _js_skip_ws(text, j + 3)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail("F666 has compare not a literal")
+    return _js_parse_string(text, j)
+
+
+def _js_parse_f666_compare_return(text, j, params):
+    """Parse `return IDENT==='LIT';` at text[j] (F666 has-trap
+    block body). Returns (literal, next_index). Never evals."""
+    m = _js_match_kw(text, j, "return")
+    if m is None:
+        raise _JSExprFail("F666 has body not return")
+    return _js_parse_f666_compare_expr(text, _js_skip_ws(text, m),
+                                       params)
+
+
+def _js_parse_f666_compare_fn(text, i):
+    """Parse a has-trap function value with a comparison body at
+    text[i] (F666).
+
+    Forms (node-exact, v24.20.0): `(P)=>IDENT==='LIT'`,
+    `P=>IDENT==='LIT'` (concise arrow),
+    `(P)=>{return IDENT==='LIT';}` (block-body arrow),
+    `function[NAME](P){return IDENT==='LIT';}` (function
+    expression). IDENT must be the trap's second param (the key).
+    `async`/generators/other bodies fail closed. Returns
+    (compared_literal, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if (text.startswith("function", j)
+            and (j + 8 >= n or text[j + 8] not in _JS_IDENT_CONT)):
+        j = _js_skip_ws(text, j + 8)
+        if j < n and text[j] in _JS_IDENT_START:
+            _, j = _js_parse_ident(text, j)  # optional name
+            j = _js_skip_ws(text, j)
+        params, j = _js_parse_f6xx_trap_params(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "{")
+        j = _js_skip_ws(text, j)
+        lit, j = _js_parse_f666_compare_return(text, j, params)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ";":
+            j = _js_skip_ws(text, j + 1)
+        j = _js_expect(text, j, "}")
+        return lit, j
+    params, j = _js_parse_f6xx_trap_params(text, j)
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F666 has trap not an arrow")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        j = _js_skip_ws(text, j + 1)
+        lit, j = _js_parse_f666_compare_return(text, j, params)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ";":
+            j = _js_skip_ws(text, j + 1)
+        j = _js_expect(text, j, "}")
+        return lit, j
+    return _js_parse_f666_compare_expr(text, j, params)
+
+
+def _js_parse_f666_has_trap(text, i):
+    """Parse `{has:TRAP}` / `{has(P){return IDENT==='LIT';}}` at
+    text[i] (F666).
+
+    TRAP is a function form (concise/block-body arrow, function
+    expression, or method shorthand) whose body is exactly
+    `return IDENT==='LIT';` with IDENT the trap's second parameter
+    (the has-trap key). Returns (compared_literal, next_index).
+    Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, i, "{")
+    j = _js_skip_ws(text, j)
+    h = _js_match_kw(text, j, "has")
+    if h is None:
+        raise _JSExprFail("F666 handler not a has trap")
+    j = _js_skip_ws(text, h)
+    if j < n and text[j] == ":":
+        lit, j = _js_parse_f666_compare_fn(text, j + 1)
+    elif j < n and text[j] == "(":
+        # method shorthand: has(P){return IDENT==='LIT';}
+        params, j = _js_parse_f6xx_trap_params(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "{")
+        j = _js_skip_ws(text, j)
+        lit, j = _js_parse_f666_compare_return(text, j, params)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ";":
+            j = _js_skip_ws(text, j + 1)
+        j = _js_expect(text, j, "}")
+    else:
+        raise _JSExprFail("F666 has trap not a function")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "}")
+    return lit, j
+
+
+def _js_parse_f666_apply_trap_iife(text, i, depth, state):
+    """Parse `(function(){[DECL X='LIT';]*var|let|const p=new
+    Proxy(function(){},{apply:TRAP});return p()(+'LIT')*;})()`
+    (F666).
+
+    The apply trap fires when the proxy is CALLED: `p()` evaluates
+    the trap body (params ignored by the modeled grammar), so the
+    call yields the trap's ADD. TRAP is any of the four node-exact
+    function forms shared with F642/F670 (concise/block-body
+    arrow, function expression, method shorthand), with the F642
+    bound-operand additive discipline (the binding section is
+    optional -- the filed shape has none; unbound idents fail
+    closed). The target is exactly the empty function
+    `function(){}`; other targets fail closed. Terminal: `return
+    p()` with `+'LIT'`/`+BOUND` summands. Node-exact (v24.20.0).
+    Never evals. Returns (value, next_index) or None.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_skip_ws(text, j + 1)
+    if not text.startswith("function", k):
+        return None
+    k2 = k + len("function")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        return None  # functionx -- not our shape
+    if k2 < n and text[k2] in _JS_IDENT_START:
+        return None  # named function -- not our shape
+    try:
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        # ---- optional binding section: [DECL X='LIT';]*
+        bindings = {}
+        while True:
+            kw, m = _js_match_decl_kw(text, sj)
+            if kw is None:
+                break
+            m2 = _js_skip_ws(text, m)
+            _pname, _pm = _js_parse_ident(text, m2)
+            _pm = _js_skip_ws(text, _pm)
+            _pm = _js_expect(text, _pm, "=")
+            _pm = _js_skip_ws(text, _pm)
+            if _pm >= n or text[_pm] not in "'\"":
+                break  # the wrapper declaration
+            m = m2
+            seen_stmt = set()
+            while True:
+                m = _js_skip_ws(text, m)
+                name, m = _js_parse_ident(text, m)
+                if name == "arguments":
+                    raise _JSExprFail("F666 binding named arguments")
+                m = _js_skip_ws(text, m)
+                m = _js_expect(text, m, "=")
+                m = _js_skip_ws(text, m)
+                if m >= n or text[m] not in "'\"":
+                    raise _JSExprFail("F666 binding RHS not a literal")
+                lit, m = _js_parse_string(text, m)
+                if name in seen_stmt or name in bindings:
+                    if kw != "var":
+                        raise _JSExprFail("F666 let/const rebind")
+                    # duplicate `var` rebinds, last wins
+                bindings[name] = lit
+                seen_stmt.add(name)
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                m = _js_skip_ws(text, m)
+                if m < n and text[m] == ",":
+                    m = m + 1
+                    continue
+                break
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, ";")
+            sj = _js_skip_ws(text, m)
+        # ---- wrapper: var|let|const p=new Proxy(function(){},{apply:TRAP});
+        kw, m = _js_match_decl_kw(text, sj)
+        if kw is None:
+            raise _JSExprFail("F666 no wrapper decl")
+        m = _js_skip_ws(text, m)
+        wname, m = _js_parse_ident(text, m)
+        if wname in bindings or wname == "arguments":
+            raise _JSExprFail("F666 wrapper ident bound")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "=")
+        m = _js_skip_ws(text, m)
+        if not (text.startswith("new", m)
+                and (m + 3 >= n or text[m + 3] not in _JS_IDENT_CONT)):
+            raise _JSExprFail("F666 wrapper not new")
+        nm = _js_skip_ws(text, m + 3)
+        pk = _js_match_kw(text, nm, "Proxy")
+        if pk is None:
+            raise _JSExprFail("F666 wrapper not Proxy")
+        m = _js_skip_ws(text, pk)
+        m = _js_expect(text, m, "(")
+        # target: exactly the empty function `function(){}`
+        m = _js_skip_ws(text, m)
+        if not text.startswith("function", m):
+            raise _JSExprFail("F666 target not a function")
+        m2 = m + len("function")
+        if m2 < n and text[m2] in _JS_IDENT_CONT:
+            raise _JSExprFail("F666 target not empty function")
+        if m2 < n and text[m2] in _JS_IDENT_START:
+            raise _JSExprFail("F666 target not empty function")
+        m = _js_skip_ws(text, m2)
+        m = _js_expect(text, m, "(")
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "{")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "}")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ",")
+        # handler: {apply:TRAP} / {apply(P){return ADD;}}
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "{")
+        m = _js_skip_ws(text, m)
+        a = _js_match_kw(text, m, "apply")
+        if a is None:
+            raise _JSExprFail("F666 handler not an apply trap")
+        m = _js_skip_ws(text, a)
+        if m < n and text[m] == ":":
+            val, m = _js_parse_f6xx_additive_fn(text, m + 1, bindings,
+                                               depth, state)
+        elif m < n and text[m] == "(":
+            # method shorthand: apply(P){return ADD;}
+            _, m = _js_parse_f6xx_trap_params(text, m)
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, "{")
+            m = _js_skip_ws(text, m)
+            r2 = _js_match_kw(text, m, "return")
+            if r2 is None:
+                raise _JSExprFail("F666 method body not return")
+            m = _js_skip_ws(text, r2)
+            val, m = _js_parse_f642_bound_additive(text, m, depth,
+                                                   state, bindings)
+            m = _js_skip_ws(text, m)
+            if m < n and text[m] == ";":
+                m = _js_skip_ws(text, m + 1)
+            m = _js_expect(text, m, "}")
+        else:
+            raise _JSExprFail("F666 apply trap not a function")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "}")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        # ---- terminal: return p()(+'LIT'|+BOUND)*;
+        m = _js_skip_ws(text, m)
+        r = _js_match_kw(text, m, "return")
+        if r is None:
+            raise _JSExprFail("F666 no return")
+        m = _js_skip_ws(text, r)
+        tname, m = _js_parse_ident(text, m)
+        if tname != wname:
+            raise _JSExprFail("F666 terminal wrong ident")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "(")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        trap_val = val  # the trap body is deterministic; each p() re-invocation yields it
+        while m < n and text[m] == "+":
+            q = _js_skip_ws(text, m + 1)
+            if q < n and text[q] in _JS_IDENT_START:
+                # `+p()` re-invocation: the trap body is deterministic
+                # (literals/bound idents only), so each call yields
+                # the same value -- node-exact (v24.20.0).
+                qname, q2 = _js_parse_ident(text, q)
+                if qname == wname:
+                    q2 = _js_skip_ws(text, q2)
+                    q2 = _js_expect(text, q2, "(")
+                    q2 = _js_skip_ws(text, q2)
+                    q2 = _js_expect(text, q2, ")")
+                    rhs, m = trap_val, q2
+                else:
+                    rhs, m = _js_parse_f642_bound_operand(text, m + 1,
+                                                          bindings)
+            else:
+                rhs, m = _js_parse_f642_bound_operand(text, m + 1,
+                                                      bindings)
+            if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F666 concat too long")
+            val = val + rhs
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        m = _js_skip_ws(text, m)
+        if m != inner_end:
+            raise _JSExprFail("F666 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f666_has_trap_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const p=new Proxy({},{has:TRAP});
+    [DECL X='LIT';]*[var|let|const o={...};]*return
+    ('GL' in p?THEN:JUNK)(+'LIT'|+BOUND)*;})()` (F666).
+
+    The `in` operator invokes the has trap with the guard literal:
+    `'GL' in p` calls `has(target, 'GL')`. The modeled trap body is
+    exactly `return IDENT==='LIT';` with IDENT the trap's second
+    param (the key) -- node-exact (v24.20.0): the guard is true iff
+    GL===LIT. On true the ternary picks THEN; on false the engine
+    yields JUNK+tail (no credential), so the decoder fails closed.
+    THEN is a member read on an object-literal binding (`o.K` /
+    `o['K']`, plain-string values only, via `_js_parse_f535_object`
+    -- node-exact, getters resolve) or a string literal; JUNK is a
+    string literal (parsed, never decoded). An optional literal
+    binding section (`[DECL X='LIT';]*`, F642 discipline) feeds the
+    tail's bound operands. Extra statements, other targets, other
+    guard forms fail closed. Never evals. Returns (value,
+    next_index) or None.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_skip_ws(text, j + 1)
+    if not text.startswith("function", k):
+        return None
+    k2 = k + len("function")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        return None  # functionx -- not our shape
+    if k2 < n and text[k2] in _JS_IDENT_START:
+        return None  # named function -- not our shape
+    try:
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        # ---- wrapper: var|let|const p=new Proxy({},{has:TRAP});
+        kw, m = _js_match_decl_kw(text, sj)
+        if kw is None:
+            raise _JSExprFail("F666 no wrapper decl")
+        m = _js_skip_ws(text, m)
+        wname, m = _js_parse_ident(text, m)
+        if wname == "arguments":
+            raise _JSExprFail("F666 wrapper named arguments")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "=")
+        m = _js_skip_ws(text, m)
+        if not (text.startswith("new", m)
+                and (m + 3 >= n or text[m + 3] not in _JS_IDENT_CONT)):
+            raise _JSExprFail("F666 wrapper not new")
+        nm = _js_skip_ws(text, m + 3)
+        pk = _js_match_kw(text, nm, "Proxy")
+        if pk is None:
+            raise _JSExprFail("F666 wrapper not Proxy")
+        m = _js_skip_ws(text, pk)
+        m = _js_expect(text, m, "(")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "{")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "}")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ",")
+        m = _js_skip_ws(text, m)
+        guard_lit, m = _js_parse_f666_has_trap(text, m)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        sj = _js_skip_ws(text, m)
+        # ---- optional binding section: [DECL X='LIT';]* (F642
+        # discipline; feeds the terminal tail's bound operands)
+        bindings = {}
+        while True:
+            kw2b, m2b = _js_match_decl_kw(text, sj)
+            if kw2b is None:
+                break
+            q2b = _js_skip_ws(text, m2b)
+            _pname, _pm = _js_parse_ident(text, q2b)
+            _pm = _js_skip_ws(text, _pm)
+            _pm = _js_expect(text, _pm, "=")
+            _pm = _js_skip_ws(text, _pm)
+            if _pm >= n or text[_pm] not in "'\"":
+                break  # object decl or terminal follows
+            m = q2b
+            seen_stmt = set()
+            while True:
+                m = _js_skip_ws(text, m)
+                name, m = _js_parse_ident(text, m)
+                if name == "arguments":
+                    raise _JSExprFail("F666 binding named arguments")
+                m = _js_skip_ws(text, m)
+                m = _js_expect(text, m, "=")
+                m = _js_skip_ws(text, m)
+                if m >= n or text[m] not in "'\"":
+                    raise _JSExprFail("F666 binding RHS not a literal")
+                lit, m = _js_parse_string(text, m)
+                if name in seen_stmt or name in bindings:
+                    if kw2b != "var":
+                        raise _JSExprFail("F666 let/const rebind")
+                    # duplicate `var` rebinds, last wins
+                bindings[name] = lit
+                seen_stmt.add(name)
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                m = _js_skip_ws(text, m)
+                if m < n and text[m] == ",":
+                    m = m + 1
+                    continue
+                break
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, ";")
+            sj = _js_skip_ws(text, m)
+        if wname in bindings:
+            raise _JSExprFail("F666 wrapper ident rebound")
+        # ---- object decls: [var|let|const NAME={...};]*
+        obj_bindings = {}
+        while True:
+            kw2, m2 = _js_match_decl_kw(text, sj)
+            if kw2 is None:
+                break
+            q = _js_skip_ws(text, m2)
+            oname, q = _js_parse_ident(text, q)
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "=")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != "{":
+                break  # not an object decl -- terminal follows
+            props, q = _js_parse_f535_object(text, q, depth, state)
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            if (oname in obj_bindings or oname == wname
+                    or oname == "arguments"):
+                raise _JSExprFail("F666 dup/bad object name")
+            obj_bindings[oname] = props
+            sj = _js_skip_ws(text, q)
+        # ---- terminal: return ('GL' in p?THEN:JUNK)(+'LIT')*;
+        r = _js_match_kw(text, sj, "return")
+        if r is None:
+            raise _JSExprFail("F666 no return")
+        m = _js_skip_ws(text, r)
+        m = _js_expect(text, m, "(")
+        m = _js_skip_ws(text, m)
+        if m >= n or text[m] not in "'\"":
+            raise _JSExprFail("F666 guard not a literal")
+        glit, m = _js_parse_string(text, m)
+        m = _js_skip_ws(text, m)
+        ik = _js_match_kw(text, m, "in")
+        if ik is None:
+            raise _JSExprFail("F666 guard not in-operator")
+        m = _js_skip_ws(text, ik)
+        pname, m = _js_parse_ident(text, m)
+        if pname != wname:
+            raise _JSExprFail("F666 guard wrong proxy")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "?")
+        m = _js_skip_ws(text, m)
+        if m < n and text[m] in "'\"":
+            then_val, m = _js_parse_string(text, m)
+        else:
+            oname2, m = _js_parse_ident(text, m)
+            if oname2 not in obj_bindings:
+                raise _JSExprFail("F666 then not an object binding")
+            m = _js_skip_ws(text, m)
+            if m < n and text[m] == ".":
+                kname, m = _js_parse_ident(text, m + 1)
+            elif m < n and text[m] == "[":
+                kname, m = _js_parse_bracket_member(text, m)
+            else:
+                raise _JSExprFail("F666 then not a member read")
+            props = obj_bindings[oname2]
+            if kname not in props:
+                raise _JSExprFail("F666 then member missing")
+            then_val = props[kname]
+            if not isinstance(then_val, str):
+                raise _JSExprFail("F666 then member not a string")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ":")
+        m = _js_skip_ws(text, m)
+        if m >= n or text[m] not in "'\"":
+            raise _JSExprFail("F666 else not a literal")
+        _, m = _js_parse_string(text, m)  # JUNK: parsed, never decoded
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        # node-exact guard: the has trap returns (GL===guard_lit)
+        if glit != guard_lit:
+            raise _JSExprFail("F666 guard false -- no credential")
+        val = then_val
+        m = _js_skip_ws(text, m)
+        while m < n and text[m] == "+":
+            rhs, m = _js_parse_f642_bound_operand(text, m + 1,
+                                                  bindings)
+            if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F666 concat too long")
+            val = val + rhs
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        m = _js_skip_ws(text, m)
+        if m != inner_end:
+            raise _JSExprFail("F666 trailing statements")
         # Invocation: exactly `()`.
         j = _js_skip_ws(text, j)
         j = _js_expect(text, j, ")")
@@ -36147,6 +36794,28 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                     state)
         if _f642 is not None:
             val, i = _f642
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F666: (function(){[DECL X='LIT';]*var|let|const p=
+        #   new Proxy(function(){},{apply:TRAP});return p()(+'LIT')*;})()
+        #   / (function(){var|let|const p=new Proxy({},{has:TRAP});
+        #   [var|let|const o={...};]*return
+        #   ('GL' in p?THEN:JUNK)(+'LIT')*;})() -- Proxy apply/has
+        #   traps (F642 covers only get traps). Tried after F642:
+        #   F642 requires a literal binding section (the filed
+        #   apply/has shapes have none) and a `get`-keyed handler
+        #   (these require `apply`/`has`); the F535 expression-level
+        #   Proxy route owns only member reads, not call or
+        #   in-operator terminals. None of the earlier routes accepts
+        #   these shapes, so no previously-decoded input changes
+        #   behavior.
+        _f666a = _js_parse_f666_apply_trap_iife(text, i, depth,
+                                                state)
+        if _f666a is not None:
+            val, i = _f666a
+            return _js_parse_postfix(text, i, val, depth, state)
+        _f666h = _js_parse_f666_has_trap_iife(text, i, depth, state)
+        if _f666h is not None:
+            val, i = _f666h
             return _js_parse_postfix(text, i, val, depth, state)
         # F647: (function(){[var|let IDENT;]?return RET;})() --
         # nullish-coalescing RIGHT-pick fragment assembly
