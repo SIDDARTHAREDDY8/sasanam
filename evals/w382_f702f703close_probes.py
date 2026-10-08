@@ -292,6 +292,29 @@ def test_p3_bound_unsafe_int():
     return ("HELD" if ok else "BREAK", "unsafeint=%s" % ok)
 
 
+@_t
+def test_p3_bound_target_getter_overwrite():
+    """Source overwriting a target getter key fails closed.
+
+    Spec-review catch: the engine's [[Set]] throws TypeError on a
+    getter-only accessor, so no value is produced -- a decode would
+    be a mis-decode. The non-overwritten twin stays node-exact.
+    """
+    ok = _misses(
+        "(function(){var o={x:'%s'};"
+        "return Object.assign({get x(){return '%s';}},o).x;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "tgtoverwrite=%s" % ok)
+
+
+@_t
+def test_p2_variant_target_getter_kept():
+    """Non-overwritten target getter reads node-exactly."""
+    ok = _blocked(
+        "(function(){return Object.assign({get x(){return '%s';}},"
+        "{y:'q'}).x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "tgtgetter=%s" % ok)
+
+
 # --------------------------------------------- siblings + neighbors (p4)
 
 @_t

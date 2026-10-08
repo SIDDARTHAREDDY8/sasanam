@@ -34590,11 +34590,14 @@ def _js_parse_f702f703_assign_getter_iife(text, i, depth, state):
       Node-exact (v24.20.0): `Object.assign` reads each source's
       [[Get]], so a source getter is invoked at assign time and the
       target receives a DATA property holding the return value; the
-      F535 literal grammar already resolves getters to their
+      F535 literal grammar already resolves source getters to their
       evaluated values, so merging a bound source's props is
-      engine-exact (the target's own getters are likewise
-      value-resolved, which matches the engine: assign [[Set]]s on
-      the target, never [[Get]]s).
+      engine-exact. The target literal is parsed accessor-aware: a
+      target getter key that no source overwrites reads node-exactly
+      (the getter's literal return), while a source overwriting a
+      target getter key fails closed -- the engine's [[Set]] throws
+      TypeError on a getter-only accessor (node-verified), so no
+      value is ever produced there.
     - F703: the legacy `__defineGetter__` API:
       `(function(){var o={};o.__defineGetter__('x',
       function(){return 'f1';});return o.x+'f2';})()`.
@@ -34682,7 +34685,8 @@ def _js_parse_f702f703_assign_getter_iife(text, i, depth, state):
             if q >= n or text[q] != "{":
                 raise _JSExprFail(
                     "F702/F703 assign target not an object literal")
-            tprops, q = _js_parse_f535_object(text, q, depth, state)
+            tprops, q = _js_parse_f535_object(text, q, depth, state,
+                                                accessor_aware=True)
             merged = dict(tprops)
             q = _js_skip_ws(text, q)
             if q >= n or text[q] != ",":
@@ -34699,6 +34703,15 @@ def _js_parse_f702f703_assign_getter_iife(text, i, depth, state):
                         raise _JSExprFail(
                             "F702/F703 assign source unbound")
                     sprops = bindings[sname][1].props
+                for _sk in sprops:
+                    if isinstance(tprops.get(_sk), _JSAccessor):
+                        # The engine's Set(target, key, value) throws
+                        # TypeError on a getter-only accessor -- a
+                        # source overwriting a target getter key never
+                        # produces a value. Fail closed (miss), never
+                        # mis-decoded (node v24.20.0 verified).
+                        raise _JSExprFail(
+                            "F702/F703 assign overwrites target getter")
                 merged.update(sprops)
                 state["parts"] += 1
                 if state["parts"] > _JS_EXPR_MAX_PARTS:
