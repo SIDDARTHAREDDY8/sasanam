@@ -3301,6 +3301,27 @@ class _JSNumStr(str):
     """
 
 
+class _JSThunks:
+    """Internal: an array literal of zero-arg arrow thunks returning
+    string literals (F620).
+
+    The thunk array is opaque at every position except the three
+    F620 invocation patterns (expression-level `.map(f=>f())`,
+    statement-IIFE indexed `f[INT]()` calls, statement-IIFE
+    `.forEach(f=>{ACC+=f();})` accumulation): the decode happens only
+    at the invocation point, never at the array value -- in the
+    engine `[()=>'a'].join('')` stringifies the functions themselves
+    ("()=> 'a'"), so modeling values at the array position would
+    mis-decode. Not a _JSArr: it never reaches value positions (the
+    additive and every other postfix branch fail closed on it).
+    """
+
+    __slots__ = ("values",)
+
+    def __init__(self, values):
+        self.values = values
+
+
 class _JSNil:
     """Internal: a parsed null/undefined array element (F479).
 
@@ -3911,7 +3932,8 @@ def _js_parse_additive(text, i, depth, state, _forbid_template=False):
             # F490: a method reference is not an additive operand --
             # fail closed (never mis-decoded, never a TypeError).
             raise _JSExprFail("method ref in additive")
-        if isinstance(val, _JSArr) or isinstance(rhs, _JSArr):
+        if isinstance(val, (_JSArr, _JSThunks)) or isinstance(
+                rhs, (_JSArr, _JSThunks)):
             raise _JSExprFail("array in additive")  # F434: no JS '+' on arrays
         state["parts"] += 1
         if state["parts"] > _JS_EXPR_MAX_PARTS:
@@ -24257,6 +24279,18 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         state["ops"] += 1
         return acc, i + 1
     if name == "map":
+        # F620: [()=>LIT,...].map(f=>f()) -- invoke each thunk in order
+        # and collect the returned literals (node v24.20.0). Tried
+        # before the F437 family: _JSThunks is not a _JSArr, so the
+        # existing branch would fail closed on it; anything but the
+        # exact thunk-invocation callback fails closed.
+        if isinstance(value, _JSThunks):
+            i = _js_parse_f620_thunk_invoke_cb(text, i)
+            i = _js_skip_ws(text, i)
+            if i >= len(text) or text[i] != ")":
+                raise _JSExprFail("bad map")
+            state["ops"] += 1  # the thunk invocation is obfuscation-shaped
+            return _JSArr(list(value.values)), i + 1
         # F437 family: ['a','b'].map(s=>s) -- identity callbacks pass the
         # array through untouched for a later .join(); anything but the
         # identity transform fails closed.
@@ -24705,6 +24739,10 @@ def _js_apply_method_at(text, i, name, value, depth, state):
             raise _JSExprFail("bad repeat")
         if count > _JS_EXPR_MAX_REPEAT:
             raise _JSExprFail("repeat too big")
+        if not isinstance(value, str):
+            # F620: _JSThunks (and any other non-string receiver) is
+            # not repeatable -- fail coded instead of TypeError.
+            raise _JSExprFail("repeat on non-string")
         result = value * count
         if len(result) > _MAX_DECODE_BYTES:
             raise _JSExprFail("repeat too long")
@@ -25049,6 +25087,10 @@ def _js_apply_tag_method(text, j, name, value, depth, state):
             _js_add_concat_part(elems, cooked, state)
             state["ops"] += 1
             return _JSArr(elems), i
+        if not isinstance(value, str):
+            # F620: a _JSThunks (or any other non-string) receiver is
+            # not concatenable -- fail coded instead of TypeError.
+            raise _JSExprFail("concat tag on non-string")
         result = value + cooked
         if len(result) > _MAX_DECODE_BYTES:
             raise _JSExprFail("concat too long")
@@ -25076,6 +25118,10 @@ def _js_apply_tag_method(text, j, name, value, depth, state):
         count = _js_tag_repeat_count(cooked)
         if count > _JS_EXPR_MAX_REPEAT:
             raise _JSExprFail("repeat too big")
+        if not isinstance(value, str):
+            # F620: a _JSThunks (or any other non-string) receiver is
+            # not repeatable -- fail coded instead of TypeError.
+            raise _JSExprFail("repeat tag on non-string")
         result = value * count
         if len(result) > _MAX_DECODE_BYTES:
             raise _JSExprFail("repeat too long")
@@ -25878,6 +25924,260 @@ def _js_parse_f571_stringify_call(text, j, depth, state):
     return _js_f571_stringify(val, state), k + 1
 
 
+def _js_parse_f620_thunk_array(text, i, state):
+    """Parse `[()=>LIT, ...]` -- an array literal whose every element
+    is a zero-arg arrow thunk returning a string literal (F620).
+
+    Node-exact (v24.20.0): the thunk bodies are string literals only;
+    block-body arrows, parameterized arrows, non-literal bodies, holes,
+    and trailing commas all fail closed (documented scope boundary).
+    Returns (_JSThunks, next_index) or None when the text is not a
+    thunk array at all (pure: restores the part budget on failure).
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "[":
+        return None
+    saved = dict(state)
+    try:
+        j += 1
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "]":
+            return None  # empty: vacuous, not a thunk shape
+        vals = []
+        while True:
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != "(":
+                raise _JSExprFail("F620 element not a thunk")
+            j = _js_skip_ws(text, j + 1)
+            if j >= n or text[j] != ")":
+                raise _JSExprFail("F620 thunk has params")
+            j = _js_skip_ws(text, j + 1)
+            if not text.startswith("=>", j):
+                raise _JSExprFail("F620 thunk no arrow")
+            j = _js_skip_ws(text, j + 2)
+            if j >= n or text[j] not in "'\"":
+                raise _JSExprFail("F620 thunk body not a literal")
+            lit, j = _js_parse_string(text, j)
+            vals.append(lit)
+            state["parts"] += 1  # F452: charge per thunk
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ",":
+                j += 1
+                continue
+            if j < n and text[j] == "]":
+                return _JSThunks(vals), j + 1
+            raise _JSExprFail("F620 bad thunk array")
+    except _JSExprFail:
+        state.clear()
+        state.update(saved)
+        return None
+
+
+def _js_parse_f620_thunk_invoke_cb(text, i):
+    """Parse the F620 thunk-invocation callback `f=>f()` / `(f)=>f()`.
+
+    The param is invoked with zero arguments; the engine calls each
+    thunk with no args (extra engine args are ignored -- the modeled
+    thunks take none). Any other callback shape fails closed
+    (documented scope boundary). Returns next_index past `)`.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j < n and text[j] == "(":
+        p, k = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        j = k
+    else:
+        p, j = _js_parse_ident(text, j)
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F620 invoke callback no arrow")
+    j = _js_skip_ws(text, j + 2)
+    p2, j = _js_parse_ident(text, j)
+    if p2 != p:
+        raise _JSExprFail("F620 invoke callback other ident")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    return j
+
+
+def _js_parse_f620_thunk_index_iife(text, i, depth, state):
+    """Parse `(function(){var|const|let f=[()=>LIT,...];
+    return f[INT]()+f[INT]();})()` (F620).
+
+    Node-exact desugar (v24.20.0): each `f[INT]()` invokes the thunk
+    at that index (out-of-range throws in the engine -- fails closed
+    here); the `+` chain concatenates the returned literals in order.
+    Bounds (all fail closed): a non-thunk binding, a non-`var`/`const`/
+    `let` decl, an index that is not a plain digit literal or is out
+    of range, any other return-body shape. Returns (value,
+    next_index), or None when the head does not match. Bounded by the
+    part/depth budgets; the wrapper charges one op
+    (obfuscation-shaped). Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        _kw, m = _js_match_decl_kw(stmts, sj)
+        if _kw is None:
+            raise _JSExprFail("F620 decl not var/const/let")
+        sj = _js_skip_ws(stmts, m)
+        alias, sj = _js_parse_ident(stmts, sj)
+        if alias == "arguments":
+            raise _JSExprFail("F620 alias named arguments")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "=")
+        thunks = _js_parse_f620_thunk_array(stmts, sj, state)
+        if thunks is None:
+            raise _JSExprFail("F620 binding not a thunk array")
+        thunks, sj = thunks
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        sj = _js_skip_ws(stmts, sj)
+        m = _js_match_kw(stmts, sj, "return")
+        if m is None:
+            raise _JSExprFail("F620 no return")
+        sj = _js_skip_ws(stmts, m)
+        parts = []
+        while True:
+            a2, sj = _js_parse_ident(stmts, sj)
+            if a2 != alias:
+                raise _JSExprFail("F620 indexed call on another ident")
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, "[")
+            sj = _js_skip_ws(stmts, sj)
+            d0 = sj
+            while sj < len(stmts) and stmts[sj] in "0123456789":
+                sj += 1
+            if sj == d0:
+                raise _JSExprFail("F620 index not a digit literal")
+            if sj < len(stmts) and stmts[sj] in _JS_IDENT_CONT:
+                raise _JSExprFail("F620 index ident-adjacent")
+            idx = int(stmts[d0:sj])
+            if idx >= len(thunks.values):
+                raise _JSExprFail("F620 index out of range")
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, "]")
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, "(")
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, ")")
+            parts.append(thunks.values[idx])
+            state["parts"] += 1  # F452: charge per invocation
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(stmts, sj)
+            if sj < len(stmts) and stmts[sj] == "+":
+                sj = _js_skip_ws(stmts, sj + 1)
+                continue
+            break
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        if _js_skip_ws(stmts, sj) != len(stmts):
+            raise _JSExprFail("F620 trailing statements")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state,
+                                        "".join(parts))
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f620_thunk_foreach_iife(text, i, depth, state):
+    """Parse `(function(){var|let s='';[()=>LIT,...].forEach(
+    f=>{s+=f();});return s;})()` (F620).
+
+    Node-exact desugar (v24.20.0): forEach invokes the callback once
+    per thunk in order; the block-body accumulation `s+=f()` joins
+    the returned literals. Bounds (all fail closed): a non-empty
+    accumulator, a `const` accumulator, a non-thunk source, a param
+    shadowing the accumulator, a callback that is not the exact
+    `s+=f();` block shape. Returns (value, next_index), or None when
+    the head does not match. Bounded by the part/depth budgets; the
+    wrapper charges one op (obfuscation-shaped). Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, sj)
+        thunks = _js_parse_f620_thunk_array(stmts, sj, state)
+        if thunks is None:
+            raise _JSExprFail("F620 source not a thunk array")
+        thunks, sj = thunks
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ".")
+        _mn, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+        if _mn != "forEach":
+            raise _JSExprFail("F620 not forEach")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "(")
+        sj = _js_skip_ws(stmts, sj)
+        if sj < len(stmts) and stmts[sj] == "(":
+            p, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj + 1))
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, ")")
+        else:
+            p, sj = _js_parse_ident(stmts, sj)
+        if p == acc:
+            raise _JSExprFail("F620 param shadows accum")
+        sj = _js_skip_ws(stmts, sj)
+        if not stmts.startswith("=>", sj):
+            raise _JSExprFail("F620 callback no arrow")
+        sj = _js_skip_ws(stmts, sj + 2)
+        sj = _js_expect(stmts, sj, "{")
+        a2, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+        if a2 != acc:
+            raise _JSExprFail("F620 accumulates another ident")
+        sj = _js_skip_ws(stmts, sj)
+        if not stmts.startswith("+=", sj):
+            raise _JSExprFail("F620 no plus-eq")
+        sj = _js_skip_ws(stmts, sj + 2)
+        p2, sj = _js_parse_ident(stmts, sj)
+        if p2 != p:
+            raise _JSExprFail("F620 invokes another ident")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "(")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "}")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        _js_parse_f6xx_return_acc(stmts, _js_skip_ws(stmts, sj), acc)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        for _ in thunks.values:
+            state["parts"] += 1  # F452: charge per iteration
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state,
+                                        "".join(thunks.values))
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_primary(text, i, depth, state, _forbid_template=False):
     """Parse one primary (literal / fromCharCode / parens / number / array /
     Array constructor / Reflect.construct).
@@ -26145,6 +26445,23 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f600 is not None:
             val, i = _f600
             return _js_parse_postfix(text, i, val, depth, state)
+        # F620: (function(){var|const|let f=[()=>LIT,...];
+        #   return f[INT]()+f[INT]();})() /
+        #   (function(){var|let s='';[()=>LIT,...].forEach(
+        #   f=>{s+=f();});return s;})() -- thunk-array invocation
+        #   accumulation. Tried after F600/F601/F602: the exact
+        #   statement grammars are disjoint from every earlier route
+        #   (all of which bind arguments, Maps/Sets, or additive
+        #   bodies over literal arrays -- a thunk array fails every
+        #   one of those grammars closed), and None falls through to
+        #   F581 like F594.
+        _f620 = _js_parse_f620_thunk_index_iife(text, i, depth, state)
+        if _f620 is None:
+            _f620 = _js_parse_f620_thunk_foreach_iife(text, i, depth,
+                                                     state)
+        if _f620 is not None:
+            val, i = _f620
+            return _js_parse_postfix(text, i, val, depth, state)
         # F581: (function(){DECL a=arguments;return a;})(lit, ...) --
         # the arguments-alias return (the Reflect.apply-dispatch
         # element). Tried before F516: the exact `return <alias>;`
@@ -26377,6 +26694,16 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             raise _JSExprFail("unbalanced paren")
         return _js_parse_postfix(text, i + 1, val, depth, state)
     if c == "[":
+        # F620: [()=>LIT,...] -- a thunk array is opaque except at the
+        # F620 invocation patterns; the parse only succeeds when every
+        # element is a zero-arg literal-returning arrow (disjoint from
+        # every other array grammar, which cannot parse `()=>`), and
+        # None falls through to the ordinary array literal.
+        _f620 = _js_parse_f620_thunk_array(text, i, state)
+        if _f620 is not None:
+            val, i = _f620
+            state["ops"] += 1  # a thunk array is obfuscation-shaped
+            return _js_parse_postfix(text, i, val, depth, state)
         if _js_is_ctor_recv(text, i):
             # F476: [].constructor.of(...) constructor-property factory --
             # disjoint from array literals / F471 spread-copy ('[' ws ']'

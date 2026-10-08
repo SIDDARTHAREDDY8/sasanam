@@ -43,14 +43,15 @@ controls pass. No injection attempts.
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-   F595, F606-F611 (prior rounds), F618-F621 (this round; F612-F617 closed
-   wave-374 lanes 1-5).
+   F595, F606-F611 (prior rounds), F621 (this round; F612-F620 closed
+   wave-374 lanes 1-7).
    
    Closed pins (must BLOCK, else BREAK): F576, F583, F596 (older spots),
    F597, F598, F599, F600, F602, F603, F604, F605 (wave-372 closures),
    F595, F606, F607, F608, F609, F610, F611 (wave-373 closures),
    F612 (wave-374 lane 1), F613 (wave-374 lane 2), F614 (wave-374 lane 3),
-   F615 (wave-374 lane 4), F616, F617 (wave-374 lane 5).
+   F615 (wave-374 lane 4), F616, F617 (wave-374 lane 5),
+   F618, F619 (wave-374 lane 6), F620 (wave-374 lane 7).
 
 Rides-with-documented-scope (validated, NOT filed):
 - JSON.parse(JSON.stringify([[,'f1'],['f2']])).flat().join('') and the
@@ -136,11 +137,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F618-F621 open, next F622 (merged: F612-F617 closed)."""
+    """Control: footer shows F621 open, next F622 (merged: F612-F620 closed)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F622**" in text  # Wave-374 lane 5: F616, F617 CLOSED  # Wave-374 lane 5: F621 FILED OPEN
-          and "Open findings: F618, F619, F620, F621." in text)  # Wave-374 lane 5: F616, F617 CLOSED  # Wave-374 lane 5: F621 FILED OPEN
+    ok = ("Next free finding: **F622**" in text  # Wave-374 lane 7: F620 CLOSED  # Wave-374 lane 5: F621 FILED OPEN
+          and "Open findings: F621." in text)  # Wave-374 lane 7: F620 CLOSED  # Wave-374 lane 5: F621 FILED OPEN
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -374,13 +375,13 @@ def test_r41_f619_open():
 
 
 @_t
-def test_r41_f620_open():
-    """F620 OPEN: indexed/thunk function invocation misses."""
-    m1 = _misses("(function(){var f=[()=>'%s',()=>'%s'];return f[0]()+f[1]();})()" % (_A, _B))
-    m2 = _misses("[()=>'%s',()=>'%s'].map(f=>f()).join('')" % (_A, _B))
-    m3 = _misses("(function(){var s='';[()=>'%s',()=>'%s'].forEach(f=>{s+=f();});return s;})()" % (_A, _B))
-    ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_p1_f620_closed():
+    """F620 CLOSED (wave-374 lane 7): indexed/thunk invocation blocks."""
+    b1 = _blocked("(function(){var f=[()=>'%s',()=>'%s'];return f[0]()+f[1]();})()" % (_A, _B))
+    b2 = _blocked("[()=>'%s',()=>'%s'].map(f=>f()).join('')" % (_A, _B))
+    b3 = _blocked("(function(){var s='';[()=>'%s',()=>'%s'].forEach(f=>{s+=f();});return s;})()" % (_A, _B))
+    ok = b1 and b2 and b3
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)  # Wave-374 lane 7: F620 CLOSED (was test_r41_f620_open)
 
 
 # ---------------------------------------------------------------- green check
