@@ -112,11 +112,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F711, F712 open, next F713 (merged lanes 1-7; F700 filings renumbered)."""
+    """Control: footer shows F700-F711,F713 open, next F714 (wave-382 lane 7: F712 CLOSED, F713 filed)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F713**" in text
-          and "Open findings: F700, F701, F702, F703, F704, F705, F706, F707, F708, F709, F710, F711, F712." in text)  # Wave-381 merge: lanes 1-7 (F686-F699 ALL CLOSED; F700->F711/F712)
+    ok = ("Next free finding: **F714**" in text
+          and "Open findings: F700, F701, F702, F703, F704, F705, F706, F707, F708, F709, F710, F711, F713." in text)  # Wave-382 lane 7: F712 CLOSED, F713 filed
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

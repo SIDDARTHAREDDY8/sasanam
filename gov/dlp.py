@@ -3768,7 +3768,274 @@ def _js_parse_f695_map_entries_spread(text, i, depth, state):
     return _JSArr([_JSArr([k, v]) for _, k, v in pairs]), j
 
 
-def _js_parse_f659_yield_star_array(text, i, state):
+def _js_parse_f712_iter_source(text, j, maps):
+    """Parse a var-bound Map iteration source at text[j] (F712).
+
+    The source is `m`, `m.entries()`, `m.keys()`, or `m.values()`
+    where *m* is bound in *maps* (name -> pairs list of (kid, k, v)
+    from `_js_parse_new_map_head`). The bare form iterates the
+    engine's Map iteration protocol, which IS the entries protocol
+    (node v24.20.0 verified: `[...m]` is `[[k,v],...]`). Returns
+    (items, next_index): for `entries` a list of 2-element _JSArr
+    [k, v] (keys keep their _JSNumStr provenance, the F600/F695
+    discipline); for `keys` the key list; for `values` the value
+    list. Bracket-string member forms (`m["entries"]()`) fail closed
+    (documented residual -- the filed shapes use dot form only).
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    name, j = _js_parse_ident(text, j)
+    if name not in maps:
+        raise _JSExprFail("F712 iter of unbound map")
+    pairs = maps[name]
+    q = _js_skip_ws(text, j)
+    kind = "entries"
+    if q < n and text[q] == ".":
+        q2 = _js_skip_ws(text, q + 1)
+        for meth in ("entries", "keys", "values"):
+            mk = _js_match_kw(text, q2, meth)
+            if mk is not None:
+                q3 = _js_expect(text, mk, "(")
+                q3 = _js_expect(text, q3, ")")
+                kind, j = meth, q3
+                break
+        else:
+            raise _JSExprFail("F712 bad iter member")
+    if kind == "entries":
+        items = [_JSArr([k, v]) for _, k, v in pairs]
+    elif kind == "keys":
+        items = [k for _, k, _ in pairs]
+    else:
+        items = [v for _, _, v in pairs]
+    return items, j
+
+
+def _js_parse_f712_iter_index(text, j, items):
+    """Apply `[I]` (and, for pair items, `[J]`) to *items* at text[j]
+    (F712).
+
+    Indices are canonical decimal literals (the F535/F565
+    discipline -- `042`/`0x10`/`1e3` fail closed, never
+    mis-decoded). Negative indices fail closed: node treats
+    `arr[-1]` as a property miss (undefined), never the last
+    element -- Python's negative indexing would mis-decode there.
+    Out-of-range indices fail closed: node throws TypeError there
+    (`[...m.entries()][5][1]` is undefined[1]), so no value is
+    ever produced. For pair items (`entries`), `[I]` alone yields
+    the pair _JSArr (the caller stringifies node-exactly via
+    Array.prototype.toString); `[I][J]` requires J < 2. For scalar
+    items (`keys`/`values`) a second index fails closed
+    (documented bound -- node would do string char-indexing,
+    outside the string-only discipline). Returns (value,
+    next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "[")
+    j = _js_skip_ws(text, j)
+    ilit, j = _js_parse_canonical_int(text, j, "F712")
+    idx = int(ilit)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "]")
+    if idx < 0 or idx >= len(items):
+        raise _JSExprFail("F712 index out of range")
+    item = items[idx]
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        if not isinstance(item, _JSArr):
+            raise _JSExprFail("F712 scalar reindex")
+        j = _js_skip_ws(text, j + 1)
+        jlit, j = _js_parse_canonical_int(text, j, "F712")
+        jdx = int(jlit)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "]")
+        if jdx < 0 or jdx >= len(item.elements):
+            raise _JSExprFail("F712 pair index out of range")
+        item = item.elements[jdx]
+        j = _js_skip_ws(text, j)
+    return item, j
+
+
+def _js_parse_f712_operand(text, j, maps, state):
+    """Parse one F712 return-additive operand at text[j].
+
+    An operand is a string literal, a var-bound Map iteration
+    spread read (`[...m]` / `[...m.entries()]` / `[...m.keys()]` /
+    `[...m.values()]` indexed), or the `Array.from` twin
+    (`Array.from(m)` / `Array.from(m.entries())` /
+    `Array.from(m.keys())` / `Array.from(m.values())` indexed).
+    The spread/`Array.from` of a var-bound Map desugars to the
+    engine's Map iteration protocol (node v24.20.0). A pair read
+    without a second index (`[...m.entries()][0]`) yields the pair
+    array, stringified node-exactly here via Array.prototype.toString
+    (comma-join) so the additive loop's string assumption holds --
+    without this the loop's `len()` would raise TypeError on the
+    _JSArr (a scanner crash, worse than a miss). Each iteration
+    read charges one op (obfuscation-shaped). Returns (value,
+    next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        val, j = _js_parse_string(text, j)
+        return val, j
+    if j < n and text[j] == "[":
+        j = _js_expect(text, j, "[")
+        j = _js_skip_ws(text, j)
+        for _ in range(3):
+            j = _js_expect(text, j, ".")
+        j = _js_skip_ws(text, j)
+        items, j = _js_parse_f712_iter_source(text, j, maps)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "]")
+        val, j = _js_parse_f712_iter_index(text, j, items)
+        state["ops"] += 1  # the iteration read is obfuscation-shaped
+        return _js_parse_f712_coerce(val), j
+    if text.startswith("Array", j):
+        ja = j + len("Array")
+        jd = _js_skip_ws(text, ja)
+        if jd >= n or text[jd] != ".":
+            raise _JSExprFail("F712 Array without dot")
+        kf = _js_skip_ws(text, jd + 1)
+        if not text.startswith("from", kf) or \
+                text.startswith("fromAsync", kf):
+            raise _JSExprFail("F712 Array not from")
+        fe = kf + len("from")
+        if fe < n and text[fe] in _JS_IDENT_CONT:
+            raise _JSExprFail("F712 Array.fromx is not from")
+        fe = _js_skip_ws(text, fe)
+        fe = _js_expect(text, fe, "(")
+        items, fe = _js_parse_f712_iter_source(text, fe, maps)
+        fe = _js_skip_ws(text, fe)
+        fe = _js_expect(text, fe, ")")
+        val, fe = _js_parse_f712_iter_index(text, fe, items)
+        state["ops"] += 1  # the iteration read is obfuscation-shaped
+        return _js_parse_f712_coerce(val), fe
+    raise _JSExprFail("F712 bad operand")
+
+
+def _js_parse_f712_coerce(val):
+    """Stringify an F712 operand value node-exactly (F712).
+
+    Pair reads without a second index (`[...m.entries()][0]`)
+    yield the pair _JSArr; in the decoder's string-only discipline
+    the array is represented by its Array.prototype.toString form
+    (elements comma-joined, node v24.20.0). Elements are flat
+    strings (keys keep _JSNumStr provenance, which stringifies
+    canonically). Plain strings pass through unchanged. Never
+    evals.
+    """
+    if isinstance(val, _JSArr):
+        return ",".join(str(e) for e in val.elements)
+    return val
+
+
+def _js_parse_f712_map_iter_iife(text, i, depth, state):
+    """Parse `(function(){[DECL M=new Map([[...]]);]* return ADD;})()`
+    with var-bound Map iteration reads at text[i] (F712).
+
+    F712 (LOW, wave-381 lane 2 residual): a VAR-BOUND literal Map's
+    iteration reads bypass the decoder -- F695 (CLOSED) models only
+    the INLINE bare-Map iteration protocol, and F589/F600 (CLOSED)
+    model only inline `.entries()`/`.keys()` iteration.
+
+    Node-exact desugar (v24.20.0): each `var|let|const M=new
+    Map([[k,v],...]);` binds M to the later-wins (kid, k, v) pair
+    list via the shared `_js_parse_new_map_head` (F494/F625 --
+    string/numeric literal keys, plain string-literal values;
+    anything else fails closed). The return is a `+`-joined
+    additive of string literals and var-bound iteration reads:
+    `[...m]` / `[...m.entries()]` (pair arrays), `[...m.keys()]`,
+    `[...m.values()]`, `Array.from(m)` / `Array.from(m.entries())`
+    / `Array.from(m.keys())` / `Array.from(m.values())`, each
+    indexed (`[I]` / `[I][J]`, canonical decimal, bounds-checked --
+    out-of-range fails closed exactly where node throws TypeError).
+    Keys keep their _JSNumStr provenance (the F600/F695
+    discipline), so numeric-key reads concat node-exactly.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    non-Map declarations, `m.set(...)` tails (F708 owns those),
+    bracket-string member forms (`m["entries"]()`), scalar
+    re-indexing (`[...m.keys()][0][1]` -- node does string
+    char-indexing there, outside the string-only discipline),
+    non-canonical indices, redeclaration, forward references,
+    trailing statements, ASI forms. Tried after F692: every
+    earlier route requires its own binding family or statement
+    head and fails closed on a var-bound-`new Map` initializer
+    (red-first verified: 5 BREAK on the open tree), so no
+    previously-decoded input changes behavior. Returns (value,
+    next_index), or None when text[i] is not this shape. Never
+    evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_f655_head(text, i)
+        if brace is None:
+            raise _JSExprFail("F712 not our head")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        maps = {}
+        sj = _js_skip_ws(text, inner_start)
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj >= inner_end:
+                raise _JSExprFail("F712 body without return")
+            rk = _js_match_kw(text, sj, "return")
+            if rk is not None:
+                break
+            dk, dnext = _js_match_decl_kw(text, sj)
+            if dk is None:
+                raise _JSExprFail("F712 bad statement")
+            q = _js_skip_ws(text, dnext)
+            vname, q = _js_parse_ident(text, q)
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "=")
+            q = _js_skip_ws(text, q)
+            pairs, q = _js_parse_new_map_head(text, q, depth, state)
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            if vname in maps:
+                raise _JSExprFail("F712 map redeclared")
+            maps[vname] = pairs
+            state["parts"] += 1  # the map binding is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = q
+        sj = _js_skip_ws(text, rk)
+        total = None
+        while True:
+            term, sj = _js_parse_f712_operand(text, sj, maps, state)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            state["ops"] += 1
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F712 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
     """Parse `['LIT',...]` (the yield* delegation operand, F659).
 
     Node-exact (v24.20.0): `yield* <array>` delegates iteration --
@@ -48708,6 +48975,20 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f692 = _js_parse_f692_super_iife(text, i, depth, state)
         if _f692 is not None:
             val, i = _f692
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F712: (function(){[DECL M=new Map([[...]]);]* return
+        #   ADD;})() with var-bound Map iteration reads
+        #   (`[...m]` / `[...m.entries()]` / `[...m.keys()]` /
+        #   `[...m.values()]` / `Array.from(m|m.entries()|
+        #   m.keys()|m.values())`, indexed). Tried after F692:
+        #   every earlier route requires its own binding family or
+        #   statement head and fails closed on a var-bound-`new
+        #   Map` initializer (red-first verified: 5 BREAK on the
+        #   open tree), so no previously-decoded input changes
+        #   behavior.
+        _f712 = _js_parse_f712_map_iter_iife(text, i, depth, state)
+        if _f712 is not None:
+            val, i = _f712
             return _js_parse_postfix(text, i, val, depth, state)
         # F696: (new String('LIT')) / (new String()) --
         # parenthesized boxed-String construction, engine-identical
