@@ -37605,6 +37605,729 @@ def _js_parse_f647_term(text, j, undef_ident, depth, state, saw):
     return val, q
 
 
+def _js_parse_f686_ownkeys_body(text, j, state):
+    """Parse `{return ['L1',...];}` ownKeys-trap body content (F686).
+
+    *j* is just after the opening `{` (block forms) -- the body must
+    be exactly a `return` of a string-literal array (F644 grammar).
+    Duplicate keys fail closed (node v24.20.0 throws
+    "'ownKeys' on proxy: trap returned duplicate entries").
+    Returns (keys, next_index) just after the closing `}`. Never
+    evals.
+    """
+    m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if m is None:
+        raise _JSExprFail("F686 ownKeys body not return")
+    j = _js_skip_ws(text, m)
+    if j >= len(text) or text[j] != "[":
+        raise _JSExprFail("F686 ownKeys not an array")
+    keys, j = _js_parse_f644_string_array(text, j, state)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "}")
+    if len(set(keys)) != len(keys):
+        raise _JSExprFail("F686 ownKeys duplicate keys")
+    return keys, j
+
+
+def _js_parse_f686_ownkeys_fn(text, i, depth, state):
+    """Parse an ownKeys trap function value (F686).
+
+    Function/arrow forms (method shorthand is handled by the
+    caller): zero params, body exactly `return ['L1',...];` --
+    concise arrows `()=>['L1',...]`, block bodies via
+    `_js_parse_f686_ownkeys_body`. Returns (keys, next_index).
+    Never evals.
+    """
+    del depth
+    params, is_block, j = _js_parse_f675_fn_head(text, i)
+    if params:
+        raise _JSExprFail("F686 ownKeys trap takes params")
+    if not is_block:
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != "[":
+            raise _JSExprFail("F686 ownKeys concise not array")
+        keys, j = _js_parse_f644_string_array(text, j, state)
+        if len(set(keys)) != len(keys):
+            raise _JSExprFail("F686 ownKeys duplicate keys")
+        return keys, j
+    return _js_parse_f686_ownkeys_body(text, j, state)
+
+
+def _js_parse_f686_gopd_object(text, j):
+    """Parse `{enumerable:true,configurable:true}` (either order)
+    at text[j] (F686).
+
+    The getOwnPropertyDescriptor twin must report every trap key
+    enumerable (node-exact, v24.20.0: Object.keys/for-in only see
+    enumerable keys; getOwnPropertyNames/Reflect.ownKeys see all
+    keys regardless). Any other property, a non-`true` value, or a
+    missing property fails closed. Returns next_index just after
+    `}`. Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    props = set()
+    for _ in range(2):
+        j = _js_skip_ws(text, j)
+        pk = _js_match_kw(text, j, "enumerable")
+        name = "enumerable"
+        if pk is None:
+            pk = _js_match_kw(text, j, "configurable")
+            name = "configurable"
+        if pk is None or name in props:
+            raise _JSExprFail("F686 gOPD not enum/config")
+        j = _js_skip_ws(text, pk)
+        j = _js_expect(text, j, ":")
+        t = _js_match_kw(text, _js_skip_ws(text, j), "true")
+        if t is None:
+            raise _JSExprFail("F686 gOPD value not true")
+        props.add(name)
+        j = _js_skip_ws(text, t)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+    j = _js_expect(text, j, "}")
+    return j
+
+
+def _js_parse_f686_gopd_body(text, j, state):
+    """Parse `{return {enumerable:true,configurable:true};}`
+    getOwnPropertyDescriptor-trap body content (F686).
+
+    *j* is just after the opening `{` (block forms). Returns
+    (True, next_index) just after the closing `}`. Never evals.
+    """
+    del state
+    m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if m is None:
+        raise _JSExprFail("F686 gOPD body not return")
+    j = _js_parse_f686_gopd_object(text, m)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "}")
+    return True, j
+
+
+def _js_parse_f686_gopd_fn(text, i, depth, state):
+    """Parse a getOwnPropertyDescriptor trap function value (F686).
+
+    Function/arrow forms (method shorthand is handled by the
+    caller): zero params; block bodies `return
+    {enumerable:true,configurable:true};`, concise arrows
+    `()=>({enumerable:true,configurable:true})`. Returns (True,
+    next_index). Never evals.
+    """
+    del depth
+    params, is_block, j = _js_parse_f675_fn_head(text, i)
+    if params:
+        raise _JSExprFail("F686 gOPD trap takes params")
+    if not is_block:
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_parse_f686_gopd_object(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        return True, j
+    return _js_parse_f686_gopd_body(text, j, state)
+
+
+def _js_parse_f686_handler(text, i, depth, state):
+    """Parse `{ownKeys:OFN,getOwnPropertyDescriptor:GFN}` (F686).
+
+    Both traps are required (either order); without the
+    getOwnPropertyDescriptor twin, Object.keys/for-in would see no
+    keys in the engine, so an ownKeys-only handler is outside the
+    modeled grammar. Each trap accepts the `key:FN` form (four
+    function/arrow forms) or the method-shorthand `key(){...}`
+    form. Returns (keys, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, _js_skip_ws(text, i), "{")
+    seen = {}
+    for _ in range(2):
+        j = _js_skip_ws(text, j)
+        k = _js_match_kw(text, j, "ownKeys")
+        key = "ownKeys"
+        if k is None:
+            k = _js_match_kw(text, j, "getOwnPropertyDescriptor")
+            key = "getOwnPropertyDescriptor"
+        if k is None or key in seen:
+            raise _JSExprFail("F686 handler not ownKeys/gOPD")
+        j = _js_skip_ws(text, k)
+        if j < n and text[j] == ":":
+            if key == "ownKeys":
+                res, j = _js_parse_f686_ownkeys_fn(text, j + 1, depth,
+                                                  state)
+            else:
+                res, j = _js_parse_f686_gopd_fn(text, j + 1, depth,
+                                               state)
+        elif j < n and text[j] == "(":
+            params, j = _js_parse_f6xx_trap_params(text, j)
+            if params:
+                raise _JSExprFail("F686 trap method takes params")
+            j = _js_expect(text, _js_skip_ws(text, j), "{")
+            if key == "ownKeys":
+                res, j = _js_parse_f686_ownkeys_body(text, j, state)
+            else:
+                res, j = _js_parse_f686_gopd_body(text, j, state)
+        else:
+            raise _JSExprFail("F686 trap not a function")
+        seen[key] = res
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+    j = _js_expect(text, _js_skip_ws(text, j), "}")
+    return seen["ownKeys"], j
+
+
+def _js_parse_f686_join_terminal(text, m, wname, keys, state):
+    """Parse `Object.keys(p).join('')` /
+    `Object.getOwnPropertyNames(p).join('')` /
+    `Reflect.ownKeys(p).join('')` at text[m] (F686).
+
+    *m* is just after `return`. The join separator must be the
+    empty string (a non-empty separator would mis-decode).
+    Returns (value, next_index) just after `;`. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, m)
+    ok = False
+    if text.startswith("Object", j) and (
+            j + 6 >= n or text[j + 6] not in _JS_IDENT_CONT):
+        j = _js_skip_ws(text, j + 6)
+        j = _js_expect(text, j, ".")
+        kk = _js_match_kw(text, _js_skip_ws(text, j), "keys")
+        if kk is None:
+            kk = _js_match_kw(text, j, "getOwnPropertyNames")
+        if kk is None:
+            raise _JSExprFail("F686 terminal not keys/gOPN")
+        j = kk
+        ok = True
+    elif text.startswith("Reflect", j) and (
+            j + 7 >= n or text[j + 7] not in _JS_IDENT_CONT):
+        j = _js_skip_ws(text, j + 7)
+        j = _js_expect(text, j, ".")
+        kk = _js_match_kw(text, _js_skip_ws(text, j), "ownKeys")
+        if kk is None:
+            raise _JSExprFail("F686 terminal not Reflect.ownKeys")
+        j = kk
+        ok = True
+    if not ok:
+        raise _JSExprFail("F686 terminal not a key enumeration")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    recv, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if recv != wname:
+        raise _JSExprFail("F686 terminal wrong receiver")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ".")
+    jm = _js_match_kw(text, _js_skip_ws(text, j), "join")
+    if jm is None:
+        raise _JSExprFail("F686 terminal not join")
+    j = _js_skip_ws(text, jm)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail("F686 join not a literal")
+    sep, j = _js_parse_string(text, j)
+    if sep != "":
+        raise _JSExprFail("F686 join separator not empty")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    val = "".join(keys)
+    if len(val) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F686 concat too long")
+    state["parts"] += len(keys)
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return val, j
+
+
+def _js_parse_f686_forin_terminal(text, m, wname, keys, inner_end,
+                                  state):
+    """Parse `var s='';for(var k in p){s+=k;}return s;` at text[m]
+    (F686).
+
+    The accumulator starts as the empty string literal and every
+    enumerated key is a string (the ownKeys grammar admits string
+    literals only), so the accumulation is the key concatenation,
+    node-exact (v24.20.0). Returns (value, next_index) just after
+    the terminal `;`. Never evals.
+    """
+    del inner_end
+    j = _js_skip_ws(text, m)
+    kw, j = _js_match_decl_kw(text, j)
+    if kw is None:
+        raise _JSExprFail("F686 for-in no accumulator decl")
+    j = _js_skip_ws(text, j)
+    sname, j = _js_parse_ident(text, j)
+    if sname == "arguments":
+        raise _JSExprFail("F686 for-in arguments accumulator")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "=")
+    j = _js_skip_ws(text, j)
+    if j >= len(text) or text[j] not in "'\"":
+        raise _JSExprFail("F686 for-in accumulator not a literal")
+    init, j = _js_parse_string(text, j)
+    if init != "":
+        raise _JSExprFail("F686 for-in accumulator not empty")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    f = _js_match_kw(text, _js_skip_ws(text, j), "for")
+    if f is None:
+        raise _JSExprFail("F686 for-in no for")
+    j = _js_expect(text, _js_skip_ws(text, f), "(")
+    j = _js_skip_ws(text, j)
+    kw2, j = _js_match_decl_kw(text, j)
+    if kw2 is None:
+        raise _JSExprFail("F686 for-in no key decl")
+    j = _js_skip_ws(text, j)
+    kname, j = _js_parse_ident(text, j)
+    if kname in ("arguments", sname):
+        raise _JSExprFail("F686 for-in bad key name")
+    inn = _js_match_kw(text, _js_skip_ws(text, j), "in")
+    if inn is None:
+        raise _JSExprFail("F686 for-in no in")
+    recv, j = _js_parse_ident(text, _js_skip_ws(text, inn))
+    if recv != wname:
+        raise _JSExprFail("F686 for-in wrong receiver")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "{")
+    j = _js_skip_ws(text, j)
+    acc, j = _js_parse_ident(text, j)
+    if acc != sname:
+        raise _JSExprFail("F686 for-in wrong accumulator")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("+=", j):
+        raise _JSExprFail("F686 for-in not +=")
+    key2, j = _js_parse_ident(text, _js_skip_ws(text, j + 2))
+    if key2 != kname:
+        raise _JSExprFail("F686 for-in wrong key")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "}")
+    r = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if r is None:
+        raise _JSExprFail("F686 for-in no return")
+    ret, j = _js_parse_ident(text, _js_skip_ws(text, r))
+    if ret != sname:
+        raise _JSExprFail("F686 for-in wrong return")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    val = "".join(keys)
+    if len(val) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F686 concat too long")
+    state["parts"] += len(keys)
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return val, j
+
+
+def _js_parse_f686_ownkeys_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const p=new Proxy({},
+    {ownKeys:OFN,getOwnPropertyDescriptor:GFN});TERM})()` (F686).
+
+    The ownKeys trap returns the fragment key list; the
+    getOwnPropertyDescriptor twin reports every key enumerable, so
+    all four terminals enumerate exactly the trap's list,
+    node-exact (v24.20.0):
+    - `return Object.keys(p).join('');`
+    - `return Object.getOwnPropertyNames(p).join('');`
+    - `return Reflect.ownKeys(p).join('');`
+    - `var s='';for(var k in p){s+=k;}return s;`
+    The proxy target is exactly `{}` (the trap invariants then
+    hold trivially for any string keys). Disjoint from F642
+    (requires a `get` trap and a literal binding section), F666
+    (`apply`/`has` traps), and F675 (`set`/`construct`/
+    `deleteProperty`/`getPrototypeOf` traps or the revocable
+    head) -- none of the earlier routes accepts these shapes, so
+    no previously-decoded input changes behavior. Returns (value,
+    next_index) or None. Never evals.
+    """
+    head = _js_parse_f675_iife_head(text, i)
+    if head is None:
+        return None
+    inner_start, inner_end, j = head
+    n = len(text)
+    try:
+        wname, m = _js_parse_f675_decl_ident(text, inner_start, ())
+        m = _js_parse_f675_new_proxy_head(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "{")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "}")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ",")
+        keys, m = _js_parse_f686_handler(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        r = _js_match_kw(text, _js_skip_ws(text, m), "return")
+        if r is None:
+            # for-in form starts with the accumulator declaration
+            val, m = _js_parse_f686_forin_terminal(text, m, wname,
+                                                   keys, inner_end,
+                                                   state)
+        else:
+            val, m = _js_parse_f686_join_terminal(text, r, wname,
+                                                  keys, state)
+        return _js_parse_f675_iife_tail(text, j, m, inner_end, val,
+                                        state)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f689_iterator_fn(text, j, depth, state):
+    """Parse `function[*name](){<fixed-yield body>}` at text[j]
+    (F689).
+
+    The generator returned for `Symbol.iterator`: yields come
+    from `_js_parse_f6xx_fixed_yield_body` (F494/F619/F659
+    grammar -- ws-tolerant, optional parens, ASI, `yield*`
+    delegation, trailing `return` skipped node-exactly). An empty
+    body yields nothing (node-exact: `[...p]` is `[]`). Params
+    must be empty; `async` generators fail closed (the F642
+    idiom). Returns (yields, next_index). Never evals.
+    """
+    del depth
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if not (text.startswith("function", j)
+            and (j + 8 >= n or text[j + 8] not in _JS_IDENT_CONT)):
+        raise _JSExprFail("F689 iterator not a function")
+    j = _js_skip_ws(text, j + 8)
+    if j < n and text[j] in _JS_IDENT_START:
+        _, j = _js_parse_ident(text, j)  # optional name
+        j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "*":
+        raise _JSExprFail("F689 iterator not a generator")
+    j = _js_skip_ws(text, j + 1)
+    if j < n and text[j] in _JS_IDENT_START:
+        _, j = _js_parse_ident(text, j)  # optional name after *
+        j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "{")
+    _jj = _js_skip_ws(text, j)
+    if _jj < n and text[_jj] == "}":
+        return [], _jj + 1
+    yields, j = _js_parse_f6xx_fixed_yield_body(
+        text, j, state, _allow_trailing_return=True)
+    return yields, j
+
+
+def _js_parse_f689_get_body(text, j, params, depth, state):
+    """Parse `{if(k===Symbol.iterator){return GEN;}return t[k];}`
+    get-trap body content (F689).
+
+    *j* is just after the opening `{` (block forms); params is
+    exactly `[tname, kname]`. The conditional routes the
+    well-known symbol to the fixed-yield generator; every other
+    key falls through to the target (node-exact, v24.20.0 -- the
+    filed terminals only iterate, so the fall-through branch is
+    never evaluated on the decoded path, but its presence is
+    required by the grammar). Returns (yields, next_index) just
+    after the closing `}`. Never evals.
+    """
+    n = len(text)
+    if len(params) != 2:
+        raise _JSExprFail("F689 get trap needs 2 params")
+    tname, kname = params
+    j = _js_skip_ws(text, j)
+    f = _js_match_kw(text, j, "if")
+    if f is None:
+        raise _JSExprFail("F689 get body not if")
+    j = _js_expect(text, _js_skip_ws(text, f), "(")
+    j = _js_skip_ws(text, j)
+    kk, j = _js_parse_ident(text, j)
+    if kk != kname:
+        raise _JSExprFail("F689 if not on key param")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("===", j):
+        raise _JSExprFail("F689 if not ===")
+    j = _js_skip_ws(text, j + 3)
+    sn, j = _js_parse_ident(text, j)
+    if sn != "Symbol":
+        raise _JSExprFail("F689 if not Symbol")
+    j = _js_expect(text, _js_skip_ws(text, j), ".")
+    iin, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if iin != "iterator":
+        raise _JSExprFail("F689 if not Symbol.iterator")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "{")
+    r = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if r is None:
+        raise _JSExprFail("F689 if body not return")
+    yields, j = _js_parse_f689_iterator_fn(text, r, depth, state)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "}")
+    r2 = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if r2 is None:
+        raise _JSExprFail("F689 get body no fall-through")
+    j = _js_skip_ws(text, r2)
+    tt, j = _js_parse_ident(text, j)
+    if tt != tname:
+        raise _JSExprFail("F689 fall-through not target param")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "[")
+    kk2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if kk2 != kname:
+        raise _JSExprFail("F689 fall-through not key param")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "]")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "}")
+    return yields, j
+
+
+def _js_parse_f689_get_fn(text, i, depth, state):
+    """Parse a Symbol.iterator-conditional get trap function value
+    (F689).
+
+    Block function/arrow forms with exactly 2 params (method
+    shorthand is handled by the caller); concise arrows cannot
+    hold the `if` statement and fail closed. Returns (yields,
+    next_index). Never evals.
+    """
+    params, is_block, j = _js_parse_f675_fn_head(text, i)
+    if not is_block:
+        raise _JSExprFail("F689 get trap not a block")
+    return _js_parse_f689_get_body(text, j, params, depth, state)
+
+
+def _js_parse_f689_get_handler(text, i, depth, state):
+    """Parse `{get:GFN}` (F689).
+
+    The single-key handler: `get:FN` (function/arrow forms) or
+    the method-shorthand `get(t,k){...}` form. Returns (yields,
+    next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, _js_skip_ws(text, i), "{")
+    j = _js_skip_ws(text, j)
+    g = _js_match_kw(text, j, "get")
+    if g is None:
+        raise _JSExprFail("F689 handler not a get trap")
+    j = _js_skip_ws(text, g)
+    if j < n and text[j] == ":":
+        yields, j = _js_parse_f689_get_fn(text, j + 1, depth,
+                                          state)
+    elif j < n and text[j] == "(":
+        params, j = _js_parse_f6xx_trap_params(text, j)
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        yields, j = _js_parse_f689_get_body(text, j, params,
+                                            depth, state)
+    else:
+        raise _JSExprFail("F689 get trap not a function")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "}")
+    return yields, j
+
+
+def _js_parse_f689_spread_terminal(text, m, wname, yields, state):
+    """Parse `return [...p].join('');` at text[m] (F689).
+
+    *m* is just after `return`. Spreading the proxy invokes the
+    get trap with `Symbol.iterator` and iterates the returned
+    generator (node-exact, v24.20.0); the join separator must be
+    the empty string. Returns (value, next_index) just after `;`.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, m)
+    j = _js_expect(text, j, "[")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("...", j):
+        raise _JSExprFail("F689 terminal not a spread")
+    recv, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+    if recv != wname:
+        raise _JSExprFail("F689 spread wrong receiver")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "]")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ".")
+    jm = _js_match_kw(text, _js_skip_ws(text, j), "join")
+    if jm is None:
+        raise _JSExprFail("F689 terminal not join")
+    j = _js_skip_ws(text, jm)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail("F689 join not a literal")
+    sep, j = _js_parse_string(text, j)
+    if sep != "":
+        raise _JSExprFail("F689 join separator not empty")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    val = "".join(yields)
+    if len(val) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F689 concat too long")
+    state["parts"] += len(yields)
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return val, j
+
+
+def _js_parse_f689_forof_terminal(text, m, wname, yields, state):
+    """Parse `var s='';for(var x of p){s+=x;}return s;` at text[m]
+    (F689).
+
+    The for-of loop iterates the proxy through the
+    Symbol.iterator trap; every yielded value is a string (the
+    fixed-yield grammar admits string literals only), so the
+    accumulation is the yield concatenation, node-exact
+    (v24.20.0). Returns (value, next_index) just after the
+    terminal `;`. Never evals.
+    """
+    j = _js_skip_ws(text, m)
+    kw, j = _js_match_decl_kw(text, j)
+    if kw is None:
+        raise _JSExprFail("F689 for-of no accumulator decl")
+    j = _js_skip_ws(text, j)
+    sname, j = _js_parse_ident(text, j)
+    if sname == "arguments":
+        raise _JSExprFail("F689 for-of arguments accumulator")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "=")
+    j = _js_skip_ws(text, j)
+    if j >= len(text) or text[j] not in "'\"":
+        raise _JSExprFail("F689 for-of accumulator not a literal")
+    init, j = _js_parse_string(text, j)
+    if init != "":
+        raise _JSExprFail("F689 for-of accumulator not empty")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    f = _js_match_kw(text, _js_skip_ws(text, j), "for")
+    if f is None:
+        raise _JSExprFail("F689 for-of no for")
+    j = _js_expect(text, _js_skip_ws(text, f), "(")
+    j = _js_skip_ws(text, j)
+    kw2, j = _js_match_decl_kw(text, j)
+    if kw2 is None:
+        raise _JSExprFail("F689 for-of no item decl")
+    j = _js_skip_ws(text, j)
+    xname, j = _js_parse_ident(text, j)
+    if xname in ("arguments", sname):
+        raise _JSExprFail("F689 for-of bad item name")
+    ofm = _js_match_kw(text, _js_skip_ws(text, j), "of")
+    if ofm is None:
+        raise _JSExprFail("F689 for-of no of")
+    recv, j = _js_parse_ident(text, _js_skip_ws(text, ofm))
+    if recv != wname:
+        raise _JSExprFail("F689 for-of wrong receiver")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "{")
+    j = _js_skip_ws(text, j)
+    acc, j = _js_parse_ident(text, j)
+    if acc != sname:
+        raise _JSExprFail("F689 for-of wrong accumulator")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("+=", j):
+        raise _JSExprFail("F689 for-of not +=")
+    item, j = _js_parse_ident(text, _js_skip_ws(text, j + 2))
+    if item != xname:
+        raise _JSExprFail("F689 for-of wrong item")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "}")
+    r = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if r is None:
+        raise _JSExprFail("F689 for-of no return")
+    ret, j = _js_parse_ident(text, _js_skip_ws(text, r))
+    if ret != sname:
+        raise _JSExprFail("F689 for-of wrong return")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    val = "".join(yields)
+    if len(val) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F689 concat too long")
+    state["parts"] += len(yields)
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return val, j
+
+
+def _js_parse_f689_symiter_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const p=new Proxy(TARGET,
+    {get:GFN});TERM})()` (F689).
+
+    TARGET is `[]` or `{}` (both node-verified: the iteration
+    path never consults the target). GFN is the
+    Symbol.iterator-conditional get trap
+    (`if(k===Symbol.iterator){return function*(){yield
+    'L1';...};}return t[k];`); TERM is `return [...p].join('');`
+    or `var s='';for(var x of p){s+=x;}return s;`. Spreading /
+    iterating the proxy invokes the trap with the well-known
+    symbol and iterates the returned generator, so the value is
+    the yield concatenation, node-exact (v24.20.0). Disjoint
+    from F642 (requires a literal binding section and an
+    additive trap body -- this body is a statement `if`), F666
+    (`apply`/`has` traps), and F675 (`set`/`construct`/
+    `deleteProperty`/`getPrototypeOf` traps or the revocable
+    head) -- none of the earlier routes accepts these shapes, so
+    no previously-decoded input changes behavior. Returns
+    (value, next_index) or None. Never evals.
+    """
+    head = _js_parse_f675_iife_head(text, i)
+    if head is None:
+        return None
+    inner_start, inner_end, j = head
+    try:
+        wname, m = _js_parse_f675_decl_ident(text, inner_start, ())
+        m = _js_parse_f675_new_proxy_head(text, m, depth, state)
+        m = _js_skip_ws(text, m)
+        if m < len(text) and text[m] == "[":
+            m = _js_skip_ws(text, m + 1)
+            m = _js_expect(text, m, "]")
+        elif m < len(text) and text[m] == "{":
+            m = _js_skip_ws(text, m + 1)
+            m = _js_expect(text, m, "}")
+        else:
+            raise _JSExprFail("F689 target not []/{}")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ",")
+        yields, m = _js_parse_f689_get_handler(text, m, depth,
+                                               state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        r = _js_match_kw(text, _js_skip_ws(text, m), "return")
+        if r is None:
+            # for-of form starts with the accumulator declaration
+            val, m = _js_parse_f689_forof_terminal(text, m, wname,
+                                                   yields, state)
+        else:
+            val, m = _js_parse_f689_spread_terminal(text, r, wname,
+                                                    yields, state)
+        return _js_parse_f675_iife_tail(text, j, m, inner_end, val,
+                                        state)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f647_nullish_right_iife(text, i, depth, state):
     """Parse `(function(){[var|let IDENT;]?return RET;})()` (F647).
 
@@ -45331,6 +46054,36 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                state)
         if _f675r is not None:
             val, i = _f675r
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F686: (function(){var|let|const p=new Proxy({},
+        #   {ownKeys:OFN,getOwnPropertyDescriptor:GFN});TERM})() --
+        #   Proxy ownKeys-trap key-name laundering: OFN returns the
+        #   fragment key list, GFN reports every key enumerable, and
+        #   TERM is Object.keys(p)/Object.getOwnPropertyNames(p)/
+        #   Reflect.ownKeys(p) joined with '' or a for-in
+        #   accumulation. Tried after F675: F642 requires a `get`
+        #   trap and a literal binding section; F666 requires
+        #   `apply`/`has`; F675 requires `set`/`construct`/
+        #   `deleteProperty`/`getPrototypeOf` keys or the revocable
+        #   head. None of the earlier routes accepts these shapes,
+        #   so no previously-decoded input changes behavior.
+        _f686 = _js_parse_f686_ownkeys_iife(text, i, depth, state)
+        if _f686 is not None:
+            val, i = _f686
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F689: (function(){var|let|const p=new Proxy([]|{},
+        #   {get:GFN});TERM})() -- Proxy Symbol.iterator-trap
+        #   iterable spread/for-of: GFN returns a fixed-yield
+        #   generator when k===Symbol.iterator, and TERM is
+        #   [...p].join('') or a for-of accumulation. Tried after
+        #   F686: F686 requires the ownKeys/gOPD handler keys; F642
+        #   requires a literal binding section and an additive
+        #   trap body (this body is a statement `if`). None of the
+        #   earlier routes accepts these shapes, so no
+        #   previously-decoded input changes behavior.
+        _f689 = _js_parse_f689_symiter_iife(text, i, depth, state)
+        if _f689 is not None:
+            val, i = _f689
             return _js_parse_postfix(text, i, val, depth, state)
         # F647: (function(){[var|let IDENT;]?return RET;})() --
         # nullish-coalescing RIGHT-pick fragment assembly

@@ -33,7 +33,8 @@ New findings (13, all LOW, all OPEN), filed from F686:
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F672-F685 (round 47), F686-F698 (this round).
+F672-F685 (round 47), F687, F688, F690-F699 (this round; F686+F689
+CLOSED 2026-10-08 wave-381 lane 1).
 
 Closed pins (must BLOCK, else BREAK): F463, F510, F535, F601, F612,
 F619, F642, F653, F655, F657, F658, F661, F662-F671 (rounds 46-47
@@ -111,11 +112,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F672-F698 open, next F699 (this lane)."""
+    """Control: footer shows F687, F688, F690-F699 open, next F700 (this lane)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F700**" in text
-          and "Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text)  # Wave-380 merge: F672-F685 CLOSED; lane-4 F686 -> F699
+          and "Open findings: F687, F688, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text)  # Wave-381 lane 1: F686+F689 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -264,28 +265,28 @@ def test_p1_f671_closed():
 # ------------------------------------------- F686-F697 open pins (must miss)
 
 @_t
-def test_r48_f686_keys_join_open():
-    """F686 OPEN (keys-join): miss reproduces."""
-    miss = _misses("(function(){var p=new Proxy({},{ownKeys:function(){return ['%s','%s'];},getOwnPropertyDescriptor:function(){return {enumerable:true,configurable:true};}});return Object.keys(p).join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f686_keys_join_closed():
+    """F686 CLOSED (keys-join): blocks."""
+    ok = _blocked("(function(){var p=new Proxy({},{ownKeys:function(){return ['%s','%s'];},getOwnPropertyDescriptor:function(){return {enumerable:true,configurable:true};}});return Object.keys(p).join('');})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f686=%s" % ok)
 
 @_t
-def test_r48_f686_for_in_open():
-    """F686 OPEN (for-in): miss reproduces."""
-    miss = _misses("(function(){var p=new Proxy({},{ownKeys:function(){return ['%s','%s'];},getOwnPropertyDescriptor:function(){return {enumerable:true,configurable:true};}});var s='';for(var k in p){s+=k;}return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f686_for_in_closed():
+    """F686 CLOSED (for-in): blocks."""
+    ok = _blocked("(function(){var p=new Proxy({},{ownKeys:function(){return ['%s','%s'];},getOwnPropertyDescriptor:function(){return {enumerable:true,configurable:true};}});var s='';for(var k in p){s+=k;}return s;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f686=%s" % ok)
 
 @_t
-def test_r48_f686_getOwnPropertyNames_open():
-    """F686 OPEN (getOwnPropertyNames): miss reproduces."""
-    miss = _misses("(function(){var p=new Proxy({},{ownKeys:function(){return ['%s','%s'];},getOwnPropertyDescriptor:function(){return {enumerable:true,configurable:true};}});return Object.getOwnPropertyNames(p).join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f686_getOwnPropertyNames_closed():
+    """F686 CLOSED (getOwnPropertyNames): blocks."""
+    ok = _blocked("(function(){var p=new Proxy({},{ownKeys:function(){return ['%s','%s'];},getOwnPropertyDescriptor:function(){return {enumerable:true,configurable:true};}});return Object.getOwnPropertyNames(p).join('');})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f686=%s" % ok)
 
 @_t
-def test_r48_f686_Reflect_ownKeys_open():
-    """F686 OPEN (Reflect-ownKeys): miss reproduces."""
-    miss = _misses("(function(){var p=new Proxy({},{ownKeys:function(){return ['%s','%s'];},getOwnPropertyDescriptor:function(){return {enumerable:true,configurable:true};}});return Reflect.ownKeys(p).join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f686_Reflect_ownKeys_closed():
+    """F686 CLOSED (Reflect-ownKeys): blocks."""
+    ok = _blocked("(function(){var p=new Proxy({},{ownKeys:function(){return ['%s','%s'];},getOwnPropertyDescriptor:function(){return {enumerable:true,configurable:true};}});return Reflect.ownKeys(p).join('');})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f686=%s" % ok)
 
 @_t
 def test_r48_f687_has_ternary_open():
@@ -312,16 +313,16 @@ def test_r48_f688_replace_fn_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r48_f689_spread_open():
-    """F689 OPEN (spread): miss reproduces."""
-    miss = _misses("(function(){var p=new Proxy([],{get:function(t,k){if(k===Symbol.iterator){return function*(){yield '%s';yield '%s';};}return t[k];}});return [...p].join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f689_spread_closed():
+    """F689 CLOSED (spread): blocks."""
+    ok = _blocked("(function(){var p=new Proxy([],{get:function(t,k){if(k===Symbol.iterator){return function*(){yield '%s';yield '%s';};}return t[k];}});return [...p].join('');})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f689=%s" % ok)
 
 @_t
-def test_r48_f689_for_of_open():
-    """F689 OPEN (for-of): miss reproduces."""
-    miss = _misses("(function(){var p=new Proxy([],{get:function(t,k){if(k===Symbol.iterator){return function*(){yield '%s';yield '%s';};}return t[k];}});var s='';for(var x of p){s+=x;}return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f689_for_of_closed():
+    """F689 CLOSED (for-of): blocks."""
+    ok = _blocked("(function(){var p=new Proxy([],{get:function(t,k){if(k===Symbol.iterator){return function*(){yield '%s';yield '%s';};}return t[k];}});var s='';for(var x of p){s+=x;}return s;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f689=%s" % ok)
 
 @_t
 def test_r48_f690_function_ctor_open():
