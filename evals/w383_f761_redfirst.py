@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Red-first for F738: F697 twin -- own non-callable [Symbol.toPrimitive].
+"""Red-first for F761: F697 twin -- own non-callable [Symbol.toPrimitive].
 
 _js_f697_toprimitive (wave-381, default hint) skips an own non-callable
 [Symbol.toPrimitive] as if absent, but the engine's GetMethod throws
@@ -25,10 +25,10 @@ _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
 
 SHAPES = [
-    ("f738-s1",
+    ("f761-s1",
      "(function(){var o={[Symbol.toPrimitive]:'x',"
      "toString:function(){return '%s';}};return o+'%s';})()" % (_A, _B), True),
-    ("f738-s2",
+    ("f761-s2",
      "(function(){var o={[Symbol.toPrimitive]:'x',"
      "valueOf:function(){return '%s';}};return o+'%s';})()" % (_A, _B), True),
 ]
