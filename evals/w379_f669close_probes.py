@@ -381,17 +381,17 @@ def test_p4_f653_still_blocks():
 
 
 def test_p4_open_neighbors_still_break():
-    """Open findings F662-F668, F670, F671: nothing absorbed by F669."""
+    """F662-F668, F670, F671 now CLOSED (wave-379 merge): they block."""
     import importlib
     bad = []
     for fnum in (662, 663, 664, 665, 666, 667, 668, 670, 671):
         mod = importlib.import_module("w378_f%d_redfirst" % fnum)
         for entry in mod.SHAPES:
             payload = entry[1]
-            if find_credential(payload) is not None:
+            if find_credential(payload) is None:
                 bad.append("f%d:%s" % (fnum, entry[0]))
     ok = not bad
-    return ("HELD" if ok else "BREAK", "absorbed=%s" % (bad or "none"))
+    return ("HELD" if ok else "BREAK", "not_blocked=%s" % (bad or "none"))
 
 
 def test_p4_junk_quiet():
@@ -410,13 +410,13 @@ def test_p4_composition():
 # ------------------------------------------------ pin + footer
 
 def test_p5_pin_and_footer():
-    """Pin 2140; lane-local footer: open F662-F668, F670, F671 / next F672."""
+    """Pin 2140; merged footer: open F672-F685 / next F686 (wave-379 merge)."""
     from gov.decision_codes import TAXONOMY  # noqa: E402
     ok = TAXONOMY_PIN == 2140
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and "Next free finding: **F672**" in text
-    ok = ok and ("Open findings: F662, F663, F664, F665, F666, F667, "
-                 "F668, F670, F671." in text)
+    ok = ok and "Next free finding: **F686**" in text
+    ok = ok and ("Open findings: F672, F673, F674, F675, F676, F677, F678, "
+                 "F679, F680, F681, F682, F683, F684, F685." in text)
     ok = ok and "**Status: CLOSED 2026-10-08 wave-379 lane 7.**" in text
     return ("HELD" if ok else "BREAK", "ok=%s" % ok)
 

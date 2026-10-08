@@ -128,7 +128,7 @@ def test_b0_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F686**" in text
-          and "Open findings: F662, F663, F664, F665, F666, F667, F668, F669, F670, F671, F672, F673, F674, F675, F676, F677, F678, F679, F680, F681, F682, F683, F684, F685." in text)
+          and "Open findings: F672, F673, F674, F675, F676, F677, F678, F679, F680, F681, F682, F683, F684, F685." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -384,9 +384,9 @@ def test_r47_f676_s1_open():
 
 @_t
 def test_r47_f676_s2_open():
-    """F676 OPEN (opt-bracket): miss reproduces."""
-    miss = _misses("(function(){var o={x:'%s'};return o?.['x']+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F676 (opt-bracket): now BLOCKED via F665 closure (wave-379 merge partial absorption)."""
+    blocked = _blocked("(function(){var o={x:'%s'};return o?.['x']+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
@@ -398,9 +398,9 @@ def test_r47_f676_s3_open():
 
 @_t
 def test_r47_f676_s4_open():
-    """F676 OPEN (opt-chain): miss reproduces."""
-    miss = _misses("(function(){var o={x:{y:'%s'}};return o?.x?.y+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F676 (opt-chain): now BLOCKED via F665 closure (wave-379 merge partial absorption)."""
+    blocked = _blocked("(function(){var o={x:{y:'%s'}};return o?.x?.y+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 # ------------------------------------------------- F677 open pins (must miss)

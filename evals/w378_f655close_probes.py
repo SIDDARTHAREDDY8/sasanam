@@ -443,7 +443,7 @@ def test_p8_lane_footer():
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as f:
         text = f.read()
     ok = ("**Status: CLOSED 2026-10-08 wave-378 lane 1.**" in text
-          and "Open findings: F662, F663, F664, F665, F666, F667, F669, F670, F671." in text  # Wave-379 lane 6: F668 CLOSED (lane-local)
+          and "Open findings: F672, F673, F674, F675, F676, F677, F678, F679, F680, F681, F682, F683, F684, F685." in text  # Wave-379 lane 6: F668 CLOSED (lane-local)
           and "Next free finding: **F672**." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 

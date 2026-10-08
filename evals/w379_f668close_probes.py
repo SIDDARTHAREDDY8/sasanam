@@ -243,24 +243,24 @@ def test_p4_sibling_closures_hold():
 _OPEN_NEIGHBORS = [
     ("f662", "(function(){class C{static x='%s';}return C.x+'%s';})()" % (_A, _B)),
     ("f663", "(function(){var o=Object.fromEntries([['x','%s']]);return o.x+'%s';})()" % (_A, _B)),
-    ("f664", "(function(){var d=Object.getOwnPropertyDescriptor({get x(){return '%s';}},'x');return d.get()+'%s';})()" % (_A, _B)),
+    ("f664", "(function(){var o={get x(){return '%s';}};return Object.getOwnPropertyDescriptor(o,'x').get()+'%s';})()" % (_A, _B)),
     ("f665", "(function(){var o={x:'%s'};return o?.x+'%s';})()" % (_A, _B)),
-    ("f666", "(function(){var p=new Proxy({},{apply:function(t,th,args){return '%s';}});return p()+'%s';})()" % (_A, _B)),
+    ("f666", "(function(){var p=new Proxy(function(){},{apply:function(){return '%s';}});return p()+'%s';})()" % (_A, _B)),
     ("f667", "(function(){var o={x:'%s'};with(o){return x+'%s';}})()" % (_A, _B)),
     ("f669", "(function(){var st=new Set(['%s','%s']);return [...st].join('');})()" % (_A, _B)),
-    ("f670", "(function(){var p=new Proxy({},{get:function(t,k){return '%s';}});return p.x+'%s';})()" % (_A, _B)),
+    ("f670", "(function(){var a='%s',b='%s';var p=new Proxy({},{get:(t,k)=>{return a+b;}});return p.anything;})()" % (_A, _B)),
     ("f671", "(function(){var o={x:'%s'};return o.x+'%s';})()" % (_A, _B)),
 ]
 
 
 def test_p5_open_neighbors_still_miss():
-    """Open F662-F667/F669-F671: representative shapes still miss."""
-    bad = [name for name, p in _OPEN_NEIGHBORS if not _misses(p)]
+    """F662-F667/F669-F671 now CLOSED (wave-379 merge): representative shapes block."""
+    bad = [name for name, p in _OPEN_NEIGHBORS if not _blocked(p)]
     ok = not bad
     return ("HELD" if ok else "BREAK",
-            "%d/%d miss%s" % (len(_OPEN_NEIGHBORS) - len(bad),
+            "%d/%d block%s" % (len(_OPEN_NEIGHBORS) - len(bad),
                               len(_OPEN_NEIGHBORS),
-                              "" if ok else " :: absorbed=" + ",".join(bad)))
+                              "" if ok else " :: not_blocked=" + ",".join(bad)))
 
 
 # ------------------------------------------------ junk quiet + composition
@@ -313,8 +313,8 @@ def test_p8_pin_footer():
     import gov.decision_codes as dc
     ok = (TAXONOMY_PIN == 2140 and len(dc.TAXONOMY) > 0)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and ("Next free finding: **F672**" in text)  # Wave-379 lane 6: F668 CLOSED; footer repoint open F662-F667,F669-F671 / next F672
-    ok = ok and ("Open findings: F662, F663, F664, F665, F666, F667, F669, F670, F671." in text)  # Wave-379 lane 6: F668 CLOSED; footer repoint open F662-F667,F669-F671 / next F672
+    ok = ok and ("Next free finding: **F686**" in text)  # Wave-379 lane 6: F668 CLOSED; footer repoint open F662-F667,F669-F671 / next F672
+    ok = ok and ("Open findings: F672, F673, F674, F675, F676, F677, F678, F679, F680, F681, F682, F683, F684, F685." in text)  # Wave-379 lane 6: F668 CLOSED; footer repoint open F662-F667,F669-F671 / next F672
     ok = ok and (_dlp is not None)
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 

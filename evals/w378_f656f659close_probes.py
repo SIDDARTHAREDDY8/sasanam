@@ -544,8 +544,8 @@ def test_p8_pin_and_footer():
             if line.startswith("Next free finding:"):
                 footer = line.strip()
     ok_footer = (footer is not None
-                 and "Next free finding: **F672**" in footer
-                 and "Open findings: F662, F663, F664, F665, F666, F667, F669, F670, F671." in footer)  # Wave-379 lane 6: F668 CLOSED (lane-local)
+                 and "Next free finding: **F686**" in footer
+                 and "Open findings: F672, F673, F674, F675, F676, F677, F678, F679, F680, F681, F682, F683, F684, F685." in footer)  # Wave-379 lane 6: F668 CLOSED (lane-local)
     ok = ok_pin and ok_footer
     return ("HELD" if ok else "BREAK",
             "pin=%s footer=%s" % (ok_pin, ok_footer))

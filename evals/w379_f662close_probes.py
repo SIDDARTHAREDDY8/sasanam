@@ -329,7 +329,7 @@ def test_p3_bounds():
 
 
 def test_p4_open_neighbors_still_miss():
-    """Open findings F663-F671: nothing absorbed by the F662 close."""
+    """F663-F671 now CLOSED (wave-379 merge): they block, nothing absorbed."""
     cases = [
         ("f663", "(function(){var o=Object.fromEntries([['a','" + _A
          + "'],['b','" + _B + "']]);return o.a+o.b;})()"),
@@ -351,9 +351,9 @@ def test_p4_open_neighbors_still_miss():
         ("f671", "(function(){var o={x:'" + _A + "'};return o.x+'" + _B
          + "';})()"),
     ]
-    bad = [n for n, p in cases if not _misses(p)]
+    bad = [n for n, p in cases if not _blocked(p)]
     ok = not bad
-    return ("HELD" if ok else "BREAK", "absorbed=%s" % (bad,))
+    return ("HELD" if ok else "BREAK", "not_blocked=%s" % (bad,))
 
 
 def test_p5_closed_neighbors_still_held():
@@ -478,14 +478,14 @@ def test_p7_node_differential():
 
 
 def test_p8_pin_footer():
-    """Pin 2140; lane-local footer: open F663-F671, next F672."""
+    """Pin 2140; merged footer: open F672-F685, next F686 (wave-379 merge)."""
     import re
     p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                      "FINDINGS.md")
     text = open(p, encoding="utf-8").read()
     ok = (TAXONOMY_PIN == 2140 and len(dc.TAXONOMY) > 0
-          and "Next free finding: **F672**." in text
-          and "Open findings: F663, F664, F665, F666, F667, F668, F669, F670, F671."
+          and "Next free finding: **F686**." in text
+          and "Open findings: F672, F673, F674, F675, F676, F677, F678, F679, F680, F681, F682, F683, F684, F685."
           in text)
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 

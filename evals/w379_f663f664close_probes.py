@@ -300,11 +300,11 @@ def test_p3_f663_extra_statement():
 
 @_t
 def test_p3_f663_plain_object_stays_open():
-    """F663 source must be fromEntries: plain object is F671's (open) shape."""
+    """F663 source must be fromEntries: plain object is F671's shape (now CLOSED, wave-379 merge)."""
     s = ("(function(){var o={a:'" + _A + "',b:'" + _B
          + "'};return o.a+o.b;})()")
-    miss = _misses(s)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    blocked = _blocked(s)
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
@@ -407,71 +407,71 @@ def test_p3_f664_member_read_term():
 
 @_t
 def test_p4_f662_still_open():
-    """F662 (OPEN): class static field still misses."""
+    """F662 now CLOSED (wave-379 merge): class static field blocks."""
     s = "(function(){class C{static x='%s';}return C.x+'%s';})()" % (_A, _B)
-    miss = _misses(s)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    blocked = _blocked(s)
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
 def test_p4_f665_still_open():
-    """F665 (OPEN): ?. member read still misses."""
+    """F665 now CLOSED (wave-379 merge): ?. member read blocks."""
     s = "({x:'%s'})?.x+'%s'" % (_A, _B)
-    miss = _misses(s)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    blocked = _blocked(s)
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
 def test_p4_f666_still_open():
-    """F666 (OPEN): Proxy apply trap still misses."""
+    """F666 now CLOSED (wave-379 merge): Proxy apply trap blocks."""
     s = ("(function(){var p=new Proxy(function(){},{apply:function()"
          + "{return '%s';}});return p()+'%s';})()") % (_A, _B)
-    miss = _misses(s)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    blocked = _blocked(s)
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
 def test_p4_f667_still_open():
-    """F667 (OPEN): with-scope identifier reads still miss."""
+    """F667 now CLOSED (wave-379 merge): with-scope reads block."""
     s = ("(function(){var o={x:'%s',y:'%s'};with(o){return x+y;}})()"
          % (_A, _B))
-    miss = _misses(s)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    blocked = _blocked(s)
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
 def test_p4_f668_still_open():
-    """F668 (OPEN): custom tag-function template still misses."""
+    """F668 now CLOSED (wave-379 merge): tag-function template blocks."""
     s = ("(function(){function tag(s){return s[0]+'%s';}return tag`%s`;})()"
          % (_B, _A))
-    miss = _misses(s)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    blocked = _blocked(s)
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
 def test_p4_f669_still_open():
-    """F669 (OPEN): builtin-iterable spread still misses."""
+    """F669 now CLOSED (wave-379 merge): iterable spread blocks."""
     s = ("(function(){var st=new Set(['%s','%s']);return [...st].join('');})()"
          % (_A, _B))
-    miss = _misses(s)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    blocked = _blocked(s)
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
 def test_p4_f670_still_open():
-    """F670 (OPEN): Proxy get-trap block-body form still misses."""
+    """F670 now CLOSED (wave-379 merge): get-trap block-body blocks."""
     s = ("(function(){var a='%s',b='%s';var p=new Proxy({},"
          + "{get:(t,k)=>{return a+b;}});return p.anything;})()") % (_A, _B)
-    miss = _misses(s)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    blocked = _blocked(s)
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
 def test_p4_f671_still_open():
-    """F671 (OPEN): return-position member reads still miss."""
+    """F671 now CLOSED (wave-379 merge): return-position reads block."""
     s = ("(function(){var o={x:'%s'};return o.x+'%s';})()" % (_A, _B))
-    miss = _misses(s)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    blocked = _blocked(s)
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 # ------------------------------------------------ p5: closed neighbors still held
@@ -558,8 +558,8 @@ def test_p7_pin_footer():
     """Pin 2140; lane-local footer (open F662, F665-F671 / next F672)."""
     ok = (TAXONOMY_PIN == 2140 and len(TAXONOMY) > 0)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and ("Next free finding: **F672**" in text)  # Wave-379 lane 2: F663, F664 CLOSED; open F662, F665-F671 / next F672
-    ok = ok and ("Open findings: F662, F665, F666, F667, F668, F669, F670, F671." in text)  # Wave-379 lane 2: F663, F664 CLOSED; open F662, F665-F671 / next F672
+    ok = ok and ("Next free finding: **F686**" in text)  # Wave-379 lane 2: F663, F664 CLOSED; open F662, F665-F671 / next F672
+    ok = ok and ("Open findings: F672, F673, F674, F675, F676, F677, F678, F679, F680, F681, F682, F683, F684, F685." in text)  # Wave-379 lane 2: F663, F664 CLOSED; open F662, F665-F671 / next F672
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 
 

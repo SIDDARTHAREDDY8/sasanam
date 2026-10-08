@@ -240,7 +240,7 @@ def test_p6_twin_boundaries():
 
 @_t
 def test_p7_open_findings_still_break():
-    """F662-F664 / F666-F670 open pins still miss -- F665/F671 closures absorbed nothing."""
+    """F662-F664 / F666-F670 now CLOSED (wave-379 merge): they block -- F665/F671 closures absorbed nothing."""
     shapes = [
         ("F662", "(function(){class C{static x='%s';}return C.x+'%s';})()" % (_A, _B)),
         ("F662", "(function(){class C{x='%s';}return new C().x+'%s';})()" % (_A, _B)),
@@ -252,9 +252,9 @@ def test_p7_open_findings_still_break():
         ("F669", "(function(){var st=new Set(['%s','%s']);return [...st].join('');})()" % (_A, _B)),
         ("F670", "(function(){var a='%s',b='%s';var p=new Proxy({},{get:(t,k)=>{return a+b;}});return p.anything;})()" % (_A, _B)),
     ]
-    got = [_misses(s) for _, s in shapes]
+    got = [_blocked(s) for _, s in shapes]
     ok = all(got)
-    return ("HELD" if ok else "BREAK", "still-miss=%s" % got)
+    return ("HELD" if ok else "BREAK", "blocked=%s" % got)
 
 
 # ------------------------------------------------ p8: junk quiet
@@ -295,8 +295,8 @@ def test_p10_pin_footer():
     """Pin 2140; lane-local footer (F665/F671 CLOSED; open F662-F664, F666-F670 / next F672)."""
     ok = (TAXONOMY_PIN == 2140 and len(TAXONOMY) > 0)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and ("Next free finding: **F672**" in text)  # Wave-379 lane 3: F665/F671 CLOSED; open F662-F664, F666-F670 / next F672
-    ok = ok and ("Open findings: F662, F663, F664, F666, F667, F668, F669, F670." in text)  # Wave-379 lane 3: F665/F671 CLOSED; open F662-F664, F666-F670 / next F672
+    ok = ok and ("Next free finding: **F686**" in text)  # Wave-379 lane 3: F665/F671 CLOSED; open F662-F664, F666-F670 / next F672
+    ok = ok and ("Open findings: F672, F673, F674, F675, F676, F677, F678, F679, F680, F681, F682, F683, F684, F685." in text)  # Wave-379 lane 3: F665/F671 CLOSED; open F662-F664, F666-F670 / next F672
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 
 
