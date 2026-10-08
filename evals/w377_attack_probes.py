@@ -117,11 +117,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F655, F656, F657, F659 closed; F658, F660, F661 open, next F662 (wave-378 merge lanes 1-3)."""
+    """Control: footer shows F655-F659 closed; F660, F661 open, next F662 (wave-378 merge lanes 1-4)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F662**" in text  # Wave-378 merge: lanes 1-3 F655, F656, F657, F659 CLOSED
-          and "Open findings: F658, F660, F661." in text)  # Wave-378 merge: lanes 1-3 F655, F656, F657, F659 CLOSED
+    ok = ("Next free finding: **F662**" in text  # Wave-378 merge: lanes 1-4 F655, F656, F657, F658, F659 CLOSED
+          and "Open findings: F660, F661." in text)  # Wave-378 merge: lanes 1-4 F655, F656, F657, F658, F659 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -252,20 +252,20 @@ def test_r45_f657_s2_open():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
-# ------------------------------------------------- F658 open pins (must miss)
+# ------------------------------------------------- F658 closed pins (must block)
 
 @_t
-def test_r45_f658_s1_open():
-    """F658 OPEN (flatMap function callback): miss reproduces."""
-    miss = _misses("['x'].flatMap(function(){return ['%s','%s'];}).join('')" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r45_f658_s1_closed():
+    """F658 CLOSED (flatMap function callback): blocks coded."""
+    ok = _blocked("['x'].flatMap(function(){return ['%s','%s'];}).join('')" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocks=%s" % ok)
 
 
 @_t
-def test_r45_f658_s2_open():
-    """F658 OPEN (flatMap arrow callback): miss reproduces."""
-    miss = _misses("['x'].flatMap(()=>['%s','%s']).join('')" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r45_f658_s2_closed():
+    """F658 CLOSED (flatMap arrow callback): blocks coded."""
+    ok = _blocked("['x'].flatMap(()=>['%s','%s']).join('')" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocks=%s" % ok)
 
 
 # ------------------------------------------------- F659 closed pins (must block; wave-378 lane 2)
