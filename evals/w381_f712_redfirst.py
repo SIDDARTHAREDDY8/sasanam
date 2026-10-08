@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Red-first for F700: var-bound Map iteration reads.
+"""Red-first for F712: var-bound Map iteration reads.
 
 F695 (CLOSED, wave-381 lane 2) models the INLINE bare-Map iteration
 protocol (`[...new Map(...)]`, `Array.from(new Map(...))`), and

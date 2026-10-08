@@ -112,11 +112,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F696, F699 open, next F700 (merged lanes 1-6)."""
+    """Control: footer shows F711, F712 open, next F713 (merged lanes 1-7; F700 filings renumbered)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F700**" in text
-          and "Open findings: F696, F699." in text)  # Wave-381 merge: lanes 1-6 (F686-F698 except F696, F699 CLOSED)
+    ok = ("Next free finding: **F713**" in text
+          and "Open findings: F711, F712." in text)  # Wave-381 merge: lanes 1-7 (F686-F699 ALL CLOSED; F700->F711/F712)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -403,16 +403,16 @@ def test_r48_f695_arrayfrom_pair_closed():
     return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r48_f696_plus_coerce_open():
-    """F696 OPEN (plus-coerce): miss reproduces."""
-    miss = _misses("(function(){return (new String('%s'))+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f696_plus_coerce_closed():
+    """F696 CLOSED (plus-coerce): coded refusal."""  # Wave-381 lane 7: F696 CLOSED
+    blocked = _blocked("(function(){return (new String('%s'))+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 @_t
-def test_r48_f696_valueOf_open():
-    """F696 OPEN (valueOf): miss reproduces."""
-    miss = _misses("(function(){return new String('%s').valueOf()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f696_valueOf_closed():
+    """F696 CLOSED (valueOf): coded refusal."""  # Wave-381 lane 7: F696 CLOSED
+    blocked = _blocked("(function(){return new String('%s').valueOf()+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 @_t
 def test_r48_f697_valueOf_closed():
