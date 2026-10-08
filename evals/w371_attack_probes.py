@@ -386,11 +386,13 @@ def test_r39_f595_open():
 
 @_t
 def test_r39_f596_open():
-    """F596 OPEN (wave-370 merge): WeakMap statement-form set/get still miss."""
-    m1 = _misses("(function(){var k={};var m=new WeakMap();m.set(k,'%s');return m.get(k);})()+'%s'" % (_A, _B))
-    m2 = _misses("(function(){const k={};const m=new WeakMap();m.set(k,'%s');return m.get(k);})()+'%s'" % (_A, _B))
-    ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    """F596 CLOSED by wave-371 lane 7: WeakMap statement-form set/get now held."""
+    # Wave-371 merge: lane 7 closed F596; the attack-lane "still open"
+    # expectation is superseded.
+    h1 = not _misses("(function(){var k={};var m=new WeakMap();m.set(k,'%s');return m.get(k);})()+'%s'" % (_A, _B))
+    h2 = not _misses("(function(){const k={};const m=new WeakMap();m.set(k,'%s');return m.get(k);})()+'%s'" % (_A, _B))
+    ok = h1 and h2
+    return ("HELD" if ok else "BREAK", "held=%s" % ok)
 
 
 # ---------------------------------------------------------------- green check
