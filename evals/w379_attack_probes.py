@@ -127,7 +127,7 @@ def test_p0_pin_taxonomy():
 @_t
 def test_b0_footer_state():
     ok = ("Next free finding: **F700**" in text
-          and "Open findings: F699." in text)  # Wave-380 merge: F672-F685 (lanes 1-7) CLOSED; lane-4 F686 -> F699; footer repoint open F699 / next F700
+          and "Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text)  # Wave-380 merge: F672-F685 (lanes 1-7) CLOSED; F686-F698 (attack round 48) OPEN; lane-4 F686 -> F699; final footer open F686-F699 / next F700
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
