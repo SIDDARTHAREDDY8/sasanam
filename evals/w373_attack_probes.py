@@ -128,11 +128,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F612-F620 open, next F621 (wave-373 merge)."""
+    """Control: footer shows F613 closed; open F612, F614-F620; next F621."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F621**" in text  # Wave-373 merge: attack round 41 filed F612-F620
-          and "Open findings: F612, F613, F614, F615, F616, F617, F618, F619, F620." in text)  # Wave-373 merge: F595, F606-F611 CLOSED
+    ok = ("Next free finding: **F621**" in text  # Wave-373 merge: attack round 41 filed F612-F620  # Wave-374 lane 2: F613 CLOSED
+          and "Open findings: F612, F614, F615, F616, F617, F618, F619, F620." in text)  # Wave-373 merge: F595, F606-F611 CLOSED  # Wave-374 lane 2: F613 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -292,13 +292,13 @@ def test_r41_f612_open():
 
 
 @_t
-def test_r41_f613_open():
-    """F613 OPEN: String.raw tag in non-leading positions misses."""
-    m1 = _misses("'" + _A + "'+String.raw`" + _B + "`")
-    m2 = _misses("(String.raw`" + _A + "`)+'" + _B + "'")
-    m3 = _misses("[String.raw`" + _A + "`,String.raw`" + _B + "`].join('')")
-    ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_p1_f613_closed():
+    """F613 CLOSED (wave-374 lane 2): String.raw tag in non-leading positions blocks."""
+    b1 = _blocked("'" + _A + "'+String.raw`" + _B + "`")
+    b2 = _blocked("(String.raw`" + _A + "`)+'" + _B + "'")
+    b3 = _blocked("[String.raw`" + _A + "`,String.raw`" + _B + "`].join('')")
+    ok = b1 and b2 and b3
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
 @_t
