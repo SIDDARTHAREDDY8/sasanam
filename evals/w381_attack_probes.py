@@ -99,7 +99,7 @@ def test_b0_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F713**" in text
-          and "Open findings: F706, F707, F708, F709, F710, F711, F712." in text)  # Wave-382 merge: lanes 1-3 (F700-F705 CLOSED)
+          and "Open findings: F708, F709, F710, F711, F712." in text)  # Wave-382 merge: lanes 1-4 (F700-F707 CLOSED)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -267,31 +267,31 @@ def test_r49_f705_reflect_get_plain_closed():
 
 
 @_t
-def test_r49_f706_dp_trap_open():
-    """F706 OPEN (defineProperty trap): miss reproduces."""
-    miss = _misses("(function(){var t={};var p=new Proxy(t,{defineProperty:function(tr,pr,de){tr[pr]='%s';return true;}});Object.defineProperty(p,'x',{value:1});return t.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r49_f706_dp_trap_closed():
+    """F706 CLOSED: still blocks."""
+    ok = _blocked("(function(){var t={};var p=new Proxy(t,{defineProperty:function(tr,pr,de){tr[pr]='%s';return true;}});Object.defineProperty(p,'x',{value:1});return t.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f706=%s" % ok)
 
 
 @_t
-def test_r49_f706_dp_trap_2_open():
-    """F706 OPEN (defineProperty trap): miss reproduces."""
-    miss = _misses("(function(){var t={};var p=new Proxy(t,{defineProperty:function(tr,pr,de){tr[pr]=de.value2||'%s';return true;}});Object.defineProperty(p,'x',{value:1});return t.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r49_f706_dp_trap_2_closed():
+    """F706 CLOSED: still blocks."""
+    ok = _blocked("(function(){var t={};var p=new Proxy(t,{defineProperty:function(tr,pr,de){tr[pr]=de.value2||'%s';return true;}});Object.defineProperty(p,'x',{value:1});return t.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f706=%s" % ok)
 
 
 @_t
-def test_r49_f707_gopd_trap_open():
-    """F707 OPEN (gopd trap): miss reproduces."""
-    miss = _misses("(function(){var t={x:'%s'};var p=new Proxy(t,{getOwnPropertyDescriptor:function(tr,pr){return {value:tr[pr],configurable:true};}});return Object.getOwnPropertyDescriptor(p,'x').value+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r49_f707_gopd_trap_closed():
+    """F707 CLOSED: still blocks."""
+    ok = _blocked("(function(){var t={x:'%s'};var p=new Proxy(t,{getOwnPropertyDescriptor:function(tr,pr){return {value:tr[pr],configurable:true};}});return Object.getOwnPropertyDescriptor(p,'x').value+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f707=%s" % ok)
 
 
 @_t
-def test_r49_f707_gopd_trap_reflect_open():
-    """F707 OPEN (gopd trap): miss reproduces."""
-    miss = _misses("(function(){var t={x:'%s'};var p=new Proxy(t,{getOwnPropertyDescriptor:function(tr,pr){return {value:tr[pr],configurable:true};}});return Reflect.getOwnPropertyDescriptor(p,'x').value+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r49_f707_gopd_trap_reflect_closed():
+    """F707 CLOSED: still blocks."""
+    ok = _blocked("(function(){var t={x:'%s'};var p=new Proxy(t,{getOwnPropertyDescriptor:function(tr,pr){return {value:tr[pr],configurable:true};}});return Reflect.getOwnPropertyDescriptor(p,'x').value+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f707=%s" % ok)
 
 
 @_t
