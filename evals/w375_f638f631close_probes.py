@@ -404,8 +404,8 @@ def p7_node_differential():
 
 
 def p8_compositions():
-    """F618/F619/F621/F625/F636/F639/F640/F641 stay HELD; still-open
-    findings (F642, F643, F654) still miss (merge intermediate)."""
+    """F618/F619/F621/F625/F636/F639/F640/F641/F642/F643 stay HELD;
+    still-open findings (F644-F654) still miss."""
     held_shapes = [
         # F618 (CLOSED) still blocks
         "Promise.all([Promise.resolve('%s'),Promise.resolve('%s')])"
@@ -440,8 +440,8 @@ def p8_compositions():
     ]
     # F641-F643: still open
     import importlib
-    for fnum in (642, 643):
-        mod = importlib.import_module("w375_f%d_redfirst" % fnum)
+    for fnum in (644, 645, 646, 647, 648, 649, 650, 651, 652, 653):
+        mod = importlib.import_module("w376_f%d_redfirst" % fnum)
         for name, payload, recovers in mod.SHAPES:
             if recovers:
                 miss_shapes.append(payload)
@@ -453,6 +453,12 @@ def p8_compositions():
     for _name, _payload, _recovers in _f641mod.SHAPES:
         if _recovers:
             held_shapes.append(_payload)
+    # F642/F643 (CLOSED 2026-10-08 wave-376 lanes 3-4) now block -- same promotion.
+    for _fmodname in ("w375_f642_redfirst", "w375_f643_redfirst"):
+        _fmod = importlib.import_module(_fmodname)
+        for _name, _payload, _recovers in _fmod.SHAPES:
+            if _recovers:
+                held_shapes.append(_payload)
     bad = [s for s in held_shapes if not _blocked(s)]
     bad += [s for s in miss_shapes if not _quiet(s)]
     return ("HELD" if not bad else "BREAK",
@@ -485,8 +491,8 @@ def p10_pin_and_footer():
     footer_ok = ("CLOSED 2026-10-08 wave-375 lane 8" in text
                  and "CLOSED 2026-10-08 wave-376 lane 1" in text  # F640 CLOSED
                  and "CLOSED 2026-10-08 wave-376 lane 2" in text  # F641 CLOSED
-                 and "Open findings: F642, F643, F644." in text  # merge intermediate
-                 and "Next free finding: **F645**" in text)  # merge intermediate
+                 and "Open findings: F644, F645, F646, F647, F648, F649, F650, F651, F652, F653, F654." in text  # merge intermediate # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
+                 and "Next free finding: **F655**" in text)  # merge intermediate # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
     detail = "pin=%s codes=%d; footer-closed=%s" % (
         TAXONOMY_PIN, n, footer_ok)
     return (("HELD", detail) if (pin_ok and footer_ok)

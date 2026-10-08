@@ -441,26 +441,26 @@ def test_p4_f638_still_blocks():
     return ("HELD" if _blocked(p) else "BREAK", "f638")
 
 
-def test_p4_f640_still_open():
-    """F640 (OPEN) for-await over sync iterables still misses."""
+def test_p4_f640_now_closed():
+    """F640 (CLOSED wave-376 lane 1) for-await over sync iterables now blocks."""
     p = ("(async()=>{var p=[];for await (const x of ['" + _F1 + "','"
          + _F2 + "','" + _F3 + "']) p.push(x); return p.join('');})()")
-    return ("HELD" if _misses(p) else "BREAK", "f640-open")
+    return ("HELD" if _blocked(p) else "BREAK", "f640-closed")
 
 
-def test_p4_f642_still_open():
-    """F642 (OPEN) getter var-fragments still miss."""
+def test_p4_f642_now_closed():
+    """F642 (CLOSED wave-376 lane 3) getter var-fragments now block."""
     p = ("(function(){var a='" + _F1 + "',b='" + _F2 + "',c='" + _F3
          + "';var o={get s(){return a+b+c;}};return o.s;})()")
-    return ("HELD" if _misses(p) else "BREAK", "f642-open")
+    return ("HELD" if _blocked(p) else "BREAK", "f642-closed")
 
 
-def test_p4_f643_still_open():
-    """F643 (OPEN) fromCharCode-u8-spread still misses."""
+def test_p4_f643_now_closed():
+    """F643 (CLOSED wave-376 lane 4) fromCharCode-u8-spread now blocks."""
     p = ("String.fromCharCode(...new Uint8Array(["
          + ",".join(str(b) for b in (_F1 + _F2).encode()) + "]))+'"
          + _F3 + "'")
-    return ("HELD" if _misses(p) else "BREAK", "f643-open")
+    return ("HELD" if _blocked(p) else "BREAK", "f643-closed")
 
 
 # ------------------------------------------------- p5: junk quiet
@@ -596,8 +596,8 @@ def test_p7_pin_taxonomy():
 def test_p7_footer_state():
     """Footer: F641 closed; open F640, F642, F643; next F644."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F644**" in text  # Wave-376 lane 2: F641 CLOSED
-          and "Open findings: F640, F642, F643." in text)  # Wave-376 lane 2: F641 CLOSED
+    ok = ("Next free finding: **F655**" in text  # Wave-376 lane 2: F641 CLOSED # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
+          and "Open findings: F644, F645, F646, F647, F648, F649, F650, F651, F652, F653, F654." in text)  # Wave-376 lane 2: F641 CLOSED # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

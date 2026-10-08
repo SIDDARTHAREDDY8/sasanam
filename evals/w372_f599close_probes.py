@@ -42,8 +42,8 @@ _CRED = _A1 + _A2
 
 TAXONOMY_PIN = 2140  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
 
-FOOTER_OPEN = "F640, F641, F642, F643"  # Wave-372 merge: footer repoint  # Wave-373 lane 4: F608 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED  # Wave-374 lane 5: F616, F617 CLOSED  # Wave-374 lane 5: F621 FILED OPEN  # Wave-374 lane 5: F616, F617 CLOSED; F621 FILED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
-FOOTER_NEXT = "F644"  # Wave-372 merge: footer repoint  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 5: F616, F617 CLOSED; F621 FILED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
+FOOTER_OPEN = "F644, F645, F646, F647, F648, F649, F650, F651, F652, F653, F654"  # Wave-372 merge: footer repoint  # Wave-373 lane 4: F608 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED  # Wave-374 lane 5: F616, F617 CLOSED  # Wave-374 lane 5: F621 FILED OPEN  # Wave-374 lane 5: F616, F617 CLOSED; F621 FILED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
+FOOTER_NEXT = "F655"  # Wave-372 merge: footer repoint  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 5: F616, F617 CLOSED; F621 FILED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
 
 
 def _blocked(payload):

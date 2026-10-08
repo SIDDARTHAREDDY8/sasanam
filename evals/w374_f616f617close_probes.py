@@ -425,8 +425,8 @@ def p9_pin_footer():
     pin_ok = TAXONOMY_PIN == 2140 and guac_graph.TAXONOMY_PIN == 2140
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    footer_ok = ("Next free finding: **F644**" in text  # Wave-375 lane 5: footer repoint open F621-F625, F628-F634, F636-F639 / next F640
-                 and "Open findings: F640, F641, F642, F643."  # Wave-375 lane 5: footer repoint open F621-F625, F628-F634, F636-F639 / next F640
+    footer_ok = ("Next free finding: **F655**" in text  # Wave-375 lane 5: footer repoint open F621-F625, F628-F634, F636-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
+                 and "Open findings: F644, F645, F646, F647, F648, F649, F650, F651, F652, F653, F654."  # Wave-375 lane 5: footer repoint open F621-F625, F628-F634, F636-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
                  in text)
     ok = pin_ok and footer_ok
     return ("HELD" if ok else "BREAK",

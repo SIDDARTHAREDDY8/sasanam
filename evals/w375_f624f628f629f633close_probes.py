@@ -335,8 +335,8 @@ def test_p5_pin_taxonomy():
 def test_p5_footer_state():
     """Footer: F624/F628/F629/F633 closed; open F621-F623,F625-F627,F630-F632,F634-F639; next F640 (wave-375 lane 4)."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F644**" in text  # Wave-375 lane 4: F624, F628, F629, F633 CLOSED
-          and "Open findings: F640, F641, F642, F643." in text)  # Wave-375 lane 4: F624, F628, F629, F633 CLOSED
+    ok = ("Next free finding: **F655**" in text  # Wave-375 lane 4: F624, F628, F629, F633 CLOSED # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
+          and "Open findings: F644, F645, F646, F647, F648, F649, F650, F651, F652, F653, F654." in text)  # Wave-375 lane 4: F624, F628, F629, F633 CLOSED # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

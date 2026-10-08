@@ -342,8 +342,8 @@ def p8_node_differential():
 def p9_pin_footer():
     assert TAXONOMY_PIN == 2140, "pin moved"
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F644**" in text  # Wave-375 lane 2: F622, F632 CLOSED  # Wave-372 merge: footer repoint next F612  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
-          and "Open findings: F640, F641, F642, F643." in text  # Wave-375 lane 2: F622, F632 CLOSED  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 4: F608 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640
+    ok = ("Next free finding: **F655**" in text  # Wave-375 lane 2: F622, F632 CLOSED  # Wave-372 merge: footer repoint next F612  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
+          and "Open findings: F644, F645, F646, F647, F648, F649, F650, F651, F652, F653, F654." in text  # Wave-375 lane 2: F622, F632 CLOSED  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 4: F608 CLOSED  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 2: F613 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
           # Wave-371 lane 6: F592/F594 CLOSED; F583-F591, F593, F595,
           # F596 OPEN (F582 footer-rot corrected: entry CLOSED)
           and text.count("**Status: CLOSED 2026-10-07 wave-371 lane 6.**")

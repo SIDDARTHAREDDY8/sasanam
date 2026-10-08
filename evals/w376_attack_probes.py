@@ -152,8 +152,8 @@ def test_b0_footer_state():
     """Control: footer shows F640-F653 open, next F654 (this lane)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F654**" in text
-          and "Open findings: F640, F641, F642, F643, F644, F645, F646, F647, F648, F649, F650, F651, F652, F653." in text)
+    ok = ("Next free finding: **F655**" in text  # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
+          and "Open findings: F644, F645, F646, F647, F648, F649, F650, F651, F652, F653, F654." in text)  # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -217,113 +217,113 @@ def test_p1_f612_closed():
 # ------------------------------------------------- F640 open pins (must miss)
 
 @_t
-def test_r43_f640_s1_open():
-    """F640 OPEN (shape forawait-accumulate): miss reproduces."""
-    miss = _misses("(async()=>{var s='';for await (const x of ['%s','%s','%s']) s+=x; return s;})()"
+def test_r43_f640_s1_closed():
+    """F640 CLOSED (wave-376 lane 1) (shape forawait-accumulate): now blocked."""
+    hit = _blocked("(async()=>{var s='';for await (const x of ['%s','%s','%s']) s+=x; return s;})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r43_f640_s2_open():
-    """F640 OPEN (shape forawait-push-join): miss reproduces."""
-    miss = _misses("(async()=>{var p=[];for await (const x of ['%s','%s','%s']) p.push(x); return p.join('');})()"
+def test_r43_f640_s2_closed():
+    """F640 CLOSED (wave-376 lane 1) (shape forawait-push-join): now blocked."""
+    hit = _blocked("(async()=>{var p=[];for await (const x of ['%s','%s','%s']) p.push(x); return p.join('');})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r43_f640_s3_open():
-    """F640 OPEN (shape forawait-map-values): miss reproduces."""
-    miss = _misses("(async()=>{var s='';for await (const x of new Map([['a','%s'],['b','%s'],['c','%s']]).values()) s+=x; return s;})()"
+def test_r43_f640_s3_closed():
+    """F640 CLOSED (wave-376 lane 1) (shape forawait-map-values): now blocked."""
+    hit = _blocked("(async()=>{var s='';for await (const x of new Map([['a','%s'],['b','%s'],['c','%s']]).values()) s+=x; return s;})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F641 open pins (must miss)
 
 @_t
-def test_r43_f641_s1_open():
-    """F641 OPEN (shape microtask-assembly): miss reproduces."""
-    miss = _misses("(async()=>{var p=[];queueMicrotask(()=>p.push('%s'));queueMicrotask(()=>p.push('%s'));queueMicrotask(()=>p.push('%s'));await null;return p.join('');})()"
+def test_r43_f641_s1_closed():
+    """F641 CLOSED (wave-376 lane 2) (shape microtask-assembly): now blocked."""
+    hit = _blocked("(async()=>{var p=[];queueMicrotask(()=>p.push('%s'));queueMicrotask(()=>p.push('%s'));queueMicrotask(()=>p.push('%s'));await null;return p.join('');})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r43_f641_s2_open():
-    """F641 OPEN (shape microtask-nested): miss reproduces."""
-    miss = _misses("(async()=>{var p=[];queueMicrotask(()=>{p.push('%s');queueMicrotask(()=>p.push('%s'+'%s'));});await null;await null;return p.join('');})()"
+def test_r43_f641_s2_closed():
+    """F641 CLOSED (wave-376 lane 2) (shape microtask-nested): now blocked."""
+    hit = _blocked("(async()=>{var p=[];queueMicrotask(()=>{p.push('%s');queueMicrotask(()=>p.push('%s'+'%s'));});await null;await null;return p.join('');})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r43_f641_s3_open():
-    """F641 OPEN (shape microtask-promise-flush): miss reproduces."""
-    miss = _misses("(async()=>{var s='';queueMicrotask(()=>{s+='%s';});queueMicrotask(()=>{s+='%s'+'%s';});await Promise.resolve();return s;})()"
+def test_r43_f641_s3_closed():
+    """F641 CLOSED (wave-376 lane 2) (shape microtask-promise-flush): now blocked."""
+    hit = _blocked("(async()=>{var s='';queueMicrotask(()=>{s+='%s';});queueMicrotask(()=>{s+='%s'+'%s';});await Promise.resolve();return s;})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r43_f641_s4_open():
-    """F641 OPEN (shape timeout-assembly): miss reproduces."""
-    miss = _misses("(async()=>{var p=[];setTimeout(()=>p.push('%s'),0);setTimeout(()=>p.push('%s'),0);setTimeout(()=>p.push('%s'),0);await new Promise(r=>setTimeout(r,20));return p.join('');})()"
+def test_r43_f641_s4_closed():
+    """F641 CLOSED (wave-376 lane 2) (shape timeout-assembly): now blocked."""
+    hit = _blocked("(async()=>{var p=[];setTimeout(()=>p.push('%s'),0);setTimeout(()=>p.push('%s'),0);setTimeout(()=>p.push('%s'),0);await new Promise(r=>setTimeout(r,20));return p.join('');})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F642 open pins (must miss)
 
 @_t
-def test_r43_f642_s1_open():
-    """F642 OPEN (shape getter-varfrags): miss reproduces."""
-    miss = _misses("(function(){var a='%s',b='%s',c='%s';var o={get s(){return a+b+c;}};return o.s;})()"
+def test_r43_f642_s1_closed():
+    """F642 CLOSED (wave-376 lane 3) (shape getter-varfrags): now blocked."""
+    hit = _blocked("(function(){var a='%s',b='%s',c='%s';var o={get s(){return a+b+c;}};return o.s;})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r43_f642_s2_open():
-    """F642 OPEN (shape proxy-get-trap-varfrags): miss reproduces."""
-    miss = _misses("(function(){var a='%s',b='%s',c='%s';var p=new Proxy({},{get:(t,k)=>a+b+c});return p.anything;})()"
+def test_r43_f642_s2_closed():
+    """F642 CLOSED (wave-376 lane 3) (shape proxy-get-trap-varfrags): now blocked."""
+    hit = _blocked("(function(){var a='%s',b='%s',c='%s';var p=new Proxy({},{get:(t,k)=>a+b+c});return p.anything;})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r43_f642_s3_open():
-    """F642 OPEN (shape weakref-deref-getter-varfrags): miss reproduces."""
-    miss = _misses("(function(){var a='%s',b='%s',c='%s';var w=new WeakRef({get s(){return a+b+c;}});return w.deref().s;})()"
+def test_r43_f642_s3_closed():
+    """F642 CLOSED (wave-376 lane 3) (shape weakref-deref-getter-varfrags): now blocked."""
+    hit = _blocked("(function(){var a='%s',b='%s',c='%s';var w=new WeakRef({get s(){return a+b+c;}});return w.deref().s;})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F643 open pins (must miss)
 
 @_t
-def test_r43_f643_s1_open():
-    """F643 OPEN (shape fromcharcode-u8-spread): miss reproduces."""
-    miss = _misses("String.fromCharCode(...new Uint8Array([%s]))+'%s'"
+def test_r43_f643_s1_closed():
+    """F643 CLOSED (wave-376 lane 4) (shape fromcharcode-u8-spread): now blocked."""
+    hit = _blocked("String.fromCharCode(...new Uint8Array([%s]))+'%s'"
                    % (",".join(str(b) for b in (_F1 + _F2).encode("latin-1")), _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r43_f643_s2_open():
-    """F643 OPEN (shape fromcharcode-u8-apply): miss reproduces."""
-    miss = _misses("String.fromCharCode.apply(null,new Uint8Array([%s]))+'%s'"
+def test_r43_f643_s2_closed():
+    """F643 CLOSED (wave-376 lane 4) (shape fromcharcode-u8-apply): now blocked."""
+    hit = _blocked("String.fromCharCode.apply(null,new Uint8Array([%s]))+'%s'"
                    % (",".join(str(b) for b in (_F1 + _F2).encode("latin-1")), _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r43_f643_s3_open():
-    """F643 OPEN (shape fromcodepoint-u8-spread): miss reproduces."""
-    miss = _misses("String.fromCodePoint(...new Uint8Array([%s]))+'%s'"
+def test_r43_f643_s3_closed():
+    """F643 CLOSED (wave-376 lane 4) (shape fromcodepoint-u8-spread): now blocked."""
+    hit = _blocked("String.fromCodePoint(...new Uint8Array([%s]))+'%s'"
                    % (",".join(str(b) for b in (_F1 + _F2).encode("latin-1")), _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 # ------------------------------------------------- F644 open pins (must miss)
 
