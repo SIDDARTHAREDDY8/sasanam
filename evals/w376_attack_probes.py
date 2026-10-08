@@ -149,11 +149,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F640-F653 open, next F654 (this lane)."""
+    """Control: footer shows F645 closed (this lane); F644, F646-F654 open, next F655."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F655**" in text  # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
-          and "Open findings: F644, F645, F646, F647, F648, F649, F650, F651, F652, F653, F654." in text)  # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
+    ok = ("Next free finding: **F655**" in text  # Wave-377 lane 2: F645 CLOSED; F644, F646-F654 OPEN (next F655)
+          and "Open findings: F644, F646, F647, F648, F649, F650, F651, F652, F653, F654." in text)  # Wave-377 lane 2: F645 CLOSED; F644, F646-F654 OPEN (next F655)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -351,30 +351,30 @@ def test_r44_f644_s3_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 
-# ------------------------------------------------- F645 open pins (must miss)
+# ------------------------------------------------- F645 closed pins (must block; wave-377 lane 2)
 
 @_t
-def test_r44_f645_s1_open():
-    """F645 OPEN (shape default-params-noarg): miss reproduces."""
-    miss = _misses("(function(s='%s',t='%s%s'){return s+t;})()"
+def test_r44_f645_s1_closed():
+    """F645 CLOSED (wave-377 lane 2, shape default-params-noarg): blocks coded."""
+    hit = _blocked("(function(s='%s',t='%s%s'){return s+t;})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r44_f645_s2_open():
-    """F645 OPEN (shape default-params-undefined): miss reproduces."""
-    miss = _misses("(function(s='%s',t='%s%s'){return s+t;})(undefined,undefined)"
-                   % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r44_f645_s3_open():
-    """F645 OPEN (shape default-params-destructured): miss reproduces."""
-    miss = _misses("(function({a,b}={a:'%s',b:'%s%s'}){return a+b;})()"
+def test_r44_f645_s2_closed():
+    """F645 CLOSED (wave-377 lane 2, shape default-params-undefined): blocks coded."""
+    hit = _blocked("(function(s='%s',t='%s%s'){return s+t;})(undefined,undefined)"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_r44_f645_s3_closed():
+    """F645 CLOSED (wave-377 lane 2, shape default-params-destructured): blocks coded."""
+    hit = _blocked("(function({a,b}={a:'%s',b:'%s%s'}){return a+b;})()"
+                   % (_F1, _F2, _F3))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F646 open pins (must miss)

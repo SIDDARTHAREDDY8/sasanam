@@ -23791,6 +23791,319 @@ def _js_parse_f612_values_varbound_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f645_params(text, i, depth, state):
+    """Parse a default-parameter list `(P (, P)*)` at text[i] (F645).
+
+    Each P is `IDENT='LIT'` (default string literal), a bare `IDENT`
+    (no default -- binds the string "undefined", node-exact for the
+    string-concat body, v24.20.0), or `{a,b,...}={k:'LIT',...}` (an
+    object-pattern param whose default is an object literal; every
+    pattern ident must have a key in the default (a missing key
+    fails closed rather than decoding the engine's "undefined" --
+    conservative refusal, permitted by the close-when), extra keys
+    are ignored, node-exact).
+
+    Returns (bindings, next_index). `bindings` maps each bound name
+    to its string value. Duplicate parameter names fail
+    closed (a non-simple parameter list -- one with defaults -- makes
+    duplicates an early SyntaxError in the engine, v24.20.0
+    verified). Rest params (`...x`), nested/array patterns,
+    non-literal defaults, template-literal defaults, `__proto__`
+    keys, quoted keys, shorthand defaults, and a param named
+    `arguments` all fail closed. Each binding charges the parts
+    budget (F452/F605 discipline). Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, i, "(")
+    j = _js_skip_ws(text, j)
+    bindings = {}
+    if j < n and text[j] == ")":
+        return bindings, j + 1
+    seen = set()
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("F645 truncated param list")
+        if text[j] == "{":
+            # Object-pattern param: {a,b,...}={k:'LIT',...}.
+            j = _js_skip_ws(text, j + 1)
+            pat = []
+            while True:
+                j = _js_skip_ws(text, j)
+                name, j = _js_parse_ident(text, j)
+                if name == "arguments":
+                    raise _JSExprFail("F645 pattern named arguments")
+                pat.append(name)
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == ",":
+                    j = j + 1
+                    continue
+                if j < n and text[j] == "}":
+                    j = j + 1
+                    break
+                raise _JSExprFail("F645 bad pattern")
+            if not pat:
+                raise _JSExprFail("F645 empty pattern")
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, "=")
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, "{")
+            defaults = {}
+            while True:
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == "}":
+                    j = j + 1
+                    break
+                key, j = _js_parse_ident(text, j)
+                if key == "__proto__":
+                    raise _JSExprFail("F645 __proto__ key")
+                j = _js_skip_ws(text, j)
+                j = _js_expect(text, j, ":")
+                j = _js_skip_ws(text, j)
+                if j >= n or text[j] not in "'\"":
+                    raise _JSExprFail("F645 default value not literal")
+                lit, j = _js_parse_string(text, j)
+                defaults[key] = lit
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == ",":
+                    j = j + 1
+                    continue
+                if j < n and text[j] == "}":
+                    j = j + 1
+                    break
+                raise _JSExprFail("F645 bad default object")
+            for name in pat:
+                if name not in defaults:
+                    raise _JSExprFail("F645 pattern key missing default")
+                if name in seen:
+                    raise _JSExprFail("F645 duplicate param")
+                seen.add(name)
+                bindings[name] = defaults[name]
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+        elif text[j] in _JS_IDENT_START:
+            name, j = _js_parse_ident(text, j)
+            if name == "arguments":
+                raise _JSExprFail("F645 param named arguments")
+            if name in seen:
+                raise _JSExprFail("F645 duplicate param")
+            seen.add(name)
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == "=":
+                j = _js_skip_ws(text, j + 1)
+                if j >= n or text[j] not in "'\"":
+                    raise _JSExprFail("F645 default not literal")
+                lit, j = _js_parse_string(text, j)
+                bindings[name] = lit
+            else:
+                # Bare param: no default; with the modeled call forms
+                # the engine binds `undefined`, and the body is a
+                # string-only additive, so "undefined" is the
+                # node-exact value (v24.20.0).
+                bindings[name] = "undefined"
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        else:
+            raise _JSExprFail("F645 bad param head")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            k = _js_skip_ws(text, j + 1)
+            if k < n and text[k] == ")":
+                return bindings, k + 1  # trailing comma
+            j = j + 1
+            continue
+        if j < n and text[j] == ")":
+            return bindings, j + 1
+        raise _JSExprFail("F645 bad param list")
+
+
+def _js_parse_f645_bound_operand(text, i, bindings):
+    """Parse one F645 additive operand: a string literal or a bound
+    identifier. An unbound identifier fails closed (the engine throws
+    ReferenceError -- the decoder never decodes a throw); `this` and
+    non-string shapes fail closed. Returns (str, next_index). Never
+    evals."""
+    j = _js_skip_ws(text, i)
+    if j >= len(text):
+        raise _JSExprFail("F645 empty operand")
+    c = text[j]
+    if c in "'\"":
+        return _js_parse_string(text, j)
+    if c in _JS_IDENT_START:
+        name, k = _js_parse_ident(text, j)
+        if name not in bindings:
+            raise _JSExprFail("F645 unbound ident")
+        return bindings[name], k
+    raise _JSExprFail("F645 bad operand")
+
+
+def _js_parse_f645_bound_additive(text, i, depth, state, bindings):
+    """Parse `LIT|BOUND (+ LIT|BOUND)*` at text[i] (F645).
+
+    Both operands are plain strings by construction, so `+` is string
+    concatenation (node-exact, v24.20.0). Returns (value, next_index).
+    Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    n = len(text)
+    val, j = _js_parse_f645_bound_operand(text, i, bindings)
+    while True:
+        k = _js_skip_ws(text, j)
+        if k >= n or text[k] != "+":
+            return val, j
+        rhs, j = _js_parse_f645_bound_operand(text, k + 1, bindings)
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("concat too long")
+        val = val + rhs
+        state["ops"] += 1
+
+
+def _js_parse_f645_invocation(text, j):
+    """Parse the F645 call suffix `()` or `(undefined (, undefined)*)`
+    at text[j]; returns next_index. Any other argument fails closed
+    (the engine applies defaults only for `undefined`/missing -- a
+    non-undefined argument would mis-decode, and non-empty call args
+    are the documented F612 residual). Extra `undefined` arguments
+    beyond the parameter count are allowed: the engine ignores them
+    (v24.20.0 verified). Never evals."""
+    n = len(text)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] != ")":
+        while True:
+            um = _js_match_kw(text, j, "undefined")
+            if um is None:
+                raise _JSExprFail("F645 arg not undefined")
+            j = _js_skip_ws(text, um)
+            if j < n and text[j] == ",":
+                j = _js_skip_ws(text, j + 1)
+                continue
+            break
+    return _js_expect(text, j, ")")
+
+
+def _js_parse_f645_default_param_iife(text, i, depth, state):
+    """Parse `(function(PARAMS){return ADD;})()` /
+    `(function(PARAMS){return ADD;})(undefined, ...)` at text[i]
+    (F645).
+
+    F612 (CLOSED) documents 'named functions/params' as a fail-closed
+    residual of its var-binding production, but default parameter
+    values in a no-arg IIFE are a distinct binding production with no
+    modeled path: the defaults supply the fragments and the call
+    supplies no arguments. Node-exact desugar (v24.20.0): each default
+    applies when its argument is `undefined` or missing, so the
+    modeled call forms bind every defaulted param to its default;
+    the return body resolves bound idents against those defaults.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a named
+    function, `async`/`function*` heads, rest params, nested/array
+    patterns, non-literal defaults, template-literal defaults,
+    `__proto__` default keys, duplicate parameter names (an early
+    SyntaxError for non-simple parameter lists), plain
+    (non-`undefined`) call arguments
+    (the documented F612 'non-empty call args' residual -- the
+    with-args twin node-evaluates to the credential but stays
+    missed), extra statements, a directive
+    prologue, non-empty bodies. The `.call`/`.apply` twins are
+    documented residuals. (Extra `undefined` arguments are allowed --
+    the engine ignores them, v24.20.0 verified.)
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_skip_ws(text, j + 1)
+    if not text.startswith("function", k):
+        return None
+    k2 = k + len("function")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        return None  # functionx -- not our shape
+    if k2 < n and text[k2] in _JS_IDENT_START:
+        return None  # named function -- not our shape
+    try:
+        j = _js_skip_ws(text, k2)
+        bindings, j = _js_parse_f645_params(text, j, depth, state)
+        if not bindings:
+            raise _JSExprFail("F645 no default params")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F645 no return")
+        sj = _js_skip_ws(text, m)
+        _rval, sj = _js_parse_f645_bound_additive(text, sj, depth,
+                                                  state, bindings)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F645 trailing statements")
+        # Invocation: `()` or `(undefined, ...)`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_parse_f645_invocation(text, j)
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return _rval, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f645_default_param_arrow_iife(text, i, depth, state):
+    """Parse `((PARAMS)=>ADD)()` / `((PARAMS)=>ADD)(undefined, ...)`
+    at text[i] (F645).
+
+    The arrow twin of the default-parameter production: the same
+    parameter-default mechanism (node-exact, v24.20.0) with an
+    expression body instead of `{return ...;}`. Block bodies
+    (`=>{...}`) fail closed. Disjoint from F577 (which requires
+    exactly one `...rest` param -- this parser fails closed on
+    `...`) and F608 (which requires Set-spread call arguments --
+    this parser fails closed on non-`undefined` args).
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_skip_ws(text, j + 1)
+    if k >= n or text[k] != "(":
+        return None
+    try:
+        bindings, q = _js_parse_f645_params(text, k, depth, state)
+        if not bindings:
+            raise _JSExprFail("F645 no default params")
+        q = _js_skip_ws(text, q)
+        if not text.startswith("=>", q):
+            raise _JSExprFail("F645 not an arrow")
+        q = _js_skip_ws(text, q + 2)
+        _rval, q = _js_parse_f645_bound_additive(text, q, depth,
+                                                 state, bindings)
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ")")
+        q = _js_skip_ws(text, q)
+        q = _js_parse_f645_invocation(text, q)
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return _rval, q
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f621_assign_mutate_iife(text, i, depth, state):
     """Parse `(function(){DECL t=<empty>;ASSIGN+;return READ;})()` (F621).
 
@@ -31686,6 +31999,20 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f612 is not None:
             val, i = _f612
             return _js_parse_postfix(text, i, val, depth, state)
+        # F645: (function(PARAMS){return ADD;})() /
+        # (function(PARAMS){return ADD;})(undefined, ...) --
+        # default-parameter fragment assembly (PARAMS has at least
+        # one `IDENT='LIT'` default, a bare ident, or an
+        # object-pattern default). Tried after F612: F612 requires
+        # the empty param list `()` so it fails closed on every
+        # shape this accepts, and this fails closed on every shape
+        # F612 accepts (no default params), so no
+        # previously-decoded input changes behavior.
+        _f645 = _js_parse_f645_default_param_iife(text, i, depth,
+                                                  state)
+        if _f645 is not None:
+            val, i = _f645
+            return _js_parse_postfix(text, i, val, depth, state)
         # F621: (function(){DECL t=<empty>;Object.assign(t,SRC,...);
         #   return Object.values(t)<postfix>; /
         #   return Object.entries(t).map(P=>P[0|1])<postfix>;})() --
@@ -31865,6 +32192,21 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f636 = _js_parse_f636_bind_chain(text, i, depth, state)
         if _f636 is not None:
             val, i = _f636
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F645 (arrow twin): ((PARAMS)=>ADD)() /
+        # ((PARAMS)=>ADD)(undefined, ...) -- default-parameter
+        # fragment assembly with an arrow expression body. Tried
+        # before F577: F577 requires exactly one `...rest` param
+        # (this fails closed on `...`), and F608 requires Set-spread
+        # call arguments (this fails closed on non-`undefined`
+        # args), so the grammars are disjoint and no
+        # previously-decoded input changes behavior. None falls
+        # through to F577 like F636.
+        _f645a = _js_parse_f645_default_param_arrow_iife(text, i,
+                                                         depth,
+                                                         state)
+        if _f645a is not None:
+            val, i = _f645a
             return _js_parse_postfix(text, i, val, depth, state)
         # F577: ((...A)=>BODY)(lit, ...) / ((...A)=>BODY).call(T, lit,
         # ...) -- arrow-IIFE rest-parameter bindings. None falls
