@@ -25368,6 +25368,543 @@ def _js_parse_f672_class_iife(text, i, depth, state):
         return None
 
 
+def _js_f690_parse_ctor_members(text, j, state):
+    """Parse `{ this.K='LIT'; ... }` at text[j] (F690).
+
+    Every statement must be `this.K='LIT';` or `this['K']='LIT';`
+    (ws-tolerant, string-literal values only). Returns (members,
+    next_index_past_'}'); later assignments win (node v24.20.0).
+    Anything else fails closed. Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "{")
+    members = {}
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("F690 ctor body overrun")
+        if text[j] == "}":
+            return members, j + 1
+        tk = _js_match_kw(text, j, "this")
+        if tk is None:
+            raise _JSExprFail("F690 ctor body not this-assign")
+        q = _js_skip_ws(text, tk)
+        if q < n and text[q] == ".":
+            q = _js_skip_ws(text, q + 1)
+            key, q = _js_parse_ident(text, q)
+        elif q < n and text[q] == "[":
+            key, q = _js_parse_bracket_member(text, q)
+        else:
+            raise _JSExprFail("F690 ctor body bad member")
+        q = _js_expect(text, q, "=")
+        if q >= n or text[q] not in "'\"":
+            raise _JSExprFail("F690 ctor assign not literal")
+        val, q = _js_parse_string(text, q)
+        q = _js_expect(text, q, ";")
+        members[key] = val
+        _js_f672_charge(state)
+        j = q
+
+
+def _js_f690_parse_class_ctor(text, j, state):
+    """Parse `{ constructor(){ BODY } }` at text[j] (F690).
+
+    The class body must contain exactly one member: a zero-param
+    `constructor` whose body is this-assignments (see
+    _js_f690_parse_ctor_members). Returns (members,
+    next_index_past_'}'). Anything else fails closed. Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "{")
+    ck = _js_match_kw(text, j, "constructor")
+    if ck is None:
+        raise _JSExprFail("F690 class needs constructor")
+    q = _js_expect(text, ck, "(")
+    q = _js_expect(text, q, ")")
+    members, q = _js_f690_parse_ctor_members(text, q, state)
+    q = _js_skip_ws(text, q)
+    if q >= n or text[q] != "}":
+        raise _JSExprFail("F690 class extra members")
+    return members, q + 1
+
+
+def _js_f690_new_instance(text, j, ctors, state):
+    """Parse `new CNAME()` at text[j] (F690).
+
+    The constructor must be declared; call arguments fail closed.
+    Returns (instance_dict, next_index): a fresh dict of the
+    constructor's this-members (node-exact -- `new` runs the body
+    against a fresh object; `return` statements fail closed in the
+    body grammar, so the fresh object always wins). Never evals.
+    """
+    nk = _js_match_kw(text, j, "new")
+    if nk is None:
+        raise _JSExprFail("F690 not new")
+    q = _js_skip_ws(text, nk)
+    cname, q = _js_parse_ident(text, q)
+    if cname not in ctors:
+        raise _JSExprFail("F690 new of undeclared ctor")
+    q = _js_expect(text, q, "(")
+    q = _js_expect(text, q, ")")
+    _js_f672_charge(state)
+    return dict(ctors[cname]), q
+
+
+def _js_f690_member_read(text, j, inst, state):
+    """Parse `.K` / `['K']` on an F690 instance dict at text[j] (F690).
+
+    Returns (value, next_index). Missing members fail closed (the
+    engine yields undefined -- outside the string-only discipline).
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n:
+        raise _JSExprFail("F690 member overrun")
+    if text[j] == ".":
+        j = _js_skip_ws(text, j + 1)
+        key, j = _js_parse_ident(text, j)
+    elif text[j] == "[":
+        key, j = _js_parse_bracket_member(text, j)
+    else:
+        raise _JSExprFail("F690 not a member read")
+    if key not in inst:
+        raise _JSExprFail("F690 member miss")
+    _js_f672_charge(state)
+    return inst[key], j
+
+
+def _js_f690_operand(text, j, env, ctors, state):
+    """Parse one F690 return-additive operand at text[j] (F690).
+
+    Operands: string literals; `INST.K` / `INST['K']` on a var-bound
+    instance; `new CNAME().K` / `new CNAME()['K']` inline
+    instantiation. Returns (value, next_index). Anything else fails
+    closed. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n:
+        raise _JSExprFail("F690 operand overrun")
+    if text[j] in "'\"":
+        val, j = _js_parse_string(text, j)
+        _js_f672_charge(state)
+        return val, j
+    if _js_match_kw(text, j, "new") is not None:
+        inst, j = _js_f690_new_instance(text, j, ctors, state)
+        return _js_f690_member_read(text, j, inst, state)
+    name, q = _js_parse_ident(text, j)
+    e = env.get(name)
+    if e is None or e[0] != "inst":
+        raise _JSExprFail("F690 unbound operand")
+    return _js_f690_member_read(text, q, e[1], state)
+
+
+def _js_parse_f690_ctor_iife(text, i, depth, state):
+    """Parse `(function(){[STMT;]* return ADD;})()` with constructor
+    this-member sources at text[i] (F690).
+
+    F690 (LOW, attack round 48): fragments read via `this` in
+    function and class constructors bypass the bounded static
+    JS-expression decoder -- the decoder never binds `this` in
+    constructors. Distinct from F674 (CLOSED, this-bound reads in
+    object-literal getters/methods): the receiver here is a
+    constructor-built instance, and from F672 (CLOSED, whose
+    class-body parser explicitly fails closed on `constructor`).
+
+    Node-exact desugar (v24.20.0): statements are exactly
+    - `function C(){ this.K='LIT'; ... }` -- function-declaration
+      constructor, zero params, body of this-assignments;
+    - `class C{ constructor(){ this.K='LIT'; ... } }` -- class
+      declaration whose only member is a zero-param constructor
+      of this-assignments;
+    - `var|let|const c=new C();` -- single-declarator binding of
+      a zero-arg instantiation (the var name must not shadow the
+      constructor name).
+    The return is a `+`-joined additive of string literals,
+    var-bound instance member reads (`c.K` / `c['K']`), and inline
+    `new C().K` reads; instantiation runs the constructor body
+    against a fresh member dict (later assignments win).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - constructor params, call args, non-this statements,
+      non-literal assignments, `return` in the ctor body (a
+      returned object would replace the instance in node);
+    - class extends, extra class members, anonymous classes,
+      class/function expressions, prototype assignments;
+    - forward references (declarations process in order);
+    - reads of unset members (engine undefined -- outside the
+      string-only discipline); ASI forms.
+    Tried after F678: every earlier route requires its own binding
+    family or statement head and fails closed on constructor
+    productions (F672's class-body parser explicitly fails closed
+    on `constructor`; F655/F611/F645 require
+    declaration/parameter heads), so no previously-decoded input
+    changes behavior. Returns (value, next_index), or None when
+    text[i] is not this shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_f655_head(text, i)
+        if brace is None:
+            raise _JSExprFail("F690 not our head")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        ctors = {}
+        env = {}
+        sj = _js_skip_ws(text, inner_start)
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj >= inner_end:
+                raise _JSExprFail("F690 body without return")
+            rk = _js_match_kw(text, sj, "return")
+            if rk is not None:
+                break
+            fk = _js_match_kw(text, sj, "function")
+            ck = _js_match_kw(text, sj, "class")
+            dk, _dnext = _js_match_decl_kw(text, sj)
+            if fk is not None:
+                q = _js_skip_ws(text, fk)
+                cname, q = _js_parse_ident(text, q)
+                q = _js_expect(text, q, "(")
+                q = _js_expect(text, q, ")")
+                members, q = _js_f690_parse_ctor_members(text, q,
+                                                        state)
+                if cname in ctors:
+                    raise _JSExprFail("F690 ctor redeclared")
+                ctors[cname] = members
+                sj = q
+            elif ck is not None:
+                q = _js_skip_ws(text, ck)
+                cname, q = _js_parse_ident(text, q)
+                q = _js_skip_ws(text, q)
+                if _js_match_kw(text, q, "extends") is not None:
+                    raise _JSExprFail("F690 class extends")
+                members, q = _js_f690_parse_class_ctor(text, q,
+                                                      state)
+                if cname in ctors:
+                    raise _JSExprFail("F690 ctor redeclared")
+                ctors[cname] = members
+                sj = q
+            elif dk is not None:
+                q = _js_skip_ws(text, _dnext)
+                vname, q = _js_parse_ident(text, q)
+                q = _js_expect(text, q, "=")
+                inst, q = _js_f690_new_instance(text, q, ctors,
+                                               state)
+                q = _js_expect(text, q, ";")
+                if vname in env or vname in ctors:
+                    raise _JSExprFail("F690 var redeclared")
+                env[vname] = ("inst", inst)
+                sj = q
+            else:
+                raise _JSExprFail("F690 bad statement")
+        sj = _js_skip_ws(text, rk)
+        total = None
+        while True:
+            term, sj = _js_f690_operand(text, sj, env, ctors, state)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            state["ops"] += 1
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F690 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
+def _js_f692_parse_static_body(text, j, state):
+    """Parse `{ static K='LIT'; | static get K(){return 'LIT';} ... }`
+    at text[j] (F692).
+
+    B's class body: only static fields with literal initializers
+    and literal-bodied static getters. Returns ({"static": {...},
+    "sget": {...}}, next_index_past_'}'). Duplicate names fail
+    closed (conservative: node lets a same-named field shadow a
+    getter). Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "{")
+    stat, sget = {}, {}
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("F692 static body overrun")
+        if text[j] == "}":
+            return {"static": stat, "sget": sget}, j + 1
+        sk = _js_match_kw(text, j, "static")
+        if sk is None:
+            raise _JSExprFail("F692 B needs static members")
+        q = _js_skip_ws(text, sk)
+        gk = _js_match_kw(text, q, "get")
+        if gk is not None:
+            q = _js_skip_ws(text, gk)
+            key, q = _js_parse_ident(text, q)
+            q = _js_expect(text, q, "(")
+            q = _js_expect(text, q, ")")
+            q = _js_expect(text, q, "{")
+            rk = _js_match_kw(text, q, "return")
+            if rk is None:
+                raise _JSExprFail("F692 getter needs return")
+            q = _js_skip_ws(text, rk)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F692 getter not literal")
+            val, q = _js_parse_string(text, q)
+            q = _js_expect(text, q, ";")
+            q = _js_expect(text, q, "}")
+        else:
+            key, q = _js_parse_ident(text, q)
+            q = _js_expect(text, q, "=")
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F692 static not literal")
+            val, q = _js_parse_string(text, q)
+            q = _js_expect(text, q, ";")
+        if key in stat or key in sget:
+            raise _JSExprFail("F692 duplicate static")
+        if gk is not None:
+            sget[key] = val
+        else:
+            stat[key] = val
+        _js_f672_charge(state)
+        j = q
+
+
+def _js_f692_parse_derived(text, j, state):
+    """Parse `{ static Y(){return super.M;} }` at text[j] (F692).
+
+    D's body must contain exactly one member: a zero-param static
+    method whose body is a single `return super.M;` /
+    `return super['M'];`. Returns ((yname, supermember),
+    next_index_past_'}'). Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "{")
+    sk = _js_match_kw(text, j, "static")
+    if sk is None:
+        raise _JSExprFail("F692 D needs static method")
+    q = _js_skip_ws(text, sk)
+    yname, q = _js_parse_ident(text, q)
+    q = _js_expect(text, q, "(")
+    q = _js_expect(text, q, ")")
+    q = _js_expect(text, q, "{")
+    rk = _js_match_kw(text, q, "return")
+    if rk is None:
+        raise _JSExprFail("F692 D method needs return")
+    q = _js_skip_ws(text, rk)
+    sp = _js_match_kw(text, q, "super")
+    if sp is None:
+        raise _JSExprFail("F692 D method not super")
+    q = _js_skip_ws(text, sp)
+    if q < n and text[q] == ".":
+        q = _js_skip_ws(text, q + 1)
+        smem, q = _js_parse_ident(text, q)
+    elif q < n and text[q] == "[":
+        smem, q = _js_parse_bracket_member(text, q)
+    else:
+        raise _JSExprFail("F692 super bad member")
+    q = _js_expect(text, q, ";")
+    q = _js_expect(text, q, "}")
+    q = _js_skip_ws(text, q)
+    if q >= n or text[q] != "}":
+        raise _JSExprFail("F692 D extra members")
+    _js_f672_charge(state)
+    return (yname, smem), q + 1
+
+
+def _js_f692_super_read(prec, smem):
+    """Resolve `super.M` against the parent static record (F692).
+
+    Node-exact: in a static method, `super` is the parent class
+    constructor, so only its static side is consulted (fields and
+    literal-bodied getters; getter bodies are literal-only, so the
+    receiver is irrelevant). Missing members fail closed (engine
+    undefined). Never evals.
+    """
+    if smem in prec["static"]:
+        return prec["static"][smem]
+    if smem in prec["sget"]:
+        return prec["sget"][smem]
+    raise _JSExprFail("F692 super member miss")
+
+
+def _js_f692_operand(text, j, bname, dname, yname, smem, prec, state):
+    """Parse one F692 return-additive operand at text[j] (F692).
+
+    Operands: string literals; `D.Y()` zero-arg calls of the
+    super-method; `B.K` / `B['K']` direct static reads on the
+    parent. Returns (value, next_index). Anything else fails
+    closed. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n:
+        raise _JSExprFail("F692 operand overrun")
+    if text[j] in "'\"":
+        val, j = _js_parse_string(text, j)
+        _js_f672_charge(state)
+        return val, j
+    name, q = _js_parse_ident(text, j)
+    q2 = _js_skip_ws(text, q)
+    if name == dname:
+        if q2 >= n or text[q2] != ".":
+            raise _JSExprFail("F692 D not a call")
+        q3 = _js_skip_ws(text, q2 + 1)
+        mname, q3 = _js_parse_ident(text, q3)
+        if mname != yname:
+            raise _JSExprFail("F692 D unknown method")
+        q3 = _js_expect(text, q3, "(")
+        q3 = _js_expect(text, q3, ")")
+        val = _js_f692_super_read(prec, smem)
+        _js_f672_charge(state)
+        return val, q3
+    if name == bname:
+        if q2 < n and text[q2] == ".":
+            q3 = _js_skip_ws(text, q2 + 1)
+            key, q3 = _js_parse_ident(text, q3)
+        elif q2 < n and text[q2] == "[":
+            key, q3 = _js_parse_bracket_member(text, q2)
+        else:
+            raise _JSExprFail("F692 B not a member")
+        val = _js_f692_super_read(prec, key)
+        _js_f672_charge(state)
+        return val, q3
+    raise _JSExprFail("F692 unbound operand")
+
+
+def _js_parse_f692_super_iife(text, i, depth, state):
+    """Parse `(function(){class B{...} class D extends B{...}
+    return ADD;})()` with super reads in static methods at text[i]
+    (F692).
+
+    F692 (LOW, attack round 48): fragments read via `super.M` in
+    static methods bypass the bounded static JS-expression decoder.
+    Distinct from F672 (CLOSED, whose class-body parser explicitly
+    fails closed on `super` and on member reads inside method
+    bodies): every shape this accepts carries a `super` production
+    F672 rejects.
+
+    Node-exact desugar (v24.20.0):
+    - `class B{ static K='LIT'; ... | static get K(){return 'LIT';}
+      ... }` -- parent with literal static fields and
+      literal-bodied static getters (duplicate names fail closed);
+    - `class D extends B{ static Y(){return super.M;} }` -- the
+      derived class with exactly one member, a zero-param static
+      method returning `super.M` / `super['M']`; `super` in a
+      static method is the parent constructor, so only B's static
+      side is consulted (node-verified: a same-named own static
+      on D does not shadow the super read).
+    The return is a `+`-joined additive of string literals,
+    `D.Y()` calls, and direct `B.K` static reads.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - B with extends, instance members, non-literal members,
+      static blocks, methods;
+    - D with extra members, params, non-super bodies;
+    - `super` member missing on B (engine undefined);
+    - ASI forms.
+    Tried after F690 (which owns the constructor-IIFE head; the
+    grammars are disjoint -- F690 requires a constructor
+    production, F692 a super production). Returns (value,
+    next_index), or None when text[i] is not this shape. Never
+    evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_f655_head(text, i)
+        if brace is None:
+            raise _JSExprFail("F692 not our head")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        ck = _js_match_kw(text, sj, "class")
+        if ck is None:
+            raise _JSExprFail("F692 needs class B")
+        q = _js_skip_ws(text, ck)
+        bname, q = _js_parse_ident(text, q)
+        q = _js_skip_ws(text, q)
+        if _js_match_kw(text, q, "extends") is not None:
+            raise _JSExprFail("F692 B extends")
+        prec, q = _js_f692_parse_static_body(text, q, state)
+        sj = _js_skip_ws(text, q)
+        ck = _js_match_kw(text, sj, "class")
+        if ck is None:
+            raise _JSExprFail("F692 needs class D")
+        q = _js_skip_ws(text, ck)
+        dname, q = _js_parse_ident(text, q)
+        if dname == bname:
+            raise _JSExprFail("F692 D redeclares B")
+        q = _js_skip_ws(text, q)
+        ek = _js_match_kw(text, q, "extends")
+        if ek is None:
+            raise _JSExprFail("F692 D needs extends")
+        q = _js_skip_ws(text, ek)
+        pname, q = _js_parse_ident(text, q)
+        if pname != bname:
+            raise _JSExprFail("F692 D extends wrong class")
+        (yname, smem), q = _js_f692_parse_derived(text, q, state)
+        sj = _js_skip_ws(text, q)
+        rk = _js_match_kw(text, sj, "return")
+        if rk is None:
+            raise _JSExprFail("F692 no return")
+        sj = _js_skip_ws(text, rk)
+        total = None
+        while True:
+            term, sj = _js_f692_operand(text, sj, bname, dname,
+                                       yname, smem, prec, state)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            state["ops"] += 1
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F692 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
 def _js_str_is_unsafe_int(v):
     """True if v looks like a canonical decimal integer with |n| > 2**53 (F676/F678).
 
@@ -47086,6 +47623,30 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f694 = _js_parse_f694_match_iife(text, i, depth, state)
         if _f694 is not None:
             val, i = _f694
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F690: (function(){[STMT;]* return ADD;})() with
+        #   constructor this-member sources -- function-declaration
+        #   constructors and single-constructor class declarations
+        #   assigning this.K, instantiated via new. Tried after
+        #   F678: every earlier route requires its own binding
+        #   family or statement head and fails closed on
+        #   constructor productions (F672's class-body parser
+        #   explicitly fails closed on `constructor`; F655/F611/F645
+        #   require declaration/parameter heads), so no
+        #   previously-decoded input changes behavior.
+        _f690 = _js_parse_f690_ctor_iife(text, i, depth, state)
+        if _f690 is not None:
+            val, i = _f690
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F692: (function(){class B{...} class D extends B{...}
+        #   return ADD;})() with super reads in static methods.
+        #   Tried after F690: the grammars are disjoint (F690
+        #   requires a constructor production, F692 a super
+        #   production); F672 fails closed on `super`, so no
+        #   previously-decoded input changes behavior.
+        _f692 = _js_parse_f692_super_iife(text, i, depth, state)
+        if _f692 is not None:
+            val, i = _f692
             return _js_parse_postfix(text, i, val, depth, state)
         # F586: (new Map(...)) / (new WeakRef(...)) --
         # parenthesized new-expression receivers, engine-identical
