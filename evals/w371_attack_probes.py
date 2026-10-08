@@ -373,13 +373,16 @@ def test_r39_f602_open():
 
 
 @_t
-def test_r39_f603_open():
-    """F603 OPEN: String.prototype.replace laundering misses."""
-    m1 = _misses("'%sX'.replace('X','%s')" % (_A, _B))
-    m2 = _misses("'%sXX'.replace('XX','%s')" % (_A, _B))
-    m3 = _misses("'X%s'.replace('X','%s')" % (_B, _A))
-    ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_p1_f603_closed():
+    """F603 CLOSED by wave-372 lane 5: String.replace literal-pattern
+    laundering now blocks."""
+    # Wave-372 lane 5 closed F603; the attack-lane "still open"
+    # expectation is superseded.
+    h1 = not _misses("'%sX'.replace('X','%s')" % (_A, _B))
+    h2 = not _misses("'%sXX'.replace('XX','%s')" % (_A, _B))
+    h3 = not _misses("'X%s'.replace('X','%s')" % (_B, _A))
+    ok = h1 and h2 and h3
+    return ("HELD" if ok else "BREAK", "held=%s" % ok)
 
 
 @_t
