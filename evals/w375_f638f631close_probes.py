@@ -404,7 +404,7 @@ def p7_node_differential():
 
 
 def p8_compositions():
-    """F618/F619 stay HELD; still-open findings (F640-F643) still miss."""
+    """F618/F619/F621/F625/F636/F639/F640 stay HELD; still-open findings (F641-F643) still miss."""
     held_shapes = [
         # F618 (CLOSED) still blocks
         "Promise.all([Promise.resolve('%s'),Promise.resolve('%s')])"
@@ -424,14 +424,21 @@ def p8_compositions():
         "(function(){var o={x:{p:'%s'},y:{q:'%s'}};"
         "return Object.values(o.x).concat(Object.values(o.y)).join('');})()"
         % (_A, _B),
+        # F640 (CLOSED wave-376 lane 1) now blocks
+        "(async()=>{var s='';for await (const x of ['%s','%s','%s']) s+=x; return s;})()"
+        % (_A[:5], _A[5:][1:], _B),
+        "(async()=>{var p=[];for await (const x of ['%s','%s','%s']) p.push(x); return p.join('');})()"
+        % (_A[:5], _A[5:][1:], _B),
+        "(async()=>{var s='';for await (const x of new Map([['a','%s'],['b','%s'],['c','%s']]).values()) s+=x; return s;})()"
+        % (_A[:5], _A[5:][1:], _B),
     ]
     miss_shapes = [
-        # F640-F643 (OPEN, attack round 43) still miss -- shapes from
+        # F641-F643 (OPEN, attack round 43) still miss -- shapes from
         # their red-first batteries
     ]
-    # F640: sync generator with computed method name
+    # F641-F643: still open
     import importlib
-    for fnum in (640, 641, 642, 643):
+    for fnum in (641, 642, 643):
         mod = importlib.import_module("w375_f%d_redfirst" % fnum)
         for name, payload, recovers in mod.SHAPES:
             if recovers:
@@ -460,14 +467,15 @@ def p9_honest_text_quiet():
 
 
 def p10_pin_and_footer():
-    """Pin 2140; footer shows F638/F631 closed, next F640."""
+    """Pin 2140; footer shows F638/F631/F640 closed, F644 filed, next F645."""
     n = len(decision_codes.TAXONOMY)
     pin_ok = (TAXONOMY_PIN == 2140 and n == 2140)
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as fh:
         text = fh.read()
     footer_ok = ("CLOSED 2026-10-08 wave-375 lane 8" in text
-                 and "Open findings: F640, F641, F642, F643." in text  # Wave-375 lane 8: F638, F631 CLOSED
-                 and "Next free finding: **F644**" in text)
+                 and "CLOSED 2026-10-08 wave-376 lane 1" in text  # Wave-376 lane 1: F640 CLOSED
+                 and "Open findings: F641, F642, F643, F644." in text  # Wave-376 lane 1
+                 and "Next free finding: **F645**" in text)  # Wave-376 lane 1
     detail = "pin=%s codes=%d; footer-closed=%s" % (
         TAXONOMY_PIN, n, footer_ok)
     return (("HELD", detail) if (pin_ok and footer_ok)

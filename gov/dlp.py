@@ -19426,6 +19426,302 @@ def _js_parse_f631_asyncgen_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f640_async_iife_head(text, i):
+    """Match `(async()=>{` or `(async function(){` at text[i] (F640).
+
+    The F640 for-await production accepts both async-IIFE head forms
+    (node v24.20.0: both are legal async wrappers). The
+    `(async function(){` form delegates to the F631 head parser --
+    F631 is tried first in the dispatch chain, so an actual
+    async-generator shape never reaches F640 (disjoint by the
+    `async function*` declaration). Returns the index OF `{` (the
+    `_js_span_braced` contract), or None. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    j = _js_skip_ws(text, j + 1)
+    _ak = _js_match_kw(text, j, "async")
+    if _ak is None:
+        return None
+    j = _js_skip_ws(text, _ak)
+    if j < n and text[j] == "(":
+        # Arrow form: (async()=>{ / (async ()=>{ / (async () => {
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != ")":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        if not text.startswith("=>", j):
+            return None
+        j = _js_skip_ws(text, j + 2)
+        if j >= n or text[j] != "{":
+            return None
+        return j
+    if _js_match_kw(text, j, "function") is not None:
+        return _js_parse_f631_async_iife_head(text, i)
+    return None
+
+
+def _js_parse_f640_accum_decl(stmts, j):
+    """Parse the F640 accumulator declaration at stmts[j].
+
+    `var|let S='';` (string accumulation) or `var|let|const P=[];`
+    (array push/join accumulation). Node-exact (v24.20.0): a `const`
+    string accumulator throws TypeError on `S+=X`, so `const` is
+    rejected for the string form (fail closed); a `const` array is
+    legal (`push` mutates, never rebinds), so `const` is accepted
+    for the array form. Both initializers must be exactly empty.
+    Returns (name, kind, next_index); kind is "str" or "arr".
+    Never evals.
+    """
+    n = len(stmts)
+    _mk = _js_match_kw(stmts, j, "var")
+    _kw = "var"
+    if _mk is None:
+        _mk = _js_match_kw(stmts, j, "let")
+        _kw = "let"
+    if _mk is None:
+        _mk = _js_match_kw(stmts, j, "const")
+        _kw = "const"
+    if _mk is None:
+        raise _JSExprFail("F640 accum decl not var/let/const")
+    j = _js_skip_ws(stmts, _mk)
+    name, j = _js_parse_ident(stmts, j)
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "=")
+    j = _js_skip_ws(stmts, j)
+    if j < n and stmts[j] in "'\"":
+        q0 = j
+        _, j = _js_parse_string(stmts, j)
+        if stmts[q0:j] != "''" and stmts[q0:j] != '""':
+            raise _JSExprFail("F640 str accum not empty")
+        if _kw == "const":
+            # The engine throws TypeError on S+=X (node-verified).
+            raise _JSExprFail("F640 const str accum throws")
+        kind = "str"
+    elif j < n and stmts[j] == "[":
+        j = _js_skip_ws(stmts, j + 1)
+        if j >= n or stmts[j] != "]":
+            raise _JSExprFail("F640 arr accum not empty")
+        j += 1
+        kind = "arr"
+    else:
+        raise _JSExprFail("F640 accum not str/arr")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ";")
+    return name, kind, j
+
+
+def _js_parse_f640_sync_source(stmts, k, depth, state):
+    """Parse a sync-iterable fragment source at stmts[k] (F640).
+
+    Node-exact (v24.20.0): `for await...of` over a sync iterable
+    consumes it in iteration order (arrays in index order;
+    Map.values()/Map.keys() in insertion order). Sources:
+      - `['LIT', ...]` -- array literal of string literals only
+        (non-literal elements fail closed; backticks never reach
+        here -- `_js_span_braced` rejects them in the IIFE body).
+      - `new Map([[...]]).values()` -- strict F563 map, string
+        values only; values in insertion order (later duplicate
+        keys win, node-exact via the F563 entries dict).
+      - `new Map([[...]]).keys()` -- F600 keys-only map (values
+        unobservable through the keys iterator, node-verified);
+        numeric keys coerce via the engine's string conversion.
+    Returns (elements, next_index) with elements a list of plain
+    strings. Anything else (Set, .entries(), generators, call
+    results, non-literal maps) fails closed -- documented
+    residuals, never mis-decoded. Never evals.
+    """
+    n = len(stmts)
+    k = _js_skip_ws(stmts, k)
+    if k < n and stmts[k] == "[":
+        _arr, k = _js_parse_string_literal_array(stmts, k, state)
+        els = []
+        for _e in _arr.elements:
+            if not isinstance(_e, str) or isinstance(_e, _JSNumStr):
+                raise _JSExprFail("F640 array elt not a string")
+            els.append(str(_e))
+        return els, k
+    # Map sources: try .keys() first (keys-only grammar accepts
+    # non-string values), then the strict .values() grammar. The
+    # keys attempt may double-charge parts on the .values() path --
+    # intentional (F469 precedent).
+    _kk = _js_parse_f600_keys_map(stmts, k, depth, state)
+    if _kk is not None:
+        _keys_obj, k = _kk
+        return [str(_x) for _x in _keys_obj.keys], k
+    _mv = _js_parse_f563_map(stmts, k, depth, state)
+    if _mv is None:
+        raise _JSExprFail("F640 source not array/Map")
+    _mmap, k = _mv
+    k = _js_skip_ws(stmts, k)
+    if k >= n or stmts[k] != ".":
+        raise _JSExprFail("F640 map not .values()")
+    _mn, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k + 1))
+    if _mn != "values":
+        raise _JSExprFail("F640 map member not values")
+    k = _js_call_empty_parens(stmts, k)
+    els = []
+    for _kid, _v in _mmap.entries.items():
+        # F563 strict: values are string literals here.
+        els.append(_v)
+        state["parts"] += 1  # F452: charge per element
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+    return els, k
+
+
+def _js_parse_f640_forawait_iife(text, i, depth, state):
+    """Parse the F640 for-await-over-sync-iterable IIFE at text[i].
+
+    Node-exact desugar (v24.20.0):
+      `(async()=>{var|let S='';for await (var|let|const X of SRC){S+=X;}return S;})()`
+      `(async()=>{var|let|const P=[];for await (var|let|const X of SRC){P.push(X);}return P.join('SEP');})()`
+    (`(async function(){...})()` head twin also modeled.) The
+    decoder cannot await, so the deterministic accumulation is
+    modeled statically (F618 precedent): for-await over a sync
+    iterable visits every element in iteration order, so the
+    result is the ordered join. The loop body is `{S+=X;}` or the
+    bare `S+=X;` (both node-exact); the push twin's join takes an
+    optional string-literal separator (missing arg is the
+    engine's comma default). Disjoint from F631 (tried first;
+    F631 requires the `async function* NAME()` declaration and a
+    `NAME()` receiver -- a sync-iterable receiver never matches
+    it) and from F619 (sync generator objects, `function*`
+    head). Bounds (all fail closed): `const` string accumulator
+    (engine throws), undeclared loop var, loop var shadowing the
+    accumulator or `arguments`, non-`of` heads, non-sync-iterable
+    receivers, non-literal sources, `S+=X` with a non-loop-var
+    operand, multi-arg push, non-literal join separators,
+    trailing statements. Returns (value, next_index), or None
+    when the head does not match or a guard fails. Bounded by
+    the part/depth budgets; the wrapper charges one op
+    (obfuscation-shaped). Never evals.
+    """
+    j = _js_parse_f640_async_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        acc, kind, sj = _js_parse_f640_accum_decl(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        _fk = _js_match_kw(stmts, sj, "for")
+        if _fk is None:
+            raise _JSExprFail("F640 not for")
+        sj = _js_skip_ws(stmts, _fk)
+        _ak = _js_match_kw(stmts, sj, "await")
+        if _ak is None:
+            raise _JSExprFail("F640 not for-await")
+        sj = _js_skip_ws(stmts, _ak)
+        sj = _js_expect(stmts, sj, "(")
+        sj = _js_skip_ws(stmts, sj)
+        _dk = (_js_match_kw(stmts, sj, "var")
+               or _js_match_kw(stmts, sj, "let")
+               or _js_match_kw(stmts, sj, "const"))
+        if _dk is None:
+            raise _JSExprFail("F640 loop var not declared")
+        sj = _dk
+        xname, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+        if xname == "arguments" or xname == acc:
+            # `arguments` shadowing (F631 precedent); a loop var named
+            # as the accumulator fails closed. Engine detail
+            # (v24.20.0): only the let-accum/var-loopvar mix is a
+            # SyntaxError; the other redeclaration mixes are
+            # engine-legal but provably cannot yield the credential
+            # (var/var doubles the last fragment; var/let returns the
+            # untouched outer "") -- so the miss is safe, never a
+            # mis-decode.
+            raise _JSExprFail("F640 loop var shadowed")
+        sj = _js_skip_ws(stmts, sj)
+        _ofk = _js_match_kw(stmts, sj, "of")
+        if _ofk is None:
+            raise _JSExprFail("F640 not for-await-of")
+        sj = _js_skip_ws(stmts, _ofk)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        elements, sj = _js_parse_f640_sync_source(stmts, sj, depth + 1,
+                                                  state)
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_skip_ws(stmts, sj)
+        if sj < len(stmts) and stmts[sj] == "{":
+            sj += 1
+            braced = True
+        else:
+            braced = False
+        _an, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+        if _an != acc:
+            raise _JSExprFail("F640 accum mismatch")
+        sj = _js_skip_ws(stmts, sj)
+        if kind == "str":
+            if not stmts.startswith("+=", sj):
+                raise _JSExprFail("F640 body not +=")
+            sj = _js_skip_ws(stmts, sj + 2)
+            _xn, sj = _js_parse_ident(stmts, sj)
+            if _xn != xname:
+                raise _JSExprFail("F640 accum operand not loop var")
+            value = "".join(elements)
+        else:
+            sj = _js_expect(stmts, sj, ".")
+            _mn, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+            if _mn != "push":
+                raise _JSExprFail("F640 body not push")
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, "(")
+            _xn, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+            if _xn != xname:
+                raise _JSExprFail("F640 push operand not loop var")
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, ")")
+            value = None  # resolved at the join
+        sj = _js_skip_ws(stmts, sj)
+        if sj < len(stmts) and stmts[sj] == ";":
+            sj += 1
+        sj = _js_skip_ws(stmts, sj)
+        if braced:
+            sj = _js_expect(stmts, sj, "}")
+        sj = _js_skip_ws(stmts, sj)
+        _rk = _js_match_kw(stmts, sj, "return")
+        if _rk is None:
+            raise _JSExprFail("F640 no return")
+        sj = _js_skip_ws(stmts, _rk)
+        _rn, sj = _js_parse_ident(stmts, sj)
+        if _rn != acc:
+            raise _JSExprFail("F640 return not accum")
+        sj = _js_skip_ws(stmts, sj)
+        if kind == "arr":
+            sj = _js_expect(stmts, sj, ".")
+            _jn, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+            if _jn != "join":
+                raise _JSExprFail("F640 return not join")
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, "(")
+            sj = _js_skip_ws(stmts, sj)
+            if sj < len(stmts) and stmts[sj] in "'\"":
+                sep, sj = _js_parse_string(stmts, sj)
+            elif sj < len(stmts) and stmts[sj] == ")":
+                sep = ","  # engine default (node-verified)
+            else:
+                raise _JSExprFail("F640 join sep not literal")
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, ")")
+            value = sep.join(elements)
+        sj = _js_skip_ws(stmts, sj)
+        if sj < len(stmts) and stmts[sj] == ";":
+            sj += 1
+        sj = _js_skip_ws(stmts, sj)
+        if sj != len(stmts):
+            raise _JSExprFail("F640 tail trailing junk")
+        state["ops"] += 1  # the accumulation is obfuscation-shaped
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, value)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f6xx_iife_head(text, i):
     """Match `(function(){` at text[i] (F600/F601/F602); returns index past `{` or None."""
     n = len(text)
@@ -30498,6 +30794,20 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f631 = _js_parse_f631_asyncgen_iife(text, i, depth, state)
         if _f631 is not None:
             val, i = _f631
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F640: (async()=>{var|let S='';for await (var|let|const X of SRC)
+        #   {S+=X;}return S;})() -- for-await over a SYNC iterable
+        #   (array literal, Map.values(), Map.keys()), plus the
+        #   push/join twin and the (async function(){...})() head twin.
+        #   The decoder cannot await, so the deterministic
+        #   accumulation is modeled statically (F618 precedent).
+        #   Tried after F631: F631 requires the `async function*
+        #   NAME()` declaration and a `NAME()` receiver, so a
+        #   sync-iterable receiver never matches it; None falls
+        #   through to the parenthesized-additive path like F631.
+        _f640 = _js_parse_f640_forawait_iife(text, i, depth, state)
+        if _f640 is not None:
+            val, i = _f640
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
