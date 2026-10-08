@@ -30169,6 +30169,233 @@ def _js_parse_f684_nested_destructure_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f693_destructure_default_iife(text, i, depth, state):
+    """Parse `(function(){var {K:PAT=DEF}=SRC;return ADD;})()` (F693).
+
+    Destructuring residuals beyond F644/F684: per-key DEFAULTS on
+    nested/array patterns with a literal source. Two productions
+    (node v24.20.0):
+    - rename-nested: `var {a:{b:c}={b:'f1'}}={};` -- key `a` is
+      missing from the source, so the per-key default `{b:'f1'}`
+      applies (a default applies exactly when the value is
+      `undefined`); the nested pattern binds `c` from the default
+      object;
+    - array-default: `var {a:[b,c]=['f1','f2']}={};` -- the same
+      default rule; the default array destructures positionally.
+    The source is a literal object (`{}` in the filed shapes); when
+    the key IS present in the source the decoder fails closed
+    (never mis-decodes -- the present-key form is a documented
+    residual, unmodeled).
+    Disjoint from F644 (flat patterns -- its splitter fails closed
+    on `{` after `key:`), F684a (parameter patterns), and F684b
+    (nested patterns WITHOUT defaults -- its pattern parser fails
+    closed on `=` after a sub-pattern). Tried after F684b.
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, multi-decl, reassignment, non-empty call args;
+    - flat/shorthand/rename-without-default entries (F644/F684b
+      own them), a key present in the source, a non-`{}`/non-literal
+      source;
+    - a nested sub-pattern entry that is not `ident:ident`
+      (deeper nesting, string/numeric keys, leaf defaults fail
+      closed), a default object with non-string values, a default
+      array with non-string elements, fewer default elements than
+      pattern names, a duplicate or `arguments` bound name;
+    - more than 8 entries (the F430 parts budget also applies).
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    if not _js_peek_arguments_iife_head(text, i):
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j) + len("function")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            return None  # not a decl
+        sj = _js_skip_ws(text, m)
+        if sj >= n or text[sj] != "{":
+            return None  # not an object pattern
+        sj = _js_skip_ws(text, sj + 1)
+        entries = []  # (key, kind, subnames, default)
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj >= n:
+                raise _JSExprFail("F693 bad pattern")
+            if text[sj] == "}":
+                sj += 1
+                break
+            key, sj = _js_parse_ident(text, sj)
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, ":")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "{":
+                # Branch A: nested object sub-pattern with a
+                # per-key default object.
+                sj = _js_skip_ws(text, sj + 1)
+                sub = []
+                while True:
+                    sj = _js_skip_ws(text, sj)
+                    sk, sj = _js_parse_ident(text, sj)
+                    sj = _js_skip_ws(text, sj)
+                    sj = _js_expect(text, sj, ":")
+                    sj = _js_skip_ws(text, sj)
+                    nm, sj = _js_parse_ident(text, sj)
+                    sub.append((sk, nm))
+                    sj = _js_skip_ws(text, sj)
+                    if sj < n and text[sj] == ",":
+                        sj = _js_skip_ws(text, sj + 1)
+                        continue
+                    if sj < n and text[sj] == "}":
+                        sj += 1
+                        break
+                    raise _JSExprFail("F693 bad sub-pattern")
+                if not sub:
+                    raise _JSExprFail("F693 empty sub-pattern")
+                sj = _js_skip_ws(text, sj)
+                sj = _js_expect(text, sj, "=")
+                sj = _js_skip_ws(text, sj)
+                if sj >= n or text[sj] != "{":
+                    raise _JSExprFail("F693 default not an object")
+                dkeys, dvals, sj = _js_parse_object_literal_keys_values(
+                    text, sj, depth, state)
+                dmap = dict(zip(dkeys, dvals))
+                entries.append((key, "obj", sub, dmap))
+            elif sj < n and text[sj] == "[":
+                # Branch B: array sub-pattern with a per-key
+                # default array.
+                sj = _js_skip_ws(text, sj + 1)
+                sub = []
+                while True:
+                    sj = _js_skip_ws(text, sj)
+                    nm, sj = _js_parse_ident(text, sj)
+                    sub.append(nm)
+                    sj = _js_skip_ws(text, sj)
+                    if sj < n and text[sj] == ",":
+                        sj = _js_skip_ws(text, sj + 1)
+                        continue
+                    if sj < n and text[sj] == "]":
+                        sj += 1
+                        break
+                    raise _JSExprFail("F693 bad array pattern")
+                if not sub:
+                    raise _JSExprFail("F693 empty array pattern")
+                sj = _js_skip_ws(text, sj)
+                sj = _js_expect(text, sj, "=")
+                sj = _js_skip_ws(text, sj)
+                if sj >= n or text[sj] != "[":
+                    raise _JSExprFail("F693 default not an array")
+                elems, sj = _js_parse_f644_string_array(text, sj,
+                                                       state)
+                entries.append((key, "arr", sub, elems))
+            else:
+                # A flat/shorthand/rename entry without a default --
+                # F644/F684b own those shapes.
+                return None
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == ",":
+                sj = _js_skip_ws(text, sj + 1)
+                continue
+            if sj < n and text[sj] == "}":
+                sj += 1
+                break
+            raise _JSExprFail("F693 bad pattern")
+        if not entries:
+            return None  # empty pattern -- not our shape
+        if len(entries) > 8:
+            raise _JSExprFail("F693 too many entries")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "{":
+            return None  # not a literal-object source
+        skeys, _svals, sj = _js_parse_object_literal_keys_values(
+            text, sj, depth, state)
+        sset = set(skeys)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        names = []
+        raws = []
+        for key, kind, sub, dflt in entries:
+            if key in sset:
+                # The key is present in the source: its default
+                # does NOT apply and the nested/array pattern would
+                # bind from the present value -- unmodeled, fail
+                # closed (never mis-decoded).
+                raise _JSExprFail("F693 key present in source")
+            if kind == "obj":
+                for sk, nm in sub:
+                    if sk not in dflt:
+                        raise _JSExprFail(
+                            "F693 sub-key missing from default")
+                    dv = dflt[sk]
+                    if type(dv) is not str:
+                        # A numeric/non-string default value would
+                        # need the F475 provenance model -- fail
+                        # closed rather than mis-decode.
+                        raise _JSExprFail(
+                            "F693 default value not a string")
+                    if nm == "arguments" or nm in names:
+                        raise _JSExprFail(
+                            "F693 duplicate/reserved name")
+                    names.append(nm)
+                    raws.append("'" + dv.replace("\\", "\\\\").replace(
+                        "'", "\\'") + "'")
+                    state["parts"] += 1
+                    if state["parts"] > _JS_EXPR_MAX_PARTS:
+                        raise _JSExprFail("too many parts")
+            else:
+                if len(sub) > len(dflt):
+                    # Node binds `undefined` for the missing
+                    # elements -- the decoder never guesses.
+                    raise _JSExprFail("F693 default too short")
+                for t, nm in enumerate(sub):
+                    if nm == "arguments" or nm in names:
+                        raise _JSExprFail(
+                            "F693 duplicate/reserved name")
+                    names.append(nm)
+                    dv = dflt[t]
+                    raws.append("'" + dv.replace("\\", "\\\\").replace(
+                        "'", "\\'") + "'")
+                    state["parts"] += 1
+                    if state["parts"] > _JS_EXPR_MAX_PARTS:
+                        raise _JSExprFail("too many parts")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F693 no return")
+        body_expr = _js_require_single_return(text[sj:inner_end])
+        rewritten = _js_bind_destructure_arguments(
+            body_expr, raws, names, list(range(len(names))))
+        val, _k = _js_parse_additive(rewritten, 0, depth + 1, state)
+        _k = _js_skip_ws(rewritten, _k)
+        if _k != len(rewritten):
+            raise _JSExprFail("F693 return not an additive")
+        if not isinstance(val, str):
+            raise _JSExprFail("F693 return not a string")
+        state["ops"] += 1  # the destructure is obfuscation-shaped
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
 def _js_f685_rewrite_arrow_calls(body_expr, fname, lit_text):
     """Rewrite `F()` call sites to the resolved arg literal (F685).
 
@@ -35110,6 +35337,291 @@ def _js_parse_f674_this_bound_iife(text, i, depth, state):
         return None
 
 
+
+
+def _js_parse_f697_object(text, i, depth, state):
+    """Parse a toPrimitive-aware object literal at text[i] == '{' (F697).
+
+    Like _js_parse_f67x_object with this_bodies=True, except the
+    computed key `[Symbol.toPrimitive]` is additionally accepted
+    (stored under the key `("symbol", "toPrimitive")`, mirroring
+    F535's registry-key convention); other computed keys fail
+    closed. Getters fail closed -- this grammar models only
+    coercion METHODS (F674 owns getter shapes and fails closed on
+    the bare-bound-ident return this grammar requires). Values:
+    string literals or zero-arg `function(){return ADD;}` methods
+    (an optional function name is allowed -- engine-identical).
+    `__proto__`, setters, method shorthand, spreads, nested
+    values, and non-literal data values fail closed. Duplicate
+    keys later-wins (node v24.20.0). Each property charges the F430
+    parts budget. Returns (props, next_index). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F697 object too deep")
+    props = {}
+    j = _js_skip_ws(text, i + 1)
+    if j < n and text[j] == "}":
+        return props, j + 1
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("F697 unterminated object")
+        c = text[j]
+        if c == "[":
+            # The only computed key this grammar accepts:
+            # [Symbol.toPrimitive] (ws-tolerant). The bracket-string
+            # twin [Symbol['toPrimitive']] fails closed (documented
+            # residual).
+            k = _js_skip_ws(text, j + 1)
+            k2 = k + len("Symbol")
+            if (not text.startswith("Symbol", k)
+                    or (k2 < n and text[k2] in _JS_IDENT_CONT)):
+                raise _JSExprFail("F697 bad computed key")
+            k = _js_skip_ws(text, k2)
+            if k >= n or text[k] != ".":
+                raise _JSExprFail("F697 bad computed key")
+            k = _js_skip_ws(text, k + 1)
+            k2 = k + len("toPrimitive")
+            if (not text.startswith("toPrimitive", k)
+                    or (k2 < n and text[k2] in _JS_IDENT_CONT)):
+                raise _JSExprFail("F697 bad computed key")
+            k = _js_skip_ws(text, k2)
+            if k >= n or text[k] != "]":
+                raise _JSExprFail("F697 bad computed key")
+            key = ("symbol", "toPrimitive")
+            j = k + 1
+        elif c in "'\"":
+            key, j = _js_parse_string(text, j)
+        elif c in _ASCII_DIGITS:
+            k = j + 1
+            while k < n and text[k] in _ASCII_DIGITS:
+                k += 1
+            key = text[j:k]
+            j = k
+        elif c in _JS_IDENT_START:
+            key, j = _js_parse_ident(text, j)
+        else:
+            raise _JSExprFail("F697 object key not a literal")
+        if key == "__proto__":
+            raise _JSExprFail("F697 __proto__ fails closed")
+        k = _js_skip_ws(text, j)
+        if key == "get" and k < n and text[k] not in ":(":
+            # A getter head -- F674 owns getters; this grammar
+            # models coercion methods only.
+            raise _JSExprFail("F697 getter not modeled")
+        if k >= n or text[k] != ":":
+            raise _JSExprFail("F697 object needs colon")
+        vj = _js_skip_ws(text, k + 1)
+        if vj < n and text[vj] in "'\"":
+            val, vj = _js_parse_string(text, vj)
+            props[key] = val
+        elif (text.startswith("function", vj)
+                and (vj + 8 >= n
+                     or text[vj + 8] not in _JS_IDENT_CONT)):
+            fk = _js_skip_ws(text, vj + 8)
+            if fk < n and text[fk] in _JS_IDENT_START:
+                # Named function expression -- engine-identical
+                # for the modeled (this-bound, zero-arg) body.
+                _, fk = _js_parse_ident(text, fk)
+                fk = _js_skip_ws(text, fk)
+            if fk >= n or text[fk] != "(":
+                raise _JSExprFail("F697 method needs parens")
+            fk = _js_skip_ws(text, fk + 1)
+            if fk >= n or text[fk] != ")":
+                raise _JSExprFail("F697 method takes no args")
+            fk = _js_skip_ws(text, fk + 1)
+            if fk >= n or text[fk] != "{":
+                raise _JSExprFail("F697 method needs a body")
+            bstart, bend, fk2 = _js_span_braced(text, fk)
+            add_text, kend = _js_scan_f67x_body_text(text, bstart,
+                                                    bend)
+            if _js_skip_ws(text, kend) != bend:
+                raise _JSExprFail("F697 method body trailing")
+            props[key] = _JSF67xBody("method", add_text)
+            vj = fk2
+        else:
+            raise _JSExprFail("F697 object value not modeled")
+        j = vj
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "}":
+                return props, j + 1
+            continue
+        if j < n and text[j] == "}":
+            return props, j + 1
+        raise _JSExprFail("F697 bad object literal")
+
+
+def _js_f697_toprimitive(props, depth, state):
+    """Evaluate ToPrimitive(props, default hint) for an F697 object.
+
+    props is the _js_parse_f697_object map; the caller guarantees at
+    least one own coercion method. Node-exact (v24.20.0): an own
+    [Symbol.toPrimitive] method is invoked first (hint "default",
+    its body ignoring the hint -- the filed shapes do); otherwise
+    OrdinaryToPrimitive tries `valueOf` then `toString` -- own
+    function values are invoked with `this` = the receiver, own
+    non-function values are skipped (the engine treats
+    non-callables as absent), and the inherited
+    Object.prototype.valueOf returns the object itself
+    (non-primitive, skipped). A method body that does not resolve
+    to a string fails closed (never mis-decoded): the engine only
+    tries the next method when the call RETURNS a non-primitive --
+    a throwing body propagates, so falling through on an
+    unevaluable body would over-decode. The documented residual is
+    the `this.missing` (undefined-returning) body, which the engine
+    would continue past but the decoder fails closed on. Never
+    evals.
+    """
+    recv = _JSObj(props)
+    tp = props.get(("symbol", "toPrimitive"))
+    if isinstance(tp, _JSF67xBody):
+        # No fallback in the engine: a throwing [Symbol.toPrimitive]
+        # propagates -- an unevaluable body fails closed.
+        val = _js_f67x_eval_body(tp, recv, depth, state)
+        if not isinstance(val, str):
+            raise _JSExprFail("F697 toPrimitive not a string")
+        return val
+    for mname in ("valueOf", "toString"):
+        mv = props.get(mname)
+        if not isinstance(mv, _JSF67xBody):
+            continue  # non-callable own value or inherited -- skipped
+        val = _js_f67x_eval_body(mv, recv, depth, state)
+        if not isinstance(val, str):
+            raise _JSExprFail("F697 coercion not a string")
+        return val
+    raise _JSExprFail("F697 no usable coercion method")
+
+
+def _js_parse_f697_toprimitive_iife(text, i, depth, state):
+    """Parse `(function(){var o={...};return ADD;})()` with implicit
+    ToPrimitive coercion of the bound object (F697).
+
+    The decoder resolves member reads/calls on this-bound objects
+    (F674) but never models the `+` operator's implicit coercion:
+    `var o={v:'f1',valueOf:function(){return this.v;}};return o+'f2';`
+    node-evaluates (v24.20.0) to the exact credential while the
+    decoder produces zero variants. Node-exact desugar: the var
+    binds the toPrimitive-aware object (string data values plus
+    zero-arg this-bound methods; at least one OWN coercion method
+    -- valueOf, toString, or [Symbol.toPrimitive] -- is required);
+    the return is a `+`-joined additive of string literals and the
+    BARE bound ident, each bare use coercing via ToPrimitive
+    (default hint).
+    Disjoint from F674: F674 fails closed on a bare bound ident
+    (it requires a member read/call term); this requires at least
+    one bare-bound-ident term and fails closed on member/call
+    terms. Tried after F674.
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, multi-decl, reassignment, non-empty call args;
+    - an object with no own coercion method (pure-data shapes are
+      earlier grammars'), a literal-only return body, an unbound
+      term, a member read/call on the bound object, a bare
+      `arguments` binding;
+    - a getter in the object (F674 owns getters), the
+      `[Symbol['toPrimitive']]` bracket-string twin, a method body
+      that is not a single `return ADD;`;
+    - a [Symbol.toPrimitive] body that does not resolve to a
+      string (the engine throws -- no fallback is modeled).
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    if not _js_peek_arguments_iife_head(text, i):
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j) + len("function")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            return None  # not a decl
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            return None
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "{":
+            return None  # not an object binding
+        props, sj = _js_parse_f697_object(text, sj, depth, state)
+        if not any(isinstance(v, _JSF67xBody)
+                   and (k == ("symbol", "toPrimitive")
+                        or k in ("valueOf", "toString"))
+                   for k, v in props.items()):
+            return None  # no own coercion method -- earlier
+            # grammars own it
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F697 no return")
+        sj = _js_skip_ws(text, m)
+        total = None
+        saw_coerce = False
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                term, sj = _js_parse_string(text, sj)
+            else:
+                name, k = _js_parse_ident(text, sj)
+                if name != oname:
+                    raise _JSExprFail("F697 unbound term")
+                k = _js_skip_ws(text, k)
+                if k < n and text[k] in ".[(":
+                    # A member read or call -- F674's shapes.
+                    raise _JSExprFail("F697 member/call term")
+                term = _js_f697_toprimitive(props, depth, state)
+                saw_coerce = True
+                sj = k
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        if not saw_coerce:
+            return None  # a literal-only body -- earlier
+            # grammars own it
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F697 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
 
 
 def _js_parse_f612_values_varbound_iife(text, i, depth, state):
@@ -48352,6 +48864,18 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f674 is not None:
             val, i = _f674
             return _js_parse_postfix(text, i, val, depth, state)
+        # F697: (function(){var o={...};return ADD;})() -- implicit
+        #   ToPrimitive coercion of the bound object in additive
+        #   position. Tried after F674: F674 fails closed on a bare
+        #   bound ident (it requires a member read/call term); this
+        #   requires at least one bare-bound-ident term and fails
+        #   closed on member/call terms. None falls through like
+        #   F674.
+        _f697 = _js_parse_f697_toprimitive_iife(text, i, depth,
+                                               state)
+        if _f697 is not None:
+            val, i = _f697
+            return _js_parse_postfix(text, i, val, depth, state)
         # F681: (function(){DECL A=['LIT',..];A.splice/fill(..);*;
         # return A.join(SEP);})() -- array-mutator fragment
         # assembly. None falls through (fails closed inside).
@@ -48373,6 +48897,15 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                         state)
         if _f684b is not None:
             return _f684b
+        # F693: (function(){var {K:PAT=DEF}=SRC;return ADD;})() --
+        #   per-key defaults on nested/array destructuring patterns.
+        #   None falls through (fails closed inside; F644's flat
+        #   shapes and F684b's default-less nested shapes never
+        #   match the per-key-default requirement).
+        _f693 = _js_parse_f693_destructure_default_iife(text, i, depth,
+                                                       state)
+        if _f693 is not None:
+            return _f693
         # F685: (function(){DECL F=()=>arguments[N];return ADD;})
         # (LITS) -- arrow-lexical arguments. None falls through
         # (fails closed inside).
