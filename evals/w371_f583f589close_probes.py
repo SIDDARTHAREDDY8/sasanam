@@ -329,13 +329,14 @@ def p6_honest_text_quiet():
 
 
 def p7_pin_and_footer():
-    """Pin 2140; footer shows F583/F589 closed, next F597."""
+    """Pin 2140; footer shows F583/F589/F600/F601/F602 closed, next F606."""
     n = len(decision_codes.TAXONOMY)
     pin_ok = (TAXONOMY_PIN == 2140 and n == 2140)
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as fh:
         text = fh.read()
     footer_ok = ("CLOSED 2026-10-07 wave-371 lane 1" in text
-                 and "Open findings: F597, F598, F599, F600, F601, F602, F603, F604, F605." in text
+                 and "CLOSED 2026-10-07 wave-372 lane 4" in text
+                 and "Open findings: F597, F598, F599, F603, F604, F605." in text
                  and "Next free finding: **F606**" in text)
     detail = "pin=%s codes=%d; footer-closed=%s" % (
         TAXONOMY_PIN, n, footer_ok)

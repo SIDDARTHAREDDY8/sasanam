@@ -3522,6 +3522,12 @@ def _js_parse_spread_copy(text, i, depth, state):
         # F471 convention, so list-level steps cannot reorder the
         # source's pairs; pair elements are shared, never mutated).
         src = _JSArr(list(src.pairs))
+    if isinstance(src, _JSMapKeys):
+        # F600: spread of a Map keys iterator -- the engine's
+        # iteration protocol yields the insertion-ordered keys;
+        # desugared to a shallow copy of the key list (the F471
+        # convention; numeric keys keep _JSNumStr provenance).
+        src = _JSArr(list(src.keys))
     if isinstance(src, str) and not isinstance(src, _JSNumStr):
         # F499: spread of a string value iterates its characters
         # (node v24.20.0 verified). _JSNumStr is excluded: the engine
@@ -3936,6 +3942,11 @@ def _js_parse_array_from(text, j, state):
       - `new Set([...])`: `Array.from(new Set(['f1','f2']))` ===
         `['f1','f2']` (parsed by _js_parse_new_set, F494 --
         SameValueZero dedup, engine-exact).
+      - `new Map([...]).keys()`: `Array.from(new Map([['f1',1],
+        ['f2',2]]).keys())` === `['f1','f2']` (F600 -- the keys
+        iterator yields the insertion-ordered keys; any other Map
+        postfix shape fails closed since the engine iterates
+        [k, v] pairs there).
     The optional mapper must be an identity callback
     (`x=>x` / `(x)=>x` / `function(x){return x;}` / `s=>{return s;}`,
     via _js_parse_map_callback, F437/F448) -- the elements pass
@@ -3958,7 +3969,21 @@ def _js_parse_array_from(text, j, state):
         # new Set(...) (a `new Map` here fails closed inside
         # _js_parse_new_set -- the engine would iterate entries,
         # not values, so it is never mis-decoded as a Set).
-        arr, j = _js_parse_new_set(text, j, 0, state)
+        _kk = _js_skip_ws(text, j + len("new"))
+        if _js_match_kw(text, _kk, "Map") is not None:
+            # F600: Array.from(new Map(...).keys()) -- the keys
+            # iterator desugars to the insertion-ordered key list
+            # (engine-identical, node v24.20.0 verified). Any other
+            # Map postfix shape fails closed here (the engine's
+            # iteration protocol yields [k, v] pairs, never bare
+            # values -- never mis-decoded).
+            _mval, _mj = _js_parse_primary(text, j, 0, state)
+            if not isinstance(_mval, _JSMapKeys):
+                raise _JSExprFail("from Map source not keys iterator")
+            arr = _JSArr(list(_mval.keys))
+            j = _mj
+        else:
+            arr, j = _js_parse_new_set(text, j, 0, state)
     else:
         raise _JSExprFail("from source not modeled")
     j = _js_skip_ws(text, j)
@@ -10846,6 +10871,27 @@ class _JSMapEntries:
         self.pairs = pairs
 
 
+class _JSMapKeys:
+    """Statically-resolved Map keys iterator (F600).
+
+    The engine's Map.prototype.keys() returns a Map Iterator, not
+    an array -- index reads and method calls on the iterator itself
+    are undefined/TypeError in the engine (node v24.20.0). The
+    decoder models it as an opaque iterable: only the F471
+    spread-copy factory (`[...m.keys()]`) and Array.from
+    (`Array.from(m.keys())`) can consume it, unwrapping to the
+    insertion-ordered key list (numeric keys keep their _JSNumStr
+    provenance, SameValueZero: 1 and '1' are distinct keys,
+    node-verified). Any other postfix step fails closed, and the
+    value never reaches the additive, so it can never be
+    mis-decoded as a string. Never evals.
+    """
+    __slots__ = ("keys",)
+
+    def __init__(self, keys):
+        self.keys = keys
+
+
 class _JSURLParams:
     """Statically-resolved URLSearchParams (F576).
 
@@ -16076,6 +16122,210 @@ def _js_parse_args_forof_iife(text, i, depth, state):
         return None
 
 
+def _js_bind_foreach_param(expr, pname, ptext):
+    """Substitute callback param *pname* with literal text *ptext* in *expr* (F600/F601/F602).
+
+    Every *pname* occurrence in code spans must be a bare read; any
+    other use (member/call/index, `pname.length`, a preceding `.`)
+    fails closed -- the engine would evaluate it, but the decoder
+    refuses rather than mis-decodes. String contents are never
+    touched. Raises _JSExprFail on any guard violation. Plain
+    string scanning throughout -- zero new regexes. Never evals.
+    """
+    out = []
+    for is_code, s in _js_split_code_strings(expr):
+        if not is_code:
+            out.append(s)
+            continue
+        buf = []
+        pos = 0
+        for st in _js_code_find_idents(s, pname):
+            en = st + len(pname)
+            rest = s[en:].lstrip(" \t\n\r")
+            if rest[:1] in (".", "[", "(") or (st > 0 and s[st - 1] == "."):
+                raise _JSExprFail("foreach param not a bare read")
+            buf.append(s[pos:st])
+            buf.append(ptext)
+            pos = en
+        buf.append(s[pos:])
+        out.append("".join(buf))
+    return "".join(out)
+
+
+def _js_foreach_E_value(E, bindings, depth, state):
+    """Evaluate one forEach accumulation expression (F600/F601/F602).
+
+    *E* is the raw text of the `ACC += E` operand; *bindings* the
+    per-iteration (param, literal-text) pairs. Each param is
+    substituted with its literal text (bare reads only --
+    anything else fails closed), and the rewritten text is parsed
+    by the normal additive grammar at depth+1, so every
+    downstream decoder, bound, and fail-closed rule applies
+    unchanged. Returns the iteration's string value. Never evals.
+    """
+    rewritten = E
+    for pname, ptext in bindings:
+        rewritten = _js_bind_foreach_param(rewritten, pname, ptext)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    val, k = _js_parse_additive(rewritten, 0, depth + 1, state)
+    k = _js_skip_ws(rewritten, k)
+    if k != len(rewritten):
+        raise _JSExprFail("foreach E trailing junk")
+    if not isinstance(val, str):
+        # _JSNumStr is a str subclass (behaves exactly like str
+        # in joins/concats, F475); _JSArr/_JSObj/_JSNil fail closed
+        # here -- the engine would coerce or throw, never yield a
+        # decodable credential string through this path.
+        raise _JSExprFail("foreach E not a string")
+    return val
+
+
+def _js_parse_foreach_accum_callback(text, j, acc_name, depth, state):
+    """Parse a forEach accumulation callback at text[j] (F600/F601/F602).
+
+    Recognized (node-verified, v24.20.0):
+      `function(P){ACC+=E;}`, `(P)=>ACC+=E`, `(P)=>{ACC+=E;}`
+    where P is one or two distinct parameter idents (Map.forEach
+    passes (value, key) positionally; Set.forEach passes (value,
+    value)), ACC is the caller's accumulator name, and E is an
+    additive expression over the params. The `+=` statement is the
+    only allowed body shape -- any other statement, a nested
+    function, a reassignment of ACC (`=`), or a param named ACC /
+    `arguments` fails closed. Returns (params, E_text, next_index)
+    just past the callback. Never evals.
+    """
+    n = len(text)
+    params = []
+    if _js_match_kw(text, j, "function") is not None:
+        j = _js_skip_ws(text, j + len("function"))
+        j = _js_expect(text, j, "(")
+        params, j = _js_parse_foreach_params(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "{")
+        E, j = _js_parse_foreach_accum_stmt(text, j, acc_name)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "}")
+        return params, E, j
+    # Arrow: `(P)=>ACC+=E`, `P=>ACC+=E`, `(P)=>{ACC+=E;}` (the
+    # bare single-param form is engine-identical, F448 precedent).
+    j0 = _js_skip_ws(text, j)
+    if j0 >= n:
+        raise _JSExprFail("foreach callback not a function")
+    if text[j0] == "(":
+        j = _js_skip_ws(text, j0 + 1)
+        params, j = _js_parse_foreach_params(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+    elif text[j0] in _JS_IDENT_START:
+        _pname, j = _js_parse_ident(text, j0)
+        if _pname == "arguments":
+            raise _JSExprFail("foreach param shadowed")
+        params = [_pname]
+        j = _js_skip_ws(text, j)
+    else:
+        raise _JSExprFail("foreach callback not a function")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("foreach arrow without =>")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        E, j = _js_parse_foreach_accum_stmt(text, j + 1, acc_name)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "}")
+        return params, E, j
+    # Concise body: `ACC+=E` terminated by `)` at depth 0.
+    a2, j = _js_parse_ident(text, j)
+    if a2 != acc_name:
+        raise _JSExprFail("foreach concise accum mismatch")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("+=", j):
+        raise _JSExprFail("foreach concise body not +=")
+    j = _js_skip_ws(text, j + 2)
+    E, j = _js_scan_foreach_E(text, j, ")")
+    return params, E, j
+
+
+def _js_parse_foreach_params(text, j):
+    """Parse `(P1[, P2])` callback params at text[j] (F600/F601/F602).
+
+    One or two plain idents; zero params, three+, defaults, rest,
+    and destructuring fail closed (the engine would call the
+    callback with (value, key[, map]) -- only the first two are
+    ever observed by the modeled bodies). Returns (params,
+    next_index) just past the params (the caller expects `)`).
+    Never evals.
+    """
+    n = len(text)
+    params = []
+    j = _js_skip_ws(text, j)
+    while True:
+        if j >= n or text[j] not in _JS_IDENT_START:
+            raise _JSExprFail("foreach param not an ident")
+        pname, j = _js_parse_ident(text, j)
+        if pname in params or pname in ("arguments",):
+            raise _JSExprFail("foreach param shadowed")
+        params.append(pname)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            if len(params) >= 2:
+                raise _JSExprFail("foreach too many params")
+            j = _js_skip_ws(text, j + 1)
+            continue
+        break
+    if not params:
+        raise _JSExprFail("foreach no params")
+    return params, j
+
+
+def _js_parse_foreach_accum_stmt(text, j, acc_name):
+    """Parse `ACC+=E;` at text[j] (F600/F601/F602 block-body form).
+
+    Returns (E_text, next_index) just past the `;`. Never evals.
+    """
+    j = _js_skip_ws(text, j)
+    a2, j = _js_parse_ident(text, j)
+    if a2 != acc_name:
+        raise _JSExprFail("foreach accum mismatch")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("+=", j):
+        raise _JSExprFail("foreach body not +=")
+    j = _js_skip_ws(text, j + 2)
+    E, j = _js_scan_foreach_E(text, j, ";")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    return E, j
+
+
+def _js_scan_foreach_E(text, j, terminator):
+    """Scan the `E` of `ACC+=E` to *terminator* at depth 0 (F600/F601/F602).
+
+    String-aware and paren/bracket/brace-depth-aware: the
+    terminator must appear at depth 0 outside string literals.
+    Returns (E_text, index_of_terminator). Never evals.
+    """
+    n = len(text)
+    depth = 0
+    k = j
+    while k < n:
+        c = text[k]
+        if c in "'\"`":
+            k = _js_skip_quoted(text, k)
+            continue
+        if c == terminator and depth == 0:
+            return text[j:k], k
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            if depth == 0:
+                break
+            depth -= 1
+        k += 1
+    raise _JSExprFail("foreach E unterminated")
+
+
 def _js_parse_f594_call_args(text, j, state):
     """Parse `(lit, ...)` string-literal call args at text[j] (F594).
 
@@ -16413,6 +16663,471 @@ def _js_parse_f543_identity_map(text, j):
     if p2 != p:
         raise _JSExprFail("F543 identity map other ident")
     return k
+
+
+def _js_quote_literal(s):
+    """Quote *s* as a single-quoted JS string literal (F600/F601/F602).
+
+    Emits only escapes the decoder's own _js_parse_string round-trips
+    exactly (\', \\\\, \\n/\\r/\\t, \\uXXXX for other controls), so a
+    substituted param re-parses to the identical value. Never evals.
+    """
+    out = ["'"]
+    for ch in s:
+        o = ord(ch)
+        if ch == "'":
+            out.append("\\'")
+        elif ch == "\\":
+            out.append("\\\\")
+        elif ch == "\n":
+            out.append("\\n")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ch == "\t":
+            out.append("\\t")
+        elif o < 0x20 or o == 0x7f:
+            out.append("\\u%04x" % o)
+        else:
+            out.append(ch)
+    out.append("'")
+    return "".join(out)
+
+
+def _js_parse_f6xx_accum_decl(stmts, j):
+    """Parse `var|let S='';` at stmts[j] (F600/F601/F602).
+
+    The accumulator must start as the empty string (a `const`
+    accumulator would throw at runtime on `+=`). Returns
+    (acc_name, next_index) just past the `;`. Never evals.
+    """
+    n = len(stmts)
+    m = _js_match_kw(stmts, j, "var")
+    if m is None:
+        m = _js_match_kw(stmts, j, "let")
+    if m is None:
+        raise _JSExprFail("accum decl not var/let")
+    j = _js_skip_ws(stmts, m)
+    acc, j = _js_parse_ident(stmts, j)
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "=")
+    j = _js_skip_ws(stmts, j)
+    if j >= n or stmts[j] not in "'\"":
+        raise _JSExprFail("accum not a string")
+    q0 = j
+    _, j = _js_parse_string(stmts, j)
+    if stmts[q0:j] != "''" and stmts[q0:j] != '""':
+        raise _JSExprFail("accum not empty")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ";")
+    return acc, j
+
+
+def _js_parse_f6xx_return_acc(stmts, j, acc):
+    """Parse `return ACC;` at stmts[j] through end-of-body (F600/F601/F602).
+
+    Returns next_index (== len(stmts) modulo trailing ws). Never evals.
+    """
+    j = _js_skip_ws(stmts, j)
+    m = _js_match_kw(stmts, j, "return")
+    if m is None:
+        raise _JSExprFail("no return")
+    j = _js_skip_ws(stmts, m)
+    acc2, j = _js_parse_ident(stmts, j)
+    if acc2 != acc:
+        raise _JSExprFail("returns another ident")
+    j = _js_skip_ws(stmts, j)
+    if j < len(stmts) and stmts[j] == ";":
+        j += 1
+    if _js_skip_ws(stmts, j) != len(stmts):
+        raise _JSExprFail("trailing statements")
+    return j
+
+
+def _js_parse_f6xx_iife_head(text, i):
+    """Match `(function(){` at text[i] (F600/F601/F602); returns index past `{` or None."""
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    j = _js_skip_ws(text, j + 1)
+    if _js_match_kw(text, j, "function") is None:
+        return None
+    j = _js_skip_ws(text, j + len("function"))
+    if j >= n or text[j] != "(":
+        return None
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != ")":
+        return None
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "{":
+        return None
+    return j
+
+
+def _js_parse_f6xx_iife_tail(text, j, depth, state, val):
+    """Parse `})()` at text[j] closing an F600/F601/F602 IIFE (zero call args)."""
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+    return val, j
+
+
+def _js_key_literal_text(kkind, kkey):
+    """Source text for a Map key binding (F600/F601): numeric keys stay numeric."""
+    if kkind == "n":
+        return kkey  # canonical digits; _JSNumStr provenance preserved
+    return _js_quote_literal(kkey)
+
+
+def _js_parse_f601_map_foreach_iife(text, i, depth, state):
+    """Parse `(function(){var|let S='';new Map([PAIRS]).forEach(CB);return S;})()` (F601).
+
+    Node-exact desugar (v24.20.0): Map.prototype.forEach calls CB
+    once per entry in insertion order with (value, key, map); the
+    modeled callbacks accumulate `S+=E` per call, so the result is
+    the per-iteration E join. CB params are positional: P1=value,
+    P2=key (a third param would be the map itself -- unmodeled,
+    fails closed at param parse). Returns (value, next_index), or
+    None when the head does not match or a guard fails. Bounded by
+    the part/depth budgets; the wrapper charges one op
+    (obfuscation-shaped). Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-empty accumulator initializer, `const` accumulator, a
+    non-`new Map` source, non-literal entries, a callback that is
+    not the exact `S+=E` accumulation shape, params shadowing the
+    accumulator, non-string E values, call args on the IIFE.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        _mval = _js_parse_f563_map(stmts, sj, depth, state)
+        if _mval is None:
+            raise _JSExprFail("F601 source not new Map")
+        _mmap, sj = _mval
+        sj = _js_skip_ws(stmts, sj)
+        if sj >= len(stmts) or stmts[sj] != ".":
+            raise _JSExprFail("F601 no dot")
+        _mn, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj + 1))
+        if _mn != "forEach":
+            raise _JSExprFail("F601 not forEach")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "(")
+        params, E, sj = _js_parse_foreach_accum_callback(
+            stmts, sj, acc, depth, state)
+        if acc in params:
+            raise _JSExprFail("F601 param shadows accum")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        _js_parse_f6xx_return_acc(stmts, _js_skip_ws(stmts, sj), acc)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        parts = []
+        for (_kkind, _kkey), _vval in _mmap.entries.items():
+            bindings = [(params[0], _js_quote_literal(_vval))]
+            if len(params) > 1:
+                bindings.append(
+                    (params[1], _js_key_literal_text(_kkind, _kkey)))
+            parts.append(_js_foreach_E_value(
+                E, bindings, depth, state))
+            state["parts"] += 1  # F452: charge per iteration
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state,
+                                        "".join(parts))
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f600_keys_foreach_iife(text, i, depth, state):
+    """Parse `(function(){var|let S='';new Map([PAIRS]).keys().forEach(CB);return S;})()` (F600).
+
+    Node-exact desugar (v24.20.0): `.keys()` yields the
+    insertion-ordered keys; forEach passes (key, key, map), so P1
+    (and P2) bind the key. Same callback/accumulator discipline as
+    F601. Returns (value, next_index), or None on mismatch/guard
+    failure. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        _mval = _js_parse_f563_map(stmts, sj, depth, state,
+                                   _keys_only=True)
+        if _mval is None:
+            raise _JSExprFail("F600 source not new Map")
+        _mmap, sj = _mval
+        sj = _js_skip_ws(stmts, sj)
+        if sj >= len(stmts) or stmts[sj] != ".":
+            raise _JSExprFail("F600 no dot")
+        _mn, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj + 1))
+        if _mn != "keys":
+            raise _JSExprFail("F600 not keys")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "(")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_skip_ws(stmts, sj)
+        if sj >= len(stmts) or stmts[sj] != ".":
+            raise _JSExprFail("F600 keys no dot")
+        _mn, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj + 1))
+        if _mn != "forEach":
+            raise _JSExprFail("F600 not forEach")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "(")
+        params, E, sj = _js_parse_foreach_accum_callback(
+            stmts, sj, acc, depth, state)
+        if acc in params:
+            raise _JSExprFail("F600 param shadows accum")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        _js_parse_f6xx_return_acc(stmts, _js_skip_ws(stmts, sj), acc)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        parts = []
+        for (_kkind, _kkey) in _mmap.entries.keys():
+            # The engine passes (key, key, map): P1 and P2 both bind
+            # the key (node v24.20.0 verified).
+            ktext = _js_key_literal_text(_kkind, _kkey)
+            bindings = [(params[0], ktext)]
+            if len(params) > 1:
+                bindings.append((params[1], ktext))
+            parts.append(_js_foreach_E_value(
+                E, bindings, depth, state))
+            state["parts"] += 1  # F452: charge per iteration
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state,
+                                        "".join(parts))
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f602_set_elements(text, j, depth, state):
+    """Parse `new Set([...])` at text[j] (F602).
+
+    Returns (elements, next_index): the SameValueZero-deduped
+    insertion-ordered element list (node v24.20.0 verified --
+    first occurrence wins). Elements must be plain string
+    literals (numeric/marker/nested elements fail closed, the F494
+    discipline); each element charges one part (F452). Never evals.
+    """
+    n = len(text)
+    j0 = _js_match_kw(text, j, "new")
+    if j0 is None:
+        raise _JSExprFail("F602 not new")
+    j = _js_skip_ws(text, j0)
+    if _js_match_kw(text, j, "Set") is None:
+        raise _JSExprFail("F602 not new Set")
+    j = _js_skip_ws(text, j + len("Set"))
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F602 Set arg not an array literal")
+    arr, j = _js_parse_array(text, j, depth, state)
+    seen = set()
+    elements = []
+    for e in arr.elements:
+        if not isinstance(e, str) or isinstance(e, _JSNumStr):
+            raise _JSExprFail("F602 Set of non-string literals")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        if e not in seen:
+            seen.add(e)
+            elements.append(e)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    return elements, j
+
+
+def _js_parse_f602_set_forof_iife(text, i, depth, state):
+    """Parse `(function(){var|let S='';for(var|let|const X of new Set([LITS])){S+=X;}return S;})()` (F602).
+
+    Node-exact desugar (v24.20.0): for-of over a Set yields the
+    deduped values in insertion order, so the accumulator is the
+    element join. The loop grammar mirrors _js_parse_f533_forof_accum
+    (braces optional, var/let/const loopvar) with the source fixed
+    to the `new Set([...])` literal. Returns (value,
+    next_index), or None on mismatch/guard failure. Never evals.
+
+    Bounds (all fail closed): a non-empty accumulator, `const`
+    accumulator, a loop variable shadowing the accumulator, a
+    loop body other than `S+=X`, non-string-literal Set elements,
+    call args on the IIFE.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        m = _js_match_kw(stmts, sj, "for")
+        if m is None:
+            raise _JSExprFail("F602 no for")
+        sj = _js_skip_ws(stmts, m)
+        sj = _js_expect(stmts, sj, "(")
+        sj = _js_skip_ws(stmts, sj)
+        m = _js_match_kw(stmts, sj, "var")
+        if m is None:
+            m = _js_match_kw(stmts, sj, "let")
+        if m is None:
+            m = _js_match_kw(stmts, sj, "const")
+        if m is None:
+            raise _JSExprFail("F602 loopvar not var/let/const")
+        sj = _js_skip_ws(stmts, m)
+        loopvar, sj = _js_parse_ident(stmts, sj)
+        if loopvar == acc:
+            raise _JSExprFail("F602 loopvar shadows accum")
+        sj = _js_skip_ws(stmts, sj)
+        m = _js_match_kw(stmts, sj, "of")
+        if m is None:
+            raise _JSExprFail("F602 no of")
+        sj = _js_skip_ws(stmts, m)
+        elements, sj = _js_parse_f602_set_elements(stmts, sj, depth,
+                                                   state)
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_skip_ws(stmts, sj)
+        braced = False
+        if sj < len(stmts) and stmts[sj] == "{":
+            braced = True
+            sj = _js_skip_ws(stmts, sj + 1)
+        acc2, sj = _js_parse_ident(stmts, sj)
+        if acc2 != acc:
+            raise _JSExprFail("F602 accum mismatch")
+        sj = _js_skip_ws(stmts, sj)
+        if not stmts.startswith("+=", sj):
+            raise _JSExprFail("F602 body not +=")
+        sj = _js_skip_ws(stmts, sj + 2)
+        v2, sj = _js_parse_ident(stmts, sj)
+        if v2 != loopvar:
+            raise _JSExprFail("F602 body reads another ident")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        sj = _js_skip_ws(stmts, sj)
+        if braced:
+            sj = _js_expect(stmts, sj, "}")
+            sj = _js_skip_ws(stmts, sj)
+        _js_parse_f6xx_return_acc(stmts, sj, acc)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state,
+                                        "".join(elements))
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f602_set_foreach_iife(text, i, depth, state):
+    """Parse `(function(){var|let S='';var|let|const ST=new Set([LITS]);ST.forEach(CB);return S;})()` (F602).
+
+    Node-exact desugar (v24.20.0): Set.prototype.forEach calls CB
+    once per element in insertion order with (value, value, set);
+    the modeled callbacks accumulate `S+=E` per call. The Set is
+    bound to a var/let/const one statement before the forEach --
+    the binding is single-assignment (the exact-shape grammar has
+    no room for reassignment). Same callback/accumulator
+    discipline as F601. Returns (value, next_index), or None on
+    mismatch/guard failure. Never evals.
+
+    Bounds (all fail closed): a non-empty accumulator, `const`
+    accumulator, a non-`new Set` binding, non-string-literal Set
+    elements, forEach on a different ident, a callback that is not
+    the exact `S+=E` shape, params shadowing the accumulator or
+    the Set binding, non-string E values, call args on the IIFE.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        m = _js_match_kw(stmts, sj, "var")
+        if m is None:
+            m = _js_match_kw(stmts, sj, "let")
+        if m is None:
+            m = _js_match_kw(stmts, sj, "const")
+        if m is None:
+            raise _JSExprFail("F602 set decl not var/let/const")
+        sj = _js_skip_ws(stmts, m)
+        setname, sj = _js_parse_ident(stmts, sj)
+        if setname == acc:
+            raise _JSExprFail("F602 set shadows accum")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "=")
+        sj = _js_skip_ws(stmts, sj)
+        elements, sj = _js_parse_f602_set_elements(stmts, sj, depth,
+                                                   state)
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        sj = _js_skip_ws(stmts, sj)
+        recv, sj = _js_parse_ident(stmts, sj)
+        if recv != setname:
+            raise _JSExprFail("F602 forEach on another ident")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ".")
+        _mn, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+        if _mn != "forEach":
+            raise _JSExprFail("F602 not forEach")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "(")
+        params, E, sj = _js_parse_foreach_accum_callback(
+            stmts, sj, acc, depth, state)
+        if acc in params or setname in params:
+            raise _JSExprFail("F602 param shadows")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        _js_parse_f6xx_return_acc(stmts, _js_skip_ws(stmts, sj), acc)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        parts = []
+        for e in elements:
+            # The engine passes (value, value, set): P1 and P2 both
+            # bind the value (node v24.20.0 verified).
+            etext = _js_quote_literal(e)
+            bindings = [(params[0], etext)]
+            if len(params) > 1:
+                bindings.append((params[1], etext))
+            parts.append(_js_foreach_E_value(
+                E, bindings, depth, state))
+            state["parts"] += 1  # F452: charge per iteration
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state,
+                                        "".join(parts))
+    except _JSExprFail:
+        return None
 
 
 def _js_parse_args_entries_values_iife(text, i, depth, state):
@@ -17588,7 +18303,7 @@ def _js_parse_f562_groupby(text, i, depth, state, recv):
     return _JSMap({("s", k): _JSArr(groups[k]) for k in order}), j
 
 
-def _js_parse_f563_map(text, i, depth, state):
+def _js_parse_f563_map(text, i, depth, state, _keys_only=False):
     """Parse `new Map(LITENTRIES)` at text[i] (F563).
 
     Desugars literal map construction node-exactly (v24.20.0):
@@ -17604,6 +18319,11 @@ def _js_parse_f563_map(text, i, depth, state):
     next_index), or None when text[i] is not a `new Map` head (the
     caller falls through, failing closed on `new` as before).
     Never evals.
+
+    _keys_only (F600): the values are parsed but DISCARDED -- any
+    parsed literal type is accepted. The resulting _JSMap must
+    only flow to `.keys()` (values are unobservable through the
+    keys iterator, node v24.20.0); it must never reach `.get`.
     """
     n = len(text)
     j = _js_match_kw(text, i, "new")
@@ -17632,12 +18352,69 @@ def _js_parse_f563_map(text, i, depth, state):
             kid = ("n", str(k))
         else:
             raise _JSExprFail("Map key not a literal")
-        if not isinstance(v, str) or isinstance(v, _JSNumStr):
-            raise _JSExprFail("Map value not a string literal")
-        entries[kid] = v  # later wins, node-exact
+        if _keys_only:
+            # F600: the value is unobservable through the keys
+            # iterator -- any parsed literal type is accepted and
+            # discarded (keys-only maps never reach `.get`; the
+            # caller guarantees the `.keys()` postfix follows).
+            entries[kid] = None
+        else:
+            if not isinstance(v, str) or isinstance(v, _JSNumStr):
+                raise _JSExprFail("Map value not a string literal")
+            entries[kid] = v  # later wins, node-exact
     j = _js_skip_ws(text, j)
     j = _js_expect(text, j, ")")
     return _JSMap(entries), j
+
+
+def _js_parse_f600_keys_map(text, i, depth, state):
+    """Parse `new Map(LITENTRIES).keys()` at text[i] (F600).
+
+    Keys-only construction for maps with non-string-literal values
+    (the filed F600 shapes use numeric values, which the strict
+    F563 grammar rejects): values are parsed but discarded --
+    unobservable through the keys iterator (node v24.20.0). The
+    `.keys()` postfix must follow immediately (dot or
+    bracket-string member form, zero args); otherwise None and the
+    strict F563 route handles the construction unchanged (the
+    re-parse charges parts again -- intentional double charge,
+    F469 precedent). Returns (_JSMapKeys, next_index). Never evals.
+    """
+    n = len(text)
+    _m = _js_parse_f563_map(text, i, depth, state, _keys_only=True)
+    if _m is None:
+        return None
+    _mmap, j = _m
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ".":
+        _mk = _js_skip_ws(text, j + 1)
+        try:
+            _mname, _mk = _js_parse_ident(text, _mk)
+        except _JSExprFail:
+            return None
+    elif j < n and text[j] == "[":
+        try:
+            _mname, _mk = _js_parse_bracket_member(text, j)
+        except _JSExprFail:
+            return None
+    else:
+        return None
+    if _mname != "keys":
+        return None
+    _ek = _js_skip_ws(text, _mk)
+    if _ek >= n or text[_ek] != "(":
+        return None
+    _ek = _js_skip_ws(text, _ek + 1)
+    if _ek >= n or text[_ek] != ")":
+        return None
+    _keys = []
+    for (_kkind, _kkey) in _mmap.entries.keys():
+        _keys.append(_JSNumStr(_kkey) if _kkind == "n" else _kkey)
+        state["parts"] += 1  # F452: charge per key
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+    state["ops"] += 1  # the keys call is obfuscation-shaped
+    return _JSMapKeys(_keys), _ek + 1
 
 
 def _js_parse_f576_new_url(text, i, depth, state):
@@ -20729,6 +21506,35 @@ def _js_parse_postfix(text, i, value, depth, state):
                 # _JSMapEntries that escapes unspread yields no decoded
                 # variant (_ascii_printable_or_none refuses non-str).
                 return _JSMapEntries(_pairs), _ek + 1
+            if _mname == "keys":
+                # F600: `.keys()` on a statically-resolved Map --
+                # insertion-ordered keys (node v24.20.0). The engine
+                # returns a Map Iterator, not an array, so the result
+                # is the opaque _JSMapKeys: only the F471 spread-copy
+                # factory (`[...m.keys()]`) and Array.from
+                # (`Array.from(m.keys())`) consume it (any other
+                # postfix step fails closed at the loop head).
+                # Numeric keys keep their _JSNumStr provenance
+                # (SameValueZero: 1 and '1' are distinct keys,
+                # node-verified).
+                _ek = _js_skip_ws(text, _mk)
+                if _ek >= len(text) or text[_ek] != "(":
+                    raise _JSExprFail("map keys without paren")
+                _ek = _js_skip_ws(text, _ek + 1)
+                if _ek >= len(text) or text[_ek] != ")":
+                    raise _JSExprFail("map keys takes no args")
+                _keys = []
+                for (_kkind, _kkey) in value.entries.keys():
+                    _keys.append(_JSNumStr(_kkey)
+                                if _kkind == "n" else _kkey)
+                    state["parts"] += 1  # F452: charge per key
+                    if state["parts"] > _JS_EXPR_MAX_PARTS:
+                        raise _JSExprFail("too many parts")
+                state["ops"] += 1  # the keys call is obfuscation-shaped
+                # The iterator ends the postfix chain (F461), same as
+                # _JSMapEntries above: a _JSMapKeys that escapes
+                # unspread yields no decoded variant.
+                return _JSMapKeys(_keys), _ek + 1
             raise _JSExprFail("map member not modeled")
 
 
@@ -21454,6 +22260,32 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f594 is not None:
             val, i = _f594
             return _js_parse_postfix(text, i, val, depth, state)
+        # F600/F601/F602: (function(){var|let S='';
+        #   new Map([PAIRS]).keys().forEach(CB);return S;})() /
+        #   (function(){var|let S='';new Map([PAIRS]).forEach(CB);
+        #   return S;})() /
+        #   (function(){var|let S='';for(var|let|const X of
+        #   new Set([LITS])){S+=X;}return S;})() /
+        #   (function(){var|let S='';var|let|const ST=new Set([LITS]);
+        #   ST.forEach(CB);return S;})() -- Map/Set iteration
+        #   accumulation. Tried after F594: the exact statement
+        #   grammars are disjoint from every earlier route (all of
+        #   which require `arguments` forms, additive bodies, or
+        #   call args -- these shapes have none), and None falls
+        #   through to F581/F516 like F594.
+        _f600 = _js_parse_f600_keys_foreach_iife(text, i, depth, state)
+        if _f600 is None:
+            _f600 = _js_parse_f601_map_foreach_iife(text, i, depth,
+                                                   state)
+        if _f600 is None:
+            _f600 = _js_parse_f602_set_forof_iife(text, i, depth,
+                                                 state)
+        if _f600 is None:
+            _f600 = _js_parse_f602_set_foreach_iife(text, i, depth,
+                                                   state)
+        if _f600 is not None:
+            val, i = _f600
+            return _js_parse_postfix(text, i, val, depth, state)
         # F581: (function(){DECL a=arguments;return a;})(lit, ...) --
         # the arguments-alias return (the Reflect.apply-dispatch
         # element). Tried before F516: the exact `return <alias>;`
@@ -21749,6 +22581,17 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         val, i = _wr
         state["ops"] += 1  # the WeakRef indirection is
                            # obfuscation-shaped
+        return _js_parse_postfix(text, i, val, depth, state)
+    # F600: new Map(LITENTRIES).keys() -- keys-only construction
+    # for maps with non-string-literal values (the strict F563
+    # grammar rejects them; values are unobservable through the
+    # keys iterator). None falls through to the strict F563 route
+    # (which re-parses -- intentional double charge, F469
+    # precedent).
+    _f600 = _js_parse_f600_keys_map(text, i, depth, state)
+    if _f600 is not None:
+        val, i = _f600
+        state["ops"] += 1  # the Map construction is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
     # F563: new Map(LITENTRIES) -- literal map construction. None
     # falls through (fails closed on `new` as before).

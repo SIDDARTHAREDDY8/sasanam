@@ -140,11 +140,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F583-F596 open, next F597 (wave-371 lane 8)."""
+    """Control: footer shows F597-F599/F603-F605 open, next F606 (wave-372 lane 4)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F606**" in text  # Wave-371 lane 8 (attack round 39): F583-F596 OPEN (base); F597-F604 filed OPEN (next F605)
-          and "Open findings: F597, F598, F599, F600, F601, F602, F603, F604, F605." in text)  # Wave-371 lane 8 (attack round 39): F583-F596 OPEN (base); F597-F604 filed OPEN (next F605)
+    ok = ("Next free finding: **F606**" in text  # Wave-372 lane 4: F600-F602 CLOSED; F597-F599, F603-F605 OPEN (next F606)
+          and "Open findings: F597, F598, F599, F603, F604, F605." in text)  # Wave-372 lane 4: F600-F602 CLOSED; F597-F599, F603-F605 OPEN (next F606)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -330,30 +330,36 @@ def test_r39_f599_open():
 
 @_t
 def test_r39_f600_open():
-    """F600 OPEN: Map keys iteration reads miss."""
-    m1 = _misses("Array.from(new Map([['%s',1],['%s',2]]).keys()).join('')" % (_A, _B))
-    m2 = _misses("[...new Map([['%s',1],['%s',2]]).keys()].join('')" % (_A, _B))
-    m3 = _misses("(function(){var s='';new Map([['%s',1],['%s',2]]).keys().forEach(function(k){s+=k;});return s;})()" % (_A, _B))
-    ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    """F600 CLOSED by wave-372 lane 4: Map keys iteration reads now held."""
+    # Wave-372 lane 4 closed F600; the attack-lane "still open"
+    # expectation is superseded.
+    h1 = not _misses("Array.from(new Map([['%s',1],['%s',2]]).keys()).join('')" % (_A, _B))
+    h2 = not _misses("[...new Map([['%s',1],['%s',2]]).keys()].join('')" % (_A, _B))
+    h3 = not _misses("(function(){var s='';new Map([['%s',1],['%s',2]]).keys().forEach(function(k){s+=k;});return s;})()" % (_A, _B))
+    ok = h1 and h2 and h3
+    return ("HELD" if ok else "BREAK", "held=%s" % ok)
 
 
 @_t
 def test_r39_f601_open():
-    """F601 OPEN: Map.prototype.forEach reads miss."""
-    m1 = _misses("(function(){var s='';new Map([['a','%s'],['b','%s']]).forEach(function(v){s+=v;});return s;})()" % (_A, _B))
-    m2 = _misses("(function(){var s='';new Map([['a','%s'],['b','%s']]).forEach((v)=>{s+=v;});return s;})()" % (_A, _B))
-    ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    """F601 CLOSED by wave-372 lane 4: Map.prototype.forEach reads now held."""
+    # Wave-372 lane 4 closed F601; the attack-lane "still open"
+    # expectation is superseded.
+    h1 = not _misses("(function(){var s='';new Map([['a','%s'],['b','%s']]).forEach(function(v){s+=v;});return s;})()" % (_A, _B))
+    h2 = not _misses("(function(){var s='';new Map([['a','%s'],['b','%s']]).forEach((v)=>{s+=v;});return s;})()" % (_A, _B))
+    ok = h1 and h2
+    return ("HELD" if ok else "BREAK", "held=%s" % ok)
 
 
 @_t
 def test_r39_f602_open():
-    """F602 OPEN: Set iteration reads miss."""
-    m1 = _misses("(function(){var s='';for(var x of new Set(['%s','%s'])){s+=x;}return s;})()" % (_A, _B))
-    m2 = _misses("(function(){var s='';var st=new Set(['%s','%s']);st.forEach(function(x){s+=x;});return s;})()" % (_A, _B))
-    ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    """F602 CLOSED by wave-372 lane 4: Set iteration reads now held."""
+    # Wave-372 lane 4 closed F602; the attack-lane "still open"
+    # expectation is superseded.
+    h1 = not _misses("(function(){var s='';for(var x of new Set(['%s','%s'])){s+=x;}return s;})()" % (_A, _B))
+    h2 = not _misses("(function(){var s='';var st=new Set(['%s','%s']);st.forEach(function(x){s+=x;});return s;})()" % (_A, _B))
+    ok = h1 and h2
+    return ("HELD" if ok else "BREAK", "held=%s" % ok)
 
 
 @_t
