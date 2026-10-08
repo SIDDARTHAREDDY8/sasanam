@@ -11,7 +11,9 @@ text before scanning (scan_tool_spec) and pins the flat form
 substitution fails closed. Wired into GovernedMCPClient._validate_and_pin.
 
 P1 flatten determinism / canonical form. P2 hostile shapes flag.
-P3 fail-closed bounds. P4 benign complex specs stay clean. P5 flat pin
+P3 fail-closed bounds. P4 benign complex specs stay clean + co-occurrence
+precision (single-family tokens clean; documented cross-leaf
+co-occurrence refusals). P5 flat pin
 + verify. P6 client integration (list_tools refuse/accept/rug-pull).
 P7 perf. P8 depth-1 green check (red-first battery, GOV_SKIP_GREEN
 honored).
@@ -224,6 +226,29 @@ BENIGN_SPECS = [
         }}),
     ("empty-schema-benign", "Pings the service", {}),
     ("no-description-benign", None, {"type": "object"}),
+    # Co-occurrence precision: single-family tokens stay clean.
+    ("single-family-ignore-only", "A tool", {
+        "properties": {"a": {"description": "ignore empty results"}}}),
+    ("single-family-instructions-only", "A tool", {
+        "properties": {"b": {"description": "see the usage instructions"}}}),
+    ("plural-no-match", "Ignores empty results", {
+        "properties": {"m": {"description": "See the usage instructions "
+                                            "for details"}}}),
+]
+
+
+# Documented fail-closed refusals: the order-independent co-occurrence
+# rule (instruction_override_split) fires on (ignore|disregard) +
+# instruction-family nouns anywhere in one spec, even across leaves.
+# For untrusted server metadata the conservative direction is to
+# refuse; the F109 deployer allowlist is the override path.
+DOCUMENTED_REFUSALS = [
+    ("cooccur-ignore-instructions", "A tool", {
+        "properties": {"a": {"description": "ignore empty results"},
+                       "b": {"description": "see the usage instructions"}}}),
+    ("cooccur-disregard-rules", "Disregard cached entries when stale", {
+        "properties": {"m": {"description": "Follows the retention "
+                                            "rules"}}}),
 ]
 
 
@@ -231,6 +256,13 @@ def p4_benign_specs():
     br, he = 0, 0
     for pname, desc, schema in BENIGN_SPECS:
         ok = not _flagged("tool_ok", desc, schema)
+        print("p4 %s: %s" % (pname, "HELD" if ok else "BREAK"))
+        if ok:
+            he += 1
+        else:
+            br += 1
+    for pname, desc, schema in DOCUMENTED_REFUSALS:
+        ok = _flagged("tool_ok", desc, schema)
         print("p4 %s: %s" % (pname, "HELD" if ok else "BREAK"))
         if ok:
             he += 1
