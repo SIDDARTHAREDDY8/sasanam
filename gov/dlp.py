@@ -21215,6 +21215,874 @@ def _js_parse_f655_multistatement_iife(text, i, depth, state):
         return None
 
 
+def _js_f662_member_access(text, j):
+    """Parse `.NAME` / `['NAME']` member access at text[j] (F662).
+
+    F510 head discipline: dot-ident or bracket-string only; computed
+    members fail closed. Returns (name, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ".":
+        q = _js_skip_ws(text, j + 1)
+        name, q = _js_parse_ident(text, q)
+        return name, q
+    if j < n and text[j] == "[":
+        name, q = _js_parse_bracket_member(text, j)
+        return name, q
+    raise _JSExprFail("F662 member not dot/bracket")
+
+
+def _js_f662_charge(state):
+    """Charge one F452 part and fail closed past the budget (F662)."""
+    state["parts"] += 1  # the binding/read is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("F662 too many parts")
+
+
+def _js_f662_prehoist_var_decl(text, j, n, env):
+    """Bind the declarator names of one depth-0 `var` statement (F662).
+
+    Called with text[j] just past the `var` keyword. Binds every
+    comma-separated declarator name as ("lit", None, True, "var")
+    (hoisted, undefined) and returns the index just past the
+    terminating `;`. Returns None (abandon the pre-hoist) on anything
+    it cannot cheaply skip -- fewer pre-binds only ever fail closed,
+    never mis-decode. Never evals.
+    """
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            return None
+        try:
+            name, j = _js_parse_ident(text, j)
+        except _JSExprFail:
+            return None
+        if name not in env:
+            env[name] = ("lit", None, True, "var")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j += 1
+            continue
+        break
+    # Skip the initializer to the terminating `;`, string- and
+    # bracket-aware. A template literal (or anything unrecognized)
+    # abands the remainder: the ordered simulation fails closed on
+    # templates anyway, so stopping here cannot mis-decode.
+    depth = 0
+    while j < n:
+        ch = text[j]
+        if ch in "'\"":
+            try:
+                _, j = _js_parse_string(text, j)
+            except _JSExprFail:
+                return None
+            continue
+        if ch == "`":
+            return None
+        if ch in "{[(":
+            depth += 1
+        elif ch in "}])":
+            depth -= 1
+            if depth < 0:
+                return None
+        elif ch == ";" and depth == 0:
+            return j + 1
+        j += 1
+    return None
+
+
+def _js_f662_prehoist_vars(text, inner_start, inner_end, env):
+    """Pre-bind top-level `var` declarator names as uninitialized (F662).
+
+    Node-exact (v24.20.0): `var` declarations hoist to the function
+    top, initialized to undefined -- so `class C{static{s='f1';}}var s;`
+    assigns the hoisted binding and node evaluates the exact
+    credential. `let`/`const` stay in TDZ and are NOT pre-bound: an
+    access before the declaration throws in the engine, and the
+    ordered simulation fails closed on it. Only depth-0 `var`
+    declarator names are bound (`var` inside a getter body is local
+    to the getter's own function scope -- node-verified -- and is
+    modeled there, not here). The scan is string- and comment-aware,
+    and abandons the remainder on anything it cannot cheaply skip.
+    Never evals.
+    """
+    j = inner_start
+    n = inner_end
+    depth = 0
+    while j < n:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            break
+        ch = text[j]
+        if ch == "/" and j + 1 < n and text[j + 1] == "/":
+            k = text.find("\n", j)
+            j = n if k < 0 else k + 1
+            continue
+        if ch == "/" and j + 1 < n and text[j + 1] == "*":
+            k = text.find("*/", j + 2)
+            if k < 0:
+                return
+            j = k + 2
+            continue
+        if ch in "'\"":
+            try:
+                _, j = _js_parse_string(text, j)
+            except _JSExprFail:
+                return
+            continue
+        if ch == "`":
+            return
+        if ch in "{[(":
+            depth += 1
+            j += 1
+            continue
+        if ch in "}])":
+            depth -= 1
+            j += 1
+            continue
+        m = None
+        if depth == 0 and (
+                j == inner_start or text[j - 1] not in _JS_IDENT_CONT):
+            # Token start (leading boundary): the trailing boundary
+            # is checked by _js_match_kw itself.
+            m = _js_match_kw(text, j, "var")
+        if m is not None:
+            j = _js_f662_prehoist_var_decl(text, m, n, env)
+            if j is None:
+                return
+            continue
+        j += 1
+
+
+def _js_f662_static_block(text, j, env, state):
+    """Parse `static { STMT* }` at text[j] == '{' (F662).
+
+    Node-exact (v24.20.0): static blocks run at class definition
+    time against the enclosing function scope, so an assignment
+    statement `NAME='LIT';` / `NAME+='LIT';` writes the env-bound
+    outer name. A target bound to an uninitialized (`var s;` / `let
+    s;`) binding accepts plain `=` (the engine assigns the
+    binding); `+=` on it fails closed -- the engine yields
+    'undefinedLIT', outside the string-only discipline. Reads of
+    class statics by bare name throw ReferenceError in the engine
+    (node-verified), so only assignments to env-bound mutable
+    names are modeled; a bare `return`, a declaration, or an
+    unbound/`const` target fails closed. Returns the index just
+    past '}'. Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "{")
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("F662 static block overrun")
+        if text[j] == "}":
+            return j + 1
+        name, q = _js_parse_ident(text, j)
+        e = env.get(name)
+        if e is None or e[0] != "lit" or not e[2]:
+            # Unbound (ReferenceError), const (TypeError), or a
+            # class/instance binding -- the engine throws; also
+            # rejects a bare `return` (parsed as an ident here).
+            raise _JSExprFail("F662 static block bad target")
+        q = _js_skip_ws(text, q)
+        if q < n and text.startswith("+=", q):
+            q += 2
+            is_plus = True
+        elif (q < n and text[q] == "="
+              and not text.startswith(("==", "=>"), q)):
+            q += 1
+            is_plus = False
+        else:
+            raise _JSExprFail("F662 static block bad op")
+        if is_plus and e[1] is None:
+            # `undefined + 'LIT'` is 'undefinedLIT' in the engine --
+            # not a string-only value; fail closed (documented bound).
+            raise _JSExprFail("F662 static block plus-eq uninit")
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] not in "'\"":
+            raise _JSExprFail("F662 static block not a literal")
+        rhs, q = _js_parse_string(text, q)
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        env[name] = ("lit", e[1] + rhs if is_plus else rhs, True, e[3])
+        _js_f662_charge(state)
+        j = q
+
+
+def _js_f662_member_head(text, j):
+    """Parse `[static] [get] NAME` at text[j] (F662).
+
+    Returns (is_static, is_getter, name, next_index). A `static`
+    followed by `=`/`(` is the member NAME "static", not the
+    modifier (an instance field/method named "static"); likewise a
+    `get` followed by `=`/`(`/non-ident is the field name "get".
+    `static {` (static block) is handled by the caller before this
+    runs. Never evals.
+    """
+    n = len(text)
+    is_static = False
+    skw = _js_match_kw(text, j, "static")
+    if skw is not None:
+        qq = _js_skip_ws(text, skw)
+        if not (qq < n and text[qq] in "=("):
+            is_static = True
+            j = qq
+    if not is_static:
+        gkw = _js_match_kw(text, j, "get")
+        if gkw is not None:
+            qq = _js_skip_ws(text, gkw)
+            if qq < n and text[qq] in _JS_IDENT_START:
+                nm, qq2 = _js_parse_ident(text, qq)
+                qq2 = _js_skip_ws(text, qq2)
+                if qq2 < n and text[qq2] == "(":
+                    return (False, True, nm, qq2)
+        name, q = _js_parse_ident(text, j)
+        return (False, False, name, q)
+    gkw = _js_match_kw(text, j, "get")
+    if gkw is not None:
+        qq = _js_skip_ws(text, gkw)
+        if qq < n and text[qq] in _JS_IDENT_START:
+            nm, qq2 = _js_parse_ident(text, qq)
+            qq2 = _js_skip_ws(text, qq2)
+            if qq2 < n and text[qq2] == "(":
+                return (True, True, nm, qq2)
+    name, q = _js_parse_ident(text, j)
+    return (True, False, name, q)
+
+
+def _js_f662_parse_getter_additive(text, j):
+    """Parse a getter `return` additive at text[j] (F662).
+
+    Terms are string literals, parenthesized string literals, and
+    identifiers, joined by `+`. Identifiers are NOT resolved here --
+    they resolve at access against the live scopes (the engine runs
+    the getter body on every access). Returns (terms, next_index)
+    with terms a list of ("lit", value) / ("ident", name). Never
+    evals.
+    """
+    n = len(text)
+    terms = []
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("F662 getter term overrun")
+        if text[j] == "(":
+            q = _js_skip_ws(text, j + 1)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F662 getter paren not literal")
+            lit, q = _js_parse_string(text, q)
+            q = _js_expect(text, q, ")")
+            terms.append(("lit", lit))
+            j = q
+        elif text[j] in "'\"":
+            lit, j = _js_parse_string(text, j)
+            terms.append(("lit", lit))
+        elif text[j] in _JS_IDENT_START:
+            name, j = _js_parse_ident(text, j)
+            terms.append(("ident", name))
+        else:
+            raise _JSExprFail("F662 getter bad term")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "+":
+            j += 1
+            continue
+        return terms, j
+
+
+def _js_f662_getter_stmt(text, j, env, state, spec):
+    """Parse ONE static-getter body statement at text[j] (F662).
+
+    Node-exact (v24.20.0) on the modeled subset. The getter body is
+    its own function scope (node-verified): `var`/`let`/`const`
+    declare body-local bindings -- `var` hoists within the body
+    (visible as undefined before its line), `let`/`const` are TDZ'd.
+    A bare `NAME='LIT';` assigns: a body-local binding when the
+    name is body-declared, otherwise the outer env binding at
+    access (closures capture variables, not values -- node-verified).
+    `spec` collects {"var_names": set, "let_names": set, "ops":
+    [...]}; ops are ("var_init", name, lit) / ("var_decl", name) /
+    ("let_init", name, lit, mutable) / ("let_decl", name, mutable) /
+    ("assign", name, lit) / ("return", terms), in source order --
+    including statements after the `return`, which are unreachable
+    (their `var` names still hoist, their `let` names are still
+    TDZ). Anything outside the subset fails closed. Returns
+    (is_return, next_index). Never evals.
+    """
+    n = len(text)
+    rk = _js_match_kw(text, j, "return")
+    if rk is not None:
+        terms, q = _js_f662_parse_getter_additive(
+            text, _js_skip_ws(text, rk))
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        spec["ops"].append(("return", terms))
+        _js_f662_charge(state)
+        return True, q
+    kw, m = _js_match_decl_kw(text, j)
+    if kw is not None:
+        q = _js_skip_ws(text, m)
+        name, q = _js_parse_ident(text, q)
+        q = _js_skip_ws(text, q)
+        lit = None
+        has_init = False
+        if q < n and text[q] == "=" and not text.startswith(
+                ("==", "=>"), q):
+            q = _js_skip_ws(text, q + 1)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F662 getter decl not literal")
+            lit, q = _js_parse_string(text, q)
+            has_init = True
+        elif q < n and text[q] == ";":
+            if kw == "const":
+                # `const NAME;` is a node SyntaxError.
+                raise _JSExprFail("F662 getter const uninit")
+        else:
+            raise _JSExprFail("F662 getter bad decl")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        if kw == "var":
+            if name in spec["let_names"]:
+                # `var` re-declaring a body `let`/`const` is a node
+                # SyntaxError.
+                raise _JSExprFail("F662 getter var/let clash")
+            spec["var_names"].add(name)
+            spec["ops"].append(
+                ("var_init", name, lit) if has_init else ("var_decl", name))
+        else:
+            if name in spec["var_names"] or name in spec["let_names"]:
+                # `let`/`const` re-declaring is a node SyntaxError.
+                # (Shadowing an OUTER name is legal -- the body is its
+                # own function scope -- so env is not consulted.)
+                raise _JSExprFail("F662 getter let clash")
+            spec["let_names"].add(name)
+            mut = kw == "let"
+            spec["ops"].append(
+                ("let_init", name, lit, mut) if has_init
+                else ("let_decl", name, mut))
+        _js_f662_charge(state)
+        return False, q
+    name, q = _js_parse_ident(text, j)
+    q = _js_skip_ws(text, q)
+    if not (q < n and text[q] == "="
+            and not text.startswith(("==", "=>"), q)):
+        raise _JSExprFail("F662 getter bad stmt")
+    q = _js_skip_ws(text, q + 1)
+    if q >= n or text[q] not in "'\"":
+        raise _JSExprFail("F662 getter assign not literal")
+    lit, q = _js_parse_string(text, q)
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ";")
+    spec["ops"].append(("assign", name, lit))
+    _js_f662_charge(state)
+    return False, q
+
+
+def _js_f662_parse_getter_body(text, j, env, state):
+    """Parse `{ STMT* }` of a static getter at text[j] (F662).
+
+    Statements are parsed (and validated) in source order,
+    including unreachable statements after the `return` -- their
+    `var` names still hoist within the body and their `let` names
+    are still TDZ (node-verified). Requires exactly one `return
+    ADD;` reachable in the op stream (the parser rejects a body
+    with none). Returns (spec, index_past_'}') with spec
+    {"var_names", "let_names", "ops"} (see _js_f662_getter_stmt);
+    the spec is evaluated at access by _js_f662_eval_getter. Never
+    evals.
+    """
+    j = _js_expect(text, j, "{")
+    spec = {"var_names": set(), "let_names": set(), "ops": []}
+    n = len(text)
+    seen_return = False
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("F662 getter body overrun")
+        if text[j] == "}":
+            if not seen_return:
+                raise _JSExprFail("F662 getter no return")
+            return spec, j + 1
+        is_ret, j = _js_f662_getter_stmt(text, j, env, state, spec)
+        seen_return = seen_return or is_ret
+
+
+def _js_f662_eval_getter(spec, env, state):
+    """Evaluate a stored static-getter spec at access (F662).
+
+    Node-exact (v24.20.0): the engine runs the getter body on every
+    access. `var` names start undefined (hoisted); `let`/`const`
+    names start TDZ; ops apply in source order up to and including
+    the `return` (later ops are unreachable). A body-local `var`
+    shadows an outer name (node-verified); a bare assignment to a
+    non-body name writes the outer env binding at access (closures
+    capture variables -- node-verified, e.g. a reassignment between
+    definition and access is observed). Identifier terms resolve
+    body-locals first, then the live outer env. Anything not a
+    string fails closed (the F510 string-only discipline); writing
+    a const binding, or touching TDZ, fails closed (the engine
+    throws). Never evals.
+    """
+    locals_ = {v: [None, True] for v in spec["var_names"]}
+    tdz = set(spec["let_names"])
+    for op in spec["ops"]:
+        kind = op[0]
+        if kind == "return":
+            out = []
+            for t in op[1]:
+                if t[0] == "lit":
+                    out.append(t[1])
+                else:
+                    nm = t[1]
+                    if nm in tdz:
+                        raise _JSExprFail("F662 getter ident TDZ")
+                    if nm in locals_:
+                        v = locals_[nm][0]
+                        if not isinstance(v, str):
+                            raise _JSExprFail("F662 getter local miss")
+                    else:
+                        e = env.get(nm)
+                        if (e is None or e[0] != "lit"
+                                or not isinstance(e[1], str)):
+                            raise _JSExprFail("F662 getter ident miss")
+                        v = e[1]
+                    out.append(v)
+                _js_f662_charge(state)
+            return "".join(out)
+        if kind == "var_init":
+            _, name, lit = op
+            locals_[name][0] = lit
+        elif kind == "let_init":
+            _, name, lit, mut = op
+            tdz.discard(name)
+            locals_[name] = [lit, mut]
+        elif kind == "let_decl":
+            _, name, mut = op
+            tdz.discard(name)
+            locals_[name] = [None, mut]
+        elif kind == "assign":
+            _, name, lit = op
+            if name in tdz:
+                raise _JSExprFail("F662 getter assign TDZ")
+            if name in locals_:
+                if not locals_[name][1]:
+                    raise _JSExprFail("F662 getter const reassign")
+                locals_[name][0] = lit
+            else:
+                e = env.get(name)
+                if e is None or e[0] != "lit" or not e[2]:
+                    raise _JSExprFail("F662 getter assign bad target")
+                env[name] = ("lit", lit, True, e[3])
+        # ("var_decl",) needs no runtime effect: the name was
+        # pre-seeded undefined above.
+        _js_f662_charge(state)
+    raise _JSExprFail("F662 getter no return")
+
+
+def _js_f662_parse_class_body(text, j, env, state, depth, cname):
+    """Parse `{ MEMBER* }` of class CNAME at text[j] (F662).
+
+    Node-exact (v24.20.0) on the modeled subset:
+    - `static NAME='LIT';` / `NAME='LIT';` -- static / instance
+      fields, later duplicate wins (node-verified);
+    - `static NAME;` -- field without initializer (undefined;
+      a read fails closed, the F510 string-only discipline);
+    - `static get NAME(){ STMT* return ADD; STMT* }` -- static
+      getter: straight-line literal statements, one `return`
+      additive (literals, parenthesized literals, identifiers);
+      unreachable statements after the return are validated and
+      discarded. The body is the getter's own function scope
+      (node-verified): `var` hoists within the body, `let`/`const`
+      are TDZ'd, a bare assignment writes the outer env at access.
+      Evaluated at access against the live env (see
+      _js_f662_eval_getter);
+    - `static { STMT* }` -- static block, executed at definition
+      against env (see _js_f662_static_block).
+    - A static field always replaces a same-named static getter
+      (data property wins), regardless of order (node-verified) --
+      the getter body is still parsed (it is real syntax) but its
+      value is discarded.
+    Bounds (all fail closed): `#` private members, computed
+    `[expr]` members, methods (`NAME(`), instance getters,
+    `constructor`, `extends` (the caller rejects it), non-literal
+    field initializers, string-literal member names, member reads /
+    calls / `+=` inside getter bodies, ASI (missing `;`) forms --
+    the decoder family requires explicit semicolons (F655 likewise).
+    Returns (record, index_past_'}') with record {"static": {},
+    "getters": {name: spec}, "instance": {}}. Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "{")
+    rec = {"static": {}, "getters": {}, "instance": {}}
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("F662 class body overrun")
+        if text[j] == "}":
+            return rec, j + 1
+        if text[j] == "#":
+            raise _JSExprFail("F662 private member")
+        if text[j] == "[":
+            raise _JSExprFail("F662 computed member")
+        # Static block: `static {` handled before the member head.
+        skw = _js_match_kw(text, j, "static")
+        if skw is not None:
+            qq = _js_skip_ws(text, skw)
+            if qq < n and text[qq] == "{":
+                j = _js_f662_static_block(text, qq, env, state)
+                continue
+        is_static, is_getter, name, q = _js_f662_member_head(text, j)
+        q = _js_skip_ws(text, q)
+        if is_getter:
+            if not is_static:
+                raise _JSExprFail("F662 instance getter")
+            q = _js_expect(text, q, "(")
+            q = _js_expect(text, q, ")")
+            if name in rec["static"]:
+                # The static field (data property) always replaces
+                # the same-named static getter, regardless of order
+                # (node v24.20.0 verified) -- the body still must
+                # parse, but its value is discarded.
+                _, q = _js_f662_parse_getter_body(text, q, env, state)
+            else:
+                spec, q = _js_f662_parse_getter_body(text, q, env, state)
+                rec["getters"][name] = spec
+            _js_f662_charge(state)
+            j = q
+            continue
+        if q < n and text[q] == "(":
+            # Method (or constructor) -- not a fragment source in
+            # the filed shapes; fail closed (documented residual).
+            raise _JSExprFail("F662 method")
+        ns = rec["static"] if is_static else rec["instance"]
+        other = rec["getters"] if is_static else None
+        if q < n and text[q] == "=":
+            q = _js_skip_ws(text, q + 1)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F662 field not a literal")
+            lit, q = _js_parse_string(text, q)
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            if other is not None and name in other:
+                # Field wins over the getter (node-verified).
+                del other[name]
+            ns[name] = lit  # later duplicate wins (node-verified)
+            _js_f662_charge(state)
+            j = q
+            continue
+        if q < n and text[q] == ";":
+            # Field without initializer: undefined in the engine;
+            # a read fails closed (string-only discipline). Still
+            # replaces a same-named getter (node-verified).
+            if other is not None and name in other:
+                del other[name]
+            ns[name] = None
+            j = q + 1
+            continue
+        raise _JSExprFail("F662 bad class member")
+
+
+def _js_f662_top_stmt(text, j, inner_end, env, cenv, state, depth):
+    """Simulate ONE top-level F662 statement at text[j].
+
+    Accepts `var|const|let NAME='LIT';` (non-reserved name),
+    `var|let NAME;` (uninitialized -- undefined in the engine;
+    `const NAME;` is a node SyntaxError), `var|const|let
+    NAME=new CNAME();` (var-bound instance of a previously
+    declared class), `class CNAME { ... }` declarations, and
+    accumulation statements `NAME+='LIT';` / `NAME='LIT';` on
+    bound mutable literal names (the F655 discipline). Only `var`
+    may re-declare a var-kind binding (node-verified); any other
+    re-declaration is a node SyntaxError. `+=` on an uninitialized
+    binding fails closed (the engine yields 'undefinedLIT').
+    Anything else fails closed. env entries are ("lit", value,
+    mutable, kind) / ("inst", class_record, False); cenv maps
+    class names to class records. Returns the index just past the
+    statement. Never evals.
+    """
+    n = len(text)
+    kw, m = _js_match_decl_kw(text, j)
+    if kw is not None:
+        q = _js_skip_ws(text, m)
+        name, q = _js_parse_ident(text, q)
+        if name == "arguments" or name in _F611_RESERVED or name in cenv:
+            raise _JSExprFail("F662 bad decl name")
+        prev = env.get(name)
+        if prev is not None and not (
+                kw == "var" and prev[0] == "lit" and prev[3] == "var"):
+            # Only `var` over a var-kind binding re-declares
+            # legally (node-verified: `var s='a';var s='b';` is
+            # fine, `let s;var s='b';` is a SyntaxError). The
+            # pre-hoist pass binds top-level `var` names as
+            # ("lit", None, True, "var"), so a hoisted name passes
+            # this gate and is (re)bound below.
+            raise _JSExprFail("F662 bad decl name")
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == ";":
+            # Uninitialized declaration: undefined in the engine --
+            # but a bare `var s;` never resets an existing value
+            # (node-verified: `var s='f1';var s;` keeps 'f1').
+            if kw == "const":
+                raise _JSExprFail("F662 const not initialized")
+            if prev is None:
+                env[name] = ("lit", None, True, kw)
+            _js_f662_charge(state)
+            return q + 1
+        if (q >= n or text[q] != "="
+                or text.startswith(("==", "=>"), q)):
+            raise _JSExprFail("F662 decl not initialized")
+        q = _js_skip_ws(text, q + 1)
+        if q < n and text[q] in "'\"":
+            val, q = _js_parse_string(text, q)
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            env[name] = ("lit", val, kw != "const", kw)
+            _js_f662_charge(state)
+            return q
+        nkw = _js_match_kw(text, q, "new")
+        if nkw is not None:
+            q2 = _js_skip_ws(text, nkw)
+            cname, q2 = _js_parse_ident(text, q2)
+            if cname not in cenv:
+                raise _JSExprFail("F662 new of undeclared class")
+            q2 = _js_skip_ws(text, q2)
+            q2 = _js_expect(text, q2, "(")
+            q2 = _js_skip_ws(text, q2)
+            q2 = _js_expect(text, q2, ")")
+            q2 = _js_skip_ws(text, q2)
+            q2 = _js_expect(text, q2, ";")
+            env[name] = ("inst", cenv[cname], False)
+            _js_f662_charge(state)
+            return q2
+        raise _JSExprFail("F662 decl not a literal/new")
+    ckw = _js_match_kw(text, j, "class")
+    if ckw is not None:
+        q = _js_skip_ws(text, ckw)
+        cname, q = _js_parse_ident(text, q)
+        if (cname == "arguments" or cname in _F611_RESERVED
+                or cname in env or cname in cenv):
+            raise _JSExprFail("F662 bad class name")
+        q = _js_skip_ws(text, q)
+        if q < n and text.startswith("extends", q):
+            ek = _js_match_kw(text, q, "extends")
+            if ek is not None:
+                # `extends` is outside the filed shapes (a
+                # documented residual) -- fail closed.
+                raise _JSExprFail("F662 extends")
+        rec, q = _js_f662_parse_class_body(text, q, env, state,
+                                           depth, cname)
+        cenv[cname] = rec
+        _js_f662_charge(state)
+        return q
+    # Accumulation on a bound mutable literal (F655 discipline),
+    # with an F662 term RHS: `NAME='LIT';` / `NAME+='LIT';` /
+    # `NAME=C.x;` / `NAME+=new C().x;` (node-exact -- the RHS
+    # evaluates to a string in the engine).
+    name, q = _js_parse_ident(text, j)
+    e = env.get(name)
+    if e is None or e[0] != "lit" or not e[2]:
+        raise _JSExprFail("F662 accum bad target")
+    q = _js_skip_ws(text, q)
+    if q < n and text.startswith("+=", q):
+        q += 2
+        is_plus = True
+    elif (q < n and text[q] == "="
+          and not text.startswith(("==", "=>"), q)):
+        q += 1
+        is_plus = False
+    else:
+        raise _JSExprFail("F662 bad accum op")
+    if is_plus and e[1] is None:
+        # `undefined + 'LIT'` is 'undefinedLIT' in the engine --
+        # not a string-only value; fail closed (documented bound).
+        raise _JSExprFail("F662 accum plus-eq uninit")
+    rhs, q = _js_f662_parse_term(text, q, env, cenv, state)
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ";")
+    env[name] = ("lit", e[1] + rhs if is_plus else rhs, True, e[3])
+    _js_f662_charge(state)
+    return q
+
+
+def _js_f662_parse_term(text, j, env, cenv, state):
+    """Parse ONE F662 additive term at text[j].
+
+    Terms are string literals, reads of env-bound literal names,
+    `CNAME.MEMBER` / `CNAME['MEMBER']` (static field or static
+    getter), `new CNAME().MEMBER` (instance field), and
+    `ONAME.MEMBER` for a var-bound instance. Member reads resolve
+    node-exactly with the F510 string-only discipline. Returns
+    (value, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        val, j = _js_parse_string(text, j)
+        _js_f662_charge(state)
+        return val, j
+    if j < n and text[j] in _JS_IDENT_START:
+        nkw = _js_match_kw(text, j, "new")
+        if nkw is not None:
+            q = _js_skip_ws(text, nkw)
+            cname, q = _js_parse_ident(text, q)
+            if cname not in cenv:
+                raise _JSExprFail("F662 new of undeclared")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "(")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ")")
+            mem, q = _js_f662_member_access(text, q)
+            val = cenv[cname]["instance"].get(mem)
+            if not isinstance(val, str):
+                raise _JSExprFail("F662 instance member miss")
+            _js_f662_charge(state)
+            return val, q
+        name, q = _js_parse_ident(text, j)
+        q2 = _js_skip_ws(text, q)
+        if q2 < n and text[q2] in ".[":
+            mem, q3 = _js_f662_member_access(text, q2)
+            if name in cenv:
+                rec = cenv[name]
+                if (mem in rec["static"]
+                        and isinstance(rec["static"][mem], str)):
+                    val = rec["static"][mem]
+                elif mem in rec["getters"]:
+                    val = _js_f662_eval_getter(rec["getters"][mem],
+                                               env, state)
+                else:
+                    raise _JSExprFail("F662 static miss")
+            elif name in env and env[name][0] == "inst":
+                v = env[name][1]["instance"].get(mem)
+                if not isinstance(v, str):
+                    raise _JSExprFail("F662 inst miss")
+                val = v
+            else:
+                raise _JSExprFail("F662 member of nonclass")
+            _js_f662_charge(state)
+            return val, q3
+        e = env.get(name)
+        if e is None or e[0] != "lit" or e[1] is None:
+            # Unbound, non-literal, or uninitialized (`var s;` is
+            # undefined in the engine) -- the F510 string-only
+            # discipline fails closed.
+            raise _JSExprFail("F662 unbound read")
+        _js_f662_charge(state)
+        return e[1], q
+    raise _JSExprFail("F662 bad term")
+
+
+def _js_f662_return_additive(text, j, inner_end, env, cenv, state):
+    """Parse the F662 return additive at text[j] (past `return`).
+
+    Terms (see _js_f662_parse_term) join with `+` only. Returns
+    (value, next_index). Never evals.
+    """
+    n = len(text)
+    parts = []
+    while True:
+        val, j = _js_f662_parse_term(text, j, env, cenv, state)
+        parts.append(val)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "+":
+            j += 1
+            continue
+        break
+    return "".join(parts), j
+
+
+def _js_parse_f662_class_iife(text, i, depth, state):
+    """Parse `(function(){[STMT;]* return ADD;})()` with class-declaration
+    fragment sources at text[i] (F662).
+
+    Class-declaration fragment sources bypass the bounded static
+    JS-expression decoder: no class production is modeled --
+    `(function(){class C{static x='f1';}return C.x+'f2';})()`
+    (static field), `(function(){let s='';class C{static{s='f1';}}
+    s+='f2';return s;})()` (static block), `(function(){class C{
+    static get x(){return 'f1';}}return C.x+'f2';})()` (static
+    getter), and `(function(){class C{x='f1';}return new
+    C().x+'f2';})()` (instance field) all node-evaluate
+    (v24.20.0) to the exact credential while the decoder
+    produced zero variants. Node-exact desugar (v24.20.0): the
+    class body is parsed into static fields (later duplicate
+    wins; a field always replaces a same-named static getter),
+    static getters (straight-line literal bodies, evaluated at
+    access against the live env), instance fields, and static
+    blocks executed at definition against the statement
+    environment; `var` names pre-hoist as undefined (node hoisting)
+    while `let`/`const` stay TDZ; member reads resolve against the
+    record with the F510 string-only discipline (a missing or
+    undefined member fails closed, never mis-decoded).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue,
+      non-empty call args, `extends`, anonymous classes;
+    - `#` private members, computed `[expr]` members, methods,
+      instance getters, `constructor`, non-literal field
+      initializers, string-literal member names;
+    - member reads, calls, and `+=` inside getter bodies;
+    - ASI (missing `;`) forms -- the decoder family requires
+      explicit semicolons (F655 likewise);
+    - `+=` on an uninitialized binding (the engine yields
+      'undefinedLIT', outside the string-only discipline);
+    - unbound/`const` static-block targets, declarations or
+      `return` inside static blocks;
+    - `?.` member reads, method calls, postfix after the return
+      additive (tight scope -- the filed shape returns the sum
+      directly).
+    Disjoint from every earlier route: F655's statement dispatch
+    fails closed on `class` (its ident path raises on the
+    unbound name), F611/F645 require declaration/parameter
+    heads, and every binding-family route requires its own
+    binding -- none decodes any shape this accepts (red-first
+    verified: 4 BREAK on the open tree), so no
+    previously-decoded input changes behavior. Tried after
+    F655. Returns (value, next_index), or None when text[i] is
+    not this shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_f655_head(text, i)
+        if brace is None:
+            raise _JSExprFail("F662 not our head")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        env = {}
+        cenv = {}
+        _js_f662_prehoist_vars(text, inner_start, inner_end, env)
+        sj = _js_skip_ws(text, inner_start)
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj >= inner_end:
+                raise _JSExprFail("F662 body without return")
+            rk = _js_match_kw(text, sj, "return")
+            if rk is not None:
+                break
+            sj = _js_f662_top_stmt(text, sj, inner_end, env, cenv,
+                                  state, depth)
+        rval, sj = _js_f662_return_additive(
+            text, _js_skip_ws(text, rk), inner_end, env, cenv,
+            state)
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != ";":
+            raise _JSExprFail("F662 return without semicolon")
+        sj = _js_skip_ws(text, sj + 1)
+        if sj != inner_end:
+            raise _JSExprFail("F662 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return rval, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f654_sync_iife_head(text, i):
     """Match `(function(){` at text[i] (F654); index OF `{` or None.
 
@@ -36208,6 +37076,20 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                   state)
         if _f655 is not None:
             val, i = _f655
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F662: (function(){[STMT;]* return ADD;})() with
+        #   class-declaration fragment sources (static fields /
+        #   static blocks / static getters / instance fields).
+        #   Tried after F655: F655's statement dispatch fails
+        #   closed on `class` (its ident path raises on the
+        #   unbound name), F611/F645 require declaration/parameter
+        #   heads, and every binding-family route requires its own
+        #   binding -- none decodes any shape this accepts
+        #   (red-first verified: 4 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior.
+        _f662 = _js_parse_f662_class_iife(text, i, depth, state)
+        if _f662 is not None:
+            val, i = _f662
             return _js_parse_postfix(text, i, val, depth, state)
         # F586: (new Map(...)) / (new WeakRef(...)) --
         # parenthesized new-expression receivers, engine-identical
