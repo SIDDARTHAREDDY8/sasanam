@@ -315,13 +315,13 @@ def test_r40_f609_open():
 
 
 @_t
-def test_r40_f610_open():
-    """F610 OPEN: URLSearchParams.set then .get misses."""
-    m1 = _misses("(function(){var p=new URLSearchParams('q=xx');p.set('q','%s');return p.get('q')+'%s';})()" % (_A, _B))
-    m2 = _misses("(function(){var p=new URLSearchParams('');p.set('q','%s');return p.get('q')+'%s';})()" % (_A, _B))
-    m3 = _misses("(function(){const p=new URLSearchParams('q=zz');p.set('q','%s');return p.get('q')+'%s';})()" % (_A, _B))
-    ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_p1_f610_closed():
+    """F610 CLOSED (wave-373 lane 2): URLSearchParams.set then .get blocks."""
+    h1 = _blocked("(function(){var p=new URLSearchParams('q=xx');p.set('q','%s');return p.get('q')+'%s';})()" % (_A, _B))
+    h2 = _blocked("(function(){var p=new URLSearchParams('');p.set('q','%s');return p.get('q')+'%s';})()" % (_A, _B))
+    h3 = _blocked("(function(){const p=new URLSearchParams('q=zz');p.set('q','%s');return p.get('q')+'%s';})()" % (_A, _B))
+    ok = h1 and h2 and h3
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
 @_t

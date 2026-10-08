@@ -147,19 +147,11 @@ def p3_boundaries():
     # Fail-closed: the decoder must produce NO variant. Every payload
     # splits the credential across literals so the raw scan cannot
     # fire either; node ground truth is recorded per probe.
-    # The sort/delete/has mutations are a tracked OPEN residual (F606,
-    # filed by the spec-axis review of this closure) -- these probes
-    # codify the current fail-closed behavior, not a fix.
+    # The sort/delete/has mutations were a tracked OPEN residual (F606)
+    # -- F606 is now CLOSED by wave-373 lane 2, so those three probes
+    # moved to p3b_closed_residuals below and assert the coded block.
     rows = []
     bounds = [
-        ("f599-sort-unmodeled",
-         "(function(){var p=new URLSearchParams('q=%s');"
-         "p.append('q','%s');p.sort();return p.getAll('q').join('');})()"
-         % (_A1, _A2)),
-        ("f599-delete-unmodeled",
-         "(function(){var p=new URLSearchParams('q=%s');"
-         "p.append('q','%s');p.delete('q');"
-         "return p.getAll('q').join('');})()" % (_A1, _A2)),
         ("f599-nonliteral-value",
          "(function(){var p=new URLSearchParams('');"
          "p.append('q',x);return p.getAll('q').join('');})()"),
@@ -194,14 +186,41 @@ def p3_boundaries():
          "(function(){'use strict';var p=new URLSearchParams('q=%s');"
          "p.append('q','%s');return p.getAll('q').join('');})()"
          % (_A1, _A2)),
+    ]
+    for name, body in bounds:
+        v, d = _verdict(_q(body), False)
+        rows.append((v, "%s %s" % (name, d)))
+    return rows
+
+
+def p3b_closed_residuals():
+    # Wave-373 lane 2 (F606 CLOSED): the sort/delete/has residuals this
+    # battery codified as fail-closed now decode node-exactly -- these
+    # probes assert the coded behavior (wave-305/306 class: a probe that
+    # demonstrated the OPEN residual must assert the closure).
+    # Note: delete('q') removes the credential itself, so there is
+    # nothing to block -- the probe asserts the node-exact '' instead.
+    rows = []
+    bounds = [
+        ("f599-sort-unmodeled",
+         "(function(){var p=new URLSearchParams('q=%s');"
+         "p.append('q','%s');p.sort();return p.getAll('q').join('');})()"
+         % (_A1, _A2)),
         ("f599-has-unmodeled",
          "(function(){var p=new URLSearchParams('q=%s');"
          "p.append('q','%s');if(p.has('q')){return p.getAll('q').join('');}"
          "return '';})()" % (_A1, _A2)),
     ]
     for name, body in bounds:
-        v, d = _verdict(_q(body), False)
+        v, d = _verdict(_q(body), True)
         rows.append((v, "%s %s" % (name, d)))
+    _del = dlp.find_credential("(function(){var p=new URLSearchParams('q=%s');"
+                              "p.append('q','%s');p.delete('q');"
+                              "return p.getAll('q').join('');})()"
+                              % (_A1, _A2)) is None
+    rows.append(("HELD" if _del else "BREAK",
+                 "f599-delete-unmodeled quiet=%s (node: ''; the delete "
+                 "removes the credential, so no hit is correct)" % (_del,)))
     return rows
 
 
@@ -365,6 +384,7 @@ def main():
         ("P1-filed", p1_filed_shapes()),
         ("P2-variants", p2_variants()),
         ("P3-boundaries", p3_boundaries()),
+        ("P3b-closed-residuals", p3b_closed_residuals()),
         ("P4-node", p4_node_differential()),
         ("P5-neighbor", p5_neighbor_regression()),
         ("P6-compositions", p6_compositions()),
