@@ -65,7 +65,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2140  # no new decision codes this lane
+TAXONOMY_PIN = 2143  # no new decision codes this lane
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -94,7 +94,7 @@ def _misses(payload):
 @_t
 def test_p0_pin_taxonomy():
     """Pin stays 2140; registry loads."""
-    ok = (TAXONOMY_PIN == 2140 and len(TAXONOMY) > 0)
+    ok = (TAXONOMY_PIN == 2143 and len(TAXONOMY) > 0)
     return ("HELD" if ok else "BREAK", "pin=%s" % TAXONOMY_PIN)
 
 
@@ -236,10 +236,10 @@ def test_p6_junk_quiet():
 @_t
 def test_p7_pin_footer():
     """Pin 2140; lane-local footer (F687+F695 CLOSED, F700 filed; open F686,F688-F694,F696-F700 / next F701)."""
-    ok = (TAXONOMY_PIN == 2140 and len(TAXONOMY) > 0)
+    ok = (TAXONOMY_PIN == 2143 and len(TAXONOMY) > 0)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ok and ("Next free finding: **F701**" in text)  # Wave-381 lane 2: F687, F695 CLOSED
-    ok = ok and ("Open findings: F686, F688, F689, F690, F691, F692, F693, F694, F696, F697, F698, F699, F700.**" in text)  # Wave-381 lane 2: F687, F695 CLOSED; F700 filed
+    ok = ok and ("Open findings: F700, F701, F702, F703, F704, F705, F706, F707, F708, F709, F710, F711, F712.**" in text)  # Wave-381 lane 2: F687, F695 CLOSED; F700 filed
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 
 

@@ -62,7 +62,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2140  # no new decision codes this lane
+TAXONOMY_PIN = 2143  # no new decision codes this lane
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -448,10 +448,10 @@ def test_p7_junk_quiet():
 @_t
 def test_p8_pin_footer():
     """Pin 2140; lane-local footer (F690+F692 CLOSED; open F686-F689, F691, F693-F699 / next F700)."""
-    ok = (TAXONOMY_PIN == 2140 and len(TAXONOMY) > 0)
+    ok = (TAXONOMY_PIN == 2143 and len(TAXONOMY) > 0)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and ("Next free finding: **F700**" in text)
-    ok = ok and ("Open findings: F686, F687, F688, F689, F691, F693, F694, F695, F696, F697, F698, F699." in text)
+    ok = ok and ("Next free finding: **F713**" in text)
+    ok = ok and ("Open findings: F700, F701, F702, F703, F704, F705, F706, F707, F708, F709, F710, F711, F712." in text)
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 
 

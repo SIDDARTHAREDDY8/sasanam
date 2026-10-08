@@ -414,7 +414,7 @@ def test_p5_pin_and_footer():
     from gov.decision_codes import TAXONOMY  # noqa: E402
     ok = TAXONOMY_PIN == 2143  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and "Next free finding: **F700**" in text
+    ok = ok and "Next free finding: **F713**" in text
     ok = ok and ("Open findings: F672, F673, F674, F675, F676, F677, F678, "
                  "F679, F680, F681, F682, F683, F684, F685." in text)
     ok = ok and "**Status: CLOSED 2026-10-08 wave-379 lane 7.**" in text

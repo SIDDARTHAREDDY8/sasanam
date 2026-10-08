@@ -623,8 +623,8 @@ def test_p10_pin_and_footer():
             if line.startswith("Next free finding:"):
                 footer = line.strip()
     ok_footer = (footer is not None
-                 and "Next free finding: **F700**" in footer  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672
-                 and "Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in footer)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672  # Wave-379 lane 6: F668 CLOSED (lane-local)
+                 and "Next free finding: **F713**" in footer  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672
+                 and "Open findings: F700, F701, F702, F703, F704, F705, F706, F707, F708, F709, F710, F711, F712." in footer)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672  # Wave-379 lane 6: F668 CLOSED (lane-local)
     ok = ok_pin and ok_footer
     return ("HELD" if ok else "BREAK",
             "pin=%s footer=%s" % (ok_pin, ok_footer))

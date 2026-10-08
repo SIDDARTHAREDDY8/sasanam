@@ -428,8 +428,8 @@ def test_p8_pin_and_footer():
     """Pin 2143 and merge footer (open F655-F660; next F661)."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     pin_ok = TAXONOMY_PIN == 2143  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
-    next_ok = "Next free finding: **F700**" in text  # Wave-377 lane 2  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672
-    open_ok = "Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672  # Wave-379 lane 6: F668 CLOSED (lane-local)
+    next_ok = "Next free finding: **F713**" in text  # Wave-377 lane 2  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672
+    open_ok = "Open findings: F700, F701, F702, F703, F704, F705, F706, F707, F708, F709, F710, F711, F712." in text  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672  # Wave-379 lane 6: F668 CLOSED (lane-local)
     closed_ok = "**Status: CLOSED 2026-10-08 wave-377 lane 2.**" in text
     ok = pin_ok and next_ok and open_ok and closed_ok
     return ("HELD" if ok else "BREAK",

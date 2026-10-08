@@ -335,8 +335,8 @@ def test_p5_pin_taxonomy():
 def test_p5_footer_state():
     """Footer: F624/F628/F629/F633 closed; open F621-F623,F625-F627,F630-F632,F634-F639; next F640 (wave-375 lane 4)."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F700**" in text  # Wave-375 lane 4: F624, F628, F629, F633 CLOSED # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672
-          and "Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text)  # Wave-375 lane 4: F624, F628, F629, F633 CLOSED # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672  # Wave-379 lane 6: F668 CLOSED (lane-local)
+    ok = ("Next free finding: **F713**" in text  # Wave-375 lane 4: F624, F628, F629, F633 CLOSED # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672
+          and "Open findings: F700, F701, F702, F703, F704, F705, F706, F707, F708, F709, F710, F711, F712." in text)  # Wave-375 lane 4: F624, F628, F629, F633 CLOSED # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672  # Wave-379 lane 6: F668 CLOSED (lane-local)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

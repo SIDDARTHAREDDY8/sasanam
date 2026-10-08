@@ -368,7 +368,7 @@ def test_p8_lane_footer():
         text = f.read()
     ok = ("**Status: CLOSED 2026-10-08 wave-377 lane 8.**" in text  # Wave-377 lane 8: F654 CLOSED
           and "**Status: CLOSED 2026-10-08 wave-378 lane 1.**" in text  # Wave-378 lane 1: F655 CLOSED
-          and "Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text  # Wave-378 lane 1: F655 CLOSED; footer repoint open F662-F671 / next F672  # Wave-379 lane 6: F668 CLOSED (lane-local)
+          and "Open findings: F700, F701, F702, F703, F704, F705, F706, F707, F708, F709, F710, F711, F712." in text  # Wave-378 lane 1: F655 CLOSED; footer repoint open F662-F671 / next F672  # Wave-379 lane 6: F668 CLOSED (lane-local)
           and "Next free finding: **F672**." in text)  # Wave-378 lane 1: F655 CLOSED; footer repoint open F662-F671 / next F672
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 

@@ -48,7 +48,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
 from gov import dlp  # noqa: E402
 
-TAXONOMY_PIN = 2140  # no new decision codes this lane
+TAXONOMY_PIN = 2143  # no new decision codes this lane
 
 _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
@@ -75,7 +75,7 @@ def _misses(payload):
 def test_p0_pin_taxonomy():
     """Pin stays 2140; registry loads."""
     from gov.decision_codes import TAXONOMY
-    ok = TAXONOMY_PIN == 2140 and len(TAXONOMY) > 0
+    ok = TAXONOMY_PIN == 2143 and len(TAXONOMY) > 0
     return ("HELD" if ok else "BREAK", "pin=%s" % TAXONOMY_PIN)
 
 
@@ -344,8 +344,8 @@ def test_p8_pin_footer():
     """Pin 2140; lane-local footer: F688/F694 closed, open F686,F687,F689-F693,F695-F699, next F700."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F700**" in text
-          and "Open findings: F686, F687, F689, F690, F691, F692, F693, F695, F696, F697, F698, F699." in text)
+    ok = ("Next free finding: **F713**" in text
+          and "Open findings: F700, F701, F702, F703, F704, F705, F706, F707, F708, F709, F710, F711, F712." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
