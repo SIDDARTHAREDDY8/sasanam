@@ -66,7 +66,7 @@ from gov import dlp  # noqa: E402
 from gov import decision_codes  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TAXONOMY_PIN = 2140  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+TAXONOMY_PIN = 2143  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 # Test credentials, concatenation-constructed -- never literals.
 _A = "xoxb-" + "0123"
@@ -329,9 +329,9 @@ def p6_honest_text_quiet():
 
 
 def p7_pin_and_footer():
-    """Pin 2140; footer shows F583/F589/F600/F601/F602 closed, next F606."""
+    """Pin 2143; footer shows F583/F589/F600/F601/F602 closed, next F606."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     n = len(decision_codes.TAXONOMY)
-    pin_ok = (TAXONOMY_PIN == 2140 and n == 2140)
+    pin_ok = (TAXONOMY_PIN == 2143 and n == 2140)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as fh:
         text = fh.read()
     footer_ok = ("CLOSED 2026-10-07 wave-371 lane 1" in text

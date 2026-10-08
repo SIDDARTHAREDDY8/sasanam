@@ -31,7 +31,7 @@ R14 (Bernstein #5569 "no row claims coverage without a test"):
   P5  coverage checker runs, writes the generated table, and reports
       honestly: exit 1 with the gap list (gaps are the deliverable --
       NOT hand-closed this lane), exit 2 on a pin mismatch.
-P6  Pin/taxonomy honesty (2140/2140/0 sorted-unique, footer state).
+P6  Pin/taxonomy honesty (2143/2143/0 sorted-unique, footer state).  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 P7  Green check (depth-1): tests/test_evidence_verify_offline as a
     child with GOV_SKIP_GREEN=1.
 
@@ -65,7 +65,7 @@ sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "tests"))
 sys.path.insert(0, os.path.join(REPO, "evals"))
 
-TAXONOMY_PIN = 2140  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+TAXONOMY_PIN = 2143  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 FOOTER_OPEN = (
                "F570", "F571", "F572", "F573",
                "F574", "F575", "F576", "F577",
@@ -336,7 +336,7 @@ def _p5():
     assert os.path.isfile(md) and os.path.isfile(js), \
         "checker did not write the generated table"
     doc = json.load(open(js, encoding="utf-8"))
-    assert doc["pin"] == TAXONOMY_PIN == 2140, "table pin mismatch"  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+    assert doc["pin"] == TAXONOMY_PIN == 2143, "table pin mismatch"  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     assert len(doc["codes"]) == 2140  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
     gaps = doc["gaps"]
     if proc.returncode == 1:
@@ -364,12 +364,13 @@ def _p6a():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
-    assert len(lits) == TAXONOMY_PIN == 2140, \
+    # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    assert len(lits) == TAXONOMY_PIN == 2143, \
         "literal count %d != pin %d" % (len(lits), TAXONOMY_PIN)
     assert len(set(lits)) == TAXONOMY_PIN, "duplicate code literals"
     assert lits == sorted(lits), "literals not sorted"
     assert len(dc.TAXONOMY) == TAXONOMY_PIN
-    _held("P6a-taxonomy-pin", "2140/2140/0 sorted-unique literals")
+    _held("P6a-taxonomy-pin", "2143/2143/0 sorted-unique literals")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
 @_probe("P6b-footer")

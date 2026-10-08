@@ -24,7 +24,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2140  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+TAXONOMY_PIN = 2143  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 _results = []
 
 
@@ -676,18 +676,18 @@ def _p17():
 # P11: pin + footer state.
 # ---------------------------------------------------------------------------
 
-@probe("P11-pin-taxonomy-2140-sorted")
+@probe("P11-pin-taxonomy-2143-sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 def _p11():
     from gov import decision_codes as dc
     import re
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     codes = re.findall(r'"code":\s*["\']([^"\']+)["\']', src)
-    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2140, (#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2143, (#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
         len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
     assert "witness-alert-wrapper-error" in dc.TAXONOMY
-    _held("P11-pin-taxonomy-2140-sorted", "2140/2140/0 sorted")
+    _held("P11-pin-taxonomy-2143-sorted", "2143/2143/0 sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
 @probe("P12-footer-state")

@@ -654,6 +654,8 @@ def make_audit_filter(*, signer=None, signer_id="pipeline"):
                     list(context._scratch.get("redactions", [])),
                 "sequence_check":
                     context._scratch.get("sequence_check"),
+                "taint_check":
+                    context._scratch.get("taint_check"),
                 "budget_reconciled":
                     context._scratch.get("budget_reconciled"),
             }
@@ -707,6 +709,35 @@ def _sequence_gate(holder):
     return sequence_gate
 
 
+def _taint_gate(holder):
+    """Pre-filter slot for the behavioral taint-sequence checker
+    (gov/seqgate.py). Pass-through until a compiled seqgate is bound
+    via :meth:`FilterStack.bind_seqgate`. Runs AFTER the declared-
+    sequence gate in pre-order: declared rules are the operator's
+    explicit contract; the taint gate is the behavioral backstop.
+    Either may refuse independently."""
+
+    def taint_gate(context, next):
+        from gov import seqgate as _seqgate
+        gate = holder.get("seqgate")
+        if gate is None:
+            return next(context)
+        try:
+            allowed = gate.check_call(
+                context.tool, context.args, history=context.history)
+        except _seqgate.SeqGateError as e:
+            raise InvocationPipelineError(
+                "taint-gate pre-filter denied: %s" % (e,), code=e.code)
+        context._scratch["taint_check"] = {
+            "seqgate": allowed["seqgate"],
+            "digest": allowed["digest"],
+        }
+        return next(context)
+
+    taint_gate.__name__ = "taint_gate"
+    return taint_gate
+
+
 # ---------------------------------------------------------------------------
 # Filter stack
 # ---------------------------------------------------------------------------
@@ -751,11 +782,16 @@ def _stack_digest(name, filters, gate_holder):
     # callable identity -- never names alone. A wholesale _filters
     # replacement with same-named functions (or same-code closure
     # instances) changes this digest and refuses coded at invoke time.
+    # The gate slots are bound by PRESENCE: a stack built with a
+    # sequence/taint slot but no binding yet still differs from a
+    # stack built without the slot.
+    holder = gate_holder or {}
     return _digest({
         "format": PIPELINE_FORMAT,
         "name": name,
         "filters": [_filter_fingerprint(fn) for fn in filters],
-        "sequence_gate": gate_holder is not None,
+        "sequence_gate": bool(holder.get("sequence_built")),
+        "taint_gate": bool(holder.get("seqgate_built")),
     })
 
 
@@ -818,7 +854,8 @@ class FilterStack:
                 "bind_rule_set needs a CompiledToolRuleSet; got %r"
                 % (type(rule_set),),
                 code=_tool_rules.RULE_COMPILE_INVALID)
-        if self._gate_holder is None:
+        if self._gate_holder is None \
+                or not self._gate_holder.get("sequence_built"):
             raise InvocationPipelineError(
                 "bind_rule_set on a stack built without a sequence gate "
                 "(use default_stack or build_filter_stack(..., "
@@ -826,6 +863,29 @@ class FilterStack:
                 "consulted", code=_tool_rules.RULE_COMPILE_INVALID)
         self._gate_holder["rule_set"] = rule_set
         return rule_set
+
+    def bind_seqgate(self, gate):
+        """Opt-in: bind a compiled behavioral sequence gate
+        (gov/seqgate.py ``CompiledSeqGate``); the taint gate in this
+        stack then runs the fetch->decrypt->read->unrelated-egress
+        chain check as a pre-filter, after the declared-sequence gate.
+        Mirrors :meth:`bind_rule_set`."""
+        from gov import seqgate as _seqgate
+        if not isinstance(gate, _seqgate.CompiledSeqGate):
+            raise InvocationPipelineError(
+                "bind_seqgate needs a CompiledSeqGate; got %r"
+                % (type(gate),),
+                code=_seqgate.SEQ_CONFIG_INVALID)
+        if self._gate_holder is None \
+                or not self._gate_holder.get("seqgate_built"):
+            raise InvocationPipelineError(
+                "bind_seqgate on a stack built without a taint gate "
+                "(use default_stack(..., seqgate=True) or "
+                "build_filter_stack(..., seqgate=True)); the binding "
+                "would never be consulted",
+                code=_seqgate.SEQ_CONFIG_INVALID)
+        self._gate_holder["seqgate"] = gate
+        return gate
 
     def audit_log(self):
         """Copies of the signed per-call records (default stacks only).
@@ -927,30 +987,44 @@ class FilterStack:
         return run
 
 
-def build_filter_stack(filters, *, name="filter-stack", sequence_gate=False):
+def build_filter_stack(filters, *, name="filter-stack", sequence_gate=False,
+                       seqgate=False):
     """Compile a custom filter stack, fail-closed, frozen at construction.
 
-    With ``sequence_gate=True`` a sequence-gate pre-filter is prepended
-    and :meth:`FilterStack.bind_rule_set` becomes available.
+    With ``sequence_gate=True`` a declared-sequence pre-filter is
+    prepended and :meth:`FilterStack.bind_rule_set` becomes available.
+    With ``seqgate=True`` a behavioral taint-sequence pre-filter is
+    prepended (after the sequence gate) and
+    :meth:`FilterStack.bind_seqgate` becomes available. (The standard
+    :func:`default_stack` always builds both slots; this flag is for
+    custom stacks.)
     """
-    holder = {} if sequence_gate else None
+    holder = {}
+    prepended = []
     if sequence_gate:
-        filters = [_sequence_gate(holder)] + list(filters)
-    return FilterStack(filters, name=name, _gate_holder=holder)
+        prepended.append(_sequence_gate(holder))
+        holder["sequence_built"] = True
+    if seqgate:
+        prepended.append(_taint_gate(holder))
+        holder["seqgate_built"] = True
+    holder = holder if (sequence_gate or seqgate) else None
+    return FilterStack(prepended + list(filters), name=name,
+                       _gate_holder=holder)
 
 
 def default_stack(*, name="default", budget_ledger=None, signer=None,
                   signer_id="pipeline"):
     """The standard pipeline: audit (outermost, logs allowed AND denied),
-    sequence gate, budget reserve/reconcile, output redaction.
+    sequence gate, taint gate, budget reserve/reconcile, output redaction.
 
-    Pre order: audit, sequence, budget-reserve, redact, body.
-    Post order: redact, budget-reconcile, sequence, audit-log.
-    The sequence gate is pass-through until :meth:`bind_rule_set`.
+    Pre order: audit, sequence, taint, budget-reserve, redact, body.
+    Post order: redact, budget-reconcile, taint, sequence, audit-log.
+    The sequence gate is pass-through until :meth:`bind_rule_set`; the
+    taint gate is pass-through until :meth:`bind_seqgate`.
     """
-    holder = {}
+    holder = {"sequence_built": True, "seqgate_built": True}
     audit_fn = make_audit_filter(signer=signer, signer_id=signer_id)
-    filters = [audit_fn, _sequence_gate(holder)]
+    filters = [audit_fn, _sequence_gate(holder), _taint_gate(holder)]
     if budget_ledger is not None:
         filters.append(make_budget_filter(budget_ledger))
     filters.append(make_redact_postfilter())

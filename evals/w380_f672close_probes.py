@@ -8,7 +8,7 @@ member names, mixins). F672 models those productions node-exactly
 (v24.20.0) via _js_parse_f672_class_iife (tried after F662; disjoint
 by head grammar -- F662 fails closed on every shape this accepts).
 
-Pin 2140. Lane-local footer: open F673-F685 / next F686.
+Pin 2143. Lane-local footer: open F673-F685 / next F686.  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 Evals-only: $0 spend. No paid API calls anywhere in this battery.
 """
@@ -28,7 +28,7 @@ import gov.dlp as _dlp  # noqa: E402
 from gov.dlp import find_credential  # noqa: E402
 import gov.decision_codes as dc  # noqa: E402
 
-TAXONOMY_PIN = 2140  # Wave-380 lane 1: F672 CLOSED
+TAXONOMY_PIN = 2143  # Wave-380 lane 1: F672 CLOSED; Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 _A = "xoxb-" + "0123"  # concatenation-constructed credentials
 _B = "456789" + "abcdef"
@@ -364,8 +364,8 @@ def test_p7_node_differential():
 # ------------------------------------------------ pin + footer + re.compile
 
 def test_p8_pin_footer():
-    """Pin 2140 and lane-local footer (F672 CLOSED: open F673-F685 / next F686)."""
-    ok = (TAXONOMY_PIN == 2140 and len(dc.TAXONOMY) > 0)
+    """Pin 2143 and lane-local footer (F672 CLOSED: open F673-F685 / next F686)."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    ok = (TAXONOMY_PIN == 2143 and len(dc.TAXONOMY) > 0)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ok and ("Next free finding: **F700**" in text)  # Wave-380 lane 1: F672 CLOSED; footer repoint open F673-F685 / next F686
     ok = ok and ("Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text)  # Wave-380 lane 1: F672 CLOSED; footer repoint open F673-F685 / next F686

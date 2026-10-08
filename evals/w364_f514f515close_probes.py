@@ -51,7 +51,7 @@ sys.path.insert(0, REPO_ROOT)
 
 from gov import dlp  # noqa: E402
 
-TAXONOMY_PIN = 2140  # Wave-364 lane 2; pin stays 2135; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+TAXONOMY_PIN = 2143  # Wave-364 lane 2; pin stays 2135; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 # Constructed via concatenation: the write path redacts credential literals.
 A1 = "xoxb-" + "0123"
@@ -196,8 +196,8 @@ def p4_compositions():
 
 
 def p5_pin_and_footer():
-    """Pin stays 2140; F514/F515 entries present; no new regexes."""
-    if TAXONOMY_PIN != 2140:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+    """Pin stays 2143; F514/F515 entries present; no new regexes."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    if TAXONOMY_PIN != 2143:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
         return ("BREAK", "pin moved: %s" % TAXONOMY_PIN)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     if "CLOSED 2026-10-07 wave-364 lane 2" not in text:
@@ -207,7 +207,7 @@ def p5_pin_and_footer():
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     if len(re.findall(r"re\.compile\(", src)) != 28:
         return ("BREAK", "re.compile count moved")
-    return ("HELD", "pin 2140; F514/F515 closed; 28 re.compile")
+    return ("HELD", "pin 2143; F514/F515 closed; 28 re.compile")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
 def _green_check():

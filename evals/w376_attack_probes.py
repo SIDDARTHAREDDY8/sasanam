@@ -96,7 +96,7 @@ controls pass. No injection attempts this round.
 Conventions: module-level staging, depth-1 green check honoring
 GOV_SKIP_GREEN=1 (unique-suffixed TMPDIRs), fresh /var/tmp/g376-*
 TMPDIRs, no in-repo git in self-pins, concatenation-constructed
-credentials, pin 2140, $0-spend-by-construction (model spend $0.000225
+credentials, pin 2143, $0-spend-by-construction (model spend $0.000225  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 logged separately in the realmodel ledger).
 """
 import os
@@ -115,7 +115,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2140  # no new decision codes this round
+TAXONOMY_PIN = 2143  # no new decision codes this round; Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -144,8 +144,8 @@ def _misses(payload):
 
 @_t
 def test_p0_pin_taxonomy():
-    """Pin stays 2140; registry loads."""
-    ok = TAXONOMY_PIN == 2140 and len(TAXONOMY) > 0
+    """Pin stays 2143; registry loads."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    ok = TAXONOMY_PIN == 2143 and len(TAXONOMY) > 0  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     return ("HELD" if ok else "BREAK", "pin=%s" % TAXONOMY_PIN)
 def test_b0_footer_state():
     """Control: footer shows F644-F654 closed; F655-F660 open, next F661 (wave-377 merge)."""

@@ -39,7 +39,7 @@ hostile input.
   G17 approvals delegation store: store_lock_unavailable
   G18 inventory query: inventory-identity-collision
   G19 evidence sigstore witness: evidence-bundle-witness-key-unavailable
-  P0  pin/taxonomy honesty (2140/2140/0 sorted-unique, footer state).
+  P0  pin/taxonomy honesty (2143/2143/0 sorted-unique, footer state).  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
   PZ  green check (depth-1): adjacent suites as children with
       GOV_SKIP_GREEN=1.
 
@@ -79,7 +79,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "tests"))
 
-TAXONOMY_PIN = 2140  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+TAXONOMY_PIN = 2143  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 _results = []
 
@@ -138,7 +138,7 @@ def p0():
     elif codes != sorted(set(codes)):
         _break("P0a", "taxonomy not sorted-unique")
     else:
-        _held("P0a", "taxonomy 2140/2140/0 sorted-unique literals")
+        _held("P0a", "taxonomy 2143/2143/0 sorted-unique literals")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     footer = open(os.path.join(REPO, "evals", "FINDINGS.md"),
                   encoding="utf-8").read()
     want = "Next free finding: **F672**. **Open findings: F662, F663, F664, F665, F666, F667, F669, F670, F671.**"  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-366 merge: F526-F530 CLOSED (lanes 1-3); F532 CLOSED at merge (honest F527 generalization, F514 precedent); F531, F533-F536 OPEN (next F537)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint next F612  # Wave-373 lane 4: F608 CLOSED  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-379 lane 6: F668 CLOSED (lane-local)

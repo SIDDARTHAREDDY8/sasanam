@@ -100,7 +100,7 @@ from gov import dlp  # noqa: E402
 _A1 = "xoxb-" + "0123"
 _A2 = "456789" + "abcdef"
 
-TAXONOMY_PIN = 2140  # Wave-366 lane 2; pin stays 2135; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+TAXONOMY_PIN = 2143  # Wave-366 lane 2; pin stays 2135; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
 def _blocked(payload):
@@ -353,9 +353,9 @@ FOOTER_NEXT = "F700"  # Wave-378 merge: F655-F661 CLOSED; F662-F671 filed OPEN (
 def p4_pin_and_footer():
     notes = []
     ok = True
-    if TAXONOMY_PIN != 2140:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
+    if TAXONOMY_PIN != 2143:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
         ok = False
-        notes.append("TAXONOMY_PIN=%s want 2140" % TAXONOMY_PIN)
+        notes.append("TAXONOMY_PIN=%s want 2143" % TAXONOMY_PIN)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     # FINDINGS.md carries historical footer lines; the live footer is
     # the LAST match.

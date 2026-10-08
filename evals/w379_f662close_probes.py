@@ -43,7 +43,7 @@ classes, class expressions, uninitialized-field reads
 Conventions: module-level staging, depth-1 green check honoring
 GOV_SKIP_GREEN=1 (unique-suffixed TMPDIRs), fresh /var/tmp/g379-*
 TMPDIRs, no in-repo git in self-pins, concatenation-constructed
-credentials, pin 2140, $0-spend-by-construction (evals-only: no
+credentials, pin 2143, $0-spend-by-construction (evals-only: no  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 realmodel_harness / ModelDriver / provider refs).
 """
 import os
@@ -60,7 +60,7 @@ import gov.dlp as _dlp  # noqa: E402
 from gov.dlp import find_credential  # noqa: E402
 import gov.decision_codes as dc  # noqa: E402
 
-TAXONOMY_PIN = 2140
+TAXONOMY_PIN = 2143  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 # Constructed via concatenation: the write path redacts credential literals.
 _A = "xoxb-" + "0123"
@@ -512,12 +512,12 @@ def test_p7_node_differential():
 
 
 def test_p8_pin_footer():
-    """Pin 2140; lane-local footer: open F673-F685, next F686 (F672 CLOSED wave-380 lane 1)."""
+    """Pin 2143; lane-local footer: open F673-F685, next F686 (F672 CLOSED wave-380 lane 1)."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     import re
     p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                      "FINDINGS.md")
     text = open(p, encoding="utf-8").read()
-    ok = (TAXONOMY_PIN == 2140 and len(dc.TAXONOMY) > 0
+    ok = (TAXONOMY_PIN == 2143 and len(dc.TAXONOMY) > 0  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
           and "Next free finding: **F700**." in text
           and "Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699."  # Wave-380 merge: F672-F685 CLOSED; footer repoint open F686-F699 / next F700
           in text)
