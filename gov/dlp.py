@@ -23583,6 +23583,288 @@ def _js_parse_f672_class_iife(text, i, depth, state):
         return None
 
 
+def _js_str_is_unsafe_int(v):
+    """True if v looks like a canonical decimal integer with |n| > 2**53 (F676/F678).
+
+    Integer provenance is lost by _js_parse_canonical_int (it returns
+    plain str), so a member value shaped like a canonical integer may
+    be an integer literal -- and above 2**53 the engine's float64
+    diverges from the canonical text (node v24.20.0 verified), which
+    would mis-decode. Genuine quoted numeric strings share the shape
+    and are conservatively excluded too (documented residual; the
+    F541/F477 precedent fails closed beyond 2**53-1). Never evals.
+    """
+    if not isinstance(v, str) or not v:
+        return False
+    t = v[1:] if v[:1] == "-" else v
+    if not t or any(c not in "0123456789" for c in t):
+        return False
+    if len(t) > 1 and t[0] == "0":
+        return False  # non-canonical; cannot be an int literal
+    try:
+        n = int(v)
+    except ValueError:
+        return False
+    return abs(n) > 2**53
+
+
+def _js_parse_f676_fn_member(text, q, depth, state):
+    """Parse `{KEY:function(){return ADD;}}` at text[q] (text[q] == '{') (F676).
+
+    Exactly one member whose value is a zero-parameter function with a
+    single `return ADD;` body (ADD is the F645 string-only additive
+    grammar over string literals -- the body is the function's own
+    scope, so no outer bindings are visible here; closure reads of
+    outer bindings fail closed, documented). Returns
+    (key, body_value, next_index). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    j = _js_skip_ws(text, q + 1)
+    key, j = _js_parse_ident(text, j)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ":")
+    j = _js_skip_ws(text, j)
+    fk = _js_match_kw(text, j, "function")
+    if fk is None:
+        raise _JSExprFail("F676 fn member not a function")
+    j = _js_skip_ws(text, fk)
+    if j < n and text[j] in _JS_IDENT_START:
+        # Optional function name (engine-exact; ignored).
+        _, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "{")
+    j = _js_skip_ws(text, j)
+    rk = _js_match_kw(text, j, "return")
+    if rk is None:
+        raise _JSExprFail("F676 fn body not a return")
+    bodyval, j = _js_parse_f645_bound_additive(
+        text, _js_skip_ws(text, rk), depth + 1, state, {})
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ";":
+        j = _js_skip_ws(text, j + 1)
+    j = _js_expect(text, j, "}")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "}")
+    state["parts"] += 1  # the function-valued member is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return key, bodyval, j
+
+
+def _js_parse_f676_optchain_iife(text, i, depth, state):
+    """Parse F676 optchain-call / nullish shapes (F676).
+
+    Two productions, both IIFE-scoped:
+
+    A. opt-call:
+       `(function(){[DECL;]* return O?.f()+ADD;})()` where one
+       declaration binds `O={KEY:function(){return ADD;}}` (parsed by
+       `_js_parse_f676_fn_member`). The receiver is provably non-null
+       (an object literal), so the `?.` short-circuit can never
+       trigger and `?.` === `.` (node-exact, v24.20.0 -- the F665
+       normalization); the zero-arg call evaluates the function body
+       (node-exact: `this`-free literal bodies only -- a body
+       referencing `this` fails closed because the additive grammar
+       has no `this`).
+
+    B. nullish:
+       `(function(){[DECL;]* return (O?.M ?? 'LIT')+ADD;})()` where
+       `O` is bound to `null`/`undefined` or to a literal object.
+       Node-exact `??` semantics: a nullish LHS (`null`/`undefined`
+       receiver, or a missing key on an object receiver) yields the
+       RHS literal; a decoded string LHS wins (the engine returns the
+       LHS when it is not nullish). M is an ident or a
+       string-literal bracket key.
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - declarations: `var|let|const NAME='LIT';` (string bindings),
+      `var|let|const NAME={LITOBJ};` (object bindings, the F535
+      literal-object grammar), `var|let|const NAME=null|undefined;`
+      (nullish bindings). Duplicate or reserved names fail closed.
+    - branch A requires the `?.` call on the function-object
+      binding with the member name equal to the function's key and
+      an empty argument list; any other callee, arguments, or a
+      `.f()` plain-dot twin fail closed (the plain-dot twin is a
+      distinct production, documented residual).
+    - branch B requires the parenthesized `(O?.M ?? 'LIT')`; a
+      string-typed receiver fails closed (the engine's `.length`
+      reads would mis-decode); a non-string object member fails
+      closed; integer-shaped members above 2**53 fail closed (the
+      engine's float64 diverges from the canonical text --
+      _js_str_is_unsafe_int); chained `?.` in the LHS fails closed.
+    - the additive tail is the F645 string-only additive grammar
+      over the IIFE's string bindings (optional in branch B).
+
+    Tried after F667: no earlier route decodes any shape this
+    accepts (red-first verified: BREAK on the open tree); only
+    previously fail-closed inputs are newly decoded. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            raise _JSExprFail("F676 not our head")
+        j = _js_skip_ws(text, brace + 1)
+        bindings = {}
+        while True:
+            kw, q = _js_match_decl_kw(text, j)
+            if kw is None:
+                break
+            q = _js_skip_ws(text, q)
+            name, q = _js_parse_ident(text, q)
+            if name in _F611_RESERVED:
+                raise _JSExprFail("F676 reserved binding name")
+            if name in bindings:
+                raise _JSExprFail("F676 duplicate binding")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != "=":
+                raise _JSExprFail("F676 bad decl")
+            q = _js_skip_ws(text, q + 1)
+            if q < n and text[q] in "'\"":
+                val, q = _js_parse_string(text, q)
+                bindings[name] = ("str", val)
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+            elif q < n and text[q] == "{":
+                # Function-valued member or a plain object literal.
+                qq = _js_skip_ws(text, q + 1)
+                _fkey = None
+                if qq < n and text[qq] in _JS_IDENT_START:
+                    try:
+                        _k, _q2 = _js_parse_ident(text, qq)
+                        _q2 = _js_skip_ws(text, _q2)
+                        if _q2 < n and text[_q2] == ":":
+                            _q3 = _js_skip_ws(text, _q2 + 1)
+                            if _js_match_kw(text, _q3,
+                                            "function") is not None:
+                                _fkey = _k
+                    except _JSExprFail:
+                        _fkey = None
+                if _fkey is not None:
+                    _key, _bodyval, q = _js_parse_f676_fn_member(
+                        text, q, depth, state)
+                    bindings[name] = ("fnobj", _key, _bodyval)
+                else:
+                    props, q = _js_parse_f535_object(text, q, depth,
+                                                     state)
+                    bindings[name] = ("obj", _JSObj(props))
+            elif _js_match_kw(text, q, "null") is not None:
+                bindings[name] = ("null", None)
+                q = _js_skip_ws(text, q + 4)
+            elif _js_match_kw(text, q, "undefined") is not None:
+                bindings[name] = ("null", None)
+                q = _js_skip_ws(text, q + 9)
+            else:
+                raise _JSExprFail("F676 bad decl init")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ";":
+                raise _JSExprFail("F676 decl without semicolon")
+            j = _js_skip_ws(text, q + 1)
+        rk = _js_match_kw(text, j, "return")
+        if rk is None:
+            raise _JSExprFail("F676 no return")
+        j = _js_skip_ws(text, rk)
+        strbinds = {k: v[1] for k, v in bindings.items()
+                    if v[0] == "str"}
+        if j < n and text[j] == "(":
+            # Branch B: (O?.M ?? 'LIT')
+            j = _js_skip_ws(text, j + 1)
+            oname, j = _js_parse_ident(text, j)
+            if oname not in bindings:
+                raise _JSExprFail("F676 nullish unbound receiver")
+            kind = bindings[oname][0]
+            j = _js_skip_ws(text, j)
+            if j + 1 >= n or text[j] != "?" or text[j + 1] != ".":
+                raise _JSExprFail("F676 nullish needs ?.")
+            j = _js_skip_ws(text, j + 2)
+            if j < n and text[j] == "[":
+                mname, j = _js_parse_bracket_member(text, j)
+            else:
+                mname, j = _js_parse_ident(text, j)
+            j = _js_skip_ws(text, j)
+            if j + 1 >= n or text[j] != "?" or text[j + 1] != "?":
+                raise _JSExprFail("F676 nullish needs ??")
+            j = _js_skip_ws(text, j + 2)
+            rhs, j = _js_parse_string(text, j)
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, ")")
+            if kind == "null":
+                lhs = rhs
+            elif kind == "obj":
+                mval = _jsobj_lookup(bindings[oname][1], mname)
+                if mval is None:
+                    lhs = rhs  # missing key -> undefined -> RHS
+                elif (isinstance(mval, str)
+                        and not isinstance(mval, _JSNumStr)
+                        and not _js_str_is_unsafe_int(mval)):
+                    lhs = mval  # non-nullish LHS wins (node-exact)
+                else:
+                    raise _JSExprFail("F676 nullish non-string member")
+            else:
+                # String receivers fail closed: the engine's
+                # `.length`/index reads would mis-decode.
+                raise _JSExprFail("F676 nullish bad receiver kind")
+            state["ops"] += 1  # the nullish combo is obfuscation-shaped
+            k = _js_skip_ws(text, j)
+            if k < n and text[k] == "+":
+                tail, j = _js_parse_f645_bound_additive(
+                    text, k + 1, depth, state, strbinds)
+                rval = lhs + tail
+            else:
+                rval = lhs
+                j = k
+        else:
+            # Branch A: O?.f()
+            oname, j = _js_parse_ident(text, j)
+            if oname not in bindings:
+                raise _JSExprFail("F676 call unbound receiver")
+            bent = bindings[oname]
+            if bent[0] != "fnobj":
+                raise _JSExprFail("F676 call receiver not a fnobj")
+            j = _js_skip_ws(text, j)
+            if j + 1 >= n or text[j] != "?" or text[j + 1] != ".":
+                raise _JSExprFail("F676 call needs ?.")
+            j = _js_skip_ws(text, j + 2)
+            mname, j = _js_parse_ident(text, j)
+            if mname != bent[1]:
+                raise _JSExprFail("F676 call member not the fn key")
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, "(")
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, ")")
+            state["ops"] += 1  # the optchain call is obfuscation-shaped
+            k = _js_skip_ws(text, j)
+            if k < n and text[k] == "+":
+                tail, j = _js_parse_f645_bound_additive(
+                    text, k + 1, depth, state, strbinds)
+                rval = bent[2] + tail
+            else:
+                rval = bent[2]
+                j = k
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            raise _JSExprFail("F676 return without semicolon")
+        j = _js_expect(text, _js_skip_ws(text, j + 1), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return rval, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f667_with_iife(text, i, depth, state):
     """Parse `(function(){[DECL S='LIT';]*[DECL S={LIT};]with(S|{LIT}){return ADD;}})()` (F667).
 
@@ -23708,6 +23990,245 @@ def _js_parse_f667_with_iife(text, i, depth, state):
         j = _js_skip_ws(text, j)
         j = _js_expect(text, j, ")")
         state["ops"] += 1  # the with-scope wrapper is obfuscation-shaped
+        return rval, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f678_with_iife(text, i, depth, state):
+    """Parse F678 nested-with / with-tail shapes (F678).
+
+    Two productions, both IIFE-scoped:
+
+    C. nested with:
+       `(function(){[DECL;]* with(S1){with(S2){... return ADD;}}})()`
+       -- two or three nested with scopes (depth-bounded). Scope
+       resolution is node-exact: the innermost scope object's
+       members shadow outer scope objects' members, which shadow
+       the IIFE's own string bindings; an identifier bound nowhere
+       is unbound and the engine throws ReferenceError -- fail
+       closed.
+
+    D. with-tail:
+       `(function(){[DECL;]* with(S){ASSIGN;}* return ADD;})()` --
+       one or more assignments inside the with body write through
+       to IIFE bindings, which the trailing `return ADD;` then
+       reads. Node-exact write semantics: an assignment target that
+       names a scope-object member writes the SCOPE OBJECT (the
+       outer binding keeps its old value) -- that shape fails
+       closed (it would otherwise mis-decode); an undeclared
+       target fails closed (the engine would create a sloppy-mode
+       global, which the static model never tracks).
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - declarations: `var|let|const NAME='LIT';` (string bindings),
+      `var|let|const NAME={LITOBJ};` (scope-object bindings, the
+      F535 literal-object grammar with F667's string-member
+      filter, plus _js_str_is_unsafe_int: integer-shaped members
+      above 2**53 are excluded because the engine's float64
+      diverges from the canonical text), `var|let NAME;`
+      (uninitialized -- `const` without an initializer is a
+      SyntaxError, fail closed). Duplicate or reserved names fail
+      closed.
+    - each with scope is a bound scope-object name or an inline
+      `{LITOBJ}` literal.
+    - branch D assignments are `IDENT=RHS;` with RHS a string
+      literal or a scope-resolved identifier read (scope members
+      first, then current bindings); reads of unbound names fail
+      closed.
+    - the return additive is the F645 string-only additive grammar
+      over the current string bindings.
+
+    Tried after F667: F667 owns the single-`with(...){return`
+    shape and fails closed on every shape this accepts (a second
+    `with` open, or an assignment before the return), and no
+    earlier route decodes any shape this accepts (red-first
+    verified: BREAK on the open tree); only previously
+    fail-closed inputs are newly decoded. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            raise _JSExprFail("F678 not our head")
+        j = _js_skip_ws(text, brace + 1)
+        strings = {}
+        scopes = {}
+        while True:
+            kw, q = _js_match_decl_kw(text, j)
+            if kw is None:
+                break
+            q = _js_skip_ws(text, q)
+            name, q = _js_parse_ident(text, q)
+            if name in _F611_RESERVED:
+                raise _JSExprFail("F678 reserved binding name")
+            if name in strings or name in scopes:
+                raise _JSExprFail("F678 duplicate binding")
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == ";":
+                # Uninitialized: var/let declare-but-don't-bind;
+                # const without an initializer is a SyntaxError.
+                if kw == "const":
+                    raise _JSExprFail("F678 const without init")
+                strings[name] = None
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                j = _js_skip_ws(text, q + 1)
+                continue
+            if q >= n or text[q] != "=":
+                raise _JSExprFail("F678 bad decl")
+            q = _js_skip_ws(text, q + 1)
+            if q < n and text[q] in "'\"":
+                val, q = _js_parse_string(text, q)
+                strings[name] = val
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+            elif q < n and text[q] == "{":
+                props, q = _js_parse_f535_object(text, q, depth, state)
+                scopes[name] = {
+                    k: v for k, v in props.items()
+                    if isinstance(k, str) and isinstance(v, str)
+                    and not isinstance(v, _JSNumStr)
+                    and not _js_str_is_unsafe_int(v)
+                }
+            else:
+                raise _JSExprFail("F678 bad decl init")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ";":
+                raise _JSExprFail("F678 decl without semicolon")
+            j = _js_skip_ws(text, q + 1)
+
+        def _f678_scope_members(idx):
+            """Parse one with-scope at text[idx]: a bound
+            scope-object name or an inline literal. Returns
+            (members, next_index)."""
+            idx = _js_skip_ws(text, idx)
+            if idx < n and text[idx] == "{":
+                props, idx = _js_parse_f535_object(text, idx, depth,
+                                                   state)
+                return ({k: v for k, v in props.items()
+                         if isinstance(k, str) and isinstance(v, str)
+                         and not isinstance(v, _JSNumStr)
+                         and not _js_str_is_unsafe_int(v)}, idx)
+            sname, idx = _js_parse_ident(text, idx)
+            if sname not in scopes:
+                raise _JSExprFail("F678 with unbound scope")
+            return scopes[sname], idx
+
+        wk = _js_match_kw(text, j, "with")
+        if wk is None:
+            raise _JSExprFail("F678 no with")
+        j = _js_expect(text, _js_skip_ws(text, wk), "(")
+        members, j = _f678_scope_members(j)
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        j = _js_skip_ws(text, j)
+        state["parts"] += 1  # the with scope is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        scope_stack = [members]
+        if _js_match_kw(text, j, "with") is not None:
+            # Branch C: nested with scopes (2-3 levels; F667 owns 1).
+            while True:
+                wk2 = _js_match_kw(text, j, "with")
+                if wk2 is None:
+                    break
+                if len(scope_stack) >= 3:
+                    raise _JSExprFail("F678 with nesting too deep")
+                j = _js_expect(text, _js_skip_ws(text, wk2), "(")
+                members2, j = _f678_scope_members(j)
+                j = _js_expect(text, _js_skip_ws(text, j), ")")
+                j = _js_expect(text, _js_skip_ws(text, j), "{")
+                j = _js_skip_ws(text, j)
+                scope_stack.append(members2)
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+            if len(scope_stack) < 2:
+                raise _JSExprFail("F678 single with is F667")
+            bound = {}
+            for k, v in strings.items():
+                if v is not None:
+                    bound[k] = v
+            for lvl in scope_stack:
+                # Innermost scope shadows outer scopes (node-exact).
+                bound.update(lvl)
+            rk = _js_match_kw(text, j, "return")
+            if rk is None:
+                raise _JSExprFail("F678 nested with body not return")
+            rval, j = _js_parse_f645_bound_additive(
+                text, _js_skip_ws(text, rk), depth, state, bound)
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != ";":
+                raise _JSExprFail("F678 return without semicolon")
+            j = _js_skip_ws(text, j + 1)
+            for _ in scope_stack:
+                j = _js_expect(text, _js_skip_ws(text, j), "}")
+        else:
+            # Branch D: with-tail -- assignments, then return after.
+            nassign = 0
+            while True:
+                jj = _js_skip_ws(text, j)
+                if jj >= n or text[jj] not in _JS_IDENT_START:
+                    break
+                tname, tq = _js_parse_ident(text, jj)
+                tq = _js_skip_ws(text, tq)
+                if tq >= n or text[tq] != "=":
+                    break
+                if tname not in strings:
+                    raise _JSExprFail("F678 assign undeclared target")
+                if tname in scope_stack[0]:
+                    # Node writes the scope object, not the outer
+                    # binding -- fail closed, never mis-decoded.
+                    raise _JSExprFail("F678 assign shadows scope member")
+                tq = _js_skip_ws(text, tq + 1)
+                if tq < n and text[tq] in "'\"":
+                    aval, tq = _js_parse_string(text, tq)
+                elif tq < n and text[tq] in _JS_IDENT_START:
+                    rname, tq = _js_parse_ident(text, tq)
+                    if rname in scope_stack[0]:
+                        aval = scope_stack[0][rname]
+                    elif (rname in strings
+                            and strings[rname] is not None):
+                        aval = strings[rname]
+                    else:
+                        raise _JSExprFail("F678 assign unbound read")
+                else:
+                    raise _JSExprFail("F678 bad assign rhs")
+                tq = _js_skip_ws(text, tq)
+                if tq >= n or text[tq] != ";":
+                    raise _JSExprFail("F678 assign without semicolon")
+                strings[tname] = aval
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                nassign += 1
+                j = _js_skip_ws(text, tq + 1)
+            if nassign == 0:
+                raise _JSExprFail("F678 with body not assignments")
+            j = _js_expect(text, _js_skip_ws(text, j), "}")
+            j = _js_skip_ws(text, j)
+            bound = {k: v for k, v in strings.items() if v is not None}
+            rk = _js_match_kw(text, j, "return")
+            if rk is None:
+                raise _JSExprFail("F678 tail no return")
+            rval, j = _js_parse_f645_bound_additive(
+                text, _js_skip_ws(text, rk), depth, state, bound)
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != ";":
+                raise _JSExprFail("F678 return without semicolon")
+            j = _js_skip_ws(text, j + 1)
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
         return rval, j
     except _JSExprFail:
         return None
@@ -42016,6 +42537,30 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f667 = _js_parse_f667_with_iife(text, i, depth, state)
         if _f667 is not None:
             val, i = _f667
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F676: (function(){[DECL;]* return O?.f()+ADD;})() /
+        #   (function(){[DECL;]* return (O?.M ?? 'LIT')+ADD;})() --
+        #   optional-chaining call and nullish-combo shapes beyond
+        #   F665. Tried after F667: every earlier route requires its
+        #   own binding family or statement head and fails closed
+        #   on `?.()` / `??` (F665 consumes `?.` member reads only,
+        #   never calls or nullish combos), so no previously-decoded
+        #   input changes behavior.
+        _f676 = _js_parse_f676_optchain_iife(text, i, depth, state)
+        if _f676 is not None:
+            val, i = _f676
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F678: (function(){[DECL;]* with(S1){with(S2){
+        #   return ADD;}}})() / (function(){[DECL;]*
+        #   with(S){ASSIGN;}* return ADD;})() -- nested with scopes
+        #   and with-tail reads beyond F667. Tried after F676: F667
+        #   owns the single-`with(...){return` shape and fails closed
+        #   on every shape this accepts; no earlier route decodes any
+        #   shape this accepts, so no previously-decoded input
+        #   changes behavior.
+        _f678 = _js_parse_f678_with_iife(text, i, depth, state)
+        if _f678 is not None:
+            val, i = _f678
             return _js_parse_postfix(text, i, val, depth, state)
         # F586: (new Map(...)) / (new WeakRef(...)) --
         # parenthesized new-expression receivers, engine-identical
