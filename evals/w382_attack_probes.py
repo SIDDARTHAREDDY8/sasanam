@@ -520,28 +520,28 @@ def test_r50_f724_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r50_f725_s1_open():
-    """F725 OPEN (__lookupGetter__ legacy API reads): miss reproduces."""
-    miss = _misses("(function(){var o={get x(){return '%s';}};var g=o.__lookupGetter__('x');return g.call(o)+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f725_s1_closed():
+    """F725 CLOSED (wave-383 lane 7): blocks coded."""
+    ok = _blocked("(function(){var o={get x(){return '%s';}};var g=o.__lookupGetter__('x');return g.call(o)+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f725_s2_open():
-    """F725 OPEN (__lookupGetter__ legacy API reads): miss reproduces."""
-    miss = _misses("(function(){var o={};o.__defineGetter__('y',function(){return '%s';});return o.__lookupGetter__('y').call(o)+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f725_s2_closed():
+    """F725 CLOSED (wave-383 lane 7): blocks coded."""
+    ok = _blocked("(function(){var o={};o.__defineGetter__('y',function(){return '%s';});return o.__lookupGetter__('y').call(o)+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f726_s1_open():
-    """F726 OPEN (F697 residual: template-literal toPrimitive coercion): miss reproduces."""
-    miss = _misses("(function(){var o={toString:function(){return '%s';}};return `${o}`+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f726_s1_closed():
+    """F726 CLOSED (wave-383 lane 7): blocks coded."""
+    ok = _blocked("(function(){var o={toString:function(){return '%s';}};return `${o}`+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f726_s2_open():
-    """F726 OPEN (F697 residual: template-literal toPrimitive coercion): miss reproduces."""
-    miss = _misses("(function(){var o={[Symbol.toPrimitive]:function(){return '%s';}};return `${o}`+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f726_s2_closed():
+    """F726 CLOSED (wave-383 lane 7): blocks coded."""
+    ok = _blocked("(function(){var o={[Symbol.toPrimitive]:function(){return '%s';}};return `${o}`+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r50_f727_s1_open():

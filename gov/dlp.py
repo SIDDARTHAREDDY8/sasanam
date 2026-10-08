@@ -35629,6 +35629,650 @@ def _js_parse_f691f698_descriptor_iife(text, i, depth, state):
 _F702F703_MAX_INSTALLS = 8
 
 
+def _js_parse_f725_lookup_getter_iife(text, i, depth, state):
+    """Parse `(function(){DECL;* return ADD;})()` with legacy
+    `__lookupGetter__` reads (F725).
+
+    The decoder models `__defineGetter__` installs (F703) but has no
+    `__lookupGetter__` production: retrieving the getter function
+    and invoking it recovers the fragment while the decoder
+    produces zero variants:
+    `(function(){var o={get x(){return 'f1';}};
+    var g=o.__lookupGetter__('x');return g.call(o)+'f2';})()` and
+    `(function(){var o={};
+    o.__defineGetter__('y',function(){return 'f1';});
+    return o.__lookupGetter__('y').call(o)+'f2';})()`
+    (node v24.20.0). Read-side twin of F703; disjoint from it
+    (F703 fails closed on `__lookupGetter__` statement and
+    return-term heads -- verified by the red-first).
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (shared F654 head parser); no
+      params, no name, no async.
+    - declarations: `var|let|const NAME={LITOBJ};` (F535 literal
+      grammar, getters resolve to their evaluated string values)
+      or `var|let|const NAME={};`, or
+      `var|let|const G=NAME.__lookupGetter__('KEY');` (KEY must
+      resolve to a known own getter -- the engine returns
+      undefined otherwise and the later `.call` throws).
+    - install statements:
+      `NAME.__defineGetter__('KEY',function(){return 'LIT';});`
+      (F703's install shape; `__proto__` keys, re-installs,
+      non-literal keys/bodies fail closed, F703 parity).
+    - return: `TERM (+ TERM)*;` where TERM is a string literal,
+      `G()`, `G.call()` / `G.call(RECV)` (RECV a bound ident or
+      empty -- the getter value is receiver-independent: the F535
+      return grammar has no `this`, verified fail-closed above),
+      or inline
+      `NAME.__lookupGetter__('KEY').call()` /
+      `.call(RECV)`. Extra `.call` args fail closed (the engine
+      ignores them on a zero-arg getter, but the closure stays
+      conservative).
+    - disjointness: at least one `__lookupGetter__` statement or
+      return-term head is required -- pure F703 shapes belong to
+      the earlier route and return None here.
+    - exactly `()` invocation; no trailing statements.
+
+    Tried after F702/F703: every accepted shape carries a
+    `__lookupGetter__` head, which no earlier route accepts;
+    only previously fail-closed inputs are newly decoded.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        getters = {}  # oname -> {key: getter string value}
+        gvals = {}    # gname -> getter string value
+        saw_lookup = [False]
+
+        def _lookup_head(q):
+            # Parse `NAME.__lookupGetter__('KEY')` at q (q at the
+            # 'N' of NAME). Returns (oname, key, next_index past
+            # ')'). The receiver must be a bound object and KEY a
+            # quoted literal (`__proto__` fails closed -- the
+            # engine would walk the prototype chain).
+            oname, r = _js_parse_ident(text, q)
+            if oname not in getters:
+                raise _JSExprFail("F725 lookup unbound")
+            r = _js_skip_ws(text, r)
+            if r >= n or text[r] != ".":
+                raise _JSExprFail("F725 lookup without dot")
+            r = _js_skip_ws(text, r + 1)
+            if not text.startswith("__lookupGetter__", r):
+                raise _JSExprFail("F725 not lookupGetter")
+            r = r + len("__lookupGetter__")
+            if r < n and text[r] in _JS_IDENT_CONT:
+                raise _JSExprFail("F725 lookupGetterx")
+            r = _js_skip_ws(text, r)
+            r = _js_expect(text, r, "(")
+            r = _js_skip_ws(text, r)
+            if r >= n or text[r] not in "'\"":
+                raise _JSExprFail("F725 lookup key not a literal")
+            key, r = _js_parse_string(text, r)
+            if key == "__proto__":
+                raise _JSExprFail("F725 __proto__ fails closed")
+            r = _js_skip_ws(text, r)
+            r = _js_expect(text, r, ")")
+            return oname, key, r
+
+        def _getter_of(oname, key):
+            gmap = getters[oname]
+            if key not in gmap:
+                # The engine returns undefined; `.call` on it
+                # throws -- fail closed, never a credential decode.
+                raise _JSExprFail("F725 no such getter")
+            return gmap[key]
+
+        def _define_getter_stmt(q):
+            # Parse `NAME.__defineGetter__('KEY',
+            # function(){return 'LIT';});` at q (F703 install
+            # shape). Returns next_index past `;`.
+            oname, r = _js_parse_ident(text, q)
+            if oname not in getters:
+                raise _JSExprFail("F725 defineGetter unbound")
+            r = _js_skip_ws(text, r)
+            r = _js_expect(text, r, ".")
+            r = _js_skip_ws(text, r)
+            if not text.startswith("__defineGetter__", r):
+                raise _JSExprFail("F725 not defineGetter")
+            r = r + len("__defineGetter__")
+            if r < n and text[r] in _JS_IDENT_CONT:
+                raise _JSExprFail("F725 defineGetterx")
+            r = _js_skip_ws(text, r)
+            r = _js_expect(text, r, "(")
+            r = _js_skip_ws(text, r)
+            if r >= n or text[r] not in "'\"":
+                raise _JSExprFail("F725 defineGetter key not a literal")
+            key, r = _js_parse_string(text, r)
+            if key == "__proto__":
+                raise _JSExprFail("F725 __proto__ fails closed")
+            if key in getters[oname]:
+                # F703 parity: re-installs fail closed (the engine
+                # lets the later install win -- a documented
+                # residual, never modeled).
+                raise _JSExprFail("F725 re-install fails closed")
+            r = _js_skip_ws(text, r)
+            r = _js_expect(text, r, ",")
+            r = _js_skip_ws(text, r)
+            if _js_match_kw(text, r, "function") is None:
+                raise _JSExprFail("F725 getter not a function")
+            r = _js_skip_ws(text, r + len("function"))
+            r = _js_expect(text, r, "(")
+            r = _js_expect(text, r, ")")
+            r = _js_skip_ws(text, r)
+            r = _js_expect(text, r, "{")
+            r = _js_skip_ws(text, r)
+            if _js_match_kw(text, r, "return") is None:
+                raise _JSExprFail("F725 getter body not a return")
+            r = _js_skip_ws(text, r + len("return"))
+            if r >= n or text[r] not in "'\"":
+                raise _JSExprFail("F725 getter value not a literal")
+            gval, r = _js_parse_string(text, r)
+            if _js_str_is_unsafe_int(gval):
+                raise _JSExprFail("F725 unsafe int getter value")
+            r = _js_skip_ws(text, r)
+            if r < n and text[r] == ";":
+                r = r + 1
+            r = _js_skip_ws(text, r)
+            r = _js_expect(text, r, "}")
+            r = _js_skip_ws(text, r)
+            r = _js_expect(text, r, ")")
+            r = _js_skip_ws(text, r)
+            r = _js_expect(text, r, ";")
+            getters[oname][key] = gval
+            return r
+
+        def _call_args(r):
+            # Parse the `.call(...)` argument list at r (r just
+            # past "call"). Returns next_index past `)`. The
+            # getter value is receiver-independent, so the
+            # receiver is accepted but ignored; it must be empty
+            # or a single bound ident (an unbound name would throw
+            # ReferenceError in the engine). Extra args fail
+            # closed.
+            r = _js_skip_ws(text, r)
+            r = _js_expect(text, r, "(")
+            r = _js_skip_ws(text, r)
+            if r < n and text[r] == ")":
+                return r + 1
+            rname, r = _js_parse_ident(text, r)
+            if rname not in getters and rname not in gvals:
+                raise _JSExprFail("F725 call receiver unbound")
+            r = _js_skip_ws(text, r)
+            r = _js_expect(text, r, ")")
+            return r
+
+        while True:
+            sj = _js_skip_ws(text, sj)
+            kw, m = _js_match_decl_kw(text, sj)
+            if kw is not None:
+                q = _js_skip_ws(text, m)
+                name, q = _js_parse_ident(text, q)
+                if name in getters or name in gvals:
+                    raise _JSExprFail("F725 duplicate binding")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, "=")
+                q = _js_skip_ws(text, q)
+                if q < n and text[q] == "{":
+                    props, q = _js_parse_f535_object(text, q, depth,
+                                                     state,
+                                                     accessor_aware=True)
+                    gmap = {}
+                    for k, v in props.items():
+                        # Only accessors are visible to
+                        # __lookupGetter__ (F549): a data property
+                        # makes the engine return undefined and
+                        # the later .call throw -- fail closed.
+                        if isinstance(v, _JSAccessor):
+                            v = v.value
+                            if not isinstance(v, str) \
+                                    or isinstance(v, (_JSNumStr,
+                                                     _JSBigInt)):
+                                raise _JSExprFail(
+                                    "F725 getter not a plain string")
+                            if _js_str_is_unsafe_int(v):
+                                raise _JSExprFail(
+                                    "F725 unsafe int getter")
+                            gmap[k] = v
+                    getters[name] = gmap
+                else:
+                    oname, key, q = _lookup_head(q)
+                    gvals[name] = _getter_of(oname, key)
+                    saw_lookup[0] = True
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, ";")
+                sj = q
+                continue
+            # `__defineGetter__` install statement?
+            if sj < n and text[sj] in _JS_IDENT_START:
+                nm, q2 = _js_parse_ident(text, sj)
+                q2 = _js_skip_ws(text, q2)
+                if q2 < n and text[q2] == ".":
+                    q3 = _js_skip_ws(text, q2 + 1)
+                    if text.startswith("__defineGetter__", q3):
+                        sj = _define_getter_stmt(sj)
+                        continue
+            break
+
+        def _f725_term(q):
+            # One additive term: a string literal, `G()`,
+            # `G.call()` / `G.call(RECV)`, or inline
+            # `NAME.__lookupGetter__('KEY').call()` /
+            # `.call(RECV)`.
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] in "'\"":
+                return _js_parse_string(text, q)
+            name, r = _js_parse_ident(text, q)
+            if name in gvals:
+                r = _js_skip_ws(text, r)
+                if r < n and text[r] == "(":
+                    # Bare `G()` -- the getter ignores `this`.
+                    r = _js_skip_ws(text, r + 1)
+                    if r >= n or text[r] != ")":
+                        raise _JSExprFail("F725 g() args fail closed")
+                    state["ops"] += 1
+                    return gvals[name], r + 1
+                if r < n and text[r] == ".":
+                    r = _js_skip_ws(text, r + 1)
+                    if not text.startswith("call", r) or (
+                            r + 4 < n and text[r + 4] in _JS_IDENT_CONT):
+                        raise _JSExprFail("F725 not a call")
+                    r = _call_args(r + 4)
+                    state["ops"] += 1
+                    return gvals[name], r
+                raise _JSExprFail("F725 bare getter ref")
+            if name in getters:
+                oname, key, r = _lookup_head(q)
+                gval = _getter_of(oname, key)
+                saw_lookup[0] = True
+                r = _js_skip_ws(text, r)
+                if r >= n or text[r] != ".":
+                    raise _JSExprFail("F725 inline lookup needs call")
+                r = _js_skip_ws(text, r + 1)
+                if not text.startswith("call", r) or (
+                        r + 4 < n and text[r + 4] in _JS_IDENT_CONT):
+                    raise _JSExprFail("F725 inline not a call")
+                r = _call_args(r + 4)
+                state["ops"] += 1
+                return gval, r
+            raise _JSExprFail("F725 term unbound")
+
+        parts = []
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F725 no return")
+        sj = _js_skip_ws(text, m)
+        while True:
+            _val, sj = _f725_term(sj)
+            parts.append(_val)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("concat too long")
+        if not saw_lookup[0]:
+            # Disjointness: without a __lookupGetter__ this body
+            # belongs to an earlier route -- do not claim it.
+            return None
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F725 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_f726_toprimitive_string(props, depth, state):
+    """Evaluate ToPrimitive(props, "string" hint) for an F697 object.
+
+    The template-literal `${o}` position (F726): the engine applies
+    ToString, i.e. ToPrimitive with the string hint, so
+    OrdinaryToPrimitive tries `toString` before `valueOf`
+    (node v24.20.0) -- the reverse of F697's default-hint order.
+    An own [Symbol.toPrimitive] method still wins outright (the
+    engine calls it with hint "string"; the modeled bodies take no
+    args and ignore the hint, so this is engine-exact). An own
+    NON-callable [Symbol.toPrimitive] makes the engine's GetMethod
+    throw TypeError with no fall-through -- this fails closed.
+    Bodies are
+    evaluated with `this` = the receiver, mirroring
+    _js_f697_toprimitive; a body that does not resolve to a string
+    fails closed (the engine would try the next method on a
+    non-primitive return, but a throwing body propagates -- falling
+    through on an unevaluable body would over-decode, F697
+    parity). Never evals.
+    """
+    recv = _JSObj(props)
+    tp = props.get(("symbol", "toPrimitive"))
+    if ("symbol", "toPrimitive") in props and not isinstance(tp, _JSF67xBody):
+        # The engine's GetMethod throws TypeError on an own
+        # non-callable @@toPrimitive (no fall-through to
+        # toString) -- fail closed, never mis-decode.
+        raise _JSExprFail("F726 toPrimitive non-callable")
+    if isinstance(tp, _JSF67xBody):
+        val = _js_f67x_eval_body(tp, recv, depth, state)
+        if not isinstance(val, str):
+            raise _JSExprFail("F726 toPrimitive not a string")
+        return val
+    ts = props.get("toString")
+    if isinstance(ts, _JSF67xBody):
+        val = _js_f67x_eval_body(ts, recv, depth, state)
+        if not isinstance(val, str):
+            raise _JSExprFail("F726 toString not a string")
+        return val
+    if "toString" in props:
+        # An own non-callable `toString` shadows the inherited one
+        # (the engine skips it as non-callable); only an own
+        # `valueOf` body can still coerce -- otherwise the engine
+        # throws TypeError and this fails closed.
+        mv = props.get("valueOf")
+        if not isinstance(mv, _JSF67xBody):
+            raise _JSExprFail("F726 no usable coercion method")
+        val = _js_f67x_eval_body(mv, recv, depth, state)
+        if not isinstance(val, str):
+            raise _JSExprFail("F726 valueOf not a string")
+        return val
+    # No own `toString` at all: the engine's OrdinaryToPrimitive
+    # ("string" hint) falls through to the inherited
+    # Object.prototype.toString, which returns "[object Object]"
+    # for a plain object (node v24.20.0). An own `valueOf` is
+    # irrelevant here -- `toString` is tried first under the
+    # string hint.
+    return "[object Object]"
+
+
+def _js_parse_f726_template_ident(text, i, depth, state, oname, props):
+    """Parse a `...` template literal at text[i] == '`' (F726).
+
+    Like _js_parse_template (F457) except a `${IDENT}` interpolation
+    is additionally accepted when IDENT is the bound coercion
+    object: it resolves via ToPrimitive with the string hint
+    (_js_f726_toprimitive_string). Literal chunks, escapes,
+    whitespace tolerance, and bounds mirror _js_parse_template;
+    any other non-literal interpolation fails closed. Each
+    interpolation charges the parts budget and marks the expression
+    obfuscation-shaped. Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("template too deep")
+    if text[i] != "`":
+        raise _JSExprFail("not a template")
+    i += 1  # consume the opening backtick
+    n = len(text)
+    out = []
+    total = 0
+    while True:
+        if i >= n:
+            raise _JSExprFail("unterminated template")
+        c = text[i]
+        if c == "`":
+            return "".join(out), i + 1
+        if c == "$" and i + 1 < n and text[i + 1] == "{":
+            i = _js_skip_ws(text, i + 2)
+            name, i = _js_parse_ident(text, i)
+            if name != oname:
+                raise _JSExprFail("F726 interpolation unbound")
+            i = _js_skip_ws(text, i)
+            if i >= n or text[i] != "}":
+                raise _JSExprFail("unterminated interpolation")
+            i = i + 1
+            val = _js_f726_toprimitive_string(props, depth + 1, state)
+            out.append(val)
+            total += len(val)
+            if total > _MAX_DECODE_BYTES:
+                raise _JSExprFail("template too long")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1  # an interpolation is obfuscation-shaped
+            continue
+        if c == "\\":
+            if i + 1 >= n:
+                raise _JSExprFail("bad escape")
+            e = text[i + 1]
+            if e in "xuU":
+                r = _decode_one_escape(text, i)
+                if r is None:
+                    raise _JSExprFail("bad escape")
+                ch, i = r
+                out.append(ch)
+                total += len(ch)
+            else:
+                out.append(_JS_SIMPLE_ESCAPES.get(e, e))
+                i += 2
+                total += 1
+            if total > _MAX_DECODE_BYTES:
+                raise _JSExprFail("template too long")
+            continue
+        if ord(c) < 0x20 and c not in "\t\n\r":
+            raise _JSExprFail("control char")
+        out.append(c)
+        total += 1
+        i += 1
+        if total > _JS_EXPR_MAX_LITERAL:
+            raise _JSExprFail("literal too long")
+        if total > _MAX_DECODE_BYTES:
+            raise _JSExprFail("template too long")
+
+
+def _js_f726_skip_template(text, i):
+    """Return the index just past the template span at text[i] == '`'.
+
+    Backslash escapes are honored (an escaped backtick never
+    terminates); `${` opens an interpolation whose braces are
+    balanced before scanning resumes (the F726 grammar only ever
+    puts an ident there, but the scan stays correct regardless).
+    Raises _JSExprFail on an unterminated template. Never evals.
+    """
+    n = len(text)
+    k = i + 1
+    while k < n:
+        c = text[k]
+        if c == "\\":
+            k += 2
+            continue
+        if c == "`":
+            return k + 1
+        if c == "$" and k + 1 < n and text[k + 1] == "{":
+            k += 2
+            depth = 1
+            while k < n and depth > 0:
+                d = text[k]
+                if d in "'\"":
+                    k = _js_skip_quoted(text, k)
+                    continue
+                if d == "\\":
+                    k += 2
+                    continue
+                if d == "{":
+                    depth += 1
+                elif d == "}":
+                    depth -= 1
+                k += 1
+            if depth != 0:
+                raise _JSExprFail("unterminated interpolation")
+            continue
+        k += 1
+    raise _JSExprFail("unterminated template in iife")
+
+
+def _js_f726_span_braced(text, brace):
+    """Span the `{ ... }` block at text[brace] == '{' (F726).
+
+    Like _js_span_braced (F509) but template-aware: backtick spans
+    are skipped (a brace inside a template never terminates the
+    scan) instead of failing closed. `'...'` / `\"...\"` spans are
+    skipped with escape handling, as in F509. `/` in code still
+    fails closed (regex/division/comments stay outside the modeled
+    grammar). Unterminated input fails closed. Never evals.
+    """
+    n = len(text)
+    depth = 0
+    k = brace
+    while k < n:
+        c = text[k]
+        if c in "'\"":
+            k = _js_skip_quoted(text, k)
+            continue
+        if c == "`":
+            k = _js_f726_skip_template(text, k)
+            continue
+        if c == "/":
+            raise _JSExprFail("slash in iife body")
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return brace + 1, k, k + 1
+        k += 1
+    raise _JSExprFail("unterminated iife body")
+
+
+def _js_parse_f726_template_coerce_iife(text, i, depth, state):
+    """Parse `(function(){var o={...};return ADD;})()` with template-
+    literal toPrimitive coercion of the bound object (F726).
+
+    F697 (CLOSED) models implicit ToPrimitive coercion in
+    valueOf/toString positions (`o+'f2'`) but not the
+    template-literal interpolation position:
+    `(function(){var o={toString:function(){return 'f1';}};
+    return `${o}`+'f2';})()` and
+    `(function(){var o={[Symbol.toPrimitive]:function(){return 'f1';}};
+    return `${o}`+'f2';})()` node-evaluate (v24.20.0) to the exact
+    credential while the decoder produces zero variants. F697
+    stays CLOSED on its pins; only the template position is
+    modeled here. Node-exact desugar: the var binds the
+    toPrimitive-aware object (F697 object grammar; at least one
+    OWN coercion method -- valueOf, toString, or
+    [Symbol.toPrimitive] -- is required); the return is a
+    `+`-joined additive of string literals and template literals
+    whose `${...}` interpolations are the bound ident (each
+    coercing via ToPrimitive with the string hint).
+    Disjoint from F697: F697 fails closed on template-literal
+    return terms (its term parser accepts only quoted strings and
+    bare idents); this requires at least one template term and
+    fails closed on bare-bound-ident terms. Tried after F697's
+    route (and after F725 -- F725 requires a `__lookupGetter__`
+    head no F726 shape carries). None falls through like F697.
+    Bounds (all fail closed): multi-decl, reassignment, extra
+    statements, member/call terms on the bound object, a
+    non-ident interpolation, an object with no own coercion
+    method, a coercion body that does not resolve to a string.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    if not _js_peek_arguments_iife_head(text, i):
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j) + len("function")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_f726_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            return None  # not a decl
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            return None
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "{":
+            return None  # not an object binding
+        props, sj = _js_parse_f697_object(text, sj, depth, state)
+        if not any(isinstance(v, _JSF67xBody)
+                   and (k == ("symbol", "toPrimitive")
+                        or k in ("valueOf", "toString"))
+                   for k, v in props.items()):
+            return None  # no own coercion method -- earlier
+            # grammars own it
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F726 no return")
+        sj = _js_skip_ws(text, m)
+        saw_template = [False]
+        parts = []
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                term, sj = _js_parse_string(text, sj)
+            elif sj < n and text[sj] == "`":
+                term, sj = _js_parse_f726_template_ident(
+                    text, sj, depth, state, oname, props)
+                saw_template[0] = True
+            else:
+                raise _JSExprFail("F726 return term not modeled")
+            parts.append(term)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("concat too long")
+        if not saw_template[0]:
+            # Disjointness: a literal-only return belongs to an
+            # earlier route -- do not claim it.
+            return None
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F726 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f702f703_assign_getter_iife(text, i, depth, state):
     """Parse `(function(){DECL;* return ADD;})()` at text[i] (F702/F703).
 
@@ -51944,6 +52588,31 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             text, i, depth, state)
         if _f702f703 is not None:
             val, i = _f702f703
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F725: (function(){DECL;* return ADD;})() -- legacy
+        #   __lookupGetter__ reads (getter-function retrieval +
+        #   .call invocation). Tried after F702/F703: every
+        #   accepted shape carries a __lookupGetter__ statement or
+        #   return-term head, which no earlier route accepts
+        #   (red-first verified: BREAK on the open tree); None
+        #   falls through like F702/F703. The F702/F703 hook and
+        #   its trailing `return` are untouched (wave-379 lesson).
+        _f725 = _js_parse_f725_lookup_getter_iife(text, i, depth,
+                                                  state)
+        if _f725 is not None:
+            val, i = _f725
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F726: (function(){var o={...};return ADD;})() --
+        #   template-literal toPrimitive coercion of the bound
+        #   object. Tried after F725: F725 requires a
+        #   __lookupGetter__ head no F726 shape carries; F697
+        #   fails closed on template-literal return terms. None
+        #   falls through like F725. The F725 hook and its
+        #   trailing `return` are untouched (wave-379 lesson).
+        _f726 = _js_parse_f726_template_coerce_iife(text, i, depth,
+                                                    state)
+        if _f726 is not None:
+            val, i = _f726
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
