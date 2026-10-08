@@ -21215,6 +21215,136 @@ def _js_parse_f655_multistatement_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f667_with_iife(text, i, depth, state):
+    """Parse `(function(){[DECL S='LIT';]*[DECL S={LIT};]with(S|{LIT}){return ADD;}})()` (F667).
+
+    with-statement scope resolution: bare identifier reads inside the
+    with body resolve through the scope object FIRST (node-exact,
+    v24.20.0), then through the IIFE's own string bindings. F655
+    (CLOSED) models `with` only as a wrapper for decl+accum
+    statements over an EMPTY scope object and fails closed on every
+    shape this accepts (a non-empty scope object), so the two
+    productions are disjoint by construction.
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - zero or more plain string declarations `var|let|const NAME='LIT';`
+      (the IIFE's own bindings);
+    - the scope object: either a declaration `var|let|const S={LITOBJ};`
+      (the F535/F510 literal-object grammar, string-valued members
+      only -- `__proto__`, spread, getters with non-literal bodies
+      and methods all fail closed there) or a direct literal in the
+      `with({LITOBJ})` position;
+    - `with(S|{LITOBJ}){return ADD;}` where ADD is the F645 string-only
+      additive grammar over string literals and bare identifier reads.
+      Scope resolution is node-exact: a scope-object member shadows
+      an IIFE binding of the same name; an identifier that is neither
+      a scope-object member nor a string binding is unbound and the
+      engine throws ReferenceError -- fail closed. Non-string member
+      values (numbers, nested objects, arrays) are excluded from the
+      resolution bindings: their engine read would not be a plain
+      string, and integers above 2^53 lose precision in the engine
+      (the canonical-decimal text would mis-decode) -- fail closed,
+      never mis-decoded.
+    - invocation with non-empty call args fails closed; the with body
+      is `return ADD;` exactly (no other statements inside).
+
+    Tried after F655: no earlier route decodes any shape this accepts
+    (red-first verified: BREAK on the open tree); only previously
+    fail-closed inputs are newly decoded. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            raise _JSExprFail("F667 not our head")
+        j = _js_skip_ws(text, brace + 1)
+        bindings = {}
+        scope_name = None
+        scope_members = None
+        while True:
+            kw, q = _js_match_decl_kw(text, j)
+            if kw is None:
+                break
+            q = _js_skip_ws(text, q)
+            name, q = _js_parse_ident(text, q)
+            if name in _F611_RESERVED:
+                raise _JSExprFail("F667 reserved binding name")
+            if name in bindings:
+                raise _JSExprFail("F667 duplicate binding")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != "=":
+                raise _JSExprFail("F667 bad decl")
+            q = _js_skip_ws(text, q + 1)
+            if q < n and text[q] in "'\"":
+                val, q = _js_parse_string(text, q)
+                bindings[name] = val
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+            elif q < n and text[q] == "{":
+                props, q = _js_parse_f535_object(text, q, depth, state)
+                members = {
+                    k: v for k, v in props.items()
+                    if isinstance(k, str) and isinstance(v, str)
+                    and not isinstance(v, _JSNumStr)
+                }
+                if scope_name is not None:
+                    raise _JSExprFail("F667 two scope objects")
+                scope_name = name
+                scope_members = members
+            else:
+                raise _JSExprFail("F667 bad decl init")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ";":
+                raise _JSExprFail("F667 decl without semicolon")
+            j = _js_skip_ws(text, q + 1)
+        wk = _js_match_kw(text, j, "with")
+        if wk is None:
+            raise _JSExprFail("F667 no with")
+        j = _js_expect(text, _js_skip_ws(text, wk), "(")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "{":
+            props, j = _js_parse_f535_object(text, j, depth, state)
+            scope_members = {
+                k: v for k, v in props.items()
+                if isinstance(k, str) and isinstance(v, str)
+                and not isinstance(v, _JSNumStr)
+            }
+        else:
+            sname, j = _js_parse_ident(text, j)
+            if sname != scope_name or scope_members is None:
+                raise _JSExprFail("F667 with unbound scope")
+        # Node-exact resolution order: the scope object is checked
+        # before the IIFE's own bindings, so its members shadow
+        # outer bindings of the same name.
+        bindings = dict(bindings)
+        bindings.update(scope_members)
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        j = _js_skip_ws(text, j)
+        rk = _js_match_kw(text, j, "return")
+        if rk is None:
+            raise _JSExprFail("F667 with body not return")
+        rval, j = _js_parse_f645_bound_additive(
+            text, _js_skip_ws(text, rk), depth, state, bindings)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            raise _JSExprFail("F667 return without semicolon")
+        j = _js_expect(text, _js_skip_ws(text, j + 1), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the with-scope wrapper is obfuscation-shaped
+        return rval, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f654_sync_iife_head(text, i):
     """Match `(function(){` at text[i] (F654); index OF `{` or None.
 
@@ -36208,6 +36338,20 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                   state)
         if _f655 is not None:
             val, i = _f655
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F667: (function(){[DECL S='LIT';]*[DECL S={LIT};]
+        #   with(S|{LIT}){return ADD;}})() -- with-statement scope
+        #   resolution: bare identifier reads inside the with body
+        #   resolve through the scope object first (node-exact), then
+        #   the IIFE's string bindings. Tried after F655: F655
+        #   models `with` only over an EMPTY scope object and fails
+        #   closed on every shape this accepts (a non-empty scope
+        #   object); every earlier route requires its own binding
+        #   family or statement head and fails closed on a `with`
+        #   head, so no previously-decoded input changes behavior.
+        _f667 = _js_parse_f667_with_iife(text, i, depth, state)
+        if _f667 is not None:
+            val, i = _f667
             return _js_parse_postfix(text, i, val, depth, state)
         # F586: (new Map(...)) / (new WeakRef(...)) --
         # parenthesized new-expression receivers, engine-identical

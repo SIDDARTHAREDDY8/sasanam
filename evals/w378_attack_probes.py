@@ -4,7 +4,7 @@
 Filed 2026-10-08 (local node validation on v24.20.0 + 2 gpt-4o-mini calls,
 hints only; every filed shape hand-crafted and node-verified).
 
-New findings (8, all LOW, all OPEN), filed from F662:
+New findings (8, all LOW; F662-F666, F668-F671 OPEN, F667 CLOSED wave-379 lane 5), filed from F662:
 - F662: class fragment sources -- static fields, static blocks, static
   getters, instance fields (4 shapes, one mechanism).
 - F663: Object.fromEntries-sourced member reads (1 shape; the
@@ -19,6 +19,7 @@ New findings (8, all LOW, all OPEN), filed from F662:
 - F666: Proxy apply/has traps beyond F642's get (2 shapes).
 - F667: with-statement scope resolution (bare ident reads through the
   with object; F655 models with only as a decl+accum wrapper) (2 shapes).
+  [CLOSED wave-379 lane 5]
 - F668: custom tag-function templates beyond String.raw (2 shapes).
 - F669: builtin-iterable spread consumption ([...set], [...map.values()];
   F653 models custom iterators, F602 covers Set for-of/forEach) (2 shapes).
@@ -134,11 +135,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F655-F671 open, next F672 (this lane)."""
+    """Control: footer shows open findings, next F672 (this lane)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F672**" in text
-          and "Open findings: F662, F663, F664, F665, F666, F667, F668, F669, F670, F671." in text)
+    ok = ("Next free finding: **F672**" in text  # Wave-379 lane 5: F667 CLOSED; open F662-F666, F668-F671 / next F672
+          and "Open findings: F662, F663, F664, F665, F666, F668, F669, F670, F671." in text)  # Wave-379 lane 5: F667 CLOSED; open F662-F666, F668-F671 / next F672
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -301,20 +302,20 @@ def test_r46_f666_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 
-# ------------------------------------------------- F667 open pins (must miss)
+# ------------------------------------------------- F667 closed pins (must block)
 
 @_t
-def test_r46_f667_s1_open():
-    """F667 OPEN (with-scope two idents): miss reproduces."""
-    miss = _misses("(function(){var o={x:'%s',y:'%s'};with(o){return x+y;}})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r46_f667_s1_closed():
+    """F667 CLOSED (with-scope two idents): now blocks (wave-379 lane 5)."""
+    hit = _blocked("(function(){var o={x:'%s',y:'%s'};with(o){return x+y;}})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r46_f667_s2_open():
-    """F667 OPEN (with-scope one ident): miss reproduces."""
-    miss = _misses("(function(){var o={x:'%s'};with(o){return x+'%s';}})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r46_f667_s2_closed():
+    """F667 CLOSED (with-scope one ident): now blocks (wave-379 lane 5)."""
+    hit = _blocked("(function(){var o={x:'%s'};with(o){return x+'%s';}})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F668 open pins (must miss)
