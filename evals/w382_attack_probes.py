@@ -31,10 +31,10 @@ New findings (24, all LOW, all OPEN), filed F713-F736 (attack-F713 renumbered F7
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F700-F712 (round 49 + wave-381 merge renumbers), F719, F720, F721, F722, F723, F724, F725, F726, F727, F728, F729, F730, F731, F732, F733, F734, F735, F736, F737 (this round; F717/F718 closed wave-383 lane 3).
+F700-F712 (round 49 + wave-381 merge renumbers), F721, F722, F723, F724, F725, F726, F727, F728, F729, F730, F731, F732, F733, F734, F735, F736, F737 (this round).
 
-Closed pins (must BLOCK, else BREAK): F686-F712 (wave-381/382 closures), F713-F718 (wave-383 lanes 1-3).F699 fails closed (None) by design -- its pin asserts the miss.
-F711 pins the raw-decoder mis-decode (find_credential fails closed on it).
+Closed pins (must BLOCK, else BREAK): F686-F712 (wave-381/382 closures), F713, F714, F715, F716, F717, F718, F719, F720 (wave-383 lanes).
+F699 fails closed (None) by design -- its pin asserts the miss.F711 pins the raw-decoder mis-decode (find_credential fails closed on it).
 
 Rides-with-documented-scope (validated, NOT filed):
 - Steal-lane seams: seqgate full chain refuses coded; userinfo-smuggled
@@ -446,28 +446,28 @@ def test_r50_f718_s2_closed():
     return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f719_s1_open():
-    """F719 OPEN (for-of accumulation over Set): miss reproduces."""
-    miss = _misses("(function(){var r='';var s=new Set(['%s','%s']);for(var x of s){r+=x;}return r;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f719_s1_closed():
+    """F719 CLOSED (wave-383 lane 4): blocks coded."""
+    ok = _blocked("(function(){var r='';var s=new Set(['%s','%s']);for(var x of s){r+=x;}return r;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f719_s2_open():
-    """F719 OPEN (for-of accumulation over Set): miss reproduces."""
-    miss = _misses("(function(){var r='';for(var x of new Set(['%s','%s'])){r=r+x;}return r;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f719_s2_closed():
+    """F719 CLOSED (wave-383 lane 4): blocks coded."""
+    ok = _blocked("(function(){var r='';for(var x of new Set(['%s','%s'])){r=r+x;}return r;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f720_s1_open():
-    """F720 OPEN (Array.prototype.includes conditional reads): miss reproduces."""
-    miss = _misses("(function(){var f=['k'].includes('k')?'%s':'xx';return f+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f720_s1_closed():
+    """F720 CLOSED (wave-383 lane 4): blocks coded."""
+    ok = _blocked("(function(){var f=['k'].includes('k')?'%s':'xx';return f+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f720_s2_open():
-    """F720 OPEN (Array.prototype.includes conditional reads): miss reproduces."""
-    miss = _misses("(function(){var a=['q','k'];var f=a.includes('k')?'%s':'xx';return f+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f720_s2_closed():
+    """F720 CLOSED (wave-383 lane 4): blocks coded."""
+    ok = _blocked("(function(){var a=['q','k'];var f=a.includes('k')?'%s':'xx';return f+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r50_f721_s1_open():
