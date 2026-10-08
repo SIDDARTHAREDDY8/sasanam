@@ -43,8 +43,8 @@ controls pass. No injection attempts.
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-   F595, F606-F611 (prior rounds), F621 (this round; F612-F620 closed
-   wave-374 lanes 1-7).
+   F595, F606-F611 (prior rounds), F621-F635 (this round; F612-F620 closed
+   wave-374 lanes 1-7; F621-F634 attack round 42; F635 lane-5 hybrid renumbered).
    
    Closed pins (must BLOCK, else BREAK): F576, F583, F596 (older spots),
    F597, F598, F599, F600, F602, F603, F604, F605 (wave-372 closures),
@@ -137,11 +137,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F621 open, next F622 (merged: F612-F620 closed)."""
+    """Control: footer shows F621-F635 open, next F636 (wave-374 merge final)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F622**" in text  # Wave-374 lane 7: F620 CLOSED  # Wave-374 lane 5: F621 FILED OPEN
-          and "Open findings: F621." in text)  # Wave-374 lane 7: F620 CLOSED  # Wave-374 lane 5: F621 FILED OPEN
+    ok = ("Next free finding: **F636**" in text  # Wave-374 merge: F621-F634 FILED OPEN, F635 renumbered
+          and "Open findings: F621, F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635." in text)  # Wave-374 merge: F621-F634 FILED OPEN, F635 renumbered
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

@@ -271,7 +271,7 @@ def p6_f617_bounds():
          "u.searchParams.sort();"
          "return u.searchParams.getAll('q').join('');})()" % _A1),
         # var-bound name on the searchParams receiver: the F616 x F617
-        # hybrid -- FILED as F621 (wave-374 lane 5); still quiet here
+        # hybrid -- FILED as F635 (wave-374 lane 5; renumbered F621->F635 at merge, wave-272); still quiet here
         ("var-name", "(function(){var u=new URL('http://x/');var q='q';"
          "u.searchParams.append(q,'%s');"
          "return u.searchParams.getAll(q).join('');})()" % _A1),
@@ -399,8 +399,8 @@ def p9_pin_footer():
     pin_ok = TAXONOMY_PIN == 2140 and guac_graph.TAXONOMY_PIN == 2140
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    footer_ok = ("Next free finding: **F622**" in text
-                 and "Open findings: F612, F613, F614, F615, F618, F619, F620, F621."
+    footer_ok = ("Next free finding: **F636**" in text
+                 and "Open findings: F621, F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635."
                  in text)
     ok = pin_ok and footer_ok
     return ("HELD" if ok else "BREAK",
