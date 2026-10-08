@@ -410,7 +410,7 @@ def test_p6_pin_footer():
     """Pin 2140; lane-local footer (open F672-F674, F676-F685 / next F686)."""
     ok = (TAXONOMY_PIN == 2140 and len(TAXONOMY) > 0)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and ("Next free finding: **F686**" in text)  # Wave-380 lane 3: F675 CLOSED; open F672-F674, F676-F685 / next F686
+    ok = ok and ("Next free finding: **F700**" in text)  # Wave-380 lane 3: F675 CLOSED; open F672-F674, F676-F685 / next F686
     ok = ok and ("Open findings: F672, F673, F674, F676, F677, F678, F679, F680, F681, F682, F683, F684, F685." in text)  # Wave-380 lane 3: F675 CLOSED; open F672-F674, F676-F685 / next F686
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 

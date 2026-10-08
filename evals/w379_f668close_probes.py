@@ -313,8 +313,8 @@ def test_p8_pin_footer():
     import gov.decision_codes as dc
     ok = (TAXONOMY_PIN == 2140 and len(dc.TAXONOMY) > 0)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and ("Next free finding: **F686**" in text)  # Wave-379 lane 6: F668 CLOSED; footer repoint open F662-F667,F669-F671 / next F672
-    ok = ok and ("Open findings: F672, F673, F674, F675, F676, F677, F678, F679, F680, F681, F682, F683, F684, F685." in text)  # Wave-379 lane 6: F668 CLOSED; footer repoint open F662-F667,F669-F671 / next F672
+    ok = ok and ("Next free finding: **F700**" in text)  # Wave-379 lane 6: F668 CLOSED; footer repoint open F662-F667,F669-F671 / next F672
+    ok = ok and ("Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text)  # Wave-379 lane 6: F668 CLOSED; footer repoint open F662-F667,F669-F671 / next F672
     ok = ok and (_dlp is not None)
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 
