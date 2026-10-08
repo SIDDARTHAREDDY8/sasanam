@@ -23429,6 +23429,387 @@ def _js_parse_f602_set_foreach_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f669_set_decl(stmts, sj, depth, state):
+    """Parse `var|let|const NAME=new Set([LITS]|);` at stmts[sj] (F669).
+
+    The Set-construction source reuses the F602 element discipline
+    (plain string literals, SameValueZero first-occurrence dedup,
+    F452 per-element parts charge); `new Set()` with no argument is
+    the node-exact empty set (v24.20.0). Returns (name, elements,
+    next_index). Never evals.
+    """
+    n = len(stmts)
+    m = _js_match_kw(stmts, sj, "var")
+    if m is None:
+        m = _js_match_kw(stmts, sj, "let")
+    if m is None:
+        m = _js_match_kw(stmts, sj, "const")
+    if m is None:
+        raise _JSExprFail("F669 set decl not var/let/const")
+    sj = _js_skip_ws(stmts, m)
+    name, sj = _js_parse_ident(stmts, sj)
+    if name in _F611_RESERVED or name == "arguments":
+        raise _JSExprFail("F669 set binding reserved")
+    sj = _js_skip_ws(stmts, sj)
+    sj = _js_expect(stmts, sj, "=")
+    sj = _js_skip_ws(stmts, sj)
+    j = _js_match_kw(stmts, sj, "new")
+    if j is None:
+        raise _JSExprFail("F669 set source not new")
+    j = _js_match_kw(stmts, _js_skip_ws(stmts, j), "Set")
+    if j is None:
+        raise _JSExprFail("F669 set source not Set")
+    j = _js_expect(stmts, j, "(")
+    j = _js_skip_ws(stmts, j)
+    if j < n and stmts[j] == ")":
+        elements = []
+        j += 1
+    else:
+        elements, j = _js_parse_f602_set_elements(stmts, sj, depth,
+                                                  state)
+    sj = _js_skip_ws(stmts, j)
+    sj = _js_expect(stmts, sj, ";")
+    return name, elements, sj
+
+
+def _js_parse_f669_set_adds(stmts, sj, name, elements, depth, state):
+    """Apply `(NAME.add('LIT');)*` mutations at stmts[sj] (F669).
+
+    Node-exact (v24.20.0): Set.prototype.add appends the value with
+    SameValueZero dedup (first occurrence wins); a non-string
+    literal fails closed (the F602 literal discipline). Returns
+    (elements, next_index). Never evals.
+    """
+    n = len(stmts)
+    elements = list(elements)
+    seen = set(elements)
+    while True:
+        q = _js_skip_ws(stmts, sj)
+        try:
+            rname, q = _js_parse_ident(stmts, q)
+        except _JSExprFail:
+            break
+        if rname != name:
+            break
+        q = _js_skip_ws(stmts, q)
+        if q >= n or stmts[q] != ".":
+            break
+        q = _js_skip_ws(stmts, q + 1)
+        try:
+            mname, q = _js_parse_ident(stmts, q)
+        except _JSExprFail:
+            break
+        if mname != "add":
+            # Unmodeled mutation: fail the whole shape closed
+            # rather than mis-decode (F599 precedent).
+            raise _JSExprFail("F669 set member not add")
+        q = _js_skip_ws(stmts, q)
+        if q >= n or stmts[q] != "(":
+            raise _JSExprFail("F669 add without paren")
+        q = _js_skip_ws(stmts, q + 1)
+        if q >= n or stmts[q] not in "'\"":
+            raise _JSExprFail("F669 add arg not a literal")
+        val, q = _js_parse_string(stmts, q)
+        q = _js_skip_ws(stmts, q)
+        if q >= n or stmts[q] != ")":
+            raise _JSExprFail("F669 add unterminated")
+        q = _js_skip_ws(stmts, q + 1)
+        if q >= n or stmts[q] != ";":
+            raise _JSExprFail("F669 add without semicolon")
+        if val not in seen:
+            seen.add(val)
+            elements.append(val)
+        state["parts"] += 1  # the mutation is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        sj = q + 1
+    return elements, sj
+
+
+def _js_parse_f669_map_decl(stmts, sj, depth, state):
+    """Parse `var|let|const NAME=new Map();` or `var|let|const NAME=new Map([[K,V],...]);` at stmts[sj] (F669).
+
+    Returns (name, pairs, next_index): pairs is the
+    insertion-ordered [(kid, key, value)] with later-wins dedup (the
+    F494 discipline, node-exact: the empty-ctor form starts empty
+    and the caller applies `.set()` mutations). The ctor-arg form
+    reuses `_js_parse_new_map_head`; each pair charges the parts
+    budget (F452). Never evals.
+    """
+    n = len(stmts)
+    m = _js_match_kw(stmts, sj, "var")
+    if m is None:
+        m = _js_match_kw(stmts, sj, "let")
+    if m is None:
+        m = _js_match_kw(stmts, sj, "const")
+    if m is None:
+        raise _JSExprFail("F669 map decl not var/let/const")
+    sj = _js_skip_ws(stmts, m)
+    name, sj = _js_parse_ident(stmts, sj)
+    if name in _F611_RESERVED or name == "arguments":
+        raise _JSExprFail("F669 map binding reserved")
+    sj = _js_skip_ws(stmts, sj)
+    sj = _js_expect(stmts, sj, "=")
+    sj = _js_skip_ws(stmts, sj)
+    j = _js_match_kw(stmts, sj, "new")
+    if j is None:
+        raise _JSExprFail("F669 map source not new")
+    j = _js_match_kw(stmts, _js_skip_ws(stmts, j), "Map")
+    if j is None:
+        raise _JSExprFail("F669 map source not Map")
+    j = _js_expect(stmts, j, "(")
+    j = _js_skip_ws(stmts, j)
+    if j < n and stmts[j] == ")":
+        pairs = []
+        j += 1
+    else:
+        pairs, j = _js_parse_new_map_head(stmts, sj, depth, state)
+        for _ in pairs:
+            state["parts"] += 1  # F452: charge per entry
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+    sj = _js_skip_ws(stmts, j)
+    sj = _js_expect(stmts, sj, ";")
+    return name, pairs, sj
+
+
+def _js_parse_f669_map_sets(stmts, sj, name, pairs, depth, state):
+    """Apply `(NAME.set(K,V);)*` mutations at stmts[sj] (F669).
+
+    Node-exact (v24.20.0): K is a string literal or numeric literal
+    (SameValueZero: 1 and '1' are distinct keys, the F494 kid
+    discipline); V is a plain string literal; a later set on an
+    existing key replaces the value at its original insertion
+    position. Returns (pairs, next_index). Never evals.
+    """
+    n = len(stmts)
+    pairs = list(pairs)
+    index = {}
+    for pos, (kid, _k, _v) in enumerate(pairs):
+        index[kid] = pos
+    while True:
+        q = _js_skip_ws(stmts, sj)
+        try:
+            rname, q = _js_parse_ident(stmts, q)
+        except _JSExprFail:
+            break
+        if rname != name:
+            break
+        q = _js_skip_ws(stmts, q)
+        if q >= n or stmts[q] != ".":
+            break
+        q = _js_skip_ws(stmts, q + 1)
+        try:
+            mname, q = _js_parse_ident(stmts, q)
+        except _JSExprFail:
+            break
+        if mname != "set":
+            # Unmodeled mutation: fail the whole shape closed
+            # rather than mis-decode (F599 precedent).
+            raise _JSExprFail("F669 map member not set")
+        q = _js_skip_ws(stmts, q)
+        if q >= n or stmts[q] != "(":
+            raise _JSExprFail("F669 set without paren")
+        q = _js_skip_ws(stmts, q + 1)
+        if q < n and stmts[q] in "'\"":
+            kval, q = _js_parse_string(stmts, q)
+            kid = ("s", kval)
+        else:
+            try:
+                kstr, q = _js_parse_map_numkey(stmts, q)
+            except _JSExprFail:
+                raise _JSExprFail("F669 set key not a literal")
+            kid = ("n", kstr)
+        q = _js_skip_ws(stmts, q)
+        if q >= n or stmts[q] != ",":
+            raise _JSExprFail("F669 set arity")
+        q = _js_skip_ws(stmts, q + 1)
+        if q >= n or stmts[q] not in "'\"":
+            raise _JSExprFail("F669 set value not a literal")
+        vval, q = _js_parse_string(stmts, q)
+        q = _js_skip_ws(stmts, q)
+        if q >= n or stmts[q] != ")":
+            raise _JSExprFail("F669 set unterminated")
+        q = _js_skip_ws(stmts, q + 1)
+        if q >= n or stmts[q] != ";":
+            raise _JSExprFail("F669 set without semicolon")
+        if kid in index:
+            pairs[index[kid]] = (kid, kid[1], vval)
+        else:
+            index[kid] = len(pairs)
+            pairs.append((kid, kid[1], vval))
+        state["parts"] += 1  # the mutation is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        sj = q + 1
+    return pairs, sj
+
+
+def _js_parse_f669_spread_head(stmts, sj, name, allowed_members,
+                               allow_bare):
+    """Parse `return [...NAME(.values()|.keys())?` at stmts[sj] (F669).
+
+    The spread must be the only array element (the F471 bounded
+    scope); the member, when present, must be in allowed_members
+    (bare spread allowed only when allow_bare -- a bare Map spread
+    yields [k,v] pair arrays and fails closed). Returns
+    (member, next_index): member is "values"/"keys", or None for a
+    bare spread. Never evals.
+    """
+    n = len(stmts)
+    q = _js_skip_ws(stmts, sj)
+    m = _js_match_kw(stmts, q, "return")
+    if m is None:
+        raise _JSExprFail("F669 body not return")
+    q = _js_skip_ws(stmts, m)
+    q = _js_expect(stmts, q, "[")
+    q = _js_skip_ws(stmts, q)
+    if not stmts.startswith("...", q):
+        raise _JSExprFail("F669 return not spread")
+    q = _js_skip_ws(stmts, q + 3)
+    rname, q = _js_parse_ident(stmts, q)
+    if rname != name:
+        raise _JSExprFail("F669 spreads another ident")
+    q = _js_skip_ws(stmts, q)
+    member = None
+    if q < n and stmts[q] == ".":
+        q = _js_skip_ws(stmts, q + 1)
+        mname, q = _js_parse_ident(stmts, q)
+        if mname not in allowed_members:
+            raise _JSExprFail("F669 spread member not values/keys")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, "(")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ")")
+        q = _js_skip_ws(stmts, q)
+        member = mname
+    elif not allow_bare:
+        raise _JSExprFail("F669 bare spread not values/keys")
+    return member, q
+
+
+def _js_parse_f669_spread_join(stmts, q, values, state):
+    """Parse `].join(SEP);` at stmts[q], end-of-body (F669).
+
+    `.join` takes a string-literal separator or no argument (","
+    default, node-exact). Returns (joined, next_index) at
+    end-of-body. Never evals.
+    """
+    n = len(stmts)
+    q = _js_expect(stmts, q, "]")
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, ".")
+    mname, q = _js_parse_ident(stmts, _js_skip_ws(stmts, q))
+    if mname != "join":
+        raise _JSExprFail("F669 return not join")
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, "(")
+    q = _js_skip_ws(stmts, q)
+    if q < n and stmts[q] == ")":
+        sep = ","
+        q += 1
+    elif q < n and stmts[q] in "'\"":
+        sep, q = _js_parse_string(stmts, q)
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ")")
+    else:
+        raise _JSExprFail("F669 join separator not a literal")
+    q = _js_skip_ws(stmts, q)
+    if q < n and stmts[q] == ";":
+        q += 1
+    if _js_skip_ws(stmts, q) != len(stmts):
+        raise _JSExprFail("F669 trailing statements")
+    result = sep.join(values)
+    if len(result) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F669 join too long")
+    state["ops"] += 1  # the spread-consume join is obfuscation-shaped
+    return result, q
+
+
+def _js_parse_f669_set_spread_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const NAME=new Set([LITS]);(NAME.add('LIT');)*return [...NAME(.values()|.keys())?].join(SEP);})()` (F669).
+
+    Node-exact desugar (v24.20.0): Set spread preserves insertion
+    order with SameValueZero first-occurrence dedup;
+    `.values()`/`.keys()` are the same value iterator; `.add`
+    appends with dedup; `.join(SEP)` uses a string-literal separator
+    (no argument = ","). Returns (value, next_index), or None on
+    mismatch/guard failure. Never evals.
+
+    Bounds (all fail closed): non-literal elements, reassignment or
+    extra statements, `.add` on another ident or with a non-literal
+    arg, unmodeled members, spread of another ident, mixed spreads,
+    a non-`join` terminal, non-literal separators, call args on the
+    IIFE.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        name, elements, sj = _js_parse_f669_set_decl(stmts, sj, depth,
+                                                     state)
+        elements, sj = _js_parse_f669_set_adds(stmts, sj, name,
+                                               elements, depth, state)
+        _member, sj = _js_parse_f669_spread_head(
+            stmts, sj, name, ("values", "keys"), True)
+        value, sj = _js_parse_f669_spread_join(stmts, sj, elements,
+                                               state)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, value)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f669_map_values_spread_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const NAME=new Map();(NAME.set(K,V);)*return [...NAME.(values|keys)()].join(SEP);})()` and the `new Map([[K,V],...])` ctor-arg twin (F669).
+
+    Node-exact desugar (v24.20.0): Map values/keys iterate in
+    insertion order with later-wins on duplicate keys (the F494 kid
+    discipline: 1 and '1' are distinct keys); a bare `[...NAME]`
+    spread would yield [k,v] pair arrays and fails closed. Returns
+    (value, next_index), or None on mismatch/guard failure. Never
+    evals.
+
+    Bounds (all fail closed): non-literal keys/values,
+    reassignment or extra statements, `.set` on another ident,
+    unmodeled members, bare Map spread, spread of another ident,
+    mixed spreads, a non-`join` terminal, non-literal separators,
+    call args on the IIFE.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        name, pairs, sj = _js_parse_f669_map_decl(stmts, sj, depth,
+                                                  state)
+        pairs, sj = _js_parse_f669_map_sets(stmts, sj, name, pairs,
+                                            depth, state)
+        member, sj = _js_parse_f669_spread_head(
+            stmts, sj, name, ("values", "keys"), False)
+        if member == "keys":
+            values = [k for _kid, k, _v in pairs]
+        elif member == "values":
+            values = [v for _kid, _k, v in pairs]
+        else:
+            raise _JSExprFail("F669 map spread not values/keys")
+        value, sj = _js_parse_f669_spread_join(stmts, sj, values,
+                                               state)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, value)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f646_accum_decl(stmts, j):
     """Parse `var|let NAME='';` or `var|let|const NAME=[];` at stmts[j] (F646).
 
@@ -35808,6 +36189,26 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f600 is None:
             _f600 = _js_parse_f602_set_foreach_iife(text, i, depth,
                                                    state)
+        # F669: (function(){var|let|const NAME=new Set([LITS]);
+        #   (NAME.add('LIT');)*return [...NAME(.values()|.keys())?]
+        #   .join(SEP);})() /
+        #   (function(){var|let|const NAME=new Map();
+        #   (NAME.set(K,V);)*return [...NAME.(values|keys)()]
+        #   .join(SEP);})() and the new Map([[K,V],...]) ctor-arg
+        #   twin -- var-bound builtin-iterable spread consumption.
+        #   Tried after F602: F602's forof/foreach both require an
+        #   accumulator decl or a forEach call and fail closed on a
+        #   spread-consume return; F657 requires an accumulator decl
+        #   plus forEach; this route requires the spread-consume
+        #   return and fails closed on all of those, so no
+        #   previously-decoded input changes behavior.
+        if _f600 is None:
+            _f600 = _js_parse_f669_set_spread_iife(text, i, depth,
+                                                    state)
+        if _f600 is None:
+            _f600 = _js_parse_f669_map_values_spread_iife(text, i,
+                                                          depth,
+                                                          state)
         if _f600 is not None:
             val, i = _f600
             return _js_parse_postfix(text, i, val, depth, state)
