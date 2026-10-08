@@ -498,7 +498,7 @@ def p10_pin_and_footer():
                  and "CLOSED 2026-10-08 wave-376 lane 1" in text  # F640 CLOSED
                  and "CLOSED 2026-10-08 wave-376 lane 2" in text  # F641 CLOSED
                  and "CLOSED 2026-10-08 wave-377 lane 8" in text  # F654 CLOSED
-                 and "Open findings: F662, F663, F664, F665, F666, F667, F668, F669, F670, F671." in text  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672
+                 and "Open findings: F662, F663, F664, F665, F666, F667, F669, F670, F671." in text  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672  # Wave-379 lane 6: F668 CLOSED (lane-local)
                  and "Next free finding: **F672**" in text)  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672
     detail = "pin=%s codes=%d; footer-closed=%s" % (
         TAXONOMY_PIN, n, footer_ok)

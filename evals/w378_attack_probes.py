@@ -19,7 +19,7 @@ New findings (8, all LOW, all OPEN), filed from F662:
 - F666: Proxy apply/has traps beyond F642's get (2 shapes).
 - F667: with-statement scope resolution (bare ident reads through the
   with object; F655 models with only as a decl+accum wrapper) (2 shapes).
-- F668: custom tag-function templates beyond String.raw (2 shapes).
+- F668: custom tag-function templates beyond String.raw (2 shapes; CLOSED wave-379 lane 6).
 - F669: builtin-iterable spread consumption ([...set], [...map.values()];
   F653 models custom iterators, F602 covers Set for-of/forEach) (2 shapes).
 - F670: Proxy get-trap non-concise function forms (arrow block-body,
@@ -134,11 +134,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F655-F671 open, next F672 (this lane)."""
+    """Control: footer shows F662-F667,F669-F671 open, next F672 (wave-379 lane 6: F668 CLOSED)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F672**" in text
-          and "Open findings: F662, F663, F664, F665, F666, F667, F668, F669, F670, F671." in text)
+          and "Open findings: F662, F663, F664, F665, F666, F667, F669, F670, F671." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -320,17 +320,17 @@ def test_r46_f667_s2_open():
 # ------------------------------------------------- F668 open pins (must miss)
 
 @_t
-def test_r46_f668_s1_open():
-    """F668 OPEN (custom tag, strings index): miss reproduces."""
-    miss = _misses("(function(){function tag(s){return s[0]+'%s';}return tag%s%s%s;})()" % (_B, _BT, _A, _BT))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r46_f668_s1_closed():
+    """F668 CLOSED (custom tag, strings index): now blocks."""
+    hit = _blocked("(function(){function tag(s){return s[0]+'%s';}return tag%s%s%s;})()" % (_B, _BT, _A, _BT))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r46_f668_s2_open():
-    """F668 OPEN (custom tag, raw index): miss reproduces."""
-    miss = _misses("(function(){var tag=function(s){return s.raw[0]+'%s';};return tag%s%s%s;})()" % (_B, _BT, _A, _BT))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r46_f668_s2_closed():
+    """F668 CLOSED (custom tag, raw index): now blocks."""
+    hit = _blocked("(function(){var tag=function(s){return s.raw[0]+'%s';};return tag%s%s%s;})()" % (_B, _BT, _A, _BT))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F669 open pins (must miss)

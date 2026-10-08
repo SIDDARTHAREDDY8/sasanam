@@ -20055,6 +20055,268 @@ def _js_parse_f619_consume_tail(stmts, sj, name, yields, state):
     return "".join(yields), k
 
 
+def _js_parse_f668_tag_template_both(text, i, state):
+    """Parse a literal-only `...` tag template, returning (cooked, raw, next).
+
+    Combines _js_parse_tag_template (cooked strings) with
+    _js_parse_raw_tag_template (raw source characters): for a
+    literal-only template the strings array is exactly [cooked] and
+    the .raw parallel array is exactly [raw_source]. ${ interpolation
+    fails closed in both (the F463 discipline). Never evals.
+    """
+    cooked, j1 = _js_parse_tag_template(text, i, state)
+    raw, j2 = _js_parse_raw_tag_template(text, i, state)
+    if j1 != j2:
+        raise _JSExprFail("tag template cook/raw divergence")
+    return cooked, raw, j1
+
+
+def _js_scan_f668_body(text, i):
+    """Scan a tag-function body additive to its closing `}` at text[i].
+
+    The F668 body grammar is flat (string literals, PARAM[int] and
+    PARAM.raw[int] terms joined by `+`): any `(`, `{`, or backtick --
+    and a `}` at bracket depth 0 -- ends or fails the scan. String
+    literals are skipped exactly (escape-aware). Returns the index of
+    the closing `}`. Never evals.
+    """
+    n = len(text)
+    j = i
+    q = None
+    bdepth = 0
+    while j < n:
+        c = text[j]
+        if q is not None:
+            if c == "\\":
+                j += 2
+                continue
+            if c == q:
+                q = None
+        elif c in "'\"":
+            q = c
+        elif c == "`":
+            raise _JSExprFail("template in tag body")
+        elif c == "{" or c == "(":
+            raise _JSExprFail("block/paren in tag body")
+        elif c == "[":
+            bdepth += 1
+        elif c == "]":
+            bdepth -= 1
+            if bdepth < 0:
+                raise _JSExprFail("unbalanced bracket in tag body")
+        elif c == "}":
+            if bdepth == 0:
+                return j
+            raise _JSExprFail("brace in tag body")
+        j += 1
+    raise _JSExprFail("unterminated tag body")
+
+
+def _js_parse_f668_tag_body_additive(body, param, strings, raws, state):
+    """Evaluate the string-only additive of a custom tag-function body (F668).
+
+    Terms: string literals, PARAM[<int>] (cooked strings-array read),
+    PARAM.raw[<int>] (raw parallel-array read). Node-exact v24.20.0:
+    an index outside the array yields undefined, which fails closed
+    here (documented residual -- never mis-decoded). Each literal and
+    each index read charges the parts budget (F452). Never evals.
+    """
+    n = len(body)
+
+    def term(j):
+        j = _js_skip_ws(body, j)
+        if j < n and body[j] in "'\"":
+            val, j = _js_parse_string(body, j)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many tag parts")
+            return val, j
+        if j < n and body[j] in _JS_IDENT_START:
+            name, j2 = _js_parse_ident(body, j)
+            if name != param:
+                raise _JSExprFail("tag body foreign ident")
+            j = _js_skip_ws(body, j2)
+            arr = strings
+            if j < n and body[j] == ".":
+                rk = _js_match_kw(body, _js_skip_ws(body, j + 1), "raw")
+                if rk is None:
+                    raise _JSExprFail("tag body bad member")
+                arr = raws
+                j = _js_skip_ws(body, rk)
+            if j >= n or body[j] != "[":
+                raise _JSExprFail("tag body index required")
+            j = _js_skip_ws(body, j + 1)
+            d0 = j
+            while j < n and body[j] in "0123456789":
+                j += 1
+            if d0 == j or j - d0 > 6:
+                raise _JSExprFail("tag body bad index")
+            idx = int(body[d0:j])
+            j = _js_skip_ws(body, j)
+            if j >= n or body[j] != "]":
+                raise _JSExprFail("tag body unclosed index")
+            j = _js_skip_ws(body, j + 1)
+            if idx >= len(arr):
+                raise _JSExprFail("tag body index out of range")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many tag parts")
+            return arr[idx], j
+        raise _JSExprFail("tag body bad term")
+
+    val, i = term(0)
+    while True:
+        j = _js_skip_ws(body, i)
+        if j < n and body[j] == "+":
+            val2, i = term(j + 1)
+            val = val + val2
+            continue
+        i = _js_skip_ws(body, j)
+        if i < n and body[i] == ";":
+            i += 1
+        i = _js_skip_ws(body, i)
+        if i != n:
+            raise _JSExprFail("tag body trailing junk")
+        return val
+
+
+def _js_parse_f668_tag_iife(text, i, depth, state):
+    """Parse `(function(){function NAME(s){return ADD;}return NAME`T`;})()`
+    and the var-bound function-expression twin (F668).
+
+    Custom tag-function templates: an arbitrary tag function receiving
+    the TemplateStringsArray has no modeled path (F463/F613 cover only
+    the String.raw tag). Node-exact v24.20.0: the tag receives the
+    cooked strings array with a .raw parallel array; the body additive
+    resolves PARAM[<int>] to the cooked strings and PARAM.raw[<int>]
+    to the raw source text. ${ interpolation fails closed (the F463
+    discipline). The decoded tag-call value flows through the normal
+    postfix chain, so return-position `+'LIT'` composition decodes
+    unchanged.
+
+    Disjoint from every earlier route: none accepts a `function`
+    declaration or a function-expression binding as the IIFE's first
+    statement (F611/F661 require literal/atob/sequence initializers;
+    F619/F631 require `function*`; F655 fails closed on named
+    functions), and the return call site requires the IDENT bound to
+    the declared tag -- never String.raw, which the primary level
+    owns via F463/F613. None falls through to the
+    parenthesized-additive path like F661. Bounds fail closed, never
+    mis-decoded. Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+        if k is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            # Optional IIFE name (engine-exact; ignored, F611 precedent).
+            _, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # params: the filed shapes take none
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "{":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        # --- the tag declaration: `function NAME(s){...}` (declaration)
+        # or `var|let|const NAME=function(s){...};` (bound expression).
+        fk = _js_match_kw(text, k, "function")
+        if fk is not None:
+            k = _js_skip_ws(text, fk)
+            tag, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+        else:
+            _dkw, kk = _js_match_decl_kw(text, k)
+            if _dkw is None:
+                return None
+            k = _js_skip_ws(text, kk)
+            tag, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "=" or text[k + 1:k + 2] in ("=",
+                                                               ">"):
+                return None
+            k = _js_skip_ws(text, k + 1)
+            fk = _js_match_kw(text, k, "function")
+            if fk is None:
+                return None
+            k = _js_skip_ws(text, fk)
+            if k < n and text[k] in _JS_IDENT_START:
+                # Optional function-expression name (ignored).
+                _, k = _js_parse_ident(text, k)
+                k = _js_skip_ws(text, k)
+        if tag in _F611_RESERVED:
+            return None  # node throws SyntaxError; never decode
+        # Exactly one parameter: the strings-array receiver.
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        param, k = _js_parse_ident(text, k)
+        if param in _F611_RESERVED:
+            return None
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ")":
+            return None  # rest/defaults/multi params fail closed
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "{":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        rk = _js_match_kw(text, k, "return")
+        if rk is None:
+            return None
+        e = _js_skip_ws(text, rk)
+        bend = _js_scan_f668_body(text, e)
+        body = text[e:bend]
+        k = _js_skip_ws(text, bend + 1)
+        # An `;` after a function declaration is engine-legal (ASI);
+        # the var-bound twin requires it.
+        if k < n and text[k] == ";":
+            k = _js_skip_ws(text, k + 1)
+        rk = _js_match_kw(text, k, "return")
+        if rk is None:
+            return None
+        k = _js_skip_ws(text, rk)
+        callee, k = _js_parse_ident(text, k)
+        if callee != tag:
+            return None  # not our tag: someone else's call site
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "`":
+            return None
+        cooked, raw, k = _js_parse_f668_tag_template_both(text, k,
+                                                          state)
+        val = _js_parse_f668_tag_body_additive(body, param, [cooked],
+                                               [raw], state)
+        state["ops"] += 1  # the tag call is obfuscation-shaped
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ";":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "}":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # invocation args: the filed shapes take none
+        k = k + 1
+    except _JSExprFail:
+        return None
+    return val, k
+
+
 def _js_parse_f619_generator_iife(text, i, depth, state):
     """Parse `(function(){function* NAME(){yield 'LIT';...}<TAIL>})()` (F619).
 
@@ -36333,6 +36595,20 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f661 = _js_parse_f661_declseq_iife(text, i, depth, state)
         if _f661 is not None:
             val, i = _f661
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F668: (function(){function NAME(s){return ADD;}
+        #   return NAME`T`;})() and the var-bound function-expression
+        #   twin -- custom tag-function templates. Tried after F661:
+        #   F611/F661 require value-initialized declarations and fail
+        #   closed on `function` as the first statement; F619/F631
+        #   require `function*`; F655 fails closed on named function
+        #   declarations; the return call site requires the IDENT
+        #   bound to the declared tag (never String.raw, which the
+        #   primary level owns via F463/F613). None falls through to
+        #   the parenthesized-additive path like F661.
+        _f668 = _js_parse_f668_tag_iife(text, i, depth, state)
+        if _f668 is not None:
+            val, i = _f668
             return _js_parse_postfix(text, i, val, depth, state)
         # F619: (function(){function* NAME(){yield 'LIT';...}
         #   <TAIL>})() -- a named fixed-yield generator declared in a
