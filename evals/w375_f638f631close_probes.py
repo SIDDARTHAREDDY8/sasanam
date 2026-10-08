@@ -418,8 +418,8 @@ def p8_compositions():
         # F621, F625, F636, F639 (CLOSED wave-375 merge) now block
         "(function(){var t={};Object.assign(t,{a:'%s',b:'%s'});"
         "return Object.values(t).join('');})()" % (_A, _B),
-        "(function(){var m=new Map([['%s','%s']]);"
-        "return [...m.entries()].map(e=>e[1]).join('');})()" % (_A, _B),
+        "((...a)=>a.map(e=>e[1]).join(''))(...new Map([['a','%s'],['b','%s']]).entries())"
+        % (_A, _B),
         "((a)=>(a+'%s')).bind(null,'%s').bind(null)()" % (_B, _A),
         "(function(){var o={x:{p:'%s'},y:{q:'%s'}};"
         "return Object.values(o.x).concat(Object.values(o.y)).join('');})()"
