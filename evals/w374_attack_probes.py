@@ -55,11 +55,12 @@ controls pass. No injection attempts.
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F612-F620 (round 41, closing in parallel wave-374 lanes), F621-F634
-(this round).
+F612-F620 (round 41, closed wave-374), F621-F623, F625-F627, F630-F632,
+F634 (this round; F624, F628, F629, F633 closed wave-375 lane 4).
 
 Closed pins (must BLOCK, else BREAK): F576, F583, F596 (older spots),
-F595, F606, F607, F608, F609, F610, F611 (wave-373 closures).
+F595, F606, F607, F608, F609, F610, F611 (wave-373 closures),
+F612-F620 (wave-374 closures), F624, F628, F629, F633 (wave-375 lane 4).
 
 Rides-with-documented-scope (validated, NOT filed -- exact shapes recorded
 for merge verification against the parallel wave-374 closure lanes):
@@ -153,11 +154,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F612-F634 open, next F635 (this lane)."""
+    """Control: footer shows F621-F639 minus F624/F628/F629/F633, next F640 (this lane)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F640**" in text  # Wave-374 merge: final truth  # Wave-374 merge: footer repoint open F621-F639 / next F640
-          and "Open findings: F621, F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635, F636, F637, F638, F639." in text)  # Wave-374 merge: final truth  # Wave-374 merge: footer repoint open F621-F639 / next F640
+    ok = ("Next free finding: **F640**" in text  # Wave-375 lane 4: F624, F628, F629, F633 CLOSED
+          and "Open findings: F621, F622, F623, F625, F626, F627, F630, F631, F632, F634, F635, F636, F637, F638, F639." in text)  # Wave-375 lane 4: F624, F628, F629, F633 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -257,10 +258,13 @@ def test_r42_f623_open():
 
 
 @_t
-def test_r42_f624_open():
-    """F624 OPEN: String.slice() trimming bounds miss."""
-    miss = _misses("\"xx%s\".slice(2)+'%s'" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r42_f624_closed():
+    """F624 CLOSED (wave-375 lane 4): String.slice() trimming bounds block."""
+    b1 = _blocked("\"xx%s\".slice(2)+'%s'" % (_A, _B))
+    b2 = _blocked('"xx%syy".slice(2,11)+\'%s\'' % (_A, _B))
+    b3 = _blocked('(function(){var s="xx%s";return s.slice(2)+\'%s\';})()' % (_A, _B))
+    ok = b1 and b2 and b3
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
 @_t
@@ -285,17 +289,21 @@ def test_r42_f627_open():
 
 
 @_t
-def test_r42_f628_open():
-    """F628 OPEN: decodeURIComponent fragment laundering miss."""
-    miss = _misses("decodeURIComponent('%s'+encodeURIComponent('%s'))" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r42_f628_closed():
+    """F628 CLOSED (wave-375 lane 4): decodeURIComponent fragment laundering blocks."""
+    b1 = _blocked("decodeURIComponent('%s'+encodeURIComponent('%s'))" % (_A, _B))
+    b2 = _blocked("decodeURIComponent(encodeURIComponent('%s')+encodeURIComponent('%s'))" % (_A, _B))
+    ok = b1 and b2
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
 @_t
-def test_r42_f629_open():
-    """F629 OPEN: TextDecoder byte assembly miss."""
-    miss = _misses("new TextDecoder().decode(new Uint8Array([%s]))" % _BYTES)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r42_f629_closed():
+    """F629 CLOSED (wave-375 lane 4): TextDecoder byte assembly blocks."""
+    b1 = _blocked("new TextDecoder().decode(new Uint8Array([%s]))" % _BYTES)
+    b2 = _blocked("new TextDecoder('utf-8').decode(new Uint8Array([%s]))" % (_BYTES,))
+    ok = b1 and b2
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
 @_t
@@ -320,10 +328,13 @@ def test_r42_f632_open():
 
 
 @_t
-def test_r42_f633_open():
-    """F633 OPEN: BigInt-to-string fragments miss."""
-    miss = _misses("('" + _A[:5] + "'+String(123n)+'" + _B + "')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r42_f633_closed():
+    """F633 CLOSED (wave-375 lane 4): BigInt-to-string fragments block."""
+    b1 = _blocked("('" + _A[:5] + "'+String(123n)+'" + _B + "')")
+    b2 = _blocked("`" + _A[:5] + "${123n}" + _B + "`")
+    b3 = _blocked("('" + _A[:4] + "-'+String(123n).padStart(4,'0')+'" + _B + "')")
+    ok = b1 and b2 and b3
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
 @_t
@@ -365,18 +376,6 @@ def test_r42_f623_s3_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r42_f624_s2_open():
-    """F624 OPEN (shape slice-trim-bounded): miss reproduces."""
-    miss = _misses('"xx%syy".slice(2,11)+\'%s\'' % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-@_t
-def test_r42_f624_s3_open():
-    """F624 OPEN (shape slice-trim-varbound): miss reproduces."""
-    miss = _misses('(function(){var s="xx%s";return s.slice(2)+\'%s\';})()' % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-@_t
 def test_r42_f625_s2_open():
     """F625 OPEN (shape entries-fixed): miss reproduces."""
     miss = _misses("((a,b)=>a[1]+b[1])(...new Map([['a','%s'],['b','%s']]).entries())" % (_A, _B))
@@ -407,18 +406,6 @@ def test_r42_f627_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r42_f628_s2_open():
-    """F628 OPEN (shape decode-split): miss reproduces."""
-    miss = _misses("decodeURIComponent(encodeURIComponent('%s')+encodeURIComponent('%s'))" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-@_t
-def test_r42_f629_s2_open():
-    """F629 OPEN (shape textdecoder-label): miss reproduces."""
-    miss = _misses("new TextDecoder('utf-8').decode(new Uint8Array([%s]))" % (_BYTES,))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-@_t
 def test_r42_f630_s2_open():
     """F630 OPEN (shape jsonparse-entries): miss reproduces."""
     miss = _misses('(function(){var o=JSON.parse(\'{\\"a\\":\\"%s\\",\\"b\\":\\"%s\\"}\');return Object.entries(o).map(e=>e[1]).join(\'\');})()' % (_A, _B))
@@ -442,18 +429,6 @@ def test_r42_f634_s2_open():
     miss = _misses('Object.entries({a:"%s",b:"%s"}).reduce((a,e)=>a+e[1],"")' % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
-@_t
-def test_r42_f633_s2_open():
-    """F633 OPEN (shape bigint-template): miss reproduces."""
-    miss = _misses("`" + _A[:5] + "${123n}" + _B + "`")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r42_f633_s3_open():
-    """F633 OPEN (shape bigint-padstart): miss reproduces."""
-    miss = _misses("('" + _A[:4] + "-'+String(123n).padStart(4,'0')+'" + _B + "')")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 
 # ---------------------------------------------------------------- green check
