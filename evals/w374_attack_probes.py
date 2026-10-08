@@ -55,8 +55,7 @@ controls pass. No injection attempts.
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F612-F620 (round 41, closing in parallel wave-374 lanes), F621-F634
-(this round).
+F621-F634 (this round; F623/F630/F634 CLOSED wave-375 lane 3).
 
 Closed pins (must BLOCK, else BREAK): F576, F583, F596 (older spots),
 F595, F606, F607, F608, F609, F610, F611 (wave-373 closures).
@@ -233,6 +232,27 @@ def test_p1_f611_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
+@_t
+def test_p1_f623_closed():
+    """F623 CLOSED (wave-375 lane 3): values()/for-in on fromEntries results block."""
+    hit = _blocked("Object.values(Object.fromEntries([['a','%s'],['b','%s']])).join('')" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_p1_f630_closed():
+    """F630 CLOSED (wave-375 lane 3): JSON.parse-sourced values/entries block."""
+    hit = _blocked("(function(){var o=JSON.parse('{\\\"a\\\":\\\"%s\\\",\\\"b\\\":\\\"%s\\\"}');return Object.values(o).join('');})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_p1_f634_closed():
+    """F634 CLOSED (wave-375 lane 3): reduce() over Object.entries() blocks."""
+    hit = _blocked("Object.entries({a:\"%s\",b:\"%s\"}).reduce((a,[k,v])=>a+v,\"\")" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
 # ------------------------------------------- this round's open pins (F621+)
 
 @_t
@@ -246,13 +266,6 @@ def test_r42_f621_open():
 def test_r42_f622_open():
     """F622 OPEN: Object.keys + computed bracket reads miss."""
     miss = _misses("(function(){var o={a:'%s',b:'%s'};var k=Object.keys(o);return o[k[0]]+o[k[1]];})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r42_f623_open():
-    """F623 OPEN: values() on fromEntries results miss."""
-    miss = _misses("Object.values(Object.fromEntries([['a','%s'],['b','%s']])).join('')" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 
@@ -299,13 +312,6 @@ def test_r42_f629_open():
 
 
 @_t
-def test_r42_f630_open():
-    """F630 OPEN: JSON.parse-sourced Object.values miss."""
-    miss = _misses("(function(){var o=JSON.parse('{\"a\":\"%s\",\"b\":\"%s\"}');return Object.values(o).join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
 def test_r42_f631_open():
     """F631 OPEN: async generator for-await miss."""
     miss = _misses("(async function(){async function* g(){yield '%s';yield '%s';}var s='';for await (var x of g()){s+=x;}return s;})()" % (_A, _B))
@@ -327,12 +333,6 @@ def test_r42_f633_open():
 
 
 @_t
-def test_r42_f634_open():
-    """F634 OPEN: reduce() over Object.entries() miss."""
-    miss = _misses("Object.entries({a:\"%s\",b:\"%s\"}).reduce((a,[k,v])=>a+v,\"\")" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
 # --------------------------------- per-shape open pins (round 42)
 @_t
 def test_r42_f621_s2_open():
@@ -353,16 +353,16 @@ def test_r42_f622_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r42_f623_s2_open():
-    """F623 OPEN (shape fromentries-varbound): miss reproduces."""
-    miss = _misses("(function(){var o=Object.fromEntries([['a','%s'],['b','%s']]);return Object.values(o).join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f623_s2_closed():
+    """F623 CLOSED (shape fromentries-varbound): blocks."""
+    hit = _blocked("(function(){var o=Object.fromEntries([['a','%s'],['b','%s']]);return Object.values(o).join('');})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r42_f623_s3_open():
-    """F623 OPEN (shape fromentries-forin): miss reproduces."""
-    miss = _misses("(function(){var o=Object.fromEntries(new Map([['a','%s'],['b','%s']]));var s='';for(var k in o){s+=o[k];}return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f623_s3_closed():
+    """F623 CLOSED (shape fromentries-forin): blocks."""
+    hit = _blocked("(function(){var o=Object.fromEntries(new Map([['a','%s'],['b','%s']]));var s='';for(var k in o){s+=o[k];}return s;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_r42_f624_s2_open():
@@ -419,10 +419,10 @@ def test_r42_f629_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r42_f630_s2_open():
-    """F630 OPEN (shape jsonparse-entries): miss reproduces."""
-    miss = _misses('(function(){var o=JSON.parse(\'{\\"a\\":\\"%s\\",\\"b\\":\\"%s\\"}\');return Object.entries(o).map(e=>e[1]).join(\'\');})()' % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f630_s2_closed():
+    """F630 CLOSED (shape jsonparse-entries): blocks."""
+    hit = _blocked('(function(){var o=JSON.parse(\'{\\"a\\":\\"%s\\",\\"b\\":\\"%s\\"}\');return Object.entries(o).map(e=>e[1]).join(\'\');})()' % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_r42_f631_s2_open():
@@ -437,10 +437,10 @@ def test_r42_f632_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r42_f634_s2_open():
-    """F634 OPEN (shape entries-reduce-indexed): miss reproduces."""
-    miss = _misses('Object.entries({a:"%s",b:"%s"}).reduce((a,e)=>a+e[1],"")' % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f634_s2_closed():
+    """F634 CLOSED (shape entries-reduce-indexed): blocks."""
+    hit = _blocked('Object.entries({a:"%s",b:"%s"}).reduce((a,e)=>a+e[1],"")' % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_r42_f633_s2_open():

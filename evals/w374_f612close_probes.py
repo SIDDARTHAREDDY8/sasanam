@@ -172,10 +172,18 @@ def test_p3_rebind_misses():
 
 
 def test_p3_nonliteral_source_misses():
-    """Non-literal sources (JSON.parse) fail closed."""
-    ok = _misses("(function(){var o=JSON.parse('{\"a\":\"%s\",\"b\":\"%s\"}');"
-                 "return Object.values(o).join('');})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    """Non-literal sources fail closed (JSON.parse now modeled -- F630).
+
+    Wave-375 lane 3 closed F630: JSON.parse('LITERAL') is now a
+    modeled enumeration source, so the JSON.parse shape blocks
+    (previously a documented fail-closed residual of F612). A
+    genuinely non-literal source (identifier-bound) still misses.
+    """
+    ok = _blocked("(function(){var o=JSON.parse('{\"a\":\"%s\",\"b\":\"%s\"}');"
+                  "return Object.values(o).join('');})()" % (_A, _B))
+    ok = ok and _misses("(function(){var o=someCall();"
+                        "return Object.values(o).join('');})()")
+    return ("HELD" if ok else "BREAK", "ok=%s" % ok)
 
 
 def test_p3_multidecl_misses():
@@ -273,10 +281,17 @@ def test_p4_f510_inline_still_blocked():
 
 
 def _round42_shapes():
-    """Filed shapes of the currently-OPEN round-42 findings (must still miss)."""
+    """Filed shapes of the currently-OPEN round-42 findings (must still miss).
+
+    Wave-375 lane 3 closed F623/F630/F634, so their shapes are
+    excluded here (they now block); the wave-375 close battery pins
+    them as blocked. Every other round-42 finding must still miss
+    (nothing absorbed).
+    """
     import importlib
     shapes = []
-    for fnum in (621, 622, 623, 624, 625, 626, 627, 628, 629, 630, 631, 632, 633, 634):
+    for fnum in (621, 622, 624, 625, 626, 627, 628, 629, 631, 632,
+                 633):
         mod = importlib.import_module("w374_f%d_redfirst" % fnum)
         for name, payload, recovers in mod.SHAPES:
             if recovers:
@@ -285,8 +300,9 @@ def _round42_shapes():
 
 
 def test_p4_open_neighbors_still_miss():
-    """Attack findings F621-F634 still miss (nothing absorbed)."""
-    bad = [f for fnum, name, payload in _round42_shapes() if not _misses(payload)]
+    """Attack findings F621/F622/F624-F629/F631-F633 still miss (nothing absorbed)."""
+    bad = [(fnum, name) for fnum, name, payload in _round42_shapes()
+           if not _misses(payload)]
     ok = not bad
     return ("HELD" if ok else "BREAK", "miss=%s bad=%s" % (ok, bad[:3]))
 
