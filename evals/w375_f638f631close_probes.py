@@ -404,8 +404,8 @@ def p7_node_differential():
 
 
 def p8_compositions():
-    """F618/F619/F621/F625/F636/F639/F640/F641/F642/F643 stay HELD;
-    still-open findings (F644-F654) still miss."""
+    """F618/F619/F621/F625/F636/F639/F640/F641/F642/F643/F654 stay HELD;
+    still-open findings (F644-F653) still miss."""
     held_shapes = [
         # F618 (CLOSED) still blocks
         "Promise.all([Promise.resolve('%s'),Promise.resolve('%s')])"
@@ -434,9 +434,9 @@ def p8_compositions():
         % (_A[:5], _A[5:][1:], _B),
     ]
     miss_shapes = [
-        # F642/F643 (OPEN, attack round 43) + F654 (OPEN, lane-1 residual,
-        # renumbered at merge) still miss -- shapes from
-        # their red-first batteries
+        # F642/F643 (OPEN, attack round 43) still miss -- shapes from
+        # their red-first batteries (F654 CLOSED wave-377 lane 8,
+        # promoted to held below)
     ]
     # F641-F643: still open
     import importlib
@@ -459,6 +459,11 @@ def p8_compositions():
         for _name, _payload, _recovers in _fmod.SHAPES:
             if _recovers:
                 held_shapes.append(_payload)
+    # F654 (CLOSED 2026-10-08 wave-377 lane 8) now blocks -- same promotion.
+    _f654mod = importlib.import_module("w376_f654_redfirst")
+    for _name, _payload, _recovers in _f654mod.SHAPES:
+        if _recovers:
+            held_shapes.append(_payload)
     bad = [s for s in held_shapes if not _blocked(s)]
     bad += [s for s in miss_shapes if not _quiet(s)]
     return ("HELD" if not bad else "BREAK",
@@ -483,7 +488,7 @@ def p9_honest_text_quiet():
 
 
 def p10_pin_and_footer():
-    """Pin 2140; footer shows F638/F631/F640 closed, F644 filed, next F645."""
+    """Pin 2140; footer shows F654 closed (wave-377 lane 8), F644-F653 open, next F655."""
     n = len(decision_codes.TAXONOMY)
     pin_ok = (TAXONOMY_PIN == 2140 and n == 2140)
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as fh:
@@ -491,7 +496,8 @@ def p10_pin_and_footer():
     footer_ok = ("CLOSED 2026-10-08 wave-375 lane 8" in text
                  and "CLOSED 2026-10-08 wave-376 lane 1" in text  # F640 CLOSED
                  and "CLOSED 2026-10-08 wave-376 lane 2" in text  # F641 CLOSED
-                 and "Open findings: F644, F645, F646, F647, F648, F649, F650, F651, F652, F653, F654." in text  # merge intermediate # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
+                 and "CLOSED 2026-10-08 wave-377 lane 8" in text  # F654 CLOSED
+                 and "Open findings: F644, F645, F646, F647, F648, F649, F650, F651, F652, F653." in text  # merge intermediate # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655) # Wave-377 lane 8: F654 CLOSED; F644-F653 OPEN
                  and "Next free finding: **F655**" in text)  # merge intermediate # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)
     detail = "pin=%s codes=%d; footer-closed=%s" % (
         TAXONOMY_PIN, n, footer_ok)
