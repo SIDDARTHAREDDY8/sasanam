@@ -48,7 +48,8 @@ literal BREAK verdict means the pin failed or a NEW break appeared):
 F662-F671 (round 46), F672-F685 (this round).
 
 Closed pins (must BLOCK, else BREAK): F463, F510, F535, F601, F612,
-F619, F642, F653, F655, F657, F658, F661.
+F619, F642, F653, F655, F657, F658, F661, F676, F678.
+(Wave-380 lane 4: F676 s1/s3 and F678 s1/s2 flipped to closed pins.)
 
 Rides-with-documented-scope (validated, NOT filed):
 - Tag-function substitutions and String.raw twins -- BLOCK; already
@@ -124,11 +125,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F662-F685 open, next F686 (this lane)."""
+    """Control: footer shows F672-F675, F677, F679-F686 open, next F687 (wave-380 lane 4: F676, F678 CLOSED; F686 FILED)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F686**" in text
-          and "Open findings: F672, F673, F674, F675, F676, F677, F678, F679, F680, F681, F682, F683, F684, F685." in text)
+    ok = ("Next free finding: **F687**" in text
+          and "Open findings: F672, F673, F674, F675, F677, F679, F680, F681, F682, F683, F684, F685, F686." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -373,13 +374,13 @@ def test_r47_f675_s5_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 
-# ------------------------------------------------- F676 open pins (must miss)
+# ------------------------------------------------- F676 pins (s1/s3 CLOSED wave-380 lane 4; s2/s4 absorbed by F665)
 
 @_t
-def test_r47_f676_s1_open():
-    """F676 OPEN (opt-call): miss reproduces."""
-    miss = _misses("(function(){var o={f:function(){return '%s';}};return o?.f()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f676_s1_closed():
+    """F676 CLOSED (opt-call): blocks coded (wave-380 lane 4)."""
+    blocked = _blocked("(function(){var o={f:function(){return '%s';}};return o?.f()+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
@@ -390,10 +391,10 @@ def test_r47_f676_s2_open():
 
 
 @_t
-def test_r47_f676_s3_open():
-    """F676 OPEN (opt-nullish): miss reproduces."""
-    miss = _misses("(function(){var o=null;return (o?.x ?? '%s')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f676_s3_closed():
+    """F676 CLOSED (opt-nullish): blocks coded (wave-380 lane 4)."""
+    blocked = _blocked("(function(){var o=null;return (o?.x ?? '%s')+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
@@ -447,20 +448,20 @@ def test_r47_f677_s6_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 
-# ------------------------------------------------- F678 open pins (must miss)
+# ------------------------------------------------- F678 pins (CLOSED wave-380 lane 4)
 
 @_t
-def test_r47_f678_s1_open():
-    """F678 OPEN (nested): miss reproduces."""
-    miss = _misses("(function(){var o={x:'%s'};var p={y:'%s'};with(o){with(p){return x+y;}}})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f678_s1_closed():
+    """F678 CLOSED (nested): blocks coded (wave-380 lane 4)."""
+    blocked = _blocked("(function(){var o={x:'%s'};var p={y:'%s'};with(o){with(p){return x+y;}}})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
-def test_r47_f678_s2_open():
-    """F678 OPEN (tail-read): miss reproduces."""
-    miss = _misses("(function(){var o={x:'%s'};var s;with(o){s=x;}return s+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f678_s2_closed():
+    """F678 CLOSED (tail-read): blocks coded (wave-380 lane 4)."""
+    blocked = _blocked("(function(){var o={x:'%s'};var s;with(o){s=x;}return s+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 # ------------------------------------------------- F679 open pins (must miss)
