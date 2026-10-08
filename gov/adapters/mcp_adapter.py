@@ -965,6 +965,14 @@ def verify_spec_flat_pin(name, description=None, schema=None,
     Raises :class:`MetadataChangedError` (fail closed) on any
     mismatch -- the spec presented at use time is not the spec that
     was scanned and pinned at registration time.
+
+    Call-site note: on the GovernedMCPClient path this verification
+    happens implicitly -- ``call_tool`` re-runs ``list_tools`` (hence
+    ``_validate_and_pin`` and both rug-pull comparisons) immediately
+    before dispatch, so a registration->call swap fails closed there.
+    This standalone function serves non-client seams: a deployment
+    that pins specs at registration time (e.g. into its own tool
+    registry) and re-verifies them at check_at_use / invocation time.
     """
     observed = spec_flat_pin(name, description, schema)
     if not isinstance(expected_pin, str) or not hmac.compare_digest(
@@ -1687,12 +1695,6 @@ class GovernedMCPClient:
                     raise
             entry_hash = metadata_hash(name, description,
                                        _entry_schema(entry))
-            # SafeKeep steal: the flat pin covers exactly the text the
-            # content scan examined. It rides alongside the raw
-            # metadata_hash pin (deployer-pin and allowlist contracts
-            # are unchanged) with its own rug-pull comparison below.
-            entry_flat_pin = spec_flat_pin(name, description,
-                                           _entry_schema(entry))
             if entry_hash in self._description_allowlist:
                 # F109: deployer allowlisted this EXACT metadata. The
                 # allowlist entry is a deliberate, audited, reversible
@@ -1704,13 +1706,25 @@ class GovernedMCPClient:
                                     {"tool": name,
                                      "metadata_hash": entry_hash})
                 new_pins[name] = entry_hash
-                new_flat_pins[name] = entry_flat_pin
+                # SafeKeep steal: the flat pin covers the canonical
+                # path-prefixed flat text -- a superset of the
+                # collapsed-atoms text the scan examines (it also pins
+                # the structural paths, so path tampering is covered
+                # too). It rides alongside the raw metadata_hash pin
+                # (deployer-pin and allowlist contracts are unchanged)
+                # with its own rug-pull comparison below. Computed here
+                # so the allowlist path -- which deliberately skips the
+                # content scan -- keeps its exact F109 contract.
+                new_flat_pins[name] = spec_flat_pin(
+                    name, description, _entry_schema(entry))
                 continue
             try:
                 # SafeKeep steal: scan the FLATTENED spec, not just the
                 # top-level description -- schema-formatted specs
                 # suppress the refusal signal otherwise.
                 scan_tool_spec(name, description, _entry_schema(entry))
+                entry_flat_pin = spec_flat_pin(
+                    name, description, _entry_schema(entry))
             except MetadataPoisoningError as exc:
                 try:
                     self._audit_listing(
@@ -1736,9 +1750,13 @@ class GovernedMCPClient:
                     pass
                 raise MetadataChangedError(name, old_hash, new_hash)
         # SafeKeep steal: the flat pin gets its own rug-pull
-        # comparison -- a change to any scanned atom (including
-        # schema-nested content the raw hash also covers) fails
-        # closed here with the flat-form digests in the audit trail.
+        # comparison. Honest redundancy note: the raw metadata_hash
+        # covers the same three inputs, so its loop above always fires
+        # first on any input change -- this loop cannot fire
+        # independently. It is kept as defense in depth (it survives
+        # any future change to what metadata_hash covers) and because
+        # the flat pins feed the audit trail and the standalone
+        # verify_spec_flat_pin API.
         for name, old_flat in self._spec_flat_pins.items():
             new_flat = new_flat_pins.get(name)
             if new_flat is not None and new_flat != old_flat:
