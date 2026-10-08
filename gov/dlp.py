@@ -33807,6 +33807,341 @@ def _js_parse_f664_gopd_varbound_iife(text, i, depth, state):
         return None
 
 
+# Max `Object.defineProperty` install statements in one
+# F691/F698 IIFE body (F452 discipline -- each descriptor parse
+# already charges parts; this caps statement count).
+_F691F698_MAX_DEFINES = 8
+
+
+def _js_parse_f691f698_descriptor_iife(text, i, depth, state):
+    """Parse `(function(){DECL o={};
+    Object.defineProperty(o,'KEY',DESC);+
+    return (LIT|(Object|Reflect).getOwnPropertyDescriptor(o,'KEY')
+    (.value|.get()))(+...)*;})()` at text[i] (F691/F698).
+
+    F664 (CLOSED) models descriptor `.get()` invocation only for
+    literal-getter sources (`var o={get x(){...}}`), and F673
+    (CLOSED) models `Object.defineProperties`-installed getters
+    read via `o.x` -- but the singular `Object.defineProperty`
+    install on a var-bound target escapes both: a data descriptor
+    read via `.value` (F691) and a defineProperty-installed
+    accessor read via descriptor `.get()` (F698) both node-evaluate
+    (v24.20.0) to the exact credential while the decoder produces
+    zero variants. Node-exact desugar: the var binds an empty
+    object; each `Object.defineProperty` installs KEY -> the
+    descriptor's decoded value (engine-exact -- the
+    descriptor grammar is `_js_parse_f548f550_descriptor`, so
+    `value`/`get`/`set` semantics, `writable`-with-accessor
+    rejection, and non-boolean-flag failures are inherited
+    node-exactly); each descriptor-read term resolves against the
+    installed map exactly like the engine:
+    - `.value` on a data descriptor returns the stored value;
+    - `.value` on an accessor descriptor is `undefined` in the
+      engine (fails closed -- never a credential decode);
+    - `.get()` on an accessor descriptor invokes the getter (its
+      return was already evaluated at install, F549/F550
+      precedent -- `this`-dependent bodies fail closed at parse);
+    - `.get()` on a data descriptor throws TypeError in the
+      engine (fails closed); a missing KEY throws too.
+    `Reflect.getOwnPropertyDescriptor` is the same builtin head
+    for own-property descriptors (node-verified identical), so
+    both heads are accepted for both terminals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - `.get` with arguments (F664 parity -- the engine ignores
+      them, but the static model stays conservative), bracket
+      terminals (`['get']()`/`['value']` -- F664 parity), a
+      non-literal KEY, `__proto__` keys, a target other than the
+      bound ident, a non-`{` install target, `Object['defineProperty']`
+      (dot form only, F550 parity), `defineProperties` (F673's);
+    - a descriptor value that is not a plain string
+      (numbers/_JSObj/_JSArr fail closed -- F664 parity; the
+      F699 guard `_js_str_is_unsafe_int` also applies, since
+      `_js_parse_canonical_int` returns plain str and integer
+      provenance is lost), a `set`-only descriptor (reads as
+      undefined, F550 parity), a getter value that is not a
+      string (F664 parity);
+    - a non-empty initial object literal, re-installing an already
+      installed KEY (the engine throws TypeError on redefinition
+      of a non-configurable descriptor -- the configurable:true
+      redefinition twin is a documented residual, never
+      mis-decoded), more than `_F691F698_MAX_DEFINES` installs, reassignment of the var,
+      multi-decl, a named function, parameters, a directive
+      prologue, extra statements, non-empty call args, any
+      trailing statements after the return additive inside the
+      body (IIFE-level postfix after the `()` invocation is
+      handled by the hook's `_js_parse_postfix`, F664 parity).
+    Tried after F664 (the defineProperty statement head is
+    disjoint from F664's `return`-first body; F664's literal-getter
+    shapes return None here before the statement scan, and this
+    parser returns None on them). Returns (value, next_index), or
+    None when text[i] is not this shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F691/F698 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            raise _JSExprFail("F691/F698 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        # The target starts as the empty object literal -- the
+        # properties are installed by the defineProperty
+        # statements that follow (a non-empty literal fails
+        # closed, documented residual).
+        sj = _js_expect(text, sj, "{")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "}")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        props = {}
+        ndef = 0
+        while True:
+            # One `Object.defineProperty(o,'KEY',DESC);` statement.
+            if not text.startswith("Object", sj):
+                break
+            q = sj + len("Object")
+            if q < n and text[q] in _JS_IDENT_CONT:
+                raise _JSExprFail("F691/F698 Objectx is not Object")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ".":
+                raise _JSExprFail("F691/F698 Object without dot")
+            q = _js_skip_ws(text, q + 1)
+            if not text.startswith("defineProperty", q):
+                break  # not an install statement -- done scanning
+            q = q + len("defineProperty")
+            if q < n and text[q] in _JS_IDENT_CONT:
+                raise _JSExprFail(
+                    "F691/F698 defineProperties is F673's")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != "(":
+                raise _JSExprFail(
+                    "F691/F698 defineProperty without paren")
+            q = _js_skip_ws(text, q + 1)
+            _tname, q = _js_parse_ident(text, q)
+            if _tname != oname:
+                raise _JSExprFail(
+                    "F691/F698 defineProperty target not bound ident")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ",":
+                raise _JSExprFail(
+                    "F691/F698 defineProperty without key")
+            q = _js_skip_ws(text, q + 1)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail(
+                    "F691/F698 defineProperty key not a literal")
+            _key, q = _js_parse_string(text, q)
+            if _key == "__proto__":
+                raise _JSExprFail("__proto__ key fails closed")
+            if _key in props:
+                # Redefinition: the engine throws TypeError unless
+                # the existing descriptor is configurable -- the
+                # descriptor parser does not surface the
+                # configurable flag, so every re-install fails
+                # closed (the configurable:true redefinition twin
+                # is a documented residual, never mis-decoded).
+                raise _JSExprFail(
+                    "F691/F698 descriptor redefinition fails closed")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ",":
+                raise _JSExprFail(
+                    "F691/F698 defineProperty without descriptor")
+            q = _js_skip_ws(text, q + 1)
+            if q >= n or text[q] != "{":
+                raise _JSExprFail(
+                    "F691/F698 descriptor not an object")
+            dkind, dval, q = _js_parse_f548f550_descriptor(
+                text, q, depth, state)
+            if dkind == "set":
+                # A set-only accessor reads as undefined in the
+                # engine -- not a decodable value (F550 parity).
+                raise _JSExprFail(
+                    "F691/F698 set-only descriptor reads undefined")
+            if not isinstance(dval, str) \
+                    or isinstance(dval, (_JSNumStr, _JSBigInt)) \
+                    or _js_str_is_unsafe_int(dval):
+                # Data/getter values must be plain strings --
+                # numbers, objects, and arrays fail closed (F664
+                # parity); the F699 guard applies because
+                # _js_parse_canonical_int returns plain str and
+                # integer provenance is lost.
+                raise _JSExprFail(
+                    "F691/F698 descriptor value not a plain string")
+            if dkind == "get":
+                props[_key] = _JSAccessor(dval)
+            else:
+                props[_key] = dval
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ")":
+                raise _JSExprFail(
+                    "F691/F698 defineProperty unterminated")
+            q = _js_skip_ws(text, q + 1)
+            q = _js_expect(text, q, ";")
+            ndef += 1
+            if ndef > _F691F698_MAX_DEFINES:
+                raise _JSExprFail("F691/F698 too many installs")
+            state["ops"] += 1  # the defineProperty call is
+            # obfuscation-shaped
+            sj = _js_skip_ws(text, q)
+        if ndef == 0:
+            # No install statement: not our shape (this also keeps
+            # F664's shapes out -- they go straight from the decl
+            # to `return`).
+            return None
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F691/F698 no return")
+        sj = _js_skip_ws(text, m)
+
+        def _f691f698_term(sj):
+            # One additive term: a string literal, or a
+            # descriptor-read on the bound ident.
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                return _js_parse_string(text, sj)
+            _head = None
+            for _cand in ("Object", "Reflect"):
+                if text.startswith(_cand, sj):
+                    _e = sj + len(_cand)
+                    if _e < n and text[_e] in _JS_IDENT_CONT:
+                        continue
+                    _head = _cand
+                    break
+            if _head is None:
+                raise _JSExprFail("F691/F698 term not modeled")
+            k = sj + len(_head)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ".":
+                raise _JSExprFail("F691/F698 head without dot")
+            k = _js_skip_ws(text, k + 1)
+            if not text.startswith("getOwnPropertyDescriptor", k):
+                raise _JSExprFail("F691/F698 not gopd")
+            k = k + len("getOwnPropertyDescriptor")
+            if k < n and text[k] in _JS_IDENT_CONT:
+                raise _JSExprFail(
+                    "F691/F698 gopd plural is not gopd")
+            # The member commits the parse: malformed shapes fail
+            # closed.
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "(":
+                raise _JSExprFail("F691/F698 gopd without paren")
+            k = _js_skip_ws(text, k + 1)
+            _tname, k = _js_parse_ident(text, k)
+            if _tname != oname:
+                raise _JSExprFail(
+                    "F691/F698 gopd target not bound ident")
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ",":
+                raise _JSExprFail("F691/F698 gopd without key")
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] not in "'\"":
+                raise _JSExprFail(
+                    "F691/F698 gopd key not a literal")
+            _key, k = _js_parse_string(text, k)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ")":
+                raise _JSExprFail("F691/F698 gopd unterminated")
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] != ".":
+                raise _JSExprFail("F691/F698 gopd without terminal")
+            k = _js_skip_ws(text, k + 1)
+            _is_value = text.startswith("value", k) and (
+                k + 5 >= n or text[k + 5] not in _JS_IDENT_CONT)
+            _is_get = text.startswith("get", k) and (
+                k + 3 >= n or text[k + 3] not in _JS_IDENT_CONT)
+            if not (_is_value or _is_get):
+                raise _JSExprFail(
+                    "F691/F698 gopd terminal not .value/.get()")
+            if _key not in props:
+                # The engine throws TypeError reading a
+                # descriptor of a missing key -- fail closed.
+                raise _JSExprFail("F691/F698 gopd missing key")
+            _raw = props[_key]
+            if _is_value:
+                if isinstance(_raw, _JSAccessor):
+                    # .value on an accessor descriptor is
+                    # undefined in the engine (node v24.20.0) --
+                    # fail closed, never a credential decode.
+                    raise _JSExprFail(
+                        "F691/F698 .value on accessor")
+                k = k + 5
+            else:
+                if not isinstance(_raw, _JSAccessor):
+                    # .get() on a data descriptor throws
+                    # TypeError in the engine (node v24.20.0) --
+                    # fail closed (F664 parity).
+                    raise _JSExprFail(
+                        "F691/F698 .get on data property")
+                k = _js_skip_ws(text, k + 3)
+                if k >= n or text[k] != "(":
+                    raise _JSExprFail("F691/F698 .get without call")
+                k = _js_skip_ws(text, k + 1)
+                if k >= n or text[k] != ")":
+                    # The engine ignores .get() args, but the
+                    # static model stays conservative (F664
+                    # parity).
+                    raise _JSExprFail("F691/F698 .get takes no args")
+                _raw = _raw.value
+                k = k + 1
+            state["ops"] += 1  # the descriptor indirection is
+            # obfuscation-shaped
+            return _raw, k
+
+        parts = []
+        while True:
+            _val, sj = _f691f698_term(sj)
+            parts.append(_val)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F691/F698 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return "".join(parts), j
+    except _JSExprFail:
+        return None
+
+
 class _JSF67xBody:
     """A this-bound method/getter body (F673/F674).
 
@@ -47972,6 +48307,24 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                  state)
         if _f664 is not None:
             val, i = _f664
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F691/F698: (function(){DECL o={};
+        #   Object.defineProperty(o,'KEY',DESC);+
+        #   return (LIT|(Object|Reflect).getOwnPropertyDescriptor(
+        #   o,'KEY')(.value|.get()))(+...)*;})() -- data-descriptor
+        #   .value reads (F691) and defineProperty-installed
+        #   accessor .get() reads (F698) on a var-bound target.
+        #   Tried after F664: the defineProperty statement head is
+        #   disjoint from F664's return-first body (F664's
+        #   literal-getter shapes return None in the new parser
+        #   before the statement scan, and the new parser returns
+        #   None on them); None falls through to the F673 route
+        #   like F664. F664's hook and its trailing `return` are
+        #   untouched (wave-379 lesson).
+        _f691f698 = _js_parse_f691f698_descriptor_iife(text, i, depth,
+                                                      state)
+        if _f691f698 is not None:
+            val, i = _f691f698
             return _js_parse_postfix(text, i, val, depth, state)
         # F673: (function(){STMT;return ADD;})() -- object-construction
         #   member reads beyond F663/F664/F671 (defineProperties
