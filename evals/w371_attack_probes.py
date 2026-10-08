@@ -320,12 +320,12 @@ def test_r39_f598_open():
 
 
 @_t
-def test_r39_f599_open():
-    """F599 OPEN: URLSearchParams.append then getAll misses."""
-    m1 = _misses("(function(){var p=new URLSearchParams('q=%s');p.append('q','%s');return p.getAll('q').join('');})()" % (_A, _B))
-    m2 = _misses("(function(){var p=new URLSearchParams('');p.append('q','%s');p.append('q','%s');return p.getAll('q').join('');})()" % (_A, _B))
+def test_r39_f599_closed():
+    """F599 CLOSED (wave-372 lane 3): URLSearchParams.append/set then getAll blocks."""
+    m1 = _blocked("(function(){var p=new URLSearchParams('q=%s');p.append('q','%s');return p.getAll('q').join('');})()" % (_A, _B))
+    m2 = _blocked("(function(){var p=new URLSearchParams('');p.append('q','%s');p.append('q','%s');return p.getAll('q').join('');})()" % (_A, _B))
     ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
 @_t
