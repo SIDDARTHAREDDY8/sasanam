@@ -335,7 +335,7 @@ def test_p4_f667_withscope_smallint():
 
 @_t
 def test_p4_open_neighbors_still_miss():
-    """Open neighbors F700-F709/F712 still miss (nothing absorbed)."""
+    """Neighbors F700/F701/F708/F709/F712 now CLOSED by sibling lanes (merge) -- their shapes block coded."""
     shapes = [
         # F700 flatMap residual
         "(function(){return ['" + _A + "','" + _B
@@ -353,9 +353,9 @@ def test_p4_open_neighbors_still_miss():
         "(function(){var m=new Map([['k','" + _A + "']]);"
         "return [...m.entries()][0][1]+'" + _B + "';})()",
     ]
-    bad = [s for s in shapes if not _misses(s)]
+    bad = [s for s in shapes if not _blocked(s)]
     ok = not bad
-    return ("HELD" if ok else "BREAK", "absorbed=%d" % len(bad))
+    return ("HELD" if ok else "BREAK", "unblocked=%d" % len(bad))
 
 # ------------------------------------------------ p5: junk-quiet, composition
 
@@ -395,8 +395,8 @@ def test_p6_pin_footer():
     """Pin 2143; lane-local footer (open F700-F709, F712 / next F713)."""
     ok = (TAXONOMY_PIN == 2143 and len(TAXONOMY) > 0)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and ("Next free finding: **F713**" in text)  # Wave-382 lane 6: F710, F711 CLOSED; open F700-F709, F712 / next F713
-    ok = ok and ("Open findings: F700, F701, F702, F703, F704, F705, F706, F707, F708, F709, F712." in text)  # Wave-382 lane 6: F710, F711 CLOSED; open F700-F709, F712 / next F713
+    ok = ok and ("Next free finding: **F738**" in text)  # Wave-382 lane 6: F710, F711 CLOSED; open F700-F709, F712 / next F713
+    ok = ok and ("Open findings: F713, F714, F715, F716, F717, F718, F719, F720, F721, F722, F723, F724, F725, F726, F727, F728, F729, F730, F731, F732, F733, F734, F735, F736, F737." in text)  # Wave-382 lane 6: F710, F711 CLOSED; open F700-F709, F712 / next F713
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 
 

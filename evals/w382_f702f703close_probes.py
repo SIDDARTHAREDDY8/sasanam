@@ -68,8 +68,8 @@ def test_b0_footer_state():
     """Control: lane-local footer (F702/F703 closed, next F713)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F713**" in text
-          and "Open findings: F700, F701, F704, F705, F706, F707, F708, F709, F710, F711, F712." in text)
+    ok = ("Next free finding: **F738**" in text
+          and "Open findings: F713, F714, F715, F716, F717, F718, F719, F720, F721, F722, F723, F724, F725, F726, F727, F728, F729, F730, F731, F732, F733, F734, F735, F736, F737." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -363,31 +363,31 @@ def test_p4_plain_assign_data_absorbed():
 
 @_t
 def test_p4_neighbor_f701_open():
-    """F701 (spread) still OPEN: miss reproduces (not absorbed)."""
-    ok = _misses(
+    """F701 (spread) CLOSED by sibling lane (merge): blocks coded."""
+    ok = _blocked(
         "(function(){var o={get x(){return '%s';},"
         "get y(){return '%s';}};var c={...o};return c.x+c.y;})()"
         % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f701-open=%s" % ok)
+    return ("HELD" if ok else "BREAK", "f701-closed=%s" % ok)
 
 
 @_t
 def test_p4_neighbor_f704_open():
-    """F704 (Object.create descriptor) still OPEN: miss reproduces."""
-    ok = _misses(
+    """F704 (Object.create descriptor) CLOSED by sibling lane (merge): blocks coded."""
+    ok = _blocked(
         "(function(){var o=Object.create(null,"
         "{x:{get:function(){return '%s';}}});return o.x+'%s';})()"
         % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f704-open=%s" % ok)
+    return ("HELD" if ok else "BREAK", "f704-closed=%s" % ok)
 
 
 @_t
 def test_p4_neighbor_f705_open():
-    """F705 (Reflect.get receiver) still OPEN: miss reproduces."""
-    ok = _misses(
+    """F705 (Reflect.get receiver) CLOSED by sibling lane (merge): blocks coded."""
+    ok = _blocked(
         "(function(){var o={get x(){return '%s';}};"
         "return Reflect.get(o,'x',{})+'%s';})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f705-open=%s" % ok)
+    return ("HELD" if ok else "BREAK", "f705-closed=%s" % ok)
 
 
 # --------------------------------------------- junk / composition (p5/p6)

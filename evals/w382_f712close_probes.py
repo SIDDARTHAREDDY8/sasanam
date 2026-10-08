@@ -199,17 +199,20 @@ def test_p4_neighbors_hold():
 
 @_t
 def test_p4_open_findings_still_miss():
-    """Open neighbors still miss (filed shapes verbatim) -- nothing absorbed."""
-    shapes = [
+    """F700/F701/F708/F709 now CLOSED by sibling lanes (merge) -- block coded; F713 stays OPEN -- misses."""
+    closed = [
         "(function(){var m=new Map([['k','%s']]);return m.get('k')+'%s';})()" % (_A, _B),  # F708 Map.get
         "(function(){return ['%s','%s'].flatMap(function(f){return [f,''];}).join('');})()" % (_A, _B),  # F700 flatMap
         "(function(){var o={get x(){return '%s';}};return {...o}.x+'%s';})()" % (_A, _B),  # F701 getter-on-spread
         "(function(){var r='';for(var i=0;i<2;i++){r+=['%s','%s'][i];}return r;})()" % (_A, _B),  # F709 loop +=
-        "(function(){var m=new Map([['k','%s']]);return [...m.values()].join('')+'%s';})()" % (_A, _B),  # F713 literal-Map spread-join (filed this lane)
     ]
-    got = [_misses(s) for s in shapes]
-    ok = all(got)
-    return ("HELD" if ok else "BREAK", "quiet=%s" % got)
+    open_ = [
+        "(function(){var m=new Map([['k','%s']]);return [...m.values()].join('')+'%s';})()" % (_A, _B),  # F713 literal-Map spread-join
+    ]
+    got_c = [_blocked(s) for s in closed]
+    got_o = [_misses(s) for s in open_]
+    ok = all(got_c) and all(got_o)
+    return ("HELD" if ok else "BREAK", "closed=%s open=%s" % (got_c, got_o))
 
 
 # ------------------------------------------------ p5: junk quiet
@@ -235,8 +238,8 @@ def test_p6_pin_footer():
     """Pin 2143; lane-local footer (F712 CLOSED, F713 filed; open F700-F711,F713 / next F714)."""
     ok = (TAXONOMY_PIN == 2143 and len(TAXONOMY) > 0)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and ("Next free finding: **F714**" in text)  # Wave-382 lane 7: F712 CLOSED, F713 filed
-    ok = ok and ("Open findings: F700, F701, F702, F703, F704, F705, F706, F707, F708, F709, F710, F711, F713." in text)  # Wave-382 lane 7
+    ok = ok and ("Next free finding: **F738**" in text)  # Wave-382 lane 7: F712 CLOSED, F713 filed
+    ok = ok and ("Open findings: F713, F714, F715, F716, F717, F718, F719, F720, F721, F722, F723, F724, F725, F726, F727, F728, F729, F730, F731, F732, F733, F734, F735, F736, F737." in text)  # Wave-382 lane 7
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 
 

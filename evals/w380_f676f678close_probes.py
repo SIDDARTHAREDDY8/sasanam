@@ -403,7 +403,7 @@ def test_p7_pin_footer():
     """Pin 2143; merge footer (F672-F676, F678 closed; lane-4 F686->F699; open F677, F679-F685, F699 / next F700)."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     ok = (TAXONOMY_PIN == 2143 and len(TAXONOMY) > 0)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and ("Next free finding: **F713**" in text)
+    ok = ok and ("Next free finding: **F738**" in text)
     ok = ok and ("Open findings: F677, F679, F680, F681, F682, F683, F684, F685, F699." in text)
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 

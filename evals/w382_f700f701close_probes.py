@@ -248,7 +248,7 @@ def test_p8_f701_residuals_miss():
 
 @_t
 def test_p9_open_neighbors_miss():
-    """F702-F705 stay open (other lanes' targets; nothing absorbed)."""
+    """F702-F705 now CLOSED by sibling lanes (merge): their shapes block coded."""
     shapes = [
         "(function(){var o={get x(){return '%s';}};return Object.assign({},o).x+'%s';})()" % (_A, _B),
         "(function(){var o={get x(){return '%s';}};var c=Object.assign({z:1},o);return c.x+'%s';})()" % (_A, _B),
@@ -256,9 +256,9 @@ def test_p9_open_neighbors_miss():
         "(function(){var o=Object.create(null,{x:{get:function(){return '%s';}}});return o.x+'%s';})()" % (_A, _B),
         "(function(){var o={get x(){return '%s';}};return Reflect.get(o,'x',{})+'%s';})()" % (_A, _B),
     ]
-    got = [_misses(s) for s in shapes]
+    got = [_blocked(s) for s in shapes]
     ok = all(got)
-    return ("HELD" if ok else "BREAK", "miss=%s" % got)
+    return ("HELD" if ok else "BREAK", "blocked=%s" % got)
 
 
 # ------------------------------------------------ p10: F700 node-exact values
@@ -302,8 +302,8 @@ def test_p12_footer_state():
     """Control: footer shows F702-F712 open, next F713 (lane-local)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F713**" in text
-          and "Open findings: F702, F703, F704, F705, F706, F707, F708, F709, F710, F711, F712." in text)
+    ok = ("Next free finding: **F738**" in text
+          and "Open findings: F713, F714, F715, F716, F717, F718, F719, F720, F721, F722, F723, F724, F725, F726, F727, F728, F729, F730, F731, F732, F733, F734, F735, F736, F737." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

@@ -229,22 +229,22 @@ def test_p5_neighbors_hold():
 
 @_t
 def test_p5_open_findings_still_miss():
-    """Open findings (F700-F707, F710-F712) still miss -- nothing absorbed."""
+    """F700/F701/F706/F710/F712 now CLOSED by sibling lanes (merge) -- their shapes block coded."""
     shapes = [
         # F700 flatMap residual
         "(function(){return ['%s','%s'].flatMap(function(x){return [x,''];}).join('');})()" % (_A, _B),
         # F701 getter on spread
         "(function(){var o={get x(){return '%s';}};var c={...o};return c.x+'%s';})()" % (_A, _B),
-        # F706 defineProperty-trap write
-        "(function(){var t={};var p=new Proxy(t,{defineProperty:function(tr,pr,d){return Reflect.defineProperty(tr,pr,{value:'%s'});}});Object.defineProperty(p,'x',{value:'y'});return t.x+'%s';})()" % (_A, _B),
+        # F706 defineProperty-trap write (filed shape: TR[PR]=RHS trap body)
+        "(function(){var t={};var p=new Proxy(t,{defineProperty:function(tr,pr,de){tr[pr]='%s';return true;}});Object.defineProperty(p,'x',{value:1});return t.x+'%s';})()" % (_A, _B),
         # F710 Set.has residual
         "(function(){var s=new Set(['k']);var f=s.has('k')?'%s':'xx';return f+'%s';})()" % (_A, _B),
         # F712 var-bound Map iteration
         "(function(){var m=new Map([['k','%s']]);return [...m.entries()][0][1]+'%s';})()" % (_A, _B),
     ]
-    got = [_misses(s) for s in shapes]
+    got = [_blocked(s) for s in shapes]
     ok = all(got)
-    return ("HELD" if ok else "BREAK", "miss=%s" % got)
+    return ("HELD" if ok else "BREAK", "blocked=%s" % got)
 
 
 # ------------------------------------------------ p6: junk quiet
@@ -263,8 +263,8 @@ def test_p7_pin_footer():
     """Pin 2143; lane-local footer (F708+F709 CLOSED; open F700-F707,F710-F712 / next F713)."""
     ok = (TAXONOMY_PIN == 2143 and len(TAXONOMY) > 0)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and ("Next free finding: **F713**" in text)  # Wave-382 lane 5: F708, F709 CLOSED
-    ok = ok and ("Open findings: F700, F701, F702, F703, F704, F705, F706, F707, F710, F711, F712." in text)  # Wave-382 lane 5: F708, F709 CLOSED
+    ok = ok and ("Next free finding: **F738**" in text)  # Wave-382 lane 5: F708, F709 CLOSED
+    ok = ok and ("Open findings: F713, F714, F715, F716, F717, F718, F719, F720, F721, F722, F723, F724, F725, F726, F727, F728, F729, F730, F731, F732, F733, F734, F735, F736, F737." in text)  # Wave-382 lane 5: F708, F709 CLOSED
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 
 
@@ -300,14 +300,12 @@ def _green_check():
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return ("HELD", "green check skipped (GOV_SKIP_GREEN=1)")
     bad = []
-    # w381_attack_probes expects 1 BREAK: test_b0_footer_state --
-    # this lane repointed FINDINGS.md's footer lane-locally
-    # (F708/F709 CLOSED); the sibling battery's b0 still asserts
-    # the base footer. Merge-owned tree-wide repoint; anything
-    # other than exactly this 1 BREAK fails the check.
+    # w381_attack_probes expects 0 BREAK: merge repointed its footer
+    # tree-wide (wave-305/306 class); anything other than exactly
+    # 0 BREAKs fails the check.
     for batt, expect_break in (("evals/w381_f708_redfirst.py", 0),
                                ("evals/w381_f709_redfirst.py", 0),
-                               ("evals/w381_attack_probes.py", 1)):
+                               ("evals/w381_attack_probes.py", 0)):
         tmp = tempfile.mkdtemp(prefix="g382-green-", dir="/var/tmp")
         env = dict(os.environ)
         env["GOV_SKIP_GREEN"] = "1"

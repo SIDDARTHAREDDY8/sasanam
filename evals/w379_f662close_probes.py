@@ -547,7 +547,7 @@ def test_p8_pin_footer():
     text = open(p, encoding="utf-8").read()
     ok = (TAXONOMY_PIN == 2143 and len(dc.TAXONOMY) > 0  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
           and "Next free finding: **F700**." in text
-          and "Open findings: F700, F701, F702, F703, F704, F705, F706, F707, F708, F709, F710, F711, F712."  # Wave-380 merge: F672-F685 CLOSED; footer repoint open F686-F699 / next F700
+          and "Open findings: F713, F714, F715, F716, F717, F718, F719, F720, F721, F722, F723, F724, F725, F726, F727, F728, F729, F730, F731, F732, F733, F734, F735, F736, F737."  # Wave-380 merge: F672-F685 CLOSED; footer repoint open F686-F699 / next F700
           in text)
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 

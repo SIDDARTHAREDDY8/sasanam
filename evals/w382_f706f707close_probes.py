@@ -477,11 +477,11 @@ def test_p5_neighbor_f708_map_get():
 
 @_t
 def test_p5_neighbor_f701_getter_spread():
-    """Open neighbor F701 (getter on object spread) still misses -- nothing absorbed."""
+    """Neighbor F701 (getter on object spread) CLOSED by sibling lane (merge) -- blocks coded."""
     s = ("(function(){var o={get x(){return '" + _A + "';}};var c={...o};"
          "return c.x+'" + _B + "';})()")
-    miss = _misses(s)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    ok = _blocked(s)
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 # ------------------------------------------------ p6: junk-quiet + perf
@@ -534,9 +534,8 @@ def test_p7_pin_taxonomy():
 def test_p7_lane_footer():
     """FINDINGS.md lane-local footer: F706/F707 closed, open F700-F705/F708-F712."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F713**" in text)
-    ok = ok and ("Open findings: F700, F701, F702, F703, F704, F705, "
-                 "F708, F709, F710, F711, F712." in text)
+    ok = ("Next free finding: **F738**" in text)
+    ok = ok and ("Open findings: F713, F714, F715, F716, F717, F718, F719, F720, F721, F722, F723, F724, F725, F726, F727, F728, F729, F730, F731, F732, F733, F734, F735, F736, F737." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

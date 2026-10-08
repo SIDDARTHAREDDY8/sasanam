@@ -215,163 +215,163 @@ def test_p1_f699_fail_closed():
 
 @_t
 def test_r49_f700_s1_open():
-    """F700 OPEN: miss reproduces."""
-    miss = _misses("(function(){return ['%s','%s'].flatMap(function(f){return [f,''];}).join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F700 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){return ['%s','%s'].flatMap(function(f){return [f,''];}).join('');})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f700_s2_open():
-    """F700 OPEN: miss reproduces."""
-    miss = _misses("(function(){return ['%s','%s'].flatMap(function(f){return ['',f];}).join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F700 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){return ['%s','%s'].flatMap(function(f){return ['',f];}).join('');})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f701_s1_open():
-    """F701 OPEN: miss reproduces."""
-    miss = _misses("(function(){var o={get x(){return '%s';}};return {...o}.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F701 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var o={get x(){return '%s';}};return {...o}.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f701_s2_open():
-    """F701 OPEN: miss reproduces."""
-    miss = _misses("(function(){var o={get x(){return '%s';},get y(){return '%s';}};var c={...o};return c.x+c.y;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F701 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var o={get x(){return '%s';},get y(){return '%s';}};var c={...o};return c.x+c.y;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f702_s1_open():
-    """F702 OPEN: miss reproduces."""
-    miss = _misses("(function(){var o={get x(){return '%s';}};return Object.assign({},o).x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F702 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var o={get x(){return '%s';}};return Object.assign({},o).x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f702_s2_open():
-    """F702 OPEN: miss reproduces."""
-    miss = _misses("(function(){var o={get x(){return '%s';}};var c=Object.assign({z:1},o);return c.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F702 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var o={get x(){return '%s';}};var c=Object.assign({z:1},o);return c.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f703_s1_open():
-    """F703 OPEN: miss reproduces."""
-    miss = _misses("(function(){var o={};o.__defineGetter__('x',function(){return '%s';});return o.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F703 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var o={};o.__defineGetter__('x',function(){return '%s';});return o.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f703_s2_open():
-    """F703 OPEN: miss reproduces."""
-    miss = _misses("(function(){var o={};o.__defineGetter__('a',function(){return '%s';});o.__defineGetter__('b',function(){return '%s';});return o.a+o.b;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F703 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var o={};o.__defineGetter__('a',function(){return '%s';});o.__defineGetter__('b',function(){return '%s';});return o.a+o.b;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f704_s1_open():
-    """F704 OPEN: miss reproduces."""
-    miss = _misses("(function(){var o=Object.create(null,{x:{get:function(){return '%s';}}});return o.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F704 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var o=Object.create(null,{x:{get:function(){return '%s';}}});return o.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f704_s2_open():
-    """F704 OPEN: miss reproduces."""
-    miss = _misses("(function(){var o=Object.create(Object.prototype,{x:{enumerable:true,get:function(){return '%s';}}});return o.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F704 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var o=Object.create(Object.prototype,{x:{enumerable:true,get:function(){return '%s';}}});return o.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f705_s1_open():
-    """F705 OPEN: miss reproduces."""
-    miss = _misses("(function(){var o={get x(){return '%s';}};return Reflect.get(o,'x',{})+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F705 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var o={get x(){return '%s';}};return Reflect.get(o,'x',{})+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f705_s2_open():
-    """F705 OPEN: miss reproduces."""
-    miss = _misses("(function(){var o={get x(){return '%s';}};return Reflect.get(o,'x')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F705 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var o={get x(){return '%s';}};return Reflect.get(o,'x')+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f706_s1_open():
-    """F706 OPEN: miss reproduces."""
-    miss = _misses("(function(){var t={};var p=new Proxy(t,{defineProperty:function(tr,pr,de){tr[pr]='%s';return true;}});Object.defineProperty(p,'x',{value:1});return t.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F706 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var t={};var p=new Proxy(t,{defineProperty:function(tr,pr,de){tr[pr]='%s';return true;}});Object.defineProperty(p,'x',{value:1});return t.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f706_s2_open():
-    """F706 OPEN: miss reproduces."""
-    miss = _misses("(function(){var t={};var p=new Proxy(t,{defineProperty:function(tr,pr,de){tr[pr]='%s';return true;}});Object.defineProperty(p,'y',{value:2});return t.y+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F706 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var t={};var p=new Proxy(t,{defineProperty:function(tr,pr,de){tr[pr]='%s';return true;}});Object.defineProperty(p,'y',{value:2});return t.y+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f707_s1_open():
-    """F707 OPEN: miss reproduces."""
-    miss = _misses("(function(){var t={x:'%s'};var p=new Proxy(t,{getOwnPropertyDescriptor:function(tr,pr){return {value:tr[pr],configurable:true};}});return Object.getOwnPropertyDescriptor(p,'x').value+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F707 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var t={x:'%s'};var p=new Proxy(t,{getOwnPropertyDescriptor:function(tr,pr){return {value:tr[pr],configurable:true};}});return Object.getOwnPropertyDescriptor(p,'x').value+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f707_s2_open():
-    """F707 OPEN: miss reproduces."""
-    miss = _misses("(function(){var t={x:'%s'};var p=new Proxy(t,{getOwnPropertyDescriptor:function(tr,pr){return {value:tr[pr],configurable:true};}});return Reflect.getOwnPropertyDescriptor(p,'x').value+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F707 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var t={x:'%s'};var p=new Proxy(t,{getOwnPropertyDescriptor:function(tr,pr){return {value:tr[pr],configurable:true};}});return Reflect.getOwnPropertyDescriptor(p,'x').value+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f708_s1_open():
-    """F708 OPEN: miss reproduces."""
-    miss = _misses("(function(){var m=new Map([['k','%s']]);return m.get('k')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F708 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var m=new Map([['k','%s']]);return m.get('k')+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f708_s2_open():
-    """F708 OPEN: miss reproduces."""
-    miss = _misses("(function(){var m=new Map();m.set('k','%s');var k='k';return m.get(k)+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F708 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var m=new Map();m.set('k','%s');var k='k';return m.get(k)+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f709_s1_open():
-    """F709 OPEN: miss reproduces."""
-    miss = _misses("(function(){var r='';for(var i=0;i<2;i++){r+=['%s','%s'][i];}return r;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F709 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var r='';for(var i=0;i<2;i++){r+=['%s','%s'][i];}return r;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f709_s2_open():
-    """F709 OPEN: miss reproduces."""
-    miss = _misses("(function(){var r='';var i=0;while(i<2){r+=['%s','%s'][i];i++;}return r;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F709 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var r='';var i=0;while(i<2){r+=['%s','%s'][i];i++;}return r;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f710_s1_open():
-    """F710 OPEN: miss reproduces."""
-    miss = _misses("(function(){var s=new Set(['k']);var f=s.has('k')?'%s':'xx';return f+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F710 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var s=new Set(['k']);var f=s.has('k')?'%s':'xx';return f+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f710_s2_open():
-    """F710 OPEN: miss reproduces."""
-    miss = _misses("(function(){var s=new Set(['q']);return (s.has('q')?'%s':'xx')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F710 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var s=new Set(['q']);return (s.has('q')?'%s':'xx')+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f712_s1_open():
-    """F712 OPEN: miss reproduces."""
-    miss = _misses("(function(){var m=new Map([['k','%s']]);return [...m.entries()][0][1]+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F712 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var m=new Map([['k','%s']]);return [...m.entries()][0][1]+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r49_f712_s2_open():
-    """F712 OPEN: miss reproduces."""
-    miss = _misses("(function(){var m=new Map([['k','%s']]);return Array.from(m)[0][1]+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F712 CLOSED (wave-382 merge): blocks coded."""
+    miss = ok = _blocked("(function(){var m=new Map([['k','%s']]);return Array.from(m)[0][1]+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t
-def test_r49_f711_dot_misdecode_open():
-    """F711 OPEN: raw decoder mis-decodes >2^53 dot read (node-inexact)."""
+def test_r49_f711_dot_misdecode_closed():
+    """F711 CLOSED (wave-382 merge): raw decoder no longer mis-decodes >2^53 dot read (fail-closed)."""
     got = _try_js_expr_decode_all("({x:9007199254740993}).x+'" + _B + "'")
-    ok = got == "9007199254740993" + _B
-    return ("HELD" if ok else "BREAK", "misdecode=%s" % ok)
+    ok = got != "9007199254740993" + _B
+    return ("HELD" if ok else "BREAK", "no-misdecode=%s" % ok)
 
 
 @_t
-def test_r49_f711_bracket_misdecode_open():
-    """F711 OPEN: raw decoder mis-decodes >2^53 bracket read."""
+def test_r49_f711_bracket_misdecode_closed():
+    """F711 CLOSED (wave-382 merge): raw decoder no longer mis-decodes >2^53 bracket read (fail-closed)."""
     got = _try_js_expr_decode_all("({x:9007199254740993})['x']+'" + _B + "'")
-    ok = got == "9007199254740993" + _B
-    return ("HELD" if ok else "BREAK", "misdecode=%s" % ok)
+    ok = got != "9007199254740993" + _B
+    return ("HELD" if ok else "BREAK", "no-misdecode=%s" % ok)
 # ------------------------------------------------- this round (must miss)
 
 

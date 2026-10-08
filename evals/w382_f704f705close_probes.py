@@ -366,11 +366,11 @@ def test_p4_siblings_hold():
 
 @_t
 def test_p5_open_neighbors_miss():
-    """Open F700-F703/F706-F712 filed shapes still miss (nothing absorbed)."""
+    """F706/F708/F710 now CLOSED by sibling lanes (merge): their shapes block coded."""
     ps = ["(function(){var s=new Set(['k']);var f=s.has('k')?'%s':'xx';return f+'%s';})()" % (_A, _B),
           "(function(){var t={};var p=new Proxy(t,{defineProperty:function(tr,pr,de){tr[pr]='%s';return true;}});Object.defineProperty(p,'x',{value:1});return t.x+'%s';})()" % (_A, _B),
           "(function(){var m=new Map([['k','%s']]);return m.get('k')+'%s';})()" % (_A, _B)]
-    bad = [p for p in ps if not _misses(p)]
+    bad = [p for p in ps if not _blocked(p)]
     return ("HELD" if not bad else "BREAK", "n=%d" % len(ps))
 
 
@@ -394,8 +394,8 @@ def test_p7_pin_footer():
     """Pin 2143; lane-local footer (open F700-F703, F706-F712 / next F713)."""
     ok = (TAXONOMY_PIN == 2143 and len(TAXONOMY) > 0)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and ("Next free finding: **F713**" in text)
-    ok = ok and ("Open findings: F700, F701, F702, F703, F706, F707, F708, F709, F710, F711, F712." in text)
+    ok = ok and ("Next free finding: **F738**" in text)
+    ok = ok and ("Open findings: F713, F714, F715, F716, F717, F718, F719, F720, F721, F722, F723, F724, F725, F726, F727, F728, F729, F730, F731, F732, F733, F734, F735, F736, F737." in text)
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 
 
