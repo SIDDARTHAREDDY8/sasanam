@@ -249,14 +249,15 @@ def test_p3_bounds():
     "instance-getter", and "class-expr" shapes below were F662
     fail-closed bounds; F672 (wave-380 lane 1) now models those
     productions node-exactly, so they decode -- see
-    test_p3b_f672_absorbed. Honest absorption of documented
-    residuals, not a regression.
+    test_p3b_f672_absorbed. NOTE (wave-381 lane 4): the
+    "constructor" shape below was an F662 fail-closed bound; F690
+    (wave-381 lane 4) now models constructor this-assignments
+    node-exactly, so it decodes -- see test_p3c_f690_absorbed.
+    Honest absorption of documented residuals, not a regression.
     """
     cases = [
         ("extends", "(function(){class C extends Object{static x='" + _A
          + "';}return C.x+'" + _B + "';})()"),
-        ("constructor", "(function(){class C{constructor(){this.x='" + _A
-         + "';}}return new C().x+'" + _B + "';})()"),
         ("private", "(function(){class C{#x='qx';static y='f2';}return C.y;})()"),
         ("nonlit-field", "(function(){class C{static x=y;}return C.x;})()"),
         ("uninit-read", "(function(){class C{static x;}return C.x+'" + _B
@@ -355,6 +356,33 @@ def test_p3b_f672_absorbed():
     ]
     bad = [n for n, p in cases
            if not (_decode_exact_f672(p) == _CRED and _blocked(p))]
+    ok = not bad
+    return ("HELD" if ok else "BREAK", "bad=%s" % (bad,))
+
+
+def _decode_exact_f690(js):
+    """Exact decoded value via the F690 ctor parser (internal seam)."""
+    state = {"ops": 0, "parts": 0, "depth": 0}
+    r = _dlp._js_parse_f690_ctor_iife(js, 0, 0, state)
+    if r is None:
+        return None
+    val, _ = r
+    return val if isinstance(val, str) else None
+
+
+def test_p3c_f690_absorbed():
+    """F690-absorbed ex-bound: decodes node-exactly (wave-381 lane 4).
+
+    The constructor shape was an F662 fail-closed bound; F690 models
+    constructor this-assignments node-exactly, so it now decodes to
+    the credential. Honest absorption of a documented residual.
+    """
+    cases = [
+        ("constructor", "(function(){class C{constructor(){this.x='" + _A
+         + "';}}return new C().x+'" + _B + "';})()"),
+    ]
+    bad = [n for n, p in cases
+           if not (_decode_exact_f690(p) == _CRED and _blocked(p))]
     ok = not bad
     return ("HELD" if ok else "BREAK", "bad=%s" % (bad,))
 

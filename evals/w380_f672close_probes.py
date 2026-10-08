@@ -174,7 +174,10 @@ _BOUNDS = [
     "dup-priv",
     "cross-class-priv",
     "priv-never-called-outofscope",
-    "constructor",
+    # NOTE (wave-381 lane 4): "constructor" was an F672 fail-closed
+    # bound; F690 now models constructor this-assignments
+    # node-exactly -- see test_p3b_f690_absorbed below. Honest
+    # absorption of a documented residual, not a regression.
     "private-method",
     "setter",
     "async-method",
@@ -210,7 +213,7 @@ _BOUND_TPLS = {
     "dup-priv": "(function(){class C{static #x='%s';static #x='q';}return C.y;})()",
     "cross-class-priv": "(function(){class C{static #x='%s';}class D{static y(){return C.#x;}}return D.y();})()",
     "priv-never-called-outofscope": "(function(){class C{static y(){return C.#z;}}return 'q';})()",
-    "constructor": "(function(){class C{constructor(){this.x='%s';}}return new C().x+'%s';})()",
+    # "constructor" moved to test_p3b_f690_absorbed (wave-381 lane 4).
     "private-method": "(function(){class C{static #m(){return '%s';}}return C.m();})()",
     "setter": "(function(){class C{set x(v){}}return 'q';})()",
     "async-method": "(function(){class C{static async m(){return '%s';}}return 'q';})()",
@@ -254,6 +257,29 @@ def test_p3_bounds_miss():
             bad.append(name)
     ok = not bad
     return ("HELD" if ok else "BREAK", "bad=%s" % (bad,))
+
+
+def _decode_exact_f690(js):
+    """Exact decoded value via the F690 ctor parser (internal seam)."""
+    state = {"ops": 0, "parts": 0, "depth": 0}
+    r = _dlp._js_parse_f690_ctor_iife(js, 0, 0, state)
+    if r is None:
+        return None
+    val, _ = r
+    return val if isinstance(val, str) else None
+
+
+def test_p3b_f690_absorbed():
+    """F690-absorbed ex-bound: decodes node-exactly (wave-381 lane 4).
+
+    The constructor shape was an F672 fail-closed bound; F690 models
+    constructor this-assignments node-exactly, so it now decodes to
+    the credential. Honest absorption of a documented residual.
+    """
+    p = ("(function(){class C{constructor(){this.x='%s';}}"
+         "return new C().x+'%s';})()") % (_A, _B)
+    ok = (_decode_exact_f690(p) == _CRED and _blocked(p))
+    return ("HELD" if ok else "BREAK", "absorbed=%s" % ok)
 
 
 # ------------------------------------------------ sibling closures hold

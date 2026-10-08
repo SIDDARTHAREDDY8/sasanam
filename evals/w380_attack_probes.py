@@ -111,11 +111,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F672-F698 open, next F699 (this lane)."""
+    """Control: footer shows F690+F692 closed (this lane); open F686-F689, F691, F693-F699, next F700."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F700**" in text
-          and "Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text)  # Wave-380 merge: F672-F685 CLOSED; lane-4 F686 -> F699
+          and "Open findings: F686, F687, F688, F689, F691, F693, F694, F695, F696, F697, F698, F699." in text)  # Wave-381 lane 4: F690, F692 CLOSED (was: Wave-380 merge footer open F686-F699 / next F700)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -324,16 +324,16 @@ def test_r48_f689_for_of_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r48_f690_function_ctor_open():
-    """F690 OPEN (function-ctor): miss reproduces."""
-    miss = _misses("(function(){function C(){this.x='%s';}var c=new C();return c.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f690_function_ctor_closed():
+    """F690 CLOSED (function-ctor): still blocks."""
+    ok = _blocked("(function(){function C(){this.x='%s';}var c=new C();return c.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f690=%s" % ok)
 
 @_t
-def test_r48_f690_class_ctor_open():
-    """F690 OPEN (class-ctor): miss reproduces."""
-    miss = _misses("(function(){class C{constructor(){this.x='%s';}}return new C().x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f690_class_ctor_closed():
+    """F690 CLOSED (class-ctor): still blocks."""
+    ok = _blocked("(function(){class C{constructor(){this.x='%s';}}return new C().x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f690=%s" % ok)
 
 @_t
 def test_r48_f691_gopd_value_open():
@@ -348,16 +348,16 @@ def test_r48_f691_reflect_value_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r48_f692_super_static_field_open():
-    """F692 OPEN (super-static-field): miss reproduces."""
-    miss = _misses("(function(){class B{static x='%s';}class D extends B{static y(){return super.x;}}return D.y()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f692_super_static_field_closed():
+    """F692 CLOSED (super-static-field): still blocks."""
+    ok = _blocked("(function(){class B{static x='%s';}class D extends B{static y(){return super.x;}}return D.y()+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f692=%s" % ok)
 
 @_t
-def test_r48_f692_super_static_getter_open():
-    """F692 OPEN (super-static-getter): miss reproduces."""
-    miss = _misses("(function(){class B{static get x(){return '%s';}}class D extends B{static y(){return super.x;}}return D.y()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f692_super_static_getter_closed():
+    """F692 CLOSED (super-static-getter): still blocks."""
+    ok = _blocked("(function(){class B{static get x(){return '%s';}}class D extends B{static y(){return super.x;}}return D.y()+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f692=%s" % ok)
 
 @_t
 def test_r48_f693_rename_nested_open():
