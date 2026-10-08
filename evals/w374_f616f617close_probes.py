@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """Wave-374 lane 5 close probes: F616 + F617 (URLSearchParams mutation family).
 
+Wave-375 lane 5 update (2026-10-08): F627 (var-bound VALUES) folded
+into the F616 production -- bindings are role-agnostic string
+constants; F635 (var-bound NAMES on the searchParams receiver) folded
+into the F617 production via the F616-style name-binding section. The
+p2/p4 variant lists and p3/p6 bound lists below reflect the folded
+close-whens; the lane-local footer is open F621-F625, F628-F634,
+F636-F639 / next F640.
+
 F616 (LOW, filed attack round 41): variable-bound (non-literal) parameter
 names in URLSearchParams statement-form mutations. F599/F606/F610 (all
 CLOSED) model the statement-form mutation model with LITERAL parameter
@@ -11,10 +19,12 @@ name-binding axis escaped:
   (function(){var p=new URLSearchParams('q=xx');var k='q';p.set(k,'f1');return p.get(k)+'f2';})()
 all node-evaluate to the exact credential (v24.20.0) while the decoder
 produces zero variants. Closed by _js_parse_f616_varname_mutation_iife:
-the F599/F606/F610 statement-form union with `var|const|let NAME='LIT'`
-name decls; unbound names fail closed (engine throws ReferenceError);
->=1 mutation required so the zero-mutation F576-domain control stays
-quiet; getAll (F599/F606) and get+additive-literal-tail (F610) terminals.
+the F599/F606/F610 statement-form union with `var|const|let X='LIT'`
+binding decls (role-agnostic: names and -- since wave-375 lane 5,
+F627 -- values); unbound idents fail closed (engine throws
+ReferenceError); >=1 mutation required so the zero-mutation
+F576-domain control stays quiet; getAll (F599/F606) and
+get+additive-literal-tail (F610) terminals.
 
 F617 (LOW, filed attack round 41): `new URL(...).searchParams`
 set/append/delete + get/getAll laundering. F599 (CLOSED) models the
@@ -26,8 +36,8 @@ so statement-form mutations through it launder exactly like the
 constructor receiver. Closed by _js_parse_f617_url_searchparams_iife:
 initial pairs from the URL query (F576's parse_qsl), append/set/delete
 engine-exact, get (F610 read path) and getAll (F599 read path) terminals;
-literal names only (the F616 x F617 var-name hybrid is a documented
-residual).
+names may be literals or bound idents (F635 folded in 2026-10-08
+wave-375 lane 5); values stay literal-only (documented residual).
 
 Seams under test (tdd): find_credential at the public seam for every
 probe; node v24.20.0 differential (subprocess) for engine-exactness.
@@ -128,6 +138,16 @@ def p2_f616_variants():
         # additive tail twin of the get terminal
         ("get-tail", "(function(){var p=new URLSearchParams('');var k='k';"
          "p.set(k,'%s');return p.get(k)+'%s';})()" % (_A1, _A2)),
+        # var-bound VALUE: CLOSED 2026-10-08 wave-375 lane 5 (F627 folded
+        # into the F616 production -- bindings are role-agnostic
+        # string constants; the same bound ident may serve as a
+        # mutation name in one statement and a value in another)
+        ("var-value", "(function(){var p=new URLSearchParams('');var q='q';"
+         "var v='%s';p.append(q,v);p.append(q,'%s');"
+         "return p.getAll(q).join('');})()" % (_A1, _A2)),
+        # var-bound value with set/get twin
+        ("var-value-set", "(function(){var p=new URLSearchParams('q=xx');"
+         "var v='%s';p.set('q',v);return p.get('q')+'%s';})()" % (_A1, _A2)),
     ]
     bad = [n for n, s in variants if not _blocked(s)]
     return (("HELD", "%d/%d F616 variants decode" % (len(variants), len(variants)))
@@ -168,9 +188,8 @@ def p3_f616_bounds():
         # so no raw/encoding layer can fire: the DECODER must stay quiet
         ("zero-mut-getall-split", "(function(){var p=new URLSearchParams('q=%s&q=%s');"
          "var k='q';return p.getAll(k).join('');})()" % (_A1, _A2)),
-        # var-bound VALUE: documented residual
-        ("var-value", "(function(){var p=new URLSearchParams('');var q='q';"
-         "var v='%s';p.append(q,v);return p.getAll(q).join('');})()" % _A1),
+        # var-bound VALUE: CLOSED 2026-10-08 wave-375 lane 5 (F627 folded
+        # into the F616 production) -- the probe moved to p2 variants
         # has-guard with var-bound name: documented residual
         ("has-guard", "(function(){var p=new URLSearchParams('');var q='q';"
          "p.append(q,'%s');if(p.has(q)){return p.getAll(q).join('');}"
@@ -256,6 +275,16 @@ def p5_f617_variants():
         ("port-frag", "(function(){var u=new URL('http://x:8443/p?q=xx#frag');"
          "u.searchParams.set('q','%s');return u.searchParams.get('q')+'%s';})()"
          % (_A1, _A2)),
+        # var-bound NAME on the searchParams receiver: CLOSED
+        # 2026-10-08 wave-375 lane 5 (F635 folded into the F617
+        # production -- the F616-style name-binding section)
+        ("var-name", "(function(){var u=new URL('http://x/');var q='q';"
+         "u.searchParams.append(q,'%s');u.searchParams.append(q,'%s');"
+         "return u.searchParams.getAll(q).join('');})()" % (_A1, _A2)),
+        # var-bound name with set/get + additive tail twin
+        ("var-name-set", "(function(){var u=new URL('http://x/?q=xx');var k='q';"
+         "u.searchParams.set(k,'%s');return u.searchParams.get(k)+'%s';})()"
+         % (_A1, _A2)),
     ]
     bad = [n for n, s in variants if not _blocked(s)]
     return (("HELD", "%d/%d F617 variants decode" % (len(variants), len(variants)))
@@ -270,11 +299,9 @@ def p6_f617_bounds():
         ("sort", "(function(){var u=new URL('http://x/?q=%s');"
          "u.searchParams.sort();"
          "return u.searchParams.getAll('q').join('');})()" % _A1),
-        # var-bound name on the searchParams receiver: the F616 x F617
-        # hybrid -- FILED as F635 (wave-374 lane 5; renumbered F621->F635 at merge, wave-272); still quiet here
-        ("var-name", "(function(){var u=new URL('http://x/');var q='q';"
-         "u.searchParams.append(q,'%s');"
-         "return u.searchParams.getAll(q).join('');})()" % _A1),
+        # var-bound name on the searchParams receiver: CLOSED 2026-10-08
+        # wave-375 lane 5 (F635 folded into the F617 production) --
+        # the probe moved to p4 variants
         # bare `u.get(...)` without .searchParams: engine throws
         ("no-receiver", "(function(){var u=new URL('http://x/?q=%s');"
          "return u.get('q');})()" % _A1),
@@ -399,8 +426,8 @@ def p9_pin_footer():
     pin_ok = TAXONOMY_PIN == 2140 and guac_graph.TAXONOMY_PIN == 2140
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    footer_ok = ("Next free finding: **F640**" in text  # Wave-374 merge: footer repoint open F621-F639 / next F640
-                 and "Open findings: F621, F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635, F636, F637, F638, F639."  # Wave-374 merge: footer repoint open F621-F639 / next F640
+    footer_ok = ("Next free finding: **F640**" in text  # Wave-375 lane 5: footer repoint open F621-F625, F628-F634, F636-F639 / next F640
+                 and "Open findings: F621, F622, F623, F624, F625, F628, F629, F630, F631, F632, F633, F634, F636, F637, F638, F639."  # Wave-375 lane 5: footer repoint open F621-F625, F628-F634, F636-F639 / next F640
                  in text)
     ok = pin_ok and footer_ok
     return ("HELD" if ok else "BREAK",

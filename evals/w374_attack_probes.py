@@ -9,8 +9,8 @@ New findings (14, all LOW, all OPEN), filed from F621:
 - F623: values()/enumeration reads on Object.fromEntries results -- 3 shapes.
 - F624: String.prototype.slice() with trimming bounds -- 3 shapes.
 - F625: Map entries()/keys() spread into call arguments -- 3 shapes.
-- F626: URLSearchParams iteration protocols (for-of/forEach/keys+get) -- 3 shapes.
-- F627: variable-bound VALUES in URLSearchParams statement-form mutations -- 2 shapes.
+- F626: URLSearchParams iteration protocols (for-of/forEach/keys+get) -- 3 shapes. [CLOSED 2026-10-08 wave-375 lane 5]
+- F627: variable-bound VALUES in URLSearchParams statement-form mutations -- 2 shapes. [CLOSED 2026-10-08 wave-375 lane 5]
 - F628: decodeURIComponent fragment laundering -- 2 shapes.
 - F629: TextDecoder byte assembly -- 2 shapes.
 - F630: JSON.parse-sourced Object.values/Object.entries -- 2 shapes.
@@ -32,9 +32,10 @@ Mechanism notes (verified this round):
 - F615 (OPEN) covers Map.values() spread; entries()/keys() are different
   source productions (F500/F505 precedent) (F625).
 - F599 (CLOSED) models getAll/get terminals on the constructor receiver;
-  the iteration read path (for-of/forEach/keys+get) escapes (F626).
-- F616 (OPEN) covers variable-bound parameter NAMES; the VALUE axis is
-  unmodeled (F627).
+  the iteration read path (for-of/forEach/keys+get) escaped (F626) --
+  CLOSED 2026-10-08 wave-375 lane 5.
+- F616 (CLOSED) covers variable-bound parameter NAMES; the VALUE axis was
+  unmodeled (F627) -- CLOSED 2026-10-08 wave-375 lane 5 (folded into F616).
 - F576 (CLOSED) models the full-credential decodeURIComponent roundtrip;
   fragment forms escape (F611 fragment precedent) (F628).
 - TextDecoder().decode(Uint8Array) is an unmodeled deserializing builtin
@@ -156,8 +157,8 @@ def test_b0_footer_state():
     """Control: footer shows F612-F634 open, next F635 (this lane)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F640**" in text  # Wave-374 merge: final truth  # Wave-374 merge: footer repoint open F621-F639 / next F640
-          and "Open findings: F621, F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635, F636, F637, F638, F639." in text)  # Wave-374 merge: final truth  # Wave-374 merge: footer repoint open F621-F639 / next F640
+    ok = ("Next free finding: **F640**" in text  # Wave-375 lane 5: lane-local truth  # Wave-375 lane 5: footer repoint open F621-F625, F628-F634, F636-F639 / next F640
+          and "Open findings: F621, F622, F623, F624, F625, F628, F629, F630, F631, F632, F633, F634, F636, F637, F638, F639." in text)  # Wave-375 lane 5: lane-local truth  # Wave-375 lane 5: footer repoint open F621-F625, F628-F634, F636-F639 / next F640
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -271,17 +272,17 @@ def test_r42_f625_open():
 
 
 @_t
-def test_r42_f626_open():
-    """F626 OPEN: URLSearchParams for-of iteration miss."""
-    miss = _misses("(function(){var p=new URLSearchParams('a=%s&b=%s');var s='';for(var kv of p){s+=kv[1];}return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f626_closed():
+    """F626 CLOSED (2026-10-08 wave-375 lane 5): for-of iteration blocks."""
+    hit = _blocked("(function(){var p=new URLSearchParams('a=%s&b=%s');var s='';for(var kv of p){s+=kv[1];}return s;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r42_f627_open():
-    """F627 OPEN: var-bound VALUES in USP mutations miss."""
-    miss = _misses("(function(){var p=new URLSearchParams('');var v='%s';p.append('q',v);p.append('q','%s');return p.getAll('q').join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f627_closed():
+    """F627 CLOSED (2026-10-08 wave-375 lane 5): var-bound VALUES block."""
+    hit = _blocked("(function(){var p=new URLSearchParams('');var v='%s';p.append('q',v);p.append('q','%s');return p.getAll('q').join('');})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
@@ -389,22 +390,22 @@ def test_r42_f625_s3_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r42_f626_s2_open():
-    """F626 OPEN (shape params-foreach): miss reproduces."""
-    miss = _misses("(function(){var p=new URLSearchParams('a=%s&b=%s');var s='';p.forEach(function(v){s+=v;});return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f626_s2_closed():
+    """F626 CLOSED (shape params-foreach): blocks."""
+    hit = _blocked("(function(){var p=new URLSearchParams('a=%s&b=%s');var s='';p.forEach(function(v){s+=v;});return s;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r42_f626_s3_open():
-    """F626 OPEN (shape params-keys-get): miss reproduces."""
-    miss = _misses("(function(){var p=new URLSearchParams('a=%s&b=%s');var s='';for(var k of p.keys()){s+=p.get(k);}return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f626_s3_closed():
+    """F626 CLOSED (shape params-keys-get): blocks."""
+    hit = _blocked("(function(){var p=new URLSearchParams('a=%s&b=%s');var s='';for(var k of p.keys()){s+=p.get(k);}return s;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r42_f627_s2_open():
-    """F627 OPEN (shape set-varbound-value): miss reproduces."""
-    miss = _misses("(function(){var p=new URLSearchParams('q=xx');var v='%s';p.set('q',v);return p.get('q')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f627_s2_closed():
+    """F627 CLOSED (shape set-varbound-value): blocks."""
+    hit = _blocked("(function(){var p=new URLSearchParams('q=xx');var v='%s';p.set('q',v);return p.get('q')+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_r42_f628_s2_open():

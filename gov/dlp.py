@@ -20879,24 +20879,29 @@ def _js_parse_f612_values_varbound_iife(text, i, depth, state):
 
 
 def _js_parse_f616_varname_mutation_iife(text, i, depth, state):
-    """Parse `(function(){DECL p=new URLSearchParams('LIT');[DECL N='LIT';]*[MUT;]*TERM})()` (F616).
+    """Parse `(function(){DECL p=new URLSearchParams('LIT');[DECL X='LIT';]*[MUT;]*TERM})()` (F616).
 
     F599/F606/F610 (all CLOSED) model statement-form URLSearchParams
-    mutations with LITERAL parameter names and fail the whole shape
-    closed on a non-literal name. The name-binding axis is a separate
-    production: a `var|const|let NAME='LIT';` declaration in the same
-    IIFE body binds NAME, and mutation/terminal parameter names may be
-    that bound ident. Node-exact desugar (v24.20.0):
-    - name decls: `var|const|let NAME='LIT';` -- one declarator per
+    mutations with LITERAL parameter names and values and fail the
+    whole shape closed on a non-literal argument. The variable-binding
+    axis is a separate production: `var|const|let X='LIT';`
+    declarations in the same IIFE body bind X, and mutation/terminal
+    parameter names AND values may be that bound ident. Node-exact
+    desugar (v24.20.0):
+    - bindings: `var|const|let X='LIT';` -- one declarator per
       statement, string-literal RHS only (anything else fails the
-      shape closed); a duplicate `var` NAME rebinds (last wins --
-      engine-exact); a duplicate `let`/`const` NAME is a SyntaxError
-      in the engine and fails the shape closed; NAME may not be the
-      params ident or `arguments`;
+      shape closed); a duplicate `var` X rebinds (last wins --
+      engine-exact); a duplicate `let`/`const` X is a SyntaxError
+      in the engine and fails the shape closed; X may not be the
+      params ident or `arguments`. Bindings are role-agnostic: the
+      same bound string may serve as a mutation name in one
+      statement and a mutation value in another (engine-exact --
+      it is just the string value);
     - mutations: append/set/sort/delete exactly as in F606
       (engine-exact), with the name argument a string literal or a
-      bound ident; VALUES stay literal-only (a var-bound value is a
-      documented residual);
+      bound ident and the VALUE argument a string literal or a
+      bound ident (F627, folded into this production 2026-10-08
+      wave-375 lane 5);
     - terminals: `return p.getAll('K'|<bound>)<postfix>;` (the
       F599/F606 getAll -- all K-values in insertion order through
       _js_parse_postfix; the return must be a string) or
@@ -20906,24 +20911,24 @@ def _js_parse_f616_varname_mutation_iife(text, i, depth, state):
     The invocation must be exactly `()`.
 
     Disjointness: tried after F610. F599/F606/F610 fail closed on
-    every shape this accepts (a non-literal name anywhere, or a name
-    declaration statement) and accept only the all-literal,
-    declaration-free forms, so no previously-decoded input changes
-    behavior.
+    every shape this accepts (a non-literal name or value anywhere,
+    or a binding declaration statement) and accept only the
+    all-literal, declaration-free forms, so no previously-decoded
+    input changes behavior.
 
     Bounds (all fail closed -- rejected, never mis-decoded):
-    - no name declarations at all (the all-literal forms belong to
-      F599/F606/F610 -- this parser owns only the name axis);
-    - ZERO mutation statements (a name-bound terminal on a
-      constructor string with no mutations is F576's domain -- the
-      F616 red-first pins it fails closed);
-    - an unbound name ident (the engine throws ReferenceError; the
-      decoder never decodes a throw), a non-string-literal name RHS,
-      a name decl after the first mutation, a name decl colliding
-      with the params ident;
-    - var-bound mutation VALUES, has-guarded terminals (F606 owns
-      the literal form; the var-name hybrid is a documented
-      residual), `new URL(...)` bindings (F617 owns the searchParams
+    - no bindings at all (the all-literal forms belong to
+      F599/F606/F610 -- this parser owns only the var-bound axis);
+    - ZERO mutation statements (a bound terminal on a constructor
+      string with no mutations is F576's domain -- the F616 red-first
+      pins it fails closed);
+    - an unbound name/value ident (the engine throws ReferenceError;
+      the decoder never decodes a throw), a non-string-literal
+      binding RHS, a binding decl after the first mutation, a
+      binding decl colliding with the params ident;
+    - has-guarded terminals (F606 owns the literal form; the
+      var-bound hybrid is a documented residual),
+      `new URL(...)` bindings (F617 owns the searchParams
       receiver), a non-literal constructor arg, extra mutation args,
       a receiver other than the bare bound ident, a missing `;`;
     - a named function, parameters, a directive prologue, extra
@@ -20970,11 +20975,14 @@ def _js_parse_f616_varname_mutation_iife(text, i, depth, state):
         pairs = list(_pv.pairs)
         sj = _js_skip_ws(text, sj)
         sj = _js_expect(text, sj, ";")
-        # Zero or more `var|const|let NAME='LIT';` name bindings.
-        # A malformed decl ends the name section (the mutation loop
+        # Zero or more `var|const|let X='LIT';` bindings. A
+        # malformed decl ends the binding section (the mutation loop
         # then fails on `var`, so the shape fails closed as before).
+        # Bindings are role-agnostic string constants: the same bound
+        # ident may serve as a mutation name in one statement and a
+        # mutation value in another (engine-exact).
         _names = {}
-        _kinds = {}  # NAME -> 'var' | 'const' | 'let'
+        _kinds = {}  # X -> 'var' | 'const' | 'let'
         while True:
             q = _js_skip_ws(text, sj)
             _dkw, _dm = _js_match_decl_kw(text, q)
@@ -21004,26 +21012,27 @@ def _js_parse_f616_varname_mutation_iife(text, i, depth, state):
                 raise _JSExprFail("F616 duplicate let/const name")
             _names[_nm] = _nv
             _kinds[_nm] = _dkw
-            state["parts"] += 1  # the name binding is obfuscation-shaped
+            state["parts"] += 1  # the binding is obfuscation-shaped
             if state["parts"] > _JS_EXPR_MAX_PARTS:
                 raise _JSExprFail("too many parts")
             sj = r  # _js_expect returns the index past ';'
         if not _names:
             # The all-literal, declaration-free forms belong to
-            # F599/F606/F610 -- this parser owns only the name axis.
+            # F599/F606/F610 -- this parser owns only the var-bound
+            # axis.
             raise _JSExprFail("F616 no name bindings")
 
-        def _res_name(q, what):
-            # Resolve a mutation/terminal parameter name: a string
-            # literal, or a bound ident from the name section. An
-            # unbound ident is a ReferenceError in the engine -- fail
-            # closed, never mis-decoded.
+        def _res_bound(q, what):
+            # Resolve a mutation/terminal parameter name or value: a
+            # string literal, or a bound ident from the binding
+            # section. An unbound ident is a ReferenceError in the
+            # engine -- fail closed, never mis-decoded.
             if q < n and text[q] in "'\"":
                 _lit, _r = _js_parse_string(text, q)
                 return _lit, _r, False
             _nm2, _r = _js_parse_ident(text, q)
             if _nm2 not in _names:
-                raise _JSExprFail(what + " name not a bound literal")
+                raise _JSExprFail(what + " arg not a bound literal")
             return _names[_nm2], _r, True
 
         # Zero or more mutation statements (F606's union: append /
@@ -21056,15 +21065,15 @@ def _js_parse_f616_varname_mutation_iife(text, i, depth, state):
                 # sort() takes no name argument; append/set/delete do.
                 _mn = None
                 if _mname != "sort":
-                    _mn, q, _ = _res_name(q, "F616 mutation")
+                    _mn, q, _ = _res_bound(q, "F616 mutation")
                 if _mname in ("append", "set"):
                     q = _js_skip_ws(text, q)
                     if q >= n or text[q] != ",":
                         raise _JSExprFail("F616 mutation arity")
                     q = _js_skip_ws(text, q + 1)
-                    if q >= n or text[q] not in "'\"":
-                        raise _JSExprFail("F616 mutation value not a literal")
-                    _mv, q = _js_parse_string(text, q)
+                    # The value is a string literal or a bound ident
+                    # (F627, folded in 2026-10-08 wave-375 lane 5).
+                    _mv, q, _ = _res_bound(q, "F616 mutation")
                     q = _js_skip_ws(text, q)
                     if q >= n or text[q] != ")":
                         raise _JSExprFail("F616 mutation unterminated")
@@ -21132,7 +21141,7 @@ def _js_parse_f616_varname_mutation_iife(text, i, depth, state):
         if q >= n or text[q] != "(":
             raise _JSExprFail("F616 terminal without paren")
         q = _js_skip_ws(text, q + 1)
-        _gkey, q, _ = _res_name(q, "F616 terminal")
+        _gkey, q, _ = _res_bound(q, "F616 terminal")
         q = _js_skip_ws(text, q)
         if q >= n or text[q] != ")":
             raise _JSExprFail("F616 terminal unterminated")
@@ -21229,14 +21238,22 @@ def _js_parse_f617_url_searchparams_iife(text, i, depth, state):
       forms fail closed, inherited);
     - the initial pairs are the form-urlencoded parse of the URL's
       query (urllib.parse.parse_qsl, node-identical per F576);
-    - `u.searchParams.append('N','V');` appends, `.set('N','V')`
-      replaces the first N-pair's value and drops the others (or
-      appends), `.delete('N');` removes every N-pair -- engine-exact,
-      node v24.20.0;
-    - terminals: `return u.searchParams.get('K')<postfix>[+'LIT']*;`
+    - optional `var|const|let NAME='LIT';` name bindings (F635,
+      folded into this production 2026-10-08 wave-375 lane 5): a
+      duplicate `var` NAME rebinds (last wins -- engine-exact); a
+      duplicate `let`/`const` is a SyntaxError and fails closed;
+      NAME may not be the URL ident or `arguments`; a binding decl
+      after the first mutation fails closed;
+    - `u.searchParams.append('N'|<bound>,'V');` appends,
+      `.set('N'|<bound>,'V')` replaces the first N-pair's value and
+      drops the others (or appends), `.delete('N'|<bound>);`
+      removes every N-pair -- engine-exact, node v24.20.0. VALUES
+      stay literal-only (a var-bound value on the searchParams
+      receiver is a documented residual);
+    - terminals: `return u.searchParams.get('K'|<bound>)<postfix>[+'LIT']*;`
       (F610's read path: first K-value; missing name is JS null and
       fails closed) or
-      `return u.searchParams.getAll('K')<postfix>;` (F599's read path:
+      `return u.searchParams.getAll('K'|<bound>)<postfix>;` (F599's read path:
       all K-values in insertion order; the return must be a string).
     The invocation must be exactly `()`.
 
@@ -21250,10 +21267,12 @@ def _js_parse_f617_url_searchparams_iife(text, i, depth, state):
       family F599/F606/F610/F616 owns those), a bare `new URL`
       binding used without `.searchParams` (the engine has no such
       member -- it throws);
-    - var-bound parameter names (the F616 x F617 hybrid is a
-      documented residual), sort mutations (documented residual),
-      has-guarded terminals (documented residual), non-literal
-      mutation names/values, extra mutation args, a missing `;`;
+    - var-bound mutation VALUES on the searchParams receiver
+      (documented residual), sort mutations (documented residual),
+      has-guarded terminals (documented residual), an unbound name
+      ident (engine ReferenceError), non-literal mutation
+      names/values other than bound idents, extra mutation args, a
+      missing `;`;
     - a named function, parameters, a directive prologue, extra
       statements, reassignment of the var, non-empty call args.
     Returns (value, next_index), or None when text[i] is not this
@@ -21306,6 +21325,57 @@ def _js_parse_f617_url_searchparams_iife(text, i, depth, state):
         sj = _js_skip_ws(text, sj)
         sj = _js_expect(text, sj, ";")
 
+        # Zero or more `var|const|let NAME='LIT';` name bindings
+        # (F635). A malformed decl ends the binding section (the
+        # mutation loop then fails on `var`, so the shape fails
+        # closed as before). The all-literal, declaration-free forms
+        # keep decoding exactly as before -- this section only adds
+        # shapes F599/F606/F610/F616 all fail closed on.
+        _names = {}
+        _kinds = {}  # NAME -> 'var' | 'const' | 'let'
+        while True:
+            bq = _js_skip_ws(text, sj)
+            _dkw, _dm = _js_match_decl_kw(text, bq)
+            if _dkw is None:
+                break
+            try:
+                r = _js_skip_ws(text, _dm)
+                _nm, r = _js_parse_ident(text, r)
+                if _nm == "arguments" or _nm == pname:
+                    raise _JSExprFail("F617 bad name ident")
+                r = _js_skip_ws(text, r)
+                r = _js_expect(text, r, "=")
+                r = _js_skip_ws(text, r)
+                if r >= n or text[r] not in "'\"":
+                    raise _JSExprFail("F617 name value not a literal")
+                _nv, r = _js_parse_string(text, r)
+                r = _js_skip_ws(text, r)
+                r = _js_expect(text, r, ";")
+            except _JSExprFail:
+                break
+            if _nm in _names and (_kinds[_nm] != "var" or _dkw != "var"):
+                # Engine-exact (node v24.20.0): only `var` rebinds.
+                raise _JSExprFail("F617 duplicate let/const name")
+            _names[_nm] = _nv
+            _kinds[_nm] = _dkw
+            state["parts"] += 1  # the name binding is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = r
+
+        def _res_name(q, what):
+            # Resolve a mutation/terminal parameter name: a string
+            # literal, or a bound ident from the name section. An
+            # unbound ident is a ReferenceError in the engine -- fail
+            # closed, never mis-decoded.
+            if q < n and text[q] in "'\"":
+                _lit, _r = _js_parse_string(text, q)
+                return _lit, _r
+            _nm2, _r = _js_parse_ident(text, q)
+            if _nm2 not in _names:
+                raise _JSExprFail(what + " name not a bound literal")
+            return _names[_nm2], _r
+
         def _recv(q):
             # Parse the `u.searchParams` receiver at q; return the
             # next index. Dot and string-literal bracket forms both
@@ -21345,9 +21415,10 @@ def _js_parse_f617_url_searchparams_iife(text, i, depth, state):
                 if q >= n or text[q] != "(":
                     raise _JSExprFail("F617 mutation without paren")
                 q = _js_skip_ws(text, q + 1)
-                if q >= n or text[q] not in "'\"":
-                    raise _JSExprFail("F617 mutation name not a literal")
-                _mn, q = _js_parse_string(text, q)
+                # The name is a string literal or a bound ident
+                # (F635); a var-bound VALUE stays fail-closed
+                # (documented residual).
+                _mn, q = _res_name(q, "F617 mutation")
                 if _mname in ("append", "set"):
                     q = _js_skip_ws(text, q)
                     if q >= n or text[q] != ",":
@@ -21411,9 +21482,9 @@ def _js_parse_f617_url_searchparams_iife(text, i, depth, state):
         if q >= n or text[q] != "(":
             raise _JSExprFail("F617 terminal without paren")
         q = _js_skip_ws(text, q + 1)
-        if q >= n or text[q] not in "'\"":
-            raise _JSExprFail("F617 terminal key not a literal")
-        _gkey, q = _js_parse_string(text, q)
+        # The terminal key is a string literal or a bound ident
+        # (F635).
+        _gkey, q = _res_name(q, "F617 terminal")
         q = _js_skip_ws(text, q)
         if q >= n or text[q] != ")":
             raise _JSExprFail("F617 terminal unterminated")
@@ -21485,6 +21556,341 @@ def _js_parse_f617_url_searchparams_iife(text, i, depth, state):
         j = _js_expect(text, j, ")")
         state["ops"] += 1  # the iife wrapper is obfuscation-shaped
         return _rval, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f626_params_iteration_iife(text, i, depth, state):
+    """Parse `(function(){DECL p=new URLSearchParams('LIT');DECL s='LIT';LOOP return s;})()` (F626).
+
+    F599 (CLOSED) models append/set statement-form mutations with
+    getAll/get terminal reads on the constructor receiver, but the
+    ITERATION read path has no modeled path on the same receiver.
+    All three filed shapes node-evaluate to the exact credential
+    (v24.20.0) while the decoder produces zero variants:
+    - `(function(){var p=new URLSearchParams('a=f1&b=f2');var s='';for(var kv of p){s+=kv[1];}return s;})()`
+    - `(function(){var p=new URLSearchParams('a=f1&b=f2');var s='';p.forEach(function(v){s+=v;});return s;})()`
+    - `(function(){var p=new URLSearchParams('a=f1&b=f2');var s='';for(var k of p.keys()){s+=p.get(k);}return s;})()`
+    Node-exact desugar (v24.20.0):
+    - `var|const|let p=new URLSearchParams('LIT')` binds p to the
+      _JSURLParams (F576's parse -- urllib.parse.parse_qsl,
+      node-identical);
+    - `var|let s='LIT';` seeds the accumulator (`const` throws on
+      `s+=` in the engine -- fails closed, node-verified);
+    - the loop is exactly one of:
+      - `for(var|let|const KV of p){s+=KV[0|1];}` or
+        `of p.entries()` -- KV binds each [name, value] pair in
+        order; KV[0] is the name, KV[1] the value (node-verified);
+      - `for(var|let|const K of p.keys()){s+=p.get(K);}` -- K binds
+        each pair name in order, duplicates included; `p.get(K)`
+        is the FIRST value for that name (node-verified); the
+        `s+=K;` name-accumulating twin is engine-identical
+        (node-verified);
+      - `for(var|let|const V of p.values()){s+=V;}` -- V binds each
+        value in order (node-verified);
+      - `p.forEach(function(V){s+=V;});` or `p.forEach((V)=>{s+=V;});`
+        -- the callback runs once per pair with (value, name,
+        params); exactly one parameter (shadowing s/p/arguments
+        fails closed), braced body holding only `s+=V;`
+        (node-verified);
+    - `return s;` -- the bare accumulator (no postfix).
+    The invocation must be exactly `()`.
+
+    Disjointness: tried after F617. F599/F606/F610/F616 fail closed
+    on every shape this accepts (the accumulator decl, the for-loop
+    and the forEach statement are not mutations, and the terminal is
+    not get/getAll); F617 requires a `new URL(...)` binding. No
+    previously-decoded input changes behavior.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - mutations before the loop (the iteration terminal over a
+      mutated pair list is a documented residual), destructuring
+      loop vars (`for(var [k,v] of p)`), an undeclared loop var, a
+      loop var or callback param shadowing s/p/arguments, a `const`
+      accumulator, extra loop-body statements, a forEach callback
+      with != 1 parameter, concise arrow bodies, mutations inside
+      the loop body (live-iteration semantics the static model does
+      not cover);
+    - a named function, parameters, a directive prologue, extra
+      statements, reassignment of p/s, non-empty call args.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_skip_ws(text, j + 1)
+    if not text.startswith("function", k):
+        return None
+    k2 = k + len("function")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        return None  # functionx -- not our shape
+    if k2 < n and text[k2] in _JS_IDENT_START:
+        return None  # named function -- not our shape
+    try:
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        # `var|const|let p=new URLSearchParams('LIT');`
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F626 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        pname, sj = _js_parse_ident(text, sj)
+        if pname == "arguments":
+            raise _JSExprFail("F626 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        _pv = _js_parse_f576_new_url(text, sj, depth, state)
+        if _pv is None or not isinstance(_pv[0], _JSURLParams):
+            raise _JSExprFail("F626 binding not URLSearchParams")
+        _pv, sj = _pv
+        pairs = list(_pv.pairs)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        # `var|let s='LIT';` -- the accumulator seed. `const`
+        # throws on `s+=` in the engine (node v24.20.0) -- fail
+        # closed rather than decode what the engine throws on.
+        _akw, m = _js_match_decl_kw(text, _js_skip_ws(text, sj))
+        if _akw is None or _akw == "const":
+            raise _JSExprFail("F626 accumulator not var/let")
+        sj = _js_skip_ws(text, m)
+        sname, sj = _js_parse_ident(text, sj)
+        if sname in ("arguments", pname):
+            raise _JSExprFail("F626 bad accumulator ident")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] not in "'\"":
+            raise _JSExprFail("F626 accumulator seed not a literal")
+        seed, sj = _js_parse_string(text, sj)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        state["parts"] += len(pairs) + 2
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+
+        def _parse_for(q, _fk):
+            # `for(DECL_KW LV of ITEREXPR){s+=ACCUM;}` -- returns
+            # (value, next_index).
+            q = _js_skip_ws(text, _fk)
+            q = _js_expect(text, q, "(")
+            q = _js_skip_ws(text, q)
+            _lkw, q = _js_match_decl_kw(text, q)
+            if _lkw is None:
+                raise _JSExprFail("F626 loop var not declared")
+            q = _js_skip_ws(text, q)
+            _lv, q = _js_parse_ident(text, q)
+            if _lv in ("arguments", pname, sname):
+                raise _JSExprFail("F626 bad loop var")
+            q = _js_skip_ws(text, q)
+            _of = _js_match_kw(text, q, "of")
+            if _of is None:
+                raise _JSExprFail("F626 loop not for-of")
+            q = _js_skip_ws(text, _of)
+            # ITEREXPR: `p`, `p.keys()`, `p.values()`, `p.entries()`.
+            _rn, q = _js_parse_ident(text, q)
+            if _rn != pname:
+                raise _JSExprFail("F626 iterates another ident")
+            q = _js_skip_ws(text, q)
+            _kind = "pairs"  # `of p` -- [name, value] pairs
+            if q < n and text[q] in ".[":
+                _mm, q = _js_f576_member_name(text, q, "f626")
+                if _mm not in ("keys", "values", "entries"):
+                    raise _JSExprFail("F626 iter member not modeled")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, "(")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, ")")
+                _kind = _mm
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ")")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "{")
+            q = _js_skip_ws(text, q)
+            # Body: exactly `s+=ACCUM;`.
+            _sn, q = _js_parse_ident(text, q)
+            if _sn != sname:
+                raise _JSExprFail("F626 body accumulates another ident")
+            q = _js_skip_ws(text, q)
+            if not text.startswith("+=", q):
+                raise _JSExprFail("F626 body not +=")
+            q = _js_skip_ws(text, q + 2)
+            if _kind in ("pairs", "entries"):
+                _an, q = _js_parse_ident(text, q)
+                if _an != _lv:
+                    raise _JSExprFail("F626 accum not the loop var")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, "[")
+                q = _js_skip_ws(text, q)
+                if q >= n or text[q] not in "01":
+                    raise _JSExprFail("F626 accum index not 0/1")
+                _idx = int(text[q])
+                q = _js_skip_ws(text, q + 1)
+                q = _js_expect(text, q, "]")
+                _pieces = [_t[_idx] for _t in pairs]
+            elif _kind == "keys":
+                # `s+=p.get(K);` or the engine-identical `s+=K;`.
+                try:
+                    _rn2, _qq = _js_parse_ident(text, q)
+                except _JSExprFail:
+                    raise _JSExprFail("F626 keys accum not an ident")
+                if _rn2 == pname:
+                    _qq = _js_skip_ws(text, _qq)
+                    if _qq >= n or text[_qq] not in ".[":
+                        raise _JSExprFail("F626 keys accum not p.get")
+                    _gm, _qq = _js_f576_member_name(text, _qq, "f626")
+                    if _gm != "get":
+                        raise _JSExprFail("F626 keys accum not p.get")
+                    _qq = _js_skip_ws(text, _qq)
+                    _qq = _js_expect(text, _qq, "(")
+                    _qq = _js_skip_ws(text, _qq)
+                    _kn, _qq = _js_parse_ident(text, _qq)
+                    if _kn != _lv:
+                        raise _JSExprFail("F626 get not the loop var")
+                    _qq = _js_skip_ws(text, _qq)
+                    _qq = _js_expect(text, _qq, ")")
+                    q = _qq
+                    # First value per name, in key-iteration order
+                    # (keys() yields one entry per pair, duplicates
+                    # included -- node v24.20.0).
+                    _first = {}
+                    for _pn2, _pvv in pairs:
+                        if _pn2 not in _first:
+                            _first[_pn2] = _pvv
+                    _pieces = [_first[_pn2] for _pn2, _ in pairs]
+                elif _rn2 == _lv:
+                    q = _qq
+                    _pieces = [_pn2 for _pn2, _ in pairs]
+                else:
+                    raise _JSExprFail("F626 keys accum unknown")
+            else:  # values
+                _an, q = _js_parse_ident(text, q)
+                if _an != _lv:
+                    raise _JSExprFail("F626 accum not the loop var")
+                _pieces = [_pvv for _, _pvv in pairs]
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "}")
+            _sval = seed
+            for _pc in _pieces:
+                if len(_sval) + len(_pc) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                _sval = _sval + _pc
+            state["parts"] += len(_pieces)
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            return _sval, q
+
+        def _parse_foreach(q):
+            # `p.forEach(CB);` where CB is `function(V){s+=V;}` or
+            # `(V)=>{s+=V;}` -- returns (value, next_index).
+            _rn, q = _js_parse_ident(text, q)
+            if _rn != pname:
+                raise _JSExprFail("F626 forEach on another ident")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] not in ".[":
+                raise _JSExprFail("F626 forEach not a member")
+            _mm, q = _js_f576_member_name(text, q, "f626")
+            if _mm != "forEach":
+                raise _JSExprFail("F626 member not forEach")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "(")
+            q = _js_skip_ws(text, q)
+            if text.startswith("function", q):
+                _k2 = q + len("function")
+                if _k2 < n and text[_k2] in _JS_IDENT_CONT:
+                    raise _JSExprFail("F626 named callback")
+                q = _js_skip_ws(text, _k2)
+                q = _js_expect(text, q, "(")
+                q = _js_skip_ws(text, q)
+                _vn, q = _js_parse_ident(text, q)
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, ")")
+            elif q < n and text[q] == "(":
+                q = _js_skip_ws(text, q + 1)
+                _vn, q = _js_parse_ident(text, q)
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, ")")
+                q = _js_skip_ws(text, q)
+                if not text.startswith("=>", q):
+                    raise _JSExprFail("F626 callback not an arrow")
+                q = q + 2
+            else:
+                raise _JSExprFail("F626 callback not a function")
+            if _vn in ("arguments", pname, sname):
+                raise _JSExprFail("F626 bad callback param")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "{")
+            q = _js_skip_ws(text, q)
+            _sn, q = _js_parse_ident(text, q)
+            if _sn != sname:
+                raise _JSExprFail("F626 callback accumulates another ident")
+            q = _js_skip_ws(text, q)
+            if not text.startswith("+=", q):
+                raise _JSExprFail("F626 callback body not +=")
+            q = _js_skip_ws(text, q + 2)
+            _an, q = _js_parse_ident(text, q)
+            if _an != _vn:
+                raise _JSExprFail("F626 callback accumulates another var")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "}")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ")")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            # forEach invokes the callback per pair with (value,
+            # name, params); the single-param body accumulates the
+            # values in order (node v24.20.0).
+            _sval = seed
+            for _, _pvv in pairs:
+                if len(_sval) + len(_pvv) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                _sval = _sval + _pvv
+            state["parts"] += len(pairs)
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            return _sval, q
+
+        # The single loop statement: for-of or forEach.
+        q = _js_skip_ws(text, sj)
+        _fk = _js_match_kw(text, q, "for")
+        if _fk is not None:
+            _sval, q = _parse_for(q, _fk)
+        else:
+            _sval, q = _parse_foreach(q)
+        # `return s;` -- the bare accumulator.
+        q = _js_skip_ws(text, q)
+        _rk = _js_match_kw(text, q, "return")
+        if _rk is None:
+            raise _JSExprFail("F626 body not return")
+        q = _js_skip_ws(text, _rk)
+        _rn, q = _js_parse_ident(text, q)
+        if _rn != sname:
+            raise _JSExprFail("F626 returns another ident")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        q = _js_skip_ws(text, q)
+        if q != inner_end:
+            raise _JSExprFail("F626 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return _sval, j
     except _JSExprFail:
         return None
 
@@ -26578,6 +26984,21 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                      state)
         if _f617 is not None:
             val, i = _f617
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F626: (function(){DECL p=new URLSearchParams('LIT');
+        #   DECL s='LIT';LOOP return s;})() -- URLSearchParams
+        #   iteration protocols (for-of over p / p.entries() /
+        #   p.keys() / p.values(), and p.forEach with an accumulator
+        #   callback). Tried after F617: F599/F606/F610/F616 fail
+        #   closed on every shape this accepts (the accumulator decl,
+        #   the for-loop and the forEach statement are not mutations,
+        #   and the terminal is not get/getAll); F617 requires a
+        #   `new URL(...)` binding. No previously-decoded input
+        #   changes behavior.
+        _f626 = _js_parse_f626_params_iteration_iife(text, i, depth,
+                                                     state)
+        if _f626 is not None:
+            val, i = _f626
             return _js_parse_postfix(text, i, val, depth, state)
         # F586: (new Map(...)) / (new WeakRef(...)) --
         # parenthesized new-expression receivers, engine-identical
