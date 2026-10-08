@@ -134,11 +134,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F663-F671 open, next F672 (wave-379 lane 1)."""
+    """Control: footer shows F665-F671 open, next F672 (wave-379 merge: lanes 1-2 merged)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F672**" in text
-          and "Open findings: F663, F664, F665, F666, F667, F668, F669, F670, F671." in text)
+          and "Open findings: F665, F666, F667, F668, F669, F670, F671." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -230,13 +230,13 @@ def test_p1_f662_s4_closed():
     return ("HELD" if ok else "BREAK", "f662=%s" % ok)
 
 
-# ------------------------------------------------- F663 open pins (must miss)
+# ------------------------------------------------- F663 closed pins (must block)
 
 @_t
-def test_r46_f663_s1_open():
-    """F663 OPEN (fromEntries member reads): miss reproduces."""
-    miss = _misses("(function(){var o=Object.fromEntries([['a','%s'],['b','%s']]);return o.a+o.b;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f663_s1_closed():
+    """F663 CLOSED (wave-379 lane 2): var-bound fromEntries member reads block."""
+    ok = _blocked("(function(){var o=Object.fromEntries([['a','%s'],['b','%s']]);return o.a+o.b;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)  # Wave-379 lane 2: F663 CLOSED (was r46 open pin)
 
 
 @_t
@@ -246,13 +246,13 @@ def test_p1_f663_values_twin_closed():
     return ("HELD" if ok else "BREAK", "f663-boundary=%s" % ok)
 
 
-# ------------------------------------------------- F664 open pins (must miss)
+# ------------------------------------------------- F664 closed pins (must block)
 
 @_t
-def test_r46_f664_s1_open():
-    """F664 OPEN (descriptor .get() in additive position): miss reproduces."""
-    miss = _misses("(function(){var o={get x(){return '%s';}};return Object.getOwnPropertyDescriptor(o,'x').get()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f664_s1_closed():
+    """F664 CLOSED (wave-379 lane 2): var-bound descriptor .get() additive blocks."""
+    ok = _blocked("(function(){var o={get x(){return '%s';}};return Object.getOwnPropertyDescriptor(o,'x').get()+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)  # Wave-379 lane 2: F664 CLOSED (was r46 open pin)
 
 
 @_t
