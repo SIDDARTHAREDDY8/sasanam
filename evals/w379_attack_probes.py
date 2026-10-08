@@ -127,7 +127,7 @@ def test_p0_pin_taxonomy():
 @_t
 def test_b0_footer_state():
     ok = ("Next free finding: **F700**" in text
-          and "Open findings: F680, F681, F682, F683, F684, F685, F699." in text)  # Wave-380 merge: F672-F679 (lanes 1-6) CLOSED; footer repoint open F680-F685, F699 / next F700
+          and "Open findings: F699." in text)  # Wave-380 merge: F672-F685 (lanes 1-7) CLOSED; lane-4 F686 -> F699; footer repoint open F699 / next F700
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -513,121 +513,121 @@ def test_r47_f679_s7_closed():
     return ("HELD" if ok else "BREAK", "f679=%s" % ok)
 
 
-# ------------------------------------------------- F680 open pins (must miss)
+# ------------------------------------------------- F680 closed pins (must block)
 
 @_t
-def test_r47_f680_s1_open():
-    """F680 OPEN (keyfor): miss reproduces."""
-    miss = _misses("(function(){return Symbol.keyFor(Symbol.for('%s'))+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r47_f680_s2_open():
-    """F680 OPEN (desc): miss reproduces."""
-    miss = _misses("(function(){return Symbol.for('%s').description+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f680_s1_closed():
+    """F680 CLOSED (keyfor): blocks (wave-380 lane 7)."""
+    blocked = not _misses("(function(){return Symbol.keyFor(Symbol.for('%s'))+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
-def test_r47_f680_s3_open():
-    """F680 OPEN (sym-keyed): miss reproduces."""
-    miss = _misses("(function(){var o={[Symbol.for('k')]:'%s'};return o[Symbol.for('k')]+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-# ------------------------------------------------- F681 open pins (must miss)
-
-@_t
-def test_r47_f681_s1_open():
-    """F681 OPEN (splice): miss reproduces."""
-    miss = _misses("(function(){var a=['junk','%s','%s'];a.splice(0,1);return a.join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f680_s2_closed():
+    """F680 CLOSED (desc): blocks (wave-380 lane 7)."""
+    blocked = not _misses("(function(){return Symbol.for('%s').description+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
-def test_r47_f681_s2_open():
-    """F681 OPEN (fill): miss reproduces."""
-    miss = _misses("(function(){var a=['x','y'];a.fill('%s',0,1);a.fill('%s',1,2);return a.join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f680_s3_closed():
+    """F680 CLOSED (sym-keyed): blocks (wave-380 lane 7)."""
+    blocked = not _misses("(function(){var o={[Symbol.for('k')]:'%s'};return o[Symbol.for('k')]+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
-# ------------------------------------------------- F682 open pins (must miss)
-
-@_t
-def test_r47_f682_s1_open():
-    """F682 OPEN (trim): miss reproduces."""
-    miss = _misses("(function(){return ' %s '.trim()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
+# ------------------------------------------------- F681 closed pins (must block)
 
 @_t
-def test_r47_f682_s2_open():
-    """F682 OPEN (trimstart): miss reproduces."""
-    miss = _misses("(function(){return ' %s'.trimStart()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f681_s1_closed():
+    """F681 CLOSED (splice): blocks (wave-380 lane 7)."""
+    blocked = not _misses("(function(){var a=['junk','%s','%s'];a.splice(0,1);return a.join('');})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
-def test_r47_f682_s3_open():
-    """F682 OPEN (trimend): miss reproduces."""
-    miss = _misses("(function(){return '%s '.trimEnd()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f681_s2_closed():
+    """F681 CLOSED (fill): blocks (wave-380 lane 7)."""
+    blocked = not _misses("(function(){var a=['x','y'];a.fill('%s',0,1);a.fill('%s',1,2);return a.join('');})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
-# ------------------------------------------------- F683 open pins (must miss)
-
-@_t
-def test_r47_f683_s1_open():
-    """F683 OPEN (reviver): miss reproduces."""
-    miss = _misses("(function(){return JSON.parse('{\"x\":\"%s\"}',function(k,v){return typeof v==='string'?v+'%s':v;}).x;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
+# ------------------------------------------------- F682 closed pins (must block)
 
 @_t
-def test_r47_f683_s2_open():
-    """F683 OPEN (reviver-key): miss reproduces."""
-    miss = _misses("(function(){return JSON.parse('{\"x\":\"%s\",\"y\":\"z\"}',function(k,v){return k==='x'?v+'%s':v;}).x;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f682_s1_closed():
+    """F682 CLOSED (trim): blocks (wave-380 lane 7)."""
+    blocked = not _misses("(function(){return ' %s '.trim()+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
-def test_r47_f683_s3_open():
-    """F683 OPEN (reviver-arr): miss reproduces."""
-    miss = _misses("(function(){return JSON.parse('[\"%s\"]',function(k,v){return k==='0'?v+'%s':v;})[0];})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-# ------------------------------------------------- F684 open pins (must miss)
-
-@_t
-def test_r47_f684_s1_open():
-    """F684 OPEN (default-ref): miss reproduces."""
-    miss = _misses("(function({a='%s',b=a+'%s'}={}){return b;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f682_s2_closed():
+    """F682 CLOSED (trimstart): blocks (wave-380 lane 7)."""
+    blocked = not _misses("(function(){return ' %s'.trimStart()+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 @_t
-def test_r47_f684_s2_open():
-    """F684 OPEN (nested): miss reproduces."""
-    miss = _misses("(function(){var {x:{y}}={x:{y:'%s'}};return y+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f682_s3_closed():
+    """F682 CLOSED (trimend): blocks (wave-380 lane 7)."""
+    blocked = not _misses("(function(){return '%s '.trimEnd()+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
-# ------------------------------------------------- F685 open pins (must miss)
-
-@_t
-def test_r47_f685_s1_open():
-    """F685 OPEN (arrow-args): miss reproduces."""
-    miss = _misses("(function(){var f=()=>arguments[0];return f()+'%s';})('%s')" % (_B, _A))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
+# ------------------------------------------------- F683 closed pins (must block)
 
 @_t
-def test_r47_f685_s2_open():
-    """F685 OPEN (arrow-args-idx1): miss reproduces."""
-    miss = _misses("(function(){var f=()=>arguments[1];return f()+'%s';})('junk','%s')" % (_B, _A))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f683_s1_closed():
+    """F683 CLOSED (reviver): blocks (wave-380 lane 7)."""
+    blocked = not _misses("(function(){return JSON.parse('{\"x\":\"%s\"}',function(k,v){return typeof v==='string'?v+'%s':v;}).x;})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
+
+
+@_t
+def test_r47_f683_s2_closed():
+    """F683 CLOSED (reviver-key): blocks (wave-380 lane 7)."""
+    blocked = not _misses("(function(){return JSON.parse('{\"x\":\"%s\",\"y\":\"z\"}',function(k,v){return k==='x'?v+'%s':v;}).x;})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
+
+
+@_t
+def test_r47_f683_s3_closed():
+    """F683 CLOSED (reviver-arr): blocks (wave-380 lane 7)."""
+    blocked = not _misses("(function(){return JSON.parse('[\"%s\"]',function(k,v){return k==='0'?v+'%s':v;})[0];})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
+
+
+# ------------------------------------------------- F684 closed pins (must block)
+
+@_t
+def test_r47_f684_s1_closed():
+    """F684 CLOSED (default-ref): blocks (wave-380 lane 7)."""
+    blocked = not _misses("(function({a='%s',b=a+'%s'}={}){return b;})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
+
+
+@_t
+def test_r47_f684_s2_closed():
+    """F684 CLOSED (nested): blocks (wave-380 lane 7)."""
+    blocked = not _misses("(function(){var {x:{y}}={x:{y:'%s'}};return y+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
+
+
+# ------------------------------------------------- F685 closed pins (must block)
+
+@_t
+def test_r47_f685_s1_closed():
+    """F685 CLOSED (arrow-args): blocks (wave-380 lane 7)."""
+    blocked = not _misses("(function(){var f=()=>arguments[0];return f()+'%s';})('%s')" % (_B, _A))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
+
+
+@_t
+def test_r47_f685_s2_closed():
+    """F685 CLOSED (arrow-args-idx1): blocks (wave-380 lane 7)."""
+    blocked = not _misses("(function(){var f=()=>arguments[1];return f()+'%s';})('junk','%s')" % (_B, _A))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 
 

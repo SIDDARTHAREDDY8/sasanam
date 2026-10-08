@@ -2220,7 +2220,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|atob(?![_$A-Za-z0-9])|decodeURIComponent(?![_$A-Za-z0-9])|encodeURIComponent(?![_$A-Za-z0-9])|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty|fromEntries|groupBy)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|Number(?![_$A-Za-z0-9])|Promise(?![_$A-Za-z0-9])|Map[ \t\n\r]*\.[ \t\n\r]*groupBy(?![_$A-Za-z0-9])|new[ \t\n\r]+Map(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|new[ \t\n\r]+Proxy(?![_$A-Za-z0-9])|new[ \t\n\r]+URLSearchParams(?![_$A-Za-z0-9])|new[ \t\n\r]+URL(?![_$A-Za-z0-9])|new[ \t\n\r]+TextDecoder(?![_$A-Za-z0-9])|\(String[ \t\n\r]*\.[ \t\n\r]*raw[ \t\n\r]*`|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|atob(?![_$A-Za-z0-9])|decodeURIComponent(?![_$A-Za-z0-9])|encodeURIComponent(?![_$A-Za-z0-9])|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty|fromEntries|groupBy)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|Symbol(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|Number(?![_$A-Za-z0-9])|Promise(?![_$A-Za-z0-9])|Map[ \t\n\r]*\.[ \t\n\r]*groupBy(?![_$A-Za-z0-9])|new[ \t\n\r]+Map(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|new[ \t\n\r]+Proxy(?![_$A-Za-z0-9])|new[ \t\n\r]+URLSearchParams(?![_$A-Za-z0-9])|new[ \t\n\r]+URL(?![_$A-Za-z0-9])|new[ \t\n\r]+TextDecoder(?![_$A-Za-z0-9])|\(String[ \t\n\r]*\.[ \t\n\r]*raw[ \t\n\r]*`|\(")
 # F536: the structuredClone anchor carries its own ident-boundary
 # lookahead so `structuredClonex(` never anchors (no wasted F512
 # total-attempt budget); the primary branch re-checks the boundary
@@ -4698,6 +4698,66 @@ def _js_parse_bracket_member(text, j):
     if j >= n or text[j] != "]":
         raise _JSExprFail("unterminated member bracket")
     return name, _js_skip_ws(text, j + 1)
+
+
+def _js_parse_f680_symbol_expr(text, i, depth, state):
+    """Parse `Symbol.keyFor(Symbol.for('LIT'))` /
+    `Symbol.for('LIT').description` at text[i] (F680).
+
+    Symbol-mediated fragment reads: the decoder never resolved
+    symbol keys or descriptions. Node-exact (v24.20.0):
+    - `Symbol.keyFor(Symbol.for('LIT'))` is the registry key name
+      ('LIT') -- keyFor returns undefined for non-registry symbols,
+      which fail closed inside _js_parse_symbol_for_expr (bare
+      `Symbol()` never parses there);
+    - `Symbol.for('LIT').description` is the description ('LIT').
+    A bare `Symbol.for('LIT')` (no .description) is NOT a string --
+    the engine throws TypeError on symbol+string concatenation, so
+    this production fails closed on it. (Note: tree-wide, a bare
+    `Symbol.for('LIT')+'LIT2'` may still flag via the pre-existing
+    shared paren-anchor quirk -- the `(` of the call parses as a
+    grouping paren -- which over-blocks in the fail-closed
+    direction; that quirk predates F680 and is out of scope.)
+    Any other Symbol member (`Symbol.iterator`,
+    `Symbol.asyncIterator`, ...) fails closed.
+    Returns (value, next_index) with the postfix chain applied, or
+    None when text[i] is not this shape. The call charges one op
+    (obfuscation-shaped). Never evals.
+    """
+    n = len(text)
+    m = _js_match_kw(text, i, "Symbol")
+    if m is None:
+        return None
+    j = _js_skip_ws(text, m)
+    if j >= n or text[j] != ".":
+        return None
+    j = _js_skip_ws(text, j + 1)
+    try:
+        mk = _js_match_kw(text, j, "keyFor")
+        if mk is not None:
+            j = _js_skip_ws(text, mk)
+            j = _js_expect(text, j, "(")
+            key, j = _js_parse_symbol_for_expr(text, _js_skip_ws(text, j))
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, ")")
+            state["ops"] += 1  # the keyFor call is obfuscation-shaped
+            return _js_parse_postfix(text, j, key, depth, state)
+        mf = _js_match_kw(text, j, "for")
+        if mf is not None:
+            key, j = _js_parse_symbol_for_expr(text, i)
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != ".":
+                raise _JSExprFail("Symbol.for without description")
+            dm = _js_match_kw(text, _js_skip_ws(text, j + 1),
+                              "description")
+            if dm is None:
+                raise _JSExprFail("Symbol.for member not description")
+            state["ops"] += 1  # the description read is
+                               # obfuscation-shaped
+            return _js_parse_postfix(text, dm, key, depth, state)
+        return None
+    except _JSExprFail:
+        return None
 
 
 def _js_parse_symbol_for_expr(text, j):
@@ -14794,8 +14854,22 @@ _JS_POSTFIX_METHOD_NAMES = (
     "concat", "repeat", "join", "reduce", "reduceRight", "map", "filter",
     "fill", "reverse", "toString", "slice", "flat", "splice", "replace",
     "padStart", "padEnd", "at", "toReversed", "with", "split",
-    "flatMap", "sort",
+    "flatMap", "sort", "trim", "trimStart", "trimEnd",
 )
+# F682: the exact JS String.prototype.trim WhiteSpace +
+# LineTerminator set (ECMAScript spec, node v24.20.0 verified):
+# 0009, 000A, 000B, 000C, 000D, 0020, 00A0, 1680, 2000-200A,
+# 2028, 2029, 202F, 205F, 3000, FEFF. This is NOT Python's
+# str.strip() set -- Python strips 001C-001F and 0085 (JS does
+# not) and does not strip FEFF via isspace (JS does). The set is
+# precomputed as a strip-argument string; str.strip(chars) is then
+# engine-exact for BMP strings.
+_JS_TRIM_CHARS = ("".join([
+    "\t", "\n", "\x0b", "\x0c", "\r", " ", "\xa0", "\u1680",
+    "\u2000", "\u2001", "\u2002", "\u2003", "\u2004", "\u2005",
+    "\u2006", "\u2007", "\u2008", "\u2009", "\u200a",
+    "\u2028", "\u2029", "\u202f", "\u205f", "\u3000", "\ufeff",
+]))
 # F547: "at" is the direct element-read form (ARR.at(INTLIT));
 # F561: "toReversed"/"with" are the ES2023 copy-on-write array methods
 # (direct form only -- dispatch through .call/.apply/.bind is
@@ -17895,7 +17969,23 @@ def _js_parse_f671_member_term(text, j, env, depth, state):
             j = _js_skip_ws(text, j + 1)
             mname, j = _js_parse_ident(text, j)
         elif j < n and text[j] == "[":
-            mname, j = _js_parse_bracket_member(text, j)
+            try:
+                mname, j = _js_parse_bracket_member(text, j)
+            except _JSExprFail:
+                # F680: `[Symbol.for('K')]` read on a symbol-keyed
+                # literal (the F552 x F671 composition). Only
+                # attempted when the bracket opens on the Symbol
+                # keyword, mirroring the postfix _JSObj branch;
+                # anything else keeps the original fail-closed error.
+                # Dot reads can never address symbol keys
+                # (node-exact).
+                k2 = _js_skip_ws(text, j + 1)
+                if _js_match_kw(text, k2, "Symbol") is not None:
+                    skey, j = _js_parse_f552_symbol_for(text, j)
+                    mname = _js_symbol_key(skey)
+                else:
+                    raise _JSExprFail("F671 bracket member not a "
+                                      "literal")
         else:
             break
         val = _jsobj_lookup(recv, mname)
@@ -28735,6 +28825,669 @@ def _js_parse_f669_map_values_spread_iife(text, i, depth, state):
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
         return _js_parse_f6xx_iife_tail(text, j, depth, state, value)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f681_mutator_iife(text, i, depth, state):
+    """Parse `(function(){DECL NAME=['LIT',...];STMT*;
+    return NAME.join(SEP);})()` (F681).
+
+    Array-mutator fragment assembly beyond F658: a var-bound
+    string-literal array mutated by splice/fill statements, then
+    joined. Node-exact desugar (v24.20.0):
+    - decl: `var|let|const NAME=['LIT',...];` -- string literals
+      only (the F644 array grammar); `const` is fine (mutation is
+      not reassignment).
+    - 1..8 mutation statements, each `NAME.splice(S,D);` or
+      `NAME.fill(V,S,E);` on the bound ident:
+      - splice(start, deleteCount): start normalized exactly as the
+        engine does (negative counts back from the end, clamped to
+        [0, len]); deleteCount clamped to [0, len-start]; the
+        elements [start, start+deleteCount) are removed.
+      - fill(value, start, end): value a string literal; start/end
+        literal ints (negative counts back, clamped); elements
+        [start, end) are set to value.
+      - Only the exact 2-arg splice and 3-arg fill forms are
+        modeled; splice insertion args (3+), 1-arg fill, and
+        non-literal args fail closed.
+    - return: `NAME.join('SEP');` / `NAME.join();` on the bound
+      ident (the F434 join discipline; the mutated elements are all
+      plain strings).
+    - invocation: exactly `()`.
+    Disjoint from every earlier IIFE route: F655's statement
+    simulator fails closed on splice/fill call statements (they are
+    neither declarations nor accumulations); F654 requires a for-of
+    head; F611 requires a single declaration; F646 requires a
+    forEach head. None of the earlier routes decodes any shape this
+    accepts (red-first verified: 2 BREAK on the open tree), so no
+    previously-decoded input changes behavior. Tried after F664.
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, reassignment of the array var, non-empty call
+      args, more than 8 mutation statements;
+    - a non-literal array element, fill value, or join separator;
+      a fractional splice/fill index (unconsumed `.5` fails the
+      `,`/`)` expect).
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F681 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        aname, sj = _js_parse_ident(text, sj)
+        if aname == "arguments" or aname in _F611_RESERVED:
+            raise _JSExprFail("F681 reserved binding name")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "[":
+            raise _JSExprFail("F681 source not an array literal")
+        elems, sj = _js_parse_f644_string_array(text, sj, state)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        # 1..8 mutation statements on the bound array.
+        nstmt = 0
+        while True:
+            sj = _js_skip_ws(text, sj)
+            q = sj
+            try:
+                qname, q = _js_parse_ident(text, q)
+            except _JSExprFail:
+                break
+            if qname != aname:
+                break
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ".":
+                break
+            try:
+                mname, q = _js_parse_ident(text, _js_skip_ws(text,
+                                                             q + 1))
+            except _JSExprFail:
+                break
+            if mname not in ("splice", "fill"):
+                break
+            # Committed: a mutation statement on the bound array --
+            # malformed shapes fail closed from here.
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "(")
+            if mname == "splice":
+                start, q = _js_parse_slice_int(text,
+                                               _js_skip_ws(text, q))
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, ",")
+                dcount, q = _js_parse_slice_int(text,
+                                                _js_skip_ws(text, q))
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, ")")
+                ln = len(elems)
+                s = ln + start if start < 0 else start
+                s = max(0, min(s, ln))
+                dc = max(0, min(dcount, ln - s))
+                del elems[s:s + dc]
+            else:
+                q = _js_skip_ws(text, q)
+                if q >= n or text[q] not in "'\"":
+                    raise _JSExprFail("F681 fill value not a literal")
+                fval, q = _js_parse_string(text, q)
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, ",")
+                fstart, q = _js_parse_slice_int(text,
+                                                _js_skip_ws(text, q))
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, ",")
+                fend, q = _js_parse_slice_int(text,
+                                              _js_skip_ws(text, q))
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, ")")
+                ln = len(elems)
+                rs = ln + fstart if fstart < 0 else fstart
+                rs = max(0, min(rs, ln))
+                re_ = ln + fend if fend < 0 else fend
+                re_ = max(0, min(re_, ln))
+                for _fi in range(rs, re_):
+                    elems[_fi] = fval
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            state["ops"] += 1  # the mutation is obfuscation-shaped
+            nstmt += 1
+            if nstmt > 8:
+                raise _JSExprFail("F681 too many mutations")
+            sj = q
+        if nstmt == 0:
+            raise _JSExprFail("F681 no mutation statement")
+        # Return: `NAME.join('SEP');` / `NAME.join();`.
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F681 no return")
+        sj = _js_skip_ws(text, m)
+        rname, sj = _js_parse_ident(text, sj)
+        if rname != aname:
+            raise _JSExprFail("F681 return not over bound array")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ".")
+        jname, sj = _js_parse_ident(text, _js_skip_ws(text, sj))
+        if jname != "join":
+            raise _JSExprFail("F681 return not join")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "(")
+        sj = _js_skip_ws(text, sj)
+        if sj < n and text[sj] == ")":
+            sep = ","
+            sj += 1
+        elif sj < n and text[sj] in "'\"":
+            sep, sj = _js_parse_string(text, sj)
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, ")")
+        else:
+            raise _JSExprFail("F681 join separator not a literal")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F681 trailing statements")
+        result = sep.join(elems)
+        if len(result) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F681 join too long")
+        state["ops"] += 1  # the join is obfuscation-shaped
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return result, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f684_defaultref_params_iife(text, i, depth, state):
+    """Parse `(function({K=V,...}={}){return ADD;})(...)` (F684a).
+
+    Destructuring residual beyond F644/F645: an object-pattern
+    parameter whose per-key defaults reference earlier-bound keys.
+    Node-exact desugar (v24.20.0): with the call supplying no
+    arguments (or `undefined`), the pattern default `{}` applies;
+    each key's default evaluates left-to-right, so a default may
+    reference earlier keys (`{a='f1',b=a+'f2'}` binds a='f1' then
+    b='f1f2'); a forward reference throws ReferenceError in the
+    engine (temporal dead zone) -- the left-to-right parse fails
+    it closed the same way. The return body resolves bound idents
+    via the F645 bound-additive grammar.
+    Disjoint from F645: F645's pattern loop fails closed on `=`
+    after a key (per-key defaults are its documented residual);
+    this requires `=` after EVERY key and the pattern default
+    exactly `={}`. Disjoint from F644: F644 has no parameters.
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, extra params, a non-`={}` pattern default,
+      a key without a default, a non-additive default, an unbound
+      name in a default (TDZ), non-empty non-undefined call args;
+    - more than 8 keys (the F430 parts budget also applies).
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "{":
+            return None  # not an object-pattern param
+        j = _js_skip_ws(text, j + 1)
+        bindings = {}
+        nkeys = 0
+        while True:
+            j = _js_skip_ws(text, j)
+            _kn, j = _js_parse_ident(text, j)
+            if _kn in bindings or _kn == "arguments":
+                raise _JSExprFail("F684a duplicate/reserved key")
+            j = _js_skip_ws(text, j)
+            # Per-key default REQUIRED (the F645 residual); a bare
+            # key falls through to F645's fail-closed path.
+            if j >= n or text[j] != "=":
+                return None
+            j = _js_skip_ws(text, j + 1)
+            _dv, j = _js_parse_f645_bound_additive(text, j, depth,
+                                                   state, bindings)
+            bindings[_kn] = _dv
+            nkeys += 1
+            if nkeys > 8:
+                raise _JSExprFail("F684a too many keys")
+            state["ops"] += 1  # each default is obfuscation-shaped
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ",":
+                j = _js_skip_ws(text, j + 1)
+                continue
+            if j < n and text[j] == "}":
+                j += 1
+                break
+            raise _JSExprFail("F684a bad pattern")
+        if not bindings:
+            return None  # empty pattern -- not our shape
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "=")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "{")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "}")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F684a no return")
+        sj = _js_skip_ws(text, m)
+        val, sj = _js_parse_f645_bound_additive(text, sj, depth,
+                                                state, bindings)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F684a trailing statements")
+        # Close the `(function` wrapper, then the invocation.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_parse_f645_invocation(text, j)
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f684_nested_pattern(text, j, depth, state):
+    """Parse an F684b destructuring pattern `{k:v,...}` at text[j].
+
+    Entries: `key` (shorthand), `key:leaf`, or `key:{...}`
+    (nested). Returns (entries, has_nested, next_index) where each
+    entry is (key, leaf_name_or_None, subpattern_or_None). Depth-
+    bounded. Raises _JSExprFail on malformed patterns. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F684b pattern too deep")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "{")
+    entries = []
+    has_nested = False
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "}":
+        raise _JSExprFail("F684b empty pattern")
+    while True:
+        j = _js_skip_ws(text, j)
+        _key, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ":":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "{":
+                _sub, _hn, j = _js_parse_f684_nested_pattern(
+                    text, j, depth + 1, state)
+                entries.append((_key, None, _sub))
+                has_nested = True
+            else:
+                _leaf, j = _js_parse_ident(text, j)
+                entries.append((_key, _leaf, None))
+        else:
+            entries.append((_key, _key, None))
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            continue
+        if j < n and text[j] == "}":
+            return entries, has_nested, j + 1
+        raise _JSExprFail("F684b bad pattern")
+
+
+def _js_f684_bind_nested(entries, props, names, raws, state):
+    """Bind F684b pattern entries against F535 props (recursive).
+
+    Leaf entries bind the source's string value (re-quoted for the
+    F644 rewrite); nested entries recurse into _JSObj values. A
+    missing key, a non-string leaf, a non-object nested source, or
+    a duplicate bound name fails closed (the engine's semantics
+    for the first three are a throw or a mis-decode risk; duplicate
+    later-wins is unmodeled -- fail closed, never mis-decoded).
+    Never evals.
+    """
+    for _key, _leaf, _sub in entries:
+        if _key not in props:
+            raise _JSExprFail("F684b key missing from source")
+        _v = props[_key]
+        if _sub is not None:
+            if not isinstance(_v, _JSObj):
+                raise _JSExprFail("F684b nested source not an object")
+            _js_f684_bind_nested(_sub, _v.props, names, raws, state)
+        else:
+            if not isinstance(_v, str):
+                raise _JSExprFail("F684b leaf not a string")
+            if _leaf in names or _leaf == "arguments":
+                raise _JSExprFail("F684b duplicate/reserved name")
+            names.append(_leaf)
+            raws.append("'" + _v.replace("\\", "\\\\").replace(
+                "'", "\\'") + "'")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+
+
+def _js_parse_f684_nested_destructure_iife(text, i, depth, state):
+    """Parse `(function(){DECL PAT={LIT};return ADD;})()` with a
+    NESTED object pattern (F684b).
+
+    Destructuring residual beyond F644: F644 models flat patterns
+    only (`{a,b}`, `{a:x}`); a nested pattern (`{x:{y}}`) fails
+    closed there. Node-exact desugar (v24.20.0): the pattern walks
+    against the F535 object-literal source (duplicate keys
+    later-wins, `__proto__` fails closed -- the F535 grammar);
+    each leaf binds its string value; the return body rewrites via
+    the F644 destructure substitution (`_js_bind_destructure_
+    arguments`) and parses with the normal additive grammar.
+    Disjoint from F644: F644 fails closed on `{` after `key:`
+    (its rename parse expects an ident); this requires at least
+    one nested sub-pattern. Tried after F664 (after F644 in the
+    chain, so F644's flat shapes never reach here).
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a flat pattern (F644 owns it), a named function, parameters,
+      a directive prologue, extra statements, multi-decl,
+      non-empty call args, reassignment (constructive grammar);
+    - a binding source outside the F535 object-literal grammar;
+    - a missing key, a non-string leaf, a non-object nested
+      source, a duplicate bound name.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            return None  # not a decl -- F644's fail-closed path
+        sj = _js_skip_ws(text, m)
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "{":
+            return None  # not a pattern -- F644 owns flat idents
+        entries, has_nested, sj = _js_parse_f684_nested_pattern(
+            text, sj, depth, state)
+        if not has_nested:
+            return None  # flat pattern -- F644 owns it
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        props, sj = _js_parse_f535_object(text, sj, depth, state)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        names = []
+        raws = []
+        _js_f684_bind_nested(entries, props, names, raws, state)
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F684b no return")
+        body_expr = _js_require_single_return(text[sj:inner_end])
+        rewritten = _js_bind_destructure_arguments(
+            body_expr, raws, names, list(range(len(names))))
+        val, _k = _js_parse_additive(rewritten, 0, depth + 1, state)
+        _k = _js_skip_ws(rewritten, _k)
+        if _k != len(rewritten):
+            raise _JSExprFail("F684b return not an additive")
+        if not isinstance(val, str):
+            raise _JSExprFail("F684b return not a string")
+        state["ops"] += 1  # the destructure is obfuscation-shaped
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_f685_rewrite_arrow_calls(body_expr, fname, lit_text):
+    """Rewrite `F()` call sites to the resolved arg literal (F685).
+
+    *fname* must occur ONLY as a no-arg call `F()`; any other use
+    (a bare `F`, `F.x`, `F[...]`, `F(args)`) fails closed -- the
+    engine's semantics for those are unmodeled. Guards mirror
+    _js_bind_iife_arguments (no nested function/class/new/delete,
+    no bare assignment, fname never an arrow param). A defensive
+    rescan requires every code-span occurrence consumed and no
+    bare `arguments` left (it would be unbound outside the arrow).
+    Raises _JSExprFail on any mismatch. Never evals.
+    """
+    segs = _js_split_code_strings(body_expr)
+    code = "".join(s for is_code, s in segs if is_code)
+    for kw, msg in (("function", "F685 nested function"),
+                    ("delete", "F685 delete"),
+                    ("new", "F685 new"),
+                    ("class", "F685 class")):
+        if _js_code_find_idents(code, kw):
+            raise _JSExprFail(msg)
+    if _js_code_has_bare_assign(code):
+        raise _JSExprFail("F685 assignment in body")
+    if _js_code_has_ident_arrow_param(code, fname):
+        raise _JSExprFail("F685 fname as arrow param")
+    out = []
+    for is_code, s in segs:
+        if not is_code:
+            out.append(s)
+            continue
+        pos = 0
+        buf = []
+        for st in _js_code_find_idents(s, fname):
+            en = st + len(fname)
+            rest = s[en:].lstrip(" \t\n\r")
+            if not rest.startswith("("):
+                raise _JSExprFail("F685 non-call use of arrow")
+            rp = rest[1:].lstrip(" \t\n\r")
+            if not rp.startswith(")"):
+                raise _JSExprFail("F685 arrow call with args")
+            buf.append(s[pos:st])
+            buf.append(lit_text)
+            pos = en + (len(s[en:]) - len(rp)) + 1
+        buf.append(s[pos:])
+        out.append("".join(buf))
+    rewritten = "".join(out)
+    rcode = "".join(s for is_code, s in _js_split_code_strings(
+        rewritten) if is_code)
+    if _js_code_find_idents(rcode, fname):
+        raise _JSExprFail("F685 fname left unsubstituted")
+    if _js_code_find_idents(rcode, "arguments"):
+        raise _JSExprFail("F685 bare arguments in body")
+    return rewritten
+
+
+def _js_parse_f685_arrow_args_iife(text, i, depth, state):
+    """Parse `(function(){DECL F=()=>arguments[N];return ADD;})`
+    `(LITS)` (F685).
+
+    Arrow-lexical `arguments` beyond F545: an arrow with no params
+    captures the ENCLOSING function's `arguments`; calling the
+    arrow reads `arguments[N]` lexically. Node-exact desugar
+    (v24.20.0): the decl binds `F` to the arrow; each `F()` call
+    site in the return body rewrites to the Nth call-site literal
+    (the F509 string-literal arg grammar); the rewritten body
+    parses with the normal additive grammar. The arrow's params
+    must be empty (a param would shadow nothing here -- the filed
+    shapes use `()`); the index must be in range (out-of-range
+    reads `undefined` in the engine, which the decoder never
+    decodes -- fail closed).
+    Disjoint from F509/F545: those bind `arguments` directly or
+    via one-hop aliases; an arrow indirection fails closed in
+    their head peeks. Tried after F664.
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, non-empty arrow params, a non-`arguments`
+      arrow body, a non-literal index, a negative or out-of-range
+      index, non-literal call args, extra statements, reassignment
+      (constructive grammar);
+    - any use of `F` other than a no-arg `F()` call; a bare
+      `arguments` elsewhere in the body; nested
+      function/class/new/delete or assignment in the body.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F685 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        fname, sj = _js_parse_ident(text, sj)
+        if fname == "arguments" or fname in _F611_RESERVED:
+            raise _JSExprFail("F685 reserved binding name")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "(")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ")")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_expect(text, sj, ">")
+        sj = _js_skip_ws(text, sj)
+        _am = _js_match_kw(text, sj, "arguments")
+        if _am is None:
+            raise _JSExprFail("F685 arrow body not arguments")
+        sj = _js_skip_ws(text, _am)
+        sj = _js_expect(text, sj, "[")
+        sj = _js_skip_ws(text, sj)
+        _aidx, sj = _js_parse_slice_int(text, sj)
+        if _aidx < 0:
+            raise _JSExprFail("F685 negative arguments index")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "]")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        _rm = _js_match_kw(text, sj, "return")
+        if _rm is None:
+            raise _JSExprFail("F685 no return")
+        body_expr = _js_require_single_return(text[sj:inner_end])
+        # Invocation: string-literal args (the F509 arg grammar).
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        args = []
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ")":
+            while True:
+                j = _js_skip_ws(text, j)
+                if j >= n or text[j] not in "'\"":
+                    raise _JSExprFail("F685 arg not a literal")
+                _a, j = _js_parse_string(text, j)
+                args.append(_a)
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == ",":
+                    j = _js_skip_ws(text, j + 1)
+                    continue
+                break
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        if _aidx >= len(args):
+            raise _JSExprFail("F685 arguments index out of range")
+        _lit = ("'" + args[_aidx].replace("\\", "\\\\").replace(
+            "'", "\\'") + "'")
+        rewritten = _js_f685_rewrite_arrow_calls(body_expr, fname,
+                                                 _lit)
+        val, _k = _js_parse_additive(rewritten, 0, depth + 1, state)
+        _k = _js_skip_ws(rewritten, _k)
+        if _k != len(rewritten):
+            raise _JSExprFail("F685 return not an additive")
+        if not isinstance(val, str):
+            raise _JSExprFail("F685 return not a string")
+        state["ops"] += 1  # the arrow-arguments desugar is
+                           # obfuscation-shaped
+        return val, j
     except _JSExprFail:
         return None
 
@@ -41522,6 +42275,34 @@ def _js_apply_method_at(text, i, name, value, depth, state):
             raise _JSExprFail("toString too long")
         state["ops"] += 1
         return result, i + 1
+    if name in ("trim", "trimStart", "trimEnd"):
+        # F682: 'lit'.trim()/trimStart()/trimEnd() -- trim-family
+        # fragment sources, node-exact (v24.20.0). The receiver must
+        # be a plain str (the F624 discipline: _JSNumStr/_JSBigInt
+        # receivers fail closed); no-arg only (any argument fails
+        # closed -- the engine ignores extra args, but the filed
+        # shapes use none and the strict no-arg form keeps the
+        # production tight). The strip uses the exact JS
+        # WhiteSpace+LineTerminator set (_JS_TRIM_CHARS), never
+        # Python's str.strip() default set. Non-BMP strings are
+        # fine here (trim does not index -- no UTF-16/code-point
+        # divergence, unlike F624 slice).
+        if not isinstance(value, str) or isinstance(
+                value, (_JSNumStr, _JSBigInt)):
+            raise _JSExprFail("trim on non-string receiver")
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("trim args unsupported")
+        if name == "trim":
+            result = value.strip(_JS_TRIM_CHARS)
+        elif name == "trimStart":
+            result = value.lstrip(_JS_TRIM_CHARS)
+        else:
+            result = value.rstrip(_JS_TRIM_CHARS)
+        if len(result) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("trim too long")
+        state["ops"] += 1  # the trim call is obfuscation-shaped
+        return result, i + 1
     if name == "slice":
         if isinstance(value, str) and not isinstance(
                 value, (_JSNumStr, _JSBigInt)):
@@ -42838,6 +43619,209 @@ def _js_parse_paren_member_call(text, i, depth, state):
 _JS_F541_MAX_JSON_DEPTH = 32  # bound on JSON nesting depth (F541)
 
 
+def _js_f683_reviver_walk(node, key, guard, append, state, depth=0):
+    """Apply an F683 reviver transform bottom-up over a json.loads value.
+
+    *guard* is ("typeof",) or ("key", KEY); *append* is the literal
+    appended in the reviver's consequent. The walk is bottom-up
+    (children before the holder), exactly as the engine invokes the
+    reviver; dict keys become the reviver's key argument and list
+    indices become the string index keys the engine passes. Only
+    str leaves are ever transformed: the typeof guard is false for
+    non-strings in the engine, and a key-guard hit on a non-string
+    leaf would coerce in the engine (unmodeled -- raises
+    _JSExprFail there, never mis-decoded). Each transformed leaf
+    charges the F430 parts budget; nesting beyond the F541 JSON
+    depth fails closed. Mutates the freshly-parsed json.loads value
+    in place. Never evals.
+    """
+    if depth > _JS_F541_MAX_JSON_DEPTH:
+        raise _JSExprFail("F683 JSON too deep")
+    if isinstance(node, dict):
+        if guard[0] == "key" and key == guard[1]:
+            # The engine would coerce the container ({}+'f2' ===
+            # '[object Object]f2'); unmodeled -- fail closed, never
+            # mis-decoded (mirrors the scalar-leaf rule below).
+            raise _JSExprFail("F683 reviver on non-string container")
+        for k in list(node.keys()):
+            node[k] = _js_f683_reviver_walk(node[k], k, guard, append,
+                                            state, depth + 1)
+        return node
+    if isinstance(node, list):
+        if guard[0] == "key" and key == guard[1]:
+            raise _JSExprFail("F683 reviver on non-string container")
+        for _wi in range(len(node)):
+            node[_wi] = _js_f683_reviver_walk(node[_wi], str(_wi),
+                                              guard, append, state,
+                                              depth + 1)
+        return node
+    if isinstance(node, str):
+        if guard[0] == "typeof" or key == guard[1]:
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("F683 too many reviver leaves")
+            _res = node + append
+            if len(_res) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F683 reviver leaf too long")
+            return _res
+        return node
+    if guard[0] == "key" and key == guard[1]:
+        # The engine would coerce (5+'f2' === '5f2',
+        # {}+'f2' === '[object Object]f2'); the decoder models only
+        # string leaves -- fail closed, never mis-decode.
+        raise _JSExprFail("F683 reviver on non-string leaf")
+    return node
+
+
+def _js_parse_f683_json_reviver(text, i, depth, state):
+    """Parse `JSON.parse('LIT',function(k,v){return GUARD?v+'APP':v;})`
+    at text[i] (F683).
+
+    JSON reviver fragment assembly beyond F541: a two-argument
+    JSON.parse whose reviver appends a fragment to selected values.
+    Node-exact desugar (v24.20.0): the JSON text parses via
+    json.loads (invalid JSON fails closed); the reviver walks the
+    value bottom-up (children before holders, list indices as
+    string keys -- exactly the engine's call order); the modeled
+    guard/consequent shapes are:
+    - `typeof v==='string'` (or `==`): every string leaf gets
+      `+'APP'`;
+    - `k==='KEY'` (or `==`): the value at KEY gets `+'APP'` (string
+      leaves only; a non-string at KEY fails closed -- the engine
+      would coerce, which the decoder does not model).
+    The consequent must be exactly `v+'APP'` and the alternate
+    exactly `v`; the reviver must be an anonymous two-param
+    function with a single `return` body. The transformed graph
+    converts via _js_f541_json_value (its bool/null/float/
+    __proto__/depth bounds apply unchanged), and the caller
+    applies the postfix chain (.x / [0] member reads).
+    Disjoint from F541: F541 requires `)` immediately after the
+    string literal; this requires `,`. Returns (value,
+    next_index) with the closing paren consumed, or None when
+    text[i] is not this shape (single-arg calls fall through to
+    F541). The parse charges one op (obfuscation-shaped). Never
+    evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = i + len("JSON")
+        if j < n and text[j] in _JS_IDENT_CONT:
+            return None  # JSONx -- the F541 branch fails it closed
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ".")
+        j = _js_skip_ws(text, j)
+        _pk = _js_match_kw(text, j, "parse")
+        if _pk is None:
+            return None
+        j = _js_skip_ws(text, _pk)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            return None
+        _jstr, j = _js_parse_string(text, j)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ",":
+            return None  # single-arg: F541 owns it
+        j = _js_skip_ws(text, j + 1)
+        _fk = _js_match_kw(text, j, "function")
+        if _fk is None:
+            raise _JSExprFail("F683 reviver not a function")
+        j = _js_skip_ws(text, _fk)
+        if j < n and text[j] in _JS_IDENT_START:
+            raise _JSExprFail("F683 named reviver")
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        _kname, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ",")
+        j = _js_skip_ws(text, j)
+        _vname, j = _js_parse_ident(text, j)
+        if _kname == _vname:
+            raise _JSExprFail("F683 duplicate reviver params")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "{")
+        j = _js_skip_ws(text, j)
+        _rk = _js_match_kw(text, j, "return")
+        if _rk is None:
+            raise _JSExprFail("F683 reviver body not a return")
+        j = _js_skip_ws(text, _rk)
+        # GUARD := typeof v==='string' | k==='KEY' (== admitted;
+        # typeof always yields a string so ==/=== agree).
+        _tk = _js_match_kw(text, j, "typeof")
+        if _tk is not None:
+            j = _js_skip_ws(text, _tk)
+            _vn, j = _js_parse_ident(text, j)
+            if _vn != _vname:
+                raise _JSExprFail("F683 typeof not over v")
+            j = _js_skip_ws(text, j)
+            j = _js_parse_f683_eq(text, j)
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] not in "'\"":
+                raise _JSExprFail("F683 typeof guard not a literal")
+            _tn, j = _js_parse_string(text, j)
+            if _tn != "string":
+                raise _JSExprFail("F683 typeof guard not 'string'")
+            _guard = ("typeof",)
+        else:
+            _kn, j = _js_parse_ident(text, j)
+            if _kn != _kname:
+                raise _JSExprFail("F683 key guard not over k")
+            j = _js_skip_ws(text, j)
+            j = _js_parse_f683_eq(text, j)
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] not in "'\"":
+                raise _JSExprFail("F683 key guard not a literal")
+            _key, j = _js_parse_string(text, j)
+            _guard = ("key", _key)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "?")
+        j = _js_skip_ws(text, j)
+        _cn, j = _js_parse_ident(text, j)
+        if _cn != _vname:
+            raise _JSExprFail("F683 consequent not v")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "+")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F683 consequent append not a literal")
+        _app, j = _js_parse_string(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ":")
+        j = _js_skip_ws(text, j)
+        _an, j = _js_parse_ident(text, j)
+        if _an != _vname:
+            raise _JSExprFail("F683 alternate not v")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ";")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "}")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        try:
+            _jval = json.loads(_jstr)
+        except (ValueError, RecursionError):
+            raise _JSExprFail("F683 arg not valid JSON")
+        _jval = _js_f683_reviver_walk(_jval, "", _guard, _app, state)
+        _val = _js_f541_json_value(_jval, state)
+        state["ops"] += 1  # the reviver parse is obfuscation-shaped
+        return _val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f683_eq(text, j):
+    """Parse `===` or `==` at text[j] (F683 reviver guards)."""
+    if text.startswith("===", j):
+        return j + 3
+    if text.startswith("==", j):
+        return j + 2
+    raise _JSExprFail("F683 guard not an equality")
+
+
 def _js_f541_json_value(obj, state, depth=0):
     """Convert a json.loads result into the decoder's internal value
     graph (F541).
@@ -43773,6 +44757,13 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         val, i = _js_parse_string_ctor(text, i, depth, state)
         state["ops"] += 1  # the call itself is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
+    # F680: Symbol.keyFor(Symbol.for('LIT')) /
+    # Symbol.for('LIT').description -- symbol-mediated fragment
+    # reads. None falls through (a bare Symbol.for(...) without
+    # .description fails closed inside, never mis-decoded).
+    _f680 = _js_parse_f680_symbol_expr(text, i, depth, state)
+    if _f680 is not None:
+        return _f680
     # F628: decodeURIComponent(EXPR) / encodeURIComponent(EXPR) --
     # fragment codec pair. None falls through (decodeURIComponentx
     # fails closed via the ident-boundary check inside).
@@ -44840,6 +45831,33 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f674 is not None:
             val, i = _f674
             return _js_parse_postfix(text, i, val, depth, state)
+        # F681: (function(){DECL A=['LIT',..];A.splice/fill(..);*;
+        # return A.join(SEP);})() -- array-mutator fragment
+        # assembly. None falls through (fails closed inside).
+        _f681 = _js_parse_f681_mutator_iife(text, i, depth, state)
+        if _f681 is not None:
+            return _f681
+        # F684a: (function({K=V,..}={}){return ADD;})(...) --
+        # default-referencing-earlier-params destructuring. None
+        # falls through (fails closed inside; F645's flat shapes
+        # never match the per-key-default requirement).
+        _f684a = _js_parse_f684_defaultref_params_iife(text, i, depth,
+                                                       state)
+        if _f684a is not None:
+            return _f684a
+        # F684b: (function(){DECL {x:{y},..}={LIT};return ADD;})()
+        # -- nested-pattern destructuring. None falls through (fails
+        # closed inside; flat patterns return None for F644).
+        _f684b = _js_parse_f684_nested_destructure_iife(text, i, depth,
+                                                        state)
+        if _f684b is not None:
+            return _f684b
+        # F685: (function(){DECL F=()=>arguments[N];return ADD;})
+        # (LITS) -- arrow-lexical arguments. None falls through
+        # (fails closed inside).
+        _f685 = _js_parse_f685_arrow_args_iife(text, i, depth, state)
+        if _f685 is not None:
+            return _f685
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
         val, i = _js_parse_additive(text, i + 1, depth + 1, state,
@@ -45013,6 +46031,15 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         return _js_parse_postfix(text, _sk + 1,
                                  _JSMap(dict(_mval.entries)),
                                  depth, state)
+    if text.startswith("JSON", i):
+        # F683: JSON.parse('LIT',function(k,v){return GUARD?v+'APP':v;})
+        # -- JSON reviver fragment assembly. None falls through to
+        # the F541 single-arg route (a reviver-less call is not this
+        # shape; the F541 branch fails closed on extra args).
+        _f683 = _js_parse_f683_json_reviver(text, i, depth, state)
+        if _f683 is not None:
+            val, i = _f683
+            return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("JSON", i):
         # F541: JSON.parse('LITERAL') -- deserializing-builtin
         # laundering. Node-exact (v24.20.0): JSON.parse builds an
