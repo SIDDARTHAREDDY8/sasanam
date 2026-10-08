@@ -3103,6 +3103,124 @@ def _js_parse_fromcharcode_spread_inner(text, i):
     return _js_parse_fromcharcode_args_inner(text, i + 1, "]")
 
 
+def _f643_ta_u8(v):
+    return v & 0xFF
+
+
+def _f643_ta_i8(v):
+    v &= 0xFF
+    return v - 256 if v >= 128 else v
+
+
+def _f643_ta_u8c(v):
+    return 255 if v > 255 else v
+
+
+def _f643_ta_u16(v):
+    return v & 0xFFFF
+
+
+def _f643_ta_i16(v):
+    v &= 0xFFFF
+    return v - 65536 if v >= 32768 else v
+
+
+def _f643_ta_u32(v):
+    return v
+
+
+def _f643_ta_i32(v):
+    return v
+
+
+_F643_TYPED_ARRAYS = (
+    ("Uint8ClampedArray", _f643_ta_u8c),
+    ("Uint8Array", _f643_ta_u8),
+    ("Int8Array", _f643_ta_i8),
+    ("Uint16Array", _f643_ta_u16),
+    ("Int16Array", _f643_ta_i16),
+    ("Uint32Array", _f643_ta_u32),
+    ("Int32Array", _f643_ta_i32),
+)
+
+
+def _js_parse_f643_typed_array(text, i):
+    """Parse `new <IntTypedArray>([n, n, ...])` at text[i] (F643);
+    returns (decoded_str, idx_after_paren).
+
+    The typed-array operand of a fromCharCode/fromCodePoint spread or
+    .apply() argsArray. Integer typed arrays only (Uint8Array,
+    Int8Array, Uint8ClampedArray, Uint16Array, Int16Array,
+    Uint32Array, Int32Array): one array-literal argument of F458
+    integer literals, `]`-then-`)` terminated. Each literal converts
+    with the engine's typed-element semantics (node v24.20.0
+    verified): Uint8/Uint16 wrap mod 2**N, Int8/Int16 wrap then sign,
+    Uint8Clamped clamps 0..255, Uint32/Int32 are identity on the F458
+    range (<= 0x10FFFF). Converted values pass the same _safe_chr
+    gate as literal codepoints (fromCharCode and fromCodePoint share
+    the gate per F505): negatives and lone surrogates fail closed --
+    for fromCodePoint the engine throws RangeError there too, so the
+    refusal is engine-exact; for fromCharCode the engine wraps
+    (ToUint16) but a negative int-array value can only wrap to
+    >= 0xFF80, never ASCII, so the refusal cannot hide a credential.
+    Uint32Array values in 0x10000..0x10FFFF inherit the pre-existing
+    F458 literal-path behavior (astral char, engine wraps via
+    ToUint16) -- documented residual. Float and BigInt typed arrays,
+    the length form `new Uint8Array(3)`, `.from()`, subclassing, and
+    non-literal elements all fail closed (documented residuals).
+    The _JS_EXPR_MAX_CODEPOINTS cap counts decoded codepoints. Never
+    evals.
+    """
+    n = len(text)
+    k = _js_match_kw(text, i, "new")
+    if k is None:
+        raise _JSExprFail("typed array needs new")
+    k = _js_skip_ws(text, k)
+    conv = None
+    for _name, _fn in _F643_TYPED_ARRAYS:
+        _kk = _js_match_kw(text, k, _name)
+        if _kk is not None:
+            conv = _fn
+            k = _kk
+            break
+    if conv is None:
+        raise _JSExprFail("not a modeled typed array")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("typed array without paren")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "[":
+        raise _JSExprFail("typed array needs array literal")
+    k += 1
+    out = []
+    total = 0
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == "]":
+        k = _js_skip_ws(text, k + 1)
+        if k < n and text[k] == ")":
+            return "", k + 1
+        raise _JSExprFail("typed array unclosed")
+    while True:
+        val, k = _js_parse_fcc_number(text, k)
+        ch = _safe_chr(conv(val))
+        if ch is None:
+            raise _JSExprFail("bad typed-array codepoint")
+        out.append(ch)
+        total += 1
+        if total > _JS_EXPR_MAX_CODEPOINTS:
+            raise _JSExprFail("too many codepoints")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ",":
+            k = _js_skip_ws(text, k + 1)
+            continue
+        if k < n and text[k] == "]":
+            k = _js_skip_ws(text, k + 1)
+            if k < n and text[k] == ")":
+                return "".join(out), k + 1
+            raise _JSExprFail("typed array unclosed")
+        raise _JSExprFail("bad typed-array args")
+
+
 def _js_parse_fromcharcode_args_inner(text, i, closer, allow_spread=False):
     """Parse `n (, n)* <closer>` -- the F458 fromCharCode codepoint-list
     grammar (F458 / F480 / F486); returns (value, idx).
@@ -3113,8 +3231,10 @@ def _js_parse_fromcharcode_args_inner(text, i, closer, allow_spread=False):
     only), an argument may also be a spread array-literal operand
     `...[n, n, ...]`, so mixed literal+spread lists
     (`String.fromCharCode(120, ...[111])`) decode engine-exactly;
-    the .call/.apply dispatch forms keep allow_spread=False (spread
-    fails closed there, documented F500 boundary). The
+    F643: a spread typed-array operand `...new Uint8Array([n, ...])`
+    (integer typed arrays) decodes the same way. The .call/.apply
+    dispatch forms keep allow_spread=False (spread fails closed
+    there, documented F500 boundary). The
     _JS_EXPR_MAX_CODEPOINTS cap counts decoded codepoints. Never evals.
     """
     out = []
@@ -3124,7 +3244,15 @@ def _js_parse_fromcharcode_args_inner(text, i, closer, allow_spread=False):
         return "", i + 1
     while True:
         if allow_spread and text.startswith("...", i):
-            val, i = _js_parse_fromcharcode_spread_inner(text, i + 3)
+            _sj = _js_skip_ws(text, i + 3)
+            if _js_match_kw(text, _sj, "new") is not None:
+                # F643: ...new Uint8Array([...]) -- the `new` keyword
+                # commits the typed-array alternative; anything else
+                # (including `...newX` idents) falls through to the
+                # array-literal spread parser and fails closed there.
+                val, i = _js_parse_f643_typed_array(text, _sj)
+            else:
+                val, i = _js_parse_fromcharcode_spread_inner(text, i + 3)
             out.append(val)
             total += len(val)
         else:
@@ -3153,9 +3281,11 @@ def _js_parse_fromcharcode_args(text, j):
     bracket-string member form (`String['fromCharCode'](...)`, F480 --
     node-identical). The F458 integer-literal grammar is unchanged.
     F500: arguments may be literal codepoints or spread array-literal
-    operands (`...[n, n, ...]`), in any mixture; the .call/.apply
+    operands (`...[n, n, ...]`), in any mixture; F643: a spread operand
+    may also be `...new <IntTypedArray>([n, n, ...])`. The .call/.apply
     dispatch forms keep the literal-only grammar (spread fails closed
-    there, documented F500 boundary).
+    there, documented F500 boundary; F643 admits a typed-array
+    .apply() argsArray via the dispatch parser, not here).
     """
     i = _js_skip_ws(text, j)
     if i >= len(text) or text[i] != "(":
@@ -3262,7 +3392,9 @@ def _js_parse_fcc_dispatch(text, paren, dname, depth, state):
     so the codepoint list reuses the F458 grammar
     (_js_parse_fromcharcode_args_inner): the same integer-literal
     spellings, the same codepoint bounds, the same fail-closed
-    classes -- faithful by construction. The thisArg is parsed but
+    classes -- faithful by construction. F643: the .apply() argsArray
+    may also be `new <IntTypedArray>([n, n, ...])`, decoded with the
+    engine's typed-element semantics. The thisArg is parsed but
     ignored (_js_parse_dispatch_thisarg). `.bind` is not modeled.
     Never evals.
     """
@@ -3274,9 +3406,13 @@ def _js_parse_fcc_dispatch(text, paren, dname, depth, state):
         raise _JSExprFail("fromCharCode dispatch without thisArg comma")
     i = _js_skip_ws(text, i + 1)
     if dname == "apply":
-        if i >= n or text[i] != "[":
-            raise _JSExprFail("fromCharCode apply argsArray not array")
-        val, i = _js_parse_fromcharcode_args_inner(text, i + 1, "]")
+        if _js_match_kw(text, i, "new") is not None:
+            # F643: .apply(null, new Uint8Array([...]))
+            val, i = _js_parse_f643_typed_array(text, i)
+        else:
+            if i >= n or text[i] != "[":
+                raise _JSExprFail("fromCharCode apply argsArray not array")
+            val, i = _js_parse_fromcharcode_args_inner(text, i + 1, "]")
         i = _js_skip_ws(text, i)
         if i >= n or text[i] != ")":
             raise _JSExprFail("fromCharCode apply with extra args")
