@@ -115,7 +115,7 @@ def test_b0_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F700**" in text
-          and "Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text)  # Wave-380 merge: F672-F685 CLOSED; lane-4 F686 -> F699
+          and "Open findings: F686, F687, F688, F689, F690, F692, F693, F694, F695, F696, F697, F699." in text)  # Wave-380 merge: F672-F685 CLOSED; lane-4 F686 -> F699; Wave-381 lane 5: F691, F698 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -261,7 +261,7 @@ def test_p1_f671_closed():
     return ("HELD" if ok else "BREAK", "f671=%s" % ok)
 
 
-# ------------------------------------------- F686-F697 open pins (must miss)
+# ------------------------------------------- F686-F690, F692-F697 open pins (must miss); F691 closed pins (must block)
 
 @_t
 def test_r48_f686_keys_join_open():
@@ -336,16 +336,16 @@ def test_r48_f690_class_ctor_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r48_f691_gopd_value_open():
-    """F691 OPEN (gopd-value): miss reproduces."""
-    miss = _misses("(function(){var o={};Object.defineProperty(o,'x',{value:'%s',enumerable:true});return Object.getOwnPropertyDescriptor(o,'x').value+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f691_gopd_value_closed():
+    """F691 CLOSED (gopd-value): blocks coded (wave-381 lane 5)."""
+    hit = _blocked("(function(){var o={};Object.defineProperty(o,'x',{value:'%s',enumerable:true});return Object.getOwnPropertyDescriptor(o,'x').value+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r48_f691_reflect_value_open():
-    """F691 OPEN (reflect-value): miss reproduces."""
-    miss = _misses("(function(){var o={};Object.defineProperty(o,'x',{value:'%s',enumerable:true});return Reflect.getOwnPropertyDescriptor(o,'x').value+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f691_reflect_value_closed():
+    """F691 CLOSED (reflect-value): blocks coded (wave-381 lane 5)."""
+    hit = _blocked("(function(){var o={};Object.defineProperty(o,'x',{value:'%s',enumerable:true});return Reflect.getOwnPropertyDescriptor(o,'x').value+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_r48_f692_super_static_field_open():
@@ -433,20 +433,20 @@ def test_r48_f697_toPrimitive_open():
 
 
 
-# ------------------------------------------- F698 open pins (must miss)
+# ------------------------------------------- F698 closed pins (must block)
 
 @_t
-def test_r48_f698_dp_get_fn_open():
-    """F698 OPEN (dp-get-fn): miss reproduces."""
-    miss = _misses("(function(){var o={};Object.defineProperty(o,'x',{get:function(){return '%s';}});return Object.getOwnPropertyDescriptor(o,'x').get()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f698_dp_get_fn_closed():
+    """F698 CLOSED (dp-get-fn): blocks coded (wave-381 lane 5)."""
+    hit = _blocked("(function(){var o={};Object.defineProperty(o,'x',{get:function(){return '%s';}});return Object.getOwnPropertyDescriptor(o,'x').get()+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r48_f698_dp_get_arrow_open():
-    """F698 OPEN (dp-get-arrow): miss reproduces."""
-    miss = _misses("(function(){var o={};Object.defineProperty(o,'x',{get:()=>'%s'});return Object.getOwnPropertyDescriptor(o,'x').get()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r48_f698_dp_get_arrow_closed():
+    """F698 CLOSED (dp-get-arrow): blocks coded (wave-381 lane 5)."""
+    hit = _blocked("(function(){var o={};Object.defineProperty(o,'x',{get:()=>'%s'});return Object.getOwnPropertyDescriptor(o,'x').get()+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- green check (depth-1)
