@@ -56062,7 +56062,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # argument binding for the bare `arguments` object; None falls
         # through to the parenthesized-additive path below (which
         # fails closed on the `function` keyword).
+        _f509_saved_parts = state['parts']; _f509_saved_ops = state['ops']
         _f509 = _js_parse_args_binding_iife(text, i, depth, state)
+        if _f509 is None:
+            state['parts'] = _f509_saved_parts; state['ops'] = _f509_saved_ops
         if _f509 is not None:
             val, i = _f509
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56073,7 +56076,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   grammar is disjoint from F529's (F529's body branches
         #   reject `of` chargeless at the in/of keyword), and None
         #   falls through to F529 like F509.
+        _f533_saved_parts = state['parts']; _f533_saved_ops = state['ops']
         _f533 = _js_parse_args_forof_iife(text, i, depth, state)
+        if _f533 is None:
+            state['parts'] = _f533_saved_parts; state['ops'] = _f533_saved_ops
         if _f533 is not None:
             val, i = _f533
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56085,7 +56091,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   Tried before F529: the exact entries/values grammar is
         #   disjoint from F529's (F529's keys head rejects entries/
         #   values chargeless), and None falls through to F529.
+        _f543_saved_parts = state['parts']; _f543_saved_ops = state['ops']
         _f543 = _js_parse_args_entries_values_iife(text, i, depth, state)
+        if _f543 is None:
+            state['parts'] = _f543_saved_parts; state['ops'] = _f543_saved_ops
         if _f543 is not None:
             val, i = _f543
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56097,7 +56106,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   Tried before F516: the exact composition grammar is
         #   disjoint from F516's (F516 fails closed on `a[i]`), and
         #   None falls through to F516 like F509.
+        _f529_saved_parts = state['parts']; _f529_saved_ops = state['ops']
         _f529 = _js_parse_args_enumerated_iife(text, i, depth, state)
+        if _f529 is None:
+            state['parts'] = _f529_saved_parts; state['ops'] = _f529_saved_ops
         if _f529 is not None:
             val, i = _f529
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56248,7 +56260,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   the index-IIFE's exact return shape), so no
         #   previously-decoded input changes behavior; None falls
         #   through to F581 like F620.
+        _f637_saved_parts = state['parts']; _f637_saved_ops = state['ops']
         _f637 = _js_parse_f637_thunk_bind_iife(text, i, depth, state)
+        if _f637 is None:
+            state['parts'] = _f637_saved_parts; state['ops'] = _f637_saved_ops
         if _f637 is not None:
             val, i = _f637
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56257,14 +56272,20 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # element). Tried before F516: the exact `return <alias>;`
         # body is disjoint from F516's additive bodies (verified --
         # F516 fails closed on it), and None falls through to F516.
+        _f581_saved_parts = state['parts']; _f581_saved_ops = state['ops']
         _f581 = _js_parse_args_alias_return_iife(text, i, depth, state)
+        if _f581 is None:
+            state['parts'] = _f581_saved_parts; state['ops'] = _f581_saved_ops
         if _f581 is not None:
             val, i = _f581
             return _js_parse_postfix(text, i, val, depth, state)
         # F516: (function(){var A=SRC;return BODY})(lit, ...) or
         # (function(...A){return BODY})(lit, ...) -- arguments
         # laundering; None falls through like F509.
+        _f516_saved_parts = state['parts']; _f516_saved_ops = state['ops']
         _f516 = _js_parse_args_laundered_iife(text, i, depth, state)
+        if _f516 is None:
+            state['parts'] = _f516_saved_parts; state['ops'] = _f516_saved_ops
         if _f516 is not None:
             val, i = _f516
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56281,7 +56302,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # F572: (function(){var k={};var m=new WeakMap([[k,'lit']]);
         # return m.get(k);})() -- WeakMap set/get threading through
         # var-bound object identity; None falls through like F516.
+        _f572_saved_parts = state['parts']; _f572_saved_ops = state['ops']
         _f572 = _js_parse_f572_weakmap_iife(text, i, depth, state)
+        if _f572 is None:
+            state['parts'] = _f572_saved_parts; state['ops'] = _f572_saved_ops
         if _f572 is not None:
             val, i = _f572
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56292,7 +56316,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # WeakMap -- a body mixing both fails closed in each), so
         # no previously-decoded input changes behavior. None falls
         # through like F572.
+        _f687_saved_parts = state['parts']; _f687_saved_ops = state['ops']
         _f687 = _js_parse_f687_weakset_iife(text, i, depth, state)
+        if _f687 is None:
+            state['parts'] = _f687_saved_parts; state['ops'] = _f687_saved_ops
         if _f687 is not None:
             val, i = _f687
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56303,7 +56330,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # (new Set vs new WeakSet -- a body mixing both fails closed
         # in each), so no previously-decoded input changes behavior.
         # None falls through like F687.
+        _f710_saved_parts = state['parts']; _f710_saved_ops = state['ops']
         _f710 = _js_parse_f710_set_has_iife(text, i, depth, state)
+        if _f710 is None:
+            state['parts'] = _f710_saved_parts; state['ops'] = _f710_saved_ops
         if _f710 is not None:
             val, i = _f710
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56331,7 +56361,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   closed on every shape this accepts and vice versa, so no
         #   previously-decoded input changes behavior. None falls
         #   through like F710.
+        _f720_saved_parts = state['parts']; _f720_saved_ops = state['ops']
         _f720 = _js_parse_f720_includes_iife(text, i, depth, state)
+        if _f720 is None:
+            state['parts'] = _f720_saved_parts; state['ops'] = _f720_saved_ops
         if _f720 is not None:
             val, i = _f720
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56344,7 +56377,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # F710 returns None and falls through here), so no
         # previously-decoded input changes behavior. None falls
         # through like F710.
+        _f721_saved_parts = state['parts']; _f721_saved_ops = state['ops']
         _f721 = _js_parse_f721_indexof_iife(text, i, depth, state)
+        if _f721 is None:
+            state['parts'] = _f721_saved_parts; state['ops'] = _f721_saved_ops
         if _f721 is not None:
             val, i = _f721
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56357,14 +56393,20 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # F712's return is iteration reads), so no
         # previously-decoded input changes behavior. None falls
         # through like F721.
+        _f722_saved_parts = state['parts']; _f722_saved_ops = state['ops']
         _f722 = _js_parse_f722_map_has_iife(text, i, depth, state)
+        if _f722 is None:
+            state['parts'] = _f722_saved_parts; state['ops'] = _f722_saved_ops
         if _f722 is not None:
             val, i = _f722
             return _js_parse_postfix(text, i, val, depth, state)
         # F517: (function(){var A='';var O={...};
         # for(var K in O)A+=O[K];return A})() -- for-in
         # accumulation; None falls through like F509.
+        _f517_saved_parts = state['parts']; _f517_saved_ops = state['ops']
         _f517 = _js_parse_forin_accum_iife(text, i, depth, state)
+        if _f517 is None:
+            state['parts'] = _f517_saved_parts; state['ops'] = _f517_saved_ops
         if _f517 is not None:
             val, i = _f517
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56383,7 +56425,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   Object.defineProperty(o,'K',DESC);return o.M;})() --
         # descriptor replacement on a var-bound literal target.
         # None falls through to F535 like F517.
+        _f578_saved_parts = state['parts']; _f578_saved_ops = state['ops']
         _f578 = _js_parse_f578_defineprop_iife(text, i, depth, state)
+        if _f578 is None:
+            state['parts'] = _f578_saved_parts; state['ops'] = _f578_saved_ops
         if _f578 is not None:
             val, i = _f578
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56395,7 +56440,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   not an object literal) and from every earlier IIFE route
         #   (none binds a URLSearchParams), so no previously-decoded
         #   input changes behavior.
+        _f599_saved_parts = state['parts']; _f599_saved_ops = state['ops']
         _f599 = _js_parse_f599_params_mutation_iife(text, i, depth, state)
+        if _f599 is None:
+            state['parts'] = _f599_saved_parts; state['ops'] = _f599_saved_ops
         if _f599 is not None:
             val, i = _f599
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56407,7 +56455,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   shape this accepts (sort/delete/has-guard), and its
         #   append/set+getAll shapes decode identically here, so no
         #   previously-decoded input changes behavior.
+        _f606_saved_parts = state['parts']; _f606_saved_ops = state['ops']
         _f606 = _js_parse_f606_params_mutation2_iife(text, i, depth, state)
+        if _f606 is None:
+            state['parts'] = _f606_saved_parts; state['ops'] = _f606_saved_ops
         if _f606 is not None:
             val, i = _f606
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56418,7 +56469,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   (get vs getAll/if-guard), and F599/F606 both fail closed
         #   on get terminals, so no previously-decoded input changes
         #   behavior.
+        _f610_saved_parts = state['parts']; _f610_saved_ops = state['ops']
         _f610 = _js_parse_f610_params_setget_iife(text, i, depth, state)
+        if _f610 is None:
+            state['parts'] = _f610_saved_parts; state['ops'] = _f610_saved_ops
         if _f610 is not None:
             val, i = _f610
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56548,7 +56602,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   URLSearchParams/URL) and terminals (a .slice member on
         #   the bound ident), so no previously-decoded input changes
         #   behavior.
+        _f624_saved_parts = state['parts']; _f624_saved_ops = state['ops']
         _f624 = _js_parse_f624_slicebound_iife(text, i, depth, state)
+        if _f624 is None:
+            state['parts'] = _f624_saved_parts; state['ops'] = _f624_saved_ops
         if _f624 is not None:
             val, i = _f624
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56650,7 +56707,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   the `var f=(` statement, so none of the earlier routes
         #   accepts these shapes -- no previously-decoded input
         #   changes behavior.
+        _f714_saved_parts = state['parts']; _f714_saved_ops = state['ops']
         _f714 = _js_parse_f714_has_trap_iife(text, i, depth, state)
+        if _f714 is None:
+            state['parts'] = _f714_saved_parts; state['ops'] = _f714_saved_ops
         if _f714 is not None:
             val, i = _f714
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56728,7 +56788,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   `deleteProperty`/`getPrototypeOf` keys or the revocable
         #   head. None of the earlier routes accepts these shapes,
         #   so no previously-decoded input changes behavior.
+        _f686_saved_parts = state['parts']; _f686_saved_ops = state['ops']
         _f686 = _js_parse_f686_ownkeys_iife(text, i, depth, state)
+        if _f686 is None:
+            state['parts'] = _f686_saved_parts; state['ops'] = _f686_saved_ops
         if _f686 is not None:
             val, i = _f686
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56742,7 +56805,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   trap body (this body is a statement `if`). None of the
         #   earlier routes accepts these shapes, so no
         #   previously-decoded input changes behavior.
+        _f689_saved_parts = state['parts']; _f689_saved_ops = state['ops']
         _f689 = _js_parse_f689_symiter_iife(text, i, depth, state)
+        if _f689 is None:
+            state['parts'] = _f689_saved_parts; state['ops'] = _f689_saved_ops
         if _f689 is not None:
             val, i = _f689
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56759,7 +56825,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   literal binding section. The `defineProperty` handler
         #   key is unique to this route, so no previously-decoded
         #   input changes behavior.
+        _f706_saved_parts = state['parts']; _f706_saved_ops = state['ops']
         _f706 = _js_parse_f706_dp_iife(text, i, depth, state)
+        if _f706 is None:
+            state['parts'] = _f706_saved_parts; state['ops'] = _f706_saved_ops
         if _f706 is not None:
             val, i = _f706
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56775,7 +56844,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   object with no Proxy. None of the earlier routes accepts
         #   these shapes, so no previously-decoded input changes
         #   behavior.
+        _f707_saved_parts = state['parts']; _f707_saved_ops = state['ops']
         _f707 = _js_parse_f707_gopd_iife(text, i, depth, state)
+        if _f707 is None:
+            state['parts'] = _f707_saved_parts; state['ops'] = _f707_saved_ops
         if _f707 is not None:
             val, i = _f707
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56796,7 +56868,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   and a literal binding section. The `isExtensible`
         #   handler key is unique to this route, so no
         #   previously-decoded input changes behavior.
+        _f731_saved_parts = state['parts']; _f731_saved_ops = state['ops']
         _f731 = _js_parse_f731_isext_iife(text, i, depth, state)
+        if _f731 is None:
+            state['parts'] = _f731_saved_parts; state['ops'] = _f731_saved_ops
         if _f731 is not None:
             val, i = _f731
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56813,7 +56888,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   F707 require their own handler keys. None of the
         #   earlier routes accepts these shapes, so no
         #   previously-decoded input changes behavior.
+        _f732_saved_parts = state['parts']; _f732_saved_ops = state['ops']
         _f732 = _js_parse_f732_gopwrite_iife(text, i, depth, state)
+        if _f732 is None:
+            state['parts'] = _f732_saved_parts; state['ops'] = _f732_saved_ops
         if _f732 is not None:
             val, i = _f732
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56841,7 +56919,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # assignments), and this requires a top-level comma plus
         # an uninitialized declaration section, so the grammars
         # are disjoint; None falls through like F647.
+        _f652_saved_parts = state['parts']; _f652_saved_ops = state['ops']
         _f652 = _js_parse_f652_sequence_iife(text, i, depth, state)
+        if _f652 is None:
+            state['parts'] = _f652_saved_parts; state['ops'] = _f652_saved_ops
         if _f652 is not None:
             val, i = _f652
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56858,7 +56939,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   for-of statement; F640's hook sits in the async chain
         #   and requires the `async` head, which this head rejects,
         #   so no previously-decoded input changes behavior.
+        _f654_saved_parts = state['parts']; _f654_saved_ops = state['ops']
         _f654 = _js_parse_f654_sync_forof_iife(text, i, depth, state)
+        if _f654 is None:
+            state['parts'] = _f654_saved_parts; state['ops'] = _f654_saved_ops
         if _f654 is not None:
             val, i = _f654
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56891,7 +56975,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   none of the earlier routes decodes any shape this
         #   accepts, so no previously-decoded input changes
         #   behavior.
+        _f679_saved_parts = state['parts']; _f679_saved_ops = state['ops']
         _f679 = _js_parse_f679_statement_iife(text, i, depth, state)
+        if _f679 is None:
+            state['parts'] = _f679_saved_parts; state['ops'] = _f679_saved_ops
         if _f679 is not None:
             val, i = _f679
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56906,7 +56993,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   its own binding family and fails closed on a leading
         #   Map decl, so no previously-decoded input changes
         #   behavior.
+        _f708_saved_parts = state['parts']; _f708_saved_ops = state['ops']
         _f708 = _js_parse_f708_map_get_iife(text, i, depth, state)
+        if _f708 is None:
+            state['parts'] = _f708_saved_parts; state['ops'] = _f708_saved_ops
         if _f708 is not None:
             val, i = _f708
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56919,7 +57009,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   the open tree); every other earlier route requires its
         #   own binding family or statement head, so no
         #   previously-decoded input changes behavior.
+        _f709_saved_parts = state['parts']; _f709_saved_ops = state['ops']
         _f709 = _js_parse_f709_loop_accum_iife(text, i, depth, state)
+        if _f709 is None:
+            state['parts'] = _f709_saved_parts; state['ops'] = _f709_saved_ops
         if _f709 is not None:
             val, i = _f709
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56936,7 +57029,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   other earlier route requires its own binding family or
         #   statement head, so no previously-decoded input changes
         #   behavior.
+        _f727_saved_parts = state['parts']; _f727_saved_ops = state['ops']
         _f727 = _js_parse_f727_dowhile_accum_iife(text, i, depth, state)
+        if _f727 is None:
+            state['parts'] = _f727_saved_parts; state['ops'] = _f727_saved_ops
         if _f727 is not None:
             val, i = _f727
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56950,7 +57046,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   binding -- none decodes any shape this accepts
         #   (red-first verified: 4 BREAK on the open tree), so no
         #   previously-decoded input changes behavior.
+        _f662_saved_parts = state['parts']; _f662_saved_ops = state['ops']
         _f662 = _js_parse_f662_class_iife(text, i, depth, state)
+        if _f662 is None:
+            state['parts'] = _f662_saved_parts; state['ops'] = _f662_saved_ops
         if _f662 is not None:
             val, i = _f662
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56968,7 +57067,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   (plain decls + literal return additive, no classes) both
         #   compute the identical literal-concat value, so flagging
         #   behavior is unchanged.
+        _f672_saved_parts = state['parts']; _f672_saved_ops = state['ops']
         _f672 = _js_parse_f672_class_iife(text, i, depth, state)
+        if _f672 is None:
+            state['parts'] = _f672_saved_parts; state['ops'] = _f672_saved_ops
         if _f672 is not None:
             val, i = _f672
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56982,7 +57084,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   object); every earlier route requires its own binding
         #   family or statement head and fails closed on a `with`
         #   head, so no previously-decoded input changes behavior.
+        _f667_saved_parts = state['parts']; _f667_saved_ops = state['ops']
         _f667 = _js_parse_f667_with_iife(text, i, depth, state)
+        if _f667 is None:
+            state['parts'] = _f667_saved_parts; state['ops'] = _f667_saved_ops
         if _f667 is not None:
             val, i = _f667
             return _js_parse_postfix(text, i, val, depth, state)
@@ -56994,7 +57099,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   on `?.()` / `??` (F665 consumes `?.` member reads only,
         #   never calls or nullish combos), so no previously-decoded
         #   input changes behavior.
+        _f676_saved_parts = state['parts']; _f676_saved_ops = state['ops']
         _f676 = _js_parse_f676_optchain_iife(text, i, depth, state)
+        if _f676 is None:
+            state['parts'] = _f676_saved_parts; state['ops'] = _f676_saved_ops
         if _f676 is not None:
             val, i = _f676
             return _js_parse_postfix(text, i, val, depth, state)
@@ -57006,7 +57114,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   on every shape this accepts; no earlier route decodes any
         #   shape this accepts, so no previously-decoded input
         #   changes behavior.
+        _f678_saved_parts = state['parts']; _f678_saved_ops = state['ops']
         _f678 = _js_parse_f678_with_iife(text, i, depth, state)
+        if _f678 is None:
+            state['parts'] = _f678_saved_parts; state['ops'] = _f678_saved_ops
         if _f678 is not None:
             val, i = _f678
             return _js_parse_postfix(text, i, val, depth, state)
@@ -57019,7 +57130,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   `.matchAll(` initializer (red-first verified: 2 BREAK on
         #   the open tree), so no previously-decoded input changes
         #   behavior.
+        _f694_saved_parts = state['parts']; _f694_saved_ops = state['ops']
         _f694 = _js_parse_f694_match_iife(text, i, depth, state)
+        if _f694 is None:
+            state['parts'] = _f694_saved_parts; state['ops'] = _f694_saved_ops
         if _f694 is not None:
             val, i = _f694
             return _js_parse_postfix(text, i, val, depth, state)
@@ -57033,7 +57147,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   explicitly fails closed on `constructor`; F655/F611/F645
         #   require declaration/parameter heads), so no
         #   previously-decoded input changes behavior.
+        _f690_saved_parts = state['parts']; _f690_saved_ops = state['ops']
         _f690 = _js_parse_f690_ctor_iife(text, i, depth, state)
+        if _f690 is None:
+            state['parts'] = _f690_saved_parts; state['ops'] = _f690_saved_ops
         if _f690 is not None:
             val, i = _f690
             return _js_parse_postfix(text, i, val, depth, state)
@@ -57043,7 +57160,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   requires a constructor production, F692 a super
         #   production); F672 fails closed on `super`, so no
         #   previously-decoded input changes behavior.
+        _f692_saved_parts = state['parts']; _f692_saved_ops = state['ops']
         _f692 = _js_parse_f692_super_iife(text, i, depth, state)
+        if _f692 is None:
+            state['parts'] = _f692_saved_parts; state['ops'] = _f692_saved_ops
         if _f692 is not None:
             val, i = _f692
             return _js_parse_postfix(text, i, val, depth, state)
@@ -57057,7 +57177,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   Map` initializer (red-first verified: 5 BREAK on the
         #   open tree), so no previously-decoded input changes
         #   behavior.
+        _f712_saved_parts = state['parts']; _f712_saved_ops = state['ops']
         _f712 = _js_parse_f712_map_iter_iife(text, i, depth, state)
+        if _f712 is None:
+            state['parts'] = _f712_saved_parts; state['ops'] = _f712_saved_ops
         if _f712 is not None:
             val, i = _f712
             return _js_parse_postfix(text, i, val, depth, state)
@@ -57106,7 +57229,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # input changes behavior. A grouped WeakRef needs its
         # `.deref()` after the outermost close paren (the filed
         # shape); the flag propagates through nested parens.
+        _f586_saved_parts = state['parts']; _f586_saved_ops = state['ops']
         _f586 = _js_parse_f586_grouped_new(text, i, depth, state)
+        if _f586 is None:
+            state['parts'] = _f586_saved_parts; state['ops'] = _f586_saved_ops
         if _f586 is not None:
             val, i, _need_deref = _f586
             if _need_deref:
@@ -57116,7 +57242,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # statically-resolved member reads on object literals. None
         # falls through to the parenthesized-additive path (which
         # fails closed on '{' / 'new' as before).
+        _f535_saved_parts = state['parts']; _f535_saved_ops = state['ops']
         _f535 = _js_parse_f535_member_read(text, i, depth, state)
+        if _f535 is None:
+            state['parts'] = _f535_saved_parts; state['ops'] = _f535_saved_ops
         if _f535 is not None:
             val, i = _f535
             return _js_parse_postfix(text, i, val, depth, state)
@@ -57127,7 +57256,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # shape is disjoint from the F509/F516/F529/F533/F543 IIFE
         # shapes above (none has a `.bind` member after the paren
         # group), so no previously-decoded input changes behavior.
+        _f556_saved_parts = state['parts']; _f556_saved_ops = state['ops']
         _f556 = _js_parse_f556_bound_arrow_call(text, i, depth, state)
+        if _f556 is None:
+            state['parts'] = _f556_saved_parts; state['ops'] = _f556_saved_ops
         if _f556 is not None:
             val, i = _f556
             return _js_parse_postfix(text, i, val, depth, state)
@@ -57141,7 +57273,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # and `.apply` on fn-expr receivers have no other route, and
         # neither has the `...rest`-param head that F577 owns. None
         # falls through to the F577/F608 routes below.
+        _f614_saved_parts = state['parts']; _f614_saved_ops = state['ops']
         _f614 = _js_parse_f614_fnexpr_dispatch(text, i, depth, state)
+        if _f614 is None:
+            state['parts'] = _f614_saved_parts; state['ops'] = _f614_saved_ops
         if _f614 is not None:
             val, i = _f614
             return _js_parse_postfix(text, i, val, depth, state)
@@ -57154,7 +57289,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # immediate invocation parens, which the chained shapes do
         # not have), so the grammars are disjoint; None falls through
         # to the F577/F608 routes below.
+        _f636_saved_parts = state['parts']; _f636_saved_ops = state['ops']
         _f636 = _js_parse_f636_bind_chain(text, i, depth, state)
+        if _f636 is None:
+            state['parts'] = _f636_saved_parts; state['ops'] = _f636_saved_ops
         if _f636 is not None:
             val, i = _f636
             return _js_parse_postfix(text, i, val, depth, state)
@@ -57178,7 +57316,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # through to the parenthesized-additive path (which fails
         # closed on the `(` + `(` head as before); the shape is
         # disjoint from every entry above (none starts `((...`).
+        _f577_saved_parts = state['parts']; _f577_saved_ops = state['ops']
         _f577 = _js_parse_f577_arrow_rest_iife(text, i, depth, state)
+        if _f577 is None:
+            state['parts'] = _f577_saved_parts; state['ops'] = _f577_saved_ops
         if _f577 is not None:
             val, i = _f577
             return _js_parse_postfix(text, i, val, depth, state)
@@ -57202,7 +57343,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   which require arguments forms, WeakMap/object bindings,
         #   or multi-statement bodies); None falls through to the
         #   parenthesized-additive path like F577.
+        _f611_saved_parts = state['parts']; _f611_saved_ops = state['ops']
         _f611 = _js_parse_f611_varbound_iife(text, i, depth, state)
+        if _f611 is None:
+            state['parts'] = _f611_saved_parts; state['ops'] = _f611_saved_ops
         if _f611 is not None:
             val, i = _f611
             return _js_parse_postfix(text, i, val, depth, state)
@@ -57218,7 +57362,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   F611. Disjoint from F652 (additive-position sequences --
         #   that route requires an uninitialized declaration
         #   section).
+        _f661_saved_parts = state['parts']; _f661_saved_ops = state['ops']
         _f661 = _js_parse_f661_declseq_iife(text, i, depth, state)
+        if _f661 is None:
+            state['parts'] = _f661_saved_parts; state['ops'] = _f661_saved_ops
         if _f661 is not None:
             val, i = _f661
             return _js_parse_postfix(text, i, val, depth, state)
@@ -57251,7 +57398,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   bound to the declared tag (never String.raw, which the
         #   primary level owns via F463/F613). None falls through to
         #   the parenthesized-additive path like F661.
+        _f668_saved_parts = state['parts']; _f668_saved_ops = state['ops']
         _f668 = _js_parse_f668_tag_iife(text, i, depth, state)
+        if _f668 is None:
+            state['parts'] = _f668_saved_parts; state['ops'] = _f668_saved_ops
         if _f668 is not None:
             val, i = _f668
             return _js_parse_postfix(text, i, val, depth, state)
@@ -57266,7 +57416,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   Disjoint from F494 (the anonymous immediate
         #   `(function*(){...})()` spread source -- that shape never
         #   reaches this chain as a named declaration).
+        _f619_saved_parts = state['parts']; _f619_saved_ops = state['ops']
         _f619 = _js_parse_f619_generator_iife(text, i, depth, state)
+        if _f619 is None:
+            state['parts'] = _f619_saved_parts; state['ops'] = _f619_saved_ops
         if _f619 is not None:
             val, i = _f619
             return _js_parse_postfix(text, i, val, depth, state)
@@ -57279,7 +57432,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   every earlier route (all require `function(` without
         #   `async`); None falls through to the
         #   parenthesized-additive path like F619.
+        _f631_saved_parts = state['parts']; _f631_saved_ops = state['ops']
         _f631 = _js_parse_f631_asyncgen_iife(text, i, depth, state)
+        if _f631 is None:
+            state['parts'] = _f631_saved_parts; state['ops'] = _f631_saved_ops
         if _f631 is not None:
             val, i = _f631
             return _js_parse_postfix(text, i, val, depth, state)
@@ -57293,7 +57449,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   NAME()` declaration and a `NAME()` receiver, so a
         #   sync-iterable receiver never matches it; None falls
         #   through to the parenthesized-additive path like F631.
+        _f640_saved_parts = state['parts']; _f640_saved_ops = state['ops']
         _f640 = _js_parse_f640_forawait_iife(text, i, depth, state)
+        if _f640 is None:
+            state['parts'] = _f640_saved_parts; state['ops'] = _f640_saved_ops
         if _f640 is not None:
             val, i = _f640
             return _js_parse_postfix(text, i, val, depth, state)
@@ -57400,7 +57559,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   `IT.next().value` postfix read (red-first verified:
         #   2 BREAK on the open tree), so no previously-decoded
         #   input changes behavior.
+        _f728_saved_parts = state['parts']; _f728_saved_ops = state['ops']
         _f728 = _js_parse_f728_nextvalue_iife(text, i, depth, state)
+        if _f728 is None:
+            state['parts'] = _f728_saved_parts; state['ops'] = _f728_saved_ops
         if _f728 is not None:
             val, i = _f728
             return _js_parse_postfix(text, i, val, depth, state)
@@ -57509,7 +57671,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   this-bodies; F673's statement objects use
         #   this_bodies=False); None falls through to the
         #   parenthesized-additive path like F673.
+        _f674_saved_parts = state['parts']; _f674_saved_ops = state['ops']
         _f674 = _js_parse_f674_this_bound_iife(text, i, depth, state)
+        if _f674 is None:
+            state['parts'] = _f674_saved_parts; state['ops'] = _f674_saved_ops
         if _f674 is not None:
             val, i = _f674
             return _js_parse_postfix(text, i, val, depth, state)
@@ -57565,7 +57730,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # F681: (function(){DECL A=['LIT',..];A.splice/fill(..);*;
         # return A.join(SEP);})() -- array-mutator fragment
         # assembly. None falls through (fails closed inside).
+        _f681_saved_parts = state['parts']; _f681_saved_ops = state['ops']
         _f681 = _js_parse_f681_mutator_iife(text, i, depth, state)
+        if _f681 is None:
+            state['parts'] = _f681_saved_parts; state['ops'] = _f681_saved_ops
         if _f681 is not None:
             return _f681
         # F684a: (function({K=V,..}={}){return ADD;})(...) --
@@ -57611,7 +57779,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # F685: (function(){DECL F=()=>arguments[N];return ADD;})
         # (LITS) -- arrow-lexical arguments. None falls through
         # (fails closed inside).
+        _f685_saved_parts = state['parts']; _f685_saved_ops = state['ops']
         _f685 = _js_parse_f685_arrow_args_iife(text, i, depth, state)
+        if _f685 is None:
+            state['parts'] = _f685_saved_parts; state['ops'] = _f685_saved_ops
         if _f685 is not None:
             return _f685
         # F702/F703: (function(){DECL;* return ADD;})() -- getter
@@ -57664,7 +57835,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   the open tree); None falls through to the
         #   parenthesized-additive path. The F723 hook and its
         #   trailing `return` are untouched (wave-379 lesson).
+        _f724_saved_parts = state['parts']; _f724_saved_ops = state['ops']
         _f724 = _js_parse_f724_setproto_iife(text, i, depth, state)
+        if _f724 is None:
+            state['parts'] = _f724_saved_parts; state['ops'] = _f724_saved_ops
         if _f724 is not None:
             val, i = _f724
             return _js_parse_postfix(text, i, val, depth, state)
@@ -57703,7 +57877,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   routes accepts these shapes (red-first verified: 2 BREAK
         #   on the open tree), so no previously-decoded input
         #   changes behavior.
+        _f729_saved_parts = state['parts']; _f729_saved_ops = state['ops']
         _f729 = _js_parse_f729_void_stmt_iife(text, i, depth, state)
+        if _f729 is None:
+            state['parts'] = _f729_saved_parts; state['ops'] = _f729_saved_ops
         if _f729 is not None:
             return _f729
 
@@ -57911,7 +58088,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # -- JSON reviver fragment assembly. None falls through to
         # the F541 single-arg route (a reviver-less call is not this
         # shape; the F541 branch fails closed on extra args).
+        _f683_saved_parts = state['parts']; _f683_saved_ops = state['ops']
         _f683 = _js_parse_f683_json_reviver(text, i, depth, state)
+        if _f683 is None:
+            state['parts'] = _f683_saved_parts; state['ops'] = _f683_saved_ops
         if _f683 is not None:
             val, i = _f683
             return _js_parse_postfix(text, i, val, depth, state)
@@ -58112,7 +58292,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # Defers to F517 when a .map projection follows, so F517's
         # mandatory-projection grammar is unchanged. None falls
         # through to F517 like the other enumeration paths.
+        _f573_saved_parts = state['parts']; _f573_saved_ops = state['ops']
         _f573 = _js_parse_f573_entries_literal(text, i, depth, state)
+        if _f573 is None:
+            state['parts'] = _f573_saved_parts; state['ops'] = _f573_saved_ops
         if _f573 is not None:
             return _f573
         # F634: Object.entries(OBJ).reduce((A,[B,C])=>A+C /
@@ -58120,7 +58303,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # receivers. F573 defers the `.reduce` form to this route;
         # F517's entries+map route is disjoint (different terminal),
         # so no previously-decoded input changes behavior.
+        _f634_saved_parts = state['parts']; _f634_saved_ops = state['ops']
         _f634 = _js_parse_f634_entries_reduce(text, i, depth, state)
+        if _f634 is None:
+            state['parts'] = _f634_saved_parts; state['ops'] = _f634_saved_ops
         if _f634 is not None:
             val, i = _f634
             state["ops"] += 1  # the reduce call is obfuscation-shaped
@@ -58196,7 +58382,10 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # -- identity-preserving builtins on parsed object literals.
         # None falls through to the F471 array-copy factory (which
         # fails closed on non-`[]` targets as before).
+        _f539_saved_parts = state['parts']; _f539_saved_ops = state['ops']
         _f539 = _js_parse_f539_object_identity(text, i, depth, state)
+        if _f539 is None:
+            state['parts'] = _f539_saved_parts; state['ops'] = _f539_saved_ops
         if _f539 is not None:
             val, i = _f539
             state["ops"] += 1  # the builtin call is obfuscation-shaped
@@ -58204,13 +58393,19 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         # F548: Object.create(PROTO[, PROPS]) -- prototype-chain
         # member reads. None falls through to defineProperty / F471
         # (which fails closed on non-assign as before).
+        _f548_saved_parts = state['parts']; _f548_saved_ops = state['ops']
         _f548 = _js_parse_f548_object_create(text, i, depth, state)
+        if _f548 is None:
+            state['parts'] = _f548_saved_parts; state['ops'] = _f548_saved_ops
         if _f548 is not None:
             val, i = _f548
             return _js_parse_postfix(text, i, val, depth, state)
         # F550: Object.defineProperty(OBJ, KEY, DESC) --
         # property-adding builtin. None falls through to F471.
+        _f550_saved_parts = state['parts']; _f550_saved_ops = state['ops']
         _f550 = _js_parse_f550_define_property(text, i, depth, state)
+        if _f550 is None:
+            state['parts'] = _f550_saved_parts; state['ops'] = _f550_saved_ops
         if _f550 is not None:
             val, i = _f550
             return _js_parse_postfix(text, i, val, depth, state)

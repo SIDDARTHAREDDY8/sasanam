@@ -70,8 +70,8 @@ def test_b0_footer_state():
     """Control: lane-local footer (F721/F722 closed, next F738)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F738**" in text
-          and "Open findings: F713, F714, F715, F716, F717, F718, F719, F720, F723, F724, F725, F726, F727, F728, F729, F730, F731, F732, F733, F734, F735, F736, F737." in text)
+    ok = ("Next free finding: **F762**" in text  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762)
+          and "Open findings: F738, F739, F740, F741, F742, F743, F744, F745, F746, F747, F748, F749, F750, F751, F752, F753, F754, F755, F756, F757, F758, F759, F760, F761." in text)  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -305,17 +305,17 @@ def test_p4_sibling_f687_weakset():
 @_t
 def test_p4_neighbor_f720_open():
     """F720 (includes) still misses -- open, not absorbed."""
-    ok = _misses(
+    ok = not _misses(
         "(function(){var a=['q','k'];var f=a.includes('k')?'%s':'xx';return f+'%s';})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f720-open=%s" % ok)
+    return ("HELD" if ok else "BREAK", "f720-closed=%s" % ok)
 
 
 @_t
 def test_p4_neighbor_f713_open():
     """F713 (Map spread-join) still misses -- open, not absorbed."""
-    ok = _misses(
+    ok = not _misses(
         "(function(){var m=new Map([['k','%s']]);return [...m.values()].join('')+'%s';})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f713-open=%s" % ok)
+    return ("HELD" if ok else "BREAK", "f713-closed=%s" % ok)
 
 
 # ------------------------------------------------------------- honestness

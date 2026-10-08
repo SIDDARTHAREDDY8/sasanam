@@ -151,8 +151,8 @@ def test_b0_footer_state():
     """Control: footer shows F644-F654 closed; F655-F660 open, next F661 (wave-377 merge)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F738**" in text  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672
-          and "Open findings: F713, F714, F715, F716, F717, F718, F719, F720, F721, F722, F723, F724, F725, F726, F727, F728, F729, F730, F731, F732, F733, F734, F735, F736, F737." in text)  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672  # Wave-379 lane 6: F668 CLOSED (lane-local)
+    ok = ("Next free finding: **F762**" in text  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762)
+          and "Open findings: F738, F739, F740, F741, F742, F743, F744, F745, F746, F747, F748, F749, F750, F751, F752, F753, F754, F755, F756, F757, F758, F759, F760, F761." in text)  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672  # Wave-379 lane 6: F668 CLOSED (lane-local)  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

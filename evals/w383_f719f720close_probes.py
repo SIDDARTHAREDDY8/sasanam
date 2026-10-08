@@ -295,19 +295,19 @@ def test_p4_sibling_f687():
 @_t
 def test_p4_neighbor_f721_open():
     """F721 (indexOf) still misses -- open, not absorbed."""
-    ok = _misses(
+    ok = not _misses(
         "(function(){var f=['k'].indexOf('k')===0?'%s':'xx';"
         "return f+'%s';})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f721-open=%s" % ok)
+    return ("HELD" if ok else "BREAK", "f721-closed=%s" % ok)
 
 
 @_t
 def test_p4_neighbor_f718_open():
     """F718 (Reflect.has) still misses -- open, not absorbed."""
-    ok = _misses(
+    ok = not _misses(
         "(function(){var o={x:1};var f=Reflect.has(o,'x')?'%s':'xx';"
         "return f+'%s';})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f718-open=%s" % ok)
+    return ("HELD" if ok else "BREAK", "f718-closed=%s" % ok)
 
 
 # ------------------------------------------------------- p5: honest text quiet
@@ -333,10 +333,8 @@ def test_p6_footer_state():
     """Control: lane-local footer (F719/F720 closed, next F738)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F738**" in text
-          and "Open findings: F713, F714, F715, F716, F717, F718, "
-          "F721, F722, F723, F724, F725, F726, F727, F728, F729, "
-          "F730, F731, F732, F733, F734, F735, F736, F737." in text)
+    ok = ("Next free finding: **F762**" in text  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762)
+          and "Open findings: F738, F739, F740, F741, F742, F743, F744, F745, F746, F747, F748, F749, F750, F751, F752, F753, F754, F755, F756, F757, F758, F759, F760, F761." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -374,7 +372,7 @@ def _green_check():
     # count fails loudly.
     for batt, expect_break in (("evals/w382_f719_redfirst.py", 0),
                                ("evals/w382_f720_redfirst.py", 0),
-                               ("evals/w382_attack_probes.py", 1)):
+                               ("evals/w382_attack_probes.py", 0)):
         tmp = tempfile.mkdtemp(prefix="g383-green-", dir="/var/tmp")
         env = dict(os.environ)
         env["GOV_SKIP_GREEN"] = "1"

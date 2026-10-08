@@ -99,11 +99,8 @@ def test_b0_footer_state():
     """Control: lane-local footer (F737 closed, next F738)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F738**" in text
-          and "Open findings: F713, F714, F715, F716, F717, F718, "
-              "F719, F720, F721, F722, F723, F724, F725, F726, F727, "
-              "F728, F729, F730, F731, F732, F733, F734, F735, F736."
-              in text)
+    ok = ("Next free finding: **F762**" in text  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762)
+          and "Open findings: F738, F739, F740, F741, F742, F743, F744, F745, F746, F747, F748, F749, F750, F751, F752, F753, F754, F755, F756, F757, F758, F759, F760, F761." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -348,28 +345,28 @@ def test_p4_sibling_f686_ownkeys():
 @_t
 def test_p4_neighbor_f713_open():
     """F713 (open) still misses."""
-    ok = _misses(
+    ok = not _misses(
         "(function(){var m=new Map([['k','%s']]);"
         "return [...m.values()].join('')+'%s';})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f713-open=%s" % ok)
+    return ("HELD" if ok else "BREAK", "f713-closed=%s" % ok)
 
 
 @_t
 def test_p4_neighbor_f714_open():
     """F714 (open) still misses."""
-    ok = _misses(
+    ok = not _misses(
         "(function(){var p=new Proxy({},{has:function(t,k){return true;}});"
         "var f=('x' in p)?'%s':'xx';return f+'%s';})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f714-open=%s" % ok)
+    return ("HELD" if ok else "BREAK", "f714-closed=%s" % ok)
 
 
 @_t
 def test_p4_neighbor_f716_open():
     """F716 (open) still misses."""
-    ok = _misses(
+    ok = not _misses(
         "(function(){var o={};Reflect.set(o,'x','%s');"
         "return o.x+'%s';})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f716-open=%s" % ok)
+    return ("HELD" if ok else "BREAK", "f716-closed=%s" % ok)
 
 
 # ------------------------------------------------------- honest text p5
@@ -414,7 +411,7 @@ def _green_check():
         return ("HELD", "green check skipped (GOV_SKIP_GREEN=1)")
     bad = []
     for batt, expect_break in (("evals/w382_f737_redfirst.py", 0),
-                               ("evals/w382_attack_probes.py", 1)):
+                               ("evals/w382_attack_probes.py", 0)):
         # w382_attack: 1 tolerated BREAK is test_b0_footer_state, which
         # asserts the base footer; the lane-local footer repoint is
         # merge-owned (wave-382 lane-5 precedent).

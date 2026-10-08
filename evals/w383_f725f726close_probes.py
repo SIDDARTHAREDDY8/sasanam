@@ -79,8 +79,8 @@ def test_b0_footer_state():
     """Control: lane-local footer (F725/F726 closed, F738 filed, next F739)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F739**" in text
-          and "Open findings: F713, F714, F715, F716, F717, F718, F719, F720, F721, F722, F723, F724, F727, F728, F729, F730, F731, F732, F733, F734, F735, F736, F737, F738." in text)
+    ok = ("Next free finding: **F762**" in text  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762)
+          and "Open findings: F738, F739, F740, F741, F742, F743, F744, F745, F746, F747, F748, F749, F750, F751, F752, F753, F754, F755, F756, F757, F758, F759, F760, F761." in text)  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -348,20 +348,20 @@ def test_p6_sibling_f697():
 
 @_t
 def test_p6_neighbor_f724_open():
-    """F724 still misses (open, correct)."""
-    miss = _misses(
+    """F724 now BLOCKS (closed wave-383 merge)."""
+    blocked = not _misses(
         "(function(){var c={};var p={get y(){return '%s';}};"
         "Object.setPrototypeOf(c,p);return c.y+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "f724-open=%s" % miss)
+    return ("HELD" if blocked else "BREAK", "f724-closed=%s" % blocked)
 
 
 @_t
 def test_p6_neighbor_f727_open():
-    """F727 still misses (open, correct)."""
-    miss = _misses(
+    """F727 now BLOCKS (closed wave-383 merge)."""
+    blocked = not _misses(
         "(function(){var r='';var i=0;do{r+=['%s','%s'][i];i++;}while(i<2);"
         "return r;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "f727-open=%s" % miss)
+    return ("HELD" if blocked else "BREAK", "f727-closed=%s" % blocked)
 
 
 @_t

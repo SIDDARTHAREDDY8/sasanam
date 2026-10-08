@@ -89,8 +89,8 @@ def test_b0_footer_state():
     """Control: lane-local footer (F729/F730 closed, next F738)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F738**" in text
-          and "Open findings: F713, F714, F715, F716, F717, F718, F719, F720, F721, F722, F723, F724, F725, F726, F727, F728, F731, F732, F733, F734, F735, F736, F737." in text)
+    ok = ("Next free finding: **F762**" in text  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762)
+          and "Open findings: F738, F739, F740, F741, F742, F743, F744, F745, F746, F747, F748, F749, F750, F751, F752, F753, F754, F755, F756, F757, F758, F759, F760, F761." in text)  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -293,16 +293,16 @@ def test_p4_sibling_f611():
 
 @_t
 def test_p4_neighbor_f731_open():
-    """F731 still misses (open, correct)."""
-    ok = _misses("(function(){var p=new Proxy({},{isExtensible:function(t){return true;}});var f=Object.isExtensible(p)?'%s':'xx';return f+'%s';})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f731-open=%s" % ok)
+    """F731 now BLOCKS (closed wave-383 merge)."""
+    ok = not _misses("(function(){var p=new Proxy({},{isExtensible:function(t){return true;}});var f=Object.isExtensible(p)?'%s':'xx';return f+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f731-closed=%s" % ok)
 
 
 @_t
 def test_p4_neighbor_f728_open():
-    """F728 still misses (open, correct)."""
-    ok = _misses("(function(){function* g(){yield '%s';yield '%s';}var it=g();return it.next().value+it.next().value;})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f728-open=%s" % ok)
+    """F728 now BLOCKS (closed wave-383 merge)."""
+    ok = not _misses("(function(){function* g(){yield '%s';yield '%s';}var it=g();return it.next().value+it.next().value;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f728-closed=%s" % ok)
 
 
 # ------------------------------------------------------------- quiet (p5)
@@ -361,7 +361,7 @@ def _green_check():
     # all functional probes must be 0 BREAK.
     for batt, expect_break in (("evals/w382_f729_redfirst.py", 0),
                                ("evals/w382_f730_redfirst.py", 0),
-                               ("evals/w382_attack_probes.py", 1)):
+                               ("evals/w382_attack_probes.py", 0)):
         tmp = tempfile.mkdtemp(prefix="g383-green-", dir="/var/tmp")
         env = dict(os.environ)
         env["GOV_SKIP_GREEN"] = "1"
