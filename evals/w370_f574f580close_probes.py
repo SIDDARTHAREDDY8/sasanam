@@ -114,7 +114,7 @@ def p3_f574_bounds():
         "['%s','%s'].flat(1.5).join('')" % (_A1, _A2),      # fractional depth
         "['%s','%s'].flat(2,3).join('')" % (_A1, _A2),      # extra arg
         "[[['%s']]].flat(Infinityx).join('')" % _A1,       # Infinityx ident
-        "['%s','%s'].flatMap(x=>x).join('')" % (_A1, _A2),  # non-identity cb
+        "['%s','%s'].flatMap((x)=>x+x).join('')" % (_A1, _A2),  # additive-return cb: fail closed (F597 models only ident/cond scalar returns)
         "['%s','%s'].flatMap((x,i)=>[x]).join('')" % (_A1, _A2),  # 2-param cb
         "['%s','%s'].flatMap(x=>['q']).join('')" % (_A1, _A2),    # const cb
         "[,'%s'].flat(2).join('')" % _A1,                  # hole: fail closed
@@ -199,15 +199,22 @@ def p7_compositions():
         "['%s','%s'].toReversed().join('')" % (_A2, _A1),
         # F553/F554: bound reduce/flatMap targets still modeled
         "[].reduce.bind(['%s','%s'],(a,b)=>a+b)()" % (_A1, _A2),
+        # F575: String.raw non-array raw object (CLOSED wave-370 lane 6)
+        "String.raw({raw:{0:'%s',1:'%s',length:2}})" % (_A1, _A2),
+        # F576: URL laundering (CLOSED wave-370 lane 2)
+        "new URLSearchParams('a=%s').get('a')+'%s'" % (_A1, _A2),
+        # F579: Reflect.ownKeys terminal reads (CLOSED wave-370 lane 3)
+        "({c:'%s'})[Reflect.ownKeys({c:'%s'})[0]]+'%s'" % (_A1, _A1, _A2),
     ]
     missed_closed = [s for s in held if not _blocked(s)]
     still_open = [
-        # F575: String.raw non-array raw object (sibling lane)
-        "String.raw({raw:{0:'%s',1:'%s',length:2}})" % (_A1, _A2),
-        # F579: Reflect.ownKeys terminal reads (sibling lane)
-        "({c:'%s'})[Reflect.ownKeys({c:'%s'})[0]]+'%s'" % (_A1, _A1, _A2),
-        # F576: URL laundering (sibling lane)
-        "new URLSearchParams('a=%s').get('a')+'%s'" % (_A1, _A2),
+        # F598: JSON.stringify of derived arrays (open, wave-372 lane 2)
+        "JSON.parse(JSON.stringify(Array.from(new Set(['%s','%s'])))).join('')"
+        % (_A1, _A2),
+        # F600: Map keys iteration (open, wave-372 lane 4)
+        "Array.from(new Map([['a','%s']]).keys()).join('')" % _A1,
+        # F601: Map.prototype.forEach (open, wave-372 lane 4)
+        "new Map([['a','%s']]).forEach((v)=>v)" % _A1,
     ]
     closed_open = [s for s in still_open if _blocked(s)]
     ok = not missed_closed and not closed_open
@@ -274,8 +281,8 @@ def p9_pin_footer():
         "guac_graph.TAXONOMY_PIN=%r want 2140" % (guac_graph.TAXONOMY_PIN,)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("Next free finding: **F606**" in text
-          and "**Open findings: F597, F598, F599, F600, F601, F602, F603, F604, F605.**"
-              in text  # Wave-370 lane 5: F574/F580 CLOSED; rest OPEN (next F583)
+          and "**Open findings: F598, F599, F600, F601, F602, F603, F604, F605.**"
+              in text  # Wave-370 lane 5: F574/F580 CLOSED; rest OPEN (next F583)  # Wave-372 lane 1: F597 CLOSED; rest OPEN (next F606)
           and "**Status: CLOSED 2026-10-07 wave-370 lane 5." in text)
     return ("HELD" if ok else "BREAK",
             "pin=%s footer=%s" % (TAXONOMY_PIN, ok))
