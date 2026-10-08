@@ -336,7 +336,7 @@ def test_p3_delete_direct_target():
 
 @_t
 def test_p4_open_neighbors_still_miss():
-    """Open findings F672-F674/F676-F685 are not absorbed."""
+    """Wave-380 merge: F672-F674/F676-F685 CLOSED -- former neighbors now block (not absorbed, closed)."""
     shapes = [
         # F672: class private statics (exact red-first shape)
         "(function(){class C{static #x='xoxb-0123';static y(){return C.#x;}}"
@@ -361,8 +361,8 @@ def test_p4_open_neighbors_still_miss():
         "('xoxb-0123')",
     ]
     got = [_misses(s) for s in shapes]
-    ok = all(got)
-    return ("HELD" if ok else "BREAK", "miss=%s" % got)
+    ok = not any(got)
+    return ("HELD" if ok else "BREAK", "still-missing=%s" % [s for s, m in zip(shapes, got) if m])
 
 
 @_t
@@ -411,7 +411,7 @@ def test_p6_pin_footer():
     ok = (TAXONOMY_PIN == 2140 and len(TAXONOMY) > 0)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ok and ("Next free finding: **F700**" in text)  # Wave-380 lane 3: F675 CLOSED; open F672-F674, F676-F685 / next F686
-    ok = ok and ("Open findings: F672, F673, F674, F676, F677, F678, F679, F680, F681, F682, F683, F684, F685." in text)  # Wave-380 lane 3: F675 CLOSED; open F672-F674, F676-F685 / next F686
+    ok = ok and ("Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text)  # Wave-380 lane 3: F675 CLOSED; open F672-F674, F676-F685 / next F686
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 
 

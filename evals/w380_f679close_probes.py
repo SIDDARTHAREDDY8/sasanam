@@ -452,20 +452,20 @@ def test_p3_template_literal():
 # ------------------------------------------------ open neighbors still miss (nothing absorbed)
 
 def test_p4_open_f672_private_static():
-    """Open F672 (private static fields) still misses."""
-    return _miss("p4", "(function(){class C{static #x='" + _A + "';static y(){return C.#x;}}return C.y()+'"
+    """Wave-380 merge: F672 CLOSED by lane 1 -- now blocks."""
+    return _hit("p4", "(function(){class C{static #x='" + _A + "';static y(){return C.#x;}}return C.y()+'"
                 + _B + "';})()")
 
 
 def test_p4_open_f672_extends():
-    """Open F672 (extends/super reads) still misses."""
-    return _miss("p4", "(function(){class C{get x(){return '" + _A + "';}}class D extends C{}return new D().x+'"
+    """Wave-380 merge: F672 CLOSED by lane 1 -- now blocks."""
+    return _hit("p4", "(function(){class C{get x(){return '" + _A + "';}}class D extends C{}return new D().x+'"
                 + _B + "';})()")
 
 
 def test_p4_open_f678_with_tail():
-    """Open F678 (with tail-read) still misses."""
-    return _miss("p4", "(function(){var o={x:'" + _A + "'};var s;with(o){s=x;}return s+'" + _B + "';})()")
+    """Wave-380 merge: F678 CLOSED by lane 4 -- now blocks."""
+    return _hit("p4", "(function(){var o={x:'" + _A + "'};var s;with(o){s=x;}return s+'" + _B + "';})()")
 
 
 # ------------------------------------------------ closed neighbors still held
@@ -534,8 +534,7 @@ def test_p7_pin_and_footer():
     ok = TAXONOMY_PIN == 2140 and len(TAXONOMY) > 0
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ok and "Next free finding: **F700**" in text
-    ok = ok and ("Open findings: F672, F673, F674, F675, F676, F677, F678, "
-                 "F680, F681, F682, F683, F684, F685." in text)
+    ok = ok and ("Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text)
     ok = ok and "**Status: CLOSED 2026-10-08 wave-380 lane 6.**" in text
     return ("HELD" if ok else "BREAK", "ok=%s" % ok)
 

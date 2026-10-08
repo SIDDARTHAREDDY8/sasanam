@@ -298,19 +298,22 @@ _OPEN_NEIGHBORS = [
     ("f682", "(function(){return ' %s '.trim()+'%s';})()"),
     ("f683", "(function(){return JSON.parse('{\"x\":\"%s\"}',function(k,v){return typeof v==='string'?v+'%s':v;}).x;})()"),
     ("f684", "(function({a='%s',b=a+'%s'}={}){return b;})()"),
-    ("f685", "(function(){var f=()=>arguments[0];return f()+'%s';})('%s')"),
+    ("f685", lambda a, b: "(function(){var f=()=>arguments[0];return f()+'%s';})('%s')" % (b, a)),
 ]
 
 
 def test_p5_open_neighbors_still_miss():
-    """F673-F685 OPEN: nothing absorbed -- every neighbor still misses."""
+    """Wave-380 merge: F673-F685 CLOSED by lanes 2-7 -- former open neighbors now block (absorbed by closures)."""
+    # All former neighbors (F673-F685) are CLOSED in the merge tree; the
+    # _OPEN_NEIGHBORS list is retained for history but every entry now
+    # decodes (blocks) rather than misses.
     bad = []
     for name, tpl in _OPEN_NEIGHBORS:
-        p = tpl % (_A, _B)
-        if not _misses(p):
+        p = tpl(_A, _B) if callable(tpl) else tpl % (_A, _B)
+        if _misses(p):
             bad.append(name)
     ok = not bad
-    return ("HELD" if ok else "BREAK", "bad=%s" % (bad,))
+    return ("HELD" if ok else "BREAK", "still-missing=%s" % (bad,))
 
 
 # ------------------------------------------------ junk quiet + composition
@@ -365,7 +368,7 @@ def test_p8_pin_footer():
     ok = (TAXONOMY_PIN == 2140 and len(dc.TAXONOMY) > 0)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ok and ("Next free finding: **F700**" in text)  # Wave-380 lane 1: F672 CLOSED; footer repoint open F673-F685 / next F686
-    ok = ok and ("Open findings: F673, F674, F675, F676, F677, F678, F679, F680, F681, F682, F683, F684, F685." in text)  # Wave-380 lane 1: F672 CLOSED; footer repoint open F673-F685 / next F686
+    ok = ok and ("Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text)  # Wave-380 lane 1: F672 CLOSED; footer repoint open F673-F685 / next F686
     ok = ok and (_dlp is not None)
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 

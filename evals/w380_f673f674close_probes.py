@@ -380,8 +380,8 @@ _t("test_p3_hasown_unbound_receiver", lambda: _miss(
     "(function(){var o={x:'" + _A + "'};"
     "return (Object.hasOwn(zzz,'x')?o.x:'junk')+'" + _B + "';})()"))
 
-_t("test_p4_open_f672_still_misses", lambda: _miss(
-    "F672 (private statics) still open",
+_t("test_p4_open_f672_still_misses", lambda: _hit(
+    "F672 (private statics) now CLOSED by lane 1 (merge)",
     "(function(){class C{static #x='" + _A + "';static y(){return C.#x;}}"
     "return C.y()+'" + _B + "';})()"))
 
@@ -390,8 +390,8 @@ _t("test_p4_open_f675_still_misses", lambda: _miss(
     "(function(){var p=new Proxy({},{get:function(t,k){return '" + _A
     + "';}});return p.x+'" + _B + "';})()"))
 
-_t("test_p4_open_f677_still_misses", lambda: _miss(
-    "F677 (manual iterators) still open",
+_t("test_p4_open_f677_still_misses", lambda: _hit(
+    "F677 now CLOSED by lane 5 (merge)",
     "(function(){var o={i:0,next:function(){this.i++;return this.i<=2?"
     "{value:this.i===1?'" + _A + "':'" + _B + "',done:false}:{done:true};}};"
     "var s='';var r=o.next();s+=r.value;r=o.next();s+=r.value;return s;})()"))
@@ -420,8 +420,7 @@ def test_p5_pin_and_footer():
     ok = TAXONOMY_PIN == 2140
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ok and "Next free finding: **F700**" in text
-    ok = ok and ("Open findings: F672, F675, F676, F677, F678, "
-                 "F679, F680, F681, F682, F683, F684, F685." in text)
+    ok = ok and ("Open findings: F686, F687, F688, F689, F690, F691, F692, F693, F694, F695, F696, F697, F698, F699." in text)
     ok = ok and ("**Status: CLOSED 2026-10-08 wave-380 lane 2.**" in text)
     return ("HELD" if ok else "BREAK", "ok=%s" % ok)
 
