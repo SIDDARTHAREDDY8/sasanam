@@ -148,12 +148,11 @@ def test_p0_pin_taxonomy():
     ok = TAXONOMY_PIN == 2140 and len(TAXONOMY) > 0
     return ("HELD" if ok else "BREAK", "pin=%s" % TAXONOMY_PIN)
 def test_b0_footer_state():
-    """Control: footer shows F644-F653 closed (merge lanes 1-7); F654, F660 open, next F655."""
+    """Control: footer shows F644-F654 closed (merge lanes 1-8); F660 open, next F655."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F655**" in text  # Wave-377 merge lanes 1-7: F644-F653 CLOSED; open F654, F660 (next F655)
-          and "Open findings: F654, F660." in text)  # Wave-377 merge lanes 1-7: F644-F653 CLOSED; open F654, F660 (next F655)
-    return ("HELD" if ok else "BREAK", "footer=%s" % ok)
+    ok = ("Next free finding: **F655**" in text  # Wave-377 merge lanes 1-8: F644-F654 CLOSED; open F660 (next F655)
+          and "Open findings: F660." in text)  # Wave-377 merge lanes 1-8: F644-F654 CLOSED; open F660 (next F655)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
