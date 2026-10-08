@@ -98,11 +98,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: lane-local footer -- open F595, F607-F609, F611 / next F612."""
+    """Control: lane-local footer -- open F612-F615, F618-F621 / next F622 (wave-374 lane 5)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F621**" in text  # Wave-373 merge: footer repoint open F612-F620 / next F621
-          and "Open findings: F612, F613, F614, F615, F616, F617, F618, F619, F620." in text)  # Wave-373 merge: footer repoint open F612-F620 / next F621
+    ok = ("Next free finding: **F622**" in text  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 5: F621 FILED OPEN
+          and "Open findings: F612, F613, F614, F615, F618, F619, F620, F621." in text)  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 lane 5: F616, F617 CLOSED  # Wave-374 lane 5: F621 FILED OPEN
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -348,7 +348,12 @@ def test_b10_tail_nonliteral():
 
 @_t
 def test_b11_url_binding():
-    """new URL(...) binding fails closed (searchParams out of scope)."""
+    """new URL(...).searchParams with a sort() mutation fails closed.
+
+    Wave-374 lane 5 (F617 CLOSED): the searchParams receiver itself is
+    now modeled, but sort() on it is a documented F617 residual --
+    this probe pins that the sort hybrid stays quiet.
+    """
     ok = _quiet("(function(){var p=new URL('http://x/?q=AA');"
                 "p.searchParams.sort();"
                 "return p.searchParams.getAll('q').join('');})()")
