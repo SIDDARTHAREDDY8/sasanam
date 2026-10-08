@@ -172,10 +172,18 @@ def test_p3_rebind_misses():
 
 
 def test_p3_nonliteral_source_misses():
-    """Non-literal sources (JSON.parse) fail closed."""
-    ok = _misses("(function(){var o=JSON.parse('{\"a\":\"%s\",\"b\":\"%s\"}');"
-                 "return Object.values(o).join('');})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    """Non-literal sources fail closed (JSON.parse now modeled -- F630).
+
+    Wave-375 lane 3 closed F630: JSON.parse('LITERAL') is now a
+    modeled enumeration source, so the JSON.parse shape blocks
+    (previously a documented fail-closed residual of F612). A
+    genuinely non-literal source (identifier-bound) still misses.
+    """
+    ok = _blocked("(function(){var o=JSON.parse('{\"a\":\"%s\",\"b\":\"%s\"}');"
+                  "return Object.values(o).join('');})()" % (_A, _B))
+    ok = ok and _misses("(function(){var o=someCall();"
+                        "return Object.values(o).join('');})()")
+    return ("HELD" if ok else "BREAK", "ok=%s" % ok)
 
 
 def test_p3_multidecl_misses():
@@ -276,11 +284,13 @@ def _round42_shapes():
     """Filed shapes of the currently-OPEN round-42 findings (must still miss).
 
     F621 dropped: CLOSED 2026-10-08 wave-375 lane 1 (its shapes now block).
+    F622, F632 dropped: CLOSED 2026-10-08 wave-375 lane 2 (their shapes now block).
+    F623, F630, F634 dropped: CLOSED 2026-10-08 wave-375 lane 3 (their shapes now block).
     """
     import importlib
     shapes = []
-    # Wave-375 merge lanes 1/10, 2/10: F621, F622, F632 CLOSED -- dropped from the still-open set.
-    for fnum in (623, 624, 625, 626, 627, 628, 629, 630, 631, 633, 634):
+    # Wave-375 merge lanes 1/10, 2/10, 3/10: F621, F622, F632, F623, F630, F634 CLOSED -- dropped from the still-open set.
+    for fnum in (624, 625, 626, 627, 628, 629, 631, 633):
         mod = importlib.import_module("w374_f%d_redfirst" % fnum)
         for name, payload, recovers in mod.SHAPES:
             if recovers:

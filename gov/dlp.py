@@ -11026,6 +11026,38 @@ def _js_order_object_keys(key_order, int_poss, str_poss):
             + [key_order[pos] for pos in str_poss])
 
 
+def _js_order_jsobj_keys_values(obj):
+    """Order a resolved _JSObj's props engine-exactly for enumeration
+    (F623/F630).
+
+    Returns (ordered_keys, ordered_values). The dict insertion order
+    is the first-insertion order: both producers this serves keep
+    later-wins overwrites in place (F565's pair list via plain dict
+    assignment; json.loads), which matches the engine's
+    CreateDataPropertyOnObject semantics (node v24.20.0 verified).
+    Integer-index keys sort ascending numerically first, then
+    string keys in insertion order -- the same permutation the
+    F510/F517 literal path applies. Non-string values fail closed
+    (an enumeration source must yield strings; the F583 keys-only
+    fallback is not offered on this path). Never evals.
+    """
+    order = []
+    key_order = []
+    int_poss = []
+    str_poss = []
+    for pos, (key, val) in enumerate(obj.props.items()):
+        if not isinstance(val, str):
+            raise _JSExprFail("enumeration source value not a string")
+        key_order.append(key)
+        order.append(val)
+        if _js_is_integer_index_key(key):
+            int_poss.append((int(key), pos))
+        else:
+            str_poss.append(pos)
+    return (_js_order_object_keys(key_order, int_poss, str_poss),
+            _js_order_object_values(order, int_poss, str_poss))
+
+
 def _js_skip_f583_literal_value(text, j, state):
     """Skip one JSON-ish literal value at text[j] (F583 keys-only mode).
 
@@ -13047,6 +13079,71 @@ def _js_parse_enumeration_wrapper(text, i, depth, state,
     return keys, vals, j + 1
 
 
+def _js_parse_f630_json_enumeration_source(text, j, depth, state):
+    """Parse `JSON.parse('LITERAL')` as an enumeration source (F630).
+
+    F541 (CLOSED) models JSON.parse of credential-bearing strings with
+    member reads on the result, but a JSON.parse call result bound
+    and read through Object.values/Object.entries escapes: the
+    source is a call, not a literal, so neither F541's member-read
+    path nor F612's literal-only enumeration grammar reaches it.
+    Node-exact desugar (v24.20.0): the single string-literal
+    argument is parsed by the stdlib json.loads and converted by
+    the F541 value-graph converter (`_js_f541_json_value` --
+    later-wins on duplicate keys, `__proto__` fails closed,
+    depth/parts bounded); the resulting _JSObj's props are then
+    enumerated engine-exactly (`_js_order_jsobj_keys_values`).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a non-string-literal argument (the F571
+      JSON.parse(JSON.stringify(...)) form stays F571's -- it is a
+      different production);
+    - extra arguments (reviver) or invalid JSON (the engine throws);
+    - a non-object JSON result (a bare string/number/array is not an
+      enumeration source);
+    - non-string values in the parsed object (the F583 keys-only
+      fallback is inline-only; here it fails closed -- F479
+      precedent).
+    Returns (ordered_keys, ordered_values, next_index). The `parse`
+    call charges one op (obfuscation-shaped). Never evals.
+    """
+    n = len(text)
+    k = j + len("JSON")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("JSONx is not JSON")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ".":
+        raise _JSExprFail("JSON without dot")
+    k = _js_skip_ws(text, k + 1)
+    m = _js_match_kw(text, k, "parse")
+    if m is None:
+        raise _JSExprFail("JSON without parse")
+    if m < n and text[m] in _JS_IDENT_CONT:
+        raise _JSExprFail("parsex is not parse")
+    k = _js_skip_ws(text, m)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("JSON.parse without paren")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] not in "'\"":
+        raise _JSExprFail("JSON.parse arg not a string literal")
+    jstr, k = _js_parse_string(text, k)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("JSON.parse with extra args")
+    try:
+        jval = json.loads(jstr)
+    except (ValueError, RecursionError):
+        # Not valid JSON (or pathologically deep) -- the engine
+        # throws; fail closed, never mis-decoded (F541 parity).
+        raise _JSExprFail("JSON.parse arg not valid JSON")
+    jobj = _js_f541_json_value(jval, state)
+    if not isinstance(jobj, _JSObj):
+        raise _JSExprFail("JSON.parse result not an object")
+    state["ops"] += 1  # the parse call is obfuscation-shaped
+    keys, vals = _js_order_jsobj_keys_values(jobj)
+    return keys, vals, k + 1
+
+
 def _js_parse_enumeration_source(text, i, depth, state,
                                  _keys_only=False):
     """Parse the OBJ of `Object.{values,keys,entries}(OBJ)` (F510/F517).
@@ -13057,12 +13154,18 @@ def _js_parse_enumeration_source(text, i, depth, state,
       the identity, so INNER is parsed by this same grammar);
     - the entries-reduce rebuild idiom
       `Object.entries(OBJLIT).reduce((A,[B,C])=>(A[B]=C,A),{})`;
+    - `Object.fromEntries(ENTRIES)` (F623 -- the F565 deserializing
+      builtin on literal pair lists / new Map inputs; its _JSObj
+      result enumerates engine-exactly);
+    - `JSON.parse('LITERAL')` (F630 -- the F541 deserializing
+      builtin on a string-literal argument; its _JSObj result
+      enumerates engine-exactly);
     - a plain object literal `{...}`.
     Anything else fails closed. Returns (ordered_keys,
     ordered_values, next_index). The F583 `_keys_only` flag applies
     to the plain-literal and wrapper branches (values skipped where
-    they cannot affect the result); the entries-reduce branch stays
-    strict. Never evals.
+    they cannot affect the result); the entries-reduce, fromEntries,
+    and JSON.parse branches stay strict. Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, i)
@@ -13081,7 +13184,29 @@ def _js_parse_enumeration_source(text, i, depth, state,
                 if k2 is not None:
                     return _js_parse_entries_reduce_keys_values(
                         text, j, depth, state)
+                k3 = _js_match_kw(text, _js_skip_ws(text, k + 1),
+                                  "fromEntries")
+                if k3 is not None:
+                    # F623: Object.fromEntries(ENTRIES) as an
+                    # enumeration source. The F565 parser commits
+                    # on the member and fails closed on malformed
+                    # shapes; its _JSObj result is ordered
+                    # engine-exactly for the enumeration readers.
+                    _fe = _js_parse_f565_from_entries(text, j, depth,
+                                                      state)
+                    if _fe is None:
+                        raise _JSExprFail("fromEntries head vanished")
+                    _fobj, _fj = _fe
+                    _fkeys, _fvals = _js_order_jsobj_keys_values(_fobj)
+                    return _fkeys, _fvals, _fj
         raise _JSExprFail("Object enumeration source not modeled")
+    if text.startswith("JSON", j):
+        # F630: JSON.parse('LITERAL') as an enumeration source.
+        # Ident-boundary discipline lives inside the callee; a
+        # non-parse JSON member falls through to the fail-closed
+        # tail below.
+        return _js_parse_f630_json_enumeration_source(text, j, depth,
+                                                      state)
     if j < n and text[j] == "{":
         return _js_parse_object_literal_keys_values(text, j, depth,
                                                     state,
@@ -13501,10 +13626,14 @@ def _js_parse_f573_entries_literal(text, i, depth, state):
         raise _JSExprFail("F573 entries with extra args")
     j += 1
     # F517 owns the `.map` projection form -- defer so its
-    # mandatory-projection grammar is unchanged.
+    # mandatory-projection grammar is unchanged. F634 owns the
+    # `.reduce` fold form -- defer likewise (its production parses
+    # the entries head itself via the enumeration-source grammar).
     q = _js_skip_ws(text, j)
     if q < n and text[q] == ".":
-        if _js_match_kw(text, _js_skip_ws(text, q + 1), "map") is not None:
+        _qm = _js_match_kw(text, _js_skip_ws(text, q + 1), "map")
+        _qr = _js_match_kw(text, _js_skip_ws(text, q + 1), "reduce")
+        if _qm is not None or _qr is not None:
             return None
     # Engine enumeration order via the F517 helper (node v24.20.0
     # verified): integer indices ascending first, then string keys
@@ -13619,6 +13748,199 @@ def _js_parse_object_entries(text, i, depth, state):
     state["ops"] += 1  # the entries+map idiom is obfuscation-shaped
     return _js_parse_postfix(text, j, _JSArr(vals if kind == "vals"
                                             else keys), depth, state)
+
+
+def _js_parse_f634_reduce_term(text, j, acc_name, val_name, indexed):
+    """Parse one `X+Y` operand of an F634 entries-reduce body.
+
+    Returns ("acc"|"val", next_index). An ident equal to *acc_name*
+    is the accumulator; an ident equal to *val_name* is the entry
+    value -- in the indexed form it must be followed by `[1]`
+    (ws-tolerant). Anything else fails closed: in particular the
+    destructured KEY name and the `[0]` projection are out of scope
+    (key-folding is a different assembly -- documented residual).
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    q, j = _js_parse_ident(text, j)
+    if q == acc_name:
+        return "acc", j
+    if q != val_name:
+        raise _JSExprFail("F634 reduce body not acc/value assembly")
+    if indexed:
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "[")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "1":
+            raise _JSExprFail("F634 reduce body not [1] projection")
+        j = _js_skip_ws(text, j + 1)
+        j = _js_expect(text, j, "]")
+    return "val", j
+
+
+def _js_parse_f634_reduce_callback(text, i):
+    """Parse the .reduce callback of an entries fold (F634).
+
+    Recognized (node-verified, v24.20.0) -- strictly static, never
+    evaluated:
+      (A,[B,C])=>A+C | (A,[B,C])=>C+A
+      (A,E)=>A+E[1] | (A,E)=>E[1]+A
+      and the {return ...;} block-body twins of each.
+    Returns (p0, tA, tB, val_name, next_index) with tA/tB in
+    {"acc","val"} and val_name the real value-ident (c of [B,C] or
+    E of (A,E)). Duplicate params fail closed. function-form
+    callbacks fail closed (documented residual -- the filed shapes
+    are arrows). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    j = _js_expect(text, j, "(")
+    p0, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    j = _js_expect(text, _js_skip_ws(text, j), ",")
+    j = _js_skip_ws(text, j)
+    indexed = False
+    if j < n and text[j] == "[":
+        # Destructured pair param [B,C]: B is the key, C the value.
+        j = _js_skip_ws(text, j + 1)
+        _b, j = _js_parse_ident(text, j)
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        c, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        if len({p0, _b, c}) < 3:
+            raise _JSExprFail("F634 duplicate reduce params")
+        val_name = c
+    else:
+        p1, j = _js_parse_ident(text, j)
+        if p1 == p0:
+            raise _JSExprFail("F634 duplicate reduce params")
+        indexed = True
+        val_name = p1
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F634 reduce callback not an arrow")
+    j = _js_skip_ws(text, j + 2)
+    block = False
+    if j < n and text[j] == "{":
+        block = True
+        j = _js_skip_ws(text, j + 1)
+        m = _js_match_kw(text, j, "return")
+        if m is None:
+            raise _JSExprFail("F634 block body not a return")
+        j = _js_skip_ws(text, m)
+    tA, j = _js_parse_f634_reduce_term(text, j, p0, val_name, indexed)
+    j = _js_expect(text, _js_skip_ws(text, j), "+")
+    tB, j = _js_parse_f634_reduce_term(text, _js_skip_ws(text, j),
+                                       p0, val_name, indexed)
+    j = _js_skip_ws(text, j)
+    if block:
+        if j < n and text[j] == ";":
+            j += 1
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+    return p0, tA, tB, val_name, j
+
+
+def _js_parse_f634_entries_reduce(text, i, depth, state):
+    """Parse `Object.entries(OBJ).reduce(CB, INIT)` at text[i] (F634).
+
+    F437 (CLOSED) models .reduce() on array-literal and
+    Object.values() receivers, but the Object.entries() receiver --
+    pair arrays folded with destructured `(a,[k,v])=>a+v` or indexed
+    `(a,e)=>a+e[1]` callbacks -- has no modeled path. Node-exact
+    (v24.20.0): the source is the F510/F517 enumeration grammar
+    (`_js_parse_enumeration_source`), so keys/vals arrive in engine
+    enumeration order; the fold starts at the string-literal INIT
+    and appends each entry's VALUE per step, honoring the body's
+    operand order (the F437 `(x,y)=>y+x` discipline, via the shared
+    `_js_reduce_fold`).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a missing or non-string-literal INIT (the engine would seed
+      from the first pair, which is not a string);
+    - non-string values in the source (F479 precedent);
+    - callback bodies that fold the KEY (`B`, `E[0]`), are not
+      acc/value `X+Y` assembly, or are function-form callbacks.
+    Returns (folded_str, next_index), or None when text[i] is not an
+    Object.entries head (the caller falls through to F517). Once
+    `.reduce` commits the parse, malformed shapes fail closed via
+    _JSExprFail. The F573 bare-entries parser defers the `.reduce`
+    form to this route. Never evals.
+    """
+    n = len(text)
+    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+        return None
+    if not text.startswith("Object", i):
+        return None
+    j = i + len("Object")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        return None  # Objectx -- fall through
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        # F480: Object['entries'] -- bracket-string member access,
+        # engine-identical to the dot form (node v24.20.0 verified).
+        _mname, j = _js_parse_bracket_member(text, j)
+        if _mname != "entries":
+            return None  # not entries -- fall through
+    elif j < n and text[j] == ".":
+        j = _js_skip_ws(text, j + 1)
+        m = _js_match_kw(text, j, "entries")
+        if m is None:
+            return None  # not entries -- fall through
+        j = m
+    else:
+        return None
+    # The `entries` member commits the parse only once `.reduce`
+    # follows the call; otherwise this is F573's bare form or F517's
+    # map form -- return None so those keep their grammars. The
+    # source parse below is speculative: on deferral the state
+    # budgets are restored (F517 precedent).
+    _saved = dict(state)
+    try:
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        keys, vals, j = _js_parse_enumeration_source(text, j,
+                                                    depth, state)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        q = _js_skip_ws(text, j)
+        _rm = (_js_match_kw(text, _js_skip_ws(text, q + 1), "reduce")
+               if q < n and text[q] == "." else None)
+        _is_reduce = _rm is not None
+    except _JSExprFail:
+        state.clear()
+        state.update(_saved)
+        return None
+    if not _is_reduce:
+        state.clear()
+        state.update(_saved)
+        return None
+    # `.reduce` committed: malformed shapes fail closed from here.
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F634 too deep")
+    if any(not isinstance(v, str) for v in vals):
+        raise _JSExprFail("F634 reduce over non-string value")
+    m = _rm  # reuse the speculative probe's match (deterministic re-parse)
+    j = _js_skip_ws(text, m)
+    j = _js_expect(text, j, "(")
+    p0, tA, tB, val_name, j = _js_parse_f634_reduce_callback(
+        text, _js_skip_ws(text, j))
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ",")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail("F634 reduce init not a string")
+    init, j = _js_parse_string(text, j)
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    acc = _js_reduce_fold(init, vals, p0,
+                          p0 if tA == "acc" else val_name,
+                          p0 if tB == "acc" else val_name,
+                          state)
+    return acc, j
 
 
 def _js_parse_descriptor_value_projection(text, i):
@@ -20201,6 +20523,178 @@ def _js_parse_forin_accum_iife(text, i, depth, state):
             k = _js_skip_ws(rewritten, k)
             if k != len(rewritten):
                 raise _JSExprFail("f517 forin trailing junk")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f623_forin_from_entries_iife(text, i, depth, state):
+    """Parse a for-in accumulation IIFE over a fromEntries result (F623).
+
+    The exact modeled shape (ws-tolerant):
+        (function(){DECL o=Object.fromEntries(...);var s='';
+         for(var k in o){s+=o[k];}return s;})()
+
+    F517/F592 model for-in accumulation over object LITERALS, but a
+    fromEntries-bound source escapes: the F623 finding's third filed
+    shape. Node-exact desugar (v24.20.0): for-in over a fresh
+    fromEntries result enumerates in Object.values order (the F565
+    model already captures the engine's CreateDataPropertyOnObject
+    semantics, including `__proto__` as an own data property), so
+    the idiom is engine-identical to
+    `Object.values(<fromEntries-text>).join('')`, which the F623
+    enumeration-source branch then resolves. The desugared text is
+    parsed by the normal additive grammar at depth+1, so every
+    downstream decoder, bound, and fail-closed rule applies
+    unchanged.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a binding source other than Object.fromEntries (F517's
+      literal grammar stays F517's -- disjoint);
+    - a non-empty accumulator, extra statements, reassignment, a
+      named function, parameters, call args, or a directive
+      prologue;
+    - a member read on the indexed value (`s+=o[k].v` -- the F592
+      member extension is literal-only);
+    - the reversed statement order (accumulator first) -- not filed.
+    Returns (value, next_index), or None when the head does not
+    match or a guard fails. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_skip_ws(text, j + 1)
+    if not text.startswith("function", k):
+        return None
+    k2 = k + len("function")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        return None  # functionx -- not our shape
+    if k2 < n and text[k2] in _JS_IDENT_START:
+        return None  # named function -- not our shape
+    try:
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        # DECL o=Object.fromEntries(...);
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F623 forin decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            raise _JSExprFail("F623 forin binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        fe_start = sj
+        _fe = _js_parse_f565_from_entries(text, sj, depth, state)
+        if _fe is None:
+            raise _JSExprFail("F623 forin source not fromEntries")
+        _, fe_end = _fe
+        fe_text = text[fe_start:fe_end]
+        sj = _js_skip_ws(text, fe_end)
+        sj = _js_expect(text, sj, ";")
+        # var s='';
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "var")
+        if m is None:
+            raise _JSExprFail("F623 forin accum not var")
+        sj = _js_skip_ws(text, m)
+        sname, sj = _js_parse_ident(text, sj)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] not in "'\"":
+            raise _JSExprFail("F623 forin accum not a string")
+        q0 = sj
+        _, sj = _js_parse_string(text, sj)
+        if text[q0:sj] != "''" and text[q0:sj] != '""':
+            raise _JSExprFail("F623 forin accum not empty")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        # for(var k in o){s+=o[k];} -- braces optional (F592 parity).
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "for")
+        if m is None:
+            raise _JSExprFail("F623 forin no for")
+        sj = _js_expect(text, _js_skip_ws(text, m), "(")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "var")
+        if m is None:
+            raise _JSExprFail("F623 forin key not var")
+        sj = _js_skip_ws(text, m)
+        kvar, sj = _js_parse_ident(text, sj)
+        if kvar in (sname, oname):
+            raise _JSExprFail("F623 forin key shadows")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "in")
+        if m is None:
+            raise _JSExprFail("F623 forin no in")
+        sj = _js_skip_ws(text, m)
+        obj2, sj = _js_parse_ident(text, sj)
+        if obj2 != oname:
+            raise _JSExprFail("F623 forin iterates another object")
+        sj = _js_expect(text, _js_skip_ws(text, sj), ")")
+        sj = _js_skip_ws(text, sj)
+        braced = False
+        if sj < inner_end and text[sj] == "{":
+            braced = True
+            sj = _js_skip_ws(text, sj + 1)
+        s2, sj = _js_parse_ident(text, sj)
+        if s2 != sname:
+            raise _JSExprFail("F623 forin accum mismatch")
+        sj = _js_skip_ws(text, sj)
+        if not text.startswith("+=", sj):
+            raise _JSExprFail("F623 forin body not +=")
+        sj = _js_skip_ws(text, sj + 2)
+        obj3, sj = _js_parse_ident(text, sj)
+        if obj3 != oname:
+            raise _JSExprFail("F623 forin body reads another object")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "[")
+        k2b, sj = _js_parse_ident(text, _js_skip_ws(text, sj))
+        if k2b != kvar:
+            raise _JSExprFail("F623 forin body indexes another key")
+        sj = _js_expect(text, _js_skip_ws(text, sj), "]")
+        sj = _js_skip_ws(text, sj)
+        if sj < inner_end and text[sj] == ".":
+            raise _JSExprFail("F623 forin member read out of scope")
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if braced:
+            sj = _js_expect(text, sj, "}")
+            sj = _js_skip_ws(text, sj)
+        # return s;
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F623 forin no return")
+        sj = _js_skip_ws(text, m)
+        s3, sj = _js_parse_ident(text, sj)
+        if s3 != sname:
+            raise _JSExprFail("F623 forin returns another ident")
+        sj = _js_skip_ws(text, sj)
+        if sj < inner_end and text[sj] == ";":
+            sj += 1
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F623 forin trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "(")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("F623 forin too deep")
+        rewritten = "Object.values(" + fe_text + ").join('')"
+        val, rk = _js_parse_additive(rewritten, 0, depth + 1, state)
+        rk = _js_skip_ws(rewritten, rk)
+        if rk != len(rewritten):
+            raise _JSExprFail("F623 forin trailing junk")
         state["ops"] += 1  # the iife wrapper is obfuscation-shaped
         return val, j
     except _JSExprFail:
@@ -27274,6 +27768,17 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f517 is not None:
             val, i = _f517
             return _js_parse_postfix(text, i, val, depth, state)
+        # F623: (function(){DECL o=Object.fromEntries(...);var s='';
+        # for(var k in o){s+=o[k];}return s;})() -- for-in
+        # accumulation over a fromEntries result. None falls through
+        # like F517; disjoint (the binding is a fromEntries call,
+        # which F517's literal grammar rejects), so no
+        # previously-decoded input changes behavior.
+        _f623 = _js_parse_f623_forin_from_entries_iife(text, i, depth,
+                                                       state)
+        if _f623 is not None:
+            val, i = _f623
+            return _js_parse_postfix(text, i, val, depth, state)
         # F578: (function(){var|const|let o=OBJLIT;
         #   Object.defineProperty(o,'K',DESC);return o.M;})() --
         # descriptor replacement on a var-bound literal target.
@@ -27823,6 +28328,16 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f573 = _js_parse_f573_entries_literal(text, i, depth, state)
         if _f573 is not None:
             return _f573
+        # F634: Object.entries(OBJ).reduce((A,[B,C])=>A+C /
+        # (A,E)=>A+E[1], "INIT") -- reduce-fold over entries
+        # receivers. F573 defers the `.reduce` form to this route;
+        # F517's entries+map route is disjoint (different terminal),
+        # so no previously-decoded input changes behavior.
+        _f634 = _js_parse_f634_entries_reduce(text, i, depth, state)
+        if _f634 is not None:
+            val, i = _f634
+            state["ops"] += 1  # the reduce call is obfuscation-shaped
+            return _js_parse_postfix(text, i, val, depth, state)
         # F517: Object.entries(OBJ).map(P=>P[0|1]) -- entries
         # indirection with a mandatory projection. None falls through
         # to the assign/getter paths below.
