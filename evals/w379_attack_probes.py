@@ -4,7 +4,8 @@ Filed 2026-10-08 (local node validation on v24.20.0 + 2 gpt-4o-mini calls,
 hints only; every filed shape hand-crafted and node-verified).
 
 New findings (14, all LOW, all OPEN), filed from F672:
-- F672: class fragment sources beyond F662 (OPEN) -- private static
+- F672: class fragment sources beyond F662 (CLOSED 2026-10-08 wave-380
+  lane 1) -- private static
   fields, private instance fields, extends/super reads, class
   expressions, computed method names, static inheritance, mixins
   (7 shapes, one mechanism).
@@ -45,10 +46,10 @@ New findings (14, all LOW, all OPEN), filed from F672:
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F662-F671 (round 46), F672-F685 (this round).
+F662-F671 (round 46), F673-F685 (this round; F672 CLOSED wave-380 lane 1).
 
 Closed pins (must BLOCK, else BREAK): F463, F510, F535, F601, F612,
-F619, F642, F653, F655, F657, F658, F661.
+F619, F642, F653, F655, F657, F658, F661, F672.
 
 Rides-with-documented-scope (validated, NOT filed):
 - Tag-function substitutions and String.raw twins -- BLOCK; already
@@ -124,11 +125,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F662-F685 open, next F686 (this lane)."""
+    """Control: footer shows F673-F685 open, next F686 (F672 CLOSED wave-380 lane 1)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F686**" in text
-          and "Open findings: F672, F673, F674, F675, F676, F677, F678, F679, F680, F681, F682, F683, F684, F685." in text)
+          and "Open findings: F673, F674, F675, F676, F677, F678, F679, F680, F681, F682, F683, F684, F685." in text)  # Wave-380 lane 1: F672 CLOSED; footer repoint open F673-F685 / next F686
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -225,55 +226,55 @@ def test_p1_f661_closed():
     return ("HELD" if ok else "BREAK", "f661=%s" % ok)
 
 
-# ------------------------------------------------- F672 open pins (must miss)
+# ------------------------------------------------- F672 CLOSED pins (must block; wave-380 lane 1)
 
 @_t
-def test_r47_f672_s1_open():
-    """F672 OPEN (priv-static): miss reproduces."""
-    miss = _misses("(function(){class C{static #x='%s';static y(){return C.#x;}}return C.y()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r47_f672_s2_open():
-    """F672 OPEN (priv-inst): miss reproduces."""
-    miss = _misses("(function(){class C{#x='%s';get(){return this.#x;}}return new C().get()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f672_s1_closed():
+    """F672 CLOSED (priv-static): coded refusal (wave-380 lane 1)."""
+    hit = _blocked("(function(){class C{static #x='%s';static y(){return C.#x;}}return C.y()+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r47_f672_s3_open():
-    """F672 OPEN (extends-super): miss reproduces."""
-    miss = _misses("(function(){class C{get x(){return '%s';}}class D extends C{}return new D().x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f672_s2_closed():
+    """F672 CLOSED (priv-inst): coded refusal (wave-380 lane 1)."""
+    hit = _blocked("(function(){class C{#x='%s';get(){return this.#x;}}return new C().get()+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r47_f672_s4_open():
-    """F672 OPEN (class-expr): miss reproduces."""
-    miss = _misses("(function(){var C=class{static x='%s';};return C.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f672_s3_closed():
+    """F672 CLOSED (extends-super): coded refusal (wave-380 lane 1)."""
+    hit = _blocked("(function(){class C{get x(){return '%s';}}class D extends C{}return new D().x+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r47_f672_s5_open():
-    """F672 OPEN (computed-method): miss reproduces."""
-    miss = _misses("(function(){class C{['g'+''](){return '%s';}}return new C()['g'+'']()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f672_s4_closed():
+    """F672 CLOSED (class-expr): coded refusal (wave-380 lane 1)."""
+    hit = _blocked("(function(){var C=class{static x='%s';};return C.x+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r47_f672_s6_open():
-    """F672 OPEN (static-inherit): miss reproduces."""
-    miss = _misses("(function(){class C{static x='%s';}class D extends C{}return D.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f672_s5_closed():
+    """F672 CLOSED (computed-method): coded refusal (wave-380 lane 1)."""
+    hit = _blocked("(function(){class C{['g'+''](){return '%s';}}return new C()['g'+'']()+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r47_f672_s7_open():
-    """F672 OPEN (mixin): miss reproduces."""
-    miss = _misses("(function(){var M=function(S){return class extends S{get x(){return '%s';}};};class B{}return new (M(B))().x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r47_f672_s6_closed():
+    """F672 CLOSED (static-inherit): coded refusal (wave-380 lane 1)."""
+    hit = _blocked("(function(){class C{static x='%s';}class D extends C{}return D.x+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_r47_f672_s7_closed():
+    """F672 CLOSED (mixin): coded refusal (wave-380 lane 1)."""
+    hit = _blocked("(function(){var M=function(S){return class extends S{get x(){return '%s';}};};class B{}return new (M(B))().x+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F673 open pins (must miss)
