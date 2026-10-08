@@ -19468,6 +19468,162 @@ def _js_parse_slice_int(text, i):
     return (-k if neg else k), i
 
 
+def _js_parse_f603_regex_literal(text, i):
+    """Parse a regex literal `/source/flags` at text[i] (F603).
+
+    Returns (source, flags, next_index). The source must be
+    regex-plain: literal characters (ASCII letters, digits, space,
+    underscore, hyphen, comma) with at most one level of
+    capture-group parentheses; no escapes, character classes,
+    quantifiers, anchors, alternations, or nested groups. For this
+    subset a single leftmost search is identical in the JS and Python
+    engines (node v24.20.0 verified), so the decoder needs no regex
+    engine at all. The body must be non-empty (`//` opens a line
+    comment in the engine, so it can never be a regex literal in
+    expression position). Flags are the trailing ASCII letters
+    (possibly empty); the caller decides which flag sets are modeled.
+    Hand-parsed: no new regexes. Never evals.
+    """
+    n = len(text)
+    if i >= n or text[i] != "/":
+        raise _JSExprFail("F603 replace needs regex literal")
+    j = i + 1
+    body = []
+    _depth = 0
+    while j < n and text[j] != "/":
+        c = text[j]
+        if c == "\\":
+            raise _JSExprFail("F603 regex escapes not modeled")
+        if c == "(":
+            if _depth:
+                raise _JSExprFail("F603 nested regex groups not modeled")
+            _depth = 1
+            body.append(c)
+        elif c == ")":
+            if not _depth:
+                raise _JSExprFail("F603 unbalanced regex paren")
+            _depth = 0
+            body.append(c)
+        elif c.isascii() and (c.isalnum() or c in " _-,"):
+            body.append(c)
+        else:
+            raise _JSExprFail("F603 regex char not modeled")
+        j += 1
+    if j >= n:
+        raise _JSExprFail("F603 unterminated regex")
+    if not body:
+        raise _JSExprFail("F603 empty regex body")
+    if _depth:
+        raise _JSExprFail("F603 unbalanced regex paren")
+    j += 1
+    flags = []
+    while j < n and text[j].isascii() and text[j].isalpha():
+        flags.append(text[j])
+        j += 1
+    return "".join(body), "".join(flags), j
+
+
+def _f603_regex_first_match(value, body):
+    """Leftmost match of a regex-plain source in value (F603).
+
+    The source holds literal characters plus one capture-group level
+    (accepted by _js_parse_f603_regex_literal). With no quantifiers,
+    classes, or alternations there is no backtracking: the match is
+    the leftmost occurrence of the concatenated literal, and each
+    group's text is its fixed-width slice. Returns (start, end,
+    groups), or (None, None, []) when there is no match.
+    Engine-identical to the JS single leftmost search for this subset
+    (node v24.20.0 verified). Never evals.
+    """
+    literal = []
+    groups = []  # (offset_in_literal, width) per capture group
+    for c in body:
+        if c == "(":
+            groups.append([len(literal), None])
+        elif c == ")":
+            groups[-1][1] = len(literal) - groups[-1][0]
+        else:
+            literal.append(c)
+    lit = "".join(literal)
+    idx = value.find(lit)
+    if idx < 0:
+        return None, None, []
+    return (idx, idx + len(lit),
+            [value[idx + s:idx + s + w] for s, w in groups])
+
+
+def _f603_expand_dollar(rep, value, start, end, match_text, groups):
+    """Expand $-patterns in a replace() replacement (F603).
+
+    Node-exact (v24.20.0) for the documented subset: '$$' -> '$',
+    '$&' -> the match, '$`' -> the pre-match portion, "$'" -> the
+    post-match portion, '$n' (single digit, 1<=n<=len(groups)) ->
+    group n. A '$' before any other character, and a trailing '$',
+    are literal (engine-exact). '$n' naming no group, '$<name>', and
+    '$' followed by a second digit fail closed: the engine literalizes
+    some of these, but refusal is the safe direction and is
+    documented. Never evals.
+    """
+    out = []
+    k = 0
+    while k < len(rep):
+        c = rep[k]
+        if c != "$" or k + 1 >= len(rep):
+            out.append(c)
+            k += 1
+            continue
+        d = rep[k + 1]
+        if d == "$":
+            out.append("$")
+            k += 2
+        elif d == "&":
+            out.append(match_text)
+            k += 2
+        elif d == "`":
+            out.append(value[:start])
+            k += 2
+        elif d == "'":
+            out.append(value[end:])
+            k += 2
+        elif d.isascii() and d.isdigit():
+            if (k + 2 < len(rep) and rep[k + 2].isascii()
+                    and rep[k + 2].isdigit()):
+                raise _JSExprFail("F603 multi-digit $n not modeled")
+            n = ord(d) - 48
+            if 1 <= n <= len(groups):
+                out.append(groups[n - 1])
+                k += 2
+            else:
+                raise _JSExprFail("F603 $n without group")
+        elif d == "<":
+            raise _JSExprFail("F603 named groups not modeled")
+        else:
+            # '$' before an ordinary char is literal (engine-exact).
+            out.append("$")
+            k += 1
+    return "".join(out)
+
+
+def _f603_replace_all_commas(value, rep):
+    """'a,b,c'.replace(/,/g, REP) with per-match $-expansion (F603).
+
+    Node-exact (v24.20.0): every comma is replaced left to right; for
+    each match '$&' is the comma and '$`'/"$'" are the pre/post
+    portions of the ORIGINAL string. The comma carries no groups, so
+    '$n' fails closed here via _f603_expand_dollar. Never evals.
+    """
+    parts = value.split(",")
+    out = [parts[0]]
+    pos = len(parts[0])
+    for part in parts[1:]:
+        start = pos
+        end = pos + 1
+        out.append(_f603_expand_dollar(rep, value, start, end, ",", []))
+        out.append(part)
+        pos = end + len(part)
+    return "".join(out)
+
+
 def _js_parse_comma_regex(text, i):
     """Parse a literal /,/-regex with {g,i} flags at text[i] (F464).
 
@@ -19475,32 +19631,20 @@ def _js_parse_comma_regex(text, i):
     no character classes) and flag characters g/i (each at most once,
     any order) are accepted -- the filed .replace(/,/g,'') shape and
     its /,/gi variant, both node-verified. Everything else fails
-    closed. Hand-parsed: no new regexes. The general regex engine is
-    NOT modeled.
+    closed. Implemented via the F603 general regex-literal parser;
+    the contract (return shape and accept/reject set) is unchanged,
+    so the F464 battery's white-box pins keep passing. Never evals.
     """
-    n = len(text)
-    if i >= n or text[i] != "/":
-        raise _JSExprFail("replace needs regex literal")
-    j = i + 1
-    body = []
-    while j < n and text[j] != "/":
-        if text[j] == "\\":
-            raise _JSExprFail("regex escapes unsupported")
-        body.append(text[j])
-        j += 1
-        if len(body) > 1:
-            raise _JSExprFail("regex body too long")
-    if j >= n:
-        raise _JSExprFail("unterminated regex")
-    if body != [","]:
+    body, flags, j = _js_parse_f603_regex_literal(text, i)
+    if body != ",":
         raise _JSExprFail("only comma regex modeled")
-    j += 1
-    flags = []
-    while j < n and text[j] in _JS_IDENT_CONT:
-        if text[j] not in "gi" or text[j] in flags:
+    seen = set()
+    for f in flags:
+        if f not in "gi" or f in seen:
             raise _JSExprFail("regex flags unsupported")
-        flags.append(text[j])
-        j += 1
+        seen.add(f)
+    if j < len(text) and text[j] in _JS_IDENT_CONT:
+        raise _JSExprFail("regex flags unsupported")
     return "".join(flags), j
 
 
@@ -20207,14 +20351,42 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         state["ops"] += 1
         return result, i + 1
     if name == "replace":
-        # F464: 'a,b'.replace(/,/g,'') -- ONLY the literal-comma
-        # regex with flags in {g,i} (the /,/gi variant is
-        # comma-identical, node-verified) and a literal-string
-        # replacement are modeled. Without "g" only the first comma
-        # is replaced, exactly as the engine does. The general regex
-        # engine is NOT modeled -- anything else fails closed.
+        # F603 (extends F464): String.prototype.replace with literal
+        # patterns, node-exact (v24.20.0). Three modeled forms:
+        #  (a) a string-literal pattern replaces the FIRST occurrence
+        #      only, matched literally -- regex metacharacters are
+        #      inert in the engine for string patterns
+        #      ('a.b'.replace('.','X') -> 'aXb');
+        #  (b) a flag-less regex literal whose source is regex-plain
+        #      (literal chars; one capture-group level; no escapes,
+        #      classes, quantifiers, anchors) replaces its first match;
+        #  (c) F464's /,/[gi] comma scope, unchanged.
+        # The replacement's $-patterns expand node-exactly for the
+        # documented subset ($$, $&, $`, $', $n for a modeled group);
+        # anything else $-shaped fails closed (documented). A regex
+        # with flags outside F464's comma scope fails closed. The
+        # general regex engine is NOT modeled. Never evals.
+        if not isinstance(value, str):
+            raise _JSExprFail("F603 replace on non-string")
         i = _js_skip_ws(text, i)
-        flags, i = _js_parse_comma_regex(text, i)
+        _f603_is_regex = False
+        _f603_comma_g = False
+        if i < len(text) and text[i] in "'\"":
+            _pattern, i = _js_parse_string(text, i)
+        elif i < len(text) and text[i] == "/":
+            _body, _flags, i = _js_parse_f603_regex_literal(text, i)
+            if _flags:
+                # F464's comma scope only; any other flagged regex
+                # fails closed (documented).
+                if _body != "," or _flags not in ("g", "i", "gi", "ig"):
+                    raise _JSExprFail("F603 replace flags not modeled")
+                _f603_comma_g = "g" in _flags
+                _pattern = ","
+            else:
+                _f603_is_regex = True
+                _pattern = _body
+        else:
+            raise _JSExprFail("F603 replace pattern not a literal")
         i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != ",":
             raise _JSExprFail("bad replace")
@@ -20223,10 +20395,27 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != ")":
             raise _JSExprFail("bad replace")
-        if "g" in flags:
-            result = value.replace(",", rep)
+        if _f603_comma_g:
+            result = _f603_replace_all_commas(value, rep)
+        elif _f603_is_regex:
+            start, end, groups = _f603_regex_first_match(value, _pattern)
+            if start is None:
+                result = value
+            else:
+                result = (value[:start]
+                          + _f603_expand_dollar(rep, value, start, end,
+                                                value[start:end], groups)
+                          + value[end:])
         else:
-            result = value.replace(",", rep, 1)
+            idx = value.find(_pattern)
+            if idx < 0:
+                result = value
+            else:
+                end = idx + len(_pattern)
+                result = (value[:idx]
+                          + _f603_expand_dollar(rep, value, idx, end,
+                                                _pattern, [])
+                          + value[end:])
         if len(result) > _MAX_DECODE_BYTES:
             raise _JSExprFail("replace too long")
         state["ops"] += 1
@@ -22550,7 +22739,10 @@ def _try_js_expr_decode(text, start):
     skips), (F464) .toString() on string arrays (engine-exact comma
     join) plus .replace(/,/g,'') with the literal-comma regex and a
     literal-string replacement (the /,/gi variant is comma-identical;
-    general regex replace is NOT modeled), (F465)
+    general regex replace is NOT modeled; F603 extends the replace
+    branch to string-literal patterns (first occurrence, matched
+    literally) and flag-less regex-plain literals (first match), with
+    node-exact $-pattern expansion in the replacement), (F465)
     .padStart(targetLen,padString) / .padEnd(targetLen,padString) with
     literal numeric length and literal pad string, and (F466)
     .slice(start[,end]) on string arrays with literal numeric bounds

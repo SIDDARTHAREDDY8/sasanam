@@ -101,7 +101,7 @@ from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TAXONOMY_PIN = 2140  # Wave-353: F464/F465/F466 closed, no new decision codes; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
-FOOTER_OPEN = "F597, F598, F599, F600, F601, F602, F603, F604, F605"    # Wave-369 merge: F547-F569 CLOSED; F570-F582 OPEN (next F583) # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-353 lane 3: F464-F466 CLOSED (merge finalizes tree-wide)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 lane 1: F469 CLOSED locally (merge finalizes tree-wide)  # Wave-354: F470 CLOSED  # Wave-354 lane 3: F471 CLOSED  # Wave-354 lane 4: F472 CLOSED  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480)  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
+FOOTER_OPEN = "F597, F598, F599, F600, F601, F602, F604, F605"  # Wave-372 lane 5: F603 CLOSED    # Wave-369 merge: F547-F569 CLOSED; F570-F582 OPEN (next F583) # Wave-360 merge: F489-F495 CLOSED; F496-F502 filed OPEN (next F503)  # Wave-353 lane 3: F464-F466 CLOSED (merge finalizes tree-wide)  # Wave-352 merge: F454-F460 CLOSED; F461-F468 filed OPEN (next F469)  # Wave-353 merge: F461-F468 CLOSED; F469-F472 filed OPEN (next F473)  # Wave-354 lane 1: F469 CLOSED locally (merge finalizes tree-wide)  # Wave-354: F470 CLOSED  # Wave-354 lane 3: F471 CLOSED  # Wave-354 lane 4: F472 CLOSED  # Wave-354 merge: F469-F472 CLOSED; F473, F474 filed OPEN (next F475)  # Wave-355 merge: F473-F475 CLOSED; F476, F477 filed OPEN (next F478)  # Wave-356 merge: F476, F477 CLOSED; F478, F479 OPEN (next F480)  # Wave-357 merge: F478, F479 CLOSED (next F481)  # Wave-358 merge: F480, F481 CLOSED; F482-F488 filed OPEN  # Wave-359 merge: F482-F488 CLOSED; F489-F495 filed OPEN  # Wave-362 merge: F503-F505 CLOSED; F506-F511 filed OPEN (next F513); F512 CLOSED (perf fix)  # Wave-363 merge: F506-F511 CLOSED; F513-F520 filed OPEN (next F521); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
 
 FOOTER_NEXT = "F606"  # Wave-371 merge: F583-F596 CLOSED (lanes 1-7); F597-F605 OPEN (next F606)
 
@@ -378,8 +378,10 @@ def p4_discr_replace_flags_quiet():
     return True
 
 
-def p4_discr_replace_strarg_quiet():
-    return _quiet_decode("'a,b'.replace(',','')")
+def p4_discr_replace_strarg_decodes():
+    # Wave-372 lane 5 (F603): string-literal patterns now decode --
+    # the old quiet expectation is superseded.
+    return dlp._try_js_expr_decode("'a,b'.replace(',','')", 0) == ("ab", 21)
 
 
 def p4_discr_replace_on_array_quiet():
@@ -590,7 +592,7 @@ _PROBES = [
     ("p4-discr-tostring-args-quiet", p4_discr_tostring_args_quiet),
     ("p4-discr-replace-body-quiet", p4_discr_replace_body_quiet),
     ("p4-discr-replace-flags-quiet", p4_discr_replace_flags_quiet),
-    ("p4-discr-replace-strarg-quiet", p4_discr_replace_strarg_quiet),
+    ("p4-discr-replace-strarg-decodes", p4_discr_replace_strarg_decodes),
     ("p4-discr-replace-on-array-quiet", p4_discr_replace_on_array_quiet),
     ("p4-discr-pad-one-arg-quiet", p4_discr_pad_one_arg_quiet),
     ("p4-discr-pad-nonliteral-quiet", p4_discr_pad_nonliteral_quiet),
