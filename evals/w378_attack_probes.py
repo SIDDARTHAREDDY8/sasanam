@@ -134,11 +134,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F655-F671 open, next F672 (this lane)."""
+    """Control: footer shows F663-F671 open, next F672 (wave-379 lane 1)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F672**" in text
-          and "Open findings: F662, F663, F664, F665, F666, F667, F668, F669, F670, F671." in text)
+          and "Open findings: F663, F664, F665, F666, F667, F668, F669, F670, F671." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -200,34 +200,34 @@ def test_p1_f653_closed():
     return ("HELD" if ok else "BREAK", "f653=%s" % ok)
 
 
-# ------------------------------------------------- F662 open pins (must miss)
+# ------------------------------------------------- F662 closed pins (must block)
 
 @_t
-def test_r46_f662_s1_open():
-    """F662 OPEN (class static field): miss reproduces."""
-    miss = _misses("(function(){class C{static x='%s';}return C.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r46_f662_s2_open():
-    """F662 OPEN (class static block): miss reproduces."""
-    miss = _misses("(function(){let s='';class C{static{s='%s';}}s+='%s';return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f662_s1_closed():
+    """F662 CLOSED (class static field): now blocks."""
+    ok = _blocked("(function(){class C{static x='%s';}return C.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f662=%s" % ok)
 
 
 @_t
-def test_r46_f662_s3_open():
-    """F662 OPEN (class static getter): miss reproduces."""
-    miss = _misses("(function(){class C{static get x(){return '%s';}}return C.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f662_s2_closed():
+    """F662 CLOSED (class static block): now blocks."""
+    ok = _blocked("(function(){let s='';class C{static{s='%s';}}s+='%s';return s;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f662=%s" % ok)
 
 
 @_t
-def test_r46_f662_s4_open():
-    """F662 OPEN (class instance field): miss reproduces."""
-    miss = _misses("(function(){class C{x='%s';}return new C().x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f662_s3_closed():
+    """F662 CLOSED (class static getter): now blocks."""
+    ok = _blocked("(function(){class C{static get x(){return '%s';}}return C.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f662=%s" % ok)
+
+
+@_t
+def test_p1_f662_s4_closed():
+    """F662 CLOSED (class instance field): now blocks."""
+    ok = _blocked("(function(){class C{x='%s';}return new C().x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f662=%s" % ok)
 
 
 # ------------------------------------------------- F663 open pins (must miss)
