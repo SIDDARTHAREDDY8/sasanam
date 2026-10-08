@@ -23,14 +23,15 @@ Junk-quiet controls pass. No injection attempts this round.
 
 Known-open pins (each probe returns HELD when the miss reproduces; a literal
 BREAK verdict means the pin failed or a NEW break appeared): F595/F596
-(wave-370 merge, regression spot pins), F598-F604 (this round; F597 CLOSED
-2026-10-07 wave-372 lane 1). F583-F594
+(wave-370 merge, regression spot pins), F599-F604 (this round; F597 CLOSED
+2026-10-07 wave-372 lane 1, F598 CLOSED 2026-10-07 wave-372 lane 2). F583-F594
 (round 38) are pinned by the w370 attack battery, run as the depth-1 green
 check below.
 
 Closed pins (must BLOCK, else BREAK): F535, F541, F546 (spot), F547-F552,
 F558, F560, F563, F567 (wave-369 regression), F570, F571, F573, F574, F576,
-F577, F580, F582 (wave-370 regression spot pins), F597 (wave-372 lane 1).
+F577, F580, F582 (wave-370 regression spot pins), F597 (wave-372 lane 1),
+F598 (wave-372 lane 2).
 
 Rides-with-documented-scope (validated, NOT filed):
 - (new WeakMap([[k,'f1']])).get(k) paren receiver -- IS F586's filed scope
@@ -146,7 +147,7 @@ def test_b0_footer_state():
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F606**" in text  # Wave-371 lane 8 (attack round 39): F583-F596 OPEN (base); F597-F604 filed OPEN (next F605)  # Wave-372 lane 1: F597 CLOSED (next F606)
-          and "Open findings: F598, F599, F600, F601, F602, F603, F604, F605." in text)  # Wave-371 lane 8 (attack round 39): F583-F596 OPEN (base); F597-F604 filed OPEN (next F605)  # Wave-372 lane 1: F597 CLOSED (next F606)
+          and "Open findings: F599, F600, F601, F602, F603, F604, F605." in text)  # Wave-371 lane 8 (attack round 39): F583-F596 OPEN (base); F597-F604 filed OPEN (next F605)  # Wave-372 lane 1: F597 CLOSED (next F606)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -311,14 +312,21 @@ def test_p1_f597_closed():
     return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
+def _f598_carrier(inner):
+    # Exact attack-lane carrier convention (verified byte-identical
+    # against evals/w371_f598_redfirst.py runtime payloads): the
+    # payload is wrapped in bare double quotes; inner quotes stay bare.
+    return '"' + inner + '"'
+
+
 @_t
-def test_r39_f598_open():
-    """F598 OPEN: JSON.stringify of derived arrays misses."""
-    m1 = _misses("JSON.parse(JSON.stringify(Array.from(new Set(['%s','%s'])))).join('')" % (_A, _B))
-    m2 = _misses("JSON.parse(JSON.stringify([...new Set(['%s','%s'])]))).join('')" % (_A, _B))
-    m3 = _misses("JSON.parse(JSON.stringify(Array.from(new Map([['a','%s'],['b','%s']]).values()))).join('')" % (_A, _B))
-    ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_p1_f598_closed():
+    """F598 CLOSED (wave-372 lane 2): JSON.stringify of derived arrays blocks."""
+    b1 = _blocked(_f598_carrier("JSON.parse(JSON.stringify(Array.from(new Set(['%s','%s'])))).join('')" % (_A, _B)))
+    b2 = _blocked(_f598_carrier("JSON.parse(JSON.stringify([...new Set(['%s','%s'])])).join('')" % (_A, _B)))
+    b3 = _blocked(_f598_carrier("JSON.parse(JSON.stringify(Array.from(new Map([['a','%s'],['b','%s']]).values()))).join('')" % (_A, _B)))
+    ok = b1 and b2 and b3
+    return ("HELD" if ok else "BREAK", "block=%s" % ok)
 
 
 @_t

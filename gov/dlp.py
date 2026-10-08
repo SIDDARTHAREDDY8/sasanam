@@ -3935,14 +3935,20 @@ def _js_parse_array_from(text, j, state):
         and engine-exact on the modeled class);
       - `new Set([...])`: `Array.from(new Set(['f1','f2']))` ===
         `['f1','f2']` (parsed by _js_parse_new_set, F494 --
-        SameValueZero dedup, engine-exact).
+        SameValueZero dedup, engine-exact);
+      - `new Map([[k,v],...]).values()`: `Array.from(new
+        Map([['a','f1']]).values())` === `['f1']` (parsed by
+        _js_parse_new_map_values, F494/F598 -- Map.values() is an
+        iterable of the values in insertion order with later-wins
+        keys; a bare `new Map(...)` still fails closed since the
+        engine iterates entries, not values).
     The optional mapper must be an identity callback
     (`x=>x` / `(x)=>x` / `function(x){return x;}` / `s=>{return s;}`,
     via _js_parse_map_callback, F437/F448) -- the elements pass
     through untouched, exactly as the engine applies it. The bare
     `String` mapper (stringifies numerics) fails closed (documented
     scope boundary -- the filed shapes are string-only); a thisArg
-    third parameter fails closed; any other source (generators,
+    third parameter fails closed; any other source (generators, bare
     Map, strings, numbers) fails closed. Never evals.
     """
     n = len(text)
@@ -3955,10 +3961,17 @@ def _js_parse_array_from(text, j, state):
     elif j < n and text[j] == "{":
         arr, j = _js_parse_arraylike_recv(text, j, 0, state)
     elif _js_match_kw(text, j, "new") is not None:
-        # new Set(...) (a `new Map` here fails closed inside
-        # _js_parse_new_set -- the engine would iterate entries,
-        # not values, so it is never mis-decoded as a Set).
-        arr, j = _js_parse_new_set(text, j, 0, state)
+        # new Set(...) (a bare `new Map` iterates entries, not
+        # values, so _js_parse_new_set fails it closed -- never
+        # mis-decoded as a Set). F598: `new Map([[k,v],...]).values()`
+        # is an iterable of the values in insertion order with
+        # later-wins keys (node v24.20.0; via _js_parse_new_map_values,
+        # F494) -- each added form was previously fail-closed
+        # everywhere, so no previously-decoded input changes behavior.
+        try:
+            arr, j = _js_parse_new_set(text, j, 0, state)
+        except _JSExprFail:
+            arr, j = _js_parse_new_map_values(text, j, 0, state)
     else:
         raise _JSExprFail("from source not modeled")
     j = _js_skip_ws(text, j)
@@ -21332,10 +21345,17 @@ def _js_parse_f571_stringify_call(text, j, depth, state):
     Returns the node-exact JSON text of VALUE. VALUE is a JSON-literal
     input: a string literal, an array of string literals
     (_js_parse_string_literal_array), or an object literal
-    (_js_parse_f535_object, default mode). Replacer/space arguments,
-    the bracket-string member form, template-literal values, and
-    non-literal values all fail closed (documented scope boundary).
-    Never evals.
+    (_js_parse_f535_object, default mode); plus the F598 derived-array
+    forms -- `Array.from(new Set([...]))` and
+    `Array.from(new Map([[k,v],...]).values())` (via
+    _js_parse_array_from, F508/F494; the `from` member only --
+    fromAsync/of/dispatch fail closed here) and `[...new Set([...])]` /
+    `[...new Map([[k,v],...]).values()]` (via _js_parse_spread_copy,
+    F494/F471) -- all desugared to their element-identical _JSArr
+    before serialization (node v24.20.0 verified). Replacer/space
+    arguments, the bracket-string member form, template-literal
+    values, and non-literal values all fail closed (documented scope
+    boundary). Never evals.
     """
     n = len(text)
     k = _js_match_kw(text, j, "JSON")
@@ -21358,10 +21378,40 @@ def _js_parse_f571_stringify_call(text, j, depth, state):
     if c in "'\"":
         val, k = _js_parse_string(text, k)
     elif c == "[":
-        val, k = _js_parse_string_literal_array(text, k, state)
+        _sk = _js_skip_ws(text, k + 1)
+        if text.startswith("...", _sk):
+            # F598: [...new Set([...])] / [...new Map([[k,v],...]).values()]
+            # (F494/F471) -- element-identical to the derived array.
+            val, k = _js_parse_spread_copy(text, k, depth, state)
+            if not isinstance(val, _JSArr):
+                raise _JSExprFail("F598 spread copy not an array")
+        else:
+            val, k = _js_parse_string_literal_array(text, k, state)
     elif c == "{":
         props, k = _js_parse_f535_object(text, k, depth, state)
         val = _JSObj(props)
+    elif text.startswith("Array", k):
+        # F598: Array.from(new Set([...])) /
+        # Array.from(new Map([[k,v],...]).values()) (F508/F494) --
+        # element-identical to the derived array. Restricted to the
+        # `from` member: Array.fromAsync is a Promise and
+        # JSON.stringify of a Promise yields '{}', not the resolved
+        # array, so fromAsync fails closed here (it would otherwise
+        # be a false positive via the F520 async desugar);
+        # Array.of and the call/apply dispatch forms were
+        # fail-closed in this grammar before F598 and stay
+        # fail-closed (no scope creep).
+        _ja = k + len("Array")
+        _jd = _js_skip_ws(text, _ja)
+        if _jd >= n or text[_jd] != ".":
+            raise _JSExprFail("F598 Array without dot")
+        _kf = _js_skip_ws(text, _jd + 1)
+        if not text.startswith("from", _kf) or text.startswith("fromAsync", _kf):
+            raise _JSExprFail("F598 Array not from")
+        _fe = _kf + len("from")
+        if _fe < n and text[_fe] in _JS_IDENT_CONT:
+            raise _JSExprFail("F598 Array.fromx is not from")
+        val, k = _js_parse_array_from(text, _fe, state)
     else:
         raise _JSExprFail("F571 stringify arg not a JSON literal")
     k = _js_skip_ws(text, k)
