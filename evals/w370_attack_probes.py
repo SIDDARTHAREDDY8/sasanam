@@ -341,12 +341,22 @@ def test_p1_f592_closed():
 
 
 @_t
-def test_r38_f593_open():
-    """F593 OPEN: WeakMap variable-identity keys miss."""
-    m1 = _misses("(function(){var r={};return new WeakMap([[r,{c:'%s'}]]).get(r).c+'%s';})()" % (_A, _B))
-    m2 = _misses("(function(){var r={};var m=new WeakMap([[r,{c:'%s'}]]);return Object.assign({},m.get(r)).c+'%s';})()" % (_A, _B))
-    ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_r38_f593_closed():
+    """F593 CLOSED (wave-371 lane 7): WeakMap variable-identity keys block.
+
+    Wave-306 maintenance: this probe demonstrated the BREAK on the open
+    tree; the closure models _JSObj WeakMap values node-exactly, so it
+    now asserts the coded refusal instead.
+    """
+    b1 = dlp.find_credential(
+        "(function(){var r={};return new WeakMap([[r,{c:'%s'}]])"
+        ".get(r).c+'%s';})()" % (_A, _B)) is not None
+    b2 = dlp.find_credential(
+        "(function(){var r={};var m=new WeakMap([[r,{c:'%s'}]]);"
+        "return Object.assign({},m.get(r)).c+'%s';})()" % (_A, _B)
+    ) is not None
+    ok = b1 and b2
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t

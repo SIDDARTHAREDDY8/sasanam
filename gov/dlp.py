@@ -10887,7 +10887,8 @@ class _JSURL:
 class _JSWeakMap:
     """Statically-resolved WeakMap (F572).
 
-    entries maps object-identity uid -> value (str). Keys are
+    entries maps object-identity uid -> value (str or _JSObj (F593)).
+    Keys are
     var-bound object literals; identity is by binding: each
     `var NAME = {...}` mints a fresh uid, and every reference to
     NAME denotes the same object (node-exact -- the F572 body
@@ -15118,11 +15119,14 @@ def _js_parse_f572_weakmap_new(text, j, depth, state, env):
     legal WeakMap keys here). Returns (_JSWeakMap, next_index). The
     argument is empty (the empty map) or a pair-list
     `[[K,'lit'],...]` where each K is an ident bound in env as an
-    object and each value is a string literal; later pairs win on
-    the same uid (node-exact: set overwrites). Inline literal keys,
-    non-string values, and malformed pairs fail closed -- the
-    engine keys WeakMaps by identity, so a static model can only
-    ever match binding identity, never structure. Never evals.
+    object and each value is a string literal or an object literal
+    (F593: values may be _JSObj -- the engine stores the reference
+    unchanged, and member reads on it resolve through the _JSObj
+    branch of _js_parse_postfix); later pairs win on the same uid
+    (node-exact: set overwrites). Inline literal keys, non-literal
+    values, and malformed pairs fail closed -- the engine keys
+    WeakMaps by identity, so a static model can only ever match
+    binding identity, never structure. Never evals.
     """
     n = len(text)
     k = _js_match_kw(text, j, "new")
@@ -15154,11 +15158,7 @@ def _js_parse_f572_weakmap_new(text, j, depth, state, env):
         if k >= n or text[k] != ",":
             raise _JSExprFail("WeakMap pair without comma")
         k = _js_skip_ws(text, k + 1)
-        if k >= n or text[k] not in "'\"":
-            raise _JSExprFail("WeakMap value not a string literal")
-        val, k = _js_parse_string(text, k)
-        if not isinstance(val, str) or isinstance(val, _JSNumStr):
-            raise _JSExprFail("WeakMap value not a string")
+        val, k = _js_parse_f572_weakmap_value(text, k, depth, state)
         k = _js_skip_ws(text, k)
         if k >= n or text[k] != "]":
             raise _JSExprFail("WeakMap pair unterminated")
@@ -15179,22 +15179,43 @@ def _js_parse_f572_weakmap_new(text, j, depth, state, env):
     return _JSWeakMap(entries), k + 1
 
 
-def _js_parse_f572_return_expr(text, j, depth, state, env):
-    """Parse the F572 IIFE return EXPR at text[j] (F572).
+def _js_parse_f572_weakmap_value(text, k, depth, state):
+    """Parse one WeakMap value literal at text[k] (F572/F593).
 
-    Mini-grammar: a bound name, `new WeakMap(...)`, and postfix
-    `.set(IDENT,'lit')` / `.get(IDENT)` chains on WeakMap values.
-    IDENT must name an object-bound var in env; set takes exactly
-    two args (key, string-literal value) and returns the map
-    (chainable, in-place -- node-exact: set mutates and returns the
-    map); get takes exactly one arg and resolves the entry (a
-    missing key fails closed -- the decoder never decodes
-    `undefined`). The final value must be a string; a WeakMap or
-    object result fails closed. Returns (value_str, next_index).
-    Never evals.
+    A string literal or an object literal (F593: the engine stores
+    the reference unchanged). Returns (value, next_index) with
+    value a str or _JSObj. Anything else fails closed. Never evals.
     """
     n = len(text)
-    k = _js_skip_ws(text, j)
+    if k >= n or text[k] not in "'\"{":
+        raise _JSExprFail("WeakMap value not a literal")
+    if text[k] == "{":
+        props, k = _js_parse_f535_object(text, k, depth, state)
+        return _JSObj(props), k
+    val, k = _js_parse_string(text, k)
+    if not isinstance(val, str) or isinstance(val, _JSNumStr):
+        raise _JSExprFail("WeakMap value not a string")
+    return val, k
+
+
+def _js_parse_f572_weakmap_chain(text, k, depth, state, env):
+    """Parse the F572 weakmap chain at text[k]: a bound name or
+    `new WeakMap(...)`, followed by a `.set(IDENT,VAL)` /
+    `.get(IDENT)` chain (F572).
+
+    IDENT must name an object-bound var in env; set takes exactly
+    two args (key, value literal -- str or _JSObj (F593)) and
+    returns the map (chainable, in-place -- node-exact: set mutates
+    and returns the map); get takes exactly one arg and resolves
+    the entry (a missing key fails closed -- the decoder never
+    decodes `undefined`). The chain stops at the first member that
+    is not a set/get on a WeakMap: when the resolved value is a
+    _JSObj the parse hands the position back to the caller's
+    postfix parser (F593: member reads resolve through the _JSObj
+    branch of _js_parse_postfix). Returns (value, next_index) with
+    value a str, _JSObj, or _JSWeakMap. Never evals.
+    """
+    n = len(text)
     if text.startswith("new", k) and (k + 3 >= n
                                       or text[k + 3] not in _JS_IDENT_CONT):
         val, k = _js_parse_f572_weakmap_new(text, k, depth, state, env)
@@ -15210,12 +15231,17 @@ def _js_parse_f572_return_expr(text, j, depth, state, env):
         k = _js_skip_ws(text, k)
         if k >= n or text[k] != ".":
             break
+        kdot = k
         k = _js_skip_ws(text, k + 1)
         mname, k = _js_parse_ident(text, k)
-        if mname not in ("set", "get"):
+        if not (isinstance(val, _JSWeakMap)
+                and mname in ("set", "get")):
+            if isinstance(val, _JSObj):
+                # F593: the chain left the WeakMap -- the member
+                # read belongs to the caller's postfix parser.
+                k = kdot
+                break
             raise _JSExprFail("F572 WeakMap member not set/get")
-        if not isinstance(val, _JSWeakMap):
-            raise _JSExprFail("F572 set/get on non-WeakMap")
         k = _js_skip_ws(text, k)
         if k >= n or text[k] != "(":
             raise _JSExprFail("F572 set/get without paren")
@@ -15228,12 +15254,8 @@ def _js_parse_f572_return_expr(text, j, depth, state, env):
         if mname == "set":
             if k >= n or text[k] != ",":
                 raise _JSExprFail("F572 set without comma")
-            k = _js_skip_ws(text, k + 1)
-            if k >= n or text[k] not in "'\"":
-                raise _JSExprFail("F572 set value not a string literal")
-            sval, k = _js_parse_string(text, k)
-            if not isinstance(sval, str) or isinstance(sval, _JSNumStr):
-                raise _JSExprFail("F572 set value not a string")
+            sval, k = _js_parse_f572_weakmap_value(
+                text, _js_skip_ws(text, k + 1), depth, state)
             k = _js_skip_ws(text, k)
             if k >= n or text[k] != ")":
                 raise _JSExprFail("F572 set unterminated")
@@ -15247,8 +15269,104 @@ def _js_parse_f572_return_expr(text, j, depth, state, env):
             raise _JSExprFail("F572 get missing key")
         state["ops"] += 1  # the get is obfuscation-shaped
         val, k = val.entries[uid], k + 1
-    if not isinstance(val, str) or isinstance(val, _JSNumStr):
+    return val, k
+
+
+def _js_parse_f572_return_expr(text, j, depth, state, env):
+    """Parse the F572 IIFE return EXPR at text[j] (F572).
+
+    Either a weakmap chain (`_js_parse_f572_weakmap_chain`) or --
+    F593 -- `Object.assign({}, CHAIN)` where CHAIN is a weakmap
+    chain resolving to a _JSObj: the engine returns the target, a
+    shallow copy whose props are the source's (node v24.20.0 --
+    identity on props for the literal values this decoder admits,
+    so a fresh _JSObj with the same props is exact). A chain that
+    resolves to a string under Object.assign fails closed (the
+    engine spreads the string into per-character indexed props of a
+    plain object -- a shape this decoder cannot thread, so refusing
+    is the honest option).
+
+    The final value must be a string (the caller splices it); when a
+    chain resolves to a _JSObj (F593: object-literal WeakMap values),
+    its member reads resolve through the _JSObj branch of
+    _js_parse_postfix inside this parse, so the IIFE wrapper closes
+    over the full return expression. A WeakMap result, or an object
+    result with no consumable member read, fails closed. Returns
+    (value_str, next_index). Never evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, j)
+    mo = _js_match_kw(text, k, "Object")
+    if mo is not None:
+        k2 = _js_skip_ws(text, mo)
+        if k2 < n and text[k2] == ".":
+            k2 = _js_skip_ws(text, k2 + 1)
+            ma = _js_match_kw(text, k2, "assign")
+            if (ma is not None
+                    and (ma >= n or text[ma] not in _JS_IDENT_CONT)):
+                # F593: Object.assign({}, CHAIN) -- committed here;
+                # malformed shapes fail closed.
+                k2 = _js_skip_ws(text, ma)
+                if k2 >= n or text[k2] != "(":
+                    raise _JSExprFail("F593 assign without paren")
+                k2 = _js_skip_ws(text, k2 + 1)
+                if k2 >= n or text[k2] != "{":
+                    raise _JSExprFail("F593 assign target not empty")
+                tprops, k2 = _js_parse_f535_object(text, k2, depth, state)
+                if tprops:
+                    raise _JSExprFail("F593 assign target not empty")
+                k2 = _js_skip_ws(text, k2)
+                if k2 >= n or text[k2] != ",":
+                    raise _JSExprFail("F593 assign without source")
+                val, k2 = _js_parse_f572_weakmap_chain(
+                    text, _js_skip_ws(text, k2 + 1), depth, state, env)
+                if not isinstance(val, _JSObj):
+                    raise _JSExprFail("F593 assign source not an object")
+                val = _JSObj(dict(val.props))
+                state["ops"] += 1  # the assign is obfuscation-shaped
+                k2 = _js_skip_ws(text, k2)
+                if k2 >= n or text[k2] != ")":
+                    raise _JSExprFail("F593 assign unterminated")
+                k = k2 + 1
+            else:
+                val, k = _js_parse_f572_weakmap_chain(
+                    text, k, depth, state, env)
+        else:
+            val, k = _js_parse_f572_weakmap_chain(
+                text, k, depth, state, env)
+    else:
+        val, k = _js_parse_f572_weakmap_chain(text, k, depth, state, env)
+    if isinstance(val, _JSObj):
+        # F593: the chain resolved to an object value -- its member
+        # reads belong to the _JSObj branch of _js_parse_postfix.
+        # Resolve them HERE (inside the IIFE parse) rather than
+        # handing the position out: the IIFE wrapper must close over
+        # the full return expression (`...get(r).c;})()`), and the
+        # outer caller never sees the interior.
+        val, k = _js_parse_postfix(text, k, val, depth, state)
+    if isinstance(val, _JSNumStr) or not isinstance(val, str):
         raise _JSExprFail("F572 return not a string")
+    # F593: a bounded additive tail of string literals
+    # (`...get(r).c+'f2'`) -- node-exact for string operands (the
+    # engine's `+` on two strings is concatenation; the value here
+    # is always a string by the check below). Previously such tails
+    # failed closed at the IIFE wrapper (the `+` is interior to the
+    # return statement).
+    while True:
+        kt = _js_skip_ws(text, k)
+        if kt >= n or text[kt] != "+":
+            break
+        kt = _js_skip_ws(text, kt + 1)
+        if kt >= n or text[kt] not in "'\"":
+            raise _JSExprFail("F593 additive tail not a string")
+        tail, kt = _js_parse_string(text, kt)
+        if not isinstance(tail, str) or isinstance(tail, _JSNumStr):
+            raise _JSExprFail("F593 additive tail not a string")
+        val += tail
+        state["parts"] += 1  # the concatenation is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many additive parts")
+        k = kt
     return val, k
 
 
@@ -15260,8 +15378,11 @@ def _js_parse_f572_weakmap_iife(text, i, depth, state):
     declarations binding either object literals (`var k={...}`,
     parsed by _js_parse_f535_object -- the value is irrelevant, only
     the identity matters) or WeakMap constructions (`var
-    m=new WeakMap([[k,'lit'],...])`), followed by a single `return
-    EXPR;` parsed by _js_parse_f572_return_expr. Each object
+    m=new WeakMap([[k,'lit'],...])`), interleaved with
+    statement-form sets on weakmap-bound vars (F596:
+    `m.set(k,'lit');` -- the engine's in-place mutation, threaded
+    into the same entries map), followed by a single `return EXPR;`
+    parsed by _js_parse_f572_return_expr. Each object
     binding mints a fresh identity uid; every reference to the
     bound name denotes the same object, so entry keys are uids --
     engine-exact because the body grammar admits no reassignment,
@@ -15308,7 +15429,50 @@ def _js_parse_f572_weakmap_iife(text, i, depth, state):
             k = _js_skip_ws(text, k)
             kk, nk = _js_match_decl_kw(text, k)
             if kk is None:
-                break
+                # F596: statement-form set on a weakmap-bound var:
+                # `m.set(k, VAL);` -- the engine's in-place
+                # mutation, threaded into the same entries map.
+                # Anything else ends the body (the return match
+                # below decides).
+                try:
+                    sname, k2 = _js_parse_ident(text, k)
+                except _JSExprFail:
+                    break
+                sbinding = env.get(sname)
+                k2 = _js_skip_ws(text, k2)
+                if (sbinding is None or sbinding[0] != "weakmap"
+                        or k2 >= n or text[k2] != "."):
+                    break
+                # Committed: a weakmap-bound head with a member --
+                # malformed shapes fail closed.
+                wmap = sbinding[1]
+                k2 = _js_skip_ws(text, k2 + 1)
+                smname, k2 = _js_parse_ident(text, k2)
+                if smname != "set":
+                    raise _JSExprFail("F596 statement not a set")
+                k2 = _js_skip_ws(text, k2)
+                if k2 >= n or text[k2] != "(":
+                    raise _JSExprFail("F596 set without paren")
+                k2 = _js_skip_ws(text, k2 + 1)
+                skname, k2 = _js_parse_ident(text, k2)
+                if env.get(skname, (None,))[0] != "obj":
+                    raise _JSExprFail("F596 set key not a bound object")
+                suid = env[skname][1]
+                k2 = _js_skip_ws(text, k2)
+                if k2 >= n or text[k2] != ",":
+                    raise _JSExprFail("F596 set without comma")
+                sval, k2 = _js_parse_f572_weakmap_value(
+                    text, _js_skip_ws(text, k2 + 1), depth, state)
+                k2 = _js_skip_ws(text, k2)
+                if k2 >= n or text[k2] != ")":
+                    raise _JSExprFail("F596 set unterminated")
+                k2 = _js_skip_ws(text, k2 + 1)
+                if k2 >= n or text[k2] != ";":
+                    raise _JSExprFail("F596 set statement unterminated")
+                wmap.entries[suid] = sval  # in-place: engine mutates
+                state["ops"] += 1  # the set is obfuscation-shaped
+                k = _js_skip_ws(text, k2 + 1)
+                continue
             k = _js_skip_ws(text, nk)
             name, k = _js_parse_ident(text, k)
             k = _js_skip_ws(text, k)
