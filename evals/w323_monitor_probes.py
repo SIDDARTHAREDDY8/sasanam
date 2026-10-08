@@ -659,7 +659,7 @@ def _p18():
     # Wave-366 merge: F526-F530 CLOSED (lanes 1-3); F532 CLOSED at merge (honest F527 generalization); F531, F533-F536 OPEN (next F537)
     # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)
     # Wave-372 merge: footer repoint next F612 | Wave-372 merge: footer repoint open F606-F611 / next F612 \
-    assert "Next free finding: **F612**. **Open findings: F595, F606, F608, F609, F610, F611.**" in text, \
+    assert "Next free finding: **F612**. **Open findings: F595, F606, F607, F609, F610, F611.**" in text, \
         "footer mismatch"
     _held("P18-footer-state", "open F444, F445 / next F446")
 

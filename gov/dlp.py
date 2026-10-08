@@ -14736,6 +14736,9 @@ def _js_parse_f577_arrow_rest_iife(text, i, depth, state):
     """Parse `((...A)=>BODY)(lit, ...)` or
     `((...A)=>BODY).call(T, lit, ...)` at text[i] (F577).
 
+    Call args may also be F608 `...new Set([LITS])` spreads (each
+    expands to the F602 deduped element list).
+
     An arrow IIFE binding call-site arguments through a rest
     parameter: `((...a)=>a[0]+a[1])('f1','f2')` and the `.call`
     dispatch form `((...a)=>a[0]+a[1]).call(null,'f1','f2')` (F511
@@ -14767,8 +14770,10 @@ def _js_parse_f577_arrow_rest_iife(text, i, depth, state):
       thisArg, so the discard is engine-exact); only
       ignored-value/identifier thisArgs are modeled -- object
       literals and other forms fail closed (documented).
-    - call args are string literals only (the F509 arg grammar);
-      non-literals fail closed.
+    - call args are string literals only (the F509 arg grammar),
+      plus F608 `...new Set([LITS])` spreads (expanded to the F602
+      deduped element list, node-exact); other non-literals fail
+      closed.
     """
     n = len(text)
     if i >= n or text[i] != "(":
@@ -14868,14 +14873,25 @@ def _js_parse_f577_arrow_rest_iife(text, i, depth, state):
         else:
             while True:
                 k = _js_skip_ws(text, k)
-                if k >= n or text[k] not in "'\"":
+                if k >= n:
+                    raise _JSExprFail("unterminated f577 call")
+                if text.startswith("...", k):
+                    # F608: `...new Set([LITS])` -- the Set spread
+                    # expands to the F602 deduped element list
+                    # (node-exact: f(...set) spreads iteration
+                    # order); non-Set spreads fail closed inside.
+                    spread_args, k = _js_parse_f608_setspread_args(
+                        text, k, depth, state)
+                    args.extend(spread_args)
+                elif text[k] in "'\"":
+                    a0 = k
+                    _, k = _js_parse_string(text, k)
+                    args.append(text[a0:k])
+                    state["parts"] += 1
+                    if state["parts"] > _JS_EXPR_MAX_PARTS:
+                        raise _JSExprFail("too many parts")
+                else:
                     raise _JSExprFail("F577 arg not string literal")
-                a0 = k
-                _, k = _js_parse_string(text, k)
-                args.append(text[a0:k])
-                state["parts"] += 1
-                if state["parts"] > _JS_EXPR_MAX_PARTS:
-                    raise _JSExprFail("too many parts")
                 k = _js_skip_ws(text, k)
                 if k >= n:
                     raise _JSExprFail("unterminated f577 call")
@@ -14901,6 +14917,208 @@ def _js_parse_f577_arrow_rest_iife(text, i, depth, state):
         k2 = _js_skip_ws(rewritten, k2)
         if k2 != len(rewritten):
             raise _JSExprFail("F577 body trailing junk")
+        state["ops"] += 1  # the arrow-iife wrapper is obfuscation-shaped
+        return val, k
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f608_fixed_arrow_spread_iife(text, i, depth, state):
+    """Parse `((P1,...,Pn)=>BODY)(ARGS)` or
+    `((P1,...,Pn)=>BODY).call(T, ARGS)` at text[i] (F608).
+
+    Fixed-parameter arrow IIFE whose call-site arguments include at
+    least one `...new Set([LITS])` spread (filed shapes:
+    `((a,b)=>a+b)(...new Set(['f1','f2']))` and the `.call` twin
+    `((a,b)=>a+b).call(null,...new Set(['f1','f2']))`, node
+    v24.20.0). The Set spread expands to the SameValueZero-deduped
+    insertion-ordered element list (the F602 discipline, via
+    `_js_parse_f608_setspread_args`); each param binds positionally
+    to the expanded arg list through
+    `_js_bind_destructure_arguments` -- a param is a STRING value in
+    the engine, so only the bare-identifier use is modeled
+    (`a[0]`/`a.M`/`a(` fail closed exactly as there). Extra args are
+    dropped engine-exactly; fewer args than params fail closed (the
+    engine coerces `undefined`, which the decoder never guesses --
+    the F524 discipline). The rewritten body is parsed by the normal
+    additive grammar at depth+1, so every downstream decoder,
+    bound, and fail-closed rule applies unchanged. Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - every param must be a plain identifier: a `...rest` param
+      belongs to the F577 production (disjoint -- rejected here),
+      `arguments`-named params shadow the exotic object
+      (conservative), and duplicate/destructured/default params
+      fail closed.
+    - at least one param and at least one arg; at least one arg
+      must be a Set spread (pure-literal fixed-param calls are an
+      unfiled residual -- documented, not silently closed).
+    - the `.call` thisArg is parsed and discarded (F577 precedent:
+      the engine ignores it for arrows -- node-exact); only
+      ignored-value/identifier thisArgs are modeled.
+    - `this`, `arguments`, `super` in the body fail closed: an
+      arrow's are lexically bound by the enclosing (unknown) scope
+      (F577 precedent).
+    - non-Set spreads (`...['a']`, `...ident`), Map spreads, and
+      `.apply` fail closed (documented residuals).
+    Returns (value, next_index), or None when the head does not
+    match (the caller falls through to the parenthesized-additive
+    path, which fails closed on the `(` + `(` head as before).
+    """
+    n = len(text)
+    if i >= n or text[i] != "(":
+        return None
+    try:
+        j = _js_skip_ws(text, i + 1)
+        if j >= n or text[j] != "(":
+            raise _JSExprFail("F608 not an arrow iife")
+        j = _js_skip_ws(text, j + 1)
+        names = []
+        while True:
+            j = _js_skip_ws(text, j)
+            if j >= n:
+                raise _JSExprFail("F608 params unterminated")
+            if text.startswith("...", j):
+                raise _JSExprFail("F608 rest param is F577")
+            name, j = _js_parse_ident(text, j)
+            if name == "arguments":
+                raise _JSExprFail("F608 param named arguments")
+            names.append(name)
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ",":
+                j += 1
+                continue
+            if j < n and text[j] == ")":
+                j += 1
+                break
+            raise _JSExprFail("F608 bad params")
+        if len(set(names)) != len(names):
+            raise _JSExprFail("F608 duplicate params")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail("F608 arrow without =>")
+        j = _js_skip_ws(text, j + 2)
+        if j < n and text[j] == "{":
+            # Single-return block body (F448 precedent).
+            inner_start, inner_end, j = _js_span_braced(text, j)
+            rk = _js_match_kw(text, _js_skip_ws(text, inner_start),
+                              "return")
+            if rk is None:
+                raise _JSExprFail("F608 block without return")
+            rk = _js_skip_ws(text, rk)
+            be = inner_end
+            while be > rk and text[be - 1] in " \t\n\r":
+                be -= 1
+            if be > rk and text[be - 1] == ";":
+                be -= 1
+            body_expr = text[rk:be]
+        else:
+            # Expression body: scan to the `)` closing the outer
+            # group opened at text[i] (strings honored, backticks
+            # and slashes fail closed -- same discipline as F577).
+            k = j
+            d = 0
+            while k < n:
+                c = text[k]
+                if c in "'\"":
+                    k = _js_skip_quoted(text, k)
+                    continue
+                if c == "`":
+                    raise _JSExprFail("template in f608 body")
+                if c == "/":
+                    raise _JSExprFail("slash in f608 body")
+                if c == "(":
+                    d += 1
+                elif c == ")":
+                    if d == 0:
+                        break
+                    d -= 1
+                k += 1
+            if k >= n:
+                raise _JSExprFail("F608 body unterminated")
+            body_expr = text[j:k]
+            j = k
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ")":
+            raise _JSExprFail("F608 group not closed")
+        j = _js_skip_ws(text, j + 1)
+        # The invocation: direct `(args)` or `.call(T, args)`
+        # (F511 precedent).
+        if j < n and text[j] == ".":
+            k = j + 1
+            if k + 4 > n or not text.startswith("call", k) or \
+                    (k + 4 < n and text[k + 4] in _JS_IDENT_CONT):
+                raise _JSExprFail("F608 not call dispatch")
+            k = _js_skip_ws(text, k + 4)
+            if k >= n or text[k] != "(":
+                raise _JSExprFail("F608 call without paren")
+            k = _js_skip_ws(text, k + 1)
+            # The .call thisArg: the engine ignores it for arrows
+            # (lexical this) -- parsed and discarded node-exactly.
+            try:
+                _, k = _js_parse_ignored_value(text, k, depth, state)
+            except _JSExprFail:
+                _, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ",":
+                raise _JSExprFail("F608 call without args")
+            k = _js_skip_ws(text, k + 1)
+        elif j < n and text[j] == "(":
+            k = _js_skip_ws(text, j + 1)
+        else:
+            raise _JSExprFail("F608 not invoked")
+        args = []
+        saw_spread = False
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ")":
+            raise _JSExprFail("F608 no args")
+        while True:
+            k = _js_skip_ws(text, k)
+            if k >= n:
+                raise _JSExprFail("unterminated f608 call")
+            if text.startswith("...", k):
+                spread_args, k = _js_parse_f608_setspread_args(
+                    text, k, depth, state)
+                args.extend(spread_args)
+                saw_spread = True
+            elif text[k] in "'\"":
+                a0 = k
+                _, k = _js_parse_string(text, k)
+                args.append(text[a0:k])
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+            else:
+                raise _JSExprFail("F608 arg not literal or spread")
+            k = _js_skip_ws(text, k)
+            if k >= n:
+                raise _JSExprFail("unterminated f608 call")
+            if text[k] == ",":
+                k = _js_skip_ws(text, k + 1)
+                continue
+            if text[k] == ")":
+                k += 1
+                break
+            raise _JSExprFail("bad f608 call")
+        if not saw_spread:
+            raise _JSExprFail("F608 no Set spread arg")
+        if len(args) < len(names):
+            raise _JSExprFail("F608 arity")
+        # Lexically-scoped names the static decoder cannot resolve
+        # fail closed (miss, never mis-decode).
+        segs = _js_split_code_strings(body_expr)
+        code = "".join(s for is_code, s in segs if is_code)
+        for kw in ("this", "arguments", "super"):
+            if _js_code_find_idents(code, kw):
+                raise _JSExprFail("F608 body references " + kw)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        rewritten = _js_bind_destructure_arguments(
+            body_expr, args, names, list(range(len(names))))
+        val, k2 = _js_parse_additive(rewritten, 0, depth + 1, state)
+        k2 = _js_skip_ws(rewritten, k2)
+        if k2 != len(rewritten):
+            raise _JSExprFail("F608 body trailing junk")
         state["ops"] += 1  # the arrow-iife wrapper is obfuscation-shaped
         return val, k
     except _JSExprFail:
@@ -17070,6 +17288,68 @@ def _js_parse_f602_set_elements(text, j, depth, state):
     j = _js_skip_ws(text, j)
     j = _js_expect(text, j, ")")
     return elements, j
+
+
+def _js_parse_f608_setspread_args(text, j, depth, state):
+    """Parse `...new Set([LITS])` at text[j] (F608).
+
+    The call-argument spread form: the spread expands to the Set's
+    SameValueZero-deduped insertion-ordered element list (the F602
+    discipline -- validated by delegating to
+    `_js_parse_f602_set_elements`, so the F494 plain-string-literal
+    rule and the F452 per-element part charging apply unchanged).
+
+    Returns (raw_texts, next_index): *raw_texts* is the raw source
+    text of each element's first occurrence, in dedupe order -- the
+    form the iife binders substitute (raw source preserves the exact
+    escape encoding, so the downstream additive parse is
+    byte-identical to a literal call-site arg). The dedupe order is
+    asserted to agree with `_js_parse_f602_set_elements`; any
+    divergence fails closed (never mis-decoded). Never evals.
+    """
+    n = len(text)
+    if j + 3 > n or not text.startswith("...", j):
+        raise _JSExprFail("F608 not spread")
+    sj = _js_skip_ws(text, j + 3)
+    elements, k = _js_parse_f602_set_elements(text, sj, depth, state)
+    # Recover each element's raw literal source text. The F602 parse
+    # above validated the array shape (plain string literals only),
+    # so the quote-span scan below is total; guards stay anyway.
+    arr = text.index("[", sj)  # safe: no strings precede the `[`
+    t = arr + 1
+    pairs = []
+    while True:
+        t = _js_skip_ws(text, t)
+        if t >= n:
+            raise _JSExprFail("F608 setspan overrun")
+        if text[t] == "]":
+            break
+        if text[t] not in "'\"":
+            raise _JSExprFail("F608 setspan non-literal")
+        q0 = t
+        val, t = _js_parse_string(text, t)
+        pairs.append((val, text[q0:t]))
+        t = _js_skip_ws(text, t)
+        if t < n and text[t] == ",":
+            t += 1
+            continue
+        if t < n and text[t] == "]":
+            break
+        raise _JSExprFail("F608 setspan bad separator")
+    seen = set()
+    raw_texts = []
+    dedup = []
+    for val, raw in pairs:
+        if val not in seen:
+            seen.add(val)
+            raw_texts.append(raw)
+            dedup.append(val)
+    if dedup != elements:
+        # Defensive: the rescan's first-occurrence dedupe order
+        # must agree with `_js_parse_f602_set_elements` exactly;
+        # anything else is a miss, never a guess.
+        raise _JSExprFail("F608 setspan dedupe mismatch")
+    return raw_texts, k
 
 
 def _js_parse_f602_set_forof_iife(text, i, depth, state):
@@ -23790,6 +24070,18 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f577 = _js_parse_f577_arrow_rest_iife(text, i, depth, state)
         if _f577 is not None:
             val, i = _f577
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F608: ((P1,...,Pn)=>BODY)(ARGS) / ((P1,...,Pn)=>BODY).call(T,
+        # ARGS) with at least one `...new Set([LITS])` arg -- fixed-
+        # parameter arrow IIFE with Set-spread call arguments. None
+        # falls through to the parenthesized-additive path (which
+        # fails closed on the `(` + `(` head as before); the shape is
+        # disjoint from F577 (F577 requires exactly one `...rest`
+        # param; F608 rejects any `...` in the param list).
+        _f608 = _js_parse_f608_fixed_arrow_spread_iife(text, i, depth,
+                                                       state)
+        if _f608 is not None:
+            val, i = _f608
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")

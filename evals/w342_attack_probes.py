@@ -168,7 +168,7 @@ def test_a10_f429_filing_pinned():
     ok = ("(F429 filed 2026-10-05, wave-342 lane 5" in text
           and "LOW, CLOSED 2026-10-05 wave-343 lane 1" in text
           and "Next free finding: **F612**" in text  # Wave-356 merge: footer repoint  # Wave-357 merge: F478, F479 CLOSED (next F481); Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint next F612
-          and "Open findings: F595, F606, F608, F609, F610, F611." in text)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint open F606-F611 / next F612
+          and "Open findings: F595, F606, F607, F609, F610, F611." in text)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 4: F608 CLOSED
     return ("HELD" if ok else "BREAK", "F429 filed closed=%s" % ok)
 
 
@@ -179,7 +179,7 @@ def test_a11_f428_still_open_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F428 filed 2026-10-05, wave-341 lane C" in text
           and "LOW, CLOSED 2026-10-05 wave-342 lane 1" in text
-          and "Open findings: F595, F606, F608, F609, F610, F611." in text)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint open F606-F611 / next F612
+          and "Open findings: F595, F606, F607, F609, F610, F611." in text)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 4: F608 CLOSED
     return ("HELD" if ok else "BREAK", "F428 closed=%s" % ok)
 
 

@@ -163,7 +163,7 @@ def test_a8_f430_filing_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     entry = ("(F430 filed 2026-10-05, wave-343 lane 3" in text
              and "LOW, CLOSED 2026-10-05 wave-344 lane 1" in text
-              and "Open findings: F595, F606, F608, F609, F610, F611." in text)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint open F606-F611 / next F612
+              and "Open findings: F595, F606, F607, F609, F610, F611." in text)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 4: F608 CLOSED
 
     refusal = (dlp.find_credential('token="xoxb-abc123" + "def456"')
                == "dlp-slack-token")
@@ -180,7 +180,7 @@ def test_a9_f429_still_open_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ("(F429 filed 2026-10-05, wave-342 lane 5" in text
           and "LOW, CLOSED 2026-10-05 wave-343 lane 1" in text
-          and "Open findings: F595, F606, F608, F609, F610, F611." in text)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint open F606-F611 / next F612
+          and "Open findings: F595, F606, F607, F609, F610, F611." in text)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 4: F608 CLOSED
 
     return ("HELD" if ok else "BREAK", "F429 closed=%s" % ok)
 
@@ -195,7 +195,7 @@ def test_a11_f434_filing_pinned():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     entry = ("(F434 filed 2026-10-05, wave-344 merge" in text
              and "LOW, CLOSED 2026-10-05 wave-345 lane 3" in text
-             and "Open findings: F595, F606, F608, F609, F610, F611." in text)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint open F606-F611 / next F612
+             and "Open findings: F595, F606, F607, F609, F610, F611." in text)  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)  # Wave-365 merge: F521-F525 CLOSED; F526-F530 filed OPEN (next F531)  # Wave-368 merge: F537-F546 CLOSED (lanes 1-4); F547-F569 filed OPEN (next F570)  # Wave-372 merge: footer repoint open F606-F611 / next F612  # Wave-373 lane 4: F608 CLOSED
     payload = "[" + ", ".join("'%s'" % ch for ch in _CRED) + "].join('')"
     refusal = dlp.find_credential(payload) == "dlp-slack-token"
     ok = entry and refusal
