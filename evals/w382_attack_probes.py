@@ -31,11 +31,9 @@ New findings (24, all LOW, all OPEN), filed F713-F736 (attack-F713 renumbered F7
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F700-F712 (round 49 + wave-381 merge renumbers), F715-F737 (this round; attack-F713 -> F737 at merge; F714 closed wave-383 lane 1).
+F700-F712 (round 49 + wave-381 merge renumbers), F719, F720, F721, F722, F723, F724, F725, F726, F727, F728, F729, F730, F731, F732, F733, F734, F735, F736, F737 (this round; F717/F718 closed wave-383 lane 3).
 
-Closed pins (must BLOCK, else BREAK): F686-F699 (wave-381 closures),
-F713-F714 (wave-383 lane 1).
-F699 fails closed (None) by design -- its pin asserts the miss.
+Closed pins (must BLOCK, else BREAK): F686-F712 (wave-381/382 closures), F713-F718 (wave-383 lanes 1-3).F699 fails closed (None) by design -- its pin asserts the miss.
 F711 pins the raw-decoder mis-decode (find_credential fails closed on it).
 
 Rides-with-documented-scope (validated, NOT filed):
@@ -424,28 +422,28 @@ def test_r50_f716_s2_closed():
     return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f717_s1_open():
-    """F717 OPEN (Reflect.defineProperty fragment writes): miss reproduces."""
-    miss = _misses("(function(){var o={};Reflect.defineProperty(o,'x',{value:'%s'});return o.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f717_s1_closed():
+    """F717 CLOSED (wave-383 lane 3): blocks coded."""
+    ok = _blocked("(function(){var o={};Reflect.defineProperty(o,'x',{value:'%s'});return o.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f717_s2_open():
-    """F717 OPEN (Reflect.defineProperty fragment writes): miss reproduces."""
-    miss = _misses("(function(){var o={};Reflect.defineProperty(o,'y',{value:'%s',enumerable:true});return o['y']+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f717_s2_closed():
+    """F717 CLOSED (wave-383 lane 3): blocks coded."""
+    ok = _blocked("(function(){var o={};Reflect.defineProperty(o,'y',{value:'%s',enumerable:true});return o['y']+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f718_s1_open():
-    """F718 OPEN (Reflect.has conditional reads): miss reproduces."""
-    miss = _misses("(function(){var o={x:1};var f=Reflect.has(o,'x')?'%s':'xx';return f+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f718_s1_closed():
+    """F718 CLOSED (wave-383 lane 3): blocks coded."""
+    ok = _blocked("(function(){var o={x:1};var f=Reflect.has(o,'x')?'%s':'xx';return f+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r50_f718_s2_open():
-    """F718 OPEN (Reflect.has conditional reads): miss reproduces."""
-    miss = _misses("(function(){var f=Reflect.has({a:1},'a')?'%s':'xx';return f+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r50_f718_s2_closed():
+    """F718 CLOSED (wave-383 lane 3): blocks coded."""
+    ok = _blocked("(function(){var f=Reflect.has({a:1},'a')?'%s':'xx';return f+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r50_f719_s1_open():
