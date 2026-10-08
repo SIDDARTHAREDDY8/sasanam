@@ -5,7 +5,7 @@ hints only; every filed shape hand-crafted and node-verified).
 
 New findings (14, all LOW, all OPEN), filed from F621:
 - F621: Object.assign mutated-target reads -- 3 shapes. [CLOSED 2026-10-08 wave-375 lane 1]
-- F622: Object.keys + computed bracket reads on var-bound objects -- 2 shapes.
+- F622: Object.keys + computed bracket reads on var-bound objects -- 2 shapes. [CLOSED 2026-10-08 wave-375 lane 2]
 - F623: values()/enumeration reads on Object.fromEntries results -- 3 shapes.
 - F624: String.prototype.slice() with trimming bounds -- 3 shapes.
 - F625: Map entries()/keys() spread into call arguments -- 3 shapes.
@@ -15,7 +15,7 @@ New findings (14, all LOW, all OPEN), filed from F621:
 - F629: TextDecoder byte assembly -- 2 shapes.
 - F630: JSON.parse-sourced Object.values/Object.entries -- 2 shapes.
 - F631: async generator yield assembly (for-await/.next) -- 2 shapes.
-- F632: for-in with compound member expressions -- 2 shapes.
+- F632: for-in with compound member expressions -- 2 shapes. CLOSED wave-375 lane 2.
 - F633: BigInt-to-string fragment assembly -- 3 shapes.
 - F634: reduce() over Object.entries() results -- 2 shapes.
 
@@ -55,8 +55,8 @@ controls pass. No injection attempts.
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F612-F620 (round 41, closing in parallel wave-374 lanes), F622-F634
-(this round; F621 CLOSED 2026-10-08 wave-375 lane 1).
+F612-F620 (round 41, closing in parallel wave-374 lanes), F623-F634
+(this round; F621 CLOSED 2026-10-08 wave-375 lane 1; F622, F632 CLOSED 2026-10-08 wave-375 lane 2).
 
 Closed pins (must BLOCK, else BREAK): F576, F583, F596 (older spots),
 F595, F606, F607, F608, F609, F610, F611 (wave-373 closures),
@@ -154,11 +154,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F612-F634 open, next F635 (this lane)."""
+    """Control: footer shows F622/F632 closed (lane-local)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F640**" in text  # Wave-374 merge: final truth  # Wave-374 merge: footer repoint open F621-F639 / next F640
-          and "Open findings: F622, F623, F624, F625, F626, F627, F628, F629, F630, F631, F632, F633, F634, F635, F636, F637, F638, F639." in text)  # Wave-375 lane 1: F621 CLOSED  # Wave-374 merge: footer repoint open F621-F639 / next F640
+    ok = ("Next free finding: **F640**" in text  # # Wave-375 merge lane 1/10: F621 CLOSED  # # Wave-375 merge lane 2/10: F622, F632 CLOSED  # Wave-374 merge: final truth  # Wave-374 merge: footer repoint open F621-F639 / next F640
+          and "Open findings: F623, F624, F625, F626, F627, F628, F629, F630, F631, F633, F634, F635, F636, F637, F638, F639." in text)  # # Wave-375 merge lane 1/10: F621 CLOSED  # # Wave-375 merge lane 2/10: F622, F632 CLOSED  # Wave-374 merge: final truth  # Wave-374 merge: footer repoint open F621-F639 / next F640
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -244,10 +244,10 @@ def test_r42prior_f621_closed():
 
 
 @_t
-def test_r42_f622_open():
-    """F622 OPEN: Object.keys + computed bracket reads miss."""
-    miss = _misses("(function(){var o={a:'%s',b:'%s'};var k=Object.keys(o);return o[k[0]]+o[k[1]];})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f622_closed():
+    """F622 CLOSED (wave-375 lane 2): Object.keys + computed bracket reads block."""
+    hit = _blocked("(function(){var o={a:'%s',b:'%s'};var k=Object.keys(o);return o[k[0]]+o[k[1]];})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)  # Wave-375 lane 2: F622 CLOSED
 
 
 @_t
@@ -314,10 +314,10 @@ def test_r42_f631_open():
 
 
 @_t
-def test_r42_f632_open():
-    """F632 OPEN: for-in compound member expressions miss."""
-    miss = _misses("(function(){var o={x:{p:'%s'},y:{q:'%s'}};var s='';for(var k in o){s+=o[k].p||o[k].q;}return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f632_closed():
+    """F632 CLOSED (wave-375 lane 2): for-in compound member expressions block."""
+    hit = _blocked("(function(){var o={x:{p:'%s'},y:{q:'%s'}};var s='';for(var k in o){s+=o[k].p||o[k].q;}return s;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)  # Wave-375 lane 2: F632 CLOSED
 
 
 @_t
@@ -348,10 +348,10 @@ def test_r42prior_f621_s3_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r42_f622_s2_open():
-    """F622 OPEN (shape keys-map): miss reproduces."""
-    miss = _misses("(function(){var o={a:'%s',b:'%s'};return Object.keys(o).map(k=>o[k]).join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f622_s2_closed():
+    """F622 CLOSED (wave-375 lane 2, shape keys-map): blocks."""
+    hit = _blocked("(function(){var o={a:'%s',b:'%s'};return Object.keys(o).map(k=>o[k]).join('');})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)  # Wave-375 lane 2: F622 CLOSED
 
 @_t
 def test_r42_f623_s2_open():
@@ -432,10 +432,10 @@ def test_r42_f631_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r42_f632_s2_open():
-    """F632 OPEN (shape forin-or-bracket): miss reproduces."""
-    miss = _misses("(function(){var o={x:{p:'%s'},y:{q:'%s'}};var s='';for(var k in o){s+=o[k]['p']||o[k]['q'];}return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_p1_f632_s2_closed():
+    """F632 CLOSED (wave-375 lane 2, shape forin-or-bracket): blocks."""
+    hit = _blocked("(function(){var o={x:{p:'%s'},y:{q:'%s'}};var s='';for(var k in o){s+=o[k]['p']||o[k]['q'];}return s;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)  # Wave-375 lane 2: F632 CLOSED
 
 @_t
 def test_r42_f634_s2_open():
