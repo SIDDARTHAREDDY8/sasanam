@@ -19844,6 +19844,153 @@ def _js_parse_f610_params_setget_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f612_values_varbound_iife(text, i, depth, state):
+    """Parse `(function(){DECL o=ENUMSRC;return Object.values(o)<postfix>;})()`
+    / `(function(){DECL o=ENUMSRC;return
+    Object.entries(o).map(P=>P[0|1])<postfix>;})()` at text[i] (F612).
+
+    F510 (CLOSED) models Object.values/Object.entries on INLINE
+    enumeration sources (plain literals, integrity wrappers, the
+    entries-reduce rebuild idiom), but a var-bound intermediate
+    escapes the source model. Node-exact desugar (v24.20.0): the
+    var binds a parsed enumeration source (F510's exact grammar --
+    `_js_parse_enumeration_source`, so integer-index keys order
+    ascending first and string keys in insertion order,
+    engine-identical); `Object.values(o)` is the ordered value
+    list and `Object.entries(o).map(P=>P[1|0])` the ordered
+    values/keys -- the same desugars F510/F517 apply inline, with
+    the entries twin reusing F517's mandatory-projection grammar
+    (`_js_parse_entries_projection`). The invocation must be
+    exactly `()`.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, reassignment of the var, multi-decl
+      (`var o=..., p=...`), non-empty call args;
+    - a binding source outside the F510 enumeration-source grammar
+      (JSON.parse, non-literal constructions, getter-returned
+      objects);
+    - a call argument other than the bare bound ident (the Object.*
+      call must read the bound name exactly);
+    - a bare `Object.entries(o)` without the mandatory .map
+      projection (F517 discipline -- unprojected pairs are not
+      modeled);
+    - non-string values in the source (the F583 keys-only fallback
+      is inline-only; here it fails closed).
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_skip_ws(text, j + 1)
+    if not text.startswith("function", k):
+        return None
+    k2 = k + len("function")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        return None  # functionx -- not our shape
+    if k2 < n and text[k2] in _JS_IDENT_START:
+        return None  # named function -- not our shape
+    try:
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F612 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            raise _JSExprFail("F612 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        keys, vals, sj = _js_parse_enumeration_source(text, sj, depth,
+                                                      state)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F612 no return")
+        sj = _js_skip_ws(text, m)
+        # `Object.values(o)` / `Object.entries(o)` (dot or
+        # bracket-string member, F510 head discipline) on the bare
+        # bound ident.
+        if not text.startswith("Object", sj):
+            raise _JSExprFail("F612 return not Object.*")
+        q = sj + len("Object")
+        if q < n and text[q] in _JS_IDENT_CONT:
+            raise _JSExprFail("F612 Objectx")
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == "[":
+            _mname, q = _js_parse_bracket_member(text, q)
+            if _mname not in ("values", "entries"):
+                raise _JSExprFail("F612 member not values/entries")
+            member = _mname
+        elif q < n and text[q] == ".":
+            q = _js_skip_ws(text, q + 1)
+            m = _js_match_kw(text, q, "values")
+            if m is not None:
+                member = "values"
+            else:
+                m = _js_match_kw(text, q, "entries")
+                if m is None:
+                    raise _JSExprFail("F612 member not values/entries")
+                member = "entries"
+            q = m
+        else:
+            raise _JSExprFail("F612 no member")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "(")
+        q = _js_skip_ws(text, q)
+        _arg, q = _js_parse_ident(text, q)
+        if _arg != oname:
+            raise _JSExprFail("F612 call arg not the bound ident")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ")")
+        if member == "entries":
+            # F517's mandatory projection grammar.
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ".")
+            q = _js_skip_ws(text, q)
+            m = _js_match_kw(text, q, "map")
+            if m is None:
+                raise _JSExprFail("F612 entries without map projection")
+            q = _js_skip_ws(text, m)
+            q = _js_expect(text, q, "(")
+            kind, q = _js_parse_entries_projection(text, q)
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ")")
+            arr = _JSArr(vals if kind == "vals" else keys)
+        else:
+            arr = _JSArr(vals)
+        state["ops"] += 1  # the values/entries call is
+                           # obfuscation-shaped
+        _rval, q = _js_parse_postfix(text, q, arr, depth, state)
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        q = _js_skip_ws(text, q)
+        if q != inner_end:
+            raise _JSExprFail("F612 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return _rval, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f576_new_url(text, i, depth, state):
     """Parse `new URLSearchParams('LIT')` / `new URL('LIT')` (F576).
 
@@ -24581,6 +24728,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f610 = _js_parse_f610_params_setget_iife(text, i, depth, state)
         if _f610 is not None:
             val, i = _f610
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F612: (function(){DECL o=ENUMSRC;return
+        #   Object.values(o)<postfix>;})() /
+        #   (function(){DECL o=ENUMSRC;return
+        #   Object.entries(o).map(P=>P[0|1])<postfix>;})() --
+        #   value/key enumeration through a var-bound intermediate.
+        #   Tried after F610: disjoint bindings (an F510
+        #   enumeration source, not URLSearchParams) and terminals
+        #   (Object.values/entries reads, not get/getAll/if-guard);
+        #   F578 also fails closed on these (no defineProperty
+        #   statement), so no previously-decoded input changes
+        #   behavior.
+        _f612 = _js_parse_f612_values_varbound_iife(text, i, depth,
+                                                   state)
+        if _f612 is not None:
+            val, i = _f612
             return _js_parse_postfix(text, i, val, depth, state)
         # F586: (new Map(...)) / (new WeakRef(...)) --
         # parenthesized new-expression receivers, engine-identical

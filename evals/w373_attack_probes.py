@@ -39,10 +39,12 @@ controls pass. No injection attempts.
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F595, F606-F611 (prior rounds), F612-F620 (this round).
+F595, F606-F611 (prior rounds), F613-F620 (this round; F612 closed
+wave-374 lane 1).
 
 Closed pins (must BLOCK, else BREAK): F576, F583, F596 (older spots),
-F597, F598, F599, F600, F602, F603, F604, F605 (wave-372 closures).
+F597, F598, F599, F600, F602, F603, F604, F605 (wave-372 closures),
+F612 (wave-374 lane 1).
 
 Rides-with-documented-scope (validated, NOT filed):
 - JSON.parse(JSON.stringify([[,'f1'],['f2']])).flat().join('') and the
@@ -128,11 +130,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F612-F620 open, next F621 (wave-373 merge)."""
+    """Control: footer shows F613-F620 open, next F621 (lane-local)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F621**" in text  # Wave-373 merge: attack round 41 filed F612-F620
-          and "Open findings: F612, F613, F614, F615, F616, F617, F618, F619, F620." in text)  # Wave-373 merge: F595, F606-F611 CLOSED
+          and "Open findings: F613, F614, F615, F616, F617, F618, F619, F620." in text)  # Wave-374 lane 1: F612 CLOSED
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -279,16 +281,19 @@ def test_r41prior_f611_closed():
     ok = m1 and m2
     return ("HELD" if ok else "BREAK", "block=%s" % ok)
 
-# ----------------------------------------- open pins, round 41 (must miss)
+# ----------------------------------------- prior-open pins now closed
 
 @_t
-def test_r41_f612_open():
-    """F612 OPEN: var-bound Object.values/Object.entries indirection misses."""
-    m1 = _misses("(function(){var o={a:'%s',b:'%s'};return Object.values(o).join('');})()" % (_A, _B))
-    m2 = _misses("(function(){var o=Object.freeze({a:'%s',b:'%s'});return Object.values(o).join('');})()" % (_A, _B))
-    m3 = _misses("(function(){var o={a:'%s',b:'%s'};return Object.entries(o).map(e=>e[1]).join('');})()" % (_A, _B))
-    ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+def test_p1_f612_closed():
+    """F612 CLOSED (wave-374 lane 1): var-bound values/entries blocks."""
+    h1 = _blocked("(function(){var o={a:'%s',b:'%s'};return Object.values(o).join('');})()" % (_A, _B))
+    h2 = _blocked("(function(){var o=Object.freeze({a:'%s',b:'%s'});return Object.values(o).join('');})()" % (_A, _B))
+    h3 = _blocked("(function(){var o={a:'%s',b:'%s'};return Object.entries(o).map(e=>e[1]).join('');})()" % (_A, _B))
+    ok = h1 and h2 and h3
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)
+
+
+# ----------------------------------------- open pins, round 41 (must miss)
 
 
 @_t
