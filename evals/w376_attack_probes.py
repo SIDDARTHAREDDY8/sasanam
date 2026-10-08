@@ -148,11 +148,11 @@ def test_p0_pin_taxonomy():
     ok = TAXONOMY_PIN == 2140 and len(TAXONOMY) > 0
     return ("HELD" if ok else "BREAK", "pin=%s" % TAXONOMY_PIN)
 def test_b0_footer_state():
-    """Control: footer shows F644-F648 closed (merge lanes 1-5); F649, F650, F653, F654, F660 open, next F655."""
+    """Control: footer shows F644-F650 closed (merge lanes 1-6); F653, F654, F660 open, next F655."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F655**" in text  # Wave-377 merge lanes 1-5: F644-F648 CLOSED; open F649, F650, F653, F654, F660 (next F655)
-          and "Open findings: F649, F650, F653, F654, F660." in text)  # Wave-377 merge lanes 1-5: F644-F648 CLOSED; open F649, F650, F653, F654, F660 (next F655)
+    ok = ("Next free finding: **F655**" in text  # Wave-377 merge lanes 1-6: F644-F650 CLOSED; open F653, F654, F660 (next F655)
+          and "Open findings: F653, F654, F660." in text)  # Wave-377 merge lanes 1-6: F644-F650 CLOSED; open F653, F654, F660 (next F655)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
@@ -455,56 +455,56 @@ def test_r44_f648_s3_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
-# ------------------------------------------------- F649 open pins (must miss)
+# ------------------------------------------------- F649 CLOSED pins (must block)
 
 @_t
-def test_r44_f649_s1_open():
-    """F649 OPEN (shape sclone-varbound-members): miss reproduces."""
-    miss = _misses("(function(){var o=structuredClone({a:'%s',b:'%s%s'});return o.a+o.b;})()"
+def test_r44_f649_s1_closed():
+    """F649 CLOSED (shape sclone-varbound-members): now blocks."""
+    hit = _blocked("(function(){var o=structuredClone({a:'%s',b:'%s%s'});return o.a+o.b;})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r44_f649_s2_open():
-    """F649 OPEN (shape sclone-inline-values): miss reproduces."""
-    miss = _misses("(function(){return Object.values(structuredClone({a:'%s',b:'%s%s'})).join('');})()"
-                   % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r44_f649_s3_open():
-    """F649 OPEN (shape sclone-varbound-values): miss reproduces."""
-    miss = _misses("(function(){var o=structuredClone({a:'%s',b:'%s%s'});return Object.values(o).join('');})()"
+def test_r44_f649_s2_closed():
+    """F649 CLOSED (shape sclone-inline-values): now blocks."""
+    hit = _blocked("(function(){return Object.values(structuredClone({a:'%s',b:'%s%s'})).join('');})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-# ------------------------------------------------- F650 open pins (must miss)
-
-@_t
-def test_r44_f650_s1_open():
-    """F650 OPEN (shape spread-varbound-values): miss reproduces."""
-    miss = _misses("(function(){var o={...{a:'%s'},...{b:'%s%s'}};return Object.values(o).join('');})()"
-                   % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r44_f650_s2_open():
-    """F650 OPEN (shape spread-inline-values): miss reproduces."""
-    miss = _misses("(function(){return Object.values({...{a:'%s'},...{b:'%s%s'}}).join('');})()"
+def test_r44_f649_s3_closed():
+    """F649 CLOSED (shape sclone-varbound-values): now blocks."""
+    hit = _blocked("(function(){var o=structuredClone({a:'%s',b:'%s%s'});return Object.values(o).join('');})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+# ------------------------------------------------- F650 CLOSED pins (must block)
+
+@_t
+def test_r44_f650_s1_closed():
+    """F650 CLOSED (shape spread-varbound-values): now blocks."""
+    hit = _blocked("(function(){var o={...{a:'%s'},...{b:'%s%s'}};return Object.values(o).join('');})()"
+                   % (_F1, _F2, _F3))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r44_f650_s3_open():
-    """F650 OPEN (shape spread-varbound-entries): miss reproduces."""
-    miss = _misses("(function(){var o={...{a:'%s'},...{b:'%s%s'}};return Object.entries(o).map(function(e){return e[1];}).join('');})()"
+def test_r44_f650_s2_closed():
+    """F650 CLOSED (shape spread-inline-values): now blocks."""
+    hit = _blocked("(function(){return Object.values({...{a:'%s'},...{b:'%s%s'}}).join('');})()"
                    % (_F1, _F2, _F3))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_r44_f650_s3_closed():
+    """F650 CLOSED (shape spread-varbound-entries): now blocks."""
+    hit = _blocked("(function(){var o={...{a:'%s'},...{b:'%s%s'}};return Object.entries(o).map(function(e){return e[1];}).join('');})()"
+                   % (_F1, _F2, _F3))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 # ------------------------------------------------- F651 closed pins (must block)  # Wave-377 lane 3: F651 CLOSED
