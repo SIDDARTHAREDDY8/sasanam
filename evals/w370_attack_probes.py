@@ -135,11 +135,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F570-F594 open, next F595 (wave-370 lane 8)."""
+    """Control: footer shows F583/F589 closed, next F597 (wave-371 lane 1)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F597**" in text  # Wave-370 lane 8 (attack round 38): F570-F582 reconfirmed OPEN; F583-F594 filed OPEN (next F595)
-          and "Open findings: F582, F583, F584, F585, F586, F587, F588, F589, F590, F591, F592, F593, F594, F595, F596." in text)  # Wave-370 lane 8 (attack round 38): F570-F582 reconfirmed OPEN; F583-F594 filed OPEN (next F595)
+    ok = ("Next free finding: **F597**" in text  # Wave-371 lane 1: F583/F589 CLOSED (next F597)
+          and "Open findings: F584, F585, F586, F587, F588, F590, F591, F592, F593, F594, F595, F596." in text)  # Wave-371 lane 1: F583/F589 CLOSED (next F597)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -239,13 +239,13 @@ def test_p1_f567_closed():
 # ------------------------------------------------- open pins (must miss)
 
 @_t
-def test_r38_f583_open():
-    """F583 OPEN: key-laundering via terminal key reads misses."""
-    m1 = _misses("Object.keys({'%s':1,'%s':1}).join('')" % (_A, _B))
-    m2 = _misses("Object.entries({'%s':1,'%s':1}).map(e=>e[0]).join('')" % (_A, _B))
-    m3 = _misses("Object.entries({'%s':1,'%s':1}).map(([k])=>k).join('')" % (_A, _B))
+def test_r38_f583_closed():
+    """F583 CLOSED 2026-10-07 wave-371 lane 1: key-terminal reads block coded."""
+    m1 = _blocked("Object.keys({'%s':1,'%s':1}).join('')" % (_A, _B))
+    m2 = _blocked("Object.entries({'%s':1,'%s':1}).map(e=>e[0]).join('')" % (_A, _B))
+    m3 = _blocked("Object.entries({'%s':1,'%s':1}).map(([k])=>k).join('')" % (_A, _B))
     ok = m1 and m2 and m3
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t
@@ -295,12 +295,12 @@ def test_r38_f588_open():
 
 
 @_t
-def test_r38_f589_open():
-    """F589 OPEN: Map entries iteration misses."""
-    m1 = _misses("[...new Map([['c','%s']]).entries()][0][1]+'%s'" % (_A, _B))
-    m2 = _misses("[...new Map([['a','%s'],['b','%s']]).entries()].map(e=>e[1]).join('')" % (_A, _B))
+def test_r38_f589_closed():
+    """F589 CLOSED 2026-10-07 wave-371 lane 1: Map entries iteration blocks coded."""
+    m1 = _blocked("[...new Map([['c','%s']]).entries()][0][1]+'%s'" % (_A, _B))
+    m2 = _blocked("[...new Map([['a','%s'],['b','%s']]).entries()].map(e=>e[1]).join('')" % (_A, _B))
     ok = m1 and m2
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t

@@ -3490,7 +3490,18 @@ def _js_parse_spread_copy(text, i, depth, state):
             if _js_match_kw(text, kkk, "Set") is not None:
                 src, j = _js_parse_new_set(text, k, depth, state)
             elif _js_match_kw(text, kkk, "Map") is not None:
-                src, j = _js_parse_new_map_values(text, k, depth, state)
+                try:
+                    src, j = _js_parse_new_map_values(text, k, depth,
+                                                      state)
+                except _JSExprFail:
+                    # F589: not `.values()` -- it may be `.entries()`,
+                    # which the primary path resolves via the _JSMap
+                    # postfix branch (the _JSMapEntries iterator
+                    # unwraps below). Any other shape fails closed
+                    # there exactly as before (the re-parse charges
+                    # parts again -- intentional double charge, F469
+                    # precedent: the budget trips sooner).
+                    src = None
         elif k < n and text[k] == "(":
             # F494: (function*(){yield ...})() spread source. A plain
             # parenthesized primary falls through to the primary path.
@@ -3504,6 +3515,13 @@ def _js_parse_spread_copy(text, i, depth, state):
             src, j = _js_parse_primary(text, j + 3, depth, state)
     finally:
         state["in_spread_copy"] = False
+    if isinstance(src, _JSMapEntries):
+        # F589: spread of a Map entries iterator -- the engine's
+        # iteration protocol yields the insertion-ordered [k, v]
+        # pairs; desugared to a shallow copy of the pair list (the
+        # F471 convention, so list-level steps cannot reorder the
+        # source's pairs; pair elements are shared, never mutated).
+        src = _JSArr(list(src.pairs))
     if isinstance(src, str) and not isinstance(src, _JSNumStr):
         # F499: spread of a string value iterates its characters
         # (node v24.20.0 verified). _JSNumStr is excluded: the engine
@@ -10441,7 +10459,77 @@ def _js_order_object_keys(key_order, int_poss, str_poss):
             + [key_order[pos] for pos in str_poss])
 
 
-def _js_parse_object_literal_keys_values(text, i, depth, state):
+def _js_skip_f583_literal_value(text, j, state):
+    """Skip one JSON-ish literal value at text[j] (F583 keys-only mode).
+
+    Accepts string literals, numeric literals (optional leading `-`,
+    decimal int/float, exponent, hex -- bounded length), and the
+    true/false/null keywords. The value is DISCARDED: in keys-only
+    mode only the KEYS affect the result (node v24.20.0 verified:
+    Object.keys ignores values entirely), so the skip only needs to
+    find the exact value boundary. Anything else (nested
+    arrays/objects, calls, idents, templates) fails closed -- a
+    mis-skipped boundary would mis-decode. Returns the index just
+    past the value. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n:
+        raise _JSExprFail("keys-only value missing")
+    c = text[j]
+    if c in "'\"":
+        _, j = _js_parse_string(text, j)
+        state["parts"] += 1  # the skipped value is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        return j
+    if (c == "-" or c in _ASCII_DIGITS
+            or (c == "." and j + 1 < n and text[j + 1] in _ASCII_DIGITS)):
+        k = j
+        if text[k] == "-":
+            k += 1
+        if k + 1 < n and text[k] == "0" and text[k + 1] in "xX":
+            k += 2
+            while k < n and (text[k] in _ASCII_DIGITS
+                             or text[k] in "abcdefABCDEF"):
+                k += 1
+        else:
+            while k < n and text[k] in _ASCII_DIGITS:
+                k += 1
+            if k < n and text[k] == ".":
+                k += 1
+                while k < n and text[k] in _ASCII_DIGITS:
+                    k += 1
+            if k < n and text[k] in "eE":
+                k += 1
+                if k < n and text[k] in "+-":
+                    k += 1
+                while k < n and text[k] in _ASCII_DIGITS:
+                    k += 1
+        if k - j > 64:
+            raise _JSExprFail("keys-only numeric value too long")
+        if k == j or (k == j + 1 and text[j] == "-"):
+            raise _JSExprFail("keys-only bad numeric value")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            # `123abc` is two tokens in the engine -- fail closed
+            # rather than mis-skip the boundary.
+            raise _JSExprFail("keys-only bad numeric value")
+        state["parts"] += 1  # the skipped value is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        return k
+    for _kw in ("true", "false", "null"):
+        _m = _js_match_kw(text, j, _kw)
+        if _m is not None:
+            state["parts"] += 1  # the skipped value is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            return _m
+    raise _JSExprFail("keys-only value not a literal")
+
+
+def _js_parse_object_literal_keys_values(text, i, depth, state,
+                                         _keys_only=False):
     """Parse `{k0:v0, k1:v1, ...}` at text[i] (text[i] == '{') (F510/F517).
 
     Returns (ordered_keys, ordered_values, next_index): the
@@ -10462,6 +10550,14 @@ def _js_parse_object_literal_keys_values(text, i, depth, state):
     prototype-poisoned or method-carrying literal is never
     mis-decoded. Each property charges the F430 parts budget. Never
     evals.
+
+    F583 `_keys_only` mode: values are SKIPPED (not parsed) via
+    _js_skip_f583_literal_value -- string/numeric/true/false/null
+    literals only; nested values fail closed. Only valid where the
+    VALUES cannot affect the result (Object.keys /
+    Object.getOwnPropertyNames, and the Object.entries keys
+    projection): the returned values list is all-None and must be
+    ignored by the caller.
     """
     n = len(text)
     j = _js_skip_ws(text, i + 1)
@@ -10500,12 +10596,18 @@ def _js_parse_object_literal_keys_values(text, i, depth, state):
         if j >= n or text[j] != ":":
             raise _JSExprFail("object literal needs colon")
         j = _js_skip_ws(text, j + 1)
-        if j >= n or text[j] not in "'\"":
-            raise _JSExprFail("object literal value not a string")
-        val, j = _js_parse_string(text, j)
-        state["parts"] += 1
-        if state["parts"] > _JS_EXPR_MAX_PARTS:
-            raise _JSExprFail("too many parts")
+        if _keys_only:
+            # F583: the value cannot affect a keys enumeration --
+            # skip it (string/numeric/true/false/null only).
+            j = _js_skip_f583_literal_value(text, j, state)
+            val = None
+        else:
+            if j >= n or text[j] not in "'\"":
+                raise _JSExprFail("object literal value not a string")
+            val, j = _js_parse_string(text, j)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
         if key in seen:
             order[seen[key]] = val
         else:
@@ -10618,6 +10720,24 @@ class _JSMap:
 
     def __init__(self, entries):
         self.entries = entries
+
+
+class _JSMapEntries:
+    """Statically-resolved Map entries iterator (F589).
+
+    The engine's Map.prototype.entries() returns a Map Iterator, not
+    an array -- index reads and method calls on the iterator itself
+    are undefined/TypeError in the engine (node v24.20.0). The
+    decoder models it as an opaque iterable: only the F471
+    spread-copy factory (`[...m.entries()]`) can consume it,
+    unwrapping to the insertion-ordered _JSArr of [k, v] pairs. Any
+    other postfix step fails closed, and the value never reaches the
+    additive, so it can never be mis-decoded as a string. Never evals.
+    """
+    __slots__ = ("pairs",)
+
+    def __init__(self, pairs):
+        self.pairs = pairs
 
 
 class _JSURLParams:
@@ -11945,7 +12065,8 @@ def _js_parse_entries_reduce_keys_values(text, i, depth, state):
     return keys, vals, j
 
 
-def _js_parse_enumeration_wrapper(text, i, depth, state):
+def _js_parse_enumeration_wrapper(text, i, depth, state,
+                                  _keys_only=False):
     """Parse `Object.<w>(INNER)` / `Object['<w>'](INNER)` as an
     object-enumeration source (F510/F517).
 
@@ -11954,7 +12075,9 @@ def _js_parse_enumeration_wrapper(text, i, depth, state):
     _js_parse_enumeration_source itself (not the dispatch-receiver
     grammar -- a plain object literal is not a dispatch receiver).
     Exactly one argument; anything else fails closed. Returns
-    (ordered_keys, ordered_values, next_index). Never evals.
+    (ordered_keys, ordered_values, next_index). The F583 `_keys_only`
+    flag threads through (values skipped where they cannot affect
+    the result). Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, i)
@@ -11978,7 +12101,8 @@ def _js_parse_enumeration_wrapper(text, i, depth, state):
         raise _JSExprFail("not an integrity wrapper")
     j = _js_expect(text, j, "(")
     keys, vals, j = _js_parse_enumeration_source(text, j, depth + 1,
-                                                state)
+                                                state,
+                                                _keys_only=_keys_only)
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ")":
         raise _JSExprFail("integrity wrapper with extra args")
@@ -11986,7 +12110,8 @@ def _js_parse_enumeration_wrapper(text, i, depth, state):
     return keys, vals, j + 1
 
 
-def _js_parse_enumeration_source(text, i, depth, state):
+def _js_parse_enumeration_source(text, i, depth, state,
+                                 _keys_only=False):
     """Parse the OBJ of `Object.{values,keys,entries}(OBJ)` (F510/F517).
 
     Source classes (node-verified, v24.20.0):
@@ -11997,14 +12122,18 @@ def _js_parse_enumeration_source(text, i, depth, state):
       `Object.entries(OBJLIT).reduce((A,[B,C])=>(A[B]=C,A),{})`;
     - a plain object literal `{...}`.
     Anything else fails closed. Returns (ordered_keys,
-    ordered_values, next_index). Never evals.
+    ordered_values, next_index). The F583 `_keys_only` flag applies
+    to the plain-literal and wrapper branches (values skipped where
+    they cannot affect the result); the entries-reduce branch stays
+    strict. Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, i)
     if depth >= _JS_EXPR_MAX_DEPTH:
         raise _JSExprFail("enumeration source too deep")
     if _js_peek_integrity_wrap_head(text, j):
-        return _js_parse_enumeration_wrapper(text, j, depth, state)
+        return _js_parse_enumeration_wrapper(text, j, depth, state,
+                                             _keys_only=_keys_only)
     if text.startswith("Object", j):
         k = j + len("Object")
         if not (k < n and text[k] in _JS_IDENT_CONT):
@@ -12018,7 +12147,8 @@ def _js_parse_enumeration_source(text, i, depth, state):
         raise _JSExprFail("Object enumeration source not modeled")
     if j < n and text[j] == "{":
         return _js_parse_object_literal_keys_values(text, j, depth,
-                                                    state)
+                                                    state,
+                                                    _keys_only=_keys_only)
     raise _JSExprFail("Object enumeration source not modeled")
 
 
@@ -12126,7 +12256,7 @@ def _js_parse_object_keys(text, i, depth, state):
     if j >= n or text[j] != "(":
         raise _JSExprFail("Object.keys without paren")
     keys, _, j = _js_parse_enumeration_source(text, j + 1, depth,
-                                              state)
+                                              state, _keys_only=True)
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ")":
         raise _JSExprFail("Object.keys with extra args")
@@ -12185,7 +12315,7 @@ def _js_parse_object_gopn(text, i, depth, state):
     if j >= n or text[j] != "(":
         raise _JSExprFail("getOwnPropertyNames without paren")
     keys, _, j = _js_parse_enumeration_source(text, j + 1, depth,
-                                              state)
+                                              state, _keys_only=True)
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ")":
         raise _JSExprFail("getOwnPropertyNames with extra args")
@@ -12217,6 +12347,85 @@ def _js_parse_projection_return(text, i, p):
     return idx, j
 
 
+def _js_parse_entries_destructure_projection(text, i):
+    """Parse a destructured entries-projection .map callback at text[i]
+    (F583).
+
+    Returns ("keys"|"vals", next_index). Recognized (node-verified,
+    v24.20.0): `([p0])=>p0`, `([p0,p1])=>p0`, `([p0,p1])=>p1`, and the
+    block-body (`=>{return p0;}`) and `function([p0]){return p0;}`
+    twins. The parameter is a 1- or 2-element array pattern over the
+    [k, v] pair; the body must return one of the bound names --
+    returning the first binds element 0 (the key), the second element
+    1 (the value). Duplicate binding names (`([k,k])=>k` -- the
+    engine binds the second, i.e. element 1) fail closed rather than
+    mis-project; 3+ names, elisions (`([,v])`), rest elements, and
+    default values fail closed (documented boundaries). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    _fn = False
+    if text.startswith("function", j):
+        k = j + len("function")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("bad destructure projection")
+        j = _js_skip_ws(text, k)
+        _fn = True
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("not a destructure projection")
+    j = _js_skip_ws(text, j + 1)
+    p0, j = _js_parse_ident(text, j)
+    j = _js_skip_ws(text, j)
+    _names = [p0]
+    if j < n and text[j] == ",":
+        j = _js_skip_ws(text, j + 1)
+        p1, j = _js_parse_ident(text, j)
+        _names.append(p1)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            raise _JSExprFail("destructure projection arity")
+    if len(set(_names)) != len(_names):
+        # ([k,k])=>k -- the engine binds the SECOND k (element 1);
+        # fail closed rather than mis-project.
+        raise _JSExprFail("destructure projection duplicate name")
+    j = _js_expect(text, j, "]")
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    if _fn:
+        j = _js_expect(text, j, "{")
+        _rk = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if _rk is None:
+            raise _JSExprFail("bad destructure projection")
+        j = _js_skip_ws(text, _rk)
+        q, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+    else:
+        if not text.startswith("=>", j):
+            raise _JSExprFail("bad destructure projection")
+        j = _js_skip_ws(text, j + 2)
+        if j < n and text[j] == "{":
+            j = _js_skip_ws(text, j + 1)
+            _rk = _js_match_kw(text, j, "return")
+            if _rk is None:
+                raise _JSExprFail("bad destructure projection")
+            j = _js_skip_ws(text, _rk)
+            q, j = _js_parse_ident(text, j)
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, ";")
+            j = _js_expect(text, j, "}")
+        else:
+            q, j = _js_parse_ident(text, j)
+    if q == _names[0]:
+        return "keys", j
+    if len(_names) == 2 and q == _names[1]:
+        return "vals", j
+    raise _JSExprFail("destructure projection not a bound name")
+
+
 def _js_parse_entries_projection(text, i):
     """Parse an entries-projection .map callback at text[i] (F517).
 
@@ -12230,6 +12439,19 @@ def _js_parse_entries_projection(text, i):
     """
     n = len(text)
     j = _js_skip_ws(text, i)
+    # F583: destructured pair param -- tried before the plain-param
+    # forms (disjoint: a plain param never starts with `[`, and
+    # `function([` never reaches the plain function branch, whose
+    # ident parse would fail closed on `[` anyway).
+    _fj = j
+    if text.startswith("function", _fj):
+        _fk = _fj + len("function")
+        if not (_fk < n and text[_fk] in _JS_IDENT_CONT):
+            _fj = _js_skip_ws(text, _fk)
+    if _fj < n and text[_fj] == "(":
+        _fq = _js_skip_ws(text, _fj + 1)
+        if _fq < n and text[_fq] == "[":
+            return _js_parse_entries_destructure_projection(text, i)
     if text.startswith("function", j):
         k = j + len("function")
         if k < n and text[k] in _JS_IDENT_CONT:
@@ -12419,8 +12641,23 @@ def _js_parse_object_entries(text, i, depth, state):
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != "(":
         raise _JSExprFail("Object.entries without paren")
-    keys, vals, j = _js_parse_enumeration_source(text, j + 1, depth,
-                                                 state)
+    _saved = dict(state)
+    try:
+        keys, vals, j = _js_parse_enumeration_source(text, j + 1, depth,
+                                                     state)
+        _keys_only = False
+    except _JSExprFail:
+        # F583: the source literal may carry non-string values
+        # (`{'f1':1,'f2':1}`) -- values are unrecoverable, so this
+        # path only continues for a KEYS projection (a values
+        # projection re-raises below, fail closed).
+        state.clear()
+        state.update(_saved)
+        keys, _, j = _js_parse_enumeration_source(text, j + 1, depth,
+                                                  state,
+                                                  _keys_only=True)
+        vals = None
+        _keys_only = True
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != ")":
         raise _JSExprFail("Object.entries with extra args")
@@ -12439,11 +12676,9 @@ def _js_parse_object_entries(text, i, depth, state):
     if j >= n or text[j] != ")":
         raise _JSExprFail("map projection unterminated")
     j += 1
-    state["ops"] += 1  # the entries+map idiom is obfuscation-shaped
-    return _js_parse_postfix(text, j, _JSArr(vals if kind == "vals"
-                                            else keys), depth, state)
-
-
+    if _keys_only and kind != "keys":
+        raise _JSExprFail("entries keys-only source needs keys "
+                          "projection")
     state["ops"] += 1  # the entries+map idiom is obfuscation-shaped
     return _js_parse_postfix(text, j, _JSArr(vals if kind == "vals"
                                             else keys), depth, state)
@@ -18657,10 +18892,41 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         # identity transform fails closed.
         if not isinstance(value, _JSArr):
             raise _JSExprFail("map on non-array")
-        i, stringifies = _js_parse_map_callback(text, _js_skip_ws(text, i))
-        i = _js_skip_ws(text, i)
-        if i >= len(text) or text[i] != ")":
-            raise _JSExprFail("bad map")
+        _ms = _js_skip_ws(text, i)
+        _saved = dict(state)
+        try:
+            i, stringifies = _js_parse_map_callback(text, _ms)
+            i = _js_skip_ws(text, i)
+            if i >= len(text) or text[i] != ")":
+                raise _JSExprFail("bad map")
+        except _JSExprFail as _e0:
+            # F589: entries-projection map over pair arrays --
+            # .map(p=>p[0|1]) (the F517 projection grammar, incl. the
+            # F583 destructured forms) where every element is a _JSArr
+            # pair. Node-exact (v24.20.0): the projection picks the
+            # pair's element, whatever the pairs' provenance (Map
+            # entries spreads, nested array literals). The identity
+            # parse above may succeed PARTIALLY (e=>e[1] parses as
+            # e=>e, then fails on `[`), so the fallback re-parses from
+            # the callback start; the original error is preserved when
+            # the projection does not apply.
+            try:
+                _kind, _mi = _js_parse_entries_projection(text, _ms)
+            except _JSExprFail:
+                raise _e0
+            _pidx = 0 if _kind == "keys" else 1
+            if not all(isinstance(_e, _JSArr)
+                       and len(_e.elements) > _pidx
+                       for _e in value.elements):
+                raise _e0
+            state.clear()
+            state.update(_saved)
+            i = _js_skip_ws(text, _mi)
+            if i >= len(text) or text[i] != ")":
+                raise _JSExprFail("bad map")
+            state["ops"] += 1  # the projection map is obfuscation-shaped
+            return _JSArr([_e.elements[_pidx]
+                           for _e in value.elements]), i + 1
         state["ops"] += 1
         elements = list(value.elements)
         if stringifies:
@@ -19492,6 +19758,39 @@ def _js_parse_postfix(text, i, value, depth, state):
                 state["ops"] += 1  # the get is obfuscation-shaped
                 value, i = value.entries[_kid], _gk + 1
                 continue
+            if _mname == "entries":
+                # F589: `.entries()` on a statically-resolved Map --
+                # insertion-ordered [k, v] pairs (node v24.20.0). The
+                # engine returns a Map Iterator, not an array, so the
+                # result is the opaque _JSMapEntries: only the F471
+                # spread-copy factory can consume it (any other
+                # postfix step fails closed at the loop head).
+                # Numeric keys keep their _JSNumStr provenance
+                # (SameValueZero: 1 and '1' are distinct keys,
+                # node-verified).
+                _ek = _js_skip_ws(text, _mk)
+                if _ek >= len(text) or text[_ek] != "(":
+                    raise _JSExprFail("map entries without paren")
+                _ek = _js_skip_ws(text, _ek + 1)
+                if _ek >= len(text) or text[_ek] != ")":
+                    raise _JSExprFail("map entries takes no args")
+                _pairs = []
+                for (_kkind, _kkey), _vval in value.entries.items():
+                    _pairs.append(_JSArr([_JSNumStr(_kkey)
+                                          if _kkind == "n" else _kkey,
+                                          _vval]))
+                    state["parts"] += 1  # F452: charge per pair
+                    if state["parts"] > _JS_EXPR_MAX_PARTS:
+                        raise _JSExprFail("too many parts")
+                state["ops"] += 1  # the entries call is
+                                   # obfuscation-shaped
+                # The iterator ends the postfix chain (F461): the
+                # engine exposes no index reads or methods on the
+                # iterator itself -- only the F471 spread-copy factory
+                # consumes it (unwrapping to the pair array). A
+                # _JSMapEntries that escapes unspread yields no decoded
+                # variant (_ascii_printable_or_none refuses non-str).
+                return _JSMapEntries(_pairs), _ek + 1
             raise _JSExprFail("map member not modeled")
 
 
