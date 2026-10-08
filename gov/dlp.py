@@ -3730,6 +3730,44 @@ def _js_parse_new_map_values(text, i, depth, state):
     return _JSArr([v for _, _, v in pairs]), j
 
 
+def _js_parse_f695_map_entries_spread(text, i, depth, state):
+    """Parse `new Map([[k,v],...])` as a pair-array source (F695).
+
+    Desugars the bare-Map iteration protocol node-exactly
+    (v24.20.0): the engine iterates a Map's entries, so
+    `[...new Map([['k','f1']])]` is `[['k','f1']]` and
+    `Array.from(new Map([['k','f1']]))` is the same -- each entry
+    becomes a 2-element _JSArr [k, v]. Entry validation is the
+    shared `_js_parse_new_map_head` (F494/F625): insertion order
+    with later-wins on duplicate keys (node-exact SameValueZero --
+    1 and '1' are distinct keys; the shared head parser does NOT
+    collapse -0/0 -- a documented pre-existing residual, always
+    fail-closed); keys keep their _JSNumStr provenance (the F600
+    discipline), values are string literals. A following `.`, `(`,
+    or `[` fails closed: `.entries()` / `.keys()` / `.values()`
+    (dot or bracket-string member form, e.g.
+    `new Map(...)['entries']()`) keep their own F589/F600/F494
+    routes via the primary path.
+    The empty-Map form fails closed here (the shared head parser
+    rejects `new Map()` without an array argument -- a documented
+    residual; the engine yields []). Anything non-literal fails
+    closed. Returns (_JSArr of _JSArr pairs, next_index). Never
+    evals.
+    """
+    pairs, j = _js_parse_new_map_head(text, i, depth, state)
+    _nj = _js_skip_ws(text, j)
+    if _nj < len(text) and text[_nj] in ".([":
+        # Not a bare Map: `.entries()` / `.keys()` / `.values()`
+        # (dot form or bracket-string member form, e.g.
+        # `new Map(...)['entries']()`) have their own routes
+        # (F589/F600/F494) via the primary path -- the F695
+        # pair-array desugar applies only to the bare-Map iteration
+        # protocol.
+        raise _JSExprFail("F695 Map has a postfix member")
+    state["ops"] += 1  # the iterable-spread source is obfuscation-shaped
+    return _JSArr([_JSArr([k, v]) for _, k, v in pairs]), j
+
+
 def _js_parse_f659_yield_star_array(text, i, state):
     """Parse `['LIT',...]` (the yield* delegation operand, F659).
 
@@ -3970,9 +4008,13 @@ def _js_parse_spread_copy(text, i, depth, state):
     fixed-yield generators `(function*(){yield 'lit';...})()` desugars
     engine-exactly (SameValueZero dedup, insertion-order values with
     later-wins keys, ordered yields); anything outside those bounded
-    classes fails closed. No new parts are charged: every element was
-    parts-charged at source parse (same convention as F461's
-    reversal), except the F499 string-spread chars, which are
+    classes fails closed. (F695) spread of a bare literal
+    `new Map([[k,v],...])` desugars to the insertion-ordered [k, v]
+    pair arrays (the engine's Map iteration protocol, node v24.20.0
+    -- `.entries()` / `.keys()` / `.values()` postfix forms keep
+    their own F589/F600/F494 routes). No new parts are charged: every
+    element was parts-charged at source parse (same convention as
+    F461's reversal), except the F499 string-spread chars, which are
     parts-charged one per char. Whitespace after '...' is tolerated
     (punctuator + _js_skip_ws, node-verified). Never evals.
     """
@@ -3999,14 +4041,26 @@ def _js_parse_spread_copy(text, i, depth, state):
                     src, j = _js_parse_new_map_values(text, k, depth,
                                                       state)
                 except _JSExprFail:
-                    # F589: not `.values()` -- it may be `.entries()`,
-                    # which the primary path resolves via the _JSMap
-                    # postfix branch (the _JSMapEntries iterator
-                    # unwraps below). Any other shape fails closed
-                    # there exactly as before (the re-parse charges
-                    # parts again -- intentional double charge, F469
-                    # precedent: the budget trips sooner).
-                    src = None
+                    try:
+                        # F695: bare `new Map([[k,v],...])` spread --
+                        # the engine's iteration protocol yields the
+                        # insertion-ordered [k, v] pairs (node
+                        # v24.20.0); each pair becomes a 2-element
+                        # _JSArr. Previously fail-closed everywhere,
+                        # so no previously-decoded input changes
+                        # behavior.
+                        src, j = _js_parse_f695_map_entries_spread(
+                            text, k, depth, state)
+                    except _JSExprFail:
+                        # F589: not `.values()` and not a bare Map --
+                        # it may be `.entries()`, which the primary
+                        # path resolves via the _JSMap postfix branch
+                        # (the _JSMapEntries iterator unwraps below).
+                        # Any other shape fails closed there exactly
+                        # as before (the re-parse charges parts again
+                        # -- intentional double charge, F469
+                        # precedent: the budget trips sooner).
+                        src = None
         elif k < n and text[k] == "(":
             # F494: (function*(){yield ...})() spread source. A plain
             # parenthesized primary falls through to the primary path.
@@ -4475,6 +4529,13 @@ def _js_parse_array_from(text, j, state):
         iterator yields the insertion-ordered keys; any other Map
         postfix shape fails closed since the engine iterates
         [k, v] pairs there).
+      - a bare `new Map([[k,v],...])`: `Array.from(new
+        Map([['k','f1']]))` === `[['k','f1']]` (F695 -- the
+        engine's Map iteration protocol yields the
+        insertion-ordered [k, v] pairs, node v24.20.0; each pair
+        is a 2-element _JSArr; numeric keys keep _JSNumStr
+        provenance; only the strict-literal class with string
+        values is admitted).
     The optional mapper must be an identity callback
     (`x=>x` / `(x)=>x` / `function(x){return x;}` / `s=>{return s;}`,
     via _js_parse_map_callback, F437/F448) -- the elements pass
@@ -4519,7 +4580,20 @@ def _js_parse_array_from(text, j, state):
                 try:
                     arr, j = _js_parse_new_map_values(text, j, 0, state)
                 except _JSExprFail:
-                    raise _JSExprFail("from Map source not keys/values iterator")
+                    # F695: bare `new Map([[k,v],...])` -- the
+                    # engine's iteration protocol yields the
+                    # insertion-ordered [k, v] pairs (node
+                    # v24.20.0); each pair becomes a 2-element
+                    # _JSArr (the shared strict-literal grammar:
+                    # string keys/values, keys keep _JSNumStr
+                    # provenance). Previously fail-closed, so no
+                    # previously-decoded input changes behavior.
+                    try:
+                        arr, j = _js_parse_f695_map_entries_spread(
+                            text, j, 0, state)
+                    except _JSExprFail:
+                        raise _JSExprFail(
+                            "from Map source not keys/values iterator")
         else:
             arr, j = _js_parse_new_set(text, j, 0, state)
     else:
@@ -17348,6 +17422,254 @@ def _js_parse_f572_weakmap_iife(text, i, depth, state):
             return None
         val, k = _js_parse_f572_return_expr(
             text, _js_skip_ws(text, rk), depth, state, env)
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ";":
+            k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "}":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # invocation args: the filed shapes take none
+        k = k + 1
+    except _JSExprFail:
+        return None
+    state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+    return val, k
+
+
+def _js_parse_f687_weakset_has(text, k, env, state):
+    """Parse one F687 membership term at text[k]: `[!]w.has(KEY)`.
+
+    w must name a weakset-bound var, KEY an obj-bound var (the
+    F572 identity discipline -- each `var k={}` mints a fresh uid,
+    so membership is binding identity, exactly like the engine).
+    Returns (bool_value, next_index). Never evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, k)
+    neg = False
+    if k < n and text[k] == "!":
+        neg = True
+        k = _js_skip_ws(text, k + 1)
+    wname, k = _js_parse_ident(text, k)
+    wbinding = env.get(wname)
+    if wbinding is None or wbinding[0] != "weakset":
+        raise _JSExprFail("F687 has() on non-WeakSet")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ".":
+        raise _JSExprFail("F687 has without member")
+    mname, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+    if mname != "has":
+        raise _JSExprFail("F687 WeakSet member not has")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("F687 has without paren")
+    kname, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+    if env.get(kname, (None,))[0] != "obj":
+        raise _JSExprFail("F687 has key not a bound object")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("F687 has unterminated")
+    state["ops"] += 1  # the has() call is obfuscation-shaped
+    val = env[kname][1] in wbinding[1]
+    return (not val) if neg else val, k + 1
+
+
+def _js_parse_f687_weakset_iife(text, i, depth, state):
+    """Parse `(function(){DECL*;return (COND?'A':'B')+TAIL;})()` (F687).
+
+    WeakSet membership-marker conditional reads, node-exact
+    (v24.20.0). Body grammar (all other shapes fail closed):
+      - `var|const|let NAME = new WeakSet();` -- an empty WeakSet
+        binding (a constructor iterable argument fails closed);
+      - `var|const|let NAME = {...};` -- an object-identity binding
+        (the F572 discipline: each declaration mints a fresh uid;
+        rebinding replaces, matching the engine);
+      - `w.add(k);` -- statement-form membership add on a
+        weakset-bound w with an obj-bound key k (the engine's
+        in-place mutation; add returns the set, which this grammar
+        never observes -- chained adds fail closed);
+      - `return (COND?'LIT':'LIT')` -- COND is `TERM (&& TERM)*`
+        with TERM = `[!]w.has(k)`; the ternary branches are string
+        literals; the parenthesized ternary must be the additive
+        left operand (an unparenthesized ternary fails closed --
+        the engine would re-associate the tail into the else
+        branch);
+      - TAIL is `+ PRIMARY` repeated, each PRIMARY a plain string
+        (the additive concat rules; non-string operands fail
+        closed -- the engine throws there).
+    The condition evaluates exactly like the engine: `w.has(k)`
+    is true iff k's binding identity is in w's member set (WeakSet
+    keys are identity-keyed, so the static uid model is exact);
+    `&&` is pure here (both sides are has() calls), so order is
+    irrelevant. Returns (value_str, next_index), or None when the
+    head does not match (the caller falls through to the
+    fail-closed paths). Disjoint from F572 (which binds only
+    `new WeakMap`): a body mixing both fails closed in each.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+    if k is None:
+        return None
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] in _JS_IDENT_START:
+        # Optional name (engine-exact; ignored).
+        try:
+            _, k = _js_parse_ident(text, k)
+        except _JSExprFail:
+            return None
+        k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        return None
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != ")":
+        return None  # params: the filed shapes take none
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "{":
+        return None
+    k = _js_skip_ws(text, k + 1)
+    env = {}
+    uid_next = [0]
+    try:
+        while True:
+            k = _js_skip_ws(text, k)
+            kk, nk = _js_match_decl_kw(text, k)
+            if kk is None:
+                # Statement-form add on a weakset-bound var:
+                # `w.add(k);` -- the engine's in-place mutation.
+                # Anything else ends the body (the return match
+                # below decides).
+                try:
+                    sname, k2 = _js_parse_ident(text, k)
+                except _JSExprFail:
+                    break
+                sbinding = env.get(sname)
+                k2 = _js_skip_ws(text, k2)
+                if (sbinding is None or sbinding[0] != "weakset"
+                        or k2 >= n or text[k2] != "."):
+                    break
+                # Committed: a weakset-bound head with a member --
+                # malformed shapes fail closed.
+                wset = sbinding[1]
+                k2 = _js_skip_ws(text, k2 + 1)
+                smname, k2 = _js_parse_ident(text, k2)
+                if smname != "add":
+                    raise _JSExprFail("F687 statement not an add")
+                k2 = _js_skip_ws(text, k2)
+                if k2 >= n or text[k2] != "(":
+                    raise _JSExprFail("F687 add without paren")
+                skname, k2 = _js_parse_ident(text, _js_skip_ws(text,
+                                                              k2 + 1))
+                if env.get(skname, (None,))[0] != "obj":
+                    raise _JSExprFail("F687 add key not a bound object")
+                k2 = _js_skip_ws(text, k2)
+                if k2 >= n or text[k2] != ")":
+                    raise _JSExprFail("F687 add unterminated")
+                k2 = _js_skip_ws(text, k2 + 1)
+                if k2 >= n or text[k2] != ";":
+                    raise _JSExprFail("F687 add statement unterminated")
+                wset.add(env[skname][1])  # in-place: engine mutates
+                state["ops"] += 1  # the add is obfuscation-shaped
+                k = _js_skip_ws(text, k2 + 1)
+                continue
+            k = _js_skip_ws(text, nk)
+            name, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "=":
+                return None
+            k = _js_skip_ws(text, k + 1)
+            if k < n and text[k] == "{":
+                _props, k = _js_parse_f535_object(text, k, depth, state)
+                uid_next[0] += 1
+                env[name] = ("obj", uid_next[0])
+            elif (text.startswith("new", k)
+                    and (k + 3 >= n
+                         or text[k + 3] not in _JS_IDENT_CONT)):
+                wk = _js_match_kw(text, _js_skip_ws(text, k + 3),
+                                  "WeakSet")
+                if wk is None:
+                    return None
+                wk = _js_skip_ws(text, wk)
+                if wk >= n or text[wk] != "(":
+                    return None
+                wk = _js_skip_ws(text, wk + 1)
+                if wk >= n or text[wk] != ")":
+                    # A constructor iterable argument fails closed
+                    # (the filed shapes build membership via add).
+                    return None
+                env[name] = ("weakset", set())
+                k = wk + 1
+            else:
+                return None
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ";":
+                return None
+            k = _js_skip_ws(text, k + 1)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                return None
+        rk = _js_match_kw(text, k, "return")
+        if rk is None:
+            return None
+        k = _js_skip_ws(text, rk)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        cond, k = _js_parse_f687_weakset_has(text, k, env, state)
+        while True:
+            k = _js_skip_ws(text, k)
+            if k + 1 >= n or text[k] != "&" or text[k + 1] != "&":
+                break
+            rhs, k = _js_parse_f687_weakset_has(text, k + 2, env, state)
+            cond = cond and rhs
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "?":
+            return None
+        then_lit, k = _js_parse_string(text, _js_skip_ws(text, k + 1))
+        if not isinstance(then_lit, str) or isinstance(
+                then_lit, _JSNumStr):
+            return None
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ":":
+            return None
+        else_lit, k = _js_parse_string(text, _js_skip_ws(text, k + 1))
+        if not isinstance(else_lit, str) or isinstance(
+                else_lit, _JSNumStr):
+            return None
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ")":
+            return None
+        val = then_lit if cond else else_lit
+        # TAIL: `+ PRIMARY` repeated (the additive concat rules,
+        # string-only -- the engine throws on non-string operands
+        # here, so failing closed is node-exact).
+        k = k + 1
+        while True:
+            kk = _js_skip_ws(text, k)
+            if kk >= n or text[kk] != "+":
+                k = kk
+                break
+            rhs, kk = _js_parse_primary(text, kk + 1, depth, state)
+            if not isinstance(rhs, str) or isinstance(rhs, _JSNumStr):
+                return None
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                return None
+            if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+                return None
+            val = val + rhs
+            state["ops"] += 1
+            k = kk
         k = _js_skip_ws(text, k)
         if k < n and text[k] == ";":
             k = _js_skip_ws(text, k + 1)
@@ -45007,6 +45329,17 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _f572 = _js_parse_f572_weakmap_iife(text, i, depth, state)
         if _f572 is not None:
             val, i = _f572
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F687: (function(){var w=new WeakSet();var k={};w.add(k);
+        # return (w.has(k)?'f1':'junk')+'f2';})() -- WeakSet
+        # membership-marker conditional reads via WeakSet.has.
+        # Tried after F572: disjoint bindings (new WeakSet vs new
+        # WeakMap -- a body mixing both fails closed in each), so
+        # no previously-decoded input changes behavior. None falls
+        # through like F572.
+        _f687 = _js_parse_f687_weakset_iife(text, i, depth, state)
+        if _f687 is not None:
+            val, i = _f687
             return _js_parse_postfix(text, i, val, depth, state)
         # F517: (function(){var A='';var O={...};
         # for(var K in O)A+=O[K];return A})() -- for-in
