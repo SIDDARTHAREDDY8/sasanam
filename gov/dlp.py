@@ -3730,37 +3730,79 @@ def _js_parse_new_map_values(text, i, depth, state):
     return _JSArr([v for _, _, v in pairs]), j
 
 
-def _js_parse_generator_iife(text, i, depth, state):
-    """Parse `(function*(){yield 'lit';...})()` at text[i] (F494).
+def _js_parse_f659_yield_star_array(text, i, state):
+    """Parse `['LIT',...]` (the yield* delegation operand, F659).
 
-    Desugars the immediately-invoked fixed-yield generator spread
-    source: node-evaluated, [...(function*(){yield 'f1';yield
-    'f2'})()] is ['f1','f2'] -- yields happen in order, and a
-    trailing `return` (with or without a literal) contributes nothing
-    to the spread (node v24.20.0 verified). The body must be a bare
-    sequence of `yield '<literal>';` statements (ws-tolerant,
-    optional parens around the literal, ASI-tolerant before `}`);
-    parameters, non-literal yields, loops, a non-trailing `return`,
-    or call args all fail closed (honest, documented boundary; the
-    filed shapes are fixed-literal yields). Returns (_JSArr,
-    next_index). Never evals.
+    Node-exact (v24.20.0): `yield* <array>` delegates iteration --
+    each element is yielded in order, so the delegation desugars to
+    the array's element list. Only string-literal elements; holes,
+    nested arrays, templates, spreads, or non-literal elements fail
+    closed (the engine would yield `undefined`/objects there -- an
+    honest miss, never a mis-decode). One optional paren pair
+    around the array is tolerated (the F494 parenthesized-literal
+    idiom). The empty array is legal (yields nothing). Returns
+    (elements, next_index); the caller charges parts per element
+    (F452). Never evals.
     """
     n = len(text)
-    j = _js_expect(text, i, "(")
-    j = _js_match_kw(text, _js_skip_ws(text, j), "function")
-    if j is None:
-        raise _JSExprFail("not a function expression")
-    j = _js_skip_ws(text, j)
-    if j >= n or text[j] != "*":
-        raise _JSExprFail("not a generator")
+    j = _js_skip_ws(text, i)
+    paren = False
+    if j < n and text[j] == "(":
+        paren = True
+        j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F659 yield* operand not an array")
     j = _js_skip_ws(text, j + 1)
-    if j < n and text[j] in _JS_IDENT_START:
-        # Optional generator name: (function* gen(){...})().
-        _, j = _js_parse_ident(text, j)
+    elements = []
+    if j < n and text[j] == "]":
+        j += 1
+    else:
+        while True:
+            j = _js_skip_ws(text, j)
+            if j >= n:
+                raise _JSExprFail("F659 array unterminated")
+            if text[j] == ",":
+                raise _JSExprFail("F659 array hole")
+            if text[j] not in "'\"":
+                raise _JSExprFail("F659 array element not a literal")
+            val, j = _js_parse_string(text, j)
+            elements.append(val)
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ",":
+                j = _js_skip_ws(text, j + 1)
+                if j < n and text[j] == "]":
+                    j += 1  # trailing comma is node-legal
+                    break
+                continue
+            if j < n and text[j] == "]":
+                j += 1
+                break
+            raise _JSExprFail("F659 array not closed")
+    if paren:
         j = _js_skip_ws(text, j)
-    j = _js_expect(text, j, "(")
-    j = _js_expect(text, j, ")")
-    j = _js_expect(text, j, "{")
+        j = _js_expect(text, j, ")")
+    return elements, j
+
+
+def _js_parse_f6xx_fixed_yield_body(text, j, state,
+                                   _allow_trailing_return):
+    """Parse a fixed-yield generator `{...}` body (F494/F619/F659).
+
+    Shared body grammar: *j* is just past the opening `{`. The body
+    is a bare sequence of `yield '<literal>';` statements
+    (ws-tolerant, optional parens around the literal, ASI-tolerant
+    before `}`) plus F659 `yield* ['LIT',...];` delegation
+    statements over literal string arrays (each element yielded in
+    order, node-exact v24.20.0). When _allow_trailing_return, a
+    trailing `return` (with or without a literal) is skipped
+    node-exactly (it never contributes to the spread -- the F494
+    expression form); otherwise any `return` fails closed (the F619
+    statement form). Parameters, non-literal yields, loops, or any
+    other statement fail closed. Parts are charged per yield
+    (F452). Returns (yields, next_index) just past the closing `}`.
+    Never evals.
+    """
+    n = len(text)
     yields = []
     while True:
         j = _js_skip_ws(text, j)
@@ -3769,6 +3811,8 @@ def _js_parse_generator_iife(text, i, depth, state):
             break
         rk = _js_match_kw(text, j, "return")
         if rk is not None:
+            if not _allow_trailing_return:
+                raise _JSExprFail("generator body has return")
             # A trailing `return` (with or without a literal) never
             # contributes to the spread -- node-exact to skip it; it
             # must be the last statement.
@@ -3787,6 +3831,23 @@ def _js_parse_generator_iife(text, i, depth, state):
         if j is None:
             raise _JSExprFail("generator body not fixed yields")
         j = _js_skip_ws(text, j)
+        if j < n and text[j] == "*":
+            # F659: `yield* ['LIT',...];` -- delegation over a literal
+            # array desugars to the array's elements in order
+            # (node-exact, v24.20.0). Only inputs the old grammars
+            # failed closed are accepted here, so no previously
+            # decoded input changes behavior.
+            _ysa, j = _js_parse_f659_yield_star_array(
+                text, j + 1, state)
+            for _yv in _ysa:
+                yields.append(_yv)
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ";":
+                j += 1
+            continue
         if j < n and text[j] == "(":
             j = _js_skip_ws(text, j + 1)
             paren = True
@@ -3806,6 +3867,44 @@ def _js_parse_generator_iife(text, i, depth, state):
             raise _JSExprFail("too many parts")
     if not yields:
         raise _JSExprFail("generator yields nothing")
+    return yields, j
+
+
+def _js_parse_generator_iife(text, i, depth, state):
+    """Parse `(function*(){yield 'lit';...})()` at text[i] (F494).
+
+    Desugars the immediately-invoked fixed-yield generator spread
+    source: node-evaluated, [...(function*(){yield 'f1';yield
+    'f2'})()] is ['f1','f2'] -- yields happen in order, and a
+    trailing `return` (with or without a literal) contributes nothing
+    to the spread (node v24.20.0 verified). The body must be a bare
+    sequence of `yield '<literal>';` statements (ws-tolerant,
+    optional parens around the literal, ASI-tolerant before `}`);
+    F659 additionally accepts `yield* ['LIT',...];` delegation
+    statements over literal string arrays (each element yielded in
+    order, node-exact); parameters, non-literal yields, loops, a
+    non-trailing `return`, or call args all fail closed (honest,
+    documented boundary; the filed shapes are fixed-literal yields).
+    Returns (_JSArr, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, i, "(")
+    j = _js_match_kw(text, _js_skip_ws(text, j), "function")
+    if j is None:
+        raise _JSExprFail("not a function expression")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "*":
+        raise _JSExprFail("not a generator")
+    j = _js_skip_ws(text, j + 1)
+    if j < n and text[j] in _JS_IDENT_START:
+        # Optional generator name: (function* gen(){...})().
+        _, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, "{")
+    yields, j = _js_parse_f6xx_fixed_yield_body(
+        text, j, state, _allow_trailing_return=True)
     j = _js_expect(text, j, ")")
     j = _js_expect(text, j, "(")
     j = _js_expect(text, j, ")")
@@ -19384,15 +19483,70 @@ def _js_call_empty_parens(stmts, k):
 def _js_parse_f619_generator_decl(stmts, sj, state):
     """Parse `function* NAME(){yield 'LIT';...}` at stmts[sj] (F619).
 
-    The generator body must be a bare sequence of literal yields
-    (ws-tolerant, optional parens around the literal, ASI-tolerant
-    before `}`) -- the F494 fixed-yield discipline. Parameters,
-    non-literal yields, `yield*` delegation, `return`, loops, or
-    any other statement fail closed. Returns (name, yields,
-    next_index) just past the declaration's closing brace. Never
-    evals.
+    Two node-exact forms (v24.20.0): the named generator
+    declaration `function* NAME(){...}`, and the F659 var-bound
+    generator-expression twin `var|let|const NAME =
+    function*(){...};` (engine-identical for the modeled consume
+    tails; the old grammar failed closed on the var-bound form, so
+    no previously decoded input changes behavior). The generator
+    body must be a bare sequence of literal yields (ws-tolerant,
+    optional parens around the literal, ASI-tolerant before `}`) --
+    the F494 fixed-yield discipline -- plus F659
+    `yield* ['LIT',...];` delegation statements over literal string
+    arrays (each element yielded in order, node-exact v24.20.0).
+    Parameters, non-literal yields, `return`, loops, or any other
+    statement fail closed. Returns (name, yields,
+    next_index) just past the declaration's closing brace (past the
+    terminating `;` for the var-bound form). Never evals.
     """
     n = len(stmts)
+    _dk = (_js_match_kw(stmts, sj, "var")
+           or _js_match_kw(stmts, sj, "let")
+           or _js_match_kw(stmts, sj, "const"))
+    if _dk is not None:
+        # F659: `var|let|const NAME = function*(){...};` -- the
+        # generator expression is anonymous (an optional inner name
+        # is ignored; the binding name rules); it is invoked at the
+        # consume tail's NAME() call, exactly like the named
+        # declaration form.
+        k = _js_skip_ws(stmts, _dk)
+        name, k = _js_parse_ident(stmts, k)
+        if name == "arguments":
+            raise _JSExprFail("F619 bound arguments")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "=")
+        k = _js_skip_ws(stmts, k)
+        # The generator expression may be grouped
+        # (`(function*(){...})`, the F494 IIFE-head shape) or bare
+        # (`function*(){...}` -- legal on an assignment RHS, the
+        # filed F659 shape); both are node-exact here.
+        grouped = False
+        if k < n and stmts[k] == "(":
+            grouped = True
+            k = _js_skip_ws(stmts, k + 1)
+        _fk = _js_match_kw(stmts, k, "function")
+        if _fk is None:
+            raise _JSExprFail("F619 bound not a function expr")
+        k = _js_skip_ws(stmts, _fk)
+        if k >= n or stmts[k] != "*":
+            raise _JSExprFail("F619 bound not a generator")
+        k = _js_skip_ws(stmts, k + 1)
+        if k < n and stmts[k] in _JS_IDENT_START:
+            _, k = _js_parse_ident(stmts, k)  # optional name, ignored
+            k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "(")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, ")")
+        k = _js_expect(stmts, k, "{")
+        yields, k = _js_parse_f6xx_fixed_yield_body(
+            stmts, k, state, _allow_trailing_return=False)
+        k = _js_skip_ws(stmts, k)
+        if grouped:
+            k = _js_expect(stmts, k, ")")
+            k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == ";":
+            k += 1
+        return name, yields, k
     k = _js_match_kw(stmts, sj, "function")
     if k is None:
         raise _JSExprFail("F619 not a generator decl")
@@ -19406,35 +19560,8 @@ def _js_parse_f619_generator_decl(stmts, sj, state):
     k = _js_skip_ws(stmts, k)
     k = _js_expect(stmts, k, ")")
     k = _js_expect(stmts, k, "{")
-    yields = []
-    while True:
-        k = _js_skip_ws(stmts, k)
-        if k < n and stmts[k] == "}":
-            k += 1
-            break
-        rk = _js_match_kw(stmts, k, "yield")
-        if rk is None:
-            raise _JSExprFail("F619 body not fixed yields")
-        k = _js_skip_ws(stmts, rk)
-        if k < n and stmts[k] == "(":
-            k = _js_skip_ws(stmts, k + 1)
-            paren = True
-        else:
-            paren = False
-        if k >= n or stmts[k] not in "'\"":
-            raise _JSExprFail("F619 yield of non-literal")
-        val, k = _js_parse_string(stmts, k)
-        if paren:
-            k = _js_expect(stmts, k, ")")
-        k = _js_skip_ws(stmts, k)
-        if k < len(stmts) and stmts[k] == ";":
-            k += 1
-        yields.append(val)
-        state["parts"] += 1  # F452: charge per yield
-        if state["parts"] > _JS_EXPR_MAX_PARTS:
-            raise _JSExprFail("too many parts")
-    if not yields:
-        raise _JSExprFail("F619 generator yields nothing")
+    yields, k = _js_parse_f6xx_fixed_yield_body(
+        stmts, k, state, _allow_trailing_return=False)
     return name, yields, k
 
 
@@ -19593,9 +19720,10 @@ def _js_parse_f619_generator_iife(text, i, depth, state):
     order; spreading, for-of, or Array.from over the INVOKED
     generator collects them into an array in yield order, and the
     tail assembles the credential. The generator body follows the
-    F494 fixed-yield discipline (literal yields only; parameters,
-    non-literal yields, `yield*` delegation, `return`, loops, or any
-    other statement fail closed). The three consumption tails are
+    F494 fixed-yield discipline (literal yields only, plus F659
+    `yield*` delegation over literal string arrays; parameters,
+    non-literal yields, `return`, loops, or any other statement fail
+    closed). The three consumption tails are
     `return [...NAME()].join('SEP');`,
     `return Array.from(NAME()).join('SEP');`, and the for-of
     accumulation `var|let S='';for(var|let|const X of
@@ -21416,6 +21544,133 @@ def _js_parse_f653_consume_tail(stmts, j, obj_name, yields, state):
         raise _JSExprFail("F653 tail trailing junk")
     state["ops"] += 1  # the accumulation is obfuscation-shaped
     return "".join(yields), k
+
+
+    state["ops"] += 1  # the accumulation is obfuscation-shaped
+    return "".join(yields), k
+
+
+def _js_parse_f656_next_value_iife(text, i, depth, state):
+    """Parse `(function*(){yield 'LIT';...})().next().value` (F656).
+
+    Node-exact desugar (v24.20.0): invoking the fixed-yield
+    generator returns a fresh generator object; the FIRST `.next()`
+    yields yields[0] as `{value: yields[0], done: false}` (the
+    grammar requires at least one yield, so the first read never
+    exhausts); `.value` reads it. The `.next()` takes no arguments
+    and `.value` is the only modeled member -- `.next('x')` (the
+    engine ignores the first-next arg, but it is unmodeled),
+    `.next().done`, `.next()` without `.value`, or any other member
+    fails closed (honest, documented boundary). A second `.next()`
+    on the same object is unreachable: the result of `.next()` is a
+    result object with no `next` member, so any chained second
+    `.next()` fails closed in the member read. Returns
+    (first_yield, next_index), or None when the head does not match
+    or a guard fails. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    try:
+        gen, j = _js_parse_generator_iife(text, j, depth, state)
+        if not gen.elements or not isinstance(gen.elements[0], str):
+            raise _JSExprFail("F656 first yield not a string")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ".")
+        _nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if _nm != "next":
+            raise _JSExprFail("F656 not .next()")
+        j = _js_call_empty_parens(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ".")
+        _vm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if _vm != "value":
+            raise _JSExprFail("F656 not .value")
+        state["ops"] += 1  # the next-value read is obfuscation-shaped
+        return gen.elements[0], j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f656_bound_next_value_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const G=(function*(){yield 'LIT';...})();
+    return G.next().value+...;})()` (F656).
+
+    Node-exact desugar (v24.20.0): G is bound to a fresh generator
+    object; the single `G.next().value` read yields yields[0] (the
+    grammar requires at least one yield). The tail after the read
+    is re-parsed as an additive with the first yield substituted as
+    a quoted literal (the F631 rewrite precedent). Exactly one
+    statement pair (the binding decl + the return): the bound name
+    is read exactly once -- a second `.next()` read, a
+    reassignment, or any extra statement fails closed (the
+    re-parsed tail hits the unbound name and fails; documented
+    residual, never a mis-decode). Returns (value, next_index), or
+    None when the head does not match or a guard fails. Never
+    evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        inner_start, inner_end, j = _js_span_braced(text, j)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        k = _js_skip_ws(stmts, 0)
+        _dk = (_js_match_kw(stmts, k, "var")
+               or _js_match_kw(stmts, k, "let")
+               or _js_match_kw(stmts, k, "const"))
+        if _dk is None:
+            raise _JSExprFail("F656 decl not var/let/const")
+        k = _js_skip_ws(stmts, _dk)
+        gname, k = _js_parse_ident(stmts, k)
+        if gname == "arguments":
+            raise _JSExprFail("F656 bound arguments")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "=")
+        k = _js_skip_ws(stmts, k)
+        gen, k = _js_parse_generator_iife(stmts, k, depth, state)
+        if not gen.elements or not isinstance(gen.elements[0], str):
+            raise _JSExprFail("F656 first yield not a string")
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == ";":
+            k += 1
+        k = _js_skip_ws(stmts, k)
+        _rk = _js_match_kw(stmts, k, "return")
+        if _rk is None:
+            raise _JSExprFail("F656 no return")
+        k = _js_skip_ws(stmts, _rk)
+        _gn, k = _js_parse_ident(stmts, k)
+        if _gn != gname:
+            raise _JSExprFail("F656 return not bound gen")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, ".")
+        _nm, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+        if _nm != "next":
+            raise _JSExprFail("F656 not .next()")
+        k = _js_call_empty_parens(stmts, k)
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, ".")
+        _vm, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+        if _vm != "value":
+            raise _JSExprFail("F656 not .value")
+        rewritten = _js_quote_literal(gen.elements[0]) + stmts[k:]
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        val, k2 = _js_parse_additive(rewritten, 0, depth + 1, state)
+        k2 = _js_skip_ws(rewritten, k2)
+        if k2 < len(rewritten) and rewritten[k2] == ";":
+            k2 += 1
+        k2 = _js_skip_ws(rewritten, k2)
+        if k2 != len(rewritten):
+            raise _JSExprFail("F656 tail trailing junk")
+        if not isinstance(val, str):
+            raise _JSExprFail("F656 tail not a string")
+        state["ops"] += 1  # the next-value read is obfuscation-shaped
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
 
 
 def _js_parse_f653_custom_iterator_iife(text, i, depth, state):
@@ -34988,6 +35243,26 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                     state)
         if _f653 is not None:
             val, i = _f653
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F656: (function*(){yield 'LIT';...})().next().value -- the
+        # first-next value read on an immediately-invoked fixed-yield
+        # generator, and the statement twin
+        # (function(){var|let|const G=(function*(){yield 'LIT';...})();
+        # return G.next().value+...;})(). Tried after F653: the
+        # `(function*` head is disjoint from every earlier route (all
+        # require `function(`/`async`/arrow/arguments forms or other
+        # bindings -- the F494 spread-copy factory peeks `(function*`
+        # itself before this chain is reached, so spread shapes never
+        # arrive here); disjoint from F619 (named generator
+        # declaration + NAME() call receiver) and F653 (protocol
+        # object, never a generator call). None falls through to the
+        # parenthesized-additive path like F653.
+        _f656 = _js_parse_f656_next_value_iife(text, i, depth, state)
+        if _f656 is None:
+            _f656 = _js_parse_f656_bound_next_value_iife(text, i,
+                                                         depth, state)
+        if _f656 is not None:
+            val, i = _f656
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
