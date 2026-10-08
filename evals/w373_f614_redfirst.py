@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Red-first for F614: Function.prototype.call/.apply/.bind on function expressions.
 
-F478 (OPEN) covers .call/.apply/.bind dispatch on PROTOTYPE-method receivers
-(`Array.prototype.concat.apply([], [...])` blocks coded) and F482 (OPEN) the
+F478 (CLOSED, wave-357) covers .call/.apply/.bind dispatch on PROTOTYPE-method receivers
+(`Array.prototype.concat.apply([], [...])` blocks coded) and F482 (CLOSED, wave-359) the
 bracket-string form, but indirect invocation of a FUNCTION-EXPRESSION
 receiver has no modeled path: the three shapes below all node-evaluate to
 the exact credential (v24.20.0) while the decoder produces zero variants.
