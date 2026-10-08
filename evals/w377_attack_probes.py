@@ -116,11 +116,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: footer shows F644-F654 closed; F655-F660 open, next F661 (wave-377 merge)."""
+    """Control: footer shows F644-F655 closed; F656-F661 open, next F662 (wave-378 lane 1)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F662**" in text  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
-          and "Open findings: F655, F656, F657, F658, F659, F660, F661." in text)  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN (next F661)  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F655-F661 / next F662
+    ok = ("Next free finding: **F662**" in text  # Wave-378 lane 1: F655 CLOSED; footer repoint open F656-F661 / next F662
+          and "Open findings: F656, F657, F658, F659, F660, F661." in text)  # Wave-378 lane 1: F655 CLOSED; footer repoint open F656-F661 / next F662
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -161,55 +161,55 @@ def test_p1_f619_closed():
     return ("HELD" if ok else "BREAK", "f619=%s" % ok)
 
 
-# ------------------------------------------------- F655 open pins (must miss)
+# ------------------------------------------------- F655 closed pins (must block)
 
 @_t
-def test_r45_f655_s1_open():
-    """F655 OPEN (two declarations): miss reproduces."""
-    miss = _misses("(function(){var a='%s';var b='%s';return a+b;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
-
-
-@_t
-def test_r45_f655_s2_open():
-    """F655 OPEN (decl + accum statement): miss reproduces."""
-    miss = _misses("(function(){var s='%s';s+='%s';return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r45_f655_s1_closed():
+    """F655 CLOSED (two declarations): now blocks."""
+    hit = _blocked("(function(){var a='%s';var b='%s';return a+b;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r45_f655_s3_open():
-    """F655 OPEN (switch fallthrough): miss reproduces."""
-    miss = _misses("(function(){let s='';switch(1){case 1:s+='%s';case 2:s+='%s';}return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r45_f655_s2_closed():
+    """F655 CLOSED (decl + accum statement): now blocks."""
+    hit = _blocked("(function(){var s='%s';s+='%s';return s;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r45_f655_s4_open():
-    """F655 OPEN (try-finally): miss reproduces."""
-    miss = _misses("(function(){let s='';try{s+='%s';}finally{s+='%s';}return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r45_f655_s3_closed():
+    """F655 CLOSED (switch fallthrough): now blocks."""
+    hit = _blocked("(function(){let s='';switch(1){case 1:s+='%s';case 2:s+='%s';}return s;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r45_f655_s5_open():
-    """F655 OPEN (do-while wrapper): miss reproduces."""
-    miss = _misses("(function(){let s='';do{s+='%s';s+='%s';}while(false);return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r45_f655_s4_closed():
+    """F655 CLOSED (try-finally): now blocks."""
+    hit = _blocked("(function(){let s='';try{s+='%s';}finally{s+='%s';}return s;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r45_f655_s6_open():
-    """F655 OPEN (with-statement wrapper): miss reproduces."""
-    miss = _misses("(function(){let s='';with({}){s+='%s';s+='%s';}return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r45_f655_s5_closed():
+    """F655 CLOSED (do-while wrapper): now blocks."""
+    hit = _blocked("(function(){let s='';do{s+='%s';s+='%s';}while(false);return s;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
-def test_r45_f655_s7_open():
-    """F655 OPEN (labeled-block wrapper): miss reproduces."""
-    miss = _misses("(function(){let s='';blk:{s+='%s';break blk;s+='junk';}s+='%s';return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r45_f655_s6_closed():
+    """F655 CLOSED (with-statement wrapper): now blocks."""
+    hit = _blocked("(function(){let s='';with({}){s+='%s';s+='%s';}return s;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
+
+
+@_t
+def test_r45_f655_s7_closed():
+    """F655 CLOSED (labeled-block wrapper): now blocks."""
+    hit = _blocked("(function(){let s='';blk:{s+='%s';break blk;s+='junk';}s+='%s';return s;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 @_t
