@@ -2220,7 +2220,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|atob(?![_$A-Za-z0-9])|decodeURIComponent(?![_$A-Za-z0-9])|encodeURIComponent(?![_$A-Za-z0-9])|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty|fromEntries|groupBy)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|Symbol(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|Number(?![_$A-Za-z0-9])|Promise(?![_$A-Za-z0-9])|Map[ \t\n\r]*\.[ \t\n\r]*groupBy(?![_$A-Za-z0-9])|new[ \t\n\r]+Map(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|new[ \t\n\r]+Proxy(?![_$A-Za-z0-9])|new[ \t\n\r]+URLSearchParams(?![_$A-Za-z0-9])|new[ \t\n\r]+URL(?![_$A-Za-z0-9])|new[ \t\n\r]+TextDecoder(?![_$A-Za-z0-9])|new[ \t\n\r]+String(?![_$A-Za-z0-9])|\(String[ \t\n\r]*\.[ \t\n\r]*raw[ \t\n\r]*`|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|atob(?![_$A-Za-z0-9])|decodeURIComponent(?![_$A-Za-z0-9])|encodeURIComponent(?![_$A-Za-z0-9])|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty|fromEntries|groupBy)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|Symbol(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|Number(?![_$A-Za-z0-9])|Promise(?![_$A-Za-z0-9])|Map[ \t\n\r]*\.[ \t\n\r]*groupBy(?![_$A-Za-z0-9])|new[ \t\n\r]+Map(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|new[ \t\n\r]+Proxy(?![_$A-Za-z0-9])|new[ \t\n\r]+URLSearchParams(?![_$A-Za-z0-9])|new[ \t\n\r]+URL(?![_$A-Za-z0-9])|new[ \t\n\r]+TextDecoder(?![_$A-Za-z0-9])|new[ \t\n\r]+String(?![_$A-Za-z0-9])|new[ \t\n\r]+Array(?![_$A-Za-z0-9])|\(String[ \t\n\r]*\.[ \t\n\r]*raw[ \t\n\r]*`|\(")
 # F536: the structuredClone anchor carries its own ident-boundary
 # lookahead so `structuredClonex(` never anchors (no wasted F512
 # total-attempt budget); the primary branch re-checks the boundary
@@ -16474,6 +16474,7 @@ _JS_POSTFIX_METHOD_NAMES = (
     "charAt", "normalize",  # F762/F763: string indexed read / normalize
     "substring", "substr",  # F764
     "toLowerCase", "toUpperCase", "toWellFormed",
+    "toSorted", "toSpliced",
 )
 # F682: the exact JS String.prototype.trim WhiteSpace +
 # LineTerminator set (ECMAScript spec, node v24.20.0 verified):
@@ -35966,6 +35967,156 @@ def _js_parse_f681_mutator_iife(text, i, depth, state):
             raise _JSExprFail("F681 join too long")
         state["ops"] += 1  # the join is obfuscation-shaped
         # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return result, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f773_fill_stmt_iife(text, i, depth, state):
+    """Parse `(function(){DECL NAME=['LIT',..];NAME.fill('LIT');
+    return NAME[INT](+ADD)*;})()` (F773).
+
+    1-arg fill statement beyond F681: F681 models the 3-arg
+    fill(value,start,end) statement with a join return; the 1-arg
+    form (which fills the whole array) followed by an indexed-read
+    return has no production. Node-exact (v24.20.0):
+    - decl: `var|let|const NAME=['LIT',..];` -- string literals only
+      (the F644 array grammar). The initial elements are irrelevant:
+      the 1-arg fill overwrites every element.
+    - statement: exactly one `NAME.fill('LIT');` -- the fill value
+      must be a string literal; every element becomes the value.
+    - return: `NAME[INT](+ADD)*;` -- INT a non-negative literal int
+      in-bounds (reads the filled value); the `+ADD` tail uses the
+      additive string grammar (plain strings only).
+    - invocation: exactly `()`.
+    Disjoint: F681's statement loop fails closed on the 1-arg fill
+    form and its return requires `.join(` (fails closed on
+    `NAME[`); F644 accepts no statements; no earlier route models
+    `NAME.fill(` as a statement. Tried after F681. Bounds (all
+    fail closed): named function, params, directive prologue,
+    extra/reordered statements, reassignment of NAME, non-literal
+    fill value, fill with start/end args, out-of-bounds index,
+    non-string ADD operands. Returns (value, next_index), or None
+    when text[i] is not this shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        # Decl: `var|let|const NAME=['LIT',..];`
+        _dname, dm = _js_match_decl_kw(text, sj)
+        if _dname is None:
+            return None
+        sj = _js_skip_ws(text, dm)
+        aname, sj = _js_parse_ident(text, sj)
+        sj = _js_expect(text, _js_skip_ws(text, sj), "=")
+        elems, sj = _js_parse_f644_string_array(text, _js_skip_ws(text, sj),
+                                                state)
+        sj = _js_expect(text, _js_skip_ws(text, sj), ";")
+        # Statement: exactly one `NAME.fill('LIT');`
+        sj = _js_skip_ws(text, sj)
+        sname, sj = _js_parse_ident(text, sj)
+        if sname != aname:
+            raise _JSExprFail("F773 fill not on bound array")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ".")
+        mname, sj = _js_parse_ident(text, _js_skip_ws(text, sj))
+        if mname != "fill":
+            raise _JSExprFail("F773 statement not fill")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "(")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] not in "'\"":
+            raise _JSExprFail("F773 fill value not a string literal")
+        fval, sj = _js_parse_string(text, sj)
+        sj = _js_skip_ws(text, sj)
+        if sj < n and text[sj] == ",":
+            # fill with start/end args is F681's class, not this one.
+            raise _JSExprFail("F773 fill takes exactly one arg")
+        sj = _js_expect(text, sj, ")")
+        sj = _js_expect(text, _js_skip_ws(text, sj), ";")
+        state["ops"] += 1  # the fill statement is obfuscation-shaped
+        # Return: `NAME[INT](+ADD)*;`
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F773 no return")
+        sj = _js_skip_ws(text, m)
+        rname, sj = _js_parse_ident(text, sj)
+        if rname != aname:
+            raise _JSExprFail("F773 return not over bound array")
+        sj = _js_expect(text, _js_skip_ws(text, sj), "[")
+        idx, sj = _js_parse_number(text, _js_skip_ws(text, sj))
+        sj = _js_expect(text, _js_skip_ws(text, sj), "]")
+        if idx >= len(elems):
+            raise _JSExprFail("F773 index out of bounds")
+        result = fval
+        sj = _js_skip_ws(text, sj)
+        while sj < n and text[sj] == "+":
+            _rhs_j = _js_skip_ws(text, sj + 1)
+            rhs = None
+            if _rhs_j < n and text[_rhs_j] not in "'\"`":
+                # Maybe `NAME[INT]` -- the bound array's filled value.
+                # _js_parse_ident raises on non-idents, so probe the
+                # name textually first (ident-boundary checked).
+                _nm = text[_rhs_j:_rhs_j + len(aname)]
+                _after = _rhs_j + len(aname)
+                if _nm == aname and (_after >= n or
+                                     text[_after] not in _JS_IDENT_CONT):
+                    _rk = _js_skip_ws(text, _after)
+                    if _rk < n and text[_rk] == "[":
+                        _rk = _js_skip_ws(text, _rk + 1)
+                        _idx2, _rk = _js_parse_number(text, _rk)
+                        _rk = _js_expect(text, _js_skip_ws(text, _rk),
+                                          "]")
+                        if _idx2 >= len(elems):
+                            raise _JSExprFail("F773 ADD index OOB")
+                        rhs = fval
+                        sj = _rk
+            if rhs is None:
+                rhs, sj = _js_parse_primary(text, sj + 1, depth, state)
+                if type(rhs) is not str:
+                    raise _JSExprFail("F773 ADD operand not a string")
+            if len(result) + len(rhs) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F773 concat too long")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            result = result + rhs
+            sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F773 trailing statements")
+        if len(result) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F773 result too long")
+        state["ops"] += 1  # the indexed read is obfuscation-shaped
+        # Invocation: exactly `()` (j is past the closing brace).
         j = _js_skip_ws(text, j)
         j = _js_expect(text, j, ")")
         j = _js_skip_ws(text, j)
@@ -60338,6 +60489,80 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         elements[k] = val
         state["ops"] += 1  # the copy-on-write is obfuscation-shaped
         return _JSArr(elements), i
+    if name == "toSorted":
+        # F772: ARR.toSorted() -- ES2023 copy-on-write sort, node-exact
+        # (v24.20.0): a fresh array with the elements in default-sort
+        # order (the receiver is NOT mutated). Any argument fails
+        # closed (a non-function comparator throws TypeError in the
+        # engine; a function comparator is outside the modeled
+        # class). The F580 default-sort discipline: UTF-16 code-unit
+        # order is Python code-point order on BMP-only strings, so
+        # astral elements fail closed (verified F580 divergence);
+        # non-str elements (incl _JSNumStr provenance, _JSNil/_JSBool,
+        # nested arrays) fail closed -- the engine's
+        # undefined-sorts-last rule cannot be modeled over the
+        # conflated _JSNil. Python's sorted() is stable, matching
+        # V8's stable sort. Checked BEFORE the "method on unjoined
+        # array" guard below.
+        if not isinstance(value, _JSArr):
+            raise _JSExprFail("toSorted on non-array")
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("toSorted takes no args")
+        i += 1
+        for e in value.elements:
+            if type(e) is not str:
+                raise _JSExprFail("toSorted non-string element")
+            if any(ord(c) > 0xFFFF for c in e):
+                raise _JSExprFail("toSorted astral element")
+        state["ops"] += 1  # the copy-on-write is obfuscation-shaped
+        return _JSArr(sorted(value.elements)), i
+    if name == "toSpliced":
+        # F772: ARR.toSpliced(start[, deleteCount[, ...items]]) --
+        # ES2023 copy-on-write splice, node-exact (v24.20.0): a fresh
+        # array with the splice applied (the receiver is NOT
+        # mutated). start/deleteCount are literal ints normalized
+        # exactly as the engine does (negative counts back from the
+        # end, clamped to [0, len]; deleteCount clamped to
+        # [0, len-start]; an omitted deleteCount deletes through the
+        # end). Items are additive string expressions (the `with`
+        # discipline: _JSNumStr passes as str; _JSNil/_JSBool/
+        # nested-array items fail closed). A fractional index
+        # (unconsumed `.5`) fails the `,`/`)` expect. Checked BEFORE
+        # the "method on unjoined array" guard below.
+        if not isinstance(value, _JSArr):
+            raise _JSExprFail("toSpliced on non-array")
+        i = _js_skip_ws(text, i)
+        ln = len(value.elements)
+        if i < len(text) and text[i] == ")":
+            # Zero-arg form: a shallow copy (node v24.20.0).
+            i += 1
+            state["ops"] += 1  # the copy-on-write is obfuscation-shaped
+            return _JSArr(list(value.elements)), i
+        start, i = _js_parse_slice_int(text, i)
+        i = _js_skip_ws(text, i)
+        s = ln + start if start < 0 else start
+        s = max(0, min(s, ln))
+        if i < len(text) and text[i] == ",":
+            dcount, i = _js_parse_slice_int(text, _js_skip_ws(text, i + 1))
+            i = _js_skip_ws(text, i)
+            dc = max(0, min(dcount, ln - s))
+        else:
+            dc = ln - s
+        items = []
+        while i < len(text) and text[i] == ",":
+            val, i = _js_parse_additive(text, _js_skip_ws(text, i + 1),
+                                        depth, state)
+            if not isinstance(val, str):
+                raise _JSExprFail("toSpliced non-string item")
+            items.append(val)
+            i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("bad toSpliced args")
+        i += 1
+        state["ops"] += 1  # the copy-on-write is obfuscation-shaped
+        return _JSArr(value.elements[0:s] + items +
+                      value.elements[s + dc:]), i
     if name == "concat" and isinstance(value, _JSArr):
         # F473: array-receiver .concat -- engine-exact Array.prototype
         # .concat on a parsed string array, returning a fresh _JSArr so
@@ -64794,6 +65019,18 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f681_saved_parts; state['ops'] = _f681_saved_ops
         if _f681 is not None:
             return _f681
+        # F773: (function(){DECL A=['LIT',..];A.fill('LIT');
+        # return A[INT](+ADD)*;})() -- 1-arg fill statement with an
+        # indexed-read return. None falls through (fails closed
+        # inside; F681's statement loop rejects the 1-arg fill and
+        # its return requires .join, so no previously-decoded input
+        # changes behavior).
+        _f773_saved_parts = state['parts']; _f773_saved_ops = state['ops']
+        _f773 = _js_parse_f773_fill_stmt_iife(text, i, depth, state)
+        if _f773 is None:
+            state['parts'] = _f773_saved_parts; state['ops'] = _f773_saved_ops
+        if _f773 is not None:
+            return _f773
         # F684a: (function({K=V,..}={}){return ADD;})(...) --
         # default-referencing-earlier-params destructuring. None
         # falls through (fails closed inside; F645's flat shapes
@@ -65139,6 +65376,35 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         val, i = _js_parse_array(text, i, depth, state)
         state["ops"] += 1  # an array literal is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
+    _new_kw = _js_match_kw(text, i, "new")
+    if _new_kw is not None:
+        # F773: `new Array(...)` -- engine-identical to the Array(...)
+        # call form (v24.20.0): desugared to _js_parse_array_constructor
+        # (F443/F446/F454 classes). Only Array is modeled; any other
+        # `new X` falls through and fails closed as before. The
+        # ident-boundary check keeps `newx` / `new Arrayx` failing
+        # closed. Tried before the Array branch: the whole-text scan
+        # anchors at `Array(` inside `new Array(`, so without this
+        # the `new ` prefix would splice through as literal text.
+        _nk = _js_skip_ws(text, _new_kw)
+        if _js_match_kw(text, _nk, "Array") is not None:
+            # The constructor's own in_array guard is bypassed for
+            # the construction alone: `new Array(N)` / `new
+            # Array('a',...)` / `new Array.of(...)` parse only
+            # bounded literals and numbers (no nesting possible --
+            # _JS_EXPR_MAX_FILL bounds N), so the flat allocation
+            # cannot smuggle a nested array literal past the outer
+            # array's guard. The flag is restored before the
+            # postfix chain, so `.fill([...])` / indexed args with
+            # nested arrays still fail closed there as before.
+            _was_in_array = state.get("in_array")
+            state["in_array"] = False
+            try:
+                val, i = _js_parse_array_constructor(text, _nk, state)
+            finally:
+                state["in_array"] = _was_in_array
+            state["ops"] += 1  # the construction is obfuscation-shaped
+            return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("Array", i):
         # F443: Array(N) constructor; F446: Array.of(...) factory;
         # F454: Array('a','b',...) multi-arg constructor (incl. ws-
