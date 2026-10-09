@@ -29629,16 +29629,19 @@ def _js_f679_str_operand(text, j, env):
     raise _JSExprFail("F679 bad str operand")
 
 
-def _js_f679_sim_str_accum(text, j, env, state):
-    """Simulate one F679 string accumulation at text[j] (F679).
+def _js_f679_accum_value(text, j, env, state):
+    """Parse one F679 assignment segment at text[j] (F679, F901).
 
-    `NAME = ADD;` / `NAME += ADD;` where each ADD operand is a
-    string literal, a bound string name, a member read on an
-    object binding, or a ternary with an evaluable condition.
-    The name must be a mutable string binding (a `const` or
-    unbound name is an engine throw -- fail closed). Node-exact
-    (v24.20.0) for the accepted subset; everything else fails
-    closed. Returns the index just past `;`. Never evals.
+    `NAME = RHS` / `NAME += RHS` without the trailing `;`. RHS is
+    the F679 string-operand grammar (literal, bound string name,
+    member read, ternary), extended (F901) with chained
+    assignment: `a=b='LIT'` is right-associative in the engine
+    (v24.20.0 verified) -- the inner name is assigned first and
+    its value becomes this segment's RHS. The inner name must be
+    a bound mutable string (an unbound name is a ReferenceError
+    in the engine -- fail closed, never mis-decode). Returns
+    (value, next_index) with next_index just past the RHS.
+    Never evals.
     """
     n = len(text)
     name, q = _js_parse_ident(text, j)
@@ -29660,6 +29663,26 @@ def _js_f679_sim_str_accum(text, j, env, state):
         is_plus = False
     else:
         raise _JSExprFail("F679 bad accum op")
+    qq = _js_skip_ws(text, q)
+    if qq < n and text[qq] in _JS_IDENT_START:
+        # F901: chained assignment `a=b='f1'` -- right-associative
+        # (node-exact, v24.20.0). The inner segment is simulated
+        # first; its value is this segment's RHS.
+        _iname, iq = _js_parse_ident(text, qq)
+        iq2 = _js_skip_ws(text, iq)
+        if (iq2 < n and text[iq2] == "="
+                and not text.startswith(("==", "=>"), iq2)):
+            ival, q = _js_f679_accum_value(text, qq, env, state)
+            if is_plus:
+                head = val if kind == "s" else _JS_UNDEFINED
+                newval = _js_f679_concat_parts([head, ival])
+            else:
+                newval = ival
+            if _js_f679_rendered_len(newval) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F679 concat too long")
+            env[name] = (newval, mutable)
+            _js_f679_charge(state)
+            return newval, q
     rhs, q = _js_f679_str_operand(text, q, env)
     # F740: operands may be the _JS_UNDEFINED sentinel -- they
     # fold with engine `+` semantics (see _js_f679_concat_parts).
@@ -29677,8 +29700,6 @@ def _js_f679_sim_str_accum(text, j, env, state):
             _js_f679_charge(state)  # the extra operand is obfuscation-shaped
         else:
             break
-    q = _js_skip_ws(text, q)
-    q = _js_expect(text, q, ";")
     if is_plus:
         # `NAME += EXPR` is `NAME = NAME + EXPR`.
         head = val if kind == "s" else _JS_UNDEFINED
@@ -29691,7 +29712,33 @@ def _js_f679_sim_str_accum(text, j, env, state):
         raise _JSExprFail("F679 concat too long")
     env[name] = (newval, mutable)
     _js_f679_charge(state)
-    return q
+    return newval, q
+
+
+def _js_f679_sim_str_accum(text, j, env, state):
+    """Simulate one F679 string accumulation at text[j] (F679).
+
+    `NAME = ADD;` / `NAME += ADD;` where each ADD operand is a
+    string literal, a bound string name, a member read on an
+    object binding, or a ternary with an evaluable condition.
+    The name must be a mutable string binding (a `const` or
+    unbound name is an engine throw -- fail closed). F901: the
+    statement may be a comma-operator sequence of assignment
+    segments (`r='x',r='f1';` -- left-to-right, node-exact
+    v24.20.0); each segment is obfuscation-shaped (part-charged).
+    Node-exact (v24.20.0) for the accepted subset; everything
+    else fails closed. Returns the index just past `;`. Never
+    evals.
+    """
+    n = len(text)
+    while True:
+        _, q = _js_f679_accum_value(text, j, env, state)
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == ",":
+            _js_f679_charge(state)  # the extra segment is obfuscation-shaped
+            j = q + 1
+            continue
+        return _js_expect(text, q, ";")
 
 
 def _js_f679_int_update(text, j, env, state):
@@ -29750,13 +29797,19 @@ def _js_f679_decl(text, j, env, state, depth, nested=False):
     `var|let|const NAME=INT;` (integer),
     `var|let|const NAME={k:'LIT',...};` (object literal via the
     F535 grammar -- every key a plain string, every value a
-    string), or `var|let NAME;` (F740: uninitialized -- bound to
+    string),
+    `var|let|const NAME=BOUND;` (F902: copy of a bound string /
+    undefined-sentinel / integer binding -- e.g. the catch
+    parameter bound to a thrown string), or
+    `var|let NAME;` (F740: uninitialized -- bound to
     the _JS_UNDEFINED sentinel, which has node-exact value
     semantics; `const NAME;` is a node SyntaxError -- fail
-    closed). Name rules mirror F655 for the top level (fresh,
-    non-reserved, not `arguments`); multi-declarator
-    `var a=.., b=..` fails closed. With nested=True (loop
-    inits/bodies), a `var` re-declaration of an existing
+    closed). F901: comma-separated multi-declarators
+    (`var a,b;`, `var a='x',b='y';`) are node-exact (v24.20.0)
+    -- each declarator processes in order (later wins, as in
+    the engine). Name rules mirror F655 for the top level
+    (fresh, non-reserved, not `arguments`). With nested=True
+    (loop inits/bodies), a `var` re-declaration of an existing
     non-lexical binding is a plain assignment (engine-hoisted,
     node-exact -- this is what makes nested loops work); a
     `var` re-declaration of a `const` binding or of a
@@ -29770,75 +29823,103 @@ def _js_f679_decl(text, j, env, state, depth, nested=False):
     kw, m = _js_match_decl_kw(text, j)
     if kw is None:
         raise _JSExprFail("F679 not a declaration")
-    q = _js_skip_ws(text, m)
-    name, q = _js_parse_ident(text, q)
-    if name == "arguments" or name in _F611_RESERVED:
-        raise _JSExprFail("F679 bad decl name")
-    lex = _js_f679_lexset(state)
-    reinit = False
-    if name in env:
-        if not (nested and kw == "var"):
+    q = m
+    while True:
+        q = _js_skip_ws(text, q)
+        name, q = _js_parse_ident(text, q)
+        if name == "arguments" or name in _F611_RESERVED:
             raise _JSExprFail("F679 bad decl name")
-        if name in lex:
-            # A `var` re-declaration cannot clobber a
-            # lexically-scoped binding (separate engine
-            # bindings); the flat env cannot represent this --
-            # fail closed, never mis-decode.
-            raise _JSExprFail("F679 var shadows lexical")
-        reinit = True
-    q = _js_skip_ws(text, q)
-    if q < n and text[q] == ";":
-        # F740: `var|let NAME;` -- uninitialized declaration.
-        # Node-exact (v24.20.0): the binding starts as `undefined`,
-        # bound here to the _JS_UNDEFINED sentinel (a plain
-        # "undefined" string would mis-decode truthiness and
-        # comparisons -- spec-review catch). `const NAME;` is a
-        # node SyntaxError -- fail closed. A `var` re-declaration
-        # without an initializer is a no-op in the engine (it does
-        # NOT reset the binding -- node-verified); re-declaring a
-        # `const` is a SyntaxError -- fail closed.
-        if kw == "const":
-            raise _JSExprFail("F679 const not initialized")
+        lex = _js_f679_lexset(state)
+        reinit = False
+        if name in env:
+            if not (nested and kw == "var"):
+                raise _JSExprFail("F679 bad decl name")
+            if name in lex:
+                # A `var` re-declaration cannot clobber a
+                # lexically-scoped binding (separate engine
+                # bindings); the flat env cannot represent this --
+                # fail closed, never mis-decode.
+                raise _JSExprFail("F679 var shadows lexical")
+            reinit = True
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] in ";,":
+            # F740: `var|let NAME;` -- uninitialized declaration.
+            # Node-exact (v24.20.0): the binding starts as
+            # `undefined`, bound here to the _JS_UNDEFINED
+            # sentinel (a plain "undefined" string would
+            # mis-decode truthiness and comparisons --
+            # spec-review catch). `const NAME;` is a node
+            # SyntaxError -- fail closed. A `var` re-declaration
+            # without an initializer is a no-op in the engine
+            # (it does NOT reset the binding -- node-verified);
+            # re-declaring a `const` is a SyntaxError -- fail
+            # closed.
+            if kw == "const":
+                raise _JSExprFail("F679 const not initialized")
+            if reinit:
+                _old, omut = env[name]
+                if not omut:
+                    raise _JSExprFail("F679 redecl const")
+            else:
+                env[name] = (_JS_UNDEFINED, True)
+            _js_f679_charge(state)
+            if text[q] == ";":
+                return q + 1
+            q = q + 1  # F901: `,` -- next declarator
+            continue
+        if q >= n or text[q] != "=" or text.startswith(("==", "=>"), q):
+            raise _JSExprFail("F679 decl not initialized")
+        q = _js_skip_ws(text, q + 1)
+        if q >= n:
+            raise _JSExprFail("F679 decl no initializer")
+        if text[q] in "'\"":
+            val, q = _js_parse_string(text, q)
+        elif text[q] == "{":
+            props, q = _js_parse_f535_object(text, q, depth, state)
+            for pk, pv in props.items():
+                if not isinstance(pk, str) or not isinstance(pv, str):
+                    raise _JSExprFail("F679 decl object not string-valued")
+            val = props
+        elif text[q] in _ASCII_DIGITS or text[q] == "-":
+            val, q = _js_f679_parse_int(text, q)
+        elif text[q] in _JS_IDENT_START:
+            # F902: `var m=e;` -- copy a bound binding (the catch
+            # parameter bound to the thrown string flows into the
+            # new var). Node-exact (v24.20.0): the value copies by
+            # value (strings, the F740 undefined sentinel, and
+            # integers). A poisoned binding (F740) is never
+            # readable -- fail closed (defense in depth); an
+            # unbound name is a ReferenceError in the engine --
+            # fail closed; object bindings are outside the
+            # string-only discipline -- fail closed. The new
+            # binding is mutable (var/let), as before.
+            sname, q = _js_parse_ident(text, q)
+            if sname not in env:
+                raise _JSExprFail("F679 decl copy unbound")
+            sval, _smut = env[sname]
+            skind = _js_f679_kind(sval)
+            if skind == "p":
+                raise _JSExprFail("F679 decl copy poison")
+            if skind == "o":
+                raise _JSExprFail("F679 decl copy object")
+            val = sval
+        else:
+            raise _JSExprFail("F679 decl bad initializer")
+        q = _js_skip_ws(text, q)
         if reinit:
             _old, omut = env[name]
             if not omut:
+                # `var` re-declaring a `const` is an engine
+                # SyntaxError -- fail closed.
                 raise _JSExprFail("F679 redecl const")
+            env[name] = (val, omut)
         else:
-            env[name] = (_JS_UNDEFINED, True)
+            env[name] = (val, kw != "const")
         _js_f679_charge(state)
-        return q + 1
-    if q >= n or text[q] != "=" or text.startswith(("==", "=>"), q):
-        raise _JSExprFail("F679 decl not initialized")
-    q = _js_skip_ws(text, q + 1)
-    if q >= n:
-        raise _JSExprFail("F679 decl no initializer")
-    if text[q] in "'\"":
-        val, q = _js_parse_string(text, q)
-    elif text[q] == "{":
-        props, q = _js_parse_f535_object(text, q, depth, state)
-        for pk, pv in props.items():
-            if not isinstance(pk, str) or not isinstance(pv, str):
-                raise _JSExprFail("F679 decl object not string-valued")
-        val = props
-    elif text[q] in _ASCII_DIGITS or text[q] == "-":
-        val, q = _js_f679_parse_int(text, q)
-    else:
-        raise _JSExprFail("F679 decl bad initializer")
-    q = _js_skip_ws(text, q)
-    if q < n and text[q] == ",":
-        raise _JSExprFail("F679 multi-declarator")
-    q = _js_expect(text, q, ";")
-    if reinit:
-        _old, omut = env[name]
-        if not omut:
-            # `var` re-declaring a `const` is an engine
-            # SyntaxError -- fail closed.
-            raise _JSExprFail("F679 redecl const")
-        env[name] = (val, omut)
-    else:
-        env[name] = (val, kw != "const")
-    _js_f679_charge(state)
-    return q
+        if q < n and text[q] == ",":
+            q = q + 1  # F901: `,` -- next declarator
+            continue
+        return _js_expect(text, q, ";")
 
 
 def _js_f679_sim_throw(text, j, env):
@@ -34294,9 +34375,9 @@ def _js_parse_f679_statement_iife(text, i, depth, state):
     Bounds (all fail closed -- rejected, never mis-decoded):
     - a named function, `function*`, `async`, parameters, a
       directive prologue, non-empty call args;
-    - non-literal/non-integer/non-object declaration
-      initializers, duplicate or reserved binding names,
-      multi-declarator `var a=.., b=..`;
+    - non-literal/non-integer/non-object/non-bound-name
+      declaration initializers, duplicate or reserved binding
+      names;
     - accumulation into `const` bindings or unbound names,
       integer statements on string bindings and vice versa
       (the engine throws or coerces -- the decoder never
@@ -37432,6 +37513,174 @@ def _js_f878_parse_ctor_members(text, q, state):
         q = q2
 
 
+# ---------------------------------------------------------------------------
+# F904: superclass constructor field initialization
+# ---------------------------------------------------------------------------
+
+_F904_UNBOUND = "\0unbound"  # a param name that can never bind (F904)
+
+
+def _js_f904_parse_base_class_body(text, q, state):
+    """Parse `{ constructor(P1, ...) { BODY } }` at text[q] (F904).
+
+    The zero-param base-class constructor twin of the F878
+    production: F878 requires one or more constructor params, so
+    a zero-param `constructor(){this.k='LIT';}` base class fails
+    closed there. Every body statement must be a this-assignment
+    with a string-literal or param RHS (the
+    `_js_f780_parse_ctor_body` grammar); arrow-function fields
+    stay with the F878 production (this parser is only a
+    fallback for constructor shapes F878 rejects). Returns
+    ((params, assigns, {}), next_index_past_'}'). Snapshot/restore
+    on miss (wave-383 lesson). Never evals.
+    """
+    n = len(text)
+    saved_parts = state["parts"]
+    saved_ops = state["ops"]
+    try:
+        q = _js_expect(text, q, "{")
+        q = _js_skip_ws(text, q)
+        cm = _js_match_kw(text, q, "constructor")
+        if cm is None:
+            raise _JSExprFail("F904 class needs constructor")
+        q = _js_skip_ws(text, cm)
+        if q >= n or text[q] != "(":
+            raise _JSExprFail("F904 constructor needs parens")
+        q2 = _js_skip_ws(text, q + 1)
+        if q2 < n and text[q2] == ")":
+            params, q = [], q2 + 1
+        else:
+            params, q = _js_f780_parse_params(text, q)
+        assigns, q = _js_f780_parse_ctor_body(text, _js_skip_ws(text, q),
+                                              params, state)
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "}")
+        return (params, assigns, {}), q
+    except _JSExprFail:
+        state["parts"] = saved_parts
+        state["ops"] = saved_ops
+        raise
+
+
+def _js_f904_parse_subclass(text, q, ctors, state):
+    """Parse `extends BNAME { BODY }` at text[q] (F904).
+
+    BNAME must name an already-declared constructor/class in
+    ctors (in-order declarations only -- forward references fail
+    closed, matching the F780 discipline). BODY is either empty
+    (the default derived constructor
+    `constructor(...args){ super(...args); }`, node-exact,
+    v24.20.0) or a single `constructor(P1,...){
+    super(ARG,...); }` whose body is only the super call (each
+    ARG a string literal or one of the subclass's params). The
+    subclass record is a plain F780 3-tuple with the
+    superclass's assigns pre-substituted, so instantiation and
+    member reads need no changes:
+    - empty body: the superclass record, copied;
+    - super-forward: params = the subclass's params; each
+      `("param", BP)` superclass source resolves through the
+      positional super args (literal -> lit; subclass param ->
+      param; missing -> the _F904_UNBOUND marker, which
+      `_js_f780_bind` maps to _F780_MISSING, node-exact);
+      methods = the superclass's arrow-field methods (copied --
+      the engine installs them on every instance).
+    A non-super statement, a non-literal non-param super arg,
+    or extra class members fail closed (documented narrow
+    scope). Returns ((params, assigns, methods), next_index).
+    Snapshot/restore on miss (wave-383 lesson). Never evals.
+    """
+    n = len(text)
+    saved_parts = state["parts"]
+    saved_ops = state["ops"]
+    try:
+        ek = _js_match_kw(text, q, "extends")
+        if ek is None:
+            raise _JSExprFail("F904 extends without keyword")
+        q = _js_skip_ws(text, ek)
+        bname, q = _js_parse_ident(text, q)
+        if bname not in ctors:
+            raise _JSExprFail("F904 extends target not declared")
+        bparams, bassigns, bmethods = ctors[bname]
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "{")
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == "}":
+            # Default derived constructor: super(...args) forwarding.
+            _js_f672_charge(state)
+            return (list(bparams), list(bassigns), dict(bmethods)), q + 1
+        cm = _js_match_kw(text, q, "constructor")
+        if cm is None:
+            raise _JSExprFail("F904 subclass needs constructor")
+        q = _js_skip_ws(text, cm)
+        if q >= n or text[q] != "(":
+            raise _JSExprFail("F904 constructor needs parens")
+        q2 = _js_skip_ws(text, q + 1)
+        if q2 < n and text[q2] == ")":
+            cparams, q = [], q2 + 1
+        else:
+            cparams, q = _js_f780_parse_params(text, q)
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "{")
+        q = _js_skip_ws(text, q)
+        sk = _js_match_kw(text, q, "super")
+        if sk is None:
+            raise _JSExprFail("F904 constructor without super")
+        q = _js_skip_ws(text, sk)
+        q = _js_expect(text, q, "(")
+        super_args = []
+        while True:
+            q = _js_skip_ws(text, q)
+            if q >= n:
+                raise _JSExprFail("F904 super args overrun")
+            if text[q] == ")":
+                q += 1
+                break
+            if text[q] in "'\"":
+                aval, q = _js_parse_string(text, q)
+                super_args.append(("lit", aval))
+            else:
+                aname, q = _js_parse_ident(text, q)
+                if aname not in cparams:
+                    raise _JSExprFail("F904 super arg unbound")
+                super_args.append(("param", aname))
+            _js_f672_charge(state)
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == ",":
+                q += 1
+                continue
+            if q < n and text[q] == ")":
+                q += 1
+                break
+            raise _JSExprFail("F904 super args malformed")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "}")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "}")
+        # Positional substitution of the superclass assigns (last
+        # param wins on duplicates, matching `_js_f780_bind`).
+        bidx = {}
+        for bi, bp in enumerate(bparams):
+            bidx[bp] = bi
+        new_assigns = []
+        for key, src in bassigns:
+            if src[0] == "lit":
+                new_assigns.append((key, src))
+                continue
+            si = bidx.get(src[1])
+            if si is None or si >= len(super_args):
+                new_assigns.append((key, ("param", _F904_UNBOUND)))
+            else:
+                new_assigns.append((key, super_args[si]))
+            _js_f672_charge(state)
+        return (cparams, new_assigns, dict(bmethods)), q
+    except _JSExprFail:
+        state["parts"] = saved_parts
+        state["ops"] = saved_ops
+        raise
+
+
 def _js_parse_f780_ctor_param_iife(text, i, depth, state):
     """Parse `(function(){[STMT;]* return ADD;})()` with param'd
     constructor this-binding sources at text[i] (F780).
@@ -37522,12 +37771,32 @@ def _js_parse_f780_ctor_param_iife(text, i, depth, state):
                         or cname in ctors):
                     raise _JSExprFail("F780 bad class name")
                 if _js_match_kw(text, _js_skip_ws(text, q), "extends") is not None:
-                    raise _JSExprFail("F780 class extends")
-                # F878: constructor + zero or more
-                # `NAME=()=>this.MEMBER;` arrow fields.
-                (params, assigns, methods), q = \
-                    _js_f878_parse_ctor_members(text, _js_skip_ws(text, q),
-                                                state)
+                    # F904: `class C extends B { ... }` -- superclass
+                    # constructor field initialization read through
+                    # the subclass (node-exact, v24.20.0). The
+                    # extends target must be declared earlier
+                    # (in-order); the subclass record is a plain
+                    # F780 3-tuple with the superclass assigns
+                    # pre-substituted, so instantiation and member
+                    # reads are unchanged.
+                    (params, assigns, methods), q = \
+                        _js_f904_parse_subclass(
+                            text, _js_skip_ws(text, q), ctors, state)
+                else:
+                    try:
+                        # F878: constructor + zero or more
+                        # `NAME=()=>this.MEMBER;` arrow fields.
+                        (params, assigns, methods), q = \
+                            _js_f878_parse_ctor_members(text, _js_skip_ws(text, q),
+                                                        state)
+                    except _JSExprFail:
+                        # F904: zero-param constructor base class --
+                        # the F878 production requires >=1 param.
+                        # Tried after F878, so no
+                        # previously-decoded input changes behavior.
+                        (params, assigns, methods), q = \
+                            _js_f904_parse_base_class_body(
+                                text, _js_skip_ws(text, q), state)
                 ctors[cname] = (params, assigns, methods)
                 _js_f672_charge(state)
                 sj = q
@@ -53801,13 +54070,61 @@ def _js_f849_parse_throw_operand(stmts, j, depth, state):
     raise _JSExprFail("F849 throw operand not modeled")
 
 
-def _js_f849_parse_catch_additive(stmts, j, cname, kind, thrown, state):
+def _js_f849_parse_copy_decls(stmts, j, cname, aliases, state):
+    """Parse `(var|let|const NAME=(CNAME|ALIAS);)*` at stmts[j] (F902).
+
+    The engine copies the thrown string into each new binding
+    (node-exact, v24.20.0); the return additive then resolves
+    each alias to the thrown value. Only the string-throw kind
+    admits copies (the caller gates on kind == "str"): for the
+    `{message:'LIT'}` twin a copy would alias the thrown object,
+    whose bare read stringifies to `[object Object]` in the
+    engine -- outside the string-only discipline. A `const` copy
+    reads identically (no reassignment is reachable before the
+    return). Each name must be fresh (not `arguments`, not the
+    catch param, no duplicates); the RHS must be the catch param
+    or a previously-declared alias (chained copies are
+    node-exact). Anything else -- reassignment, a
+    multi-declarator, a non-copy initializer -- fails closed
+    (the `return` must immediately follow the copies). Returns
+    the index just past the last `;`. Never evals.
+    """
+    n = len(stmts)
+    while True:
+        dk, m = _js_match_decl_kw(stmts, j)
+        if dk is None:
+            return j
+        q = _js_skip_ws(stmts, m)
+        name, q = _js_parse_ident(stmts, q)
+        if name == "arguments" or name == cname or name in aliases:
+            raise _JSExprFail("F902 bad copy name")
+        q = _js_skip_ws(stmts, q)
+        if q >= n or stmts[q] != "=" or stmts.startswith(("==", "=>"), q):
+            raise _JSExprFail("F902 copy not an assignment")
+        q = _js_skip_ws(stmts, q + 1)
+        sname, q = _js_parse_ident(stmts, q)
+        if sname != cname and sname not in aliases:
+            raise _JSExprFail("F902 copy source not the thrown value")
+        q = _js_skip_ws(stmts, q)
+        if q < n and stmts[q] == ",":
+            raise _JSExprFail("F902 multi-declarator")
+        q = _js_expect(stmts, q, ";")
+        aliases.add(name)
+        _js_f672_charge(state)
+        j = q
+
+
+def _js_f849_parse_catch_additive(stmts, j, cname, kind, thrown, state,
+                                 aliases=()):
     """Parse `TERM (+ TERM)*` at stmts[j] (F849).
 
     TERM is a plain string literal, the bare catch param (only when
     the throwable is a string literal -- the engine binds the param
-    to the thrown value), or `C.message` / `C['message']` /
-    `C["message"]` (only when the throwable is `{message:'LIT'}`).
+    to the thrown value), a copy alias declared by
+    `_js_f849_parse_copy_decls` (F902 -- resolves to the thrown
+    string exactly like the bare param), or `C.message` /
+    `C['message']` / `C["message"]` (only when the throwable is
+    `{message:'LIT'}`).
     Cross-combos fail closed: `'LIT'.message` is `undefined` and a
     thrown object stringifies to `[object Object]` -- both outside
     the string-only discipline. Returns (value, next_index) with
@@ -53826,7 +54143,7 @@ def _js_f849_parse_catch_additive(stmts, j, cname, kind, thrown, state):
             out.append(lit)
         elif stmts[j] in _JS_IDENT_START:
             name, j = _js_parse_ident(stmts, j)
-            if name != cname:
+            if name != cname and name not in aliases:
                 raise _JSExprFail("F849 term not the catch param")
             q = _js_skip_ws(stmts, j)
             if q < n and stmts[q] == ".":
@@ -53930,11 +54247,20 @@ def _js_parse_f849_throw_catch_iife(text, i, depth, state):
         sj = _js_expect(stmts, sj, ")")
         sj = _js_skip_ws(stmts, sj)
         sj = _js_expect(stmts, sj, "{")
+        # F902: `(var|let|const NAME=(CNAME|ALIAS);)*` -- the thrown
+        # string copied into fresh bindings before the return.
+        # Only the string-throw kind admits copies (a copy would
+        # alias the thrown object for the `{message:'LIT'}` twin).
+        aliases = set()
+        if kind == "str":
+            sj = _js_f849_parse_copy_decls(stmts, _js_skip_ws(stmts, sj),
+                                           cname, aliases, state)
         rk = _js_match_kw(stmts, _js_skip_ws(stmts, sj), "return")
         if rk is None:
             raise _JSExprFail("F849 catch without return")
         val, sj = _js_f849_parse_catch_additive(
-            stmts, _js_skip_ws(stmts, rk), cname, kind, thrown, state)
+            stmts, _js_skip_ws(stmts, rk), cname, kind, thrown, state,
+            aliases)
         sj = _js_skip_ws(stmts, sj)
         sj = _js_expect(stmts, sj, ";")
         sj = _js_skip_ws(stmts, sj)
@@ -53950,8 +54276,128 @@ def _js_parse_f849_throw_catch_iife(text, i, depth, state):
 
 
 # ---------------------------------------------------------------------------
-# F850: Proxy set-trap writes on an inline empty target
+# F903: JSON.stringify + slice laundering
 # ---------------------------------------------------------------------------
+
+def _js_f903_js_slice(s, a, b):
+    """node-exact String.prototype.slice(a, b) on integer args (F903).
+
+    v24.20.0: negatives count from the end (clamped at 0),
+    out-of-range clamps to [0, len], start >= end yields "".
+    Python's str slicing is identical for integer indices (both
+    args are finite canonical ints by construction -- the caller
+    parses them with `_js_f679_parse_int`). Never evals.
+    """
+    return s[a:b]
+
+
+def _js_parse_f903_stringify_slice_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const S=JSON.stringify(VALUE);return S.slice(A,B)(+ 'LIT')*;})()` (F903).
+
+    F903 (LOW, filed 2026-10-09 by wave-387 attack round 55): the
+    decoder models JSON.parse shapes but not stringify-then-slice
+    laundering:
+      `(function(){var s=JSON.stringify(['f1']);return s.slice(2,-2)+'f2';})()`
+      `(function(){var s=JSON.stringify({k:'f1'});return s.slice(6,-2)+'f2';})()`
+    Both resolve node-exactly (v24.20.0) to the credential while
+    the decoder produces zero variants.
+
+    Node-exact desugar (v24.20.0): `JSON.stringify(VALUE)` is the
+    F571 node-exact serialization (string/array/object JSON
+    literals); `.slice(A,B)` on the resulting text is the
+    engine's slice (see `_js_f903_js_slice`); the return additive
+    is plain string-literal concatenation. The bound name must be
+    fresh (not `arguments`, not reserved); the declaration and
+    the return are adjacent (no rebinding -- a `S=...`
+    reassignment between them fails closed). A non-literal
+    stringify argument, a non-`.slice` read, non-integer slice
+    args, or a non-literal additive term all fail closed
+    (documented narrow scope -- rejected, never mis-decoded).
+    Disjoint from every earlier route: F679's declaration grammar
+    has no call-initializer production and fails closed on
+    `var S=JSON.stringify(...)`; no earlier route accepts a
+    JSON.stringify declaration head (red-first verified: 2 BREAK
+    on the open tree), so no previously-decoded input changes
+    behavior. Snapshot/restore on miss (wave-383 lesson).
+    Returns (value, next_index) or None. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts = state["parts"]
+    saved_ops = state["ops"]
+    try:
+        brace = _js_parse_f6xx_iife_head(text, i)
+        if brace is None:
+            raise _JSExprFail("F903 not our head")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        m = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        dk, dq = _js_match_decl_kw(stmts, sj)
+        if dk is None:
+            raise _JSExprFail("F903 not a declaration")
+        sj = _js_skip_ws(stmts, dq)
+        sname, sj = _js_parse_ident(stmts, sj)
+        if sname == "arguments" or sname in _F611_RESERVED:
+            raise _JSExprFail("F903 bad var name")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "=")
+        jstr, sj = _js_parse_f571_stringify_call(
+            stmts, _js_skip_ws(stmts, sj), depth, state)
+        if not isinstance(jstr, str):
+            raise _JSExprFail("F903 stringify not a string")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        rk = _js_match_kw(stmts, _js_skip_ws(stmts, sj), "return")
+        if rk is None:
+            raise _JSExprFail("F903 no return")
+        sj = _js_skip_ws(stmts, rk)
+        rname, sj = _js_parse_ident(stmts, sj)
+        if rname != sname:
+            raise _JSExprFail("F903 slice not on the bound string")
+        sj = _js_skip_ws(stmts, sj)
+        if sj >= m or stmts[sj] != ".":
+            raise _JSExprFail("F903 slice not a dot read")
+        mname, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj + 1))
+        if mname != "slice":
+            raise _JSExprFail("F903 not a slice call")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "(")
+        aval, sj = _js_f679_parse_int(stmts, _js_skip_ws(stmts, sj))
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ",")
+        bval, sj = _js_f679_parse_int(stmts, _js_skip_ws(stmts, sj))
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ")")
+        out = _js_f903_js_slice(jstr, aval, bval)
+        state["parts"] += 1  # the slice is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        sj = _js_skip_ws(stmts, sj)
+        while sj < m and stmts[sj] == "+":
+            sj = _js_skip_ws(stmts, sj + 1)
+            if sj >= m or stmts[sj] not in "'\"":
+                raise _JSExprFail("F903 term not a literal")
+            lit, sj = _js_parse_string(stmts, sj)
+            if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+                raise _JSExprFail("F903 term not plain")
+            if len(out) + len(lit) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F903 concat too long")
+            out += lit
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        if _js_skip_ws(stmts, sj) != m:
+            raise _JSExprFail("F903 trailing statements")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, out)
+    except _JSExprFail:
+        state["parts"] = saved_parts
+        state["ops"] = saved_ops
+        return None
 
 def _js_f850_parse_trap_params(stmts, j):
     """Parse `(P1,P2,P3)` at stmts[j] (F850).
@@ -89624,6 +90070,23 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f679_saved_parts; state['ops'] = _f679_saved_ops
         if _f679 is not None:
             val, i = _f679
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F903: (function(){var|let|const S=JSON.stringify(VALUE);
+        #   return S.slice(A,B)(+ 'LIT')*;})() -- stringify-then-slice
+        #   laundering. Tried after F679: F679's declaration grammar
+        #   has no call-initializer production and fails closed on
+        #   `var S=JSON.stringify(...)` (red-first verified: 2 BREAK
+        #   on the open tree); no earlier route accepts a
+        #   JSON.stringify declaration head, so no
+        #   previously-decoded input changes behavior.
+        #   Snapshot/restore on miss (wave-383 lesson).
+        _f903_saved_parts = state['parts']; _f903_saved_ops = state['ops']
+        _f903 = _js_parse_f903_stringify_slice_iife(text, i, depth,
+                                                    state)
+        if _f903 is None:
+            state['parts'] = _f903_saved_parts; state['ops'] = _f903_saved_ops
+        if _f903 is not None:
+            val, i = _f903
             return _js_parse_postfix(text, i, val, depth, state)
         # F750: (function(){PRE* try{THROW}catch(C){return RET;}})()
         # -- Error .message reads. Tried after F679: F679's
