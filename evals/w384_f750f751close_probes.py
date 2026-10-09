@@ -369,12 +369,12 @@ def test_p4_f679_intact():
 
 
 @_t
-def test_p4_f740_still_open():
-    """F740 (try/catch value flows, OPEN) still misses."""
-    ok = _misses(
+def test_p4_f740_now_closed():
+    """F740 (try/catch value flows) now blocks (closed wave-384 lane 2)."""
+    ok = _blocked(
         "(function(){var r;try{throw '%s';}catch(e){r=e;}"
         "return r+'%s';})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f740-open=%s" % ok)
+    return ("HELD" if ok else "BREAK", "f740-closed=%s" % ok)
 
 
 @_t

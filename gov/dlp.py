@@ -42026,6 +42026,228 @@ def _js_parse_f726_template_coerce_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f760_template_member(text, i, depth, state, oname, props):
+    """Parse a `...` template literal at text[i] == '`' (F760).
+
+    Like _js_parse_f726_template_ident except each `${...}`
+    interpolation is a member read on the bound object:
+    `${o.MEM}` or `${o['MEM']}` (ws-tolerant). The read resolves
+    against the F697 object-literal props map to a string-literal
+    data property -- the engine reads the property value
+    directly (node v24.20.0). A missing key (engine: undefined),
+    a method-valued property (engine: the function object), a
+    numeric member, or any non-member interpolation (bare ident,
+    call, nested template, ...) fails closed. Getters cannot
+    appear (the F697 grammar fails closed on them); `__proto__`
+    cannot appear either. Literal chunks, escapes, whitespace
+    tolerance, and the length/part budgets mirror
+    _js_parse_f726_template_ident; each interpolation charges the
+    parts budget and marks the expression obfuscation-shaped.
+    Returns (value, next_index, saw_member). Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("template too deep")
+    if text[i] != "`":
+        raise _JSExprFail("not a template")
+    i += 1  # consume the opening backtick
+    n = len(text)
+    out = []
+    total = 0
+    saw_member = False
+    while True:
+        if i >= n:
+            raise _JSExprFail("unterminated template")
+        c = text[i]
+        if c == "`":
+            return "".join(out), i + 1, saw_member
+        if c == "$" and i + 1 < n and text[i + 1] == "{":
+            i = _js_skip_ws(text, i + 2)
+            name, i = _js_parse_ident(text, i)
+            if name != oname:
+                raise _JSExprFail("F760 interpolation unbound")
+            i = _js_skip_ws(text, i)
+            if i < n and text[i] == ".":
+                i = _js_skip_ws(text, i + 1)
+                key, i = _js_parse_ident(text, i)
+            elif i < n and text[i] == "[":
+                i = _js_skip_ws(text, i + 1)
+                if i >= n or text[i] not in "'\"":
+                    raise _JSExprFail("F760 member not a string key")
+                key, i = _js_parse_string(text, i)
+                i = _js_skip_ws(text, i)
+                if i >= n or text[i] != "]":
+                    raise _JSExprFail("F760 member missing bracket")
+                i = i + 1
+            else:
+                raise _JSExprFail("F760 interpolation not a member read")
+            i = _js_skip_ws(text, i)
+            if i >= n or text[i] != "}":
+                raise _JSExprFail("unterminated interpolation")
+            i = i + 1
+            val = props.get(key)
+            if not isinstance(val, str):
+                # Missing key, a method-valued property, or any
+                # non-string -- fail closed, never mis-decode.
+                raise _JSExprFail("F760 member not a string data prop")
+            out.append(val)
+            saw_member = True
+            total += len(val)
+            if total > _MAX_DECODE_BYTES:
+                raise _JSExprFail("template too long")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1  # an interpolation is obfuscation-shaped
+            continue
+        if c == "\\":
+            if i + 1 >= n:
+                raise _JSExprFail("bad escape")
+            e = text[i + 1]
+            if e in "xuU":
+                r = _decode_one_escape(text, i)
+                if r is None:
+                    raise _JSExprFail("bad escape")
+                ch, i = r
+                out.append(ch)
+                total += len(ch)
+            else:
+                out.append(_JS_SIMPLE_ESCAPES.get(e, e))
+                i += 2
+                total += 1
+            if total > _MAX_DECODE_BYTES:
+                raise _JSExprFail("template too long")
+            continue
+        if ord(c) < 0x20 and c not in "\t\n\r":
+            raise _JSExprFail("control char")
+        out.append(c)
+        total += 1
+        i += 1
+        if total > _JS_EXPR_MAX_LITERAL:
+            raise _JSExprFail("literal too long")
+        if total > _MAX_DECODE_BYTES:
+            raise _JSExprFail("template too long")
+
+
+def _js_parse_f760_template_member_iife(text, i, depth, state):
+    """Parse `(function(){var o={...};return ADD;})()` with template-
+    literal member-read interpolations on the bound object (F760).
+
+    F726 (CLOSED) models template-literal ToPrimitive COERCION
+    (`${o}` interpolations on a toPrimitive-aware object), but
+    nested member reads `${o.x}` have no modeled path:
+    `(function(){var o={x:'f1'};return `${o.x}f2`;})()` and
+    `(function(){var o={x:'f1',y:'f2'};return `${o.x}${o.y}`;})()`
+    node-evaluate (v24.20.0) to the exact credential while the
+    decoder produces zero variants. Node-exact desugar: the var
+    binds a plain object literal (the F697 object grammar -- data
+    props plus zero-arg methods; getters fail closed there); the
+    return is a `+`-joined additive of string literals and
+    template literals whose `${...}` interpolations are member
+    reads `${o.MEM}` / `${o['MEM']}` resolving to string-literal
+    data properties.
+    Disjoint from F726: F726 fails closed on member-read
+    interpolations (its interpolation parser raises on anything
+    but the bare bound ident) and requires an own coercion
+    method; this requires at least one member-read interpolation
+    and fails closed on bare-ident interpolations, so no input
+    F726 decodes reaches a decode here, and no input this
+    decodes was decoded before (red-first verified: 2 BREAK on
+    the open tree). Tried after F726's route. None falls through
+    like F726. The F726 hook and its trailing `return` are
+    untouched (wave-379 lesson).
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    multi-decl, reassignment, extra statements, a non-template
+    non-literal return term, a member/call term outside a
+    template, a bare-ident interpolation, a missing or
+    method-valued member key, a numeric member, a template with
+    no member-read interpolation, a literal-only return.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    if not _js_peek_arguments_iife_head(text, i):
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j) + len("function")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_f726_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            return None  # not a decl
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            return None
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "{":
+            return None  # not an object binding
+        props, sj = _js_parse_f697_object(text, sj, depth, state)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F760 no return")
+        sj = _js_skip_ws(text, m)
+        saw_template = False
+        saw_member = False
+        parts = []
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                term, sj = _js_parse_string(text, sj)
+            elif sj < n and text[sj] == "`":
+                term, sj, tm = _js_parse_f760_template_member(
+                    text, sj, depth, state, oname, props)
+                saw_template = True
+                saw_member = saw_member or tm
+            else:
+                raise _JSExprFail("F760 return term not modeled")
+            parts.append(term)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("concat too long")
+        if not (saw_template and saw_member):
+            # Disjointness: a literal-only return belongs to an
+            # earlier route, and a member-free template belongs to
+            # F457's domain -- do not claim either.
+            return None
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F760 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f702f703_assign_getter_iife(text, i, depth, state):
     """Parse `(function(){DECL;* return ADD;})()` at text[i] (F702/F703).
 
@@ -45525,20 +45747,32 @@ def _js_f697_toprimitive(props, depth, state):
     non-callables as absent), and the inherited
     Object.prototype.valueOf returns the object itself
     (non-primitive, skipped). A method body that does not resolve
-    to a string fails closed (never mis-decoded). Rationale (node
-    v24.20.0): a body returning an Object makes the engine throw
-    (valueOf/toString fall through to the next method;
-    @@toPrimitive propagates the throw) -- correctly refused;
-    but a body returning a non-string PRIMITIVE (number/boolean)
-    does NOT throw -- the engine String()-coerces it -- so this
-    fail-closed is a genuine decoder miss on a live channel,
-    filed as F762 (fail-safe direction). The documented residual is
+    to a string fails closed (never mis-decoded): the engine only
+    tries the next method when the call RETURNS a non-primitive --
+    a throwing body propagates, so falling through on an
+    unevaluable body would over-decode. An own NON-callable
+    [Symbol.toPrimitive] makes the engine's GetMethod throw
+    TypeError with no fall-through to valueOf/toString (F761,
+    node v24.20.0) -- this fails closed rather than skipping it
+    as absent. Rationale (node v24.20.0): a body returning an
+    Object makes the engine throw (valueOf/toString fall through
+    to the next method; @@toPrimitive propagates the throw) --
+    correctly refused; but a body returning a non-string PRIMITIVE
+    (number/boolean) does NOT throw -- the engine String()-coerces
+    it -- so this fail-closed is a genuine decoder miss on a live
+    channel, filed as F794 (fail-safe direction). The documented
+    residual is
     the `this.missing` (undefined-returning) body, which the engine
     would continue past but the decoder fails closed on. Never
     evals.
     """
     recv = _JSObj(props)
     tp = props.get(("symbol", "toPrimitive"))
+    if ("symbol", "toPrimitive") in props and not isinstance(tp, _JSF67xBody):
+        # F761: the engine's GetMethod throws TypeError on an own
+        # non-callable @@toPrimitive (no fall-through to
+        # valueOf/toString) -- fail closed, never mis-decode.
+        raise _JSExprFail("F697 toPrimitive non-callable")
     if isinstance(tp, _JSF67xBody):
         # No fallback in the engine: a throwing [Symbol.toPrimitive]
         # propagates -- an unevaluable body fails closed.
@@ -63608,6 +63842,26 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                     state)
         if _f726 is not None:
             val, i = _f726
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F760: (function(){var o={...};return `...${o.x}...`;})() --
+        #   template-literal member-read interpolations on a
+        #   var-bound literal object. Tried after F726: F726 fails
+        #   closed on member-read interpolations (its interpolation
+        #   parser raises on anything but the bare bound ident) and
+        #   requires an own coercion method; this requires at least
+        #   one member-read interpolation and fails closed on
+        #   bare-ident interpolations (red-first verified: 2 BREAK
+        #   on the open tree), so no previously-decoded input
+        #   changes behavior. None falls through like F726. The
+        #   F726 hook and its trailing `return` are untouched
+        #   (wave-379 lesson).
+        _f760_saved_parts = state['parts']; _f760_saved_ops = state['ops']
+        _f760 = _js_parse_f760_template_member_iife(text, i, depth,
+                                                    state)
+        if _f760 is None:
+            state['parts'] = _f760_saved_parts; state['ops'] = _f760_saved_ops
+        if _f760 is not None:
+            val, i = _f760
             return _js_parse_postfix(text, i, val, depth, state)
         # F729: (function(){var|let|const NAME='LIT';void OPERAND;
         #   return EXPR;})() -- void-operator statements (the void
