@@ -6769,9 +6769,25 @@ def _js_parse_array_from(text, j, state):
         raise _JSExprFail("from source not modeled")
     j = _js_skip_ws(text, j)
     if j < n and text[j] == ",":
-        _me, _stringifies = _js_parse_map_callback(text,
-                                                   _js_skip_ws(text,
-                                                               j + 1))
+        _mf = _js_skip_ws(text, j + 1)
+        try:
+            _me, _stringifies = _js_parse_map_callback(text, _mf)
+        except _JSExprFail:
+            # F939: Array.from([...], FCC_CB) -- the fromCharCode
+            # mapper. Tried after the identity mapper (which fails
+            # closed on any non-identity callback), so no
+            # previously-decoded input changes behavior. Budget
+            # snapshot/restore on miss (wave-383 lesson).
+            _f939m_saved = dict(state)
+            try:
+                _me, _mapped = _js_parse_f939_from_mapper(text, _mf,
+                                                         arr, state)
+            except _JSExprFail:
+                state.clear()
+                state.update(_f939m_saved)
+                raise
+            arr = _JSArr(_mapped)
+            _stringifies = False
         if _stringifies:
             raise _JSExprFail("from String mapper not modeled")
         j = _js_skip_ws(text, _me)
@@ -61697,6 +61713,1553 @@ def _js_parse_f933_string_forof_iife(text, i, depth, state):
         return None
 
 
+
+def _js_parse_f93x_int_array(text, j):
+    """Parse `[INT, INT, ...]` at text[j] (F937).
+
+    Elements use the F458 integer-literal spellings
+    (_js_parse_fcc_number -- decimal, hex, octal, binary, legacy
+    octal, separators; node v24.20.0). Returns (spans, next_index):
+    the raw source span of each element -- spans feed the shared
+    String.fromCharCode production, so per-element decoding is
+    faithful to the direct call form by construction. Holes,
+    trailing commas, and non-integer elements fail closed. Never
+    evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F93x not an int array")
+    j += 1
+    spans = []
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "]":
+        return spans, j + 1
+    while True:
+        j = _js_skip_ws(text, j)
+        k0 = j
+        _, j = _js_parse_fcc_number(text, j)
+        spans.append(text[k0:j])
+        if len(spans) > 512:
+            raise _JSExprFail("F93x int array too long")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "]":
+                raise _JSExprFail("F93x trailing comma")
+            continue
+        if j < n and text[j] == "]":
+            return spans, j + 1
+        raise _JSExprFail("F93x bad int array")
+
+
+def _js_parse_f93x_str_array(text, j):
+    """Parse `['LIT', ...]` at text[j] (F938).
+
+    Plain string-literal elements only (escapes decoded by
+    _js_parse_string); numbers, nested arrays, holes, and trailing
+    commas fail closed. Returns (values, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F93x not a str array")
+    j += 1
+    vals = []
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "]":
+        return vals, j + 1
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F93x non-string element")
+        lit, j = _js_parse_string(text, j)
+        vals.append(lit)
+        if len(vals) > 512:
+            raise _JSExprFail("F93x str array too long")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "]":
+                raise _JSExprFail("F93x trailing comma")
+            continue
+        if j < n and text[j] == "]":
+            return vals, j + 1
+        raise _JSExprFail("F93x bad str array")
+
+
+def _js_f93x_decode_fcc(span, state):
+    """Decode `String.fromCharCode(<span>)` (F937/F939/F940).
+
+    Routes through the shared F458/F500 production, so the
+    per-element decode carries exactly the direct-call semantics
+    (integer-literal spellings, codepoint bounds, surrogate
+    fail-closed) -- faithful by construction. Never evals.
+    """
+    val, _ = _js_parse_fromcharcode(
+        "String.fromCharCode(" + span + ")", 0, state)
+    return val
+
+
+def _js_f93x_parse_accum_decls(stmts, j, want, seen=None, partial=False):
+    """Parse the F937/F938 declaration prelude at stmts[j].
+
+    want is "fcc" (F937: one int array, one '' accumulator,
+    optional 0 index) or "frag" (F938: one string array, one ''
+    accumulator, optional 0 index). Bindings are var|let -- const
+    fails closed (the accumulator reassignment would throw in the
+    engine). One or more declaration statements; anything else
+    (non-empty strings, non-zero indexes, duplicate names,
+    reserved names) fails closed. seen is an optional existing
+    binding set (extended in place); partial skips the
+    completeness requirement (the caller validates). Returns
+    (arrname, array, accname, idxname, seen, next_index) where
+    array is the int spans (F937) or string values (F938). Never
+    evals.
+    """
+    n = len(stmts)
+    arrname = accname = idxname = None
+    array = None
+    if seen is None:
+        seen = set()
+    sj = _js_skip_ws(stmts, j)
+    while True:
+        kw, m = _js_match_decl_kw(stmts, sj)
+        if kw is None:
+            break
+        if kw == "const":
+            raise _JSExprFail("F93x const decl")
+        m = _js_skip_ws(stmts, m)
+        while True:
+            name, m = _js_parse_ident(stmts, m)
+            if (name in seen or name == "arguments"
+                    or name in _F611_RESERVED):
+                raise _JSExprFail("F93x bad decl name")
+            m = _js_expect(stmts, m, "=")
+            m = _js_skip_ws(stmts, m)
+            if m < n and stmts[m] == "[":
+                if want == "fcc":
+                    arr, m = _js_parse_f93x_int_array(stmts, m)
+                else:
+                    arr, m = _js_parse_f93x_str_array(stmts, m)
+                if arrname is not None:
+                    raise _JSExprFail("F93x two arrays")
+                arrname, array = name, arr
+            elif m < n and stmts[m] in "'\"":
+                q0 = m
+                _, m = _js_parse_string(stmts, m)
+                if stmts[q0:m] != "''" and stmts[q0:m] != '""':
+                    raise _JSExprFail("F93x accum not empty")
+                if accname is not None:
+                    raise _JSExprFail("F93x two accums")
+                accname = name
+            else:
+                num, m = _js_parse_canonical_int(stmts, m, "F93x")
+                if int(num) != 0:
+                    raise _JSExprFail("F93x index not zero")
+                if idxname is not None:
+                    raise _JSExprFail("F93x two indexes")
+                idxname = name
+            seen.add(name)
+            m = _js_skip_ws(stmts, m)
+            if m < n and stmts[m] == ",":
+                m = _js_skip_ws(stmts, m + 1)
+                continue
+            break
+        sj = _js_expect(stmts, m, ";")
+        sj = _js_skip_ws(stmts, sj)
+    if not partial:
+        if accname is None:
+            raise _JSExprFail("F93x no accumulator")
+        if arrname is None:
+            raise _JSExprFail("F93x no array")
+    return arrname, array, accname, idxname, seen, sj
+
+
+def _js_f93x_parse_accum_head(stmts, j, acc):
+    """Parse the `ACC+=` / `ACC=ACC+` head of an accumulation statement (F937/F938).
+
+    Returns next_index just past the `+=` / `+`. Never evals.
+    """
+    n = len(stmts)
+    a2, j = _js_parse_ident(stmts, j)
+    if a2 != acc:
+        raise _JSExprFail("F93x accum mismatch")
+    j = _js_skip_ws(stmts, j)
+    if j + 1 < n and stmts[j] == "+" and stmts[j + 1] == "=":
+        return _js_skip_ws(stmts, j + 2)
+    if j < n and stmts[j] == "=":
+        j = _js_skip_ws(stmts, j + 1)
+        a3, j = _js_parse_ident(stmts, j)
+        if a3 != acc:
+            raise _JSExprFail("F93x accum rhs mismatch")
+        j = _js_skip_ws(stmts, j)
+        if j >= n or stmts[j] != "+":
+            raise _JSExprFail("F93x not accum concat")
+        if j + 1 < n and stmts[j + 1] in "+=":
+            raise _JSExprFail("F93x not additive plus")
+        return _js_skip_ws(stmts, j + 1)
+    raise _JSExprFail("F93x body not accum")
+
+
+def _js_f93x_parse_fcc_arg(stmts, j):
+    """Parse `String.fromCharCode(` at stmts[j] (F937); returns past `(`."""
+    fcm = _js_match_kw(stmts, j, "String")
+    if fcm is None:
+        raise _JSExprFail("F93x not fromCharCode")
+    j = _js_expect(stmts, fcm, ".")
+    fcm = _js_match_kw(stmts, _js_skip_ws(stmts, j), "fromCharCode")
+    if fcm is None:
+        raise _JSExprFail("F93x not fromCharCode")
+    return _js_expect(stmts, fcm, "(")
+
+
+def _js_f93x_parse_accum_fcc_index(stmts, j, acc, arrname, idxname):
+    """Parse `ACC+=String.fromCharCode(ARR[IDX]);` / `ACC=ACC+...;` (F937).
+
+    The indexed form over the loop's array. Returns next_index past
+    the `;`. Never evals.
+    """
+    j = _js_f93x_parse_accum_head(stmts, j, acc)
+    j = _js_f93x_parse_fcc_arg(stmts, j)
+    a2, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if a2 != arrname:
+        raise _JSExprFail("F93x elem not our array")
+    j = _js_expect(stmts, j, "[")
+    i2, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if i2 != idxname:
+        raise _JSExprFail("F93x elem not our index")
+    j = _js_expect(stmts, j, "]")
+    j = _js_expect(stmts, j, ")")
+    return _js_expect(stmts, j, ";")
+
+
+def _js_f93x_parse_accum_fcc_var(stmts, j, acc, loopvar):
+    """Parse `ACC+=String.fromCharCode(VAR);` / `ACC=ACC+...;` (F937 for-of).
+
+    The loop-variable form. Returns next_index past the `;`. Never
+    evals.
+    """
+    j = _js_f93x_parse_accum_head(stmts, j, acc)
+    j = _js_f93x_parse_fcc_arg(stmts, j)
+    v2, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if v2 != loopvar:
+        raise _JSExprFail("F93x elem not our loopvar")
+    j = _js_expect(stmts, j, ")")
+    return _js_expect(stmts, j, ";")
+
+
+def _js_f93x_parse_accum_index(stmts, j, acc, arrname, idxname):
+    """Parse `ACC+=ARR[IDX];` / `ACC=ACC+ARR[IDX];` (F938)."""
+    j = _js_f93x_parse_accum_head(stmts, j, acc)
+    a2, j = _js_parse_ident(stmts, j)
+    if a2 != arrname:
+        raise _JSExprFail("F93x elem not our array")
+    j = _js_expect(stmts, j, "[")
+    i2, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if i2 != idxname:
+        raise _JSExprFail("F93x elem not our index")
+    j = _js_expect(stmts, j, "]")
+    return _js_expect(stmts, j, ";")
+
+
+def _js_f93x_parse_accum_var(stmts, j, acc, loopvar):
+    """Parse `ACC+=VAR;` / `ACC=ACC+VAR;` (F938 for-of / nested-func)."""
+    j = _js_f93x_parse_accum_head(stmts, j, acc)
+    v2, j = _js_parse_ident(stmts, j)
+    if v2 != loopvar:
+        raise _JSExprFail("F93x elem not our loopvar")
+    return _js_expect(stmts, j, ";")
+
+
+def _js_f93x_parse_accum_shift(stmts, j, acc, arrname):
+    """Parse `ACC+=ARR.shift();` / `ACC=ACC+ARR.shift();` (F938 while)."""
+    j = _js_f93x_parse_accum_head(stmts, j, acc)
+    a2, j = _js_parse_ident(stmts, j)
+    if a2 != arrname:
+        raise _JSExprFail("F93x shift not our array")
+    j = _js_expect(stmts, j, ".")
+    sm = _js_match_kw(stmts, _js_skip_ws(stmts, j), "shift")
+    if sm is None:
+        raise _JSExprFail("F93x not shift")
+    j = _js_expect(stmts, sm, "(")
+    j = _js_expect(stmts, j, ")")
+    return _js_expect(stmts, j, ";")
+
+
+def _js_f93x_parse_for_cindex(stmts, j, arrname, seen):
+    """Parse `for(var|let I=0;I<ARR.length;I++)` at stmts[j] (F937/F938).
+
+    The index is always loop-declared (var|let -- const would throw
+    on I++ in the engine) and must not shadow an existing binding.
+    Returns (idxname, next_index) just past `)`. Never evals.
+    """
+    fm = _js_match_kw(stmts, j, "for")
+    if fm is None:
+        raise _JSExprFail("F93x no for")
+    j = _js_expect(stmts, fm, "(")
+    kw, j = _js_match_decl_kw(stmts, _js_skip_ws(stmts, j))
+    if kw is None or kw == "const":
+        raise _JSExprFail("F93x index not var/let")
+    j = _js_skip_ws(stmts, j)
+    idxname, j = _js_parse_ident(stmts, j)
+    if idxname in seen:
+        raise _JSExprFail("F93x index shadows binding")
+    j = _js_expect(stmts, j, "=")
+    num, j = _js_parse_canonical_int(stmts, _js_skip_ws(stmts, j),
+                                     "F93x")
+    if int(num) != 0:
+        raise _JSExprFail("F93x index not zero")
+    j = _js_expect(stmts, j, ";")
+    i2, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if i2 != idxname:
+        raise _JSExprFail("F93x cond not our index")
+    j = _js_expect(stmts, j, "<")
+    a2, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if a2 != arrname:
+        raise _JSExprFail("F93x cond not our array")
+    j = _js_expect(stmts, j, ".")
+    lm = _js_match_kw(stmts, _js_skip_ws(stmts, j), "length")
+    if lm is None:
+        raise _JSExprFail("F93x cond not length")
+    j = _js_expect(stmts, lm, ";")
+    i3, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if i3 != idxname:
+        raise _JSExprFail("F93x incr not our index")
+    j = _js_skip_ws(stmts, j)
+    if not stmts.startswith("++", j):
+        raise _JSExprFail("F93x incr not ++")
+    j = _js_expect(stmts, _js_skip_ws(stmts, j + 2), ")")
+    return idxname, j
+
+
+def _js_f93x_parse_while_cindex(stmts, j, arrname, idxname):
+    """Parse `while(IDX<ARR.length)` at stmts[j] (F937/F938).
+
+    The index must be pre-bound to 0 in the declaration prelude.
+    Returns next_index just past `)`. Never evals.
+    """
+    if idxname is None:
+        raise _JSExprFail("F93x while needs bound index")
+    wm = _js_match_kw(stmts, j, "while")
+    if wm is None:
+        raise _JSExprFail("F93x no while")
+    j = _js_expect(stmts, wm, "(")
+    i2, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if i2 != idxname:
+        raise _JSExprFail("F93x while cond not our index")
+    j = _js_expect(stmts, j, "<")
+    a2, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if a2 != arrname:
+        raise _JSExprFail("F93x while cond not our array")
+    j = _js_expect(stmts, j, ".")
+    lm = _js_match_kw(stmts, _js_skip_ws(stmts, j), "length")
+    if lm is None:
+        raise _JSExprFail("F93x while cond not length")
+    return _js_expect(stmts, lm, ")")
+
+
+def _js_f93x_parse_while_shift(stmts, j, arrname):
+    """Parse `while(ARR.length)` at stmts[j] (F938 shift form)."""
+    wm = _js_match_kw(stmts, j, "while")
+    if wm is None:
+        raise _JSExprFail("F93x no while")
+    j = _js_expect(stmts, wm, "(")
+    a2, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if a2 != arrname:
+        raise _JSExprFail("F93x while not our array")
+    j = _js_expect(stmts, j, ".")
+    lm = _js_match_kw(stmts, _js_skip_ws(stmts, j), "length")
+    if lm is None:
+        raise _JSExprFail("F93x while not length")
+    return _js_expect(stmts, lm, ")")
+
+
+def _js_f93x_parse_incr_stmt(stmts, j, idxname):
+    """Parse `IDX++;` at stmts[j] (F937/F938 while/do bodies)."""
+    i2, j = _js_parse_ident(stmts, j)
+    if i2 != idxname:
+        raise _JSExprFail("F93x incr not our index")
+    j = _js_skip_ws(stmts, j)
+    if not stmts.startswith("++", j):
+        raise _JSExprFail("F93x incr not ++")
+    return _js_expect(stmts, _js_skip_ws(stmts, j + 2), ";")
+
+
+def _js_f93x_parse_forof(stmts, j, acc, seen, want, arrname, array):
+    """Parse `for(var|let|const V of SRC)` at stmts[j] (F937/F938).
+
+    want is "fcc" (F937: SRC is an int-literal array or the name of
+    the prelude-bound int array) or "frag" (F938: SRC is a
+    string-literal array or the prelude-bound string array).
+    Returns (loopvar, spans_or_values, next_index) just past `)`.
+    Never evals.
+    """
+    n = len(stmts)
+    fm = _js_match_kw(stmts, j, "for")
+    if fm is None:
+        raise _JSExprFail("F93x no for")
+    j = _js_expect(stmts, fm, "(")
+    kw, j = _js_match_decl_kw(stmts, _js_skip_ws(stmts, j))
+    if kw is None:
+        raise _JSExprFail("F93x loopvar not var/let/const")
+    j = _js_skip_ws(stmts, j)
+    loopvar, j = _js_parse_ident(stmts, j)
+    if loopvar in seen or loopvar == acc:
+        raise _JSExprFail("F93x loopvar shadows binding")
+    j = _js_skip_ws(stmts, j)
+    om = _js_match_kw(stmts, j, "of")
+    if om is None:
+        raise _JSExprFail("F93x no of")
+    j = _js_skip_ws(stmts, om)
+    if j < n and stmts[j] == "[":
+        if want == "fcc":
+            spans, j = _js_parse_f93x_int_array(stmts, j)
+        else:
+            spans, j = _js_parse_f93x_str_array(stmts, j)
+    else:
+        a2, j = _js_parse_ident(stmts, j)
+        if a2 != arrname:
+            raise _JSExprFail("F93x for-of not our array")
+        spans = array
+    j = _js_expect(stmts, j, ")")
+    return loopvar, spans, j
+
+
+def _js_f93x_charge(state):
+    """Charge one F452 part for a loop iteration (F937/F938)."""
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("F93x too many parts")
+
+
+def _js_f937_parse_for_cindex_loop(stmts, sj, arrname, spans, acc,
+                                 seen, state):
+    """Parse the F937 for-index loop; returns (val, next_index)."""
+    idx, sj = _js_f93x_parse_for_cindex(stmts, sj, arrname, seen)
+    sj = _js_skip_ws(stmts, sj)
+    braced = False
+    if sj < len(stmts) and stmts[sj] == "{":
+        braced = True
+        sj = _js_skip_ws(stmts, sj + 1)
+    sj = _js_f93x_parse_accum_fcc_index(stmts, _js_skip_ws(stmts, sj),
+                                       acc, arrname, idx)
+    if braced:
+        sj = _js_expect(stmts, _js_skip_ws(stmts, sj), "}")
+    val = ""
+    for k in range(len(spans)):
+        piece = _js_f93x_decode_fcc(spans[k], state)
+        if len(val) + len(piece) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F937 accum too long")
+        val += piece
+        _js_f93x_charge(state)
+    return val, sj
+
+
+def _js_f937_parse_while_loop(stmts, sj, arrname, spans, acc, idxname,
+                              state):
+    """Parse the F937 while loop; returns (val, next_index)."""
+    sj = _js_f93x_parse_while_cindex(stmts, sj, arrname, idxname)
+    # Braced body required: {ACC+=...;I++;} in order. An unbraced
+    # single-statement body could not increment the index (infinite
+    # loop in the engine), so it fails closed.
+    sj = _js_expect(stmts, _js_skip_ws(stmts, sj), "{")
+    sj = _js_f93x_parse_accum_fcc_index(stmts, _js_skip_ws(stmts, sj),
+                                       acc, arrname, idxname)
+    sj = _js_f93x_parse_incr_stmt(stmts, _js_skip_ws(stmts, sj),
+                                 idxname)
+    sj = _js_expect(stmts, _js_skip_ws(stmts, sj), "}")
+    val = ""
+    k = 0
+    while k < len(spans):
+        piece = _js_f93x_decode_fcc(spans[k], state)
+        if len(val) + len(piece) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F937 accum too long")
+        val += piece
+        _js_f93x_charge(state)
+        k += 1
+    return val, sj
+
+
+def _js_f937_parse_do_loop(stmts, sj, arrname, spans, acc, idxname,
+                           state):
+    """Parse the F937 do-while loop; returns (val, next_index)."""
+    dm = _js_match_kw(stmts, sj, "do")
+    if dm is None:
+        raise _JSExprFail("F937 no do")
+    sj = _js_expect(stmts, _js_skip_ws(stmts, dm), "{")
+    sj = _js_f93x_parse_accum_fcc_index(stmts, _js_skip_ws(stmts, sj),
+                                       acc, arrname, idxname)
+    sj = _js_f93x_parse_incr_stmt(stmts, _js_skip_ws(stmts, sj),
+                                 idxname)
+    sj = _js_expect(stmts, _js_skip_ws(stmts, sj), "}")
+    wat = _js_skip_ws(stmts, sj)
+    if _js_match_kw(stmts, wat, "while") is None:
+        raise _JSExprFail("F937 no while")
+    sj = _js_f93x_parse_while_cindex(stmts, wat, arrname, idxname)
+    sj = _js_expect(stmts, sj, ";")
+    if not spans:
+        # do-while executes the body once even over an empty array;
+        # C[0] is undefined there -- the direct fromCharCode form
+        # fails closed on it, so this fails closed too (never
+        # mis-decoded).
+        raise _JSExprFail("F937 do-while over empty array")
+    val = ""
+    for k in range(len(spans)):
+        piece = _js_f93x_decode_fcc(spans[k], state)
+        if len(val) + len(piece) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F937 accum too long")
+        val += piece
+        _js_f93x_charge(state)
+    return val, sj
+
+
+def _js_f937_parse_forof_loop(stmts, sj, acc, seen, arrname, spans,
+                              state):
+    """Parse the F937 for-of loop; returns (val, next_index)."""
+    loopvar, espans, sj = _js_f93x_parse_forof(stmts, sj, acc, seen,
+                                              "fcc", arrname, spans)
+    sj = _js_skip_ws(stmts, sj)
+    braced = False
+    if sj < len(stmts) and stmts[sj] == "{":
+        braced = True
+        sj = _js_skip_ws(stmts, sj + 1)
+    sj = _js_f93x_parse_accum_fcc_var(stmts, _js_skip_ws(stmts, sj),
+                                     acc, loopvar)
+    if braced:
+        sj = _js_expect(stmts, _js_skip_ws(stmts, sj), "}")
+    val = ""
+    for k in range(len(espans)):
+        piece = _js_f93x_decode_fcc(espans[k], state)
+        if len(val) + len(piece) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F937 accum too long")
+        val += piece
+        _js_f93x_charge(state)
+    return val, sj
+
+
+def _js_f937_parse_for_loop(stmts, sj, arrname, spans, acc, seen,
+                            idxname, state):
+    """Parse the F937 for-loop (index or for-of form); returns (val, next)."""
+    sp, so = state["parts"], state["ops"]
+    try:
+        return _js_f937_parse_for_cindex_loop(stmts, sj, arrname,
+                                              spans, acc, seen, state)
+    except _JSExprFail:
+        state["parts"], state["ops"] = sp, so
+    return _js_f937_parse_forof_loop(stmts, sj, acc, seen, arrname,
+                                     spans, state)
+
+
+def _js_parse_f937_charcode_loop_iife(text, i, depth, state):
+    """Parse statement-level char-code accumulation loop IIFEs (F937).
+
+    `(function(){var|let C=[INT,...],S='',I=0;LOOP;return S;})()`
+    where LOOP is one of:
+    - `for(var|let J=0;J<C.length;J++){S+=String.fromCharCode(C[J]);}`
+    - `while(J<C.length){S+=String.fromCharCode(C[J]);J++;}`
+    - `for(var|let|const X of [INT,...]|C){S+=String.fromCharCode(X);}`
+    - `do{S+=String.fromCharCode(C[J]);J++;}while(J<C.length);`
+    (J pre-bound to 0 for the while/do forms; the `S=S+...` twin of
+    each body is admitted, engine-identical.)
+
+    Node-exact desugar (v24.20.0): each iteration appends
+    String.fromCharCode of the current code integer, decoded
+    through the shared F458 production (integer-literal spellings,
+    codepoint bounds -- faithful by construction). Loop bounds are
+    literal, so the iteration count is exact; one F452 part is
+    charged per iteration. Returns (value, next_index), or None on
+    mismatch. Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    const decls, non-empty accumulator inits, non-zero index inits,
+    non-literal bounds, `J+=1` increments, unbraced while/do
+    bodies, do-while over an empty array (the body reads C[0] =
+    undefined there -- the direct form fails closed on it), extra
+    statements, call args on the IIFE.
+
+    Tried after F933: F933's for-of requires a string-literal or
+    Array.from-entries source with an `S+=E` element body -- every
+    shape accepted here fails F933's source/body grammar closed
+    (red-first verified: 5 BREAK on the open tree), so no
+    previously-decoded input changes behavior. Budget
+    snapshot/restore on miss (wave-383 lesson).
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            raise _JSExprFail("F937 not our head")
+        inner_start, inner_end, j = _js_span_braced(text, j)
+        stmts = text[inner_start:inner_end]
+        arrname, spans, acc, idxname, seen, sj = \
+            _js_f93x_parse_accum_decls(stmts, 0, "fcc", partial=True)
+        if acc is None:
+            raise _JSExprFail("F937 no accumulator")
+        sj = _js_skip_ws(stmts, sj)
+        if _js_match_kw(stmts, sj, "for") is not None:
+            val, sj = _js_f937_parse_for_loop(stmts, sj, arrname,
+                                              spans, acc, seen,
+                                              idxname, state)
+        elif _js_match_kw(stmts, sj, "while") is not None:
+            if arrname is None:
+                raise _JSExprFail("F937 while needs array")
+            val, sj = _js_f937_parse_while_loop(stmts, sj, arrname,
+                                               spans, acc, idxname,
+                                               state)
+        elif _js_match_kw(stmts, sj, "do") is not None:
+            if arrname is None:
+                raise _JSExprFail("F937 do needs array")
+            val, sj = _js_f937_parse_do_loop(stmts, sj, arrname,
+                                            spans, acc, idxname,
+                                            state)
+        else:
+            raise _JSExprFail("F937 no loop head")
+        _js_parse_f6xx_return_acc(stmts, _js_skip_ws(stmts, sj), acc)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
+def _js_f938_parse_for_cindex_loop(stmts, sj, arrname, array, acc,
+                                 seen, state):
+    """Parse the F938 for-index loop; returns (val, next_index)."""
+    idx, sj = _js_f93x_parse_for_cindex(stmts, sj, arrname, seen)
+    sj = _js_skip_ws(stmts, sj)
+    braced = False
+    if sj < len(stmts) and stmts[sj] == "{":
+        braced = True
+        sj = _js_skip_ws(stmts, sj + 1)
+    sj = _js_f93x_parse_accum_index(stmts, _js_skip_ws(stmts, sj),
+                                   acc, arrname, idx)
+    if braced:
+        sj = _js_expect(stmts, _js_skip_ws(stmts, sj), "}")
+    val = ""
+    for k in range(len(array)):
+        piece = array[k]
+        if len(val) + len(piece) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F938 accum too long")
+        val += piece
+        _js_f93x_charge(state)
+    return val, sj
+
+
+def _js_f938_parse_while_shift_loop(stmts, sj, arrname, array, acc,
+                                   state):
+    """Parse the F938 `while(ARR.length){ACC+=ARR.shift();}` loop."""
+    sj = _js_f93x_parse_while_shift(stmts, sj, arrname)
+    # Braced body required (an unbraced single-statement body is the
+    # same shape -- admit it too: the shift is the only statement).
+    sj = _js_skip_ws(stmts, sj)
+    braced = False
+    if sj < len(stmts) and stmts[sj] == "{":
+        braced = True
+        sj = _js_skip_ws(stmts, sj + 1)
+    sj = _js_f93x_parse_accum_shift(stmts, _js_skip_ws(stmts, sj),
+                                   acc, arrname)
+    if braced:
+        sj = _js_expect(stmts, _js_skip_ws(stmts, sj), "}")
+    # Node-exact: shift() removes and returns the first element per
+    # iteration until the array is empty.
+    vals = list(array)
+    val = ""
+    while vals:
+        piece = vals.pop(0)
+        if len(val) + len(piece) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F938 accum too long")
+        val += piece
+        _js_f93x_charge(state)
+    return val, sj
+
+
+def _js_f938_parse_forof_loop(stmts, sj, acc, seen, arrname, array,
+                              state):
+    """Parse the F938 for-of loop; returns (val, next_index)."""
+    loopvar, vals, sj = _js_f93x_parse_forof(stmts, sj, acc, seen,
+                                            "frag", arrname, array)
+    sj = _js_skip_ws(stmts, sj)
+    braced = False
+    if sj < len(stmts) and stmts[sj] == "{":
+        braced = True
+        sj = _js_skip_ws(stmts, sj + 1)
+    sj = _js_f93x_parse_accum_var(stmts, _js_skip_ws(stmts, sj),
+                                 acc, loopvar)
+    if braced:
+        sj = _js_expect(stmts, _js_skip_ws(stmts, sj), "}")
+    val = ""
+    for k in range(len(vals)):
+        piece = vals[k]
+        if len(val) + len(piece) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F938 accum too long")
+        val += piece
+        _js_f93x_charge(state)
+    return val, sj
+
+
+def _js_f938_parse_do_loop(stmts, sj, arrname, array, acc, idxname,
+                           state):
+    """Parse the F938 do-while loop; returns (val, next_index)."""
+    dm = _js_match_kw(stmts, sj, "do")
+    if dm is None:
+        raise _JSExprFail("F938 no do")
+    sj = _js_expect(stmts, _js_skip_ws(stmts, dm), "{")
+    sj = _js_f93x_parse_accum_index(stmts, _js_skip_ws(stmts, sj),
+                                   acc, arrname, idxname)
+    sj = _js_f93x_parse_incr_stmt(stmts, _js_skip_ws(stmts, sj),
+                                 idxname)
+    sj = _js_expect(stmts, _js_skip_ws(stmts, sj), "}")
+    wat = _js_skip_ws(stmts, sj)
+    if _js_match_kw(stmts, wat, "while") is None:
+        raise _JSExprFail("F938 no while")
+    sj = _js_f93x_parse_while_cindex(stmts, wat, arrname, idxname)
+    sj = _js_expect(stmts, sj, ";")
+    if not array:
+        # do-while executes the body once even over an empty array;
+        # A[0] is undefined there -- the direct form fails closed on
+        # it, so this fails closed too (never mis-decoded).
+        raise _JSExprFail("F938 do-while over empty array")
+    val = ""
+    for k in range(len(array)):
+        piece = array[k]
+        if len(val) + len(piece) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F938 accum too long")
+        val += piece
+        _js_f93x_charge(state)
+    return val, sj
+
+
+def _js_f938_parse_labeled_loop(stmts, sj, label, arrname, array, acc,
+                                seen, state):
+    """Parse the F938 labeled-break loop (form E); returns (val, next)."""
+    fm = _js_match_kw(stmts, sj, "for")
+    if fm is None:
+        raise _JSExprFail("F938 no for")
+    sj = _js_expect(stmts, fm, "(")
+    kw, sj = _js_match_decl_kw(stmts, _js_skip_ws(stmts, sj))
+    if kw is None or kw == "const":
+        raise _JSExprFail("F938 index not var/let")
+    sj = _js_skip_ws(stmts, sj)
+    idx, sj = _js_parse_ident(stmts, sj)
+    if idx in seen:
+        raise _JSExprFail("F938 index shadows binding")
+    sj = _js_expect(stmts, sj, "=")
+    num, sj = _js_parse_canonical_int(stmts, _js_skip_ws(stmts, sj),
+                                     "F938")
+    if int(num) != 0:
+        raise _JSExprFail("F938 index not zero")
+    # Empty condition: `;;`.
+    sj = _js_expect(stmts, sj, ";")
+    sj = _js_expect(stmts, _js_skip_ws(stmts, sj), ";")
+    i3, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+    if i3 != idx:
+        raise _JSExprFail("F938 incr not our index")
+    sj = _js_skip_ws(stmts, sj)
+    if not stmts.startswith("++", sj):
+        raise _JSExprFail("F938 incr not ++")
+    sj = _js_expect(stmts, _js_skip_ws(stmts, sj + 2), ")")
+    sj = _js_expect(stmts, _js_skip_ws(stmts, sj), "{")
+    # `if(IDX>=ARR.length)break LABEL;`
+    sj = _js_skip_ws(stmts, sj)
+    im = _js_match_kw(stmts, sj, "if")
+    if im is None:
+        raise _JSExprFail("F938 no if-break")
+    sj = _js_expect(stmts, im, "(")
+    i4, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+    if i4 != idx:
+        raise _JSExprFail("F938 if not our index")
+    sj = _js_skip_ws(stmts, sj)
+    if not stmts.startswith(">=", sj):
+        raise _JSExprFail("F938 if not >=")
+    sj = _js_skip_ws(stmts, sj + 2)
+    a2, sj = _js_parse_ident(stmts, sj)
+    if a2 != arrname:
+        raise _JSExprFail("F938 if not our array")
+    sj = _js_expect(stmts, sj, ".")
+    lm = _js_match_kw(stmts, _js_skip_ws(stmts, sj), "length")
+    if lm is None:
+        raise _JSExprFail("F938 if not length")
+    sj = _js_expect(stmts, lm, ")")
+    bm = _js_match_kw(stmts, _js_skip_ws(stmts, sj), "break")
+    if bm is None:
+        raise _JSExprFail("F938 no break")
+    l2, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, bm))
+    if l2 != label:
+        raise _JSExprFail("F938 break not our label")
+    sj = _js_expect(stmts, sj, ";")
+    sj = _js_f93x_parse_accum_index(stmts, _js_skip_ws(stmts, sj),
+                                   acc, arrname, idx)
+    sj = _js_expect(stmts, _js_skip_ws(stmts, sj), "}")
+    # Node-exact: the break fires exactly when IDX reaches the
+    # array length, so every element is accumulated once in order.
+    val = ""
+    for k in range(len(array)):
+        piece = array[k]
+        if len(val) + len(piece) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F938 accum too long")
+        val += piece
+        _js_f93x_charge(state)
+    return val, sj
+
+
+def _js_f938_parse_try_loop(stmts, sj, arrname, array, acc, seen,
+                            state):
+    """Parse the F938 try-wrapped for loop (form F); returns (val, next)."""
+    tm = _js_match_kw(stmts, sj, "try")
+    if tm is None:
+        raise _JSExprFail("F938 no try")
+    sj = _js_expect(stmts, _js_skip_ws(stmts, tm), "{")
+    # The inner loop is exactly the for-index form; it cannot throw
+    # (literal bounds, string elements), so the try/catch is a
+    # no-op wrapper -- engine-exact.
+    val, sj = _js_f938_parse_for_cindex_loop(stmts, _js_skip_ws(stmts, sj),
+                                            arrname, array, acc,
+                                            seen, state)
+    sj = _js_expect(stmts, _js_skip_ws(stmts, sj), "}")
+    cm = _js_match_kw(stmts, _js_skip_ws(stmts, sj), "catch")
+    if cm is None:
+        raise _JSExprFail("F938 no catch")
+    sj = _js_skip_ws(stmts, cm)
+    if sj < len(stmts) and stmts[sj] == "(":
+        _cname, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj + 1))
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_skip_ws(stmts, sj)
+    sj = _js_expect(stmts, sj, "{")
+    sj = _js_expect(stmts, _js_skip_ws(stmts, sj), "}")
+    return val, sj
+
+
+def _js_f938_parse_accum_func(stmts, j, acc, seen):
+    """Parse `function NAME(PARAM){ACC+=PARAM;}` (F938 form G).
+
+    The nested-function accumulator. Returns (name, param,
+    next_index) just past `}`. Never evals.
+    """
+    if acc is None:
+        raise _JSExprFail("F938 func needs accumulator")
+    fm = _js_match_kw(stmts, j, "function")
+    if fm is None:
+        raise _JSExprFail("F938 no function")
+    j = _js_skip_ws(stmts, fm)
+    name, j = _js_parse_ident(stmts, j)
+    if name in seen or name == "arguments" or name in _F611_RESERVED:
+        raise _JSExprFail("F938 bad func name")
+    j = _js_expect(stmts, j, "(")
+    param, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if (param in seen or param == acc or param == "arguments"
+            or param in _F611_RESERVED):
+        raise _JSExprFail("F938 bad func param")
+    j = _js_expect(stmts, j, ")")
+    j = _js_expect(stmts, j, "{")
+    j = _js_f93x_parse_accum_var(stmts, _js_skip_ws(stmts, j),
+                                acc, param)
+    j = _js_expect(stmts, _js_skip_ws(stmts, j), "}")
+    return name, param, j
+
+
+def _js_f938_parse_funccall_loop(stmts, sj, arrname, array, acc, seen,
+                                 fname, state):
+    """Parse the F938 nested-function call loop (form G)."""
+    idx, sj = _js_f93x_parse_for_cindex(stmts, sj, arrname, seen)
+    sj = _js_skip_ws(stmts, sj)
+    braced = False
+    if sj < len(stmts) and stmts[sj] == "{":
+        braced = True
+        sj = _js_skip_ws(stmts, sj + 1)
+    f2, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+    if f2 != fname:
+        raise _JSExprFail("F938 call not our function")
+    sj = _js_expect(stmts, sj, "(")
+    a2, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+    if a2 != arrname:
+        raise _JSExprFail("F938 call arg not our array")
+    sj = _js_expect(stmts, sj, "[")
+    i2, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+    if i2 != idx:
+        raise _JSExprFail("F938 call arg not our index")
+    sj = _js_expect(stmts, sj, "]")
+    sj = _js_expect(stmts, sj, ")")
+    sj = _js_expect(stmts, sj, ";")
+    if braced:
+        sj = _js_expect(stmts, _js_skip_ws(stmts, sj), "}")
+    # Node-exact: each call appends the indexed fragment to the
+    # accumulator (the function body is exactly ACC+=PARAM).
+    val = ""
+    for k in range(len(array)):
+        piece = array[k]
+        if len(val) + len(piece) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F938 accum too long")
+        val += piece
+        _js_f93x_charge(state)
+    return val, sj
+
+
+def _js_f938_parse_while_loop(stmts, sj, arrname, array, acc, idxname,
+                              state):
+    """Parse the F938 while loop (index or shift form); returns (val, next)."""
+    sp, so = state["parts"], state["ops"]
+    # Shift form first: `while(ARR.length)` -- the cindex form's
+    # `while(IDX<...` fails it closed at the `<` expect, and vice
+    # versa, so order is irrelevant; restore budget between tries.
+    try:
+        return _js_f938_parse_while_shift_loop(stmts, sj, arrname,
+                                               array, acc, state)
+    except _JSExprFail:
+        state["parts"], state["ops"] = sp, so
+    sj2 = _js_f93x_parse_while_cindex(stmts, sj, arrname, idxname)
+    sj2 = _js_expect(stmts, _js_skip_ws(stmts, sj2), "{")
+    sj2 = _js_f93x_parse_accum_index(stmts, _js_skip_ws(stmts, sj2),
+                                    acc, arrname, idxname)
+    sj2 = _js_f93x_parse_incr_stmt(stmts, _js_skip_ws(stmts, sj2),
+                                  idxname)
+    sj2 = _js_expect(stmts, _js_skip_ws(stmts, sj2), "}")
+    val = ""
+    k = 0
+    while k < len(array):
+        piece = array[k]
+        if len(val) + len(piece) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F938 accum too long")
+        val += piece
+        _js_f93x_charge(state)
+        k += 1
+    return val, sj2
+
+
+def _js_f938_parse_for_loop(stmts, sj, arrname, array, acc, seen,
+                            fname, state):
+    """Parse the F938 for-loop (cindex, for-of, or funccall form)."""
+    if fname is not None:
+        return _js_f938_parse_funccall_loop(stmts, sj, arrname, array,
+                                            acc, seen, fname, state)
+    sp, so = state["parts"], state["ops"]
+    try:
+        return _js_f938_parse_for_cindex_loop(stmts, sj, arrname,
+                                              array, acc, seen, state)
+    except _JSExprFail:
+        state["parts"], state["ops"] = sp, so
+    return _js_f938_parse_forof_loop(stmts, sj, acc, seen, arrname,
+                                     array, state)
+
+
+def _js_parse_f938_frag_loop_iife(text, i, depth, state):
+    """Parse statement-level string-fragment accumulation loop IIFEs (F938).
+
+    `(function(){var|let A=['LIT',...],S='',I=0;LOOP;return S;})()`
+    where LOOP is one of:
+    - `for(var|let J=0;J<A.length;J++){S+=A[J];}`
+    - `while(A.length){S+=A.shift();}`
+    - `for(var|let|const X of ['LIT',...]|A){S+=X;}` (the `S=S+X`
+      twin admitted, engine-identical)
+    - `do{S+=A[J];J++;}while(J<A.length);`
+    - `L:for(var|let J=0;;J++){if(J>=A.length)break L;S+=A[J];}`
+    - `try{for(var|let J=0;J<A.length;J++){S+=A[J];}}catch(E){}`
+    - `function F(X){S+=X;}` + `for(var|let J=0;J<A.length;J++)F(A[J]);`
+    (the `S=S+...` twin of each accum body admitted, engine-identical.)
+
+    Node-exact desugar (v24.20.0): each iteration appends the
+    current fragment; the while-shift form mutates the array
+    exactly as the engine does; the labeled break fires exactly at
+    the array length; the try/catch wraps a non-throwing loop
+    (literal bounds, string elements -- the catch is a no-op).
+    One F452 part per iteration. Returns (value, next_index), or
+    None on mismatch. Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    const decls, non-empty accumulator inits, non-zero index inits,
+    non-literal bounds/elements, `J+=1` increments, unbraced
+    while/do bodies, do-while over an empty array, non-empty catch
+    bodies, extra statements, call args on the IIFE.
+
+    Tried after F937: F937 requires int-array decls and
+    fromCharCode bodies -- every shape accepted here fails F937's
+    decl/body grammar closed (red-first verified: 7 BREAK on the
+    open tree), so no previously-decoded input changes behavior.
+    Budget snapshot/restore on miss (wave-383 lesson).
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            raise _JSExprFail("F938 not our head")
+        inner_start, inner_end, j = _js_span_braced(text, j)
+        stmts = text[inner_start:inner_end]
+        # Prelude: decl runs with at most one nested-function decl
+        # (form G) between them.
+        arrname = array = acc = idxname = None
+        seen = set()
+        fname = None
+        sj = 0
+        while True:
+            sj = _js_skip_ws(stmts, sj)
+            if (fname is None
+                    and _js_match_kw(stmts, sj, "function")
+                    is not None):
+                fname, _, sj = _js_f938_parse_accum_func(
+                    stmts, sj, acc, seen)
+                seen.add(fname)
+                continue
+            kw, _ = _js_match_decl_kw(stmts, sj)
+            if kw is None:
+                break
+            a2, ar2, ac2, ix2, seen, sj = \
+                _js_f93x_parse_accum_decls(stmts, sj, "frag",
+                                          seen=seen, partial=True)
+            # Merge with the bindings from earlier decl runs (the
+            # nested-function form splits them); duplicates fail
+            # closed.
+            if a2 is not None:
+                if arrname is not None:
+                    raise _JSExprFail("F938 two arrays")
+                arrname, array = a2, ar2
+            if ac2 is not None:
+                if acc is not None:
+                    raise _JSExprFail("F938 two accums")
+                acc = ac2
+            if ix2 is not None:
+                if idxname is not None:
+                    raise _JSExprFail("F938 two indexes")
+                idxname = ix2
+        if acc is None:
+            raise _JSExprFail("F938 incomplete prelude")
+        # (arrname may be None: the for-of form allows an inline
+        # array literal with no prelude array.)
+        sj = _js_skip_ws(stmts, sj)
+        # Labeled form E starts with `IDENT:` -- peek before the
+        # keyword dispatch.
+        label = None
+        t_sj = sj
+        try:
+            lab, t = _js_parse_ident(stmts, t_sj)
+            t = _js_skip_ws(stmts, t)
+            if t < len(stmts) and stmts[t] == ":" and lab not in seen:
+                label = lab
+                sj = _js_skip_ws(stmts, t + 1)
+        except _JSExprFail:
+            pass
+        if label is not None:
+            val, sj = _js_f938_parse_labeled_loop(
+                stmts, sj, label, arrname, array, acc, seen, state)
+        elif _js_match_kw(stmts, sj, "for") is not None:
+            val, sj = _js_f938_parse_for_loop(
+                stmts, sj, arrname, array, acc, seen, fname, state)
+        elif _js_match_kw(stmts, sj, "while") is not None:
+            val, sj = _js_f938_parse_while_loop(
+                stmts, sj, arrname, array, acc, idxname, state)
+        elif _js_match_kw(stmts, sj, "do") is not None:
+            val, sj = _js_f938_parse_do_loop(
+                stmts, sj, arrname, array, acc, idxname, state)
+        elif _js_match_kw(stmts, sj, "try") is not None:
+            val, sj = _js_f938_parse_try_loop(
+                stmts, sj, arrname, array, acc, seen, state)
+        else:
+            raise _JSExprFail("F938 no loop head")
+        _js_parse_f6xx_return_acc(stmts, _js_skip_ws(stmts, sj), acc)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f940_fcc_arg(text, j, p1):
+    """Parse `String.fromCharCode(P1)` at text[j] (F939/F940).
+
+    The dot member form only (the bracket-string twin is a
+    documented boundary). Returns next_index past `)`. Never
+    evals.
+    """
+    fcm = _js_match_kw(text, j, "String")
+    if fcm is None:
+        raise _JSExprFail("F93x not fromCharCode")
+    j = _js_expect(text, fcm, ".")
+    fcm = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+    if fcm is None:
+        raise _JSExprFail("F93x not fromCharCode")
+    j = _js_expect(text, fcm, "(")
+    q, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if q != p1:
+        raise _JSExprFail("F93x fcc not our param")
+    return _js_expect(text, j, ")")
+
+
+def _js_parse_f939_fcc_map_cb(text, i):
+    """Parse a fromCharCode-per-element map callback at text[i] (F939).
+
+    Forms (all node-verified, v24.20.0):
+    - `function(P){return String.fromCharCode(P);}`
+    - `(P)=>String.fromCharCode(P)` / `(P)=>{return String.fromCharCode(P);}`
+    - `P=>String.fromCharCode(P)`
+    - the IIFE-per-element twin:
+      `function(P){return (function(){return String.fromCharCode(P);})();}`
+      (the inner IIFE takes no params, so P resolves to the outer
+      callback's parameter -- engine-exact).
+    Exactly one plain-ident param (reserved/arguments names fail
+    closed). Returns (param, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if text.startswith("function", j):
+        k = j + len("function")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F939 not a function callback")
+        j = _js_skip_ws(text, k)
+        j = _js_expect(text, j, "(")
+        p, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if p == "arguments" or p in _F611_RESERVED:
+            raise _JSExprFail("F939 bad param")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "{")
+        j = _js_skip_ws(text, j)
+        rm = _js_match_kw(text, j, "return")
+        if rm is None:
+            raise _JSExprFail("F939 body not return")
+        j = _js_skip_ws(text, rm)
+        if j < n and text[j] == "(":
+            # IIFE-per-element twin.
+            j = _js_skip_ws(text, j + 1)
+            fk = _js_match_kw(text, j, "function")
+            if fk is None:
+                raise _JSExprFail("F939 not an iife")
+            j = _js_skip_ws(text, fk)
+            j = _js_expect(text, j, "(")
+            j = _js_expect(text, j, ")")
+            j = _js_expect(text, j, "{")
+            j = _js_skip_ws(text, j)
+            rm2 = _js_match_kw(text, j, "return")
+            if rm2 is None:
+                raise _JSExprFail("F939 iife not return")
+            j = _js_parse_f940_fcc_arg(text, _js_skip_ws(text, rm2),
+                                      p)
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ";":
+                j += 1
+            j = _js_expect(text, j, "}")
+            j = _js_expect(text, j, ")")
+            j = _js_expect(text, j, "(")
+            j = _js_expect(text, j, ")")
+        else:
+            j = _js_parse_f940_fcc_arg(text, j, p)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ";":
+            j += 1
+        j = _js_expect(text, j, "}")
+        return p, j
+    # Arrow forms: `(P)=>` or `P=>`, expression or block body.
+    j = _js_skip_ws(text, i)
+    if j < n and text[j] == "(":
+        p, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        if p == "arguments" or p in _F611_RESERVED:
+            raise _JSExprFail("F939 bad param")
+        j = _js_expect(text, j, ")")
+    else:
+        p, j = _js_parse_ident(text, j)
+        if p == "arguments" or p in _F611_RESERVED:
+            raise _JSExprFail("F939 bad param")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F939 not an arrow callback")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        j = _js_skip_ws(text, j + 1)
+        rm = _js_match_kw(text, j, "return")
+        if rm is None:
+            raise _JSExprFail("F939 body not return")
+        j = _js_parse_f940_fcc_arg(text, _js_skip_ws(text, rm), p)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ";":
+            j += 1
+        j = _js_expect(text, j, "}")
+    else:
+        j = _js_parse_f940_fcc_arg(text, j, p)
+    return p, j
+
+
+def _js_f939_decode_elements(elements, state, what):
+    """Decode int elements through the shared fromCharCode production (F939/F940).
+
+    Elements must be _JSNumStr or plain int (bool excluded);
+    strings, markers, and nested arrays fail closed (the direct
+    form fails closed on them too). Returns the char list. Never
+    evals.
+    """
+    chars = []
+    for e in elements:
+        if isinstance(e, bool) or not isinstance(e, (_JSNumStr, int)):
+            raise _JSExprFail(what + " over non-int element")
+        chars.append(_js_f93x_decode_fcc(str(e), state))
+        if len(chars) > 512:
+            raise _JSExprFail(what + " too long")
+    return chars
+
+
+def _js_parse_f939_fcc_map(text, i, value, depth, state):
+    """Parse `.map(FCC_CB)` over an int-element _JSArr (F939).
+
+    Each element decodes through the shared fromCharCode
+    production (node-exact per element, v24.20.0). Returns
+    (_JSArr_of_chars, next_index) just past `)` so the normal
+    postfix chain (`.join('')`) consumes it. Never evals.
+    """
+    n = len(text)
+    _, j = _js_parse_f939_fcc_map_cb(text, i)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("F939 bad map tail")
+    chars = _js_f939_decode_elements(value.elements, state,
+                                     "F939 map")
+    state["ops"] += 1  # the fromCharCode map is obfuscation-shaped
+    return _JSArr(chars), j + 1
+
+
+def _js_parse_f939_from_mapper(text, i, arr, state):
+    """Parse the F939 fromCharCode mapper in `Array.from(SRC, FCC_CB)`.
+
+    Tried after the F437 identity mapper fails closed. Returns
+    (next_index, mapped_elements). Never evals.
+    """
+    _, j = _js_parse_f939_fcc_map_cb(text, i)
+    mapped = _js_f939_decode_elements(arr.elements, state,
+                                      "F939 from-mapper")
+    state["ops"] += 1  # the fromCharCode map is obfuscation-shaped
+    return j, mapped
+
+
+def _js_parse_f939_map_return_iife(text, i, depth, state):
+    """Parse `(function(){var|let C=[INT,...];return C.map(FCC_CB).join('');})()` (F939).
+
+    Node-exact (v24.20.0): the int array is bound, mapped
+    per-element through String.fromCharCode (the F939 callback
+    forms), and joined with the empty string. The `.join('')` /
+    `.join("")` tail is required (a bare returned array is not
+    obfuscation-shaped). Returns (value, next_index), or None on
+    mismatch. Never evals.
+
+    Tried after the forEach IIFE: disjoint statement heads (a
+    `return C.map(` statement vs the forEach accumulation).
+    Budget snapshot/restore on miss (wave-383 lesson).
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            raise _JSExprFail("F939 not our head")
+        inner_start, inner_end, j = _js_span_braced(text, j)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        kw, m = _js_match_decl_kw(stmts, sj)
+        if kw is None or kw == "const":
+            raise _JSExprFail("F939 not a var/let decl")
+        m = _js_skip_ws(stmts, m)
+        arrname, m = _js_parse_ident(stmts, m)
+        if (arrname == "arguments" or arrname in _F611_RESERVED):
+            raise _JSExprFail("F939 bad array name")
+        m = _js_expect(stmts, m, "=")
+        spans, m = _js_parse_f93x_int_array(stmts, _js_skip_ws(stmts, m))
+        m = _js_expect(stmts, m, ";")
+        m = _js_skip_ws(stmts, m)
+        rm = _js_match_kw(stmts, m, "return")
+        if rm is None:
+            raise _JSExprFail("F939 no return")
+        m = _js_skip_ws(stmts, rm)
+        a2, m = _js_parse_ident(stmts, m)
+        if a2 != arrname:
+            raise _JSExprFail("F939 return not our array")
+        m = _js_expect(stmts, m, ".")
+        mn, m = _js_parse_ident(stmts, _js_skip_ws(stmts, m))
+        if mn != "map":
+            raise _JSExprFail("F939 not a map")
+        m = _js_expect(stmts, m, "(")
+        _, m = _js_parse_f939_fcc_map_cb(stmts, _js_skip_ws(stmts, m))
+        m = _js_skip_ws(stmts, m)
+        if m >= len(stmts) or stmts[m] != ")":
+            raise _JSExprFail("F939 bad map tail")
+        m = _js_expect(stmts, m + 1, ".")
+        jn, m = _js_parse_ident(stmts, _js_skip_ws(stmts, m))
+        if jn != "join":
+            raise _JSExprFail("F939 not a join")
+        m = _js_expect(stmts, m, "(")
+        m = _js_skip_ws(stmts, m)
+        if m >= len(stmts) or stmts[m] not in "'\"":
+            raise _JSExprFail("F939 join not a string")
+        sep, m = _js_parse_string(stmts, m)
+        if sep != "":
+            raise _JSExprFail("F939 join not empty")
+        m = _js_expect(stmts, m, ")")
+        m = _js_expect(stmts, m, ";")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        val = ""
+        for span in spans:
+            piece = _js_f93x_decode_fcc(span, state)
+            if len(val) + len(piece) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F939 accum too long")
+            val += piece
+            _js_f93x_charge(state)
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f939_foreach_fcc_iife(text, i, depth, state):
+    """Parse `(function(){var|let S='';[INT,...].forEach(function(C){S+=String.fromCharCode(C);});return S;})()` (F939).
+
+    Node-exact desugar (v24.20.0): Array.prototype.forEach calls
+    the callback once per element in ascending index order; the
+    body appends String.fromCharCode of the element (decoded
+    through the shared F458 production). The `S=S+...` body twin
+    is admitted, engine-identical. Returns (value, next_index),
+    or None on mismatch. Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    non-empty accumulator init, const accumulator, non-integer
+    array elements, a second callback param, non-`S+=fcc` bodies,
+    call args on the IIFE.
+
+    Tried after F938: F938's while-shift form requires
+    `while(ARR.length)` and its for-of requires `of` -- every
+    shape accepted here carries a `.forEach(` statement head that
+    F938 fails closed on (red-first verified: 6 BREAK on the open
+    tree), so no previously-decoded input changes behavior.
+    Budget snapshot/restore on miss (wave-383 lesson).
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            raise _JSExprFail("F939 not our head")
+        inner_start, inner_end, j = _js_span_braced(text, j)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        spans, sj = _js_parse_f93x_int_array(stmts, sj)
+        sj = _js_expect(stmts, sj, ".")
+        mn, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+        if mn != "forEach":
+            raise _JSExprFail("F939 not forEach")
+        sj = _js_expect(stmts, sj, "(")
+        sj = _js_skip_ws(stmts, sj)
+        # Callback: function(C){S+=String.fromCharCode(C);} or the
+        # braced-arrow twin.
+        if stmts.startswith("function", sj):
+            k = sj + len("function")
+            if k < len(stmts) and stmts[k] in _JS_IDENT_CONT:
+                raise _JSExprFail("F939 bad callback")
+            sj = _js_skip_ws(stmts, k)
+            sj = _js_expect(stmts, sj, "(")
+            param, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+            if (param == "arguments" or param in _F611_RESERVED
+                    or param == acc):
+                raise _JSExprFail("F939 bad param")
+            sj = _js_expect(stmts, sj, ")")
+            sj = _js_expect(stmts, sj, "{")
+            sj = _js_f93x_parse_accum_fcc_var(
+                stmts, _js_skip_ws(stmts, sj), acc, param)
+            sj = _js_expect(stmts, _js_skip_ws(stmts, sj), "}")
+        else:
+            # Braced-arrow twin: `(C)=>{S+=String.fromCharCode(C);}`.
+            sj = _js_skip_ws(stmts, sj)
+            if sj < len(stmts) and stmts[sj] == "(":
+                param, sj = _js_parse_ident(
+                    stmts, _js_skip_ws(stmts, sj + 1))
+                sj = _js_expect(stmts, sj, ")")
+            else:
+                param, sj = _js_parse_ident(stmts, sj)
+            if (param == "arguments" or param in _F611_RESERVED
+                    or param == acc):
+                raise _JSExprFail("F939 bad param")
+            sj = _js_skip_ws(stmts, sj)
+            if not stmts.startswith("=>", sj):
+                raise _JSExprFail("F939 not an arrow")
+            sj = _js_skip_ws(stmts, sj + 2)
+            sj = _js_expect(stmts, sj, "{")
+            sj = _js_f93x_parse_accum_fcc_var(
+                stmts, _js_skip_ws(stmts, sj), acc, param)
+            sj = _js_expect(stmts, _js_skip_ws(stmts, sj), "}")
+        sj = _js_expect(stmts, _js_skip_ws(stmts, sj), ")")
+        sj = _js_expect(stmts, sj, ";")
+        _js_parse_f6xx_return_acc(stmts, _js_skip_ws(stmts, sj), acc)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        val = ""
+        for k in range(len(spans)):
+            piece = _js_f93x_decode_fcc(spans[k], state)
+            if len(val) + len(piece) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F939 accum too long")
+            val += piece
+            _js_f93x_charge(state)
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f940_concat_expr(text, j, p0, p1):
+    """Parse `P0+String.fromCharCode(P1)` or `String.fromCharCode(P1)+P0` (F940).
+
+    The concatenation order is admitted in both directions (both
+    are node-verified shapes); the accumulator operand must be the
+    plain ident P0 and the fromCharCode argument the plain ident
+    P1. Returns (acc_first, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    save = j
+    try:
+        q, j = _js_parse_ident(text, j)
+        if q != p0:
+            raise _JSExprFail("F940 not acc")
+        j = _js_skip_ws(text, j)
+        if (j >= n or text[j] != "+"
+                or (j + 1 < n and text[j + 1] in "+=")):
+            raise _JSExprFail("F940 not concat")
+        j = _js_skip_ws(text, j + 1)
+        j = _js_parse_f940_fcc_arg(text, j, p1)
+        return True, j
+    except _JSExprFail:
+        pass
+    j = save
+    j = _js_parse_f940_fcc_arg(text, j, p1)
+    j = _js_skip_ws(text, j)
+    if (j >= n or text[j] != "+"
+            or (j + 1 < n and text[j + 1] in "+=")):
+        raise _JSExprFail("F940 not concat")
+    j = _js_skip_ws(text, j + 1)
+    q, j = _js_parse_ident(text, j)
+    if q != p0:
+        raise _JSExprFail("F940 not acc")
+    return False, j
+
+
+def _js_parse_f940_fcc_cb(text, i):
+    """Parse a fromCharCode-concat reduce callback at text[i] (F940).
+
+    Forms (all node-verified, v24.20.0), each with the concat in
+    either operand order:
+    - `function(P0,P1){return P0+String.fromCharCode(P1);}`
+    - `(P0,P1)=>P0+String.fromCharCode(P1)`
+    - `(P0,P1)=>{return P0+String.fromCharCode(P1);}`
+    Exactly two distinct plain-ident params (reserved/arguments
+    names fail closed). Returns (p0, p1, acc_first, next_index).
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if text.startswith("function", j):
+        k = j + len("function")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F940 not a function callback")
+        j = _js_skip_ws(text, k)
+        j = _js_expect(text, j, "(")
+        p0, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ",":
+            raise _JSExprFail("F940 needs two params")
+        p1, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        for p in (p0, p1):
+            if p == "arguments" or p in _F611_RESERVED:
+                raise _JSExprFail("F940 bad param")
+        if p1 == p0:
+            raise _JSExprFail("F940 duplicate params")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "{")
+        j = _js_skip_ws(text, j)
+        rm = _js_match_kw(text, j, "return")
+        if rm is None:
+            raise _JSExprFail("F940 body not return")
+        j = _js_skip_ws(text, rm)
+        acc_first, j = _js_parse_f940_concat_expr(text, j, p0, p1)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ";":
+            j += 1
+        j = _js_expect(text, j, "}")
+        return p0, p1, acc_first, j
+    # Arrow: `(P0,P1)=>EXPR` or `(P0,P1)=>{return EXPR;}`.
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("F940 not a parenthesized arrow")
+    p0, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F940 needs two params")
+    p1, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+    for p in (p0, p1):
+        if p == "arguments" or p in _F611_RESERVED:
+            raise _JSExprFail("F940 bad param")
+    if p1 == p0:
+        raise _JSExprFail("F940 duplicate params")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F940 not an arrow callback")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        j = _js_skip_ws(text, j + 1)
+        rm = _js_match_kw(text, j, "return")
+        if rm is None:
+            raise _JSExprFail("F940 body not return")
+        j = _js_skip_ws(text, rm)
+        acc_first, j = _js_parse_f940_concat_expr(text, j, p0, p1)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ";":
+            j += 1
+        j = _js_expect(text, j, "}")
+    else:
+        acc_first, j = _js_parse_f940_concat_expr(text, j, p0, p1)
+    return p0, p1, acc_first, j
+
+
+def _js_parse_f940_fcc_reduce(text, i, value, name, depth, state):
+    """Parse `.reduce(FCC_CB,'INIT')` / `.reduceRight(FCC_CB,'INIT')` (F940).
+
+    Node-exact fold (v24.20.0): with INIT the callback runs once
+    per element in ascending (reduce) or descending (reduceRight)
+    order, accumulating `acc+String.fromCharCode(elem)` (or the
+    operand-swapped twin). Each element decodes through the shared
+    fromCharCode production. The seedless form (no INIT) fails
+    closed -- its first callback call passes two ELEMENTS (not an
+    accumulator), a shape the direct form never decodes and this
+    grammar does not model (documented boundary). Returns
+    (value, next_index) just past `)`. Never evals.
+    """
+    n = len(text)
+    _, _, acc_first, j = _js_parse_f940_fcc_cb(text, i)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        # Seedless reduce: the first call's accumulator is an
+        # element, not a string -- not modeled (fail closed).
+        raise _JSExprFail("F940 needs init")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail("F940 init not a string literal")
+    init, j = _js_parse_string(text, j)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("F940 bad reduce tail")
+    chars = _js_f939_decode_elements(value.elements, state,
+                                     "F940 reduce")
+    order = chars if name == "reduce" else chars[::-1]
+    acc = init
+    for ch in order:
+        acc = acc + ch if acc_first else ch + acc
+        if len(acc) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F940 reduce too long")
+    state["ops"] += 1  # the fromCharCode reduce is obfuscation-shaped
+    return acc, j + 1
+
 def _js_parse_f896_dataview_iife(text, i, depth, state):
     """Parse the DataView non-Uint8-width IIFEs (F896).
 
@@ -86098,6 +87661,20 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         except _JSExprFail:
             state.clear()
             state.update(_f906f907_saved)
+        # F940: fromCharCode-concat reduce callbacks -- tried after
+        # F906/F907, before the F437 callback grammar. The F437
+        # grammar requires the `pA+pB` body and F873/F906F907
+        # require first/second-param returns, so none parses a
+        # fromCharCode-concat body (red-first: 3 BREAK on the open
+        # tree) -- no previously-decoded input changes behavior.
+        # Budget snapshot/restore on miss (wave-383 lesson).
+        _f940_saved = dict(state)
+        try:
+            return _js_parse_f940_fcc_reduce(text, i, value, name,
+                                             depth, state)
+        except _JSExprFail:
+            state.clear()
+            state.update(_f940_saved)
         if any(not isinstance(e, str) for e in value.elements):
             # F479: the fold assembles with JS '+'; null/undefined/
             # boolean/nested-array elements do not string-concat in the
@@ -86170,6 +87747,20 @@ def _js_apply_method_at(text, i, name, value, depth, state):
             try:
                 _kind, _mi = _js_parse_entries_projection(text, _ms)
             except _JSExprFail:
+                # F939: fromCharCode-per-element map -- tried after
+                # the F437 family (identity + entries-projection).
+                # Neither parses a fromCharCode callback (identity
+                # requires the bare param; projection requires
+                # p[0|1]), so no previously-decoded input changes
+                # behavior (red-first: 6 BREAK on the open tree).
+                # Budget snapshot/restore on miss (wave-383 lesson).
+                _f939_saved = dict(state)
+                try:
+                    return _js_parse_f939_fcc_map(text, _ms, value,
+                                                  depth, state)
+                except _JSExprFail:
+                    state.clear()
+                    state.update(_f939_saved)
                 raise _e0
             _pidx = 0 if _kind == "keys" else 1
             if not all(isinstance(_e, _JSArr)
@@ -95880,9 +97471,16 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   for-in; F640 requires for-await; F654 (OPEN) requires a
         #   bare sync-iterable for-of with no iterator-method
         #   member call, so no previously-decoded input changes
-        #   behavior.
+        #   behavior. Budget snapshot/restore on miss (wave-383
+        #   lesson): the speculative array parse charges 1 part per
+        #   element, which would otherwise starve later hooks on
+        #   long arrays (found closing F937: a 40-element array left
+        #   40 parts consumed).
+        _f651_saved_parts = state['parts']; _f651_saved_ops = state['ops']
         _f651 = _js_parse_f651_array_iter_forof_iife(text, i, depth,
                                                      state)
+        if _f651 is None:
+            state['parts'] = _f651_saved_parts; state['ops'] = _f651_saved_ops
         if _f651 is not None:
             val, i = _f651
             return _js_parse_postfix(text, i, val, depth, state)
@@ -99390,6 +100988,53 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f933_saved_parts; state['ops'] = _f933_saved_ops
         if _f933 is not None:
             val, i = _f933
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F937: statement-level char-code accumulation loop IIFEs.
+        # F937 requires int-array decls and fromCharCode bodies --
+        # disjoint from F933's string-literal for-of shapes. Budget
+        # snapshot/restore on miss (wave-383 lesson).
+        _f937_saved_parts = state['parts']; _f937_saved_ops = state['ops']
+        _f937 = _js_parse_f937_charcode_loop_iife(text, i, depth,
+                                                  state)
+        if _f937 is None:
+            state['parts'] = _f937_saved_parts; state['ops'] = _f937_saved_ops
+        if _f937 is not None:
+            val, i = _f937
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F938: statement-level string-fragment accumulation loop
+        # IIFEs. F938 requires string-array decls and plain-fragment
+        # bodies -- disjoint from F937's int-array/fromCharCode
+        # shapes. Budget snapshot/restore on miss (wave-383 lesson).
+        _f938_saved_parts = state['parts']; _f938_saved_ops = state['ops']
+        _f938 = _js_parse_f938_frag_loop_iife(text, i, depth,
+                                              state)
+        if _f938 is None:
+            state['parts'] = _f938_saved_parts; state['ops'] = _f938_saved_ops
+        if _f938 is not None:
+            val, i = _f938
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F939: forEach fromCharCode accumulation IIFE. The
+        # `.forEach(` statement head fails F938's loop grammar
+        # closed. Budget snapshot/restore on miss (wave-383 lesson).
+        _f939fe_saved_parts = state['parts']; _f939fe_saved_ops = state['ops']
+        _f939fe = _js_parse_f939_foreach_fcc_iife(text, i, depth,
+                                                  state)
+        if _f939fe is None:
+            state['parts'] = _f939fe_saved_parts; state['ops'] = _f939fe_saved_ops
+        if _f939fe is not None:
+            val, i = _f939fe
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F939: `(function(){var|let C=[INT,...];return
+        # C.map(FCC_CB).join('');})()`. The `return C.map(` head
+        # fails the forEach IIFE's grammar closed. Budget
+        # snapshot/restore on miss (wave-383 lesson).
+        _f939mr_saved_parts = state['parts']; _f939mr_saved_ops = state['ops']
+        _f939mr = _js_parse_f939_map_return_iife(text, i, depth,
+                                                 state)
+        if _f939mr is None:
+            state['parts'] = _f939mr_saved_parts; state['ops'] = _f939mr_saved_ops
+        if _f939mr is not None:
+            val, i = _f939mr
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
