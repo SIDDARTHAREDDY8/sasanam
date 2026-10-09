@@ -30847,6 +30847,857 @@ def _js_parse_f655_multistatement_iife(text, i, depth, state):
         return None
 
 
+class _JSF95XContinue(Exception):
+    """Internal control flow for the F95x top-level statement sim:
+    `continue;` / `continue LBL;`.
+
+    Raised by `_js_f95x_sim_block`; caught by the enclosing
+    `_js_f95x_sim_for` (its own label, or a bare continue). Any
+    other escape is a node SyntaxError, converted to _JSExprFail
+    at the top level. Never evals."""
+
+    def __init__(self, label):
+        super().__init__("f95x continue")
+        self.label = label
+
+
+def _js_f95x_parse_obj_lit(text, k, state):
+    """Parse `{k1:'v1', ...}` at text[k] (F956 narrow object literal).
+
+    Keys: identifiers or string literals (`__proto__` fails
+    closed); values: string literals only. Duplicate keys: later
+    wins (engine-exact). Returns (dict, next_index). Never evals.
+    """
+    n = len(text)
+    k = _js_expect(text, k, "{")
+    props = {}
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == "}":
+        return props, k + 1
+    while True:
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in "'\"":
+            key, k = _js_parse_string(text, k)
+        elif k < n and text[k] in _JS_IDENT_START:
+            key, k = _js_parse_ident(text, k)
+        else:
+            raise _JSExprFail("F95x obj key not modeled")
+        if key == "__proto__":
+            raise _JSExprFail("F95x __proto__ not modeled")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ":")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] not in "'\"":
+            raise _JSExprFail("F95x obj value not a string literal")
+        val, k = _js_parse_string(text, k)
+        props[key] = val
+        state["parts"] += 1  # the property is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("F95x too many parts")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ",":
+            k += 1
+            continue
+        if k < n and text[k] == "}":
+            return props, k + 1
+        raise _JSExprFail("F95x bad object literal")
+
+
+def _js_f95x_parse_sab_u8(text, k, state):
+    """Parse `new Uint8Array(new SharedArrayBuffer(N))` at text[k]
+    (F954): binds a zeroed N-byte buffer. N is an integer literal;
+    anything else fails closed. Returns (bytearray, next_index).
+    Never evals.
+    """
+    n = len(text)
+    k = _js_match_kw(text, k, "new")
+    k = _js_match_kw(text, _js_skip_ws(text, k), "Uint8Array")
+    if k is None:
+        raise _JSExprFail("F95x not a SAB Uint8Array")
+    k = _js_expect(text, k, "(")
+    k = _js_skip_ws(text, k)
+    k2 = _js_match_kw(text, k, "new")
+    if k2 is None:
+        raise _JSExprFail("F95x Uint8Array arg not SAB")
+    k2 = _js_match_kw(text, _js_skip_ws(text, k2), "SharedArrayBuffer")
+    if k2 is None:
+        raise _JSExprFail("F95x not a SharedArrayBuffer")
+    k2 = _js_expect(text, k2, "(")
+    size, k2 = _js_parse_number(text, _js_skip_ws(text, k2))
+    k2 = _js_skip_ws(text, k2)
+    k2 = _js_expect(text, k2, ")")
+    k = _js_skip_ws(text, k2)
+    k = _js_expect(text, k, ")")
+    if size > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F95x SAB too big")
+    state["parts"] += 1  # the buffer construction is
+                         # obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("F95x too many parts")
+    return bytearray(size), k
+
+
+def _js_f95x_parse_init(text, k, env, state):
+    """Parse one F95x declaration initializer at text[k] (after `=`).
+
+    Values: str (string literal), int (integer literal), dict
+    (narrow `{k:'v'}` literal), bytearray (`new Uint8Array(new
+    SharedArrayBuffer(N))`), or a bound ident's value (aliased --
+    the sim's only mutations go through the name used, so
+    aliasing is node-exact). Anything else fails closed. Returns
+    (value, next_index). Never evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] in "'\"":
+        return _js_parse_string(text, k)
+    if k < n and text[k] in _ASCII_DIGITS:
+        return _js_parse_number(text, k)
+    if k < n and text[k] == "{":
+        return _js_f95x_parse_obj_lit(text, k, state)
+    if _js_match_kw(text, k, "new") is not None:
+        return _js_f95x_parse_sab_u8(text, k, state)
+    if k < n and text[k] in _JS_IDENT_START:
+        name, k = _js_parse_ident(text, k)
+        if name not in env:
+            raise _JSExprFail("F95x init unbound")
+        return env[name][0], k
+    raise _JSExprFail("F95x init not modeled")
+
+
+def _js_f95x_decl_stmt(text, j, env, state):
+    """Parse one F95x `var|let|const` declaration statement.
+
+    Comma-separated declarators, each `NAME = INIT` (an
+    uninitialized declarator is a node-undefined -- fail closed).
+    Duplicate, reserved, or `RESULT` names fail closed. Returns
+    the index just past `;`. Never evals.
+    """
+    n = len(text)
+    kw, k = _js_match_decl_kw(text, j)
+    while True:
+        k = _js_skip_ws(text, k)
+        name, k = _js_parse_ident(text, k)
+        if name in env or name in _F611_RESERVED or name == "RESULT":
+            raise _JSExprFail("F95x bad decl name")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "=" or text.startswith(("==", "=>"), k):
+            raise _JSExprFail("F95x decl without init")
+        val, k = _js_f95x_parse_init(text, k + 1, env, state)
+        env[name] = (val, kw != "const")
+        state["parts"] += 1  # the binding is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("F95x too many parts")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ",":
+            k += 1
+            continue
+        if k < n and text[k] == ";":
+            return k + 1
+        raise _JSExprFail("F95x decl not closed")
+
+
+def _js_f95x_member_rhs(text, q, env):
+    """Parse an `OBJ[KEY]` / `OBJ.KEY` member read at text[q].
+
+    OBJ is bound to a dict with string values; KEY is a string
+    literal, a bound-string ident (bracket form), or an identifier
+    (dot form). A missing key is a node-undefined -- outside the
+    string-only discipline: fail closed. Returns (value,
+    next_index). Never evals.
+    """
+    n = len(text)
+    oname, k = _js_parse_ident(text, q)
+    if oname not in env:
+        raise _JSExprFail("F95x member obj unbound")
+    oval = env[oname][0]
+    if not isinstance(oval, dict):
+        raise _JSExprFail("F95x member obj not an object")
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == "[":
+        k = _js_skip_ws(text, k + 1)
+        if k < n and text[k] in "'\"":
+            key, k = _js_parse_string(text, k)
+        elif k < n and text[k] in _JS_IDENT_START:
+            kn, k = _js_parse_ident(text, k)
+            if kn not in env or not isinstance(env[kn][0], str):
+                raise _JSExprFail("F95x member key not a string")
+            key = env[kn][0]
+        else:
+            raise _JSExprFail("F95x member key not modeled")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "]")
+    elif k < n and text[k] == ".":
+        key, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+    else:
+        raise _JSExprFail("F95x not a member read")
+    if key not in oval:
+        raise _JSExprFail("F95x member missing")
+    return oval[key], k
+
+
+def _js_f95x_sim_accum(text, j, env, state):
+    """Simulate one F95x accumulation `NAME += RHS;` / `NAME = RHS;`.
+
+    RHS: string literal, bound string ident, bound int ident
+    (node-exact String(i) coercion -- the modeled ints are all
+    non-negative), or a member read over a bound string-valued
+    object (`o[k]` / `o['k']` / `o.k`). Node-exact (v24.20.0) for
+    the modeled subset; everything else fails closed. Returns the
+    index just past `;`. Never evals.
+    """
+    n = len(text)
+    name, q = _js_parse_ident(text, j)
+    if name not in env:
+        raise _JSExprFail("F95x accum unbound")
+    val, mutable = env[name]
+    if not mutable:
+        raise _JSExprFail("F95x accum const")
+    if not isinstance(val, str):
+        raise _JSExprFail("F95x accum non-string target")
+    q = _js_skip_ws(text, q)
+    if q < n and text.startswith("+=", q):
+        q += 2
+        is_plus = True
+    elif q < n and text[q] == "=" and not text.startswith(("==", "=>"), q):
+        q += 1
+        is_plus = False
+    else:
+        raise _JSExprFail("F95x bad accum op")
+    q = _js_skip_ws(text, q)
+    if q < n and text[q] in "'\"":
+        rhs, q = _js_parse_string(text, q)
+    elif q < n and text[q] in _JS_IDENT_START:
+        rname, q2 = _js_parse_ident(text, q)
+        q3 = _js_skip_ws(text, q2)
+        if q3 < n and text[q3] in "[.":
+            rhs, q = _js_f95x_member_rhs(text, q, env)
+        else:
+            if rname not in env:
+                raise _JSExprFail("F95x accum rhs unbound")
+            rhs = env[rname][0]
+            if isinstance(rhs, int) and not isinstance(rhs, bool):
+                # Node-exact for the modeled non-negative ints:
+                # s += i stringifies the int (JS String(i)).
+                rhs = str(rhs)
+            if not isinstance(rhs, str):
+                raise _JSExprFail("F95x accum rhs non-string")
+            q = q2
+    else:
+        raise _JSExprFail("F95x bad accum rhs")
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ";")
+    newval = val + rhs if is_plus else rhs
+    if len(newval) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F95x concat too long")
+    env[name] = (newval, mutable)
+    state["parts"] += 1  # the accumulation is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("F95x too many parts")
+    return q
+
+
+def _js_f95x_sim_if(text, j, env, state, depth):
+    """Simulate `if(COND){STMTS}` at text[j] (F955).
+
+    Tries the F655 constant-condition form first (F452
+    snapshot/restore on the miss, wave-383 rule); then the
+    comparison form `if(IDENT OP LIT)` with IDENT bound to an int
+    (OP one of `=== !== == != < > <= >=`, node-exact for ints) or
+    to a string (OP one of `=== !== == !=`, node-exact string
+    equality; ordering deliberately not modeled). No `else`
+    (fails closed). Returns the index just past `}`. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F95x too deep")
+    _svp, _svo = state["parts"], state["ops"]
+    try:
+        return _js_f655_sim_if_const(text, j, env, state, depth)
+    except _JSExprFail:
+        state["parts"], state["ops"] = _svp, _svo
+    j = _js_skip_ws(text, _js_match_kw(text, j, "if"))
+    j = _js_expect(text, j, "(")
+    lname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if lname not in env:
+        raise _JSExprFail("F95x if lhs unbound")
+    lval = env[lname][0]
+    if isinstance(lval, bool):
+        raise _JSExprFail("F95x if lhs not modeled")
+    j = _js_skip_ws(text, j)
+    for op in ("===", "!==", "==", "!=", "<=", ">=", "<", ">"):
+        if text.startswith(op, j):
+            break
+    else:
+        raise _JSExprFail("F95x if op not modeled")
+    j = _js_skip_ws(text, j + len(op))
+    if isinstance(lval, int):
+        rval, j = _js_parse_number(text, j)
+        truthy = {"===": lval == rval, "!==": lval != rval,
+                  "==": lval == rval, "!=": lval != rval,
+                  "<": lval < rval, ">": lval > rval,
+                  "<=": lval <= rval, ">=": lval >= rval}[op]
+    elif isinstance(lval, str):
+        # String equality only (ordering is lexicographic in the
+        # engine -- deliberately not modeled). Node-exact for
+        # ===/!==/==/!= on strings (v24.20.0).
+        if op not in ("===", "!==", "==", "!="):
+            raise _JSExprFail("F95x if str op not modeled")
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F95x if str rhs not a literal")
+        rval, j = _js_parse_string(text, j)
+        truthy = (lval == rval) if op in ("===", "==") else (lval != rval)
+    else:
+        raise _JSExprFail("F95x if lhs not modeled")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "{")
+    bs, be, j = _js_span_braced(text, j - 1)
+    if truthy:
+        _js_f95x_sim_block(text, _js_skip_ws(text, bs), be, env,
+                           state, depth + 1)
+    j = _js_skip_ws(text, j)
+    if _js_match_kw(text, j, "else") is not None:
+        raise _JSExprFail("F95x if-else not modeled")
+    return j
+
+
+def _js_f95x_sim_for(text, j, env, state, depth, label=None):
+    """Simulate `[LBL:]for(var|let IDX=0;IDX<BOUND;IDX++){STMTS}`
+    at text[j] (`for` matched; label already consumed) (F953/F955).
+
+    Node-exact (v24.20.0) for the modeled subset: zero-init
+    `var`/`let` index, literal integer `<` bound, `IDX++` step,
+    braced body. `break [LBL];` exits the (labeled) loop;
+    `continue [LBL];` starts the next iteration. The index binding
+    follows engine scoping: `var` survives with its final value
+    (break exits before the step), `let` is loop-scoped (a
+    shadowed outer binding is restored). One F452 part per
+    iteration. Returns the index just past `}`. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F95x too deep")
+    j = _js_skip_ws(text, _js_match_kw(text, j, "for"))
+    j = _js_expect(text, j, "(")
+    kw, k = _js_match_decl_kw(text, _js_skip_ws(text, j))
+    if kw is None or kw == "const":
+        raise _JSExprFail("F95x for init not var/let")
+    idx, k = _js_parse_ident(text, _js_skip_ws(text, k))
+    if idx in _F611_RESERVED:
+        raise _JSExprFail("F95x for reserved index")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, "=")
+    zero, k = _js_parse_number(text, _js_skip_ws(text, k))
+    if zero != 0:
+        raise _JSExprFail("F95x for index not zero")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, ";")
+    cname, k = _js_parse_ident(text, _js_skip_ws(text, k))
+    if cname != idx:
+        raise _JSExprFail("F95x for cond not our index")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "<" or text.startswith("<=", k):
+        raise _JSExprFail("F95x for cond not <")
+    bound, k = _js_parse_number(text, _js_skip_ws(text, k + 1))
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, ";")
+    iname, k = _js_parse_ident(text, _js_skip_ws(text, k))
+    if iname != idx:
+        raise _JSExprFail("F95x for incr not our index")
+    k = _js_skip_ws(text, k)
+    if not text.startswith("++", k):
+        raise _JSExprFail("F95x for incr not ++")
+    k = _js_expect(text, _js_skip_ws(text, k + 2), ")")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, "{")
+    bs, be, k = _js_span_braced(text, k - 1)
+    had = idx in env
+    old = env.get(idx)
+    # Engine-visible final index: `var` is function-scoped (the
+    # binding survives the loop with its final value); `let` is
+    # loop-scoped (a shadowed outer binding is restored).
+    final = None
+    try:
+        for it in range(bound):
+            # Charged first: break/continue paths must also consume
+            # budget (wave-362 standing rule) -- a body of bare
+            # `continue;` would otherwise burn unbounded CPU.
+            state["parts"] += 1  # one part per iteration
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("F95x too many parts")
+            env[idx] = (it, True)
+            try:
+                _js_f95x_sim_block(text, _js_skip_ws(text, bs), be,
+                                   env, state, depth + 1)
+            except _JSF655Break as brk:
+                if brk.label is None or brk.label == label:
+                    final = it  # break exits before the i++ step
+                    break
+                raise
+            except _JSF95XContinue as ctn:
+                if ctn.label is None or ctn.label == label:
+                    continue
+                raise
+        else:
+            final = bound  # all iterations ran; i stepped past
+    finally:
+        if kw == "var":
+            env[idx] = (final if final is not None else 0, True)
+        elif had:
+            env[idx] = old
+        else:
+            env.pop(idx, None)
+    state["ops"] += 1  # the loop is obfuscation-shaped
+    return k
+
+
+def _js_f95x_sim_forin(text, j, env, state, depth, label=None):
+    """Simulate `[LBL:]for(var|let K in OBJ){STMTS}` at text[j]
+    (`for` matched; label already consumed) (F956).
+
+    Node-exact (v24.20.0) for the modeled subset: OBJ is bound to
+    a string-valued object literal; iteration is over its keys in
+    insertion order (the modeled objects have string keys only,
+    so the engine's integer-key reordering never applies). The
+    key binding follows engine scoping: `var` survives with the
+    last key, `let` is loop-scoped (a shadowed outer binding is
+    restored). One F452 part per iteration. Returns the index just
+    past `}`. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F95x too deep")
+    j = _js_skip_ws(text, _js_match_kw(text, j, "for"))
+    j = _js_expect(text, j, "(")
+    kw, k = _js_match_decl_kw(text, _js_skip_ws(text, j))
+    if kw is None or kw == "const":
+        raise _JSExprFail("F95x for-in not var/let")
+    kname, k = _js_parse_ident(text, _js_skip_ws(text, k))
+    if kname in _F611_RESERVED:
+        raise _JSExprFail("F95x for-in reserved key name")
+    ik = _js_match_kw(text, _js_skip_ws(text, k), "in")
+    if ik is None:
+        raise _JSExprFail("F95x for-in without in")
+    oname, k = _js_parse_ident(text, _js_skip_ws(text, ik))
+    if oname not in env:
+        raise _JSExprFail("F95x for-in obj unbound")
+    oval = env[oname][0]
+    if not isinstance(oval, dict):
+        raise _JSExprFail("F95x for-in obj not an object")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, ")")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, "{")
+    bs, be, k = _js_span_braced(text, k - 1)
+    had = kname in env
+    old = env.get(kname)
+    last = None
+    try:
+        for key in oval:
+            # Charged first: break/continue paths must also consume
+            # budget (wave-362 standing rule).
+            state["parts"] += 1  # one part per iteration
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("F95x too many parts")
+            last = key
+            env[kname] = (key, True)
+            try:
+                _js_f95x_sim_block(text, _js_skip_ws(text, bs), be,
+                                   env, state, depth + 1)
+            except _JSF655Break as brk:
+                if brk.label is None or brk.label == label:
+                    break
+                raise
+            except _JSF95XContinue as ctn:
+                if ctn.label is None or ctn.label == label:
+                    continue
+                raise
+    finally:
+        if kw == "var":
+            # Function-scoped: survives with the last key; an
+            # empty object leaves a pre-existing binding as-is
+            # (a fresh one would be undefined -- unrepresentable,
+            # fail closed on read).
+            if last is not None:
+                env[kname] = (last, True)
+            elif not had:
+                env.pop(kname, None)
+        elif had:
+            env[kname] = old  # let: restore the shadowed outer
+        else:
+            env.pop(kname, None)  # let: loop-scoped, gone after
+    state["ops"] += 1  # the loop is obfuscation-shaped
+    return k
+
+
+def _js_f95x_sim_for_or_in(text, j, env, state, depth, label=None):
+    """Dispatch `[LBL:]for(...` at text[j] to the C-style or for-in
+    sim (F953/F955/F956). Peeks past the declarator for the `in`
+    keyword; re-parses from `for` so each sim owns its grammar.
+    Never evals.
+    """
+    k = _js_skip_ws(text, _js_match_kw(text, j, "for"))
+    k = _js_expect(text, k, "(")
+    kw, k2 = _js_match_decl_kw(text, _js_skip_ws(text, k))
+    if kw is None:
+        raise _JSExprFail("F95x for without decl")
+    _nm, k2 = _js_parse_ident(text, _js_skip_ws(text, k2))
+    k2 = _js_skip_ws(text, k2)
+    if _js_match_kw(text, k2, "in") is not None:
+        return _js_f95x_sim_forin(text, j, env, state, depth, label)
+    return _js_f95x_sim_for(text, j, env, state, depth, label)
+
+
+def _js_f95x_sim_foreach_fill(text, j, env, state):
+    """Simulate `[b,...].forEach((c,i)=>BUF[i]=c);` at text[j] (F954).
+
+    Node-exact (v24.20.0) for the modeled subset: the array is an
+    integer-literal list (each 0..255, else fail closed); the
+    callback is exactly `(c,i)=>BUF[i]=c` with BUF bound to a
+    bytearray. Stores apply the engine's ToUint8 (identity on the
+    modeled range); out-of-range indices are silently ignored
+    (engine). One F452 part per element. Returns the index just
+    past `;`. Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "[")
+    codes = []
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "]":
+        j += 1
+    else:
+        while True:
+            c, j = _js_parse_number(text, _js_skip_ws(text, j))
+            if c > 255:
+                raise _JSExprFail("F95x fill byte out of range")
+            codes.append(c)
+            if len(codes) > _JS_EXPR_MAX_CODEPOINTS:
+                raise _JSExprFail("F95x too many bytes")
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ",":
+                j += 1
+                continue
+            if j < n and text[j] == "]":
+                j += 1
+                break
+            raise _JSExprFail("F95x bad fill array")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("F95x fill not a method call")
+    fk = _js_match_kw(text, _js_skip_ws(text, j + 1), "forEach")
+    if fk is None:
+        raise _JSExprFail("F95x fill not forEach")
+    j = _js_expect(text, fk, "(")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    cname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ",")
+    iname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F95x fill not an arrow")
+    j = _js_skip_ws(text, j + 2)
+    bname, j = _js_parse_ident(text, j)
+    if bname not in env or not isinstance(env[bname][0], bytearray):
+        raise _JSExprFail("F95x fill target not a bound buffer")
+    buf = env[bname][0]
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "[")
+    iname2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if iname2 != iname:
+        raise _JSExprFail("F95x fill index not the callback index")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "]")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "=" or text.startswith(("==", "=>"), j):
+        raise _JSExprFail("F95x fill not a store")
+    vname, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+    if vname != cname:
+        raise _JSExprFail("F95x fill value not the callback element")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    for idx, code in enumerate(codes):
+        if idx >= len(buf):
+            break  # the engine ignores out-of-range stores
+        buf[idx] = code
+        state["parts"] += 1  # one part per element
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("F95x too many parts")
+    state["ops"] += 1  # the fill is obfuscation-shaped
+    return j
+
+
+def _js_f95x_stmt_inner(text, j, env, state, depth):
+    """Dispatch one F95x non-top-level statement (no break/continue).
+
+    Shared by the top-level sequence and block bodies: `switch`,
+    `for`/`for-in` (labeled or not), `if`, accumulations, labeled
+    `for`, and the forEach-fill form. Anything else fails closed.
+    Returns the index just past the statement. Never evals.
+    """
+    n = len(text)
+    if _js_match_kw(text, j, "switch") is not None:
+        return _js_f922_sim_switch(text, j, env, state, depth)
+    if _js_match_kw(text, j, "for") is not None:
+        return _js_f95x_sim_for_or_in(text, j, env, state, depth)
+    if _js_match_kw(text, j, "if") is not None:
+        return _js_f95x_sim_if(text, j, env, state, depth)
+    if j < n and text[j] in _JS_IDENT_START:
+        name, q = _js_parse_ident(text, j)
+        q2 = _js_skip_ws(text, q)
+        if q2 < n and text[q2] == ":":
+            if name in _F611_RESERVED:
+                raise _JSExprFail("F95x reserved label")
+            fq = _js_skip_ws(text, q2 + 1)
+            if _js_match_kw(text, fq, "for") is None:
+                raise _JSExprFail("F95x label not on for")
+            return _js_f95x_sim_for_or_in(text, fq, env, state, depth,
+                                          label=name)
+        return _js_f95x_sim_accum(text, j, env, state)
+    if j < n and text[j] == "[":
+        return _js_f95x_sim_foreach_fill(text, j, env, state)
+    raise _JSExprFail("F95x bad statement")
+
+
+def _js_f95x_stmt_top(text, j, env, state, depth):
+    """Dispatch one top-level F95x statement.
+
+    A top-level `break`/`continue` is a node SyntaxError -- fail
+    closed. Otherwise identical to `_js_f95x_stmt_inner`. Returns
+    the index just past the statement. Never evals.
+    """
+    if _js_match_kw(text, j, "break") is not None or \
+       _js_match_kw(text, j, "continue") is not None:
+        raise _JSExprFail("F95x top-level break/continue")
+    return _js_f95x_stmt_inner(text, j, env, state, depth)
+
+
+def _js_f95x_sim_block(text, j, be, env, state, depth):
+    """Simulate F95x block statements from j to be.
+
+    The `_js_f95x_stmt_inner` statement set, plus `break [LBL];`
+    and `continue [LBL];` (raised for the enclosing loop/switch).
+    Returns the index at be. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F95x too deep")
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= be:
+            return j
+        bk = _js_match_kw(text, j, "break")
+        if bk is not None:
+            q = _js_skip_ws(text, bk)
+            label = None
+            if q < n and text[q] in _JS_IDENT_START:
+                label, q = _js_parse_ident(text, q)
+                q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            raise _JSF655Break(label)
+        ck = _js_match_kw(text, j, "continue")
+        if ck is not None:
+            q = _js_skip_ws(text, ck)
+            label = None
+            if q < n and text[q] in _JS_IDENT_START:
+                label, q = _js_parse_ident(text, q)
+                q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            raise _JSF95XContinue(label)
+        j = _js_f95x_stmt_inner(text, j, env, state, depth)
+
+
+def _js_f95x_result_additive(text, j, env, state):
+    """Parse the F956 `RESULT` additive `LIT|IDENT (+ LIT|IDENT)*`.
+
+    Operands are string literals, bound-string idents, or bound
+    int idents (node-exact String(i) coercion). Returns (value,
+    next_index). Never evals.
+    """
+    n = len(text)
+    parts = []
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] in "'\"":
+            s, j = _js_parse_string(text, j)
+        elif j < n and text[j] in _JS_IDENT_START:
+            nm, j = _js_parse_ident(text, j)
+            if nm not in env:
+                raise _JSExprFail("F95x RESULT ident unbound")
+            v = env[nm][0]
+            if isinstance(v, str):
+                s = v
+            elif isinstance(v, int) and not isinstance(v, bool):
+                # Node-exact for the modeled ints (all
+                # non-negative: literals, loop indices): JS
+                # String(i) === Python str(i).
+                s = str(v)
+            else:
+                raise _JSExprFail("F95x RESULT ident not a string")
+        else:
+            raise _JSExprFail("F95x RESULT operand not modeled")
+        parts.append(s)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "+":
+            j += 1
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("F95x too many parts")
+            continue
+        break
+    val = "".join(parts)
+    if len(val) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F95x RESULT too long")
+    return val, j
+
+
+def _js_f95x_result_textdecoder(text, j, env, state):
+    """Parse `new TextDecoder([label]).decode(BOUND)` at text[j]
+    (F954 RESULT form): BOUND names a bytearray binding; strict
+    UTF-8 decode (malformed fails closed). Returns (str,
+    next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_match_kw(text, j, "new")
+    j = _js_match_kw(text, _js_skip_ws(text, j), "TextDecoder")
+    if j is None:
+        raise _JSExprFail("F95x RESULT not TextDecoder")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        label, j = _js_parse_string(text, j)
+        j = _js_skip_ws(text, j)
+    else:
+        label = "utf-8"
+    j = _js_expect(text, j, ")")
+    if label.lower() not in ("utf-8", "utf8"):
+        raise _JSExprFail("F95x RESULT TextDecoder label not modeled")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ".")
+    j = _js_match_kw(text, _js_skip_ws(text, j), "decode")
+    if j is None:
+        raise _JSExprFail("F95x RESULT without .decode")
+    j = _js_expect(text, j, "(")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm not in env or not isinstance(env[nm][0], bytearray):
+        raise _JSExprFail("F95x decode arg not a bound buffer")
+    raw = bytes(env[nm][0])
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    try:
+        result = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise _JSExprFail("F95x TextDecoder invalid bytes")
+    if len(result) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F95x RESULT too long")
+    # The byte material was already charged at fill time (one part
+    # per element); the decode itself is a single call over an
+    # already-counted buffer, so it costs a flat 2 parts. Charging
+    # per byte again would push the filed 40-char credential over
+    # the F452 part budget (wave-391 lesson).
+    state["parts"] += 2
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("F95x too many parts")
+    state["ops"] += 1  # the decode call is obfuscation-shaped
+    return result, j
+
+
+def _js_f95x_result_rhs(text, j, env, state):
+    """Parse the F95x `RESULT = RHS;` right-hand side at text[j]
+    (after `RESULT`).
+
+    RHS: a bound string ident, a `+` string additive of literals /
+    bound idents, or `new TextDecoder([label]).decode(BOUND)`.
+    Returns (value, next_index) with next_index after `;`. Never
+    evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "=" or text.startswith(("==", "=>"), j):
+        raise _JSExprFail("F95x RESULT without =")
+    j = _js_skip_ws(text, j + 1)
+    if _js_match_kw(text, j, "new") is not None:
+        val, j = _js_f95x_result_textdecoder(text, j, env, state)
+    elif j < n and (text[j] in "'\"" or text[j] in _JS_IDENT_START):
+        val, j = _js_f95x_result_additive(text, j, env, state)
+    else:
+        raise _JSExprFail("F95x RESULT rhs not modeled")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    return val, j
+
+
+def _js_f95x_top_seq(text):
+    """Decode a top-level F95x statement sequence (F953/F954/F955/F956).
+
+    `STMT* var|let|const RESULT = RHS;` where the statements are
+    literal `var`/`let`/`const` declarations (string/int/object /
+    SAB-backed-Uint8Array / bound-ident initializers), string
+    accumulations (literal, bound-ident, and member-read RHS),
+    `switch` (fallthrough), C-style and for-in `for` loops
+    (labeled, with break/continue), constant or int-comparison
+    `if`s, and the `[bytes].forEach((c,i)=>buf[i]=c)` fill form.
+    The RESULT right-hand side is a bound string, a string
+    additive, or a TextDecoder decode over a bound buffer.
+
+    Node-exact (v24.20.0) for the modeled subset; every other shape
+    fails closed (returns None), never mis-decoded. In particular
+    the F949 top-level builtin classes (structuredClone,
+    generators, static blocks, Proxy.revocable, WeakRef,
+    destructuring, Object.values, Map spread, labeled blocks) all
+    fail this grammar closed -- disjoint by construction.
+
+    Returns the RESULT string, or None. The caller adds it as a
+    decode variant. Bounded by the F452 part budget on a fresh
+    attempt-local state (wave-383 snapshot/restore holds
+    trivially -- nothing escapes on miss). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, 0)
+    kw, _k = _js_match_decl_kw(text, j)
+    if kw is None:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        env = {}
+        j = _js_skip_ws(text, 0)
+        while True:
+            j = _js_skip_ws(text, j)
+            if j >= n:
+                raise _JSExprFail("F95x missing RESULT")
+            kw2, k2 = _js_match_decl_kw(text, j)
+            if kw2 is not None:
+                kk = _js_skip_ws(text, k2)
+                nm = None
+                if kk < n and text[kk] in _JS_IDENT_START:
+                    nm, _k3 = _js_parse_ident(text, kk)
+                if nm == "RESULT":
+                    val, j = _js_f95x_result_rhs(text, _k3, env, state)
+                    j = _js_skip_ws(text, j)
+                    if j != n:
+                        raise _JSExprFail("F95x trailing input")
+                    return val
+                j = _js_f95x_decl_stmt(text, j, env, state)
+                continue
+            j = _js_f95x_stmt_top(text, j, env, state, 0)
+    except _JSExprFail:
+        return None
+    except (_JSF655Break, _JSF95XContinue):
+        # A break/continue that escapes to the top level is a node
+        # SyntaxError -- fail closed, never mis-decode.
+        return None
+    except RecursionError:
+        return None
+
+
 class _JSF679Throw(Exception):
     """Internal control flow for F679: `throw VAL;`.
 
@@ -83636,6 +84487,109 @@ def _js_parse_f628_uri_component(text, i, depth, state):
     return result, j + 1
 
 
+def _js_parse_f954_rewrap_arg(text, k, state):
+    """Parse `new Uint8Array([b,...]).buffer` at text[k] (`new`
+    matched) for the F954 re-wrap form.
+
+    Node-exact (v24.20.0): `new Uint8Array(buf)` with buf the fresh
+    inner buffer views the whole buffer, so the decoded bytes are
+    exactly the inner literal's. The inner byte list uses the F629
+    literal discipline (integers 0..255; anything else fails
+    closed). Returns (bytevals, next_index) with next_index AT the
+    outer `)` (the caller consumes it as the Uint8Array close).
+    Never evals.
+    """
+    n = len(text)
+    k = _js_match_kw(text, k, "new")
+    k = _js_match_kw(text, _js_skip_ws(text, k), "Uint8Array")
+    if k is None:
+        raise _JSExprFail("F954 rewrap not Uint8Array")
+    k = _js_expect(text, k, "(")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "[":
+        raise _JSExprFail("F954 rewrap arg not an array literal")
+    k += 1
+    bytevals = []
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == "]":
+        k += 1
+    else:
+        while True:
+            b, k = _js_parse_number(text, _js_skip_ws(text, k))
+            if b > 255:
+                raise _JSExprFail("F954 byte out of range")
+            bytevals.append(b)
+            if len(bytevals) > _JS_EXPR_MAX_CODEPOINTS:
+                raise _JSExprFail("F954 too many bytes")
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ",":
+                k += 1
+                continue
+            if k < n and text[k] == "]":
+                k += 1
+                break
+            raise _JSExprFail("F954 bad byte array")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("F954 bad inner Uint8Array()")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != ".":
+        raise _JSExprFail("F954 rewrap without .buffer")
+    bk = _js_match_kw(text, _js_skip_ws(text, k + 1), "buffer")
+    if bk is None:
+        raise _JSExprFail("F954 rewrap not .buffer")
+    state["parts"] += len(bytevals) + 2  # inner list + rewrap
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("F954 too many parts")
+    return bytevals, bk
+
+
+def _js_parse_f954_sub_index(text, k):
+    """Parse one F954 subarray index (optional `-`, integer literal).
+
+    Returns (value, next_index). Never evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, k)
+    neg = False
+    if k < n and text[k] == "-":
+        neg = True
+        k = _js_skip_ws(text, k + 1)
+    val, k = _js_parse_number(text, k)
+    return (-val if neg else val), k
+
+
+def _js_parse_f954_subarray(text, sm, bytevals, state):
+    """Parse `(begin[, end])` at text[sm] (`subarray` matched) for the
+    F954 subarray form; returns (sliced_bytes, next_index).
+
+    Node-exact (v24.20.0) TypedArray.prototype.subarray clamping:
+    negative indices count from the end, both ends clamp to
+    [0, len], and end < begin yields the empty view. Integer
+    literals only; anything else fails closed. Never evals.
+    """
+    n = len(text)
+    k = _js_expect(text, sm, "(")
+    begin, k = _js_parse_f954_sub_index(text, k)
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ",":
+        end, k = _js_parse_f954_sub_index(text, k + 1)
+    else:
+        end = len(bytevals)
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, ")")
+    L = len(bytevals)
+    b = begin if begin >= 0 else max(L + begin, 0)
+    b = min(b, L)
+    e = end if end >= 0 else max(L + end, 0)
+    e = min(e, L)
+    newlen = max(e - b, 0)
+    state["parts"] += 1  # the subarray view is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("F954 too many parts")
+    return bytevals[b:b + newlen], k
+
+
 def _js_parse_f629_textdecoder(text, i, depth, state):
     """Parse `new TextDecoder([label]).decode(new Uint8Array([b,...]))` (F629).
 
@@ -83645,7 +84599,11 @@ def _js_parse_f629_textdecoder(text, i, depth, state):
     decoder only models UTF-8). The byte array is a literal list
     of integers 0..255 (negative/float/non-literal entries fail
     closed -- the engine's ToUint8 coercion is deliberately not
-    modeled). Decoding is strict UTF-8: malformed sequences fail
+    modeled). F954 extends the source class: `new
+    Uint8Array([b,...]).subarray(begin[, end])` (engine clamping,
+    node-exact) and `new Uint8Array(new
+    Uint8Array([b,...]).buffer)` (re-wrapped whole-buffer view,
+    node-exact). Decoding is strict UTF-8: malformed sequences fail
     closed (the engine would emit U+FFFD, which can never match an
     ASCII credential -- failing closed is the honest, safe
     choice). The byte count is charged to the part budget.
@@ -83687,33 +84645,51 @@ def _js_parse_f629_textdecoder(text, i, depth, state):
         raise _JSExprFail("decode arg not Uint8Array")
     k = _js_expect(text, k, "(")
     k = _js_skip_ws(text, k)
-    if k >= n or text[k] != "[":
-        raise _JSExprFail("Uint8Array arg not an array literal")
-    k += 1
-    bytevals = []
-    k = _js_skip_ws(text, k)
-    if k < n and text[k] == "]":
-        k += 1
+    if _js_match_kw(text, k, "new") is not None:
+        # F954: new Uint8Array(new Uint8Array([b,...]).buffer) --
+        # re-wrapped view over the same bytes. Returns k at the
+        # outer ')' (consumed below as the Uint8Array close).
+        # Disjoint from the F629 literal form (which starts with
+        # `[`), so no previously-decoded input changes behavior.
+        bytevals, k = _js_parse_f954_rewrap_arg(text, k, state)
     else:
-        while True:
-            b, k = _js_parse_number(text, _js_skip_ws(text, k))
-            if b > 255:
-                raise _JSExprFail("byte out of range")
-            bytevals.append(b)
-            if len(bytevals) > _JS_EXPR_MAX_CODEPOINTS:
-                raise _JSExprFail("too many bytes")
-            k = _js_skip_ws(text, k)
-            if k < n and text[k] == ",":
-                k += 1
-                continue
-            if k < n and text[k] == "]":
-                k += 1
-                break
-            raise _JSExprFail("bad byte array")
+        if k >= n or text[k] != "[":
+            raise _JSExprFail("Uint8Array arg not an array literal")
+        k += 1
+        bytevals = []
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == "]":
+            k += 1
+        else:
+            while True:
+                b, k = _js_parse_number(text, _js_skip_ws(text, k))
+                if b > 255:
+                    raise _JSExprFail("byte out of range")
+                bytevals.append(b)
+                if len(bytevals) > _JS_EXPR_MAX_CODEPOINTS:
+                    raise _JSExprFail("too many bytes")
+                k = _js_skip_ws(text, k)
+                if k < n and text[k] == ",":
+                    k += 1
+                    continue
+                if k < n and text[k] == "]":
+                    k += 1
+                    break
+                raise _JSExprFail("bad byte array")
     k = _js_skip_ws(text, k)
     if k >= n or text[k] != ")":
         raise _JSExprFail("bad Uint8Array()")
     k = _js_skip_ws(text, k + 1)
+    # F954: new Uint8Array([...]).subarray(begin[, end]) -- the view
+    # slices the fresh bytes. A `.` that is not `.subarray(` falls
+    # through to the decode-close check and fails closed there.
+    _sk = _js_skip_ws(text, k)
+    if _sk < n and text[_sk] == ".":
+        _sm = _js_match_kw(text, _js_skip_ws(text, _sk + 1), "subarray")
+        if _sm is not None:
+            bytevals, k = _js_parse_f954_subarray(text, _sm, bytevals,
+                                                 state)
+            k = _js_skip_ws(text, k)
     if k >= n or text[k] != ")":
         raise _JSExprFail("bad decode()")
     try:
@@ -104177,6 +105153,15 @@ def _decode_layer(text):
         decoded = _try_utf16_null_decode(m.group(0))
         if decoded is not None:
             _add(text[:m.start()] + decoded + text[m.end():])
+    # F953/F954/F955/F956: top-level statement-sequence decode --
+    # `var` declaration runs with switch/for/for-in accumulation
+    # ending in `var RESULT=...;` node-evaluate to the assembled
+    # string while the expression-level decoders produce zero
+    # variants. Additive at the end so pre-existing variant order
+    # is preserved exactly (F441).
+    _top = _js_f95x_top_seq(text)
+    if _top is not None:
+        _add(_top)
     return variants
 
 
