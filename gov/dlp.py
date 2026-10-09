@@ -9872,7 +9872,7 @@ def _js_parse_reflect_get(text, i, depth, state):
     modeled. Never evals.
     """
     n = len(text)
-    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+    if 0 < i <= n and text[i - 1] in _JS_IDENT_CONT:
         return None
     j = i + len("Reflect")
     if j < n and text[j] in _JS_IDENT_CONT:
@@ -9939,7 +9939,7 @@ def _js_parse_gopd_value(text, i, depth, state):
     closed. Never evals.
     """
     n = len(text)
-    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+    if 0 < i <= n and text[i - 1] in _JS_IDENT_CONT:
         return None
     j = i + len("Object")
     if j < n and text[j] in _JS_IDENT_CONT:
@@ -9999,7 +9999,7 @@ def _js_parse_reflect_call(text, i, depth, state):
     startswith-based method selection cannot mis-route).
     """
     n = len(text)
-    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+    if 0 < i <= n and text[i - 1] in _JS_IDENT_CONT:
         # Engine-exact: `fooReflect.apply` is member access on
         # `fooReflect` in node (ReferenceError for the bare global),
         # never the global Reflect -- the _JS_EXPR_START anchor has no
@@ -15104,7 +15104,7 @@ def _js_parse_f696_new_string(text, i, depth, state):
     through, failing closed on `new` as before). Never evals.
     """
     n = len(text)
-    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+    if 0 < i <= n and text[i - 1] in _JS_IDENT_CONT:
         return None
     j = _js_match_kw(text, i, "new")
     if j is None:
@@ -15291,7 +15291,7 @@ def _js_parse_f587_proxy_member(text, i, depth, state):
     through `_js_parse_dispatch_receiver`, never here). Never evals.
     """
     n = len(text)
-    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+    if 0 < i <= n and text[i - 1] in _JS_IDENT_CONT:
         return None
     j = _js_match_kw(text, i, "new")
     if j is None:
@@ -15561,7 +15561,7 @@ def _js_parse_f539_weakref(text, i, depth, state):
     malformed shapes fail closed via _JSExprFail. Never evals.
     """
     n = len(text)
-    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+    if 0 < i <= n and text[i - 1] in _JS_IDENT_CONT:
         return None
     j = _js_match_kw(text, i, "new")
     if j is None:
@@ -15960,7 +15960,7 @@ def _js_parse_f548_object_create(text, i, depth, state):
     fails closed, documented residual). Never evals.
     """
     n = len(text)
-    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+    if 0 < i <= n and text[i - 1] in _JS_IDENT_CONT:
         return None
     j = i + len("Object")
     if j < n and text[j] in _JS_IDENT_CONT:
@@ -16049,7 +16049,7 @@ def _js_parse_f549_gopd_object(text, i, depth, state):
     arguments. Never evals.
     """
     n = len(text)
-    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+    if 0 < i <= n and text[i - 1] in _JS_IDENT_CONT:
         return None
     j = i + len("Object")
     if j < n and text[j] in _JS_IDENT_CONT:
@@ -16150,7 +16150,7 @@ def _js_parse_f550_define_property(text, i, depth, state):
     closed, documented residual). Never evals.
     """
     n = len(text)
-    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+    if 0 < i <= n and text[i - 1] in _JS_IDENT_CONT:
         return None
     j = i + len("Object")
     if j < n and text[j] in _JS_IDENT_CONT:
@@ -16726,7 +16726,7 @@ def _js_parse_object_values(text, i, depth, state):
     parse, malformed shapes fail closed via _JSExprFail. Never evals.
     """
     n = len(text)
-    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+    if 0 < i <= n and text[i - 1] in _JS_IDENT_CONT:
         return None
     if not text.startswith("Object", i):
         return None
@@ -16778,7 +16778,7 @@ def _js_parse_object_keys(text, i, depth, state):
     _JSExprFail. Never evals.
     """
     n = len(text)
-    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+    if 0 < i <= n and text[i - 1] in _JS_IDENT_CONT:
         return None
     if not text.startswith("Object", i):
         return None
@@ -16836,7 +16836,7 @@ def _js_parse_object_gopn(text, i, depth, state):
     documented boundary). Never evals.
     """
     n = len(text)
-    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+    if 0 < i <= n and text[i - 1] in _JS_IDENT_CONT:
         return None
     if not text.startswith("Object", i):
         return None
@@ -17076,7 +17076,7 @@ def _js_parse_f573_entries_literal(text, i, depth, state):
     Never evals.
     """
     n = len(text)
-    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+    if 0 < i <= n and text[i - 1] in _JS_IDENT_CONT:
         return None
     if not text.startswith("Object", i):
         return None
@@ -17168,7 +17168,7 @@ def _js_parse_object_entries(text, i, depth, state):
     closed via _JSExprFail. Never evals.
     """
     n = len(text)
-    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+    if 0 < i <= n and text[i - 1] in _JS_IDENT_CONT:
         return None
     if not text.startswith("Object", i):
         return None
@@ -17355,7 +17355,7 @@ def _js_parse_f634_entries_reduce(text, i, depth, state):
     form to this route. Never evals.
     """
     n = len(text)
-    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+    if 0 < i <= n and text[i - 1] in _JS_IDENT_CONT:
         return None
     if not text.startswith("Object", i):
         return None
@@ -17578,7 +17578,7 @@ def _js_parse_object_gopds_values(text, i, depth, state):
     parse, malformed shapes fail closed via _JSExprFail. Never evals.
     """
     n = len(text)
-    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+    if 0 < i <= n and text[i - 1] in _JS_IDENT_CONT:
         return None
     if not text.startswith("Object", i):
         return None
@@ -80286,6 +80286,7 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f800_saved_parts; state['ops'] = _f800_saved_ops
         if _f800 is not None:
             val, i = _f800
+            return _js_parse_postfix(text, i, val, depth, state)
         # F801: (function(){function NAME(params){return BODY;}
         #   return ADD;})() with Reflect.apply(NAME, thisArg, [args])
         #   read terms -- Reflect.apply on a named function
@@ -80328,6 +80329,7 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f802_saved_parts; state['ops'] = _f802_saved_ops
         if _f802 is not None:
             val, i = _f802
+            return _js_parse_postfix(text, i, val, depth, state)
         # F807: (function(){DECL O={...};DECL C=structuredClone(O);
         #   return ADD;})() -- structuredClone deep-copy reads.
         #   Tried after F792: no earlier route has a structuredClone
@@ -80361,6 +80363,7 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f808_saved_parts; state['ops'] = _f808_saved_ops
         if _f808 is not None:
             val, i = _f808
+            return _js_parse_postfix(text, i, val, depth, state)
         # F809: (function(){DECL*;new Promise(function(P){STMT*;});
         #   return ADD;})() -- Promise-executor assignments to outer
         #   bindings (the executor runs synchronously, node
