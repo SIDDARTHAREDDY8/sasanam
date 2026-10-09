@@ -16470,6 +16470,7 @@ _JS_POSTFIX_METHOD_NAMES = (
     "replaceAll", "matchAll", "match",
     "padStart", "padEnd", "at", "toReversed", "with", "split",
     "flatMap", "sort", "trim", "trimStart", "trimEnd",
+    "charAt", "normalize",  # F762/F763: string indexed read / normalize
 )
 # F682: the exact JS String.prototype.trim WhiteSpace +
 # LineTerminator set (ECMAScript spec, node v24.20.0 verified):
@@ -58961,6 +58962,65 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         elements = value.elements[lo:hi] if hi > lo else []
         state["ops"] += 1
         return _JSArr(elements), i
+    if name == "charAt":
+        # F762: "lit".charAt(INTLIT) -- indexed character read,
+        # node-exact (v24.20.0). Zero args reads index 0 (the engine
+        # ToInteger's undefined to +0); a single integer literal
+        # indexes the UTF-16 code unit; negative or out-of-range
+        # indices yield "" in the engine. Fractional or non-literal
+        # indices fail closed (the engine ToInteger's them, but the
+        # static grammar admits literal ints only -- documented scope
+        # boundary). Non-BMP receivers fail closed: the engine
+        # indexes UTF-16 code units while the decoder indexes code
+        # points (F624 slice parity). _JSNumStr/_JSBigInt receivers
+        # fail closed (the engine throws -- (123).charAt is not a
+        # function).
+        if not isinstance(value, str) or isinstance(
+                value, (_JSNumStr, _JSBigInt)):
+            raise _JSExprFail("charAt on non-string receiver")
+        if any(ord(ch) > 0xFFFF for ch in value):
+            raise _JSExprFail("charAt on non-BMP string")
+        i = _js_skip_ws(text, i)
+        if i < len(text) and text[i] == ")":
+            idx, i = 0, i + 1
+        else:
+            idx, i = _js_parse_slice_int(text, i)
+            i = _js_skip_ws(text, i)
+            if i >= len(text) or text[i] != ")":
+                raise _JSExprFail("bad charAt args")
+            i += 1
+        result = value[idx] if 0 <= idx < len(value) else ""
+        state["ops"] += 1  # the indexed read is obfuscation-shaped
+        return result, i
+    if name == "normalize":
+        # F763: "lit".normalize([FORM]) -- Unicode normalization,
+        # node-exact (v24.20.0) on ASCII receivers: normalization is
+        # the identity on ASCII for all four forms (NFC/NFD/NFKC/
+        # NFKD) -- ASCII codepoints have no decompositions or
+        # compatibility mappings. Non-ASCII receivers fail closed
+        # (e.g. 'é'.normalize('NFD') gains a combining mark; the
+        # decoder never guesses). FORM must be a string literal in
+        # the canonical four (the engine throws RangeError on
+        # anything else); zero args defaults to NFC. Non-string
+        # receivers fail closed.
+        if not isinstance(value, str) or isinstance(
+                value, (_JSNumStr, _JSBigInt)):
+            raise _JSExprFail("normalize on non-string receiver")
+        if any(ord(ch) > 0x7F for ch in value):
+            raise _JSExprFail("normalize on non-ASCII string")
+        i = _js_skip_ws(text, i)
+        if i < len(text) and text[i] == ")":
+            i += 1
+        else:
+            form, i = _js_parse_string(text, i)
+            i = _js_skip_ws(text, i)
+            if i >= len(text) or text[i] != ")":
+                raise _JSExprFail("bad normalize args")
+            if form not in ("NFC", "NFD", "NFKC", "NFKD"):
+                raise _JSExprFail("normalize bad form")
+            i += 1
+        state["ops"] += 1  # the normalize call is obfuscation-shaped
+        return value, i
     if name == "flat":
         # F466: ['a','b'].flat() -- identity on flat arrays. F574:
         # flat(INTLIT) / flat(Infinity) -- node-exact recursive
@@ -59213,6 +59273,34 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         state["ops"] += 1
         return _JSArr(value.elements[0:2]), i + 1
     if name == "at":
+        if isinstance(value, str) and not isinstance(
+                value, (_JSNumStr, _JSBigInt)):
+            # F762: "lit".at(INTLIT) -- ES2022 string indexed read,
+            # node-exact (v24.20.0). Zero args reads index 0 (the
+            # engine ToIntegerOrInfinity's undefined to +0); negative
+            # indices count back from the end; out-of-range reads
+            # return undefined in the engine, which the static
+            # decoder has no value for -- fail closed. Non-BMP
+            # receivers fail closed (UTF-16 code-unit vs code-point
+            # divergence, F624 parity). Fractional or non-literal
+            # indices fail closed. Checked BEFORE the F547 array
+            # branch below (disjoint by receiver type).
+            if any(ord(ch) > 0xFFFF for ch in value):
+                raise _JSExprFail("at on non-BMP string")
+            i = _js_skip_ws(text, i)
+            if i < len(text) and text[i] == ")":
+                idx, i = 0, i + 1
+            else:
+                idx, i = _js_parse_slice_int(text, i)
+                i = _js_skip_ws(text, i)
+                if i >= len(text) or text[i] != ")":
+                    raise _JSExprFail("bad at args")
+                i += 1
+            k = idx if idx >= 0 else len(value) + idx
+            if k < 0 or k >= len(value):
+                raise _JSExprFail("at out of bounds")
+            state["ops"] += 1  # the indexed read is obfuscation-shaped
+            return value[k], i
         # F547: ARR.at(INTLIT) -- node-exact element read
         # (v24.20.0): non-negative literal indices read the element;
         # negative indices count back from the end (engine .at

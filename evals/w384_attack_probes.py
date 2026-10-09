@@ -284,28 +284,28 @@ def test_r52_f737_s1_closed():
 # ------------------------------------------- open pins (must miss)
 
 @_t
-def test_r52_f762_s1_open():
-    """F762 OPEN: miss reproduces."""
-    miss = _misses("(function(){var s='%s';return s.charAt(0)+s.slice(1)+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f762_s1_closed():
+    """F762 CLOSED (wave-385 lane 1): charAt indexed read blocks coded."""
+    ok = _blocked("(function(){var s='%s';return s.charAt(0)+s.slice(1)+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r52_f762_s2_open():
-    """F762 OPEN: miss reproduces."""
-    miss = _misses("(function(){var s='%s';return s.at(0)+s.at(1)+s.slice(2)+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f762_s2_closed():
+    """F762 CLOSED (wave-385 lane 1): .at() indexed read blocks coded."""
+    ok = _blocked("(function(){var s='%s';return s.at(0)+s.at(1)+s.slice(2)+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r52_f763_s1_open():
-    """F763 OPEN: miss reproduces."""
-    miss = _misses("(function(){var s='%s';return s.normalize()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f763_s1_closed():
+    """F763 CLOSED (wave-385 lane 1): normalize() identity blocks coded."""
+    ok = _blocked("(function(){var s='%s';return s.normalize()+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r52_f763_s2_open():
-    """F763 OPEN: miss reproduces."""
-    miss = _misses("(function(){var s='%s';return s.normalize('NFD')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f763_s2_closed():
+    """F763 CLOSED (wave-385 lane 1): normalize('NFD') blocks coded."""
+    ok = _blocked("(function(){var s='%s';return s.normalize('NFD')+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r52_f764_s1_open():
