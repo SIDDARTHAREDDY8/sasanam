@@ -2349,6 +2349,36 @@ def _js_skip_ws(text, i):
     return i
 
 
+def _js_skip_ws_comments(text, i):
+    """Skip whitespace and JS comments (F918).
+
+    Node-exact tokenizer behavior (v24.20.0 verified): `/* ... */`
+    and `// ...` comments are whitespace-equivalent between tokens,
+    so `a./*x*/flat()` === `a.flat()` and `a.//x<newline>flat()`
+    === `a.flat()`. An unterminated block comment stops the skip at
+    the `/` (the engine syntax-errors the whole program; the
+    decoder's caller then fails to match its token and fails closed
+    -- never half-skipped). Block comments do not nest (the first
+    `*/` closes). Never evals.
+    """
+    n = len(text)
+    while True:
+        while i < n and text[i] in " \t\n\r":
+            i += 1
+        if i + 1 < n and text[i] == "/" and text[i + 1] == "*":
+            end = text.find("*/", i + 2)
+            if end == -1:
+                break  # unterminated: stop, caller fails closed
+            i = end + 2
+            continue
+        if i + 1 < n and text[i] == "/" and text[i + 1] == "/":
+            nl = text.find("\n", i + 2)
+            i = n if nl == -1 else nl + 1
+            continue
+        break
+    return i
+
+
 def _js_parse_string(text, i):
     """Parse a '...' or "..." literal at text[i].
 
@@ -7132,7 +7162,20 @@ def _js_parse_f579_ownkeys_key(text, j, depth, state):
     return key, _js_skip_ws(text, k3 + 1)
 
 
-def _js_fold_key_expr(text, k, depth, state):
+def _js_fold_key_ident(text, k, pre_env, what):
+    """Resolve a bound-identifier key operand to its value (F917).
+
+    Returns (bound_value, next_index). *what* names the operand
+    position for fail-closed errors. Raises _JSExprFail when the
+    identifier is unbound or bound to a non-string. Never evals.
+    """
+    iname, k = _js_parse_ident(text, k)
+    if iname not in pre_env or not isinstance(pre_env[iname], str):
+        raise _JSExprFail("key %s not bound" % what)
+    return pre_env[iname], k
+
+
+def _js_fold_key_expr(text, k, depth, state, pre_env=None):
     """Fold a computed member-key expression to its string value (F492).
 
     Parses one string literal or template literal followed by zero or
@@ -7146,6 +7189,12 @@ def _js_fold_key_expr(text, k, depth, state):
     Only string-literal and literal-only-template operands are
     folded: numeric/additive/variable/call operands fail closed
     (documented scope boundary -- the decoder never guesses a key).
+    F917: an operand that is a bare identifier bound to a string
+    literal in pre_env folds to its bound value (node-exact: the
+    engine evaluates `['m'+k]` with k='2' to 'm2', v24.20.0); an
+    unbound or non-string-bound identifier fails closed. pre_env is
+    None for all callers without a bound-identifier environment
+    (behavior unchanged there).
     The folded name must be a non-empty ASCII identifier, the same
     constraint as _js_parse_bracket_member; anything else fails
     closed. Each `+` operand is charged to the part budget. Never
@@ -7160,6 +7209,9 @@ def _js_fold_key_expr(text, k, depth, state):
         part, k = _js_parse_string(text, k)
     elif c == "`":
         part, k = _js_parse_template(text, k, depth, state)
+    elif c in _JS_IDENT_START and pre_env is not None:
+        # F917: a leading bound identifier operand.
+        part, k = _js_fold_key_ident(text, k, pre_env, "identifier")
     else:
         raise _JSExprFail("key not a literal")
     out = [part]
@@ -7175,6 +7227,9 @@ def _js_fold_key_expr(text, k, depth, state):
             part, j = _js_parse_string(text, j)
         elif c == "`":
             part, j = _js_parse_template(text, j, depth, state)
+        elif c in _JS_IDENT_START and pre_env is not None:
+            # F917: a bound-identifier `+` operand.
+            part, j = _js_fold_key_ident(text, j, pre_env, "operand")
         else:
             raise _JSExprFail("key operand not a literal")
         out.append(part)
@@ -7188,17 +7243,18 @@ def _js_fold_key_expr(text, k, depth, state):
     return name, k
 
 
-def _js_fold_bracket_key(text, j, depth, state):
+def _js_fold_bracket_key(text, j, depth, state, pre_env=None):
     """Fold `['a'+'b']` / `` [`a${'b'}`] `` at text[j] == '[' (F492).
 
     Returns (folded_name, idx_after_rbracket), whitespace-tolerant.
     The plain-literal case is handled by _js_parse_bracket_member;
     callers try that first and fall back here for computed keys.
-    Never evals.
+    F917: pre_env threads bound-identifier operands through
+    _js_fold_key_expr. Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, j + 1)
-    name, j = _js_fold_key_expr(text, j, depth, state)
+    name, j = _js_fold_key_expr(text, j, depth, state, pre_env=pre_env)
     j = _js_skip_ws(text, j)
     if j >= n or text[j] != "]":
         raise _JSExprFail("unterminated computed key bracket")
@@ -15195,7 +15251,10 @@ def _js_parse_f535_getter_head(text, i, pre_env=None, depth=0,
     string-literal key declarators (the F673/F811 computed-key
     shape), a `[IDENT]` computed name bound there resolves to its
     literal (F67x key-branch precedent). The additive
-    `['m'+'2']` fold is pure (F492) and needs no env. Never evals.
+    `['m'+'2']` fold is pure (F492) and needs no env. F917: a mixed
+    literal/bound-identifier additive (`['m'+k]` / `[k+'2']` with k
+    bound in pre_env) folds via _js_fold_bracket_key with pre_env.
+    Never evals.
     """
     n = len(text)
     c = text[i] if i < n else ""
@@ -15223,29 +15282,54 @@ def _js_parse_f535_getter_head(text, i, pre_env=None, depth=0,
                 j = q + 1
             else:
                 # F886: `['m'+'2']` -- the first literal is followed
-                # by `+`, not `]`; fold the additive (F492).
+                # by `+`, not `]`; fold the additive (F492). F917:
+                # the additive may mix literal and bound-identifier
+                # operands (`['m'+k]` with k bound in pre_env).
                 try:
                     name, j = _js_fold_bracket_key(text, i, depth,
-                                                   _fst)
+                                                   _fst, pre_env=pre_env)
                 except _JSExprFail:
                     raise _JSExprFail("bad computed getter name")
         elif q < n and text[q] in _JS_IDENT_START:
             # `[IDENT]` or `[Symbol.for('k')]` -- try the bound
             # identifier first, fall back to the Symbol.for form.
+            # F917: an ident followed by `+` (`[k+'2']` with k
+            # bound in pre_env) folds the mixed additive (F492)
+            # instead; an unbound ident still fails closed via the
+            # Symbol.for fallback below.
             iname, q2 = _js_parse_ident(text, q)
             q2 = _js_skip_ws(text, q2)
             if (q2 < n and text[q2] == "]" and pre_env
                     and iname in pre_env
                     and isinstance(pre_env[iname], str)):
                 name, j = pre_env[iname], q2 + 1
+            elif q2 < n and text[q2] == "+" and pre_env is not None:
+                # F452: the fold below is speculative (it charges
+                # parts per operand) -- snapshot/restore around it
+                # so a miss leaves no charge for the Symbol.for
+                # fallback.
+                _f917_sp, _f917_so = _fst["parts"], _fst["ops"]
+                try:
+                    name, j = _js_fold_bracket_key(text, i, depth,
+                                                   _fst, pre_env=pre_env)
+                except _JSExprFail:
+                    _fst["parts"], _fst["ops"] = _f917_sp, _f917_so
+                    skey, j = _js_parse_f552_symbol_for(text, i)
+                    name = _js_symbol_key(skey)
             else:
                 skey, j = _js_parse_f552_symbol_for(text, i)
                 name = _js_symbol_key(skey)
         else:
             # Additive/template fold, else the Symbol.for attempt
             # (which fails closed on non-Symbol computed names).
+            # F917: pre_env threads through for template-leading
+            # mixed additives (`` [`lit`+k] ``); `${k}`
+            # interpolations inside templates stay fail-closed
+            # (documented residual -- _js_parse_template is
+            # literal-only).
             try:
-                name, j = _js_fold_bracket_key(text, i, depth, _fst)
+                name, j = _js_fold_bracket_key(text, i, depth, _fst,
+                                               pre_env=pre_env)
             except _JSExprFail:
                 skey, j = _js_parse_f552_symbol_for(text, i)
                 name = _js_symbol_key(skey)
@@ -19036,11 +19120,16 @@ def _js_span_braced(text, brace):
     Returns (inner_start, inner_end, after_close): absolute indices of
     the text between the braces and the index just past the matching
     `}`. `'...'` / `"..."` spans are skipped with escape handling so a
-    brace inside a string never terminates the scan. Fails closed
-    (raises _JSExprFail) on backticks and on `/` in code -- template
-    literals, regex literals, division, and comments are all outside
-    the modeled F509 body grammar (documented boundary; a miss, never
-    a mis-decode). Unterminated input fails closed. Never evals.
+    brace inside a string never terminates the scan. F918: `/* ... */`
+    and `// ...` comment spans are skipped too -- the engine's
+    tokenizer treats comments as whitespace, so a brace inside a
+    comment never affects the block structure (node v24.20.0); an
+    unterminated block comment fails closed. Fails closed (raises
+    _JSExprFail) on backticks and on a `/` that does not start a
+    comment -- template literals, regex literals, and division are
+    all outside the modeled F509 body grammar (documented boundary;
+    a miss, never a mis-decode). Unterminated input fails closed.
+    Never evals.
     """
     n = len(text)
     depth = 0
@@ -19053,6 +19142,21 @@ def _js_span_braced(text, brace):
         if c == "`":
             raise _JSExprFail("template in iife body")
         if c == "/":
+            if k + 1 < n and text[k + 1] == "*":
+                # F918: block comment -- skip to the closer so
+                # braces inside never affect the span.
+                end = text.find("*/", k + 2)
+                if end == -1:
+                    raise _JSExprFail("unterminated comment in iife")
+                k = end + 2
+                continue
+            if k + 1 < n and text[k + 1] == "/":
+                # F918: line comment -- skip to end of line.
+                nl = text.find("\n", k + 2)
+                if nl == -1:
+                    raise _JSExprFail("unterminated iife body")
+                k = nl + 1
+                continue
             raise _JSExprFail("slash in iife body")
         if c == "{":
             depth += 1
@@ -64517,7 +64621,11 @@ def _js_parse_f832_join_varbound_iife(text, i, depth, state):
                     raise _JSExprFail("F832 term not bound ident")
                 sj = _js_skip_ws(text, _q)
                 if sj < n and text[sj] == ".":
-                    _mk = _js_skip_ws(text, sj + 1)
+                    # F888: the engine tolerates whitespace between
+                    # `.` and the method name; F918: JS comments
+                    # are tokenizer-whitespace in the same position
+                    # (`a./*x*/flat()`).
+                    _mk = _js_skip_ws_comments(text, sj + 1)
                     _mm = _js_match_kw(text, _mk, "join")
                     _mname = "join" if _mm is not None else None
                 elif sj < n and text[sj] == "[":
@@ -64663,7 +64771,11 @@ def _js_parse_f802_flat_varbound_iife(text, i, depth, state):
                     raise _JSExprFail("F802 term not bound ident")
                 sj = _js_skip_ws(text, _q)
                 if sj < n and text[sj] == ".":
-                    _mk = _js_skip_ws(text, sj + 1)
+                    # F888: the engine tolerates whitespace between
+                    # `.` and the method name; F918: JS comments
+                    # are tokenizer-whitespace in the same position
+                    # (`a./*x*/flat()`).
+                    _mk = _js_skip_ws_comments(text, sj + 1)
                     _mm = _js_match_kw(text, _mk, "flat")
                     _mname = "flat" if _mm is not None else None
                     if _mname is None:
@@ -85401,8 +85513,11 @@ def _js_parse_postfix(text, i, value, depth, state):
         # F888: the engine tolerates whitespace between `.` and the
         # method name (`a. flat()`); skip it once before the
         # name loop (no-space inputs are unaffected -- the skip is a
-        # no-op there).
-        _mdot = _js_skip_ws(text, j + 1)
+        # no-op there). F918: JS comments in the same position are
+        # tokenizer-whitespace too (`a./*x*/flat()`), skipped by
+        # _js_skip_ws_comments (unterminated comments stop the skip
+        # and fail closed via the no-match return below).
+        _mdot = _js_skip_ws_comments(text, j + 1)
         for name in _JS_POSTFIX_METHOD_NAMES:
 
             if text.startswith(name, _mdot):
@@ -90298,19 +90413,21 @@ def _js_parse_f870_one_dispatch(text, k, depth, state):
 
 
 def _js_parse_f870_chain_value(text, j, params, body, depth, state,
-                               prebound, two_hops):
+                               prebound, hops):
     """Parse an F870 bind-chain term at text[j] (past the target name).
 
     *prebound* is the arg list already bound (twin 2's `var`
-    statement bind, else []). *two_hops* selects the twin: True for
-    twin 1 (`NAME.bind(...).bind|.call|.apply(...)` -- exactly two
+    statement bind, else []). *hops* selects the twin: 2 for twin 1
+    (`NAME.bind(...).bind|.call|.apply(...)` -- exactly two
     dispatches; the first MUST be `.bind` since `.call`/`.apply`
-    invoke immediately), False for twin 2 (`GNAME.bind|.call|.apply`
-    -- one dispatch on the alias). A terminal `.bind` requires the
-    immediate invocation parens (a bound function with no call is
-    not a decodable value -- the F614/F636 precedent; a third
-    dispatch fails closed structurally). Returns (value,
-    next_index). Raises _JSExprFail. Never evals.
+    invoke immediately), 1 for twin 2 (`GNAME.bind|.call|.apply`
+    -- one dispatch on the alias) and for the F920 single direct
+    bind (`NAME.bind(...)()` -- one dispatch on the named function
+    itself). A terminal `.bind` requires the immediate invocation
+    parens (a bound function with no call is not a decodable value
+    -- the F614/F636 precedent; a third dispatch fails closed
+    structurally). Returns (value, next_index). Raises _JSExprFail.
+    Never evals.
     """
     n = len(text)
     q = _js_skip_ws(text, j)
@@ -90318,7 +90435,7 @@ def _js_parse_f870_chain_value(text, j, params, body, depth, state,
     d1, b1, q = _js_parse_f870_one_dispatch(text, q, depth, state)
     total.extend(b1)
     d = d1
-    if two_hops:
+    if hops == 2:
         if d1 != "bind":
             # .call/.apply invoke immediately and cannot chain --
             # node would invoke, not bind (F636 precedent).
@@ -90327,6 +90444,11 @@ def _js_parse_f870_chain_value(text, j, params, body, depth, state,
         d2, b2, q = _js_parse_f870_one_dispatch(text, q, depth, state)
         total.extend(b2)
         d = d2
+    elif not prebound and d1 != "bind":
+        # F920: a single direct dispatch on the named function must
+        # be .bind -- a .call/.apply single dispatch on the direct
+        # name is F614's single-dispatch shape (disjoint).
+        raise _JSExprFail("F920 single direct not bind")
     q = _js_skip_ws(text, q)
     if d == "bind":
         if q >= n or text[q] != "(":
@@ -90382,7 +90504,10 @@ def _js_parse_f870_bindchain_iife(text, i, depth, state):
     - twin 1: `return ADD2;` where ADD2 is a `+`-additive of string
       literals and >=1 chain terms `NAME.bind(BT,...)[.bind|.call|
       .apply](...)` with exactly two dispatches (3+ fail closed --
-      the F636 documented residual).
+      the F636 documented residual). F920: a single direct
+      `NAME.bind(BT,ARGS)()` (one hop + immediate invocation) --
+      node-exact: the bound args prepend the call args (v24.20.0);
+      a single direct `.call`/`.apply` stays F614's (disjoint).
     - twin 2: `var GNAME=NAME.bind(BT,ARGS);` then `return ADD2;`
       where the chain terms are `GNAME.bind(BT,...)[...](...)`
       with exactly one dispatch (the `var` bind is the first hop).
@@ -90482,9 +90607,26 @@ def _js_parse_f870_bindchain_iife(text, i, depth, state):
                 nm, nq = _js_parse_ident(text, q)
                 if nm != chain_name:
                     raise _JSExprFail("F870 return unknown target")
-                val, q = _js_parse_f870_chain_value(
-                    text, nq, params, body, depth, state,
-                    prebound, chain_name == fname)
+                if chain_name == fname:
+                    # Twin 1: two dispatches (F870); F920: a single
+                    # direct `NAME.bind(...)()` -- try the 2-hop
+                    # parse first, then the 1-hop parse, with
+                    # budget snapshot/restore on the first miss
+                    # (F452 -- a speculative parse must not charge).
+                    _svp, _svo = state["parts"], state["ops"]
+                    try:
+                        val, q = _js_parse_f870_chain_value(
+                            text, nq, params, body, depth, state,
+                            prebound, 2)
+                    except _JSExprFail:
+                        state["parts"], state["ops"] = _svp, _svo
+                        val, q = _js_parse_f870_chain_value(
+                            text, nq, params, body, depth, state,
+                            prebound, 1)
+                else:
+                    val, q = _js_parse_f870_chain_value(
+                        text, nq, params, body, depth, state,
+                        prebound, 1)
                 parts.append(val)
                 saw_chain = True
             else:
@@ -90812,8 +90954,12 @@ def _js_parse_f872_sortzero_iife(text, i, depth, state):
       `const` are a documented residual), string-literal elements
       (the F809 literal check; _JSNumStr rejected).
     - `A.sort(ZEROCMP);` -- the same array name; ZEROCMP is the
-      F872 constant-zero comparator (a bare `()` sort and any
-      other comparator fail closed -- documented residuals).
+      F872 constant-zero comparator. F919: a bare `A.sort();`
+      (no comparator) sorts by default UTF-16 code-unit order --
+      Python sorted() on BMP-only strings (astral elements fail
+      closed, F580 precedent) -- and the indexed reads observe the
+      sorted order. Any other comparator fails closed (documented
+      residual).
     - `return ADD;` where ADD is a `+`-additive of string literals
       and `A[INT]` indexed reads with INT in `[0, len)` (an
       out-of-range index is `undefined` in node -- fail closed,
@@ -90864,9 +91010,23 @@ def _js_parse_f872_sortzero_iife(text, i, depth, state):
             raise _JSExprFail("F872 not a sort statement")
         q = _js_skip_ws(text, q)
         q = _js_expect(text, q, "(")
-        q = _js_parse_f872_zero_cmp(text, q)
         q = _js_skip_ws(text, q)
-        q = _js_expect(text, q, ")")
+        if q < n and text[q] == ")":
+            # F919: bare `sort()` statement -- default UTF-16
+            # code-unit order (node v24.20.0 verified). Python's
+            # sorted() is code-unit-identical on BMP-only strings;
+            # any astral element fails closed (F580 precedent --
+            # verified divergence there). The sorted order is what
+            # the subsequent indexed reads observe.
+            for _e in elems:
+                if any(ord(_c) > 0xFFFF for _c in _e):
+                    raise _JSExprFail("F919 sort astral element")
+            elems = sorted(elems)
+            q = q + 1
+        else:
+            q = _js_parse_f872_zero_cmp(text, q)
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ")")
         q = _js_skip_ws(text, q)
         q = _js_expect(text, q, ";")
         q = _js_skip_ws(text, q)
