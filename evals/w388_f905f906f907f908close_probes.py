@@ -479,8 +479,8 @@ def test_p7_perf_200_sites():
 
 @_t
 def test_p8_findings_stamps():
-    """F905/F906/F907/F908 stamped CLOSED; F893-F904, F909-F920 OPEN;
-    lane-local footer (open F893-F904, F909-F920 / next F921)."""
+    """F905/F906/F907/F908 stamped CLOSED; F893-F904, F909-F920 filed;
+    merge footer (open F921-F926, F928-F936 / next F937)."""
     text = _findings_text()
     bad = []
     for fid in ("F905", "F906", "F907", "F908"):
@@ -496,8 +496,8 @@ def test_p8_findings_stamps():
     for fid in ("F893", "F904", "F909", "F920"):
         if ("(%s filed" % fid) not in text:
             bad.append(fid + "-missing")
-    if "Next free finding: **F921**" not in text:
-        bad.append("footer-next-not-F921")
+    if "Next free finding: **F937**" not in text:
+        bad.append("footer-next-not-F937")
     return ("HELD" if not bad else "BREAK",
             "stamps %s" % ("ok" if not bad else bad))
 

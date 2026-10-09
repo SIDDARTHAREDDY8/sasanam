@@ -98,12 +98,12 @@ def test_p0_no_new_recompile():
 
 @_t
 def test_p0_footer_state():
-    """Footer: F909-F912 CLOSED; open F893-F908 + F913-F920; next F921."""
+    """Footer: F909-F912 CLOSED; open F921-F926, F928-F936; next F937."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     fl = [l for l in text.split("\n")
           if l.startswith("Next free finding:")][-1]
-    want_open = (["F%d" % n for n in range(893, 909)]
-                 + ["F%d" % n for n in range(913, 921)])
+    want_open = (["F%d" % n for n in range(921, 927)]
+                 + ["F%d" % n for n in range(928, 937)])
     m = re.search(r"Open findings: ([^*]+)\.\*\*", fl)
     got_open = [x.strip() for x in m.group(1).split(",")] if m else []
     closed_ok = all(
@@ -111,7 +111,7 @@ def test_p0_footer_state():
         and "LOW, CLOSED (wave-388 lane 5" in
         text[text.index("(%s filed" % f):text.index("(%s filed" % f) + 400]
         for f in ("F909", "F910", "F911", "F912"))
-    ok = ("Next free finding: **F921**" in fl
+    ok = ("Next free finding: **F937**" in fl
           and got_open == want_open and closed_ok)
     return ("HELD" if ok else "BREAK",
             "open=%d closed4=%s" % (len(got_open), closed_ok))
@@ -350,7 +350,7 @@ def test_p3_f911_bounds():
 
 @_t
 def test_p3_f912_bounds():
-    """F912 bounds: dotseg / backslash / empty / encoded paths closed."""
+    """F912 bounds: dotseg / backslash / empty / encoded paths closed; .search now blocks (F913)."""
     bounds = [
         # dot segment (normalized by the engine)
         (("(function(){var u=new URL('https://h/a/../%s');"
@@ -370,13 +370,17 @@ def test_p3_f912_bounds():
         # relative URL (engine throws)
         (("(function(){var u=new URL('/%s');"
           "return u.pathname+'%s';})()"), (_A, _B)),
-        # .search still unmodeled
+        # .search now modeled (F913, wave-388 lane 6) -- positive pin
         (("(function(){var u=new URL('https://h/?q=%s');"
-          "return u.search+'%s';})()"), (_A, _B)),
+          "return u.search+'%s';})()"), (_A, _B), True),
     ]
-    loud = [s for s, args in bounds if not _misses(s % args)]
-    return ("HELD" if not loud else "BREAK",
-            "%d/%d fail closed" % (len(bounds) - len(loud), len(bounds)))
+    loud = [s for s, args in bounds[:6] if not _misses(s % args)]
+    # the .search positive pin must decode (block), not miss
+    _spos, _apos, _ = bounds[6]
+    search_blocks = not _misses(_spos % _apos)
+    ok = not loud and search_blocks
+    return ("HELD" if ok else "BREAK",
+            "%d/%d fail closed; search-blocks=%s" % (len(bounds) - 1 - len(loud), len(bounds) - 1, search_blocks))
 
 
 # ------------------------------------------------- P4: sibling pins

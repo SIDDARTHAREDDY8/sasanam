@@ -98,17 +98,17 @@ def test_p0_recount():
 
 @_t
 def test_p0_footer_state():
-    """Control: lane-local footer (F901-F904 closed; open F893-F900, F905-F920; next F921)."""
+    """Control: merge footer (F893-F920 closed; open F921-F926, F928-F936; next F937)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     foot = [ln for ln in text.splitlines()
             if ln.startswith("Next free finding:")]
     # The open list must not contain F901-F904 as open entries.
     open_seg = foot[-1].split("Open findings:")[-1] if "Open findings:" in foot[-1] else ""
-    ok = (bool(foot) and "**F921**" in foot[-1]
-          and "F893, F894" in foot[-1] and "F919, F920." in foot[-1]
+    ok = (bool(foot) and "**F937**" in foot[-1]
+          and "F921, F922" in foot[-1] and "F935, F936." in foot[-1]
           and "F901," not in open_seg and "F904." not in open_seg
-          and "F905" in open_seg)
+          and "F926" in open_seg)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -388,16 +388,14 @@ def _green_check():
         return ("HELD", "green check skipped (GOV_SKIP_GREEN=1)")
     bad = []
     # Four lane red-firsts must be 0 BREAK (F901-F904 closed). The
-    # wave-387 attack battery is expected to report exactly 12
-    # BREAKs: 5 pre-existing open-state pins plus the 7 F901-F904
-    # open-state pins, which now decode because this lane closes
-    # them -- tree-wide maintenance is merge-owned (wave-306
-    # lesson). All functional probes must HELD.
+    # wave-387 attack battery's F893-F909 pins were flipped to
+    # closed-hit assertions at the wave-388 merge (F893-F909 all
+    # closed) -- it must now report 0 BREAKs.
     for batt, expect_break in (("evals/w388_f901_redfirst.py", 0),
                                ("evals/w388_f902_redfirst.py", 0),
                                ("evals/w388_f903_redfirst.py", 0),
                                ("evals/w388_f904_redfirst.py", 0),
-                               ("evals/w387_attack_probes.py", 12)):
+                               ("evals/w387_attack_probes.py", 0)):
         tmp = tempfile.mkdtemp(prefix="g388-green-", dir="/var/tmp")
         env = dict(os.environ)
         env["GOV_SKIP_GREEN"] = "1"

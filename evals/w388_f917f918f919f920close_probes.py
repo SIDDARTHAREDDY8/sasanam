@@ -157,7 +157,7 @@ def test_p0_no_new_re_compile():
 
 @_t
 def test_p0_footer_state():
-    """Control: lane-local footer (F917-F920 closed; open F893-F916; next F921)."""
+    """Control: merge footer (F917-F920 closed; open F921-F926, F928-F936; next F937)."""
     import re
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
@@ -169,10 +169,12 @@ def test_p0_footer_state():
         m = re.search(r"\*\*Open findings: ([^*]+)\.\*\*", last)
         open_list = m.group(1) if m else ""
         items = [x.strip() for x in open_list.split(",")]
-        ok = ("**F921**" in last
-              and items == ["F%d" % n for n in range(893, 917)]
+        want = (["F%d" % n for n in range(921, 927)]
+                + ["F%d" % n for n in range(928, 937)])
+        ok = ("**F937**" in last
+              and items == want
               and "# Wave-387 merge: F829-F892 CLOSED (64)" in last
-              and "# Wave-388 lane 7: F917-F920 CLOSED (4)" in last)
+              and "F893-F920 CLOSED (28)" in last)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

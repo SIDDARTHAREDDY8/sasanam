@@ -93,15 +93,15 @@ def test_p0_pin_recompile():
 
 @_t
 def test_p0_footer():
-    """Footer: F913-F916 CLOSED; open F893-F912, F917-F920; next F921."""
+    """Footer: F913-F916 CLOSED; open F921-F926, F928-F936; next F937."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    m = re.search(r"Next free finding: \*\*F921\*\*\. \*\*Open findings: "
+    m = re.search(r"Next free finding: \*\*F937\*\*\. \*\*Open findings: "
                   r"([^*]+)\.", text)
     if not m:
-        return ("BREAK", "no F921 footer")
+        return ("BREAK", "no F937 footer")
     opens = [x.strip() for x in m.group(1).split(",")]
-    want = (["F%d" % i for i in range(893, 913)]
-            + ["F%d" % i for i in range(917, 921)])
+    want = (["F%d" % i for i in range(921, 927)]
+            + ["F%d" % i for i in range(928, 937)])
     ok = (opens == want
           and all("(%s filed" % f in text for f in
                   ("F913", "F914", "F915", "F916"))

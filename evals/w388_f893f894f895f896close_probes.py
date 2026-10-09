@@ -95,16 +95,16 @@ def test_p0_pin_recompile():
 
 @_t
 def test_p0_footer_state():
-    """Control: lane footer (F893-F896 closed; open F897-F920; next F921)."""
+    """Control: merge footer (F893-F920 closed; open F921-F926, F928-F936; next F937)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     foot = [ln for ln in text.splitlines()
             if ln.startswith("Next free finding:")]
     ok = (bool(foot)
-          and "**F921**" in foot[-1]
-          and "F897, F898" in foot[-1]
-          and "F919, F920." in foot[-1]
-          and "F893-F896 CLOSED" in foot[-1])
+          and "**F937**" in foot[-1]
+          and "F921, F922" in foot[-1]
+          and "F935, F936." in foot[-1]
+          and "F893-F920 CLOSED" in foot[-1])
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

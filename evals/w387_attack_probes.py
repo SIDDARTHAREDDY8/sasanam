@@ -66,11 +66,13 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: lane-local footer (F829-F909 open, next F910)."""
+    """Control: merge footer (F893-F920 closed; open F921-F926, F928-F936; next F937)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F910**" in text  # Wave-387 attack round 55
-          and "F893, F894, F895, F896, F897, F898, F899, F900, F901, F902, F903, F904, F905, F906, F907, F908, F909.**" in text)
+    ok = ("Next free finding: **F937**" in text  # Wave-388 merge
+          and "F921, F922" in text
+          and "F935, F936.**" in text
+          and "F893-F920 CLOSED (28)" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -80,212 +82,212 @@ def test_p9_junk_quiet():
     quiet = _misses("'(function(){var s=\\'ab\\';return s;})()'")
     return ("HELD" if quiet else "BREAK", "quiet=%s" % quiet)
 
-# ------------------------------------------- open pins (must miss -> HELD)
+# ---------------- closed pins (wave-388: F893-F909 now block -> HELD)
 
 
 @_t
-def test_r55_f893_s1_open():
-    """F893 OPEN: miss reproduces."""
+def test_r55_f893_s1_closed():
+    """F893 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var g=eval;return g(\"'%s'\")+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f893_s2_open():
-    """F893 OPEN: miss reproduces."""
+def test_r55_f893_s2_closed():
+    """F893 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){return (0,eval)(\"'%s'\")+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f894_s1_open():
-    """F894 OPEN: miss reproduces."""
+def test_r55_f894_s1_closed():
+    """F894 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var o={k:'%s'};with(o){var q=k;}return q+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f894_s2_open():
-    """F894 OPEN: miss reproduces."""
+def test_r55_f894_s2_closed():
+    """F894 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var o={k:'%s',j:'%s'};var r='';with(o){r=k+j;}return r;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f895_s1_open():
-    """F895 OPEN: miss reproduces."""
+def test_r55_f895_s1_closed():
+    """F895 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){function f(){return [...arguments].join('');}return f('%s','%s');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f895_s2_open():
-    """F895 OPEN: miss reproduces."""
+def test_r55_f895_s2_closed():
+    """F895 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){function f(){return Array.from(arguments).join('');}return f('%s','%s');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f896_s1_open():
-    """F896 OPEN: miss reproduces."""
+def test_r55_f896_s1_closed():
+    """F896 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var b=new ArrayBuffer(22);var v=new DataView(b);var ps=[30831,30818,11568,12594,13108,13622,14136,14689,25187,25701];for(var i=0;i<10;i++)v.setUint16(i*2,ps[i]);v.setUint8(20,102);var r='';for(var j=0;j<21;j++)r+=String.fromCharCode(v.getUint8(j));return r;})()")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f896_s2_open():
-    """F896 OPEN: miss reproduces."""
+def test_r55_f896_s2_closed():
+    """F896 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var v=new DataView(new ArrayBuffer(21));var bs=[120,111,120,98,45,48,49,50,51,52,53,54,55,56,57,97,98,99,100,101,102];for(var i=0;i<21;i++)v.setInt8(i,bs[i]);var r='';for(var j=0;j<21;j++)r+=String.fromCharCode(v.getInt8(j));return r;})()")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f897_s1_open():
-    """F897 OPEN: miss reproduces."""
+def test_r55_f897_s1_closed():
+    """F897 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var t=new Uint8Array([120,111,120,98,45,48,49,50,51,52,53,54,55,56,57,97,98,99,100,101,102]);return String.fromCharCode.apply(null,Array.from(t));})()")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f897_s2_open():
-    """F897 OPEN: miss reproduces."""
+def test_r55_f897_s2_closed():
+    """F897 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var cs=[120,111,120,98,45,48,49,50,51,52,53,54,55,56,57,97,98,99,100,101,102];return String.fromCharCode.call(null,...cs)+'%s';})()" % (_A))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f898_s1_open():
-    """F898 OPEN: miss reproduces."""
+def test_r55_f898_s1_closed():
+    """F898 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){try{throw new Error('%s');}catch(e){var m=/xoxb-[0-9a-z-]+/.exec(e.stack||'');return (m?m[0]:'no')+'%s';}})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f898_s2_open():
-    """F898 OPEN: miss reproduces."""
+def test_r55_f898_s2_closed():
+    """F898 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var e=new Error('%s');var m=String(e.stack).match(/xoxb-\\S+/);return (m?m[0]:'')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f899_s1_open():
-    """F899 OPEN: miss reproduces."""
+def test_r55_f899_s1_closed():
+    """F899 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var t={k:'%s'};var x=new Proxy(t,{get:function(o,k){return o[k];}});return x.k+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f899_s2_open():
-    """F899 OPEN: miss reproduces."""
+def test_r55_f899_s2_closed():
+    """F899 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var t={k:'%s'};var x=new Proxy(t,{});return x.k+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f900_s1_open():
-    """F900 OPEN: miss reproduces."""
+def test_r55_f900_s1_closed():
+    """F900 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var r='';outer:do{r+='%s';break outer;}while(0);return r+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f900_s2_open():
-    """F900 OPEN: miss reproduces."""
+def test_r55_f900_s2_closed():
+    """F900 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var r='';outer:do{if(1){r+='%s';break outer;}}while(0);return r+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f901_s1_open():
-    """F901 OPEN: miss reproduces."""
+def test_r55_f901_s1_closed():
+    """F901 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var r;r='x',r='%s';return r+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f901_s2_open():
-    """F901 OPEN: miss reproduces."""
+def test_r55_f901_s2_closed():
+    """F901 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var a,b;a=b='%s';return a+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f902_s1_open():
-    """F902 OPEN: miss reproduces."""
+def test_r55_f902_s1_closed():
+    """F902 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){try{throw '%s';}catch(e){return e+'%s';}})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f902_s2_open():
-    """F902 OPEN: miss reproduces."""
+def test_r55_f902_s2_closed():
+    """F902 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){try{throw '%s';}catch(e){var m=e;return m+'%s';}})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f903_s1_open():
-    """F903 OPEN: miss reproduces."""
+def test_r55_f903_s1_closed():
+    """F903 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var s=JSON.stringify(['%s']);return s.slice(2,-2)+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f903_s2_open():
-    """F903 OPEN: miss reproduces."""
+def test_r55_f903_s2_closed():
+    """F903 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var s=JSON.stringify({k:'%s'});return s.slice(6,-2)+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f904_s1_open():
-    """F904 OPEN: miss reproduces."""
+def test_r55_f904_s1_closed():
+    """F904 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){class B{constructor(){this.k='%s';}}class C extends B{}return new C().k+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f904_s2_open():
-    """F904 OPEN: miss reproduces."""
+def test_r55_f904_s2_closed():
+    """F904 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){class B{constructor(x){this.k=x;}}class C extends B{constructor(){super('%s');}}return new C().k+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f905_s1_open():
-    """F905 OPEN: miss reproduces."""
+def test_r55_f905_s1_closed():
+    """F905 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var r='';for(var [k,v] of Object.entries({k:'%s'})){r+=v;}return r+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f905_s2_open():
-    """F905 OPEN: miss reproduces."""
+def test_r55_f905_s2_closed():
+    """F905 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var r='';for(var e of Object.entries({k:'%s'})){r+=e[1];}return r+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f906_s1_open():
-    """F906 OPEN: miss reproduces."""
+def test_r55_f906_s1_closed():
+    """F906 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){return ['%s','z'].reduceRight(function(a,b){return b;})+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f906_s2_open():
-    """F906 OPEN: miss reproduces."""
+def test_r55_f906_s2_closed():
+    """F906 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){return ['z'].reduceRight(function(a){return a;},'%s')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f907_s1_open():
-    """F907 OPEN: miss reproduces."""
+def test_r55_f907_s1_closed():
+    """F907 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){return ['%s','z'].reduce((a,b)=>a)+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f907_s2_open():
-    """F907 OPEN: miss reproduces."""
+def test_r55_f907_s2_closed():
+    """F907 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){return ['z','%s'].reduce((a,b)=>b)+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f908_s1_open():
-    """F908 OPEN: miss reproduces."""
+def test_r55_f908_s1_closed():
+    """F908 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var s='';var m=new Map([['a','%s'],['b','%s']]);for(var [k,v] of m)s+=v;return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f908_s2_open():
-    """F908 OPEN: miss reproduces."""
+def test_r55_f908_s2_closed():
+    """F908 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var s='';var m=new Map();m.set('x','%s');m.set('y','%s');for(var [k,v] of m)s+=v;return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f909_s1_open():
-    """F909 OPEN: miss reproduces."""
+def test_r55_f909_s1_closed():
+    """F909 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var p=new Proxy({},{get:function(){return '%s';}});return p.anything+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
-def test_r55_f909_s2_open():
-    """F909 OPEN: miss reproduces."""
+def test_r55_f909_s2_closed():
+    """F909 CLOSED (wave-388): block holds."""
     miss = _misses("(function(){var p=new Proxy({},{get(){return '%s';}});return p.anything+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 # --------------------------------- lane red-first sweep (F829-F833, F883-F892)
 
@@ -294,7 +296,7 @@ LANE_NUMS = [829, 830, 831, 832, 833, 883, 884, 885, 886, 887, 888, 889, 890, 89
 
 @_t
 def test_p8_lane_sweep():
-    """All lane-filed open findings still miss (via their red-firsts)."""
+    """All w386 red-firsts now hold (F829-F892 closed wave-387)."""
     bad = []
     for n in LANE_NUMS:
         tmp = tempfile.mkdtemp(prefix="g387-lanesweep-", dir="/var/tmp")
@@ -305,10 +307,10 @@ def test_p8_lane_sweep():
             [sys.executable, os.path.join(REPO_ROOT, "evals", "w386_f%d_redfirst.py" % n)],
             capture_output=True, text=True, env=env, timeout=300, cwd=REPO_ROOT)
         out = (p.stdout or "") + (p.stderr or "")
-        # open = at least one BREAK (or RAISED) in the tally
+        # closed = zero BREAK/RAISED in the tally
         m = [l for l in out.splitlines() if l.startswith("tally:")]
-        still_open = any(("BREAK" in l or "RAISED" in l) and not l.startswith("tally: 0 BREAK") for l in m)
-        if not still_open:
+        still_held = any(l.startswith("tally: 0 BREAK") or l.startswith("tally: 0 RAISED") for l in m)
+        if not still_held:
             bad.append(n)
     ok = not bad
     return ("HELD" if ok else "BREAK", "lane-still-open=%s bad=%s" % (ok, bad))

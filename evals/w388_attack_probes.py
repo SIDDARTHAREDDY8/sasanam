@@ -61,11 +61,12 @@ def _misses(payload):
 
 @_t
 def test_b0_footer_state():
-    """Control: lane-local footer (F893-F936 open, next F937)."""
+    """Control: merge footer (F893-F920 closed; open F921-F926, F928-F936; next F937)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F937**" in text  # Wave-388 attack round 56
-          and "F893, F894, F895, F896, F897, F898, F899, F900, F901, F902, F903, F904, F905, F906, F907, F908, F909, F910, F911, F912, F913, F914, F915, F916, F917, F918, F919, F920, F921, F922, F923, F924, F925, F926, F927, F928, F929, F930, F931, F932, F933, F934, F935, F936.**" in text)
+    ok = ("Next free finding: **F937**" in text  # Wave-388 merge
+          and "F921, F922, F923, F924, F925, F926, F928, F929, F930, F931, F932, F933, F934, F935, F936.**" in text
+          and "F893-F920 CLOSED (28)" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -123,10 +124,10 @@ def test_r56_f926_extends_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r56_f927_chainassign_open():
-    """F927 OPEN: miss reproduces."""
+def test_r56_f927_chainassign_closed():
+    """F927 CLOSED (wave-388 merge, incidental: F901's chained-assignment closure covers it)."""
     miss = _misses("(function(){var a,b;a=b='%s';return a+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 @_t
 def test_r56_f928_comma_open():
@@ -201,17 +202,10 @@ def _green_check():
     for line in out.splitlines():
         if ": BREAK" in line:
             broke.add(line.split(":")[0])
-    # Known-stale pins in the w387 battery (pre-existing on the wave-387 base;
-    # the wave-387 merge re-pinned w386_attack_probes.py but not w387_attack_probes.py):
-    # - test_b0_footer_state: this lane repointed the footer (wave-305/306 class)
-    # - test_p8_lane_sweep: sweeps F829-F892 red-firsts, closed by wave-387 lanes
-    # - test_r55_f902_s1_open / f906_s2 / f907_s1: those exact shapes are now
-    #   blocked (incidental wave-387 closure-lane coverage); each finding stays
-    #   OPEN via its other red-first shapes (verified: F902 s2, F906 s1, F907 s2
-    #   still BREAK on this tree).
-    stale = {"test_b0_footer_state", "test_p8_lane_sweep",
-             "test_r55_f902_s1_open", "test_r55_f906_s2_open",
-             "test_r55_f907_s1_open"}
+    # The w387 battery was fully re-pinned at the wave-388 merge
+    # (F893-F909 closed-hit pins, footer + lane-sweep updated) --
+    # it must now report 0 BREAKs; no stale set remains.
+    stale = set()
     real = broke - stale
     missing = stale - broke
     ok = not real and not missing
