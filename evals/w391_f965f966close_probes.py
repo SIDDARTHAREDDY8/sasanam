@@ -94,10 +94,11 @@ def test_p0_pin_recompile():
 
 @_t
 def test_p0_footer_next_free():
-    """Merged footer: F965/F966 CLOSED; all F949-F966 CLOSED (18); next free F988."""
+    """Merged footer (wave-392): F965/F966 CLOSED; F967-F987 CLOSED; next free F1005."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F988**" in text
-          and "F949-F966 CLOSED (18)." in text)
+    ok = ("Next free finding: **F1005**" in text
+          and "F949-F966 CLOSED (18)." in text
+          and "F967-F974 CLOSED (8" in text)
     return ("HELD" if ok else "BREAK", "footer-ok=%s" % ok)
 
 

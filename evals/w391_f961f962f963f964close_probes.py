@@ -95,7 +95,7 @@ def test_p0_pin_recompile():
 
 @_t
 def test_p0_footer_lane_local():
-    """Merged footer: F961-F964 CLOSED; open F967-F987 (21); next F988."""
+    """Merged footer (wave-392): F961-F964 CLOSED; F967-F987 CLOSED (18); open F988-F1003, F1004; next F1005."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = True
     notes = []
@@ -105,12 +105,12 @@ def test_p0_footer_lane_local():
             ok = False
             notes.append("%s not CLOSED" % f)
     footer = text[text.rfind("Next free finding:"):]
-    if not re.search(r"F967-F987 OPEN \(21", footer):
+    if not re.search(r"F967-F974 CLOSED \(8", footer):
         ok = False
-        notes.append("open F967-F987 missing from footer")
-    if "F988" not in footer:
+        notes.append("F967-F974 closed missing from footer")
+    if "F1005" not in footer:
         ok = False
-        notes.append("next-free not F988")
+        notes.append("next-free not F1005")
     return ("HELD" if ok else "BREAK", "; ".join(notes) or "footer ok")
 
 

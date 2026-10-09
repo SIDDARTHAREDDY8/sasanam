@@ -84,12 +84,12 @@ def test_p0_pin_recompile():
 
 @_t
 def test_p0_footer_state():
-    """Lane-local footer: F977/F978/F980/F981 CLOSED; F1004 filed OPEN (renumbered from F988 per wave-272); open F982-F987 + F1004; next F989."""
+    """Merged footer: F977/F978/F980/F981 CLOSED; F1004 OPEN (renumbered from F988); F988-F1003 OPEN; next F1005."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F989**" in text
+    ok = ("Next free finding: **F1005**" in text
           and "F977, F978, F980, F981 CLOSED (4" in text
           and "F1004 OPEN (1, wave-392 lane 3" in text
-          and "F982-F987 OPEN (6" in text)
+          and "F988-F1003 OPEN (16" in text)
     return ("HELD" if ok else "BREAK", "footer-ok=%s" % ok)
 
 
@@ -227,6 +227,15 @@ def test_p3_fail_closed():
 # w391_attack_probes.py.
 
 _SIBLING_OPEN = [
+    # (empty at merge: F967-F974/F982-F987 all CLOSED by wave-392 lanes)
+]
+
+_SIBLING_CLOSED = [
+    # F975/F976/F979: wave-391 merge incidentals (F949+F947 composition)
+    "class C{#x='xoxb-0123';get s(){return this.#x+'456789abcdef';}}var RESULT=new C().s;",
+    "var o={a:'xoxb-0123'};var RESULT=(o?.a??'x')+'456789abcdef';",
+    "var o={a:'xoxb-0123',b:'456789abcdef'};var RESULT=Object.keys(o).map(function(k){return o[k];}).join('');",
+    # F967-F974/F982-F987: CLOSED by wave-392 lanes 1+2+4+5 (moved from _SIBLING_OPEN at merge)
     "var c=[[120,111,120,98,45,48,49,50,51],[52,53,54,55,56,57,97,98,99,100,101,102]];var RESULT=String.fromCharCode.apply(null,c.flat());",  # F967
     "var e=Object.entries({a:'xoxb-0123',b:'456789abcdef'});var o=Object.fromEntries(e);var RESULT=o.a+o.b;",  # F968
     "var f=new FormData();f.append('a','xoxb-0123');f.append('b','456789abcdef');var RESULT=String(f.getAll('a'))+String(f.getAll('b'));",  # F969
@@ -243,17 +252,10 @@ _SIBLING_OPEN = [
     "var c=[120,111,120,98,45,48,49,50,51,52,53,54,55,56,57,97,98,99,100,101,102];var RESULT=String.fromCharCode.apply(null,c);",  # F987
 ]
 
-_SIBLING_CLOSED = [
-    # F975/F976/F979: wave-391 merge incidentals (F949+F947 composition)
-    "class C{#x='xoxb-0123';get s(){return this.#x+'456789abcdef';}}var RESULT=new C().s;",
-    "var o={a:'xoxb-0123'};var RESULT=(o?.a??'x')+'456789abcdef';",
-    "var o={a:'xoxb-0123',b:'456789abcdef'};var RESULT=Object.keys(o).map(function(k){return o[k];}).join('');",
-]
-
 
 @_t
 def test_p4_sibling_pins():
-    """14 other round-59 findings still OPEN (miss); incidentals still CLOSED (block)."""
+    """Round-59 sibling findings CLOSED by wave-392 lanes (block); incidentals still CLOSED (block)."""
     bad_open = [p for p in _SIBLING_OPEN if not _misses(p)]
     bad_closed = [p for p in _SIBLING_CLOSED if not _blocked(p)]
     bad = bad_open + bad_closed

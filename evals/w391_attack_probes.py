@@ -61,12 +61,14 @@ def _misses(payload):
 
 @_t
 def test_b0_footer_state():
-    """Control: merged footer (F949-F966 closed; open F967-F987; next F988)."""
+    """Control: merged footer (F949-F987 closed; open F988-F1003, F1004; next F1005)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F988**" in text
-          and "F949-F966 CLOSED (18)." in text
-          and "F967-F974, F977, F978, F980-F987 OPEN (18" in text)
+    ok = ("Next free finding: **F1005**" in text
+          and "F967-F974 CLOSED (8" in text
+          and "F986-F987 CLOSED (2" in text
+          and "F988-F1003 OPEN (16" in text
+          and "F1004 OPEN (1" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -87,59 +89,59 @@ def test_p9_taxonomy_pin():
 # ------------------------------------------------- new pins (round 59)
 
 @_t
-def test_r59_f967_open():
-    """F967 OPEN: flat/flatMap on fromCharCode arg arrays (F952 residual)."""
+def test_r59_f967_closed():
+    """F967 CLOSED: flat/flatMap on fromCharCode arg arrays (F952 residual)."""
     miss = _misses('var c=[[120,111,120,98,45,48,49,50,51],[52,53,54,55,56,57,97,98,99,100,101,102]];var RESULT=String.fromCharCode.apply(null,c.flat());')
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 @_t
-def test_r59_f968_open():
-    """F968 OPEN (residual): entries->fromEntries round-trip still breaks; literal-pair forms closed by merge composition."""
+def test_r59_f968_closed():
+    """F968 CLOSED: entries->fromEntries round-trip now blocked by wave-392 lane 1."""
     miss = _misses("var e=Object.entries({a:'xoxb-0123',b:'456789abcdef'});var o=Object.fromEntries(e);var RESULT=o.a+o.b;")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 @_t
-def test_r59_f969_open():
-    """F969 OPEN: multi-name FormData.getAll (F914 residual)."""
+def test_r59_f969_closed():
+    """F969 CLOSED: multi-name FormData.getAll (F914 residual)."""
     miss = _misses("var f=new FormData();f.append('a','xoxb-0123');f.append('b','456789abcdef');var RESULT=String(f.getAll('a'))+String(f.getAll('b'));")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 @_t
-def test_r59_f970_open():
-    """F970 OPEN: property-descriptor assembly."""
+def test_r59_f970_closed():
+    """F970 CLOSED: property-descriptor assembly."""
     miss = _misses("var d=Object.getOwnPropertyDescriptor({a:'xoxb-0123'},'a');var RESULT=d.value+'456789abcdef';")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 @_t
-def test_r59_f971_open():
-    """F971 OPEN: Reflect.ownKeys / Map.get reads."""
+def test_r59_f971_closed():
+    """F971 CLOSED: Reflect.ownKeys / Map.get reads."""
     miss = _misses("var o={a:'xoxb-0123',b:'456789abcdef'};var ks=Reflect.ownKeys(o);var RESULT=o[ks[0]]+o[ks[1]];")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 @_t
-def test_r59_f972_open():
-    """F972 OPEN: JSON.parse/new-Array sources for fromCharCode (F943 residual)."""
+def test_r59_f972_closed():
+    """F972 CLOSED: JSON.parse/new-Array sources for fromCharCode (F943 residual)."""
     miss = _misses("var a=JSON.parse('[120,111,120,98,45,48,49,50,51]');var RESULT=String.fromCharCode(...a)+'456789abcdef';")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 @_t
-def test_r59_f973_open():
-    """F973 OPEN: closure-captured reads."""
+def test_r59_f973_closed():
+    """F973 CLOSED: closure-captured reads."""
     miss = _misses("function f(){var q='xoxb-0123';return function(){return q+'456789abcdef';};}var RESULT=f()();")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 @_t
-def test_r59_f974_open():
-    """F974 OPEN (residual): symbol-keyed member reads still break; plain getter forms closed by merge composition."""
+def test_r59_f974_closed():
+    """F974 CLOSED: symbol-keyed member reads now blocked by wave-392 lane 2."""
     miss = _misses("var k=Symbol.for('a');var o={};o[k]='xoxb-0123';var r={get s(){return o[k]+'456789abcdef';}};var RESULT=r.s;")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 @_t
@@ -157,17 +159,17 @@ def test_r59_f976_closed():
 
 
 @_t
-def test_r59_f977_open():
-    """F977 OPEN: delete/re-add lifecycle."""
+def test_r59_f977_closed():
+    """F977 CLOSED: delete/re-add lifecycle."""
     miss = _misses("var o={a:'xoxb-0123',b:'456789abcdef'};delete o.b;o.b='456789abcdef';var RESULT=o.a+o.b;")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 @_t
-def test_r59_f978_open():
-    """F978 OPEN: splice reassembly."""
+def test_r59_f978_closed():
+    """F978 CLOSED: splice reassembly."""
     miss = _misses("var q=['x','xoxb-0123','y','456789abcdef','z'];q.splice(0,1);q.splice(1,1);q.splice(2,1);var RESULT=q.join('');")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 @_t
@@ -178,59 +180,59 @@ def test_r59_f979_closed():
 
 
 @_t
-def test_r59_f980_open():
-    """F980 OPEN: arguments spread into fromCharCode."""
+def test_r59_f980_closed():
+    """F980 CLOSED: arguments spread into fromCharCode."""
     miss = _misses("var RESULT=(function(){return String.fromCharCode(...arguments);})(120,111,120,98,45,48,49,50,51)+'456789abcdef';")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 @_t
-def test_r59_f981_open():
-    """F981 OPEN: pop accumulation (F938 residual)."""
+def test_r59_f981_closed():
+    """F981 CLOSED: pop accumulation (F938 residual)."""
     miss = _misses("var q=['456789abcdef','xoxb-0123'];var s='';while(q.length){s=s+q.pop();}var RESULT=s;")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 @_t
-def test_r59_f982_open():
-    """F982 OPEN: F937 loop-form residuals."""
+def test_r59_f982_closed():
+    """F982 CLOSED: F937 loop-form residuals."""
     miss = _misses("var s='',i=0;do{s+='xoxb-0123',i++;}while(i<1);s+='456789abcdef';var RESULT=s;")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 @_t
-def test_r59_f983_open():
-    """F983 OPEN: switch computed discriminant (F953 residual)."""
+def test_r59_f983_closed():
+    """F983 CLOSED: switch computed discriminant (F953 residual)."""
     miss = _misses("var s='';switch(1+1){case 1:s+='no';break;case 2:s+='xoxb-0123';s+='456789abcdef';break;}var RESULT=s;")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 @_t
-def test_r59_f984_open():
-    """F984 OPEN: try/catch around statement builtins (F949/F950 composition)."""
+def test_r59_f984_closed():
+    """F984 CLOSED: try/catch around statement builtins (F949/F950 composition)."""
     miss = _misses("var s='';try{var o=structuredClone({a:'xoxb-0123',b:'456789abcdef'});s=o.a+o.b;}catch(e){s='no';}var RESULT=s;")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 @_t
-def test_r59_f985_open():
-    """F985 OPEN: charCodeAt inverse."""
+def test_r59_f985_closed():
+    """F985 CLOSED: charCodeAt inverse."""
     miss = _misses("var t='xoxb-0123';var c=t.charCodeAt(0);var RESULT=String.fromCharCode(c)+'oxb-0123'+'456789abcdef';")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 @_t
-def test_r59_f986_open():
-    """F986 OPEN: guarded conditional assembly."""
+def test_r59_f986_closed():
+    """F986 CLOSED: guarded conditional assembly."""
     miss = _misses("var s='';if(1){s+='xoxb-0123';}else{s+='x';}s+='456789abcdef';var RESULT=s;")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 @_t
-def test_r59_f987_open():
-    """F987 OPEN: var-bound fromCharCode arg arrays (F643 residual)."""
+def test_r59_f987_closed():
+    """F987 CLOSED: var-bound fromCharCode arg arrays (F643 residual)."""
     miss = _misses('var c=[120,111,120,98,45,48,49,50,51,52,53,54,55,56,57,97,98,99,100,101,102];var RESULT=String.fromCharCode.apply(null,c);')
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 

@@ -97,7 +97,7 @@ def test_pins():
     check("pin:taxonomy-2143", "TAXONOMY_PIN = 2143" in guac_src)
     with open(os.path.join(REPO, "evals", "FINDINGS.md")) as f:
         foot = f.read()
-    check("pin:footer-next-f988", "Next free finding: **F988**" in foot)
+    check("pin:footer-next-f1005", "Next free finding: **F1005**" in foot)
     for fid in ("F982", "F983", "F984", "F985"):
         lines = [ln for ln in foot.split("\n") if ln.startswith("(%s " % fid)]
         check("pin:footer-%s-closed" % fid.lower(),

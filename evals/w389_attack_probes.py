@@ -61,12 +61,12 @@ def _misses(payload):
 
 @_t
 def test_b0_footer_state():
-    """Control: merged footer (F949-F966 closed; open F967-F987; next F988)."""
+    """Control: merged footer (F949-F987 closed; open F988-F1003, F1004; next F1005)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F988**" in text
-          and "F949-F966 CLOSED (18)." in text
-          and "F967-F974, F977, F978, F980-F987 OPEN (18" in text)
+    ok = ("Next free finding: **F1005**" in text
+          and "F967-F974 CLOSED (8" in text
+          and "F988-F1003 OPEN (16" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

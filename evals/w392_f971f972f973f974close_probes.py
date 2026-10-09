@@ -96,11 +96,11 @@ def test_p0_pin_recompile():
 
 @_t
 def test_p0_footer_lane2():
-    """Lane footer: F971-F974 CLOSED (4); F967-F970/F977/F978/F980-F987 OPEN (14); next F988."""
+    """Merged footer: F971-F974 CLOSED (wave-392 lane 2); F967-F987 closed except F988-F1003/F1004; next F1005."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F988**" in text
-          and "F971-F974 CLOSED (4, wave-392 lane 2)" in text
-          and "F967-F970, F977, F978, F980-F987 OPEN (14" in text)
+    ok = ("Next free finding: **F1005**" in text
+          and "F967-F974 CLOSED (8" in text
+          and "F988-F1003 OPEN (16" in text)
     return ("HELD" if ok else "BREAK", "footer-ok=%s" % ok)
 
 
@@ -267,12 +267,15 @@ def test_p4_sibling_pins():
         "var o={a:'%s'};var RESULT=(o?.a??'x')+'%s';" % (_A, _B),
     ]
     still_open = [
-        # F968 residual: entries->fromEntries round-trip (my F971 must not close it)
+        # F968 residual: entries->fromEntries round-trip — CLOSED by wave-392 lane 1 (merge)
+        # F977: delete/re-add lifecycle — CLOSED by wave-392 lane 3 (merge)
+        # (both moved to `blocked` below; kept here documented, not probed)
+    ]
+    extra_blocked = [
         "var e=Object.entries({a:'%s',b:'%s'});var o=Object.fromEntries(e);var RESULT=o.a+o.b;" % (_A, _B),
-        # F977: delete/re-add lifecycle (my F974's delete guard must not close it)
         "var o={a:'%s',b:'%s'};delete o.b;o.b='%s';var RESULT=o.a+o.b;" % (_A, _B, _B),
     ]
-    bad_blocked = [s for s in blocked if not _blocked(s)]
+    bad_blocked = [s for s in blocked + extra_blocked if not _blocked(s)]
     bad_open = [s for s in still_open if not _misses(s)]
     bad = bad_blocked + bad_open
     return ("HELD" if not bad else "BREAK",
