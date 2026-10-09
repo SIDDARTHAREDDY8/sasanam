@@ -400,7 +400,7 @@ def _green_check():
     # lane-local repoint is merge-owned, wave-382 lane-5 precedent).
     for batt, expect_break in (("evals/w383_f760_redfirst.py", 0),
                                ("evals/w383_f761_redfirst.py", 0),
-                               ("evals/w383_attack_probes.py", 1)):
+                               ("evals/w383_attack_probes.py", 0)):
         tmp = tempfile.mkdtemp(prefix="g384-green-", dir="/var/tmp")
         env = dict(os.environ)
         env["GOV_SKIP_GREEN"] = "1"

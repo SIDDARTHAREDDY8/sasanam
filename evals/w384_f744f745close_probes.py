@@ -335,10 +335,9 @@ def _green_check():
     # (battery, expected BREAKs)
     for batt, expect_break in (("evals/w383_f744_redfirst.py", 0),
                                ("evals/w383_f745_redfirst.py", 0),
-                               ("evals/w383_attack_probes.py", 1)):
-        # w383_attack: 1 tolerated BREAK is test_b0_footer_state, which
-        # asserts the base footer; the lane-local footer repoint is
-        # merge-owned (wave-382 lane-5 precedent).
+                               ("evals/w383_attack_probes.py", 0)):
+        # w383_attack: 0 BREAKs after the wave-384 merge footer repoint
+        # (test_b0_footer_state now asserts the merged footer).
         tmp = tempfile.mkdtemp(prefix="g384-green-", dir="/var/tmp")
         env = dict(os.environ)
         env["GOV_SKIP_GREEN"] = "1"

@@ -21274,9 +21274,8 @@ def _js_parse_f748_logassign_iife(text, i, depth, state):
             return None
         k = _js_skip_ws(text, k)
         if k < n and text[k] in _JS_IDENT_START:
-            # Optional name (engine-exact; ignored) -- F611 twin.
-            _, k = _js_parse_ident(text, k)
-            k = _js_skip_ws(text, k)
+            # Named function: fail closed (documented F748 bound).
+            return None
         if k >= n or text[k] != "(":
             return None
         k = _js_skip_ws(text, k + 1)
@@ -21464,9 +21463,8 @@ def _js_parse_f749_destructure_default_iife(text, i, depth, state):
             return None
         k = _js_skip_ws(text, k)
         if k < n and text[k] in _JS_IDENT_START:
-            # Optional name (engine-exact; ignored) -- F611 twin.
-            _, k = _js_parse_ident(text, k)
-            k = _js_skip_ws(text, k)
+            # Named function: fail closed (documented F749 bound).
+            return None
         if k >= n or text[k] != "(":
             return None
         k = _js_skip_ws(text, k + 1)

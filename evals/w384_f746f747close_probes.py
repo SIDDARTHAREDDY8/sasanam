@@ -382,20 +382,20 @@ def test_p4_sibling_f669():
 # ------------------------------------------- open neighbors still miss (p4b)
 
 @_t
-def test_p4b_neighbor_f745_open():
-    """F745 (Set.prototype.union) still misses -- open, not absorbed."""
-    ok = _misses(
+def test_p4b_neighbor_f745_now_closed():
+    """F745 (Set.prototype.union) now blocks (closed wave-384 lane 4)."""
+    ok = _blocked(
         "(function(){var a=new Set(['%s']);var b=new Set(['%s']);"
         "return [...a.union(b)].join('');})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f745-open=%s" % ok)
+    return ("HELD" if ok else "BREAK", "f745-closed=%s" % ok)
 
 
 @_t
-def test_p4b_neighbor_f748_open():
-    """F748 (||= / &&=) still misses -- open, not absorbed."""
-    ok = _misses(
+def test_p4b_neighbor_f748_now_closed():
+    """F748 (||= / &&=) now blocks (closed wave-384 lane 6)."""
+    ok = _blocked(
         "(function(){var x;x||='%s';x+='%s';return x;})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f748-open=%s" % ok)
+    return ("HELD" if ok else "BREAK", "f748-closed=%s" % ok)
 
 
 # ------------------------------------------------------------- honest (p5)
@@ -443,11 +443,10 @@ def _green_check():
     bad = []
     # Red-firsts must show 0 BREAK on the closed tree. The
     # w383_attack battery must show 0 BREAK with the F746/F747
-    # pins flipped to closed (lane-local footer is merge-owned
-    # tree-wide; its footer BREAK is tolerated here).
+    # pins flipped to closed (footer repointed at wave-384 merge).
     for batt, expect_break in (("evals/w383_f746_redfirst.py", 0),
                                ("evals/w383_f747_redfirst.py", 0),
-                               ("evals/w383_attack_probes.py", 1)):
+                               ("evals/w383_attack_probes.py", 0)):
         tmp = tempfile.mkdtemp(prefix="g384-green-", dir="/var/tmp")
         env = dict(os.environ)
         env["GOV_SKIP_GREEN"] = "1"

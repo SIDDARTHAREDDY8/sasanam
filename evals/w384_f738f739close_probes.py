@@ -361,32 +361,30 @@ def test_p4_sibling_f671():
 
 
 @_t
-def test_p4_neighbor_f740_open():
-    """F740 (open) still misses."""
-    ok = _misses(
+def test_p4_neighbor_f740_now_closed():
+    """F740 now blocks (closed wave-384 lane 2)."""
+    ok = _blocked(
         "(function(){var r;try{throw '%s';}catch(e){r=e;}"
         "return r+'%s';})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f740-open=%s" % ok)
+    return ("HELD" if ok else "BREAK", "f740-closed=%s" % ok)
 
 
 @_t
-def test_p4_neighbor_f761_open():
-    """F761 (open) keeps its filed over-decode behavior.
+def test_p4_neighbor_f761_now_closed():
+    """F761 now fails closed (closed wave-384 lane 12).
 
-    F761's filed shapes throw in the engine (own non-callable
-    [Symbol.toPrimitive]) while the decoder over-decodes -- that
-    over-decode is F761's open state, owned by another lane. This
-    probe pins the verbatim filed shapes so this lane cannot
-    silently alter F761.
+    The filed shapes throw in the engine (own non-callable
+    [Symbol.toPrimitive]); the decoder now refuses coded instead
+    of over-decoding.
     """
-    ok = _blocked(
+    ok = _misses(
         "(function(){var o={[Symbol.toPrimitive]:'x',"
         "toString:function(){return '%s';}};"
-        "return o+'%s';})()" % (_A, _B)) and _blocked(
+        "return o+'%s';})()" % (_A, _B)) and _misses(
         "(function(){var o={[Symbol.toPrimitive]:'x',"
         "valueOf:function(){return '%s';}};"
         "return o+'%s';})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f761-open=%s" % ok)
+    return ("HELD" if ok else "BREAK", "f761-closed=%s" % ok)
 
 
 # ------------------------------------------------------- honest text p5

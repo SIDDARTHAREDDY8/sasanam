@@ -299,17 +299,17 @@ def test_p4_sibling_f729_void():
 
 
 @_t
-def test_p4_neighbor_f753_open():
-    """Neighbor: F753 (spread args) still misses (open)."""
-    ok = _misses("(function(){function h(a,b){return a+b;}return h(...['%s','%s']);})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f753-open=%s" % ok)
+def test_p4_neighbor_f753_now_closed():
+    """Neighbor: F753 (spread args) now blocks (closed wave-384 lane 8)."""
+    ok = _blocked("(function(){function h(a,b){return a+b;}return h(...['%s','%s']);})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f753-closed=%s" % ok)
 
 
 @_t
-def test_p4_neighbor_f756_open():
-    """Neighbor: F756 (ternary) still misses (open)."""
-    ok = _misses("(function(){var c=true;return (c?'%s':'z')+'%s';})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f756-open=%s" % ok)
+def test_p4_neighbor_f756_now_closed():
+    """Neighbor: F756 (ternary) now blocks (closed wave-384 lane 10)."""
+    ok = _blocked("(function(){var c=true;return (c?'%s':'z')+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f756-closed=%s" % ok)
 
 
 # ------------------------------------------------------------ junk (p5)
@@ -364,7 +364,7 @@ def _green_check():
     # repoint is merge-owned.
     for batt, expect_break in (("evals/w383_f754_redfirst.py", 0),
                                ("evals/w383_f755_redfirst.py", 0),
-                               ("evals/w383_attack_probes.py", 1)):
+                               ("evals/w383_attack_probes.py", 0)):
         tmp = tempfile.mkdtemp(prefix="g384-green-", dir="/var/tmp")
         env = dict(os.environ)
         env["GOV_SKIP_GREEN"] = "1"

@@ -381,30 +381,30 @@ def test_p4_sibling_f697():
 
 
 @_t
-def test_p4_open_f740():
-    """F740 (try/catch) still misses -- open finding untouched."""
-    ok = _misses(
+def test_p4_f740_now_closed():
+    """F740 (try/catch) now blocks (closed wave-384 lane 2)."""
+    ok = _blocked(
         "(function(){var r;try{throw '%s';}catch(e){r=e;}return r+'%s';})()"
         % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f740=%s" % ok)
+    return ("HELD" if ok else "BREAK", "f740-closed=%s" % ok)
 
 
 @_t
-def test_p4_open_f758():
-    """F758 (rest params) still misses -- open finding untouched."""
-    ok = _misses(
+def test_p4_f758_now_closed():
+    """F758 (rest params) now blocks (closed wave-384 lane 11)."""
+    ok = _blocked(
         "(function(){function h(...xs){return xs.join('');}return h('%s','%s');})()"
         % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f758=%s" % ok)
+    return ("HELD" if ok else "BREAK", "f758-closed=%s" % ok)
 
 
 @_t
-def test_p4_open_f761():
-    """F761 (over-decode: non-callable @@toPrimitive) still over-decodes -- open finding untouched."""
-    ok = _blocked(
+def test_p4_f761_now_closed():
+    """F761 now fails closed (closed wave-384 lane 12; no over-decode)."""
+    ok = _misses(
         "(function(){var o={[Symbol.toPrimitive]:'x',"
         "toString:function(){return '%s';}};return o+'%s';})()" % (_A, _B))
-    return ("HELD" if ok else "BREAK", "f761=%s" % ok)
+    return ("HELD" if ok else "BREAK", "f761-closed=%s" % ok)
 
 
 @_t
@@ -459,7 +459,7 @@ def _green_check():
     # tree-wide (wave-305/306 class).
     for batt, expect_break in (("evals/w383_f756_redfirst.py", 0),
                                ("evals/w383_f757_redfirst.py", 0),
-                               ("evals/w383_attack_probes.py", 1)):
+                               ("evals/w383_attack_probes.py", 0)):
         tmp = tempfile.mkdtemp(prefix="g384-green-", dir="/var/tmp")
         env = dict(os.environ)
         env["GOV_SKIP_GREEN"] = "1"
@@ -481,21 +481,7 @@ def _green_check():
             bad.append((batt, "no-tally"))
         elif nbreak != expect_break:
             bad.append((batt, nbreak))
-    # The single tolerated attack-battery BREAK must be the footer
-    # pin, not a real probe.
-    if not bad:
-        tmp = tempfile.mkdtemp(prefix="g384-green-", dir="/var/tmp")
-        env = dict(os.environ)
-        env["GOV_SKIP_GREEN"] = "1"
-        env["TMPDIR"] = tmp
-        p = subprocess.run(
-            [sys.executable,
-             os.path.join(REPO_ROOT, "evals", "w383_attack_probes.py")],
-            capture_output=True, text=True, env=env, timeout=900,
-            cwd=REPO_ROOT)
-        out = (p.stdout or "") + (p.stderr or "")
-        if "test_b0_footer_state: BREAK" not in out:
-            bad.append(("w383_attack_probes.py", "footer-not-the-break"))
+    # 0 BREAKs expected after the wave-384 merge footer repoint.
     ok = not bad
     return ("HELD" if ok else "BREAK", "green=%s" % (bad if bad else "ok"))
 

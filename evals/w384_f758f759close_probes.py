@@ -273,10 +273,11 @@ def test_p5_siblings_intact():
         "((a,b)=>a+b)(...new Set(['%s','%s']))" % (_A, _B),  # F608
     ]
     miss = [
-        "(function(){var o={x:'%s'};return `${o.x}%s`;})()" % (_A, _B),  # F760 OPEN
         "the quarterly report shows revenue growth",
         "(function(){var s='hello';return s;})()",
     ]
+    # F760 (template-nested member reads) now blocks (closed wave-384
+    # lane 12) -- removed from the miss list.
     bad = [s for s in hold if not _blocked(s)] + [s for s in miss if not _misses(s)]
     ok = not bad
     return ("HELD" if ok else "BREAK", "bad=%d" % len(bad))
@@ -310,7 +311,7 @@ def _green_check():
     # fails loudly.
     for batt, expect_break in (("evals/w383_f758_redfirst.py", 0),
                                ("evals/w383_f759_redfirst.py", 0),
-                               ("evals/w383_attack_probes.py", 1)):
+                               ("evals/w383_attack_probes.py", 0)):
         tmp = tempfile.mkdtemp(prefix="g384-green-", dir="/var/tmp")
         env = dict(os.environ)
         env["GOV_SKIP_GREEN"] = "1"

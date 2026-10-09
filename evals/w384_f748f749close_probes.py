@@ -470,22 +470,22 @@ def test_p4_sibling_f671():
 
 
 @_t
-def test_p4_neighbor_f740_open():
-    """Neighbor F740 (try/catch, OPEN) still misses."""
+def test_p4_neighbor_f740_now_closed():
+    """Neighbor F740 (try/catch) now blocks (closed wave-384 lane 2)."""
     s = ("(function(){var r;try{throw '" + _A + "';}catch(e){r=e;}"
          "return r+'" + _B + "';})()")
-    ok = _misses(s)
-    return ("HELD" if ok else "BREAK", "f740-open=%s" % ok)
+    ok = _blocked(s)
+    return ("HELD" if ok else "BREAK", "f740-closed=%s" % ok)
 
 
 @_t
-def test_p4_neighbor_f750_open():
-    """Neighbor F750 (builtin-iterator .next().value, OPEN) still misses."""
+def test_p4_neighbor_f752_now_closed():
+    """Neighbor F752 (builtin-iterator .next().value) now blocks (closed wave-384 lane 8)."""
     s = ("(function(){var it=['" + _A + "','" + _B
          + "'][Symbol.iterator]();var s='';s+=it.next().value;"
          "s+=it.next().value;return s;})()")
-    ok = _misses(s)
-    return ("HELD" if ok else "BREAK", "f750-open=%s" % ok)
+    ok = _blocked(s)
+    return ("HELD" if ok else "BREAK", "f752-closed=%s" % ok)
 
 
 @_t
@@ -553,13 +553,12 @@ def _green_check():
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return ("HELD", "green check skipped (GOV_SKIP_GREEN=1)")
     bad = []
-    # w383_attack_probes.py expects 1 BREAK: its test_b0_footer_state
-    # asserts the base footer (F738-F761 open); the lane-local repoint
-    # (F748/F749 closed) moves it. The tree-wide footer repoint is
-    # merge-owned (wave-305 lesson); all functional probes must HELD.
+    # w383_attack_probes.py expects 0 BREAKs after the wave-384 merge
+    # footer repoint (test_b0_footer_state now asserts the merged
+    # footer); all functional probes must HELD.
     for batt, expect_break in (("evals/w383_f748_redfirst.py", 0),
                                ("evals/w383_f749_redfirst.py", 0),
-                               ("evals/w383_attack_probes.py", 1)):
+                               ("evals/w383_attack_probes.py", 0)):
         tmp = tempfile.mkdtemp(prefix="g384-green-", dir="/var/tmp")
         env = dict(os.environ)
         env["GOV_SKIP_GREEN"] = "1"

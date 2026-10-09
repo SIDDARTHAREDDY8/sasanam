@@ -383,11 +383,11 @@ def test_p4_f434_siblings():
 
 @_t
 def test_p4_open_neighbors():
-    """Open neighbors F740 (try/catch), F744 (Set.union), F762 (numeric toPrimitive) still miss."""
-    ok = _misses(
+    """Neighbors: F740/F744 now block (closed wave-384); F794 (numeric toPrimitive) still misses."""
+    ok = _blocked(
         "(function(){var r;try{throw '%s';}catch(e){r=e;}"
         "return r+'%s';})()" % (_A, _B))
-    ok = ok and _misses(
+    ok = ok and _blocked(
         "(function(){var s=new Set(['%s']).union(new Set(['%s']));"
         "return [...s].join('');})()" % (_A, _B))
     ok = ok and _misses(
@@ -431,9 +431,7 @@ def _green_check():
         return ("HELD", "green check skipped (GOV_SKIP_GREEN=1)")
     bad = []
     # w383_attack: 4 pins flipped open->closed by this lane; the footer
-    # pin (test_b0_footer_state) asserts the base footer -- the
-    # lane-local repoint is merge-owned (wave-305 class). Expect
-    # exactly 1 BREAK (the footer pin).
+    # pin was repointed at the wave-384 merge. Expect 0 BREAKs.
     tmp = tempfile.mkdtemp(prefix="g384-green-", dir="/var/tmp")
     env = dict(os.environ)
     env["GOV_SKIP_GREEN"] = "1"
@@ -453,7 +451,7 @@ def _green_check():
                 pass
     if nbreak is None:
         bad.append(("w383_attack_probes", "no-tally"))
-    elif nbreak != 1:
+    elif nbreak != 0:
         bad.append(("w383_attack_probes", nbreak))
     ok = not bad
     return ("HELD" if ok else "BREAK", "green=%s" % (bad if bad else "ok"))

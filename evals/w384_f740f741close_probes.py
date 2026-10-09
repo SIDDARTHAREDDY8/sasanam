@@ -432,15 +432,12 @@ def _green_check():
         return ("HELD", "green check skipped (GOV_SKIP_GREEN=1)")
     bad = []
     # (battery, expected BREAKs)
-    for batt, expect_break in (("evals/w383_attack_probes.py", 1),
-                               ("evals/w380_f679close_probes.py", 1),
-                               ("evals/w378_f655close_probes.py", 2)):
-        # All expected BREAKs are footer-pin only (the lane-local
-        # footer repoint is merge-owned -- wave-382 lane-5
-        # precedent): w383_attack test_b0_footer_state asserts the
-        # base footer; w380_f679close test_p7_pin_and_footer likewise;
-        # w378_f655close test_p8_lane_footer likewise, plus the
-        # PRE-EXISTING test_p4_sibling_closures_hold NameError
+    for batt, expect_break in (("evals/w383_attack_probes.py", 0),
+                               ("evals/w380_f679close_probes.py", 0),
+                               ("evals/w378_f655close_probes.py", 1)):
+        # Footer pins repointed at the wave-384 merge (0 BREAKs); the
+        # 1 remaining w378 BREAK is the PRE-EXISTING
+        # test_p4_sibling_closures_hold NameError
         # (_js_parse_f659_yield_star_array -- a battery defect,
         # identical on the base tree, verified via git stash,
         # unrelated to F740/F741).

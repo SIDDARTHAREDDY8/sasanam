@@ -536,12 +536,10 @@ def _green_check():
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return ("HELD", "green check skipped (GOV_SKIP_GREEN=1)")
     bad = []
-    # (battery, tolerated_breaks): the attack battery's footer pin is
-    # stale by design -- the lane-local footer repoint is merge-owned
-    # (wave-305/306 class).
+    # (battery, tolerated_breaks): footer repointed at wave-384 merge.
     for batt, tolerated in (("evals/w383_f752_redfirst.py", 0),
                             ("evals/w383_f753_redfirst.py", 0),
-                            ("evals/w383_attack_probes.py", 1)):
+                            ("evals/w383_attack_probes.py", 0)):
         tmp = tempfile.mkdtemp(prefix="g384-green-", dir="/var/tmp")
         env = dict(os.environ)
         env["GOV_SKIP_GREEN"] = "1"
