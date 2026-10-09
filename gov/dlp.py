@@ -32513,8 +32513,9 @@ def _js_f662_prehoist_vars(text, inner_start, inner_end, env):
         j += 1
 
 
-def _js_f662_static_block(text, j, env, state):
-    """Parse `static { STMT* }` at text[j] == '{' (F662, extended F805).
+def _js_f662_static_block(text, j, env, state, cname=None,
+                          static_dict=None):
+    """Parse `static { STMT* }` at text[j] == '{' (F662, extended F805/F877).
 
     Node-exact (v24.20.0): static blocks run at class definition
     time against the enclosing function scope, so an assignment
@@ -32544,6 +32545,28 @@ def _js_f662_static_block(text, j, env, state):
     RHS yields 'undefined...' in the engine -- outside the
     string-only discipline, fail closed). Anything else fails
     closed.
+
+    F877 extension (node-verified v24.20.0): a static block may
+    contain `try { STMT* } catch [(e)] { STMT* }` -- the try body
+    executes statement-by-statement; the first `throw` transfers
+    control to the catch body (statements after the throw never
+    run); without a throw the catch body never runs (its syntax
+    is still validated against scratch scopes, since a
+    SyntaxError would reject the whole class). An uncaught
+    `throw` propagates out of the static block -- the class
+    definition throws in the engine, so no value is produced
+    and the hook fails closed. A `finally` clause fails closed
+    (narrow scope). `let`/`const` declared in a try/catch body
+    are scoped to the static block here (approximation; `var`
+    hoists to the block node-exactly). Statements may also be
+    `CNAME.MEMBER='LIT';` / `CNAME.MEMBER+='LIT';` -- static-field
+    writes through the enclosing class name (only when *cname*
+    and *static_dict* are provided; `+=` on an undeclared/
+    uninitialized field fails closed -- the engine yields
+    'undefinedLIT'). Dot-ident members only; `this.` writes,
+    computed members, and non-literal RHS fail closed. The F672
+    call site passes neither (try/catch still applies; `C.k=`
+    writes fail closed there).
     """
     n = len(text)
     j = _js_expect(text, j, "{")
@@ -32555,92 +32578,277 @@ def _js_f662_static_block(text, j, env, state):
             raise _JSExprFail("F662 static block overrun")
         if text[j] == "}":
             return j + 1
-        # F805: `var|let|const NAME[='LIT'];` -- block-local binding.
-        dkw, dm = _js_match_decl_kw(text, j)
-        if dkw is not None:
-            q = _js_skip_ws(text, dm)
-            dname, q = _js_parse_ident(text, q)
-            prev = local.get(dname)
-            if prev is not None and not (dkw == "var"
-                                         and prev[3] == "var"):
-                # Only var+var redeclaration is legal in the engine
-                # (node SyntaxError otherwise) -- fail closed.
-                raise _JSExprFail("F805 static block redeclare")
-            q = _js_skip_ws(text, q)
-            dval = None
-            if (q < n and text[q] == "="
-                    and not text.startswith(("==", "=>"), q)):
-                q = _js_skip_ws(text, q + 1)
-                if q >= n or text[q] not in "'\"":
-                    raise _JSExprFail("F805 static block decl not literal")
-                dval, q = _js_parse_string(text, q)
-                q = _js_skip_ws(text, q)
-            elif dkw == "const":
-                # `const x;` is a node SyntaxError -- fail closed.
-                raise _JSExprFail("F805 static block const no init")
-            q = _js_expect(text, q, ";")
-            # F805: a bare `var x;` redeclare does NOT reset the value
-            # in the engine (node v24.20.0 keeps 'A' for
-            # `var x='A';var x;`) -- only (re)bind on first
-            # declaration or when an initializer is present.
-            if prev is None or dval is not None:
-                local[dname] = ("lit", dval, dkw != "const", dkw)
-            _js_f662_charge(state)
-            j = q
-            continue
-        name, q = _js_parse_ident(text, j)
-        # F805: resolve the assignment target -- block-local first,
-        # then the enclosing env (the F662 discipline).
-        e = local.get(name)
-        e_is_local = e is not None
-        if not e_is_local:
-            e = env.get(name)
-        if e is None or e[0] != "lit" or not e[2]:
-            # Unbound (ReferenceError), const (TypeError), or a
-            # class/instance binding -- the engine throws; also
-            # rejects a bare `return` (parsed as an ident here).
-            raise _JSExprFail("F662 static block bad target")
+        j, threw = _js_f662_static_stmt(text, j, env, local, cname,
+                                        static_dict, state)
+        if threw:
+            # F877: an uncaught `throw` propagates out of the
+            # static block in the engine (node) -- the class
+            # definition itself throws, so no value is produced;
+            # fail closed.
+            raise _JSExprFail("F877 static block uncaught throw")
+
+
+def _js_f662_static_stmt(text, j, env, local, cname, static_dict,
+                         state):
+    """Parse ONE static-block statement at text[j] (F662/F805/F877).
+
+    Returns (next_index, threw); `threw` is True only for a
+    top-level `throw` statement not caught by an enclosing try
+    (the caller fails closed). Never evals.
+    """
+    n = len(text)
+    # F877: `try { ... } catch [(e)] { ... }`.
+    tkw = _js_match_kw(text, j, "try")
+    if tkw is not None:
+        return _js_f877_parse_try(text, tkw, env, local, cname,
+                                  static_dict, state)
+    # F877: `throw EXPR;` -- control transfers to the nearest
+    # enclosing catch (or propagates, signaled via `threw`).
+    hkw = _js_match_kw(text, j, "throw")
+    if hkw is not None:
+        q = _js_f877_skip_to_semi(text, hkw)
+        _js_f662_charge(state)
+        return q, True
+    # F805: `var|let|const NAME[='LIT'];` -- block-local binding.
+    dkw, dm = _js_match_decl_kw(text, j)
+    if dkw is not None:
+        q = _js_skip_ws(text, dm)
+        dname, q = _js_parse_ident(text, q)
+        prev = local.get(dname)
+        if prev is not None and not (dkw == "var"
+                                     and prev[3] == "var"):
+            # Only var+var redeclaration is legal in the engine
+            # (node SyntaxError otherwise) -- fail closed.
+            raise _JSExprFail("F805 static block redeclare")
         q = _js_skip_ws(text, q)
-        if q < n and text.startswith("+=", q):
-            q += 2
+        dval = None
+        if (q < n and text[q] == "="
+                and not text.startswith(("==", "=>"), q)):
+            q = _js_skip_ws(text, q + 1)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F805 static block decl not literal")
+            dval, q = _js_parse_string(text, q)
+            q = _js_skip_ws(text, q)
+        elif dkw == "const":
+            # `const x;` is a node SyntaxError -- fail closed.
+            raise _JSExprFail("F805 static block const no init")
+        q = _js_expect(text, q, ";")
+        # F805: a bare `var x;` redeclare does NOT reset the value
+        # in the engine (node v24.20.0 keeps 'A' for
+        # `var x='A';var x;`) -- only (re)bind on first
+        # declaration or when an initializer is present.
+        if prev is None or dval is not None:
+            local[dname] = ("lit", dval, dkw != "const", dkw)
+        _js_f662_charge(state)
+        return q, False
+    name, q = _js_parse_ident(text, j)
+    q2 = _js_skip_ws(text, q)
+    # F877: `CNAME.MEMBER='LIT';` / `CNAME.MEMBER+='LIT';` --
+    # static-field write through the enclosing class name.
+    if (q2 < n and text[q2] == "." and cname is not None
+            and static_dict is not None and name == cname):
+        mem, q3 = _js_parse_ident(text, _js_skip_ws(text, q2 + 1))
+        q3 = _js_skip_ws(text, q3)
+        if q3 < n and text.startswith("+=", q3):
+            q3 += 2
             is_plus = True
-        elif (q < n and text[q] == "="
-              and not text.startswith(("==", "=>"), q)):
-            q += 1
+        elif (q3 < n and text[q3] == "="
+              and not text.startswith(("==", "=>"), q3)):
+            q3 += 1
             is_plus = False
         else:
-            raise _JSExprFail("F662 static block bad op")
-        if is_plus and e[1] is None:
-            # `undefined + 'LIT'` is 'undefinedLIT' in the engine --
-            # not a string-only value; fail closed (documented bound).
-            raise _JSExprFail("F662 static block plus-eq uninit")
-        q = _js_skip_ws(text, q)
-        if q < n and text[q] in "'\"":
-            rhs, q = _js_parse_string(text, q)
-        elif q < n and text[q] in _JS_IDENT_START:
-            # F805: `NAME=RHSNAME;` / `NAME+=RHSNAME;` -- the RHS
-            # name resolves block-local first, then in env, and must
-            # be a string (an undefined RHS yields 'undefined...'
-            # in the engine -- outside the string-only discipline).
-            rname, q = _js_parse_ident(text, q)
+            raise _JSExprFail("F877 static write bad op")
+        q3 = _js_skip_ws(text, q3)
+        if q3 < n and text[q3] in "'\"":
+            rhs, q3 = _js_parse_string(text, q3)
+        elif q3 < n and text[q3] in _JS_IDENT_START:
+            # F877: `C.k=RHSNAME;` -- the RHS name resolves
+            # block-local first, then in env (the F805
+            # discipline); must be a string.
+            rname, q3 = _js_parse_ident(text, q3)
             re_ = local.get(rname)
             if re_ is None:
                 re_ = env.get(rname)
             if re_ is None or re_[0] != "lit" \
                     or not isinstance(re_[1], str):
-                raise _JSExprFail("F805 static block bad rhs name")
+                raise _JSExprFail("F877 static write bad rhs name")
             rhs = re_[1]
         else:
-            raise _JSExprFail("F662 static block not a literal")
-        q = _js_skip_ws(text, q)
-        q = _js_expect(text, q, ";")
-        newval = (e[1] + rhs) if is_plus else rhs
-        if e_is_local:
-            local[name] = ("lit", newval, True, e[3])
+            raise _JSExprFail("F877 static write not literal")
+        q3 = _js_skip_ws(text, q3)
+        q3 = _js_expect(text, q3, ";")
+        cur = static_dict.get(mem)
+        if is_plus:
+            if not isinstance(cur, str):
+                # `undefined + 'LIT'` is 'undefinedLIT' in the
+                # engine -- outside the string-only discipline.
+                raise _JSExprFail("F877 static plus-eq uninit")
+            static_dict[mem] = cur + rhs
         else:
-            env[name] = ("lit", newval, True, e[3])
+            static_dict[mem] = rhs
         _js_f662_charge(state)
-        j = q
+        return q3, False
+    # F805: resolve the assignment target -- block-local first,
+    # then the enclosing env (the F662 discipline).
+    e = local.get(name)
+    e_is_local = e is not None
+    if not e_is_local:
+        e = env.get(name)
+    if e is None or e[0] != "lit" or not e[2]:
+        # Unbound (ReferenceError), const (TypeError), or a
+        # class/instance binding -- the engine throws; also
+        # rejects a bare `return` (parsed as an ident here).
+        raise _JSExprFail("F662 static block bad target")
+    q = _js_skip_ws(text, q)
+    if q < n and text.startswith("+=", q):
+        q += 2
+        is_plus = True
+    elif (q < n and text[q] == "="
+          and not text.startswith(("==", "=>"), q)):
+        q += 1
+        is_plus = False
+    else:
+        raise _JSExprFail("F662 static block bad op")
+    if is_plus and e[1] is None:
+        # `undefined + 'LIT'` is 'undefinedLIT' in the engine --
+        # not a string-only value; fail closed (documented bound).
+        raise _JSExprFail("F662 static block plus-eq uninit")
+    q = _js_skip_ws(text, q)
+    if q < n and text[q] in "'\"":
+        rhs, q = _js_parse_string(text, q)
+    elif q < n and text[q] in _JS_IDENT_START:
+        # F805: `NAME=RHSNAME;` / `NAME+=RHSNAME;` -- the RHS
+        # name resolves block-local first, then in env, and must
+        # be a string (an undefined RHS yields 'undefined...'
+        # in the engine -- outside the string-only discipline).
+        rname, q = _js_parse_ident(text, q)
+        re_ = local.get(rname)
+        if re_ is None:
+            re_ = env.get(rname)
+        if re_ is None or re_[0] != "lit" \
+                or not isinstance(re_[1], str):
+            raise _JSExprFail("F805 static block bad rhs name")
+        rhs = re_[1]
+    else:
+        raise _JSExprFail("F662 static block not a literal")
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ";")
+    newval = (e[1] + rhs) if is_plus else rhs
+    if e_is_local:
+        local[name] = ("lit", newval, True, e[3])
+    else:
+        env[name] = ("lit", newval, True, e[3])
+    _js_f662_charge(state)
+    return q, False
+
+
+def _js_f877_skip_to_semi(text, j):
+    """Skip to the `;` terminating a `throw` statement at text[j].
+
+    String-literal and ()[]{}-nesting aware; template literals
+    fail closed (narrow). Returns the index just past `;`.
+    Never evals.
+    """
+    n = len(text)
+    depth = 0
+    while j < n:
+        c = text[j]
+        if c in "'\"":
+            _, j = _js_parse_string(text, j)
+            continue
+        if c == "`":
+            raise _JSExprFail("F877 throw template")
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            if depth == 0:
+                raise _JSExprFail("F877 throw unbalanced")
+            depth -= 1
+        elif c == ";" and depth == 0:
+            return j + 1
+        j += 1
+    raise _JSExprFail("F877 throw unterminated")
+
+
+def _js_f877_parse_try(text, j, env, local, cname, static_dict,
+                       state):
+    """Parse `try { STMT* } catch [(e)] { STMT* }` at text[j] past `try` (F877).
+
+    Node-exact (v24.20.0): the try body executes
+    statement-by-statement; the first `throw` transfers control
+    to the catch body (statements after the throw never run).
+    With no throw the catch body never runs -- it still parses
+    against scratch scopes (a SyntaxError would reject the whole
+    class in the engine, and no state may leak from an
+    unexecuted body). A `finally` clause fails closed (narrow
+    scope). Returns (next_index, threw); a `throw` inside the
+    executed catch body propagates via `threw`. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "{":
+        raise _JSExprFail("F877 try no body")
+    body_start, body_end, j = _js_span_braced(text, j)
+    j = _js_skip_ws(text, j)
+    ckw = _js_match_kw(text, j, "catch")
+    if ckw is None:
+        raise _JSExprFail("F877 try without catch")
+    j = _js_skip_ws(text, ckw)
+    if j < n and text[j] == "(":
+        # Optional catch binding -- the bound name is unused by
+        # the string discipline (the thrown value is discarded).
+        j = _js_skip_ws(text, j + 1)
+        _, j = _js_parse_ident(text, j)
+        j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "{":
+        raise _JSExprFail("F877 catch no body")
+    h_start, h_end, j = _js_span_braced(text, j)
+    j = _js_skip_ws(text, j)
+    if _js_match_kw(text, j, "finally") is not None:
+        raise _JSExprFail("F877 finally")
+    # Execute the try body statement-by-statement.
+    threw = False
+    sj = body_start
+    while True:
+        sj = _js_skip_ws(text, sj)
+        if sj >= body_end:
+            break
+        sj, stmt_threw = _js_f662_static_stmt(text, sj, env, local,
+                                              cname, static_dict,
+                                              state)
+        if stmt_threw:
+            threw = True
+            break
+    if threw:
+        hj = h_start
+        while True:
+            hj = _js_skip_ws(text, hj)
+            if hj >= h_end:
+                break
+            hj, h_threw = _js_f662_static_stmt(text, hj, env, local,
+                                               cname, static_dict,
+                                               state)
+            if h_threw:
+                return hj, True
+    else:
+        # No throw: validate the handler against scratch scopes
+        # so no state leaks from an unexecuted body. A `throw`
+        # in it never runs -- swallow the signal.
+        scratch_env = dict(env)
+        scratch_local = dict(local)
+        scratch_static = (dict(static_dict)
+                          if static_dict is not None else None)
+        hj = h_start
+        while True:
+            hj = _js_skip_ws(text, hj)
+            if hj >= h_end:
+                break
+            hj, _ = _js_f662_static_stmt(text, hj, scratch_env,
+                                         scratch_local, cname,
+                                         scratch_static, state)
+    _js_f662_charge(state)
+    return j, False
 
 
 def _js_f662_member_head(text, j):
@@ -32962,7 +33170,10 @@ def _js_f662_parse_class_body(text, j, env, state, depth, cname):
         if skw is not None:
             qq = _js_skip_ws(text, skw)
             if qq < n and text[qq] == "{":
-                j = _js_f662_static_block(text, qq, env, state)
+                # F877: pass the class name + static record so
+                # `CNAME.MEMBER='LIT';` writes land.
+                j = _js_f662_static_block(text, qq, env, state,
+                                          cname, rec["static"])
                 continue
         is_static, is_getter, name, q = _js_f662_member_head(text, j)
         q = _js_skip_ws(text, q)
@@ -34863,8 +35074,15 @@ def _js_f780_new_instance(text, j, ctors, state):
             break
         raise _JSExprFail("F780 new args malformed")
     q = _js_expect(text, q, ")")
-    params, assigns = ctors[cname]
-    return _js_f780_bind(params, assigns, args), q
+    params, assigns, methods = ctors[cname]
+    inst = _js_f780_bind(params, assigns, args)
+    for mname, mem in methods.items():
+        # F878: arrow-function field `m=()=>this.K` -- the
+        # instance dict carries it under a tuple key so a
+        # constructor-assigned `m` can never collide (the
+        # F878 parser rejects the collision).
+        inst[("arrow", mname)] = mem
+    return inst, q
 
 
 def _js_f780_parse_lit_array(text, j, state):
@@ -34933,11 +35151,12 @@ def _js_f780_reflect_construct(text, j, ctors, state):
         params, q = _js_f780_parse_params(text, q)
         assigns, q = _js_f780_parse_ctor_body(text, _js_skip_ws(text, q),
                                              params, state)
+        methods = {}
     else:
         cname, q = _js_parse_ident(text, q)
         if cname not in ctors:
             raise _JSExprFail("F780 construct of undeclared")
-        params, assigns = ctors[cname]
+        params, assigns, methods = ctors[cname]
     q = _js_expect(text, q, ",")
     args, q = _js_f780_parse_lit_array(text, q, state)
     q = _js_skip_ws(text, q)
@@ -34945,7 +35164,11 @@ def _js_f780_reflect_construct(text, j, ctors, state):
         raise _JSExprFail("F780 construct newTarget")
     q = _js_expect(text, q, ")")
     _js_f672_charge(state)
-    return _js_f780_bind(params, assigns, args), q
+    inst = _js_f780_bind(params, assigns, args)
+    for mname, mem in methods.items():
+        # F878: arrow-function field (see _js_f780_new_instance).
+        inst[("arrow", mname)] = mem
+    return inst, q
 
 
 def _js_f780_member_read(text, j, inst, state):
@@ -34967,7 +35190,37 @@ def _js_f780_member_read(text, j, inst, state):
     else:
         raise _JSExprFail("F780 not a member read")
     if key not in inst or inst[key] is _F780_MISSING:
-        raise _JSExprFail("F780 member miss")
+        # F878: arrow-function field `m=()=>this.K` -- `o.m()`
+        # invokes the arrow against the instance. The `()`
+        # must immediately follow (a bare `o.m` read without a
+        # call yields a function object in the engine -- outside
+        # the string-only discipline -- and fails closed).
+        arrow_key = ("arrow", key)
+        if arrow_key not in inst:
+            raise _JSExprFail("F780 member miss")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "(":
+            raise _JSExprFail("F878 arrow not called")
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != ")":
+            raise _JSExprFail("F878 arrow has call args")
+        j += 1
+        target = inst[arrow_key]
+        if target not in inst:
+            # Never-assigned member (or another arrow field):
+            # the engine yields undefined / a function object --
+            # outside the string-only discipline; fail closed
+            # (a KeyError here would escape the hook boundary).
+            raise _JSExprFail("F878 arrow target missing")
+        kval = inst[target]
+        if kval is _F780_MISSING:
+            raise _JSExprFail("F878 arrow target unbound")
+        if not isinstance(kval, str) or isinstance(
+                kval, (_JSNumStr, _JSBigInt)):
+            raise _JSExprFail("F878 arrow target not a string")
+        _js_f672_charge(state)
+        state["ops"] += 1  # the arrow call is obfuscation-shaped
+        return kval, j
     _js_f672_charge(state)
     return inst[key], j
 
@@ -34999,6 +35252,85 @@ def _js_f780_operand(text, j, env, ctors, state):
     if e is None or e[0] != "inst":
         raise _JSExprFail("F780 unbound operand")
     return _js_f780_member_read(text, q, e[1], state)
+
+
+def _js_f878_parse_ctor_members(text, q, state):
+    """Parse `{ constructor(P1, ...) { BODY } [M=()=>this.K;]* }` (F878).
+
+    text[q] is at `{`. Returns ((params, assigns, methods),
+    next_index_past_'}'), where *methods* maps an arrow-function
+    field name to the instance member name it reads. Node-exact
+    (v24.20.0): an instance field `m=()=>this.k` captures the
+    instance's `this`, so `new C('f1').m()` reads the instance's
+    `k`. Only the narrow shape is modeled: the class must have a
+    constructor first (the F780 grammar), then zero or more
+    `NAME=()=>this.MEMBER;` / `NAME=()=>this['MEMBER'];` fields
+    with zero arrow params. A field named `static`, a field
+    colliding with a constructor-assigned key, arrow params, or
+    a non-`this` arrow body fails closed. Never evals.
+    """
+    n = len(text)
+    q = _js_expect(text, q, "{")
+    q = _js_skip_ws(text, q)
+    cm = _js_match_kw(text, q, "constructor")
+    if cm is None:
+        raise _JSExprFail("F878 class needs constructor")
+    params, q = _js_f780_parse_params(text, _js_skip_ws(text, cm))
+    assigns, q = _js_f780_parse_ctor_body(text, _js_skip_ws(text, q),
+                                          params, state)
+    methods = {}
+    assign_keys = {k for k, _ in assigns}
+    while True:
+        q = _js_skip_ws(text, q)
+        if q >= n:
+            raise _JSExprFail("F878 class body overrun")
+        if text[q] == "}":
+            return (params, assigns, methods), q + 1
+        mname, q2 = _js_parse_ident(text, q)
+        if (mname == "arguments" or mname in _F611_RESERVED
+                or mname == "static" or mname in methods
+                or mname in assign_keys):
+            # `static` as a field name is legal in the engine
+            # (an instance field literally named "static"), but
+            # it collides with the static-member grammar --
+            # fail closed (narrow, documented bound). A field
+            # colliding with a constructor-assigned key would
+            # shadow it in the engine; fail closed.
+            raise _JSExprFail("F878 bad field name")
+        q2 = _js_skip_ws(text, q2)
+        if not (q2 < n and text[q2] == "="
+                and not text.startswith(("==", "=>"), q2)):
+            raise _JSExprFail("F878 field not arrow")
+        q2 = _js_skip_ws(text, q2 + 1)
+        if q2 < n and text[q2] == "(":
+            q3 = _js_skip_ws(text, q2 + 1)
+            if q3 < n and text[q3] == ")":
+                q2 = q3 + 1
+            else:
+                raise _JSExprFail("F878 arrow has params")
+        else:
+            # A bare `m=x=>...` single-param arrow, or a
+            # non-arrow RHS -- both fail closed (narrow).
+            raise _JSExprFail("F878 arrow has params")
+        q2 = _js_skip_ws(text, q2)
+        if not text.startswith("=>", q2):
+            raise _JSExprFail("F878 not an arrow")
+        q2 = _js_skip_ws(text, q2 + 2)
+        tk = _js_match_kw(text, q2, "this")
+        if tk is None:
+            raise _JSExprFail("F878 arrow not this")
+        q2 = _js_skip_ws(text, tk)
+        if q2 < n and text[q2] == ".":
+            mem, q2 = _js_parse_ident(text, _js_skip_ws(text, q2 + 1))
+        elif q2 < n and text[q2] == "[":
+            mem, q2 = _js_parse_bracket_member(text, q2)
+        else:
+            raise _JSExprFail("F878 arrow bad member")
+        q2 = _js_skip_ws(text, q2)
+        q2 = _js_expect(text, q2, ";")
+        methods[mname] = mem
+        _js_f672_charge(state)
+        q = q2
 
 
 def _js_parse_f780_ctor_param_iife(text, i, depth, state):
@@ -35081,7 +35413,7 @@ def _js_parse_f780_ctor_param_iife(text, i, depth, state):
                 params, q = _js_f780_parse_params(text, q)
                 assigns, q = _js_f780_parse_ctor_body(text, _js_skip_ws(text, q),
                                                      params, state)
-                ctors[cname] = (params, assigns)
+                ctors[cname] = (params, assigns, {})
                 _js_f672_charge(state)
                 sj = q
             elif ck is not None:
@@ -35092,31 +35424,54 @@ def _js_parse_f780_ctor_param_iife(text, i, depth, state):
                     raise _JSExprFail("F780 bad class name")
                 if _js_match_kw(text, _js_skip_ws(text, q), "extends") is not None:
                     raise _JSExprFail("F780 class extends")
-                q = _js_expect(text, q, "{")
-                q = _js_skip_ws(text, q)
-                cm = _js_match_kw(text, q, "constructor")
-                if cm is None:
-                    raise _JSExprFail("F780 class needs constructor")
-                params, q = _js_f780_parse_params(text, _js_skip_ws(text, cm))
-                assigns, q = _js_f780_parse_ctor_body(text, _js_skip_ws(text, q),
-                                                     params, state)
-                q = _js_skip_ws(text, q)
-                if q >= n or text[q] != "}":
-                    raise _JSExprFail("F780 class extra members")
-                ctors[cname] = (params, assigns)
+                # F878: constructor + zero or more
+                # `NAME=()=>this.MEMBER;` arrow fields.
+                (params, assigns, methods), q = \
+                    _js_f878_parse_ctor_members(text, _js_skip_ws(text, q),
+                                                state)
+                ctors[cname] = (params, assigns, methods)
                 _js_f672_charge(state)
-                sj = q + 1
+                sj = q
             elif dk is not None:
                 q = _js_skip_ws(text, _dnext)
                 vname, q = _js_parse_ident(text, q)
                 q = _js_expect(text, q, "=")
-                inst, q = _js_f780_new_instance(text, _js_skip_ws(text, q),
-                                               ctors, state)
-                q = _js_expect(text, q, ";")
-                if vname in env or vname in ctors or vname == "arguments":
-                    raise _JSExprFail("F780 var redeclared")
-                env[vname] = ("inst", inst)
-                sj = q
+                q = _js_skip_ws(text, q)
+                # F879: `var|let|const NAME=class[INNER]{...};` --
+                # anonymous (or inner-named) class expression.
+                # Checked before the `new`-instance path: the
+                # `class` head is disjoint from `new` (red-first
+                # verified: 2 BREAK on the open tree), so no
+                # previously-decoded input changes behavior.
+                ckw = _js_match_kw(text, q, "class")
+                if ckw is not None:
+                    if (vname == "arguments" or vname in _F611_RESERVED
+                            or vname in env or vname in ctors):
+                        raise _JSExprFail("F879 bad class name")
+                    q = _js_skip_ws(text, ckw)
+                    if q < n and text[q] in _JS_IDENT_START:
+                        # Optional inner class name -- binds only
+                        # inside the class body in the engine, so
+                        # it is parsed and discarded here.
+                        _, q = _js_parse_ident(text, q)
+                        q = _js_skip_ws(text, q)
+                    if _js_match_kw(text, q, "extends") is not None:
+                        raise _JSExprFail("F879 class extends")
+                    (params, assigns, methods), q = \
+                        _js_f878_parse_ctor_members(text, q, state)
+                    q = _js_expect(text, q, ";")
+                    ctors[vname] = (params, assigns, methods)
+                    _js_f672_charge(state)
+                    sj = q
+                else:
+                    inst, q = _js_f780_new_instance(
+                        text, _js_skip_ws(text, q), ctors, state)
+                    q = _js_expect(text, q, ";")
+                    if (vname in env or vname in ctors
+                            or vname == "arguments"):
+                        raise _JSExprFail("F780 var redeclared")
+                    env[vname] = ("inst", inst)
+                    sj = q
             else:
                 raise _JSExprFail("F780 bad statement")
         sj = _js_skip_ws(text, rk)
@@ -35495,7 +35850,7 @@ def _js_f823_parse_method_call(text, j, ctors, protos, vcnames, state):
         raise _JSExprFail("F823 not a method read")
     q = _js_expect(text, q, "(")
     q = _js_expect(text, q, ")")
-    _params, assigns = ctors[cname]
+    _params, assigns, _methods = ctors[cname]
     if any(k == mname for k, _ in assigns):
         # Own data property shadows the prototype in the engine;
         # calling it throws -- fail closed, never mis-decode.
@@ -35590,7 +35945,7 @@ def _js_parse_f823_hybrid_iife(text, i, depth, state):
                 params, q = _js_f780_parse_params(text, q)
                 assigns, q = _js_f780_parse_ctor_body(text, _js_skip_ws(text, q),
                                                      params, state)
-                ctors[cname] = (params, assigns)
+                ctors[cname] = (params, assigns, {})
                 protos.setdefault(cname, {})
                 _js_f672_charge(state)
                 sj = q
@@ -35613,7 +35968,7 @@ def _js_parse_f823_hybrid_iife(text, i, depth, state):
                 q = _js_skip_ws(text, q)
                 if q >= n or text[q] != "}":
                     raise _JSExprFail("F823 class extra members")
-                ctors[cname] = (params, assigns)
+                ctors[cname] = (params, assigns, {})
                 protos.setdefault(cname, {})
                 _js_f672_charge(state)
                 sj = q + 1
@@ -72777,6 +73132,221 @@ def _js_filter_spec_apply(spec, elements):
     return elements
 
 
+def _js_f880_parse_zero_comparator(text, i, state):
+    """Parse an always-zero sort comparator at text[i] (F880).
+
+    Accepts `function [name](p1, ...) { return 0; }` and
+    `(p1, ...) => 0` / `p => 0` where the params are plain
+    identifiers (or empty) and the zero is a numeric literal
+    equal to 0 (int/float, incl -0). Node-exact (v24.20.0): a
+    stable sort whose comparator always returns +0/-0 keeps
+    every element in its original relative order, so the
+    result is the identity copy. Any other comparator shape
+    fails closed. Returns the index just past the comparator.
+    Never evals.
+    """
+    n = len(text)
+    i = _js_skip_ws(text, i)
+
+    def _parse_zero_num(q):
+        q = _js_skip_ws(text, q)
+        m = re.match(r"-?(?:\d+(?:\.\d+)?|\.\d+)", text[q:])
+        if not m:
+            raise _JSExprFail("F880 comparator not zero")
+        try:
+            if float(m.group(0)) != 0:
+                raise _JSExprFail("F880 comparator nonzero")
+        except ValueError:
+            raise _JSExprFail("F880 comparator bad number")
+        return q + len(m.group(0))
+
+    def _parse_ident_params(q):
+        # `(p1, p2)` -- plain identifiers only; returns past `)`.
+        q = _js_expect(text, q, "(")
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == ")":
+            return q + 1
+        while True:
+            q = _js_skip_ws(text, q)
+            pname, q = _js_parse_ident(text, q)
+            if pname == "arguments" or pname in _F611_RESERVED:
+                raise _JSExprFail("F880 bad param")
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == ",":
+                q += 1
+                continue
+            if q < n and text[q] == ")":
+                return q + 1
+            raise _JSExprFail("F880 bad params")
+
+    fk = _js_match_kw(text, i, "function")
+    if fk is not None:
+        q = _js_skip_ws(text, fk)
+        if q < n and text[q] in _JS_IDENT_START:
+            _, q = _js_parse_ident(text, q)
+            q = _js_skip_ws(text, q)
+        q = _parse_ident_params(q)
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "{")
+        rk = _js_match_kw(text, _js_skip_ws(text, q), "return")
+        if rk is None:
+            raise _JSExprFail("F880 function not return-zero")
+        q = _parse_zero_num(rk)
+        q = _js_expect(text, q, ";")
+        q = _js_expect(text, q, "}")
+        _js_f672_charge(state)
+        return q
+    # Arrow form: `(p1, ...) => 0` or `p => 0`.
+    q = i
+    if q < n and text[q] == "(":
+        q = _parse_ident_params(q)
+    elif q < n and text[q] in _JS_IDENT_START:
+        pname, q = _js_parse_ident(text, q)
+        if pname == "arguments" or pname in _F611_RESERVED:
+            raise _JSExprFail("F880 bad param")
+    else:
+        raise _JSExprFail("F880 not a comparator")
+    q = _js_skip_ws(text, q)
+    if not text.startswith("=>", q):
+        raise _JSExprFail("F880 not an arrow")
+    q = _parse_zero_num(q + 2)
+    _js_f672_charge(state)
+    return q
+
+
+def _js_parse_f880_varr_iife(text, i, depth, state):
+    """Parse `(function(){DECL A=[...].toSorted([FN]);return A[I]+A[J]...;})()` (F880).
+
+    F880 (LOW, filed 2026-10-09 by wave-386 attack round 54): the
+    decoder models postfix `.toSorted(FN)` but not the var-bound
+    form:
+      `(function(){var a=['f1','f2','x'].toSorted(function(x,y){return 0;});return a[0]+a[1];})()`
+    resolves node-exactly while the decoder produces zero
+    variants.
+
+    Node-exact desugar (v24.20.0): the array literal holds dense
+    plain-string elements (the F772 element discipline:
+    BMP-only strings; astral elements fail closed); `.toSorted()`
+    with no args sorts in default UTF-16 order (Python
+    code-point order on BMP-only strings); `.toSorted(FN)` with
+    the always-zero comparator (see
+    _js_f880_parse_zero_comparator) is the identity copy; any
+    other comparator fails closed. The return is a `+`-joined
+    additive of `A[I]` index reads with literal non-negative
+    indices (out-of-range fails closed -- the engine yields
+    undefined). `toSorted` never mutates the receiver, so the
+    bound array is pristine.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    non-literal / non-string / astral elements, non-zero
+    comparators, non-`toSorted` methods at the declaration site,
+    non-index return reads, out-of-range indices, extra
+    statements. Tried after F802: the
+    `DECL A=[...].toSorted(` head is unique (F802 requires a
+    flat/flatMap method step at the return site; red-first
+    verified: 2 BREAK on the open tree), so no
+    previously-decoded input changes behavior. The F802 hook
+    and its trailing `return` are untouched (wave-379 lesson).
+    F452 parts charged per element/index via _js_f672_charge;
+    speculative misses restore parts/ops at the dispatch site
+    (wave-383 lesson). Returns (value, next_index), or None
+    when text[i] is not this shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            raise _JSExprFail("F880 not our head")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        dkw, dm = _js_match_decl_kw(text, sj)
+        if dkw is None:
+            raise _JSExprFail("F880 not a decl")
+        sj = _js_skip_ws(text, dm)
+        aname, sj = _js_parse_ident(text, sj)
+        if aname == "arguments" or aname in _F611_RESERVED:
+            raise _JSExprFail("F880 bad array name")
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "[":
+            raise _JSExprFail("F880 not an array")
+        arr, sj = _js_parse_array(text, sj, depth, state)
+        for e in arr.elements:
+            if not isinstance(e, str) or isinstance(
+                    e, (_JSNumStr, _JSBigInt)):
+                raise _JSExprFail("F880 non-string element")
+            if any(ord(c) > 0xFFFF for c in e):
+                raise _JSExprFail("F880 astral element")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != ".":
+            raise _JSExprFail("F880 not toSorted")
+        mname, sj = _js_parse_ident(text, _js_skip_ws(text, sj + 1))
+        if mname != "toSorted":
+            raise _JSExprFail("F880 not toSorted")
+        sj = _js_expect(text, sj, "(")
+        sj = _js_skip_ws(text, sj)
+        if sj < n and text[sj] == ")":
+            sj += 1
+            bound = sorted(arr.elements)
+        else:
+            sj = _js_f880_parse_zero_comparator(text, sj, state)
+            sj = _js_expect(text, sj, ")")
+            bound = list(arr.elements)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        rk = _js_match_kw(text, sj, "return")
+        if rk is None:
+            raise _JSExprFail("F880 no return")
+        sj = _js_skip_ws(text, rk)
+        total = None
+        while True:
+            sj = _js_skip_ws(text, sj)
+            rname, sj = _js_parse_ident(text, sj)
+            if rname != aname:
+                raise _JSExprFail("F880 return not our array")
+            sj = _js_skip_ws(text, sj)
+            if sj >= n or text[sj] != "[":
+                raise _JSExprFail("F880 return not index")
+            sj = _js_skip_ws(text, sj + 1)
+            m = re.match(r"\d+", text[sj:])
+            if not m:
+                raise _JSExprFail("F880 index not literal")
+            idx = int(m.group(0))
+            sj += len(m.group(0))
+            sj = _js_expect(text, sj, "]")
+            if idx >= len(bound):
+                raise _JSExprFail("F880 index out of range")
+            term = bound[idx]
+            _js_f672_charge(state)
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("F880 concat too long")
+                total = total + term
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj += 1
+                continue
+            break
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F880 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
 def _js_apply_method_at(text, i, name, value, depth, state):
     """Apply a method whose argument list starts at text[i] (F478).
 
@@ -73713,15 +74283,29 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         if not isinstance(value, _JSArr):
             raise _JSExprFail("toSorted on non-array")
         i = _js_skip_ws(text, i)
-        if i >= len(text) or text[i] != ")":
-            raise _JSExprFail("toSorted takes no args")
-        i += 1
+        if i < len(text) and text[i] == ")":
+            i += 1
+            is_identity = False
+        else:
+            # F880: `toSorted(FN)` -- the comparator must be the
+            # always-zero function (node-exact identity: V8's
+            # stable sort keeps all-equal elements in order, so
+            # the result is the input order). Any other
+            # comparator fails closed.
+            i = _js_f880_parse_zero_comparator(text, i, state)
+            i = _js_skip_ws(text, i)
+            if i >= len(text) or text[i] != ")":
+                raise _JSExprFail("toSorted comparator not closed")
+            i += 1
+            is_identity = True
         for e in value.elements:
             if type(e) is not str:
                 raise _JSExprFail("toSorted non-string element")
             if any(ord(c) > 0xFFFF for c in e):
                 raise _JSExprFail("toSorted astral element")
         state["ops"] += 1  # the copy-on-write is obfuscation-shaped
+        if is_identity:
+            return _JSArr(list(value.elements)), i
         return _JSArr(sorted(value.elements)), i
     if name == "toSpliced":
         # F772: ARR.toSpliced(start[, deleteCount[, ...items]]) --
@@ -80329,6 +80913,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f802_saved_parts; state['ops'] = _f802_saved_ops
         if _f802 is not None:
             val, i = _f802
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F880: (function(){DECL A=[...].toSorted([FN]);return
+        #   A[I]+A[J]...;})() -- var-bound toSorted reads. Tried
+        #   after F802: the `DECL A=[...].toSorted(` head is unique
+        #   (F802 requires a flat/flatMap method step at the
+        #   return site; red-first verified: 2 BREAK on the open
+        #   tree), so no previously-decoded input changes
+        #   behavior. The F802 hook and its trailing `return`
+        #   are untouched (wave-379 lesson). Budget
+        #   snapshot/restore on miss (wave-383 lesson).
+        _f880_saved_parts = state["parts"]; _f880_saved_ops = state["ops"]
+        _f880 = _js_parse_f880_varr_iife(text, i, depth, state)
+        if _f880 is None:
+            state["parts"] = _f880_saved_parts; state["ops"] = _f880_saved_ops
+        if _f880 is not None:
+            val, i = _f880
             return _js_parse_postfix(text, i, val, depth, state)
         # F807: (function(){DECL O={...};DECL C=structuredClone(O);
         #   return ADD;})() -- structuredClone deep-copy reads.
