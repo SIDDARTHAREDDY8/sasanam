@@ -63,7 +63,7 @@ def _misses(payload):
 
 @_t
 def test_b0_footer_state():
-    """Control: lane-local footer (F937-F948 carried open; new open F949-F966; next F967)."""
+    """Control: merged footer (F937-F948 closed; open F949-F966; next F967)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F967**" in text
@@ -217,90 +217,90 @@ def test_r58_f966_open():
 
 
 @_t
-def test_r57_f937_charloop_open():
-    """F937 OPEN: char-code accumulation loop misses."""
+def test_r57_f937_charloop_closed():
+    """F937 CLOSED (wave-390 merge): now blocked."""
     miss = _misses("(function(){var c=[%s],s='';for(var i=0;i<c.length;i++){s+=String.fromCharCode(c[i]);}return s;})()" % _CODES)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r57_f938_fragloop_open():
-    """F938 OPEN: string-fragment accumulation loop misses."""
+def test_r57_f938_fragloop_closed():
+    """F938 CLOSED (wave-390 merge): now blocked."""
     miss = _misses("(function(){var a=['%s','%s'],s='';for(var i=0;i<a.length;i++){s+=a[i];}return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r57_f939_perelmap_open():
-    """F939 OPEN: per-element fromCharCode map misses."""
+def test_r57_f939_perelmap_closed():
+    """F939 CLOSED (wave-390 merge): now blocked."""
     miss = _misses("(function(){return [%s].map(function(c){return String.fromCharCode(c);}).join('');})()" % _CODES)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r57_f940_reducefcc_open():
-    """F940 OPEN: reduce with fromCharCode-concat misses."""
+def test_r57_f940_reducefcc_closed():
+    """F940 CLOSED (wave-390 merge): now blocked."""
     miss = _misses("(function(){return [%s].reduce(function(s,c){return s+String.fromCharCode(c);},'');})()" % _CODES)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r57_f941_recursion_open():
-    """F941 OPEN: recursion-based assembly misses."""
+def test_r57_f941_recursion_closed():
+    """F941 CLOSED (wave-390 merge): now blocked."""
     miss = _misses("(function(){var c=[%s];function f(i){return i>=c.length?'':String.fromCharCode(c[i])+f(i+1);}return f(0);})()" % _CODES)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r57_f942_spreadgen_open():
-    """F942 OPEN: spread-iterable fromCharCode misses."""
+def test_r57_f942_spreadgen_closed():
+    """F942 CLOSED (wave-390 merge): now blocked."""
     miss = _misses("(function(){function* g(){var c=[%s];for(var x of c)yield x;}return String.fromCharCode(...g());})()" % _CODES)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r57_f943_anchors_open():
-    """F943 OPEN: non-canonical fromCharCode anchor misses."""
+def test_r57_f943_anchors_closed():
+    """F943 CLOSED (wave-390 merge): now blocked."""
     miss = _misses("(function(){return Reflect.apply(String.fromCharCode,null,[%s]);})()" % _CODES)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r57_f944_uescape_open():
-    """F944 OPEN: code-point escape literal misses."""
+def test_r57_f944_uescape_closed():
+    """F944 CLOSED (wave-390 merge): now blocked."""
     miss = _misses("(function(){return '\\u{78}\\u{6f}\\u{78}\\u{62}-0123456789abcdef';})()")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r57_f945_evalloop_open():
-    """F945 OPEN: computed-arg eval loop misses."""
+def test_r57_f945_evalloop_closed():
+    """F945 CLOSED (wave-390 merge): now blocked."""
     miss = _misses("(function(){var c=[%s],s='';for(var i=0;i<c.length;i++){s+=eval('String.fromCharCode('+c[i]+')');}return s;})()" % _CODES)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r57_f946_addcodes_open():
-    """F946 OPEN: additive code arguments miss."""
+def test_r57_f946_addcodes_closed():
+    """F946 CLOSED (wave-390 merge): now blocked."""
     add = "+".join("String.fromCharCode(%d+%d)" % (ord(c) - 1, 1) for c in _CRED)
     miss = _misses("(function(){return %s;})()" % add)
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r57_f947_propasm_open():
-    """F947 OPEN: property char assembly misses."""
+def test_r57_f947_propasm_closed():
+    """F947 CLOSED (wave-390 merge): now blocked."""
     props = ",".join("p%d:%s" % (i, repr(c)) for i, c in enumerate(_CRED))
     pread = "+".join("o.p%d" % i for i in range(len(_CRED)))
     miss = _misses("(function(){var o={%s};return %s;})()" % (props, pread))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r57_f948_bracedasi_open():
-    """F948 OPEN: F924 braced/ASI residual misses."""
+def test_r57_f948_bracedasi_closed():
+    """F948 CLOSED (wave-390 merge): now blocked."""
     miss = _misses("(function(){var s='';outer:for(var i=0;i<1;i++){for(var j=0;j<3;j++){if(j===1){continue outer;}s+='%s';}}return s+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 # ------------------------------------------------------- green check (depth-1)

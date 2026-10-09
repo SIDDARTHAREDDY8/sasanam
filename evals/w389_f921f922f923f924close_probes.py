@@ -145,7 +145,7 @@ def test_p0_no_new_re_compile():
 
 @_t
 def test_p0_footer_state():
-    """Merged footer: F921-F936 closed; open F937-F948; next F949."""
+    """Merged footer: F937-F948 closed; open F949-F966; next F967."""
     import re
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
@@ -157,10 +157,10 @@ def test_p0_footer_state():
         m = re.search(r"\*\*Open findings: ([^*]+)\.\*\*", last)
         open_list = m.group(1) if m else ""
         items = [x.strip() for x in open_list.split(",")]
-        want = ["F%d" % n for n in range(937, 949)]
-        ok = ("**F949**" in last
+        want = ["F%d" % n for n in range(949, 967)]
+        ok = ("**F967**" in last
               and items == want
-              and "F921-F936 CLOSED (15)" in last)
+              and "F937-F948 CLOSED (12)" in last)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

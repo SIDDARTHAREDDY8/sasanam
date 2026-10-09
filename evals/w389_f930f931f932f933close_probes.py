@@ -91,16 +91,17 @@ def test_p0_pin_recompile():
 
 @_t
 def test_p0_footer():
-    """Merged footer: F921-F936 closed; open F937-F948; next F949."""
+    """Merged footer: F937-F948 closed; open F949-F966; next F967."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    m = re.search(r"Next free finding: \*\*F949\*\*\. \*\*Open findings: "
+    m = re.search(r"Next free finding: \*\*F967\*\*\. \*\*Open findings: "
                   r"([^*]+)\.", text)
     if not m:
         return ("BREAK", "footer pattern missing")
     open_part = m.group(1)
     ok = True
-    for f in ("F937", "F938", "F939", "F940", "F941", "F942", "F943",
-              "F944", "F945", "F946", "F947", "F948"):
+    for f in ("F949", "F950", "F951", "F952", "F953", "F954", "F955", "F956",
+              "F957", "F958", "F959", "F960", "F961", "F962", "F963", "F964",
+              "F965", "F966"):
         ok = ok and f in open_part
     return ("HELD" if ok else "BREAK", "open=[%s]" % open_part[:80])
 

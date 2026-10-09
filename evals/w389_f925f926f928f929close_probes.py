@@ -159,7 +159,7 @@ def test_p0_no_new_re_compile():
 
 @_t
 def test_p0_footer_state():
-    """Merged footer: F921-F936 closed; open F937-F948; next F949."""
+    """Merged footer: F937-F948 closed; open F949-F966; next F967."""
     import re
     text = _findings_text()
     foot = [ln for ln in text.splitlines()
@@ -170,10 +170,10 @@ def test_p0_footer_state():
         m = re.search(r"\*\*Open findings: ([^*]+)\.\*\*", last)
         open_list = m.group(1) if m else ""
         items = [x.strip() for x in open_list.split(",")]
-        want = ["F%d" % n for n in range(937, 949)]
-        ok = ("**F949**" in last
+        want = ["F%d" % n for n in range(949, 967)]
+        ok = ("**F967**" in last
               and items == want
-              and "F921-F936 CLOSED (15)" in last)
+              and "F937-F948 CLOSED (12)" in last)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -745,8 +745,8 @@ def test_p8_findings_stamps():
     for fid in ("F921", "F924", "F930", "F936"):
         if ("(%s filed" % fid) not in text:
             bad.append(fid + "-missing")
-    if "Next free finding: **F949**" not in text:
-        bad.append("footer-next-not-F949")
+    if "Next free finding: **F967**" not in text:
+        bad.append("footer-next-not-F967")
     return ("HELD" if not bad else "BREAK",
             "stamps %s" % ("ok" if not bad else bad))
 
