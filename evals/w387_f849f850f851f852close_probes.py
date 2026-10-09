@@ -88,12 +88,16 @@ def test_p0_recount():
 
 @_t
 def test_p0_footer_state():
-    """Control: lane-local footer (F849-F852 closed, open F829-F848/F853-F892, next F893)."""
+    """Control: wave-387 merge footer (F829-F892 closed; open F893-F920; next F921)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("F849" in text and "F852" in text
-          and "Next free finding: **F893**" in text
-          and "F829" in text and "F892" in text)
+    foot = [ln for ln in text.splitlines()
+            if ln.startswith("Next free finding:")]
+    ok = (bool(foot)
+          and "**F921**" in foot[-1]
+          and "F893, F894" in foot[-1]
+          and "F919, F920." in foot[-1]
+          and "# Wave-387 merge: F829-F892 CLOSED (64)" in foot[-1])
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

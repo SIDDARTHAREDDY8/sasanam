@@ -480,7 +480,7 @@ def test_p7_perf_200_sites():
 
 @_t
 def test_p8_findings_stamps():
-    """F877-F880 stamped CLOSED; F829-F876/F881-F892 OPEN; footer next F893."""
+    """F877-F880 stamped CLOSED; F829-F892 CLOSED at merge; footer next F921."""
     text = _findings_text()
     bad = []
     for fid in ("F877", "F878", "F879", "F880"):
@@ -495,8 +495,8 @@ def test_p8_findings_stamps():
     for fid in ("F829", "F876", "F881", "F892"):
         if "(%s filed" % fid not in text:
             bad.append(fid + "-missing")
-    if "Next free finding: **F893**" not in text:
-        bad.append("footer-next-not-F893")
+    if "Next free finding: **F921**" not in text:
+        bad.append("footer-next-not-F921")
     return ("HELD" if not bad else "BREAK",
             "stamps %s" % ("ok" if not bad else bad))
 

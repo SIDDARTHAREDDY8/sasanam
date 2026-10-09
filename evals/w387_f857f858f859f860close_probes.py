@@ -93,12 +93,16 @@ def test_p0_pin_recompile():
 
 @_t
 def test_p0_footer_state():
-    """Lane-local footer: F857-F860 CLOSED; F893-F899 new open; next F900."""
-    text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F900**" in text
-          and "F857-F860 CLOSED (4)" in text
-          and "F893, F894, F895, F896, F897, F898, F899." in text
-          and "F857," not in text.split("Open findings:")[1].split(".")[0])
+    """Control: wave-387 merge footer (F829-F892 closed; open F893-F920; next F921)."""
+    path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
+    text = open(path).read()
+    foot = [ln for ln in text.splitlines()
+            if ln.startswith("Next free finding:")]
+    ok = (bool(foot)
+          and "**F921**" in foot[-1]
+          and "F893, F894" in foot[-1]
+          and "F919, F920." in foot[-1]
+          and "# Wave-387 merge: F829-F892 CLOSED (64)" in foot[-1])
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

@@ -95,7 +95,7 @@ def test_p0_recount():
 
 @_t
 def test_p0_footer_state():
-    """Lane-local footer: F837-F840 closed; F829-F836, F841-F892 open."""
+    """F837-F840 closed (entries); not in the open list."""
     p = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     src = open(p).read()
     ok = True

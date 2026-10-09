@@ -130,22 +130,16 @@ def test_p0_no_new_re_compile():
 
 @_t
 def test_p0_footer_state():
-    """Control: lane-local footer (F869-F872 closed; new F893/F894
-    open; open F829-F868, F873-F894; next F895)."""
+    """Control: wave-387 merge footer (F829-F892 closed; open F893-F920; next F921)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    open_list = ("F829, F830, F831, F832, F833, F834, F835, F836, F837, "
-                 "F838, F839, F840, F841, F842, F843, F844, F845, F846, "
-                 "F847, F848, F849, F850, F851, F852, F853, F854, F855, "
-                 "F856, F857, F858, F859, F860, F861, F862, F863, F864, "
-                 "F865, F866, F867, F868, F873, F874, F875, F876, F877, "
-                 "F878, F879, F880, F881, F882, F883, F884, F885, F886, "
-                 "F887, F888, F889, F890, F891, F892, F893, F894.")
-    footer = text.split("Open findings:")[1].split(".")[0]
-    ok = ("Next free finding: **F895**" in text
-          and "Open findings: " + open_list in text
-          and ", F869," not in footer and ", F870," not in footer
-          and ", F871," not in footer and ", F872," not in footer)
+    foot = [ln for ln in text.splitlines()
+            if ln.startswith("Next free finding:")]
+    ok = (bool(foot)
+          and "**F921**" in foot[-1]
+          and "F893, F894" in foot[-1]
+          and "F919, F920." in foot[-1]
+          and "# Wave-387 merge: F829-F892 CLOSED (64)" in foot[-1])
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -365,11 +359,13 @@ def test_p3_f869_extra_slice_arg():
 
 @_t
 def test_p3_f869_regex_sep():
-    """F869 bound: regex split separator fails closed (F564 boundary)."""
+    """F869 bound: regex split separator now HITS (F866, wave-387 lane 10
+    models flagless regex separators; the old F564 'regex fails closed'
+    boundary is narrowed to flagged/non-F765 atoms)."""
     p = ("(function(){return String.prototype.split.call('f1,f2',/,/)"
          ".join('');})()")
-    ok = _fails_closed(p)
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    ok = not _fails_closed(p)
+    return ("HELD" if ok else "BREAK", "hit=%s" % ok)
 
 
 @_t

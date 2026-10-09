@@ -131,15 +131,16 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_p0_footer_state():
-    """Lane-local footer: F873-F876 CLOSED; open F829-F872,
-    F877-F892; next F893."""
+    """Control: wave-387 merge footer (F829-F892 closed; open F893-F920; next F921)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F893**" in text
-          and "F873-F876 CLOSED" in text
-          and "F877, F878" in text
-          and ", F873," not in text
-          and ", F876," not in text)
+    foot = [ln for ln in text.splitlines()
+            if ln.startswith("Next free finding:")]
+    ok = (bool(foot)
+          and "**F921**" in foot[-1]
+          and "F893, F894" in foot[-1]
+          and "F919, F920." in foot[-1]
+          and "# Wave-387 merge: F829-F892 CLOSED (64)" in foot[-1])
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
