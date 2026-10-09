@@ -34410,8 +34410,74 @@ def _js_f662_prehoist_vars(text, inner_start, inner_end, env):
         j += 1
 
 
-def _js_f662_static_block(text, j, env, state):
-    """Parse `static { STMT* }` at text[j] == '{' (F662, extended F805).
+def _js_f876_this_assign(text, j, _f876_this, state):
+    """Parse `this.NAME='LIT';` / `this['NAME']='LIT';` (and the
+    `+=` twins) at text[j] (F876).
+
+    Inside a static block `this` is the class constructor, so
+    `this.k='f1'` installs/overwrites the static data property
+    `k` (node-verified, v24.20.0). The `_f876_this` argument is
+    the `(static_dict, getters_dict, assigned)` triple owned by
+    the F662 class-body parser: the assignment writes
+    `static_dict`, and names created by a this-assignment (no
+    prior field definition) are recorded in *assigned* so a
+    later `static get name()` fails closed -- the engine throws
+    TypeError at class definition in that case (node-verified),
+    while a field-defined-then-this-assigned name keeps the
+    field-wins rule.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-literal RHS, `=`/`+=` over a static getter (the engine
+    throws TypeError -- strict-mode [[Set]] on a getter-only
+    accessor), `+=` on an unset/undefined target (the engine
+    yields 'undefinedLIT', outside the string-only discipline),
+    any other member form. Returns the index just past ';'.
+    Never evals.
+    """
+    static_dict, getters_dict, assigned = _f876_this
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ".":
+        name, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+    elif j < n and text[j] == "[":
+        # `this['k']` -- bracket-string member, engine-identical
+        # to the dot form (node v24.20.0 verified).
+        name, j = _js_parse_bracket_member(text, j)
+    else:
+        raise _JSExprFail("F876 this member not modeled")
+    j = _js_skip_ws(text, j)
+    if j < n and text.startswith("+=", j):
+        is_plus = True
+        j += 2
+    elif (j < n and text[j] == "="
+            and not text.startswith(("==", "=>"), j)):
+        is_plus = False
+        j += 1
+    else:
+        raise _JSExprFail("F876 this bad op")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail("F876 this rhs not literal")
+    rhs, j = _js_parse_string(text, j)
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    if name in getters_dict:
+        raise _JSExprFail("F876 this-assign over getter")
+    if is_plus:
+        old = static_dict.get(name)
+        if not isinstance(old, str):
+            raise _JSExprFail("F876 this plus-eq uninit")
+        static_dict[name] = old + rhs
+    else:
+        if name not in static_dict:
+            assigned.add(name)
+        static_dict[name] = rhs
+    _js_f662_charge(state)
+    return j
+
+
+def _js_f662_static_block(text, j, env, state, _f876_this=None):
+    """Parse `static { STMT* }` at text[j] == '{' (F662, extended
+    F805, F876).
 
     Node-exact (v24.20.0): static blocks run at class definition
     time against the enclosing function scope, so an assignment
@@ -34485,7 +34551,16 @@ def _js_f662_static_block(text, j, env, state):
             _js_f662_charge(state)
             j = q
             continue
-        name, q = _js_parse_ident(text, j)
+        # F876: `this.NAME='LIT';` / `this['NAME']='LIT';` (+=
+        # twins) -- static-block assignment to the class itself.
+        # Only modeled when the caller supplies the class record
+        # triple (F662); otherwise `this.` keeps failing closed
+        # exactly as before (the F672 call site passes None).
+        _tname, _tq = _js_parse_ident(text, j)
+        if _tname == "this" and _f876_this is not None:
+            j = _js_f876_this_assign(text, _tq, _f876_this, state)
+            continue
+        name, q = _tname, _tq
         # F805: resolve the assignment target -- block-local first,
         # then the enclosing env (the F662 discipline).
         e = local.get(name)
@@ -34828,10 +34903,15 @@ def _js_f662_parse_class_body(text, j, env, state, depth, cname):
       _js_f662_eval_getter);
     - `static { STMT* }` -- static block, executed at definition
       against env (see _js_f662_static_block).
+    - `this.NAME='LIT';` / `this['NAME']='LIT';` (+= twins) in a
+      static block -- assignment to the class's own static data
+      property (F876, node-verified); a later `static get` for a
+      this-assigned name fails closed (the engine throws).
     - A static field always replaces a same-named static getter
       (data property wins), regardless of order (node-verified) --
       the getter body is still parsed (it is real syntax) but its
-      value is discarded.
+      value is discarded. (A this-assigned name is NOT a field
+      for this rule -- see above.)
     Bounds (all fail closed): `#` private members, computed
     `[expr]` members, methods (`NAME(`), instance getters,
     `constructor`, `extends` (the caller rejects it), non-literal
@@ -34844,6 +34924,12 @@ def _js_f662_parse_class_body(text, j, env, state, depth, cname):
     n = len(text)
     j = _js_expect(text, j, "{")
     rec = {"static": {}, "getters": {}, "instance": {}}
+    # F876: names installed by a static-block `this.` assignment
+    # (with no prior field definition). A later `static get`
+    # for such a name throws in the engine (node-verified), so
+    # the getter branch fails closed on them instead of
+    # applying the field-wins rule.
+    _this_assigned = set()
     while True:
         j = _js_skip_ws(text, j)
         if j >= n:
@@ -34859,7 +34945,9 @@ def _js_f662_parse_class_body(text, j, env, state, depth, cname):
         if skw is not None:
             qq = _js_skip_ws(text, skw)
             if qq < n and text[qq] == "{":
-                j = _js_f662_static_block(text, qq, env, state)
+                j = _js_f662_static_block(
+                    text, qq, env, state,
+                    (rec["static"], rec["getters"], _this_assigned))
                 continue
         is_static, is_getter, name, q = _js_f662_member_head(text, j)
         q = _js_skip_ws(text, q)
@@ -34869,6 +34957,14 @@ def _js_f662_parse_class_body(text, j, env, state, depth, cname):
             q = _js_expect(text, q, "(")
             q = _js_expect(text, q, ")")
             if name in rec["static"]:
+                if name in _this_assigned:
+                    # F876: class C{static{this.k='f1';}static get
+                    # k(){...}} -- the engine throws TypeError at
+                    # class definition (node v24.20.0 verified), so
+                    # the field-wins rule does NOT apply to
+                    # this-assigned names; fail closed instead of
+                    # mis-decoding as 'f1'.
+                    raise _JSExprFail("F876 this-assigned then getter")
                 # The static field (data property) always replaces
                 # the same-named static getter, regardless of order
                 # (node v24.20.0 verified) -- the body still must
@@ -55726,6 +55822,398 @@ def _js_parse_f768_object_entries_array(text, i, depth, state):
         state["ops"] += 1  # the entries+map idiom is
                            # obfuscation-shaped
         return proj, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f874_iter_spread_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const IT=SRC.values();return
+    [].concat(...IT).join('SEP');})()` (F874).
+
+    The array-iterator spread laundering: `.values()` on a string
+    array (or a `new Set([...])` of strings) yields the elements in
+    order; spreading into `[].concat()` materializes them, and
+    `.join('SEP')` concatenates. Node-exact (v24.20.0) on the
+    modeled subset: SRC is `['LIT',...]` (plain-string elements
+    only, the F768 discipline) or `new Set(['LIT',...])`
+    (SameValueZero dedup, first-insertion order); the join
+    separator is a string literal or omitted (the engine default
+    `","`); the return may append `+'LIT'` terms after the
+    concat-join expression.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    non-string array elements, extra concat args, a non-literal
+    join separator, spread of anything but the bound iterator
+    name, and any statement besides the single iterator decl and
+    the return. Disjoint from every earlier route: no earlier
+    production models `.values()` iterators, `new Set` sources,
+    or spread-of-iterator concat (red-first verified: 4 BREAK on
+    the open tree), so no previously-decoded input changes
+    behavior. Tried after F810 (its statement dispatch fails
+    closed on `.values()`). The F452 per-attempt budget is
+    charged (parts per return term plus the element charges from
+    `_js_parse_array`, one op per concat-join plus one for the
+    IIFE wrapper) and restored by the caller's snapshot on miss;
+    results are capped at _MAX_DECODE_BYTES. Returns (value,
+    next_index), or None when text[i] is not this shape. Never
+    evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    if not _js_peek_arguments_iife_head(text, i):
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j) + len("function")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            return None
+        sj = _js_skip_ws(text, m)
+        itname, sj = _js_parse_ident(text, sj)
+        if itname == "arguments":
+            return None
+        sj = _js_expect(text, _js_skip_ws(text, sj), "=")
+        sj = _js_skip_ws(text, sj)
+        # SRC: `['LIT',...]` or `new Set(['LIT',...])`.
+        nkw = _js_match_kw(text, sj, "new")
+        if nkw is not None:
+            sm = _js_match_kw(text, _js_skip_ws(text, nkw), "Set")
+            if sm is None:
+                return None
+            q = _js_expect(text, _js_skip_ws(text, sm), "(")
+            arr, q = _js_parse_array(text, _js_skip_ws(text, q),
+                                     depth, state)
+            q = _js_expect(text, _js_skip_ws(text, q), ")")
+            raw = _js_f768_plain_string_elements(arr.elements)
+            seen = set()
+            elems = []
+            for _e in raw:
+                if _e not in seen:
+                    seen.add(_e)
+                    elems.append(_e)
+            sj = q
+        elif sj < n and text[sj] == "[":
+            arr, sj = _js_parse_array(text, sj, depth, state)
+            elems = _js_f768_plain_string_elements(arr.elements)
+        else:
+            return None
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ".")
+        vm = _js_match_kw(text, _js_skip_ws(text, sj), "values")
+        if vm is None:
+            return None
+        sj = _js_skip_ws(text, vm)
+        sj = _js_expect(text, sj, "(")
+        sj = _js_expect(text, _js_skip_ws(text, sj), ")")
+        sj = _js_expect(text, _js_skip_ws(text, sj), ";")
+        # `return ([].concat(...IT).join('SEP')|'LIT')(+...)*;`
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F874 no return")
+        sj = _js_skip_ws(text, m)
+        parts = []
+        saw_spread = False
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                term, sj = _js_parse_string(text, sj)
+            else:
+                sj = _js_expect(text, sj, "[")
+                sj = _js_expect(text, _js_skip_ws(text, sj), "]")
+                sj = _js_expect(text, _js_skip_ws(text, sj), ".")
+                cm = _js_match_kw(text, _js_skip_ws(text, sj),
+                                  "concat")
+                if cm is None:
+                    raise _JSExprFail("F874 not concat")
+                sj = _js_expect(text, _js_skip_ws(text, cm), "(")
+                sj = _js_skip_ws(text, sj)
+                if not text.startswith("...", sj):
+                    raise _JSExprFail("F874 not a spread")
+                sj = _js_skip_ws(text, sj + 3)
+                spname, sj = _js_parse_ident(text, sj)
+                if spname != itname:
+                    raise _JSExprFail("F874 spread of other ident")
+                sj = _js_expect(text, _js_skip_ws(text, sj), ")")
+                sj = _js_expect(text, _js_skip_ws(text, sj), ".")
+                jm = _js_match_kw(text, _js_skip_ws(text, sj),
+                                  "join")
+                if jm is None:
+                    raise _JSExprFail("F874 not join")
+                sj = _js_skip_ws(text, jm)
+                sj = _js_expect(text, sj, "(")
+                sj = _js_skip_ws(text, sj)
+                if sj < n and text[sj] in "'\"":
+                    sep, sj = _js_parse_string(text, sj)
+                elif sj < n and text[sj] == ")":
+                    sep = ","
+                else:
+                    raise _JSExprFail("F874 join sep not literal")
+                sj = _js_expect(text, _js_skip_ws(text, sj), ")")
+                term = sep.join(elems)
+                saw_spread = True
+                state["ops"] += 1  # the concat-join is laundering
+            parts.append(term)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("F874 too many parts")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj += 1
+                continue
+            break
+        if not saw_spread:
+            return None
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F874 concat too long")
+        sj = _js_expect(text, _js_skip_ws(text, sj), ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F874 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f875_keymap_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const o={...};return
+    Object.getOwnPropertyNames(o).map(CB)[INT]+...;})()` (F875).
+
+    The key-projection laundering: `Object.getOwnPropertyNames`
+    (or the engine-identical-on-this-domain `Object.keys` -- the
+    F525 discipline: all own properties of the modeled sources
+    are enumerable, node-verified v24.20.0) yields the ordered
+    key list, and `.map(function(k){return o[k];})` projects each
+    key back to its value; `[INT]` selects one. Node-exact
+    (v24.20.0) on the modeled subset: the object parses via
+    `_js_parse_enumeration_source` (plain literal, integrity
+    wrappers, entries-reduce, fromEntries, JSON.parse,
+    structuredClone, spread-assembled -- the F510/F517 source
+    classes), all values must be plain strings (the string-only
+    discipline); CB is `function(p){return o[p];}` or the arrow
+    twins `(p)=>o[p]` / `(p)=>{return o[p];}` / `p=>o[p]` /
+    `p=>{return o[p];}` with the param distinct from the object
+    name (a shadowing param would read the key string, not the
+    object -- fail closed); the index is a literal non-negative
+    int within bounds; the return may append `+'LIT'` terms.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-literal callback, `o[k]` with a mismatched receiver or
+    shadowed object name, non-string values, out-of-range index,
+    extra statements. Disjoint from every earlier route: the
+    F525 production requires a literal enumeration source (it
+    fails closed on the var-bound `o`), and the F437-family map
+    only accepts identity callbacks (it fails closed on the
+    `o[k]` member-read body) -- red-first verified: 4 BREAK on
+    the open tree -- so no previously-decoded input changes
+    behavior. Tried after F874 (disjoint decl heads). Budget
+    snapshot/restore on miss (wave-383 lesson); results capped
+    at _MAX_DECODE_BYTES. Returns (value, next_index), or None
+    when text[i] is not this shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    if not _js_peek_arguments_iife_head(text, i):
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j) + len("function")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            return None
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            return None
+        sj = _js_expect(text, _js_skip_ws(text, sj), "=")
+        _keys, vals, sj = _js_parse_enumeration_source(
+            text, _js_skip_ws(text, sj), depth, state)
+        for _v in vals:
+            if (not isinstance(_v, str)
+                    or isinstance(_v, (_JSNumStr, _JSBigInt))):
+                raise _JSExprFail("F875 non-string value")
+        sj = _js_expect(text, _js_skip_ws(text, sj), ";")
+        # `return (Object.getOwnPropertyNames(o)|Object.keys(o))
+        #  .map(CB)[INT](+'LIT')*;`
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F875 no return")
+        sj = _js_skip_ws(text, m)
+        parts = []
+        saw_keymap = False
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                term, q = _js_parse_string(text, sj)
+            else:
+                if not text.startswith("Object", sj):
+                    raise _JSExprFail("F875 not Object")
+                q = sj + len("Object")
+                if q < n and text[q] in _JS_IDENT_CONT:
+                    raise _JSExprFail("F875 not Object")
+                q = _js_skip_ws(text, q)
+                if q < n and text[q] == "[":
+                    # F480: Object['getOwnPropertyNames'] /
+                    # Object['keys'] -- bracket-string member,
+                    # engine-identical to the dot form.
+                    _mname, q = _js_parse_bracket_member(text, q)
+                    if _mname not in ("getOwnPropertyNames",
+                                      "keys"):
+                        raise _JSExprFail("F875 bad member")
+                elif q < n and text[q] == ".":
+                    q = _js_skip_ws(text, q + 1)
+                    mm = _js_match_kw(text, q,
+                                      "getOwnPropertyNames")
+                    if mm is None:
+                        mm = _js_match_kw(text, q, "keys")
+                    if mm is None:
+                        raise _JSExprFail("F875 bad member")
+                    q = mm
+                else:
+                    raise _JSExprFail("F875 bad member")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, "(")
+                recv, q = _js_parse_ident(text,
+                                          _js_skip_ws(text, q))
+                if recv != oname:
+                    raise _JSExprFail("F875 wrong receiver")
+                q = _js_expect(text, _js_skip_ws(text, q), ")")
+                q = _js_expect(text, _js_skip_ws(text, q), ".")
+                pm = _js_match_kw(text, _js_skip_ws(text, q),
+                                  "map")
+                if pm is None:
+                    raise _JSExprFail("F875 not map")
+                q = _js_skip_ws(text, pm)
+                q = _js_expect(text, q, "(")
+                # CB: `function(p){return o[p];}` or the arrow
+                # twins `(p)=>o[p]` / `(p)=>{return o[p];}` /
+                # `p=>o[p]` / `p=>{return o[p];}`. The param must
+                # differ from the object name: a shadowing param
+                # would read the key string, not the object.
+                q = _js_skip_ws(text, q)
+                if text.startswith("function", q):
+                    fend = q + len("function")
+                    if (fend < n
+                            and text[fend] in _JS_IDENT_CONT):
+                        raise _JSExprFail("F875 bad callback")
+                    q = _js_skip_ws(text, fend)
+                    q = _js_expect(text, q, "(")
+                    p, q = _js_parse_ident(text,
+                                           _js_skip_ws(text, q))
+                    q = _js_expect(text, _js_skip_ws(text, q),
+                                   ")")
+                    q = _js_expect(text, _js_skip_ws(text, q),
+                                   "{")
+                    q = _js_skip_ws(text, q)
+                    rm = _js_match_kw(text, q, "return")
+                    if rm is None:
+                        raise _JSExprFail("F875 bad body")
+                    q = _js_skip_ws(text, rm)
+                    is_block = True
+                else:
+                    if q < n and text[q] == "(":
+                        p, q = _js_parse_ident(
+                            text, _js_skip_ws(text, q + 1))
+                        q = _js_expect(text, _js_skip_ws(text,
+                                                         q), ")")
+                    else:
+                        p, q = _js_parse_ident(text, q)
+                    q = _js_skip_ws(text, q)
+                    if not text.startswith("=>", q):
+                        raise _JSExprFail("F875 bad callback")
+                    q = _js_skip_ws(text, q + 2)
+                    if q < n and text[q] == "{":
+                        q = _js_skip_ws(text, q + 1)
+                        rm = _js_match_kw(text, q, "return")
+                        if rm is None:
+                            raise _JSExprFail("F875 bad body")
+                        q = _js_skip_ws(text, rm)
+                        is_block = True
+                    else:
+                        is_block = False
+                if p == oname:
+                    raise _JSExprFail("F875 shadowed object")
+                # Body: `o[p]` (bracket member read of the param).
+                recv2, q = _js_parse_ident(text, q)
+                if recv2 != oname:
+                    raise _JSExprFail("F875 bad body receiver")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, "[")
+                idx_name, q = _js_parse_ident(text,
+                                              _js_skip_ws(text,
+                                                          q))
+                if idx_name != p:
+                    raise _JSExprFail("F875 bad body index")
+                q = _js_expect(text, _js_skip_ws(text, q), "]")
+                if is_block:
+                    q = _js_skip_ws(text, q)
+                    if q < n and text[q] == ";":
+                        q += 1
+                    q = _js_expect(text, _js_skip_ws(text, q),
+                                   "}")
+                q = _js_expect(text, _js_skip_ws(text, q), ")")
+                # `[INT]` -- the projected value.
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, "[")
+                q = _js_skip_ws(text, q)
+                sel, q = _js_parse_slice_int(text, q)
+                q = _js_expect(text, _js_skip_ws(text, q), "]")
+                if sel < 0 or sel >= len(vals):
+                    raise _JSExprFail("F875 index out of range")
+                term = vals[sel]
+                saw_keymap = True
+                state["ops"] += 1  # the keymap is laundering
+            parts.append(term)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("F875 too many parts")
+            sj = _js_skip_ws(text, q)
+            if sj < n and text[sj] == "+":
+                sj += 1
+                continue
+            break
+        if not saw_keymap:
+            return None
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F875 concat too long")
+        sj = _js_expect(text, _js_skip_ws(text, sj), ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F875 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
     except _JSExprFail:
         return None
 
@@ -78774,6 +79262,119 @@ def _js_parse_f604_locale_cmp(text, i):
     return mode, i
 
 
+def _js_parse_f873_identity_callback(text, i):
+    """Parse an identity callback at text[i] (F873).
+
+    Recognized forms (all node-verified, v24.20.0):
+    - `function(a){return a;}` / `function(a,b){return a;}`
+    - `(a)=>a` / `(a,b)=>a` / `a=>a`
+    - `(a)=>{return a;}` / `(a,b)=>{return a;}` / `a=>{return a;}`
+    Anything else -- named function expressions, three params,
+    `(a,b)=>b`, non-ident bodies -- fails closed (narrow scope;
+    the `(a,b)=>b` currentValue projection is a different
+    production, out of scope). Returns (p0, next_index). The
+    returned p0 is unused by the caller beyond the parse; it is
+    returned for symmetry with _js_parse_reduce_callback. Never
+    evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if text.startswith("function", j):
+        k = j + len("function")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F873 not a function callback")
+        j = _js_skip_ws(text, k)
+        j = _js_expect(text, j, "(")
+        p0, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            p1, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+            if p1 == p0:
+                raise _JSExprFail("F873 duplicate params")
+            j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "{")
+        _, _, j = _js_parse_return_body_single(
+            text, _js_skip_ws(text, j), p0)
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        return p0, j
+    # Arrow form: `(a)=>`, `(a,b)=>`, or bare `a=>`.
+    if j < n and text[j] == "(":
+        p0, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            p1, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+            if p1 == p0:
+                raise _JSExprFail("F873 duplicate params")
+            j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+    else:
+        p0, j = _js_parse_ident(text, j)
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F873 not an arrow callback")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        _, _, j = _js_parse_return_body_single(
+            text, _js_skip_ws(text, j + 1), p0)
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+    else:
+        q, j = _js_parse_ident(text, j)
+        if q != p0:
+            raise _JSExprFail("F873 arrow body not identity")
+    return p0, j
+
+
+def _js_parse_f873_identity_reduce(text, i, value, name, depth, state):
+    """Parse `.reduce(IDENTITY_CB[, INIT])` / `.reduceRight(...)`
+    at text[i] (F873).
+
+    The callback returns its first parameter unchanged, so the
+    fold is node-exact without iterating: with INIT the result
+    is INIT; without INIT the result is the seed element
+    (`elements[0]` for reduce, `elements[-1]` for reduceRight --
+    node-verified), and an empty seedless array fails closed (the
+    engine throws TypeError). INIT parses as an additive string
+    expression (the F437 init discipline); a non-string INIT
+    fails closed. The empty-with-INIT array is legal and yields
+    INIT (node-verified).
+
+    Tried before the F437 callback grammar inside the reduce
+    branch: identity callbacks never parse there
+    (`_js_parse_reduce_callback` requires the `pA+pB` body), so
+    no previously-decoded input changes behavior; non-identity
+    shapes raise and the caller restores the F452 budget snapshot
+    before falling through to F437. The F483 value-dispatch path
+    (line ~17819) is untouched -- identity callbacks stay
+    fail-closed there (documented boundary). Bounds: the result
+    is capped at _MAX_DECODE_BYTES; one F452 op is charged (the
+    fold does no per-element work). Never evals.
+    """
+    n = len(text)
+    _p0, j = _js_parse_f873_identity_callback(text, i)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ",":
+        init, j = _js_parse_additive(text, j + 1, depth, state)
+        if not isinstance(init, str):
+            raise _JSExprFail("F873 reduce init not a string")
+        result = init
+    else:
+        if not value.elements:
+            raise _JSExprFail("F873 reduce of empty array")
+        e0 = value.elements[-1] if name == "reduceRight" else value.elements[0]
+        if not isinstance(e0, str):
+            raise _JSExprFail("F873 reduce over non-string seed")
+        result = e0
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("F873 bad reduce tail")
+    if len(result) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F873 reduce too long")
+    state["ops"] += 1  # the fold is obfuscation-shaped
+    return result, j + 1
+
+
 def _js_apply_method(text, j, name, value, depth, state):
     """Apply .concat(...) / .repeat(...) / .join(...) / .reduce(...) /
     .reduceRight(...) / .map(...) / .filter(...) / .fill(...) /
@@ -78947,13 +79548,28 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         # (x,y)=>y+x assembles in reverse -- exactly as the engine does.
         if not isinstance(value, _JSArr):
             raise _JSExprFail("reduce on non-array")
+        i = _js_skip_ws(text, i)
+        # F873: identity-callback reduce -- tried before the F437
+        # callback grammar. Identity callbacks never parse there
+        # (it requires the `pA+pB` body), so no previously-decoded
+        # input changes behavior; with an INIT the element-type
+        # check below is unnecessary because the fold never
+        # touches the elements. The speculative parse snapshots
+        # the F452 budget: on miss the counters are restored and
+        # F437 proceeds exactly as before.
+        _f873_saved = dict(state)
+        try:
+            return _js_parse_f873_identity_reduce(text, i, value,
+                                                  name, depth, state)
+        except _JSExprFail:
+            state.clear()
+            state.update(_f873_saved)
         if any(not isinstance(e, str) for e in value.elements):
             # F479: the fold assembles with JS '+'; null/undefined/
             # boolean/nested-array elements do not string-concat in the
             # engine the way the str model would -- fail closed rather
             # than mis-decode (or raise uncoded).
             raise _JSExprFail("reduce over non-string element")
-        i = _js_skip_ws(text, i)
         p0, p1, idA, idB, i = _js_parse_reduce_callback(text, i)
         i = _js_skip_ws(text, i)
         if i < len(text) and text[i] == ",":
@@ -89916,6 +90532,41 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f872_saved_parts; state['ops'] = _f872_saved_ops
         if _f872 is not None:
             val, i = _f872
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F874: (function(){var|let|const IT=SRC.values();return
+        #   [].concat(...IT).join('SEP');})() -- array-iterator
+        #   spread laundering (SRC is `['LIT',...]` or
+        #   `new Set(['LIT',...])`). Tried after F810: F810's
+        #   object-literal-decl head fails closed on the
+        #   array/`new Set` decl head, and no earlier production
+        #   models `.values()` iterators, `new Set` sources, or
+        #   spread-of-iterator concat (red-first verified: 4 BREAK
+        #   on the open tree), so no previously-decoded input
+        #   changes behavior. Budget snapshot/restore on miss
+        #   (wave-383 lesson).
+        _f874_saved_parts = state['parts']; _f874_saved_ops = state['ops']
+        _f874 = _js_parse_f874_iter_spread_iife(text, i, depth, state)
+        if _f874 is None:
+            state['parts'] = _f874_saved_parts; state['ops'] = _f874_saved_ops
+        if _f874 is not None:
+            val, i = _f874
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F875: (function(){var|let|const o={...};return
+        #   Object.getOwnPropertyNames(o).map(CB)[INT]+...;})() --
+        #   key-projection laundering (CB returns o[k]). Tried
+        #   after F874: disjoint decl heads (F874's decl binds an
+        #   array/`new Set` iterator; F875's binds an object), and
+        #   no earlier production models the `o[k]` member-read map
+        #   callback (red-first verified: 4 BREAK on the open
+        #   tree), so no previously-decoded input changes
+        #   behavior. Budget snapshot/restore on miss (wave-383
+        #   lesson).
+        _f875_saved_parts = state['parts']; _f875_saved_ops = state['ops']
+        _f875 = _js_parse_f875_keymap_iife(text, i, depth, state)
+        if _f875 is None:
+            state['parts'] = _f875_saved_parts; state['ops'] = _f875_saved_ops
+        if _f875 is not None:
+            val, i = _f875
             return _js_parse_postfix(text, i, val, depth, state)
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
