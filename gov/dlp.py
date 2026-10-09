@@ -16473,6 +16473,7 @@ _JS_POSTFIX_METHOD_NAMES = (
     "flatMap", "sort", "trim", "trimStart", "trimEnd",
     "charAt", "normalize",  # F762/F763: string indexed read / normalize
     "substring", "substr",  # F764
+    "toLowerCase", "toUpperCase", "toWellFormed",
 )
 # F682: the exact JS String.prototype.trim WhiteSpace +
 # LineTerminator set (ECMAScript spec, node v24.20.0 verified):
@@ -20308,6 +20309,159 @@ _F611_RESERVED = frozenset(
     " enum export extends finally for function if import in instanceof new"
     " return super switch this throw try typeof var void while with".split()
 )
+
+
+def _js_parse_f770_case_iife(text, i, depth, state):
+    """Parse `(function(){DECL NAME=ADDITIVE;return NAME.toLowerCase()|toUpperCase()(+LIT)*;})()` (F770).
+
+    Case-transform on a concat-initialized binding: F611 (tried
+    first) owns the single-literal/atob-initializer shape and fails
+    closed on additive initializers, so this route requires a
+    NON-literal initializer (a string additive of literals -- the
+    filed `var s='xox'+'B-0123'` shape) and a `NAME.toLowerCase()` /
+    `NAME.toUpperCase()` call in the return. The folded initializer
+    must be ASCII-only (the F770 case-transform discipline:
+    Python's lower()/upper() are byte-identical to the engine's
+    locale-independent conversion on ASCII; non-ASCII fails
+    closed). The return is the method call plus an optional
+    `+'LIT'` additive tail (string literals only).
+
+    Bounds (all fail closed): a literal/atob initializer (F611
+    owns those); a paren/sequence initializer (F652/F661 own
+    those); a non-string additive result; reassignment of NAME;
+    any method-call argument; a non-literal tail term; invocation
+    arguments. Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+        if k is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            _, k = _js_parse_ident(text, k)  # optional name, ignored
+            k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "{":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        _kw, k = _js_match_decl_kw(text, k)
+        if _kw is None:
+            return None
+        k = _js_skip_ws(text, k)
+        name, k = _js_parse_ident(text, k)
+        if name in _F611_RESERVED:
+            return None
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "=" or text[k + 1:k + 2] in ("=", ">"):
+            return None
+        k = _js_skip_ws(text, k + 1)
+        # F611 owns literal/atob initializers; F652/F661 own paren/
+        # sequence initializers -- this route needs a bare additive.
+        # A single string literal init is F611's shape (reject only
+        # when the literal is immediately followed by `;` -- an
+        # additive like 'xox'+'B-0123' merely starts with a quote).
+        if k < n and text[k] == "(":
+            return None
+        if text.startswith("atob", k) and (k + 4 >= n or
+                                           text[k + 4] not in _JS_IDENT_CONT):
+            return None
+        try:
+            _, _send = _js_parse_string(text, k)
+            _send = _js_skip_ws(text, _send)
+            if _send < n and text[_send] == ";":
+                return None
+        except _JSExprFail:
+            pass
+        init_val, k = _js_parse_additive(text, k, depth + 1, state)
+        if not isinstance(init_val, str) or isinstance(
+                init_val, (_JSNumStr, _JSBigInt)):
+            return None
+        if any(ord(ch) > 0x7F for ch in init_val):
+            return None  # non-ASCII: case tables may diverge
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ";":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        rk = _js_match_kw(text, k, "return")
+        if rk is None:
+            return None
+        k = _js_skip_ws(text, rk)
+        rname, k = _js_parse_ident(text, k)
+        if rname != name:
+            return None
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ".":
+            return None
+        # No whitespace between `.` and the method name (the
+        # postfix-loop discipline -- `s. trim()` fails closed there
+        # too, pre-existing).
+        k += 1
+        if text.startswith("toLowerCase", k) and (
+                k + 11 >= n or text[k + 11] not in _JS_IDENT_CONT):
+            lower = True
+            k += 11
+        elif text.startswith("toUpperCase", k) and (
+                k + 11 >= n or text[k + 11] not in _JS_IDENT_CONT):
+            lower = False
+            k += 11
+        else:
+            return None
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # no-arg only (F682 precedent)
+        k += 1
+        # Optional `+'LIT'` additive tail (string literals only).
+        tail = []
+        while True:
+            kk = _js_skip_ws(text, k)
+            if kk >= n or text[kk] != "+":
+                break
+            kk = _js_skip_ws(text, kk + 1)
+            if kk >= n or text[kk] not in "'\"":
+                return None
+            lit, kk = _js_parse_string(text, kk)
+            tail.append(lit)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                return None
+            k = kk
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ";":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "}":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None
+        k += 1
+    except _JSExprFail:
+        return None
+    result = (init_val.lower() if lower else init_val.upper()) + "".join(tail)
+    if len(result) > _MAX_DECODE_BYTES:
+        return None
+    state["ops"] += 1  # the case call is obfuscation-shaped
+    return result, k
 
 
 def _js_parse_f611_varbound_iife(text, i, depth, state):
@@ -59561,6 +59715,54 @@ def _js_apply_method_at(text, i, name, value, depth, state):
             raise _JSExprFail("trim too long")
         state["ops"] += 1  # the trim call is obfuscation-shaped
         return result, i + 1
+    if name in ("toLowerCase", "toUpperCase"):
+        # F770: 'LIT'.toLowerCase()/toUpperCase() -- case-transform
+        # fragment sources, node-exact (v24.20.0) under the ASCII
+        # discipline: the receiver must be a plain str (the F624
+        # discipline: _JSNumStr/_JSBigInt receivers fail closed -- the
+        # engine throws TypeError) and ASCII-only. On ASCII-only
+        # strings Python's lower()/upper() are byte-identical to the
+        # engine's locale-independent case conversion; any non-ASCII
+        # char fails closed (Python's Unicode case tables diverge
+        # from the engine's on exotic code points -- documented scope
+        # boundary, honest refusal, not a mis-decode). No-arg only
+        # (any argument fails closed -- the engine ignores extra
+        # args, but the filed shapes use none and the strict no-arg
+        # form keeps the production tight, F682 precedent).
+        if not isinstance(value, str) or isinstance(
+                value, (_JSNumStr, _JSBigInt)):
+            raise _JSExprFail("case transform on non-string receiver")
+        if any(ord(ch) > 0x7F for ch in value):
+            raise _JSExprFail("case transform on non-ASCII string")
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("case transform args unsupported")
+        result = value.lower() if name == "toLowerCase" else value.upper()
+        if len(result) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("case transform too long")
+        state["ops"] += 1  # the case call is obfuscation-shaped
+        return result, i + 1
+    if name == "toWellFormed":
+        # F771: 'LIT'.toWellFormed() -- the identity on well-formed
+        # text (node v24.20.0). Plain-str receiver discipline and
+        # strict no-arg form as above (F770). Lone surrogates are
+        # replaced with U+FFFD exactly as the engine does: Python
+        # str never holds paired surrogates as separate chars, so
+        # the 0xD800-0xDFFF test catches precisely the engine's
+        # lone-surrogate set (node-verified: '\uD800'.toWellFormed()
+        # === '\ufffd').
+        if not isinstance(value, str) or isinstance(
+                value, (_JSNumStr, _JSBigInt)):
+            raise _JSExprFail("toWellFormed on non-string receiver")
+        i = _js_skip_ws(text, i)
+        if i >= len(text) or text[i] != ")":
+            raise _JSExprFail("toWellFormed args unsupported")
+        result = "".join("\ufffd" if 0xD800 <= ord(ch) <= 0xDFFF
+                         else ch for ch in value)
+        if len(result) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("toWellFormed too long")
+        state["ops"] += 1  # the toWellFormed call is obfuscation-shaped
+        return result, i + 1
     if name == "slice":
         if isinstance(value, str) and not isinstance(
                 value, (_JSNumStr, _JSBigInt)):
@@ -64099,6 +64301,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f611_saved_parts; state['ops'] = _f611_saved_ops
         if _f611 is not None:
             val, i = _f611
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F770: (function(){DECL NAME=ADDITIVE;
+        #   return NAME.toLowerCase()|toUpperCase()(+'LIT')*;})() --
+        #   case transform on a concat-initialized binding. Tried
+        #   after F611: F611 requires a literal/atob/JSON-reviver
+        #   initializer and fails closed on additive initializers;
+        #   this route requires a non-literal additive initializer
+        #   and fails closed on literal/atob/paren initializers, so
+        #   no previously-decoded input changes behavior. None falls
+        #   through to F661 like F611.
+        _f770_saved_parts = state['parts']; _f770_saved_ops = state['ops']
+        _f770 = _js_parse_f770_case_iife(text, i, depth, state)
+        if _f770 is None:
+            state['parts'] = _f770_saved_parts; state['ops'] = _f770_saved_ops
+        if _f770 is not None:
+            val, i = _f770
             return _js_parse_postfix(text, i, val, depth, state)
         # F661: (function(){(var|let|const) D(,D)*;return EXPR;})()
         #   where each declarator is NAME='LIT'|atob('LIT')|(SEQ) --
