@@ -6322,6 +6322,302 @@ def _js_parse_generator_iife(text, i, depth, state):
     return _JSArr(yields), j
 
 
+# ---------------------------------------------------------------------------
+# F966: spread of a named-generator call
+# ---------------------------------------------------------------------------
+
+
+def _js_f966_skip_interpolation(text, k):
+    """Skip a ${...} interpolation starting at text[k] (just past '${') (F966).
+
+    Returns the index just past the matching '}'. Braces balance;
+    '...'/\"...\" spans skip with escape handling; template
+    literals nest recursively; // and /* */ comments skip.
+    Raises _JSExprFail on unterminated input. Never evals.
+    """
+    n = len(text)
+    depth = 1
+    while k < n and depth > 0:
+        c = text[k]
+        if c in "'\"":
+            k = _js_skip_quoted(text, k)
+            continue
+        if c == "`":
+            k = _js_f966_skip_template(text, k)
+            continue
+        if c == "/" and k + 1 < n and text[k + 1] == "/":
+            nl = text.find("\n", k + 2)
+            if nl == -1:
+                raise _JSExprFail("F966 unterminated comment")
+            k = nl + 1
+            continue
+        if c == "/" and k + 1 < n and text[k + 1] == "*":
+            end = text.find("*/", k + 2)
+            if end == -1:
+                raise _JSExprFail("F966 unterminated comment")
+            k = end + 2
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        k += 1
+    if depth != 0:
+        raise _JSExprFail("F966 unterminated interpolation")
+    return k
+
+
+def _js_f966_skip_template(text, i):
+    """Return the index just past the template literal at text[i] == '`' (F966).
+
+    Backslash escapes are honored; ${...} interpolations nest via
+    _js_f966_skip_interpolation. Raises _JSExprFail on an
+    unterminated template. Never evals.
+    """
+    n = len(text)
+    k = i + 1
+    while k < n:
+        c = text[k]
+        if c == "\\":
+            k += 2
+            continue
+        if c == "`":
+            return k + 1
+        if c == "$" and k + 1 < n and text[k + 1] == "{":
+            k = _js_f966_skip_interpolation(text, k + 2)
+            continue
+        k += 1
+    raise _JSExprFail("F966 unterminated template")
+
+
+def _js_f966_scan(text, gname):
+    """Tokenizing scan of *text* for F966.
+
+    Single pass: '...'/\"...\" spans skip with escape handling,
+    template literals skip via _js_f966_skip_template, // and /* */
+    comments skip. Returns (func_kw, decl_kw, name_occs): positions
+    of the `function` keyword, of var/let/const keywords, and of
+    identifier occurrences of *gname*. Raises _JSExprFail on
+    unterminated strings/templates/comments. Never evals.
+    """
+    n = len(text)
+    k = 0
+    func_kw = []
+    decl_kw = []
+    name_occs = []
+    while k < n:
+        c = text[k]
+        if c in "'\"":
+            k = _js_skip_quoted(text, k)
+            continue
+        if c == "`":
+            k = _js_f966_skip_template(text, k)
+            continue
+        if c == "/" and k + 1 < n and text[k + 1] == "/":
+            nl = text.find("\n", k + 2)
+            if nl == -1:
+                raise _JSExprFail("F966 unterminated comment")
+            k = nl + 1
+            continue
+        if c == "/" and k + 1 < n and text[k + 1] == "*":
+            end = text.find("*/", k + 2)
+            if end == -1:
+                raise _JSExprFail("F966 unterminated comment")
+            k = end + 2
+            continue
+        if c in _JS_IDENT_START:
+            j = k + 1
+            while j < n and text[j] in _JS_IDENT_CONT:
+                j += 1
+            word = text[k:j]
+            if word == "function":
+                func_kw.append(k)
+            elif word in ("var", "let", "const"):
+                decl_kw.append(k)
+            elif word == gname:
+                name_occs.append(k)
+            k = j
+            continue
+        k += 1
+    return func_kw, decl_kw, name_occs
+
+
+def _js_f966_scope_ok(text, decl_end, use_pos):
+    """Check the F966 scope rule: the generator declaration ending at
+    *decl_end* must lexically enclose the spread use at *use_pos*.
+
+    The brace depth over (decl_end, use_pos) must never go negative
+    -- a negative step means the declaration's enclosing scope
+    closed before the use (the engine would throw ReferenceError
+    there). Strings, template literals, and comments skip so their
+    braces never affect the count. Regex literals do NOT skip (a
+    documented boundary: a regex-literal brace between decl and use
+    could mask a scope exit; the decoded value still consists
+    solely of literal yields present in the text, so no credential
+    is fabricated). Unterminated spans fail closed. Never evals.
+    """
+    n = len(text)
+    depth = 0
+    k = decl_end
+    try:
+        while k < use_pos:
+            c = text[k]
+            if c in "'\"":
+                k = _js_skip_quoted(text, k)
+                continue
+            if c == "`":
+                k = _js_f966_skip_template(text, k)
+                continue
+            if c == "/" and k + 1 < n and text[k + 1] == "/":
+                nl = text.find("\n", k + 2)
+                if nl == -1 or nl >= use_pos:
+                    return False
+                k = nl + 1
+                continue
+            if c == "/" and k + 1 < n and text[k + 1] == "*":
+                end = text.find("*/", k + 2)
+                if end == -1 or end >= use_pos:
+                    return False
+                k = end + 2
+                continue
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth < 0:
+                    return False
+            k += 1
+    except _JSExprFail:
+        return False
+    return True
+
+
+def _js_f966_lookup_generator(text, use_pos, gname, state):
+    """Find the yields of the single `function* gname(){...}` declaration (F966).
+
+    Node-exact binding resolution (v24.20.0) for the spread use at
+    *use_pos*: exactly one declaration of *gname* may exist in the
+    whole text -- the named declaration `function* gname(){...}`
+    or the var-bound twin `var|let|const gname = function*(){...}`
+    (both parsed by the shared F619 grammar: literal yields only,
+    the F494 fixed-yield discipline); the declaration must end
+    before the use; every other identifier occurrence of *gname*
+    must be a bare `gname(` call (not preceded by `.` -- with the
+    `...` spread punctuator excepted -- and not by the `new`
+    keyword); and the declaration's scope must enclose the use
+    (_js_f966_scope_ok). A use-before-declaration (hoisted) order
+    fails closed -- a documented residual, never a mis-decode.
+    Returns the yield list, or None when any guard fails. The
+    F452 budgets are restored on miss; on hit only the chosen
+    declaration's yields stay charged. Never evals.
+    """
+    n = len(text)
+    try:
+        func_kw, decl_kw, name_occs = _js_f966_scan(text, gname)
+    except _JSExprFail:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    winner = None
+    try:
+        seen_ends = set()
+        covered_until = -1
+        for pos in sorted(func_kw + decl_kw):
+            if pos < covered_until:
+                # Inside an already-parsed declaration (e.g. the
+                # inner `function` of a var-bound named generator
+                # expression) -- the outer parse covers it.
+                continue
+            gd = _js_try_f619_generator_decl(text, pos, state, None)
+            if gd is None:
+                continue
+            dname, yields, dend = gd
+            covered_until = max(covered_until, dend)
+            if dname != gname or dend in seen_ends:
+                continue
+            seen_ends.add(dend)
+            if winner is not None:
+                winner = False  # more than one: no winner
+                break
+            winner = (pos, dend, yields)
+        if winner is None or winner is False:
+            return None
+        dstart, dend, _ = winner
+        if dend > use_pos:
+            return None
+        # Every other identifier occurrence of gname must be a bare
+        # `gname(` call: not a member access (a `.` immediately
+        # before, except the `...` spread punctuator), not a
+        # `new gname()` construction, and followed by `(`.
+        # Anything else -- assignment, parameter, property, bare
+        # reference -- fails closed (the binding may not resolve to
+        # the generator at runtime).
+        for occ in name_occs:
+            if dstart <= occ < dend:
+                continue  # the declaration's own name
+            q = _js_skip_ws(text, occ + len(gname))
+            if q >= n or text[q] != "(":
+                return None
+            b = occ - 1
+            while b >= 0 and text[b] in " \t\n\r":
+                b -= 1
+            if b >= 0 and text[b] == ".":
+                if not (b >= 2 and text[b - 2:b + 1] == "..."):
+                    return None
+            if (b >= 2 and text[b - 2:b + 1] == "new"
+                    and (b - 3 < 0
+                         or text[b - 3] not in _JS_IDENT_CONT)):
+                return None
+        if not _js_f966_scope_ok(text, dend, use_pos):
+            return None
+    finally:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+    # Re-parse the single winner so only its yields stay charged.
+    gd = _js_try_f619_generator_decl(text, winner[0], state, None)
+    if gd is None or gd[0] != gname:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+    return gd[1]
+
+
+def _js_parse_f966_gen_call(text, i, k, depth, state):
+    """Parse the `IDENT()` generator-call spread operand at text[k] (F966).
+
+    *i* is the `[` of the `[...IDENT()]` spread (the use position
+    for the binding lookup), *k* the operand's identifier start.
+    The call must be a no-arg `gname()` -- any arguments fail
+    closed (documented boundary; the engine ignores extra args on
+    a no-param generator, so this is a miss, never a mis-decode).
+    Returns (_JSArr(yields), next_index). Raises _JSExprFail on any
+    no-match. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F966 too deep")
+    gname, gk = _js_parse_ident(text, k)
+    if gname in _F611_RESERVED or gname == "arguments":
+        raise _JSExprFail("F966 bad gen name")
+    gk = _js_skip_ws(text, gk)
+    if gk >= n or text[gk] != "(":
+        raise _JSExprFail("F966 not a call")
+    gk = _js_skip_ws(text, gk + 1)
+    if gk >= n or text[gk] != ")":
+        raise _JSExprFail("F966 call has args")
+    gk += 1
+    yields = _js_f966_lookup_generator(text, i, gname, state)
+    if yields is None:
+        raise _JSExprFail("F966 no generator binding")
+    state["ops"] += 1  # the iterable-spread source is obfuscation-shaped
+    return _JSArr(list(yields)), gk
+
+
+def _js_try_f966_gen_call(text, i, k, depth, state):
+    """Try _js_parse_f966_gen_call; None on no-match (F966). Never raises."""
+    try:
+        return _js_parse_f966_gen_call(text, i, k, depth, state)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_spread_copy(text, i, depth, state):
     """Parse '[...X]' spread-copy factory at text[i] (F471).
 
@@ -6411,6 +6707,22 @@ def _js_parse_spread_copy(text, i, depth, state):
                 if kf < n and text[kf] == "*":
                     src, j = _js_parse_generator_iife(text, k, depth,
                                                       state)
+        elif k < n and text[k] in _JS_IDENT_START:
+            # F966: [...gen()] -- spread of a no-arg call of a
+            # generator declared once in the same text (F940
+            # residual). Tried before the primary path: the primary
+            # path fails closed on call-spread sources (red-first
+            # verified: 2 BREAK on the open tree), so no
+            # previously-decoded input changes behavior. On miss
+            # the F452 budgets are restored (wave-383 lesson).
+            _f966_saved_parts = state["parts"]
+            _f966_saved_ops = state["ops"]
+            _f966 = _js_try_f966_gen_call(text, i, k, depth, state)
+            if _f966 is None:
+                state["parts"] = _f966_saved_parts
+                state["ops"] = _f966_saved_ops
+            else:
+                src, j = _f966
         if src is None:
             src, j = _js_parse_primary(text, j + 3, depth, state)
     finally:
@@ -56249,6 +56561,245 @@ def _js_parse_f947_propasm_iife(text, i, depth, state):
 
 
 # ---------------------------------------------------------------------------
+# F965: eval with computed template-literal program
+# ---------------------------------------------------------------------------
+
+
+def _js_f965_cook_template(text, j, pname, elems, depth, state,
+                           _allow_literals):
+    """Cook a `...` template at text[j] == '`' (F965).
+
+    Shared cooker for the eval-argument template and the program
+    template. Literal segments use the F457 escape discipline
+    (mirrors _js_parse_template: \\x/\\u/\\U via _decode_one_escape,
+    other escapes via _JS_SIMPLE_ESCAPES, an escaped \\${ stays the
+    literal characters "${"); line continuations (backslash +
+    newline) cook node-exactly to nothing (v24.20.0) -- a deliberate
+    divergence from _js_parse_template's shared keep-discipline,
+    safe because this production is new and no previously-decoded
+    input flows through it. Each ${pname[INT]} substitution
+    (whitespace tolerated around the tokens) reads elems[INT] --
+    node-exact (v24.20.0); an out-of-range index cooks to the
+    string "undefined", exactly as the engine stringifies the
+    undefined element. When _allow_literals, literal-only ${...}
+    substitutions ride the F457 _js_parse_template_interp
+    discipline (the eval-argument template, whose cooked value is
+    the program); otherwise any other substitution fails closed
+    (the program template). Returns (cooked, next_index) just past
+    the closing backtick. The cooked value is bounded by
+    _MAX_DECODE_BYTES; substitutions are part-charged (F452) and
+    each marks the expression obfuscation-shaped. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F965 template too deep")
+    j += 1  # consume the opening backtick (caller checked)
+    out = []
+    total = 0
+    while True:
+        if j >= n:
+            raise _JSExprFail("F965 unterminated template")
+        c = text[j]
+        if c == "`":
+            return "".join(out), j + 1
+        if c == "$" and j + 1 < n and text[j + 1] == "{":
+            k = _js_skip_ws(text, j + 2)
+            kn = k + len(pname)
+            if (text.startswith(pname, k)
+                    and (kn >= n or text[kn] not in _JS_IDENT_CONT)):
+                # ${pname[INT]} -- fragment read.
+                k = _js_skip_ws(text, kn)
+                if k >= n or text[k] != "[":
+                    raise _JSExprFail("F965 bad substitution")
+                k = _js_skip_ws(text, k + 1)
+                d0 = k
+                while k < n and text[k] in _ASCII_DIGITS:
+                    k += 1
+                if k == d0 or k - d0 > 10:
+                    raise _JSExprFail("F965 bad index")
+                idx = int(text[d0:k])
+                k = _js_skip_ws(text, k)
+                if k >= n or text[k] != "]":
+                    raise _JSExprFail("F965 bad substitution")
+                k = _js_skip_ws(text, k + 1)
+                if k >= n or text[k] != "}":
+                    raise _JSExprFail("F965 bad substitution")
+                j = k + 1
+                piece = elems[idx] if idx < len(elems) else "undefined"
+            elif _allow_literals:
+                piece, j = _js_parse_template_interp(text, j + 2,
+                                                     depth + 1, state)
+            else:
+                raise _JSExprFail("F965 bad substitution")
+            out.append(piece)
+            total += len(piece)
+            if total > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F965 template too long")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1  # a substitution is obfuscation-shaped
+            continue
+        if c == "\\":
+            if j + 1 >= n:
+                raise _JSExprFail("F965 bad escape")
+            e = text[j + 1]
+            if e in "xuU":
+                r = _decode_one_escape(text, j)
+                if r is None:
+                    raise _JSExprFail("F965 bad escape")
+                ch, j = r
+                out.append(ch)
+                total += len(ch)
+            elif e == "\n":
+                j += 2  # line continuation: removed (node-exact)
+            elif e == "\r":
+                if j + 2 < n and text[j + 2] == "\n":
+                    j += 3
+                else:
+                    j += 2
+            elif e == " " or e == " ":
+                j += 2  # line continuation: removed (node-exact)
+            else:
+                out.append(_JS_SIMPLE_ESCAPES.get(e, e))
+                j += 2
+                total += 1
+            if total > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F965 template too long")
+            continue
+        if ord(c) < 0x20 and c not in "\t\n\r":
+            raise _JSExprFail("F965 control char")
+        out.append(c)
+        total += 1
+        j += 1
+        if total > _JS_EXPR_MAX_LITERAL:
+            raise _JSExprFail("F965 template too long")
+    # unreachable
+
+
+def _js_f965_cook_template_program(prog, pname, elems, depth, state):
+    """Evaluate a template-literal program string (F965).
+
+    *prog* is the cooked value of the eval argument -- it must be
+    exactly one template literal (leading/trailing whitespace
+    tolerated). The template cooks via _js_f965_cook_template:
+    ${pname[INT]} reads and literal-only substitutions are
+    admitted (both node-exact); anything else (a non-template
+    program, nested templates, other substitutions, trailing junk)
+    fails closed -- rejected, never mis-decoded. Never evals.
+    """
+    n = len(prog)
+    j = _js_skip_ws(prog, 0)
+    if j >= n or prog[j] != "`":
+        raise _JSExprFail("F965 program not a template")
+    val, j = _js_f965_cook_template(prog, j, pname, elems, depth + 1,
+                                    state, True)
+    j = _js_skip_ws(prog, j)
+    if j != n:
+        raise _JSExprFail("F965 program trailing junk")
+    return val
+
+
+def _js_parse_f965_eval_template_iife(text, i, depth, state):
+    """Parse `(function(){var|let P=['LIT',...];return eval(PROG);})()` (F965).
+
+    F965 (LOW, filed 2026-10-09 by wave-390 attack round 58): eval()
+    with a computed template-literal program -- F945 covers eval
+    with computed per-iteration args; eval('`${parts[0]}${parts[1]}`')
+    over a fragment array misses. Both filed shapes (short +
+    40-char split credentials) verified node-exact (v24.20.0).
+
+    Node-exact desugar (v24.20.0): P is a var/let-bound array of
+    string literals; PROG is a string literal, or a template
+    literal whose literal and ${P[INT]} substitutions cook in the
+    IIFE scope, and whose cooked value is exactly one template
+    literal; the direct eval runs that template program in the
+    IIFE scope where P is bound, so each ${P[INT]} reads the
+    fragment (out-of-range reads cook to "undefined") and the
+    literal segments cook with template escape discipline. The
+    result is the cooked concatenation -- the credential.
+
+    The body parses inline on text (no _js_span_braced: the eval
+    argument may be a template literal, which the F509 span
+    rejects); the fixed two-statement shape is the statement
+    check -- anything else fails at the `}` expect.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    `const` P, non-literal elements, extra statements, a
+    non-literal eval argument, a program that is not exactly one
+    template literal, substitutions outside ${P[INT]}, an indirect
+    eval (`(0,eval)(...)` runs in global scope where P is unbound
+    -- the engine throws ReferenceError), a shadowed eval. On miss
+    the F452 budgets are restored (wave-383 lesson). Returns
+    (value, next_index), or None. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        sj = _js_parse_f6xx_iife_head(text, i)
+        if sj is None:
+            raise _JSExprFail("F965 not our head")
+        sj += 1  # the head returns the index OF the `{`
+        # `var|let P=['LIT',...];`
+        dkw, dk = _js_match_decl_kw(text, sj)
+        if dkw not in ("var", "let"):
+            raise _JSExprFail("F965 decl not var/let")
+        sj = _js_skip_ws(text, dk)
+        pname, sj = _js_parse_ident(text, sj)
+        if pname in _F611_RESERVED or pname in ("eval", "arguments"):
+            raise _JSExprFail("F965 bad parts name")
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "[":
+            raise _JSExprFail("F965 parts not array")
+        elems, sj = _js_parse_string_literal_list(text, sj + 1,
+                                                  state, "]")
+        if not elems:
+            raise _JSExprFail("F965 empty parts")
+        sj = _js_expect(text, sj, ";")
+        # `return eval(PROG);`
+        sj = _js_skip_ws(text, sj)
+        rk = _js_match_kw(text, sj, "return")
+        if rk is None:
+            raise _JSExprFail("F965 not return")
+        sj = _js_skip_ws(text, rk)
+        ek = _js_match_kw(text, sj, "eval")
+        if ek is None:
+            raise _JSExprFail("F965 not eval")
+        sj = _js_expect(text, ek, "(")
+        sj = _js_skip_ws(text, sj)
+        if sj < n and text[sj] == "`":
+            # Template argument: cooks (literal and ${P[INT]}
+            # substitutions) to the program, which must then be
+            # exactly one template literal -- evaluated below. A
+            # template whose substitutions cook to a non-template
+            # program (e.g. the direct `${P[0]}` twin, where the
+            # engine evals the credential itself and throws) fails
+            # closed at the program check, correctly.
+            prog, sj = _js_f965_cook_template(text, sj, pname,
+                                              elems, depth, state,
+                                              True)
+        elif sj < n and text[sj] in "'\"":
+            prog, sj = _js_parse_string(text, sj)
+        else:
+            raise _JSExprFail("F965 eval arg not literal")
+        sj = _js_expect(text, sj, ")")
+        sj = _js_skip_ws(text, sj)
+        if sj < n and text[sj] == ";":
+            sj += 1
+        sj = _js_expect(text, _js_skip_ws(text, sj), "}")
+        val = _js_f965_cook_template_program(prog, pname, elems,
+                                             depth, state)
+        state["ops"] += 1  # the eval-template is obfuscation-shaped
+        return _js_parse_f6xx_iife_tail(text, sj, depth, state, val)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+# ---------------------------------------------------------------------------
 # F787: Error cause reads (F750 residual)
 # ---------------------------------------------------------------------------
 
@@ -101649,6 +102200,25 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f947_saved_parts; state['ops'] = _f947_saved_ops
         if _f947 is not None:
             val, i = _f947
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F965: (function(){var|let P=['LIT',...];return
+        #   eval('`...${P[N]}...`');})() -- eval with a computed
+        #   template-literal program (F945 residual). Tried after
+        #   F947: F945 requires the eval-in-for body, F946 the
+        #   Array.from head, F947 the object-literal head -- all
+        #   fail closed on the `var P=[` + `return eval(` shape
+        #   (red-first verified: 2 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior. The F947
+        #   hook and its trailing `return` are untouched
+        #   (wave-379 lesson). Budget snapshot/restore on miss
+        #   (wave-383 lesson).
+        _f965_saved_parts = state['parts']; _f965_saved_ops = state['ops']
+        _f965 = _js_parse_f965_eval_template_iife(text, i, depth,
+                                                  state)
+        if _f965 is None:
+            state['parts'] = _f965_saved_parts; state['ops'] = _f965_saved_ops
+        if _f965 is not None:
+            val, i = _f965
             return _js_parse_postfix(text, i, val, depth, state)
         # F787: (function(){try{throw [new] CTOR('LIT',{cause:'LIT2'});}
         #   catch(C){return ADD;}})() and the assigned twin
