@@ -112,11 +112,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: merged footer (F795-F828 open, next F829)."""
+    """Control: merged footer (F795-F817, F819-F828 open, next F829)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F829**" in text  # Wave-385 merge: F795-F828 OPEN
-          and "Open findings: F795, F796, F797, F798, F799, F800, F801, F802, F803, F804, F805, F806, F807, F808, F809, F810, F811, F812, F813, F814, F815, F816, F817, F818, F819, F820, F821, F822, F823, F824, F825, F826, F827, F828." in text)
+          and "Open findings: F795, F796, F797, F798, F799, F800, F801, F802, F803, F804, F805, F806, F807, F808, F809, F810, F811, F812, F813, F814, F815, F816, F817, F819, F820, F821, F822, F823, F824, F825, F826, F827, F828." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -394,27 +394,27 @@ def test_r53_f816_s2_open():
 
 @_t
 def test_r53_f817_s1_open():
-    """F817 OPEN: miss reproduces."""
-    miss = _misses("(function(){var [a,...r]=['%s','%s'];return a+r[0];})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F817 s1: array rest declaration covered by F790 (CLOSED lane 14); s2 assignment form remains OPEN."""
+    ok = _blocked("(function(){var [a,...r]=['%s','%s'];return a+r[0];})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r53_f817_s2_open():
-    """F817 OPEN: miss reproduces."""
+    """F817 OPEN: array destructuring assignment miss reproduces."""
     miss = _misses("(function(){var a='%s',b='%s';[a,b]=[b,a];return b+a;})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
 def test_r53_f818_s1_open():
-    """F818 OPEN: miss reproduces."""
-    miss = _misses("(function(){var a=['%s','%s'];return a.at(-2)+a.at(-1);})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F818 CLOSED (wave-385 merge, incidentally by F769 (lane 4)): blocks coded."""
+    ok = _blocked("(function(){var a=['%s','%s'];return a.at(-2)+a.at(-1);})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r53_f818_s2_open():
-    """F818 OPEN: miss reproduces."""
-    miss = _misses("(function(){var a=['z','%s','%s'];return a.at(-2)+a.at(-1);})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F818 CLOSED (wave-385 merge, incidentally by F769 (lane 4)): blocks coded."""
+    ok = _blocked("(function(){var a=['z','%s','%s'];return a.at(-2)+a.at(-1);})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r53_f819_s1_open():

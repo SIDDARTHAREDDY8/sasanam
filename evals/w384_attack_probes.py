@@ -405,27 +405,27 @@ def test_r52_f771_s2_closed():
 
 @_t
 def test_r52_f772_s1_open():
-    """F772 OPEN: miss reproduces."""
-    miss = _misses("(function(){return ['%s','%s'].toSorted().reverse().join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F772 CLOSED (wave-385 lane 6): blocks coded."""
+    ok = _blocked("(function(){return ['%s','%s'].toSorted().reverse().join('');})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r52_f772_s2_open():
-    """F772 OPEN: miss reproduces."""
-    miss = _misses("(function(){return ['xx','%s','%s'].toSpliced(0,1).join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F772 CLOSED (wave-385 lane 6): blocks coded."""
+    ok = _blocked("(function(){return ['xx','%s','%s'].toSpliced(0,1).join('');})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r52_f773_s1_open():
-    """F773 OPEN: miss reproduces."""
-    miss = _misses("(function(){return [new Array(1).fill('%s')[0],'%s'].join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F773 CLOSED (wave-385 lane 6): blocks coded."""
+    ok = _blocked("(function(){return [new Array(1).fill('%s')[0],'%s'].join('');})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r52_f773_s2_open():
-    """F773 OPEN: miss reproduces."""
-    miss = _misses("(function(){var a=['xx'];a.fill('%s');return a[0]+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F773 CLOSED (wave-385 lane 6): blocks coded."""
+    ok = _blocked("(function(){var a=['xx'];a.fill('%s');return a[0]+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r52_f774_s1_closed():
@@ -575,39 +575,39 @@ def test_r52_f785_s2_closed():
 
 @_t
 def test_r52_f786_s1_open():
-    """F786 OPEN: miss reproduces."""
-    miss = _misses("(function(){var r='';for(var x of ['%s','xx','%s']){if(x==='xx')continue;r+=x;}return r;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F786 CLOSED (wave-385 lane 13): blocks coded."""
+    ok = _blocked("(function(){var r='';for(var x of ['%s','xx','%s']){if(x==='xx')continue;r+=x;}return r;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r52_f786_s2_open():
-    """F786 OPEN: miss reproduces."""
-    miss = _misses("(function(){var r='';var a=['%s','xx','%s'];for(var i=0;i<a.length;i++){if(a[i]==='xx')continue;r+=a[i];}return r;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F786 CLOSED (wave-385 lane 13): blocks coded."""
+    ok = _blocked("(function(){var r='';var a=['%s','xx','%s'];for(var i=0;i<a.length;i++){if(a[i]==='xx')continue;r+=a[i];}return r;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r52_f787_s1_open():
-    """F787 OPEN: miss reproduces."""
-    miss = _misses("(function(){try{throw new Error('x',{cause:'%s'});}catch(e){return e.cause+'%s';}})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F787 CLOSED (wave-385 lane 13): blocks coded."""
+    ok = _blocked("(function(){try{throw new Error('x',{cause:'%s'});}catch(e){return e.cause+'%s';}})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r52_f787_s2_open():
-    """F787 OPEN: miss reproduces."""
-    miss = _misses("(function(){var e=new Error('x');e.cause='%s';return e.cause+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F787 CLOSED (wave-385 lane 13): blocks coded."""
+    ok = _blocked("(function(){var e=new Error('x');e.cause='%s';return e.cause+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r52_f788_s1_open():
-    """F788 OPEN: miss reproduces."""
-    miss = _misses("(function(){var e=new AggregateError(['%s'],'x');return e.errors[0]+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F788 CLOSED (wave-385 lane 13): blocks coded."""
+    ok = _blocked("(function(){var e=new AggregateError(['%s'],'x');return e.errors[0]+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r52_f788_s2_open():
-    """F788 OPEN: miss reproduces."""
-    miss = _misses("(function(){var e=new AggregateError(['%s','%s'],'x');return e.errors.join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F788 CLOSED (wave-385 lane 13): blocks coded."""
+    ok = _blocked("(function(){var e=new AggregateError(['%s','%s'],'x');return e.errors.join('');})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r52_f789_s1_closed():
