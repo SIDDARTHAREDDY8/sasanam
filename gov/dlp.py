@@ -6492,6 +6492,91 @@ def _js_f966_scope_ok(text, decl_end, use_pos):
     return True
 
 
+def _js_f966_has_dynamic_rebind(text, gname, dstart, dend):
+    """Check for a dynamic-rebinding vector for *gname* (F966 H2).
+
+    A direct `eval(...)`, indirect `(0,eval)(...)`, or
+    `Function(...)`/`new Function(...)` call whose string argument
+    mentions *gname* can rebind the generator at runtime (sloppy
+    mode: later declaration wins), so the static whole-text binding
+    may be wrong -- fail closed. Returns True when such a vector
+    is present: an `eval`/`Function` identifier followed by `(`
+    (outside strings/templates/comments) AND *gname* appearing in
+    a string/template literal outside [*dstart*, *dend*). The
+    check is conservative (a miss, never a mis-decode). Never
+    evals.
+    """
+    n = len(text)
+    k = 0
+    has_eval_call = False
+    gname_in_lit = False
+    while k < n:
+        c = text[k]
+        if c in "'\"":
+            q = k
+            try:
+                k = _js_skip_quoted(text, k)
+            except _JSExprFail:
+                return True
+            if not (dstart <= q < dend) and gname in text[q:k]:
+                gname_in_lit = True
+            continue
+        if c == "`":
+            q = k
+            try:
+                k = _js_f966_skip_template(text, k)
+            except _JSExprFail:
+                return True
+            if not (dstart <= q < dend) and gname in text[q:k]:
+                gname_in_lit = True
+            continue
+        if c == "/" and k + 1 < n and text[k + 1] == "/":
+            nl = text.find("\n", k + 2)
+            if nl == -1:
+                break
+            k = nl + 1
+            continue
+        if c == "/" and k + 1 < n and text[k + 1] == "*":
+            end = text.find("*/", k + 2)
+            if end == -1:
+                break
+            k = end + 2
+            continue
+        if c in _JS_IDENT_START:
+            j = k + 1
+            while j < n and text[j] in _JS_IDENT_CONT:
+                j += 1
+            word = text[k:j]
+            if word == "eval" or word == "Function":
+                q = _js_skip_ws(text, j)
+                if q < n and text[q] == "(":
+                    has_eval_call = True
+            k = j
+            continue
+        k += 1
+        if has_eval_call and gname_in_lit:
+            return True
+    return has_eval_call and gname_in_lit
+
+
+def _js_f966_is_async_function(text, pos):
+    """Check if the `function` keyword at *pos* is `async`-prefixed (F966 H1).
+
+    `async function* gname(){...}` declares an async generator --
+    spreading its call throws TypeError (not sync-iterable, node
+    v24.20.0), so it must not resolve as a sync generator binding.
+    Returns True when the `async` keyword immediately precedes
+    (whitespace-tolerant). Never evals.
+    """
+    b = pos - 1
+    while b >= 0 and text[b] in " \t\n\r":
+        b -= 1
+    if b >= 4 and text[b - 4:b + 1] == "async":
+        if b - 5 < 0 or text[b - 5] not in _JS_IDENT_CONT:
+            return True
+    return False
+
+
 def _js_f966_lookup_generator(text, use_pos, gname, state):
     """Find the yields of the single `function* gname(){...}` declaration (F966).
 
@@ -6504,7 +6589,11 @@ def _js_f966_lookup_generator(text, use_pos, gname, state):
     before the use; every other identifier occurrence of *gname*
     must be a bare `gname(` call (not preceded by `.` -- with the
     `...` spread punctuator excepted -- and not by the `new`
-    keyword); and the declaration's scope must enclose the use
+    keyword); the declaration must not be `async`-prefixed (H1:
+    async generators are not sync-iterable -- spreading throws);
+    no dynamic-rebinding vector may be present (H2:
+    eval/Function with *gname* in a string literal fails closed);
+    and the declaration's scope must enclose the use
     (_js_f966_scope_ok). A use-before-declaration (hoisted) order
     fails closed -- a documented residual, never a mis-decode.
     Returns the yield list, or None when any guard fails. The
@@ -6521,11 +6610,17 @@ def _js_f966_lookup_generator(text, use_pos, gname, state):
     try:
         seen_ends = set()
         covered_until = -1
+        func_set = set(func_kw)
         for pos in sorted(func_kw + decl_kw):
             if pos < covered_until:
                 # Inside an already-parsed declaration (e.g. the
                 # inner `function` of a var-bound named generator
                 # expression) -- the outer parse covers it.
+                continue
+            if (pos in func_set
+                    and _js_f966_is_async_function(text, pos)):
+                # H1: `async function*` -- spreading its call throws
+                # TypeError (not sync-iterable); never a sync binding.
                 continue
             gd = _js_try_f619_generator_decl(text, pos, state, None)
             if gd is None:
@@ -6567,6 +6662,10 @@ def _js_f966_lookup_generator(text, use_pos, gname, state):
                     and (b - 3 < 0
                          or text[b - 3] not in _JS_IDENT_CONT)):
                 return None
+        if _js_f966_has_dynamic_rebind(text, gname, dstart, dend):
+            # H2: eval/Function may rebind gname at runtime -- the
+            # static binding cannot be trusted. Fail closed.
+            return None
         if not _js_f966_scope_ok(text, dend, use_pos):
             return None
     finally:
@@ -56565,6 +56664,42 @@ def _js_parse_f947_propasm_iife(text, i, depth, state):
 # ---------------------------------------------------------------------------
 
 
+def _js_f965_strip_continuations(raw):
+    """Remove backslash+LineTerminator sequences from a raw literal span (F965 H3).
+
+    Node-exact (v24.20.0): \\<LF>, \\<CR>, \\<CR><LF>, \\<U+2028>,
+    \\<U+2029> inside a string/template literal are line
+    continuations (removed). An escaped backslash (\\\\) is not a
+    continuation -- both chars are preserved (a raw LF after \\\\ is
+    a SyntaxError in the engine, and the downstream parser fails
+    closed on it exactly as before). Used to pre-strip the eval-argument
+    literal source before the shared `_js_parse_string` /
+    `_js_f965_cook_template` cooks it, since those keep `\\<LF>`
+    (H3a wrong value) and the ASCII gate kills `\\<U+2028>` (H3c
+    total miss). Returns the stripped span. Never evals.
+    """
+    out = []
+    i = 0
+    n = len(raw)
+    while i < n:
+        if raw[i] == "\\" and i + 1 < n:
+            nxt = raw[i + 1]
+            if nxt == "\\":
+                out.append("\\")
+                out.append("\\")
+                i += 2
+                continue
+            if nxt == "\n" or nxt == "\r" or nxt == " " or nxt == " ":
+                if nxt == "\r" and i + 2 < n and raw[i + 2] == "\n":
+                    i += 3
+                else:
+                    i += 2
+                continue
+        out.append(raw[i])
+        i += 1
+    return "".join(out)
+
+
 def _js_f965_cook_template(text, j, pname, elems, depth, state,
                            _allow_literals):
     """Cook a `...` template at text[j] == '`' (F965).
@@ -56777,12 +56912,23 @@ def _js_parse_f965_eval_template_iife(text, i, depth, state):
             # template whose substitutions cook to a non-template
             # program (e.g. the direct `${P[0]}` twin, where the
             # engine evals the credential itself and throws) fails
-            # closed at the program check, correctly.
-            prog, sj = _js_f965_cook_template(text, sj, pname,
-                                              elems, depth, state,
-                                              True)
+            # closed at the program check, correctly. Line
+            # continuations are stripped node-exactly first (H3):
+            # the delegated literal-substitution parser keeps them.
+            tend = _js_f966_skip_template(text, sj)
+            traw = _js_f965_strip_continuations(text[sj:tend])
+            prog, _ = _js_f965_cook_template(traw, 0, pname, elems,
+                                             depth, state, True)
+            sj = tend
         elif sj < n and text[sj] in "'\"":
-            prog, sj = _js_parse_string(text, sj)
+            # String argument: line continuations are stripped
+            # node-exactly before cooking (H3) -- _js_parse_string
+            # keeps `\<LF>` (wrong value) and the ASCII gate kills
+            # `\<U+2028>` (total miss).
+            qend = _js_skip_quoted(text, sj)
+            sraw = _js_f965_strip_continuations(text[sj:qend])
+            prog, _ = _js_parse_string(sraw, 0)
+            sj = qend
         else:
             raise _JSExprFail("F965 eval arg not literal")
         sj = _js_expect(text, sj, ")")
