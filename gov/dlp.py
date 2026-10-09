@@ -43778,6 +43778,512 @@ def _js_parse_f724_setproto_iife(text, i, depth, state):
     except _JSExprFail:
         return None
 
+
+def _js_parse_f774_gopd_term(text, j, env, depth, state):
+    """Parse one F774 descriptor-read term at text[j].
+
+    A term is a string literal, or a descriptor value read on a
+    var-bound object:
+    - `Object.getOwnPropertyDescriptor(IDENT, 'KEY').value` /
+      `['value']` (singular)
+    - `Object.getOwnPropertyDescriptors(IDENT).KEY.value` /
+      `['KEY']` / `['value']` twins (plural)
+    IDENT must be env-bound to a _JSObj (the F774 decl grammar
+    binds accessor-aware object literals). KEY is a string
+    literal. The descriptor read is own-property only
+    (engine-exact: getOwnPropertyDescriptor(s) never consult the
+    prototype chain): a missing key fails closed (the engine
+    throws TypeError on `.value` of undefined). An accessor
+    property fails closed (the engine's `.value` descriptor field
+    is undefined for accessors -- never the getter's return).
+    Only `.value` (dot or bracket-string) is modeled; `.get`,
+    `.set`, `.writable`, `.enumerable`, `.configurable` fail
+    closed. The resolved value must be a str -- small integers
+    arrive already canonicalized to their digit string by the
+    literal parser (node-exact: the engine stringifies them in
+    the additive, F549 parity); a _JSNumStr raises via the F711
+    guard and any other non-string fails closed rather than
+    coercing. Exactly two args
+    (singular) / one arg (plural); extra args fail closed (the
+    F549 precedent -- the engine ignores them, but the narrow
+    grammar refuses rather than widen). Returns the resolved
+    string and next index. Returns None when text[j] is not a
+    descriptor-read head (the caller falls through); once the
+    `getOwnPropertyDescriptor(s)` member commits the parse,
+    malformed shapes raise _JSExprFail. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n:
+        raise _JSExprFail("F774 term empty")
+    if text[j] in "'\"":
+        return _js_parse_string(text, j)
+    if not text.startswith("Object", j):
+        return None
+    k = j + len("Object")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        return None  # Objectx -- not our head
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ".":
+        return None
+    k = _js_skip_ws(text, k + 1)
+    plural = False
+    if text.startswith("getOwnPropertyDescriptors", k):
+        m = k + len("getOwnPropertyDescriptors")
+        if m < n and text[m] in _JS_IDENT_CONT:
+            return None
+        plural = True
+        k = m
+    elif text.startswith("getOwnPropertyDescriptor", k):
+        m = k + len("getOwnPropertyDescriptor")
+        if m < n and text[m] in _JS_IDENT_CONT:
+            return None  # getOwnPropertyDescriptors handled above
+        k = m
+    else:
+        return None
+    # The member commits the parse: malformed shapes fail closed.
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("F774 gopd without paren")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] not in _JS_IDENT_START:
+        raise _JSExprFail("F774 gopd target not an ident")
+    tname, k = _js_parse_ident(text, k)
+    if tname not in env:
+        raise _JSExprFail("F774 gopd unbound target")
+    target = env[tname]
+    if not isinstance(target, _JSObj):
+        raise _JSExprFail("F774 gopd target not an object")
+    k = _js_skip_ws(text, k)
+    if plural:
+        k = _js_expect(text, k, ")")
+        # .KEY (dot or bracket-string) on the descriptors object.
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ".":
+            k = _js_skip_ws(text, k + 1)
+            key, k = _js_parse_ident(text, k)
+        elif k < n and text[k] == "[":
+            key, k = _js_parse_bracket_member(text, k)
+        else:
+            raise _JSExprFail("F774 gopds without key read")
+    else:
+        k = _js_expect(text, k, ",")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] not in "'\"":
+            raise _JSExprFail("F774 gopd key not a literal")
+        key, k = _js_parse_string(text, k)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ")":
+            raise _JSExprFail("F774 gopd extra args")
+        k = k + 1
+    # .value (dot or bracket-string) -- the only modeled field.
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ".":
+        k = _js_skip_ws(text, k + 1)
+        m = _js_match_kw(text, k, "value")
+        if m is None:
+            raise _JSExprFail("F774 descriptor field not value")
+        k = m
+    elif k < n and text[k] == "[":
+        vname, k = _js_parse_bracket_member(text, k)
+        if vname != "value":
+            raise _JSExprFail("F774 descriptor field not value")
+    else:
+        raise _JSExprFail("F774 gopd without .value")
+    # Own-property only, data properties only.
+    if key not in target.props:
+        raise _JSExprFail("F774 gopd missing key")
+    raw = target.props[key]
+    if isinstance(raw, _JSAccessor):
+        raise _JSExprFail("F774 .value on accessor")
+    if isinstance(raw, _JSNumStr):
+        raise _JSExprFail("F774 unsafe-int descriptor value")
+    if isinstance(raw, _JSThisMember):
+        raise _JSExprFail("F774 this-member descriptor value")
+    if not isinstance(raw, str):
+        raise _JSExprFail("F774 non-string descriptor value")
+    state["ops"] += 1  # the descriptor indirection is
+    # obfuscation-shaped
+    return raw, k
+
+
+def _js_parse_f774_gopd_read_iife(text, i, depth, state):
+    """Parse `(function(){DECL;+ return ADD;})()` at text[i] (F774).
+
+    Property-descriptor value reads on var-bound objects: F549
+    (CLOSED) models `Object.getOwnPropertyDescriptor(OBJLIT,
+    KEY).value` on inline object literals and F491 (CLOSED) models
+    the Array/String-prototype targets, but a VAR-BOUND object
+    target has no production:
+    `(function(){var o={x:'f1'};return
+    Object.getOwnPropertyDescriptor(o,'x').value+'f2';})()` and
+    the plural twin `(function(){var o={x:'f1'};return
+    Object.getOwnPropertyDescriptors(o).x.value+'f2';})()` both
+    node-evaluate (v24.20.0) to the exact credential while the
+    decoder produces zero variants.
+
+    Node-exact desugar: each DECL binds an accessor-aware object
+    literal (`_js_parse_f535_object` -- duplicate keys later-wins,
+    `__proto__` fails closed); the return is a `+`-joined
+    additive of string literals and descriptor-read terms (the
+    F671 term discipline: parts/ops charged, `_MAX_DECODE_BYTES`
+    bound).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, multi-decl, reassignment, rebinding, a binding
+      named `arguments`, non-empty call args;
+    - a non-literal decl initializer (only `{...}` object
+      literals; an `Object.create` decl would have empty own
+      props so its descriptor read fails closed on the missing
+      key -- the grammar refuses it outright);
+    - an unbound or non-object descriptor target, a non-literal
+      key, a missing key, an accessor property, a non-string
+      value, a non-`value` descriptor field, extra call args,
+      `Object['getOwnPropertyDescriptor']` bracket heads.
+    Residuals (documented, not silently absorbed): `.get()` on a
+    var-bound accessor (F549 models it for inline literals
+    only); `?.value` chains; symbol-keyed descriptors.
+    Tried after F724: every accepted shape carries a
+    `Object.getOwnPropertyDescriptor(` / `(...s)(` term head in
+    the return additive, which no earlier route accepts on a
+    var-bound target (F549 needs the inline literal, F491 the
+    prototype targets; red-first verified: 2 BREAK on the open
+    tree). None falls through to the F775 route. The F724 hook
+    and its trailing `return` are untouched (wave-379 lesson).
+    Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+        if k is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_expect(text, k, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        env = {}
+        saw_decl = False
+        while True:
+            _kw, m = _js_match_decl_kw(text, sj)
+            if _kw is None:
+                break
+            sj = _js_skip_ws(text, m)
+            name, sj = _js_parse_ident(text, sj)
+            if name == "arguments":
+                raise _JSExprFail("F774 binding named arguments")
+            if name in env:
+                raise _JSExprFail("F774 rebinding")
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, "=")
+            sj = _js_skip_ws(text, sj)
+            if sj >= n or text[sj] != "{":
+                return None  # not an object literal -- not our shape
+            props, sj = _js_parse_f535_object(text, sj, depth + 1,
+                                              state,
+                                              accessor_aware=True)
+            env[name] = _JSObj(props)
+            saw_decl = True
+            state["ops"] += 1  # each declaration is
+            # obfuscation-shaped
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, ";")
+            sj = _js_skip_ws(text, sj)
+        if not saw_decl:
+            return None
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            return None
+        sj = _js_skip_ws(text, m)
+        total = None
+        while True:
+            _t774 = _js_parse_f774_gopd_term(text, sj, env,
+                                            depth, state)
+            if _t774 is None:
+                raise _JSExprFail("F774 return term not modeled")
+            term, sj = _t774
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            state["ops"] += 1  # each additive term is
+            # obfuscation-shaped
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F774 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f775_getproto_term(text, j, env, depth, state):
+    """Parse one F775 `Object.getPrototypeOf(IDENT).MEMBER` term.
+
+    Returns (resolved_string, next_index), or None when text[j]
+    is not a getPrototypeOf head (the caller falls through).
+    IDENT must be env-bound to a _JSObj; MEMBER is a dot-ident
+    or bracket-string read resolved through the prototype chain
+    via _jsobj_lookup (node-exact: getPrototypeOf returns the
+    proto object; the member read walks it -- getters unwrap
+    with the proto as receiver, F738 parity). A null prototype
+    fails closed (the engine throws TypeError on the member
+    read); a missing key fails closed (the engine yields
+    undefined); a non-string value fails closed (F671
+    discipline); extra call args fail closed. Once the
+    `getPrototypeOf` member commits the parse, malformed shapes
+    raise _JSExprFail. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if not text.startswith("Object", j):
+        return None
+    k = j + len("Object")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        return None  # Objectx -- not our head
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ".":
+        return None
+    k = _js_skip_ws(text, k + 1)
+    m = _js_match_kw(text, k, "getPrototypeOf")
+    if m is None:
+        return None
+    # The member commits the parse: malformed shapes fail closed.
+    k = _js_skip_ws(text, m)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("F775 getPrototypeOf without paren")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] not in _JS_IDENT_START:
+        raise _JSExprFail("F775 getPrototypeOf arg not an ident")
+    tname, k = _js_parse_ident(text, k)
+    if tname not in env:
+        raise _JSExprFail("F775 getPrototypeOf unbound target")
+    target = env[tname]
+    if not isinstance(target, _JSObj):
+        raise _JSExprFail("F775 getPrototypeOf target not an object")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("F775 getPrototypeOf extra args")
+    k = k + 1
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ".":
+        k = _js_skip_ws(text, k + 1)
+        member, k = _js_parse_ident(text, k)
+    elif k < n and text[k] == "[":
+        member, k = _js_parse_bracket_member(text, k)
+    else:
+        raise _JSExprFail("F775 getPrototypeOf without member read")
+    proto = target.proto
+    if proto is None:
+        raise _JSExprFail("F775 null prototype member read")
+    val = _jsobj_lookup(proto, member)
+    if val is None:
+        raise _JSExprFail("F775 missing key")
+    if isinstance(val, _JSThisMember):
+        raise _JSExprFail("F775 this-member not a string")
+    if not isinstance(val, str):
+        raise _JSExprFail("F775 non-string member value")
+    state["ops"] += 1  # the prototype indirection is
+    # obfuscation-shaped
+    return val, k
+
+
+def _js_parse_f775_getproto_member_iife(text, i, depth, state):
+    """Parse `(function(){DECL;+ [STMT;*] return ADD;})()` at text[i]
+    (F775).
+
+    F723 residual -- Object.getPrototypeOf member reads: F723
+    (CLOSED) models getter reads through a var-bound
+    Object.create prototype chain, but reading through an
+    explicit `Object.getPrototypeOf(o).x` production is
+    unmodeled:
+    `(function(){var p={x:'f1'};var o=Object.create(p);return
+    Object.getPrototypeOf(o).x+'f2';})()` and the setPrototypeOf
+    twin `(function(){var p={x:'f1'};var o={};
+    Object.setPrototypeOf(o,p);return
+    Object.getPrototypeOf(o).x+'f2';})()` both node-evaluate
+    (v24.20.0) to the exact credential while the decoder
+    produces zero variants.
+
+    Node-exact desugar: each DECL binds an accessor-aware object
+    literal or a one-argument `Object.create(BOUND)` (the F723
+    decl grammar via `_js_f723f724_parse_decl_init`); each
+    `Object.setPrototypeOf(TARGET, PROTO);` statement mutates
+    the bound target's proto (the F724 statement grammar via
+    `_js_f723f724_parse_setproto_stmt`); the return is a
+    `+`-joined additive of string literals and
+    `Object.getPrototypeOf(IDENT).MEMBER` terms (dot or
+    bracket-string), resolved through the prototype chain.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, multi-decl, reassignment, rebinding, a binding
+      named `arguments`, non-empty call args;
+    - an unbound or non-object getPrototypeOf target, a
+      non-ident target, extra call args, a null prototype, a
+      missing key, a non-string member value, a bare
+      `Object.getPrototypeOf(o)` with no member step;
+    - a primitive getPrototypeOf argument (the engine coerces
+      `Object.getPrototypeOf(5)` to Number.prototype -- the
+      grammar only binds _JSObj idents, so it fails closed);
+    - `Object['getPrototypeOf']` bracket heads.
+    Residuals (documented, not silently absorbed): two-argument
+    `Object.create(BOUND, PROPS)` decls (F704's shape);
+    `Reflect.getPrototypeOf`; mixed F774+F775 return additives
+    (e.g. `return Object.getPrototypeOf(o).x +
+    Object.getOwnPropertyDescriptor(q,'y').value`) -- each
+    narrow-grammar IIFE route requires >=1 of its own terms, so
+    the mixed additive fails closed in both hook orders (no
+    bypass, no mis-decode). Note: plain-literal decl targets
+    (`var o={}`) also always fail closed -- the model never
+    binds `Object.prototype`, so there is no engine-reachable
+    proto to read (refusal-only, non-launderable).
+    Tried after F724: every accepted shape carries an
+    `Object.getPrototypeOf(` term head in the return additive,
+    which no earlier route accepts (F723/F724 return terms are
+    member reads on env-bound idents -- `Object` is never
+    env-bound; red-first verified: 2 BREAK on the open tree).
+    None falls through to the F725 route. The F724 hook and its
+    trailing `return` are untouched (wave-379 lesson). Never
+    evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+        if k is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_expect(text, k, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        env = {}
+        saw_decl = False
+        while True:
+            _kw, m = _js_match_decl_kw(text, sj)
+            if _kw is None:
+                break
+            sj = _js_skip_ws(text, m)
+            name, sj = _js_parse_ident(text, sj)
+            if name == "arguments":
+                raise _JSExprFail("F775 binding named arguments")
+            if name in env:
+                raise _JSExprFail("F775 rebinding")
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, "=")
+            sj = _js_skip_ws(text, sj)
+            _init = _js_f723f724_parse_decl_init(text, sj, env,
+                                                 depth, state)
+            if _init is None:
+                return None  # not our initializer -- not our shape
+            val, sj = _init
+            env[name] = val
+            saw_decl = True
+            state["ops"] += 1  # each declaration is
+            # obfuscation-shaped
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, ";")
+            sj = _js_skip_ws(text, sj)
+        if not saw_decl:
+            return None
+        # Optional Object.setPrototypeOf(TARGET, PROTO); statements
+        # (the F724 statement grammar).
+        while True:
+            _mk = _js_f723f724_parse_setproto_stmt(text, sj, env,
+                                                   depth, state)
+            if _mk is None:
+                break
+            sj = _mk
+            sj = _js_skip_ws(text, sj)
+            state["ops"] += 1  # each statement is obfuscation-shaped
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            return None
+        sj = _js_skip_ws(text, m)
+        total = None
+        saw_getproto = False
+        while True:
+            _sj = _js_skip_ws(text, sj)
+            if _sj < n and text[_sj] in "'\"":
+                term, sj = _js_parse_string(text, _sj)
+            else:
+                _t = _js_parse_f775_getproto_term(text, sj, env,
+                                                 depth, state)
+                if _t is None:
+                    raise _JSExprFail("F775 return term not modeled")
+                term, sj = _t
+                saw_getproto = True
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            state["ops"] += 1  # each additive term is
+            # obfuscation-shaped
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        if not saw_getproto:
+            # A plain additive of literals belongs to the generic
+            # routes, not this hook -- fail closed without claiming.
+            raise _JSExprFail("F775 no getPrototypeOf term")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F775 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
 def _js_parse_f733_litobj(text, i, depth, state):
     """Parse `{k:'lit',...}` / `{get n(){return 'lit';},...}` (F733).
 
@@ -65136,6 +65642,42 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f724_saved_parts; state['ops'] = _f724_saved_ops
         if _f724 is not None:
             val, i = _f724
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F774: (function(){DECL;+ return ADD;})() -- descriptor
+        #   value reads on var-bound objects
+        #   (`Object.getOwnPropertyDescriptor(o,'k').value` /
+        #   `Object.getOwnPropertyDescriptors(o).k.value`). Tried
+        #   after F724: every accepted shape carries a
+        #   getOwnPropertyDescriptor(s) term head in the return
+        #   additive, which no earlier route accepts on a
+        #   var-bound target (F549 needs the inline literal, F491
+        #   the prototype targets; red-first verified: 2 BREAK on
+        #   the open tree). None falls through to the F775 route.
+        #   The F724 hook and its trailing `return` are untouched
+        #   (wave-379 lesson).
+        _f774_saved_parts = state['parts']; _f774_saved_ops = state['ops']
+        _f774 = _js_parse_f774_gopd_read_iife(text, i, depth, state)
+        if _f774 is None:
+            state['parts'] = _f774_saved_parts; state['ops'] = _f774_saved_ops
+        if _f774 is not None:
+            val, i = _f774
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F775: (function(){DECL;+ [STMT;*] return ADD;})() --
+        #   explicit Object.getPrototypeOf(o).x member reads.
+        #   Tried after F774: every accepted shape carries an
+        #   `Object.getPrototypeOf(` term head in the return
+        #   additive, which no earlier route accepts (F723/F724
+        #   return terms are member reads on env-bound idents;
+        #   red-first verified: 2 BREAK on the open tree). None
+        #   falls through to the F725 route. The F774 hook and
+        #   its trailing `return` are untouched (wave-379 lesson).
+        _f775_saved_parts = state['parts']; _f775_saved_ops = state['ops']
+        _f775 = _js_parse_f775_getproto_member_iife(text, i, depth,
+                                                    state)
+        if _f775 is None:
+            state['parts'] = _f775_saved_parts; state['ops'] = _f775_saved_ops
+        if _f775 is not None:
+            val, i = _f775
             return _js_parse_postfix(text, i, val, depth, state)
         # F725: (function(){DECL;* return ADD;})() -- legacy
         #   __lookupGetter__ reads (getter-function retrieval +

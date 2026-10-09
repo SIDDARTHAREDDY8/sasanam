@@ -428,28 +428,28 @@ def test_r52_f773_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r52_f774_s1_open():
-    """F774 OPEN: miss reproduces."""
-    miss = _misses("(function(){var o={x:'%s'};return Object.getOwnPropertyDescriptor(o,'x').value+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f774_s1_closed():
+    """F774 CLOSED (wave-385 lane 7): descriptor value read blocks coded."""
+    blocked = not _misses("(function(){var o={x:'%s'};return Object.getOwnPropertyDescriptor(o,'x').value+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 @_t
-def test_r52_f774_s2_open():
-    """F774 OPEN: miss reproduces."""
-    miss = _misses("(function(){var o={x:'%s'};return Object.getOwnPropertyDescriptors(o).x.value+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f774_s2_closed():
+    """F774 CLOSED (wave-385 lane 7): plural descriptor value read blocks coded."""
+    blocked = not _misses("(function(){var o={x:'%s'};return Object.getOwnPropertyDescriptors(o).x.value+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 @_t
-def test_r52_f775_s1_open():
-    """F775 OPEN: miss reproduces."""
-    miss = _misses("(function(){var p={x:'%s'};var o=Object.create(p);return Object.getPrototypeOf(o).x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f775_s1_closed():
+    """F775 CLOSED (wave-385 lane 7): getPrototypeOf member read blocks coded."""
+    blocked = not _misses("(function(){var p={x:'%s'};var o=Object.create(p);return Object.getPrototypeOf(o).x+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 @_t
-def test_r52_f775_s2_open():
-    """F775 OPEN: miss reproduces."""
-    miss = _misses("(function(){var p={x:'%s'};var o={};Object.setPrototypeOf(o,p);return Object.getPrototypeOf(o).x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f775_s2_closed():
+    """F775 CLOSED (wave-385 lane 7): setPrototypeOf getPrototypeOf read blocks coded."""
+    blocked = not _misses("(function(){var p={x:'%s'};var o={};Object.setPrototypeOf(o,p);return Object.getPrototypeOf(o).x+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 @_t
 def test_r52_f776_s1_open():
