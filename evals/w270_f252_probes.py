@@ -38,7 +38,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 
 from gov import decision_codes  # noqa: E402  (taxonomy pin below)
 
-TAXONOMY_PIN = int(os.environ.get("W270_TAXONOMY_PIN", "2143"))  # Wave-382 merge: pin 2135 -> 2143
+TAXONOMY_PIN = int(os.environ.get("W270_TAXONOMY_PIN", "2144"))  # Wave-382 merge: pin 2135 -> 2143  # Wave-385: pin 2143 -> 2144
 # Wave-270 F252 lane: 1325 + ifc-grant-unissued + ifc-registry-corrupt.
 # Red phase runs with W270_TAXONOMY_PIN=1325 against the pristine tree.
 assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN, (

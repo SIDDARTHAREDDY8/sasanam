@@ -108,8 +108,8 @@ def _green_check():
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return "skipped (GOV_SKIP_GREEN=1)"
     from gov.decision_codes import TAXONOMY
-    assert len(TAXONOMY) == 2143, "taxonomy pin"  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
-    return "pin 2143 HELD"  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    assert len(TAXONOMY) == 2144, "taxonomy pin"  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    return "pin 2144 HELD"  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 
 
 def main():

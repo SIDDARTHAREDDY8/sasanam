@@ -440,15 +440,15 @@ def p_artifact_type_gated():
 def p_pin_taxonomy():
     import gov.guac_graph as gg
     pin = gg.TAXONOMY_PIN
-    assert pin == 2140, "want 2143, got %d" % pin  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    assert pin == 2140, "want 2144, got %d" % pin  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
     from gov import decision_codes as dc
     codes = sorted(dc.TAXONOMY.keys())
     # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
     # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
-    assert len(codes) == len(set(codes)) == 2143, \
+    assert len(codes) == len(set(codes)) == 2144, \
         "taxonomy not 2140/unique: %d" % len(codes)
     assert codes == sorted(codes), "taxonomy not sorted"
-    _record("pin-taxonomy-2143-sorted", "HELD", "2143/2143/0 sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    _record("pin-taxonomy-2144-sorted", "HELD", "2144/2144/0 sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 
 
 

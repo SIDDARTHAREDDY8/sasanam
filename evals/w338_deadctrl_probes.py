@@ -7,7 +7,7 @@ What this battery pins:
 
 P1 (real tree): the gate passes on the shipped tree -- 0 orphans, 0 dead
   codes, entry-point set exactly {"gov.approve"}.
-P2 (pin): TAXONOMY_PIN == 2143 and the registry holds 2131 codes.  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+P2 (pin): TAXONOMY_PIN == 2144 and the registry holds 2131 codes.  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 P3 (footer): open none / next F430.
 P4 (synthetic, red-capable): an orphan gov module fails the gate and is
   named; a module imported only by an orphan is also orphan (fixpoint).
@@ -54,7 +54,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import no_dead_controls as gate  # noqa: E402
 
-TAXONOMY_PIN = 2143  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+TAXONOMY_PIN = 2144  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 
 _EXPECTED_BREAKS = set()  # never {} (wave-331 lesson); breaks documented above
 
@@ -161,15 +161,15 @@ def p1_gate_green_real_tree():
 
 
 def p2_pin():
-    """TAXONOMY_PIN == 2143 and the registry holds 2131 codes."""  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    """TAXONOMY_PIN == 2144 and the registry holds 2131 codes."""  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
     try:
         codes = gate.registered_codes(REPO_ROOT)
     except Exception:
         return "ERROR", "P2", traceback.format_exc(limit=3)
-    if TAXONOMY_PIN != 2143:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
-        return "BREAK", "P2", "TAXONOMY_PIN = %r, want 2143" % TAXONOMY_PIN  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    if TAXONOMY_PIN != 2144:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+        return "BREAK", "P2", "TAXONOMY_PIN = %r, want 2144" % TAXONOMY_PIN  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
     if len(codes) != 2140:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
-        return "BREAK", "P2", "registry has %d codes, want 2143" % len(codes)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+        return "BREAK", "P2", "registry has %d codes, want 2144" % len(codes)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
     return "HELD", "P2", "pin 2131; registry 2131 codes"
 
 

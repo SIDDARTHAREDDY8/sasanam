@@ -83,7 +83,7 @@ from gov.dlp import (  # noqa: E402
     find_credential,
 )
 
-TAXONOMY_PIN = 2143  # Wave-367 lane 4; pin stays 2135; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+TAXONOMY_PIN = 2144  # Wave-367 lane 4; pin stays 2135; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 
 # Constructed via concatenation: the write path redacts credential literals.
 _A1 = "xoxb-" + "0123"
@@ -317,9 +317,9 @@ def p8_compositions_honest():
 
 
 def p9_pin_and_footer():
-    """Pin stays 2143; re.compile stays 28; F535/F536 CLOSED in  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    """Pin stays 2144; re.compile stays 28; F535/F536 CLOSED in  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
     FINDINGS; lane-local footer (repointed wave-369 lane 2)."""
-    if TAXONOMY_PIN != 2143:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    if TAXONOMY_PIN != 2144:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
         return ("BREAK", "pin moved: %s" % TAXONOMY_PIN)
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     if len(re.findall(r"re\.compile\(", src)) != 28:
@@ -331,7 +331,7 @@ def p9_pin_and_footer():
         return ("BREAK", "lane-local footer wrong")
     if "Next free finding: **F795**" not in text:  # Wave-369 lane 2 local: F548/F549/F550 CLOSED (merge finalizes)  # Wave-372 merge: footer repoint next F612  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762) # Wave-384 merge: F738-F761 CLOSED; F762-F794 OPEN (next F795)
         return ("BREAK", "next-free footer wrong")
-    return ("HELD", "pin 2143; 28 re.compile; F535/F536 CLOSED; "  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    return ("HELD", "pin 2144; 28 re.compile; F535/F536 CLOSED; "  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
             "footer F547,F551-F569/next F570 (wave-369 lane 2)")
 
 

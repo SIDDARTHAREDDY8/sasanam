@@ -35,7 +35,7 @@ previously-decoded input changes behavior).
 Conventions: module-level staging, depth-1 green check honoring
 GOV_SKIP_GREEN=1 (unique-suffixed TMPDIRs), fresh /var/tmp/g379-*
 TMPDIRs, no in-repo git in self-pins, concatenation-constructed
-credentials, pin 2143, $0-spend-by-construction (evals-only: no  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+credentials, pin 2144, $0-spend-by-construction (evals-only: no  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 realmodel_harness / ModelDriver / provider refs).
 """
 import os
@@ -52,7 +52,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2143  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+TAXONOMY_PIN = 2144  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 
 from gov.dlp import find_credential  # noqa: E402
 import gov.dlp as _dlp  # noqa: E402
@@ -410,9 +410,9 @@ def test_p4_composition():
 # ------------------------------------------------ pin + footer
 
 def test_p5_pin_and_footer():
-    """Pin 2143; merged footer: open F672-F685 / next F686 (wave-379 merge)."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    """Pin 2144; merged footer: open F672-F685 / next F686 (wave-379 merge)."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
     from gov.decision_codes import TAXONOMY  # noqa: E402
-    ok = TAXONOMY_PIN == 2143  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    ok = TAXONOMY_PIN == 2144  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ok and "Next free finding: **F795**" in text  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762) # Wave-384 merge: F738-F761 CLOSED; F762-F794 OPEN (next F795)
     ok = ok and ("Open findings: F672, F673, F674, F675, F676, F677, F678, "

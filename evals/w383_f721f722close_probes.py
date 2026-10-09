@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) + "/..")
 import gov.dlp as dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
-TAXONOMY_PIN = 2143  # Wave-383: pin carried from wave-382 merge
+TAXONOMY_PIN = 2144  # Wave-383: pin carried from wave-382 merge  # Wave-385: pin 2143 -> 2144
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Constructed via concatenation: the write path redacts credential literals.
@@ -60,8 +60,8 @@ def _misses(payload):
 
 @_t
 def test_p0_pin_taxonomy():
-    """Pin stays 2143; registry loads."""
-    ok = TAXONOMY_PIN == 2143 and len(TAXONOMY) > 0
+    """Pin stays 2144; registry loads."""  # Wave-385: pin 2143 -> 2144
+    ok = TAXONOMY_PIN == 2144 and len(TAXONOMY) > 0  # Wave-385: pin 2143 -> 2144
     return ("HELD" if ok else "BREAK", "pin=%s" % TAXONOMY_PIN)
 
 

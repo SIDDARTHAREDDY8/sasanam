@@ -48,7 +48,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2143  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+TAXONOMY_PIN = 2144  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 
 from gov import evidence_admission as ap  # noqa: E402
 from gov import governed_exceptions as ge  # noqa: E402
@@ -236,16 +236,16 @@ def test_a7_family_fallback_premise():
 
 
 def test_pin_taxonomy_2127():
-    if TAXONOMY_PIN != 2143:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    if TAXONOMY_PIN != 2144:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
         return "BREAK", "battery pin drifted: %r" % (TAXONOMY_PIN,)
-    if len(TAXONOMY) != 2143:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
-        return "BREAK", "registry holds %d codes, want 2143" % len(TAXONOMY)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    if len(TAXONOMY) != 2144:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+        return "BREAK", "registry holds %d codes, want 2144" % len(TAXONOMY)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
     keys = list(TAXONOMY)
     if keys != sorted(keys):
         return "BREAK", "taxonomy not sorted"
     if len(set(keys)) != len(keys):
         return "BREAK", "duplicate code literals"
-    return "HELD", "2143/2143/0 sorted, raw-literal unique"  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    return "HELD", "2144/2144/0 sorted, raw-literal unique"  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 
 
 def test_footer_state():

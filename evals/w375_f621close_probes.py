@@ -31,7 +31,7 @@ first -- the ordering can never drift from F510. Zero new re.compile
 Conventions: module-level staging, depth-1 green check honoring
 GOV_SKIP_GREEN=1 (pid-suffixed TMPDIRs), fresh /var/tmp/g375-*
 TMPDIRs, no in-repo git in self-pins, concatenation-constructed
-credentials, pin 2143, $0-spend-by-construction (evals-only: no  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+credentials, pin 2144, $0-spend-by-construction (evals-only: no  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 realmodel_harness / ModelDriver / provider refs).
 """
 import json
@@ -49,7 +49,7 @@ import gov.dlp as dlp  # noqa: E402
 from gov.dlp import find_credential  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TAXONOMY_PIN = 2143  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+TAXONOMY_PIN = 2144  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 
 # Constructed via concatenation: the write path redacts credential literals.
 _A = "xoxb-" + "0123"

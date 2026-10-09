@@ -23,7 +23,7 @@ Closure (gov/dlp.py):
   arrays -- bare `a` or the engine index reads `a[0]`/`a[1]` only;
   everything else fails closed.
 
-Tally convention: 0 BREAK / N HELD. Pin 2143. $0 spend (evals-only).  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+Tally convention: 0 BREAK / N HELD. Pin 2144. $0 spend (evals-only).  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 """
 import os
 import sys
@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) + "/..")
 
 from gov import dlp  # noqa: E402
 
-TAXONOMY_PIN = 2143  # Wave-374 merge: F636-F639 FILED OPEN; next F640; Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+TAXONOMY_PIN = 2144  # Wave-374 merge: F636-F639 FILED OPEN; next F640; Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 
 # Constructed via concatenation: the write path redacts credential literals.
 _A = "xoxb-" + "0123"
@@ -286,10 +286,10 @@ def p6_honest_text_quiet():
 
 
 def p7_pin_and_footer():
-    """Pin 2143; footer shows F625 closed, next F640."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    """Pin 2144; footer shows F625 closed, next F640."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
     from gov import decision_codes as _dc
     n = len(_dc.TAXONOMY)
-    pin_ok = (TAXONOMY_PIN == 2143 and n == 2140)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    pin_ok = (TAXONOMY_PIN == 2144 and n == 2140)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         "FINDINGS.md")
     text = open(path).read()

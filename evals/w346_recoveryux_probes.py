@@ -37,7 +37,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2143  # Wave-346: no new decision codes (sessions are journal fields, not codes); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+TAXONOMY_PIN = 2144  # Wave-346: no new decision codes (sessions are journal fields, not codes); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 
 from gov import recovery_guide as rg  # noqa: E402
 from gov import trajectory_labels as tl  # noqa: E402
@@ -90,7 +90,7 @@ def test_p0_pin_taxonomy():
                   ("RecoverySession", "RecoveryStepSpec", "open_session",
                    "guidance_after_failure")))
     return ("HELD" if ok else "BREAK",
-            "pin 2143, no new codes; session surface exported: %d codes"  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+            "pin 2144, no new codes; session surface exported: %d codes"  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
             % len(TAXONOMY))
 
 

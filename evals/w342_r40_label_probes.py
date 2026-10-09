@@ -52,7 +52,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2143  # Wave-342 lane 3: pin 2131 -> 2134 (+4 label-* codes); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+TAXONOMY_PIN = 2144  # Wave-342 lane 3: pin 2131 -> 2134 (+4 label-* codes); Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 
 from gov.trajectory_labels import (  # noqa: E402
     BLOCKED, LABEL_ANNOTATION_UNREGISTERED, LABEL_EGRESS_REFUSED,
@@ -368,7 +368,7 @@ def test_pin_taxonomy_2135():
     codes = sorted(TAXONOMY)
     label_codes = {"label-egress-refused", "label-remedy-empty-unliftable",
                    "label-annotation-unregistered", "label-trust-floor-refused"}
-    ok = (len(codes) == TAXONOMY_PIN == 2143  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    ok = (len(codes) == TAXONOMY_PIN == 2144  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
           and len(set(codes)) == len(codes)
           and label_codes <= set(codes))
     return ("HELD" if ok else "BREAK",

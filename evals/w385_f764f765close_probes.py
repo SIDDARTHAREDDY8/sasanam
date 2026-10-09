@@ -28,7 +28,7 @@ means the closure regressed or a new break appeared.
 Conventions: module-level staging, depth-1 green check honoring
 GOV_SKIP_GREEN=1 (unique-suffixed TMPDIRs), fresh /var/tmp/g385-*
 TMPDIRs, no in-repo git in self-pins, concatenation-constructed
-credentials, pin 2143, $0-spend-by-construction (local node only).
+credentials, pin 2144, $0-spend-by-construction (local node only).  # Wave-385: pin 2143 -> 2144
 """
 import os
 
@@ -45,7 +45,7 @@ sys.path.insert(0, REPO_ROOT)
 from gov import dlp  # noqa: E402
 from gov.guac_graph import TAXONOMY_PIN as _REGISTRY_PIN  # noqa: E402
 
-TAXONOMY_PIN = 2143  # no new decision codes this lane
+TAXONOMY_PIN = 2144  # no new decision codes this lane  # Wave-385: pin 2143 -> 2144
 
 _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
@@ -72,9 +72,9 @@ def _decodes_to(payload, want):
 
 @_t
 def test_p0_taxonomy_pin():
-    """Pin 2143 unchanged (wave-385 lane 2); registry loads."""
+    """Pin 2144 unchanged (wave-385 lane 2); registry loads."""  # Wave-385: pin 2143 -> 2144
     from gov.decision_codes import TAXONOMY
-    ok = TAXONOMY_PIN == 2143 and _REGISTRY_PIN == 2143 and len(TAXONOMY) > 0
+    ok = TAXONOMY_PIN == 2144 and _REGISTRY_PIN == 2144 and len(TAXONOMY) > 0  # Wave-385: pin 2143 -> 2144
     return ("HELD" if ok else "BREAK", "pin=%s" % TAXONOMY_PIN)
 
 

@@ -35,7 +35,7 @@ P8 (ag2 malformed): unparseable / non-object arguments return
 P9 (optional-extra convention): without the framework installed the
    adapter module raises ImportError naming the extra; with it, import
    succeeds.
-P10 (honesty): taxonomy 2143/2143/0 sorted-unique on raw source  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+P10 (honesty): taxonomy 2144/2144/0 sorted-unique on raw source  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
    literals; no new decision codes (adapters reuse existing outcomes);
    footer open none / next F430.
 
@@ -84,7 +84,7 @@ for _p in (REPO, os.path.join(REPO, "tests"), os.path.join(REPO, "evals")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2143  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+TAXONOMY_PIN = 2144  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 try:
     from pydantic import BaseModel, ConfigDict, Field
     from gov.adapters.crewai_tools import (
@@ -421,7 +421,7 @@ def P9a():
 
 
 def P10a():
-    pid = "P10a-pin-taxonomy-2143-sorted"  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    pid = "P10a-pin-taxonomy-2144-sorted"  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     codes = re.findall(r'''"code":\s*['"]([^'"]+)['"]''', src)
@@ -462,7 +462,7 @@ _PROBES = [
     ("P7a-ag2-denied-error-event", P7a),
     ("P8a-ag2-malformed-and-unregistered", P8a),
     ("P9a-adapter-extra-convention", P9a),
-    ("P10a-pin-taxonomy-2143-sorted", P10a),  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    ("P10a-pin-taxonomy-2144-sorted", P10a),  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
     ("P10b-footer-open-f424-f425-next-f426", P10b),
 ]
 

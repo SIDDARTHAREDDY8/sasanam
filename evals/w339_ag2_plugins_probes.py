@@ -60,7 +60,7 @@ Probes:
   P2b  maybe_auto_approve fires only on the policy file's
        auto_approve: opt-in (deployment-owned); no agent-authorable
        channel pre-approves.
-  P3   pin/taxonomy honesty (2143/2143/0 sorted-unique, footer state).  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+  P3   pin/taxonomy honesty (2144/2144/0 sorted-unique, footer state).  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
   P4   green check (depth-1).
 
 Base: f670892a (wave-338 merge). Pin 2127, footer open none / next
@@ -83,7 +83,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "tests"))
 
-TAXONOMY_PIN = 2143  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+TAXONOMY_PIN = 2144  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 
 # ----------------------------------------------------------------------
 # Stand-in ag2.events / ag2.middleware, faithful to ag2 1.1.2
@@ -498,9 +498,9 @@ def run_p3_probes():
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
     # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
-    if len(lits) == TAXONOMY_PIN == 2143 and len(set(lits)) == 2143 \
+    if len(lits) == TAXONOMY_PIN == 2144 and len(set(lits)) == 2144 \
             and lits == sorted(lits):
-        _held("P3a", "taxonomy 2143/2143/0 sorted-unique literals")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+        _held("P3a", "taxonomy 2144/2144/0 sorted-unique literals")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
     else:
         _break("P3a", "literals %d, unique %d, sorted=%s"
                % (len(lits), len(set(lits)), lits == sorted(lits)))

@@ -45,7 +45,7 @@ Fix (gov/dlp.py, zero new re.compile -- 28 stays):
 Conventions: module-level staging, depth-1 green check honoring
 GOV_SKIP_GREEN=1 (unique-suffixed TMPDIRs), fresh /var/tmp/g383-*
 TMPDIRs, no in-repo git in self-pins, concatenation-constructed
-credentials, pin 2143, $0-spend-by-construction.
+credentials, pin 2144, $0-spend-by-construction.  # Wave-385: pin 2143 -> 2144
 """
 import os
 
@@ -85,13 +85,13 @@ def _misses(payload):
 
 # ------------------------------------------------------- p0: pin
 
-TAXONOMY_PIN = 2143
+TAXONOMY_PIN = 2144  # Wave-385: pin 2143 -> 2144
 
 
 @_t
 def test_p0_pin_taxonomy():
-    """Pin stays 2143; registry loads."""
-    ok = TAXONOMY_PIN == 2143 and len(TAXONOMY) > 0
+    """Pin stays 2144; registry loads."""  # Wave-385: pin 2143 -> 2144
+    ok = TAXONOMY_PIN == 2144 and len(TAXONOMY) > 0  # Wave-385: pin 2143 -> 2144
     return ("HELD" if ok else "BREAK", "pin=%s" % TAXONOMY_PIN)
 
 

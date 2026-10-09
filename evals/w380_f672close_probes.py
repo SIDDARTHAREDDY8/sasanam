@@ -8,7 +8,7 @@ member names, mixins). F672 models those productions node-exactly
 (v24.20.0) via _js_parse_f672_class_iife (tried after F662; disjoint
 by head grammar -- F662 fails closed on every shape this accepts).
 
-Pin 2143. Lane-local footer: open F673-F685 / next F686.  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+Pin 2144. Lane-local footer: open F673-F685 / next F686.  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 
 Evals-only: $0 spend. No paid API calls anywhere in this battery.
 """
@@ -28,7 +28,7 @@ import gov.dlp as _dlp  # noqa: E402
 from gov.dlp import find_credential  # noqa: E402
 import gov.decision_codes as dc  # noqa: E402
 
-TAXONOMY_PIN = 2143  # Wave-380 lane 1: F672 CLOSED; Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+TAXONOMY_PIN = 2144  # Wave-380 lane 1: F672 CLOSED; Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 
 _A = "xoxb-" + "0123"  # concatenation-constructed credentials
 _B = "456789" + "abcdef"
@@ -390,8 +390,8 @@ def test_p7_node_differential():
 # ------------------------------------------------ pin + footer + re.compile
 
 def test_p8_pin_footer():
-    """Pin 2143 and lane-local footer (F672 CLOSED: open F673-F685 / next F686)."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
-    ok = (TAXONOMY_PIN == 2143 and len(dc.TAXONOMY) > 0)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    """Pin 2144 and lane-local footer (F672 CLOSED: open F673-F685 / next F686)."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    ok = (TAXONOMY_PIN == 2144 and len(dc.TAXONOMY) > 0)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ok and ("Next free finding: **F795**" in text)  # Wave-380 lane 1: F672 CLOSED; footer repoint open F673-F685 / next F686  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762) # Wave-384 merge: F738-F761 CLOSED; F762-F794 OPEN (next F795)
     ok = ok and ("Open findings: F762, F763, F764, F765, F766, F767, F768, F769, F770, F771, F772, F773, F774, F775, F776, F777, F778, F779, F780, F781, F782, F783, F784, F785, F786, F787, F788, F789, F790, F791, F792, F793, F794." in text)  # Wave-380 lane 1: F672 CLOSED; footer repoint open F673-F685 / next F686  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762) # Wave-384 merge: F738-F761 CLOSED; F762-F794 OPEN (next F795)

@@ -22,13 +22,13 @@ What this battery proves:
   the FilterStack seam, records taint_check in the audit record, and
   is pass-through until bound.
 - P5: determinism (frozen doc, stable digest).
-- P6: pin 2143 + wave-380 footer untouched + zero new re.compile.
+- P6: pin 2144 + wave-380 footer untouched + zero new re.compile.  # Wave-385: pin 2143 -> 2144
 - P7: perf sanity.
 - P8: depth-1 green check honoring GOV_SKIP_GREEN=1.
 
 Conventions: module-level staging, depth-1 green check, fresh
 /var/tmp/g381-* TMPDIRs, no in-repo git in self-pins,
-concatenation-constructed credentials, pin 2143,
+concatenation-constructed credentials, pin 2144,  # Wave-385: pin 2143 -> 2144
 $0-spend-by-construction.
 """
 import os
@@ -49,7 +49,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2143  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+TAXONOMY_PIN = 2144  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 
 from gov import seqgate  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -490,8 +490,8 @@ def test_p5_allowed_record():
 
 @_t
 def test_p6_pin_footer():
-    """Pin 2143; wave-380 footer untouched (open F686-F699 / next F700)."""
-    ok = (TAXONOMY_PIN == 2143 and len(TAXONOMY) > 0)
+    """Pin 2144; wave-380 footer untouched (open F686-F699 / next F700)."""  # Wave-385: pin 2143 -> 2144
+    ok = (TAXONOMY_PIN == 2144 and len(TAXONOMY) > 0)  # Wave-385: pin 2143 -> 2144
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ok and ("Next free finding: **F795**" in text)  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762) # Wave-384 merge: F738-F761 CLOSED; F762-F794 OPEN (next F795)
     ok = ok and ("Open findings: F700, F701, F702, F703, F704, F705, F706, "
@@ -505,7 +505,7 @@ def test_p6_codes_registered():
     missing = [c for c in ("seqgate-chain-blocked", "seqgate-state-overflow",
                            "seqgate-config-invalid") if c not in TAXONOMY]
     n = len(TAXONOMY)
-    ok = (not missing and n == TAXONOMY_PIN == 2143)
+    ok = (not missing and n == TAXONOMY_PIN == 2144)  # Wave-385: pin 2143 -> 2144
     return ("HELD" if ok else "BREAK",
             "missing=%r n=%d" % (missing, n))
 

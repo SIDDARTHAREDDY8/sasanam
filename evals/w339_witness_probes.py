@@ -25,7 +25,7 @@ P3 (5): dual-threshold -- signer-set change sealed with anchor
     base-tree gap, demonstrated red before the fix); old+new thresholds
     pass; unchanged signer set keeps old behavior; new-set-only fails;
     one key counted once per side (dedup).
-P4 (2): pin 2143/2143/0 sorted on raw source literals (2 new codes:  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+P4 (2): pin 2144/2144/0 sorted on raw source literals (2 new codes:  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
     witness-policy-dual-threshold-unmet, witness-daemon-state-failed);
     footer open none / next F430.
 
@@ -63,7 +63,7 @@ from gov import decision_codes as DC  # noqa: E402
 from gov.witness_log import WitnessLog  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
-TAXONOMY_PIN = 2143  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+TAXONOMY_PIN = 2144  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 
 _results = []
 _PROBES = []
@@ -768,7 +768,7 @@ def _p3e():
 # P4: pin + footer
 # ---------------------------------------------------------------------------
 
-@probe("P4-pin-taxonomy-2143-unique")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+@probe("P4-pin-taxonomy-2144-unique")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
 def _p4a():
     path = os.path.join(REPO, "gov", "decision_codes.py")
     with open(path, "r", encoding="utf-8") as fh:
@@ -778,15 +778,15 @@ def _p4a():
     # literals and are excluded by the name pattern.
     lits = re.findall(r"\"code\":\s*[\"']([A-Za-z0-9_.\-]+)[\"']", src)
     n_dict = len(DC.TAXONOMY)
-    ok = (n_dict == TAXONOMY_PIN == 2143  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
-          and len(lits) == 2143 and len(set(lits)) == len(lits)  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    ok = (n_dict == TAXONOMY_PIN == 2144  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+          and len(lits) == 2144 and len(set(lits)) == len(lits)  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
           and "witness-policy-dual-threshold-unmet" in lits
           and "witness-daemon-state-failed" in lits)
     if ok:
-        return _held("P4-pin-taxonomy-2143-unique",  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+        return _held("P4-pin-taxonomy-2144-unique",  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
                      "2131 dict / 2131 unique raw literals; both new "
                      "codes registered")
-    return _break("P4-pin-taxonomy-2143-unique",  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    return _break("P4-pin-taxonomy-2144-unique",  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
                   "want dict 2131 + 2131 unique literals, got dict=%d "
                   "lits=%d unique=%s" % (n_dict, len(lits),
                                          len(set(lits)) == len(lits)))

@@ -11,7 +11,7 @@ verdict means the shape still misses on the open tree (expected) or the
 closure regressed (not expected).
 
 Conventions: module-level staging, fresh /var/tmp/g382-* TMPDIRs,
-concatenation-constructed credentials, pin 2143, $0-spend-by-construction.
+concatenation-constructed credentials, pin 2144, $0-spend-by-construction.  # Wave-385: pin 2143 -> 2144
 """
 import os
 
