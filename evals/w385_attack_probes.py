@@ -112,11 +112,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: merged footer (F795-F817, F819-F828 open, next F829)."""
+    """Control: merged footer (F795-F798, F801-F817, F819-F828 open, next F829)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F829**" in text  # Wave-385 merge: F795-F828 OPEN
-          and "Open findings: F795, F796, F797, F798, F799, F800, F801, F802, F803, F804, F805, F806, F807, F808, F809, F810, F811, F812, F813, F814, F815, F816, F817, F819, F820, F821, F822, F823, F824, F825, F826, F827, F828." in text)
+          and "Open findings: F795, F796, F797, F798, F801, F802, F803, F804, F805, F806, F807, F808, F809, F810, F811, F812, F813, F814, F815, F816, F817, F819, F820, F821, F822, F823, F824, F825, F826, F827, F828." in text)  # Wave-386 lane 3: F799, F800 CLOSED (lane-local)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -177,28 +177,28 @@ def test_r53_f798_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f799_s1_open():
-    """F799 OPEN: miss reproduces."""
-    miss = _misses("(function(){class S extends String{}var s=new S('%s');return s.valueOf()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f799_s1_closed():
+    """F799 CLOSED (wave-386 lane 3): subclassed String valueOf: blocks coded."""
+    ok = _blocked("(function(){class S extends String{}var s=new S('%s');return s.valueOf()+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r53_f799_s2_open():
-    """F799 OPEN: miss reproduces."""
-    miss = _misses("(function(){class A extends Array{}var a=new A('%s','%s');return a.join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f799_s2_closed():
+    """F799 CLOSED (wave-386 lane 3): subclassed Array join: blocks coded."""
+    ok = _blocked("(function(){class A extends Array{}var a=new A('%s','%s');return a.join('');})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r53_f800_s1_open():
-    """F800 OPEN: miss reproduces."""
-    miss = _misses("(function(){var p=new Proxy({},{get:function(t,k){return '%s';}});return p.anything+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f800_s1_closed():
+    """F800 CLOSED (wave-386 lane 3): constant-get-trap proxy: blocks coded."""
+    ok = _blocked("(function(){var p=new Proxy({},{get:function(t,k){return '%s';}});return p.anything+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r53_f800_s2_open():
-    """F800 OPEN: miss reproduces."""
-    miss = _misses("(function(){var r=Proxy.revocable({k:'%s'},{});return r.proxy.k+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f800_s2_closed():
+    """F800 CLOSED (wave-386 lane 3): Proxy.revocable read: blocks coded."""
+    ok = _blocked("(function(){var r=Proxy.revocable({k:'%s'},{});return r.proxy.k+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r53_f801_s1_open():

@@ -46431,6 +46431,585 @@ def _js_parse_f792_groupby_iife(text, i, depth, state):
         return None
 
 
+# ---------------------------------------------------------------------------
+# F799: subclassed builtin reads (class S extends String{} / class A extends Array{})
+# ---------------------------------------------------------------------------
+
+def _js_parse_f799_class_decl(stmts, j):
+    """Parse `class NAME extends String|Array{}` at stmts[j] (F799).
+
+    The subclass declaration: exactly `class`, an identifier, the
+    `extends` keyword, the `String` or `Array` identifier, and an
+    EMPTY class body (whitespace only -- methods, constructors,
+    fields, statics, or computed names fail closed; the engine
+    would give them semantics the static model cannot see, e.g. an
+    overridden valueOf/toString changes the read result
+    node-verifiably). Returns (name, base, next_index). Raises
+    _JSExprFail. Never evals.
+    """
+    n = len(stmts)
+    k = _js_match_kw(stmts, j, "class")
+    if k is None:
+        raise _JSExprFail("F799 not a class declaration")
+    k = _js_skip_ws(stmts, k)
+    name, k = _js_parse_ident(stmts, k)
+    if name == "arguments":
+        raise _JSExprFail("F799 class named arguments")
+    k = _js_skip_ws(stmts, k)
+    e = _js_match_kw(stmts, k, "extends")
+    if e is None:
+        raise _JSExprFail("F799 class without extends")
+    e = _js_skip_ws(stmts, e)
+    base, e = _js_parse_ident(stmts, e)
+    if base not in ("String", "Array"):
+        raise _JSExprFail("F799 superclass not String/Array")
+    if name == base:
+        # `class String extends String{}`: the heritage position is
+        # evaluated with the subclass name in TDZ -- node throws
+        # ReferenceError. Refuse rather than emit a value for
+        # throwing code.
+        raise _JSExprFail("F799 subclass shadows its heritage")
+    e = _js_skip_ws(stmts, e)
+    if e >= n or stmts[e] != "{":
+        raise _JSExprFail("F799 class without body")
+    e = _js_skip_ws(stmts, e + 1)
+    if e >= n or stmts[e] != "}":
+        raise _JSExprFail("F799 non-empty class body")
+    return name, base, e + 1
+
+
+def _js_f799_parse_new_args(stmts, q, base, depth, state):
+    """Parse the `(ARGS)` of `new S(ARGS)` at stmts[q] (F799).
+
+    String subclass: zero or more string literals; the instance
+    wraps the FIRST literal (extras ignored -- node-exact:
+    `new S('a','b').valueOf()` is 'a'; `new S()` is ''). A
+    non-string-literal arg fails closed.
+    Array subclass: string literals become elements; a SINGLE
+    non-negative integer literal means holes of that length
+    (F443 holes-as-"" contract -- joins compute arithmetically,
+    never materialized); `new A('x')` is the single-element ['x']
+    (node-exact -- a lone string arg is an element, not a length).
+    Anything else fails closed. Returns (kind, data, next_index):
+    kind "str" -> data is the primitive string; kind "arr" -> data
+    is the element list or the hole count (int). Raises
+    _JSExprFail. Never evals.
+    """
+    n = len(stmts)
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, "(")
+    args = []
+    q = _js_skip_ws(stmts, q)
+    if q >= n:
+        raise _JSExprFail("F799 unterminated new args")
+    if stmts[q] != ")":
+        while True:
+            q = _js_skip_ws(stmts, q)
+            if q < n and stmts[q] in "'\"":
+                lit, q = _js_parse_string(stmts, q)
+                args.append(("s", lit))
+            else:
+                num, q = _js_parse_number(stmts, q)
+                args.append(("n", num))
+            state["parts"] += 1  # F452: charge per argument
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            q = _js_skip_ws(stmts, q)
+            if q < n and stmts[q] == ",":
+                q = _js_skip_ws(stmts, q + 1)
+                continue
+            break
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, ")")
+    if base == "String":
+        for kind, _v in args:
+            if kind != "s":
+                raise _JSExprFail("F799 String arg not a string")
+        return "str", (args[0][1] if args else ""), q
+    if len(args) == 1 and args[0][0] == "n":
+        return "arr", args[0][1], q
+    elems = []
+    for kind, v in args:
+        if kind != "s":
+            raise _JSExprFail("F799 Array arg not a string")
+        elems.append(v)
+    return "arr", elems, q
+
+
+def _js_f799_parse_read(stmts, q, xname, kind, data, depth, state):
+    """Parse the `x.METHOD(...)(+'LIT')*;` return at stmts[q] (F799).
+
+    kind "str": `.valueOf()` / `.toString()` (dot or
+    bracket-string twin), zero args -- the wrapped primitive.
+    kind "arr": `.join('SEP')` (one string-literal arg) or
+    `.toString()` (dot or bracket twin) -- the joined elements
+    (holes join arithmetically, bounded by _MAX_DECODE_BYTES).
+    Array `valueOf` returns the object (out of the string-ADD
+    model) and String has no `join` (the engine throws) -- both
+    fail closed. The additive tail is string literals only (F746
+    discipline). Returns (value, next_index). Raises _JSExprFail.
+    Never evals.
+    """
+    n = len(stmts)
+    q = _js_skip_ws(stmts, q)
+    rname, q = _js_parse_ident(stmts, q)
+    if rname != xname:
+        raise _JSExprFail("F799 return not the instance")
+    q = _js_skip_ws(stmts, q)
+    if q < n and stmts[q] == ".":
+        q = _js_skip_ws(stmts, q + 1)
+        mname, q = _js_parse_ident(stmts, q)
+    elif q < n and stmts[q] == "[":
+        q = _js_skip_ws(stmts, q + 1)
+        if q >= n or stmts[q] not in "'\"":
+            raise _JSExprFail("F799 member not a string")
+        mname, q = _js_parse_string(stmts, q)
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, "]")
+    else:
+        raise _JSExprFail("F799 return not a member read")
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, "(")
+    q = _js_skip_ws(stmts, q)
+    if kind == "str":
+        if mname not in ("valueOf", "toString"):
+            raise _JSExprFail("F799 String method not modeled")
+        q = _js_expect(stmts, q, ")")
+        val = data
+    else:
+        if mname == "join":
+            if q >= n or stmts[q] not in "'\"":
+                raise _JSExprFail("F799 join sep not a string")
+            sep, q = _js_parse_string(stmts, q)
+            q = _js_skip_ws(stmts, q)
+            q = _js_expect(stmts, q, ")")
+            if isinstance(data, int):
+                if data == 0:
+                    val = ""
+                else:
+                    if len(sep) * (data - 1) > _MAX_DECODE_BYTES:
+                        raise _JSExprFail("F799 join too long")
+                    val = sep * (data - 1)
+            else:
+                val = sep.join(data)
+                if len(val) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("F799 join too long")
+        elif mname == "toString":
+            q = _js_expect(stmts, q, ")")
+            if isinstance(data, int):
+                if data and data - 1 > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("F799 toString too long")
+                val = "," * (data - 1) if data else ""
+                if len(val) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("F799 join too long")
+            else:
+                val = ",".join(data)
+        else:
+            raise _JSExprFail("F799 Array method not modeled")
+    state["ops"] += 1  # the read is obfuscation-shaped
+    while True:
+        t = _js_skip_ws(stmts, q)
+        if t >= n or stmts[t] != "+":
+            break
+        t = _js_skip_ws(stmts, t + 1)
+        if t >= n or stmts[t] not in "'\"":
+            raise _JSExprFail("F799 tail not a literal")
+        _tail, t = _js_parse_string(stmts, t)
+        if len(val) + len(_tail) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F799 concat too long")
+        val = val + _tail
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        state["ops"] += 1
+        q = t
+    return val, q
+
+
+def _js_parse_f799_subclass_builtin_iife(text, i, depth, state):
+    """Parse `(function(){class S extends String|Array{}var|let|const x=new S(ARGS);return READ(+LIT)*;})()` (F799).
+
+    F799 (LOW, wave-385 attack round 53): the decoder models
+    subclassed Map construction (F746, CLOSED) but has no
+    subclass production for String/Array -- `class S extends
+    String{}` / `class A extends Array{}` instances resolve
+    `valueOf()`/`toString()`/`join()` node-exactly while the
+    decoder produces zero variants.
+
+    Node-exact desugar (v24.20.0): the class declaration binds S
+    as a String/Array subclass (empty body only -- the default
+    derived constructor forwards to super); `new S(ARGS)` builds
+    the wrapped primitive / element list with constructor
+    semantics (`new S('a','b')` wraps 'a'; `new A('x')` is ['x'];
+    `new A(3)` is 3 holes); the return reads the instance through
+    the modeled methods and an optional literal additive tail.
+
+    Disjointness: tried after F792. Every accepted shape carries
+    a leading `class NAME extends String|Array{}` declaration
+    with an empty body, which no earlier route accepts (F783
+    requires the superclass to be a previously-declared class,
+    so it fails closed on `extends String`; red-first verified:
+    2 BREAK on the open tree). None falls through to the
+    parenthesized-additive path.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-empty class body, a non-String/Array superclass, a
+    non-literal constructor arg (String) / non-string-literal arg
+    (Array, except the single-integer holes form), a shadowed
+    subclass or instance name, an unmodeled method (`join` on a
+    String -- the engine throws; `valueOf` on an Array -- returns
+    the object), a non-literal join separator or tail, extra
+    statements, call args on the IIFE. Method-shorthand and
+    multi-statement bodies are documented residuals.
+    Returns (value, next_index), or None when the head does not
+    match or a guard fails. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        # `class S extends String|Array{}`
+        subname, base, sj = _js_parse_f799_class_decl(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        # `var|let|const x = new S(ARGS);`
+        dkw, q = _js_match_decl_kw(stmts, sj)
+        if dkw is None:
+            raise _JSExprFail("F799 decl not var/let/const")
+        q = _js_skip_ws(stmts, q)
+        xname, q = _js_parse_ident(stmts, q)
+        if xname in (subname, "arguments"):
+            raise _JSExprFail("F799 instance shadows subclass")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, "=")
+        q = _js_skip_ws(stmts, q)
+        nk = _js_match_kw(stmts, q, "new")
+        if nk is None:
+            raise _JSExprFail("F799 not a new-expression")
+        nk = _js_skip_ws(stmts, nk)
+        cname, nk = _js_parse_ident(stmts, nk)
+        if cname != subname:
+            raise _JSExprFail("F799 not the subclass ctor")
+        kind, data, nk = _js_f799_parse_new_args(stmts, nk, base,
+                                                depth, state)
+        nk = _js_skip_ws(stmts, nk)
+        nk = _js_expect(stmts, nk, ";")
+        state["parts"] += 1  # the construction is shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        # `return READ(+ 'LIT')*;`
+        rk = _js_match_kw(stmts, _js_skip_ws(stmts, nk), "return")
+        if rk is None:
+            raise _JSExprFail("F799 body not return")
+        q = _js_skip_ws(stmts, rk)
+        val, q = _js_f799_parse_read(stmts, q, xname, kind, data,
+                                    depth, state)
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ";")
+        if _js_skip_ws(stmts, q) != n:
+            raise _JSExprFail("F799 trailing statements")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# F800: Proxy get-trap residuals (constant-return function get bodies; Proxy.revocable)
+# ---------------------------------------------------------------------------
+
+def _js_f800_parse_const_get_handler(stmts, q, depth, state):
+    """Parse `{get:function(P1,P2){return 'LIT';}}` or `{get:(P1,P2)=>'LIT'}` at stmts[q] (F800).
+
+    The constant-return get trap: the engine invokes the trap
+    with (target, key, receiver) and returns its result, so a
+    body that returns a string literal makes EVERY property read
+    on the proxy resolve to that literal node-exactly (v24.20.0).
+    Both the function-expression form (optional name) and the
+    arrow form are modeled; the body must be exactly a single
+    string-literal return. Extra handler keys, non-constant
+    bodies, wrong arity, method-shorthand handlers, or a named
+    trap all fail closed (documented boundary). Returns (literal,
+    next_index). Raises _JSExprFail. Never evals.
+    """
+    n = len(stmts)
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, "{")
+    q = _js_skip_ws(stmts, q)
+    gname, q = _js_parse_ident(stmts, q)
+    if gname != "get":
+        raise _JSExprFail("F800 handler not a get trap")
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, ":")
+    q = _js_skip_ws(stmts, q)
+    fk = _js_match_kw(stmts, q, "function")
+    if fk is not None:
+        q = _js_skip_ws(stmts, fk)
+        if q < n and (stmts[q].isalpha() or stmts[q] in "_$"):
+            try:
+                _fname, q2 = _js_parse_ident(stmts, q)
+                q2 = _js_skip_ws(stmts, q2)
+                if q2 < n and stmts[q2] == "(":
+                    q = q2
+            except _JSExprFail:
+                pass
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, "(")
+        q = _js_skip_ws(stmts, q)
+        _p1, q = _js_parse_ident(stmts, q)
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ",")
+        q = _js_skip_ws(stmts, q)
+        _p2, q = _js_parse_ident(stmts, q)
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ")")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, "{")
+        q = _js_skip_ws(stmts, q)
+        rk = _js_match_kw(stmts, q, "return")
+        if rk is None:
+            raise _JSExprFail("F800 get body not a return")
+        q = _js_skip_ws(stmts, rk)
+        if q >= n or stmts[q] not in "'\"":
+            raise _JSExprFail("F800 get return not a string")
+        lit, q = _js_parse_string(stmts, q)
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ";")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, "}")
+    else:
+        q = _js_expect(stmts, q, "(")
+        q = _js_skip_ws(stmts, q)
+        _p1, q = _js_parse_ident(stmts, q)
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ",")
+        q = _js_skip_ws(stmts, q)
+        _p2, q = _js_parse_ident(stmts, q)
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ")")
+        q = _js_skip_ws(stmts, q)
+        if q + 1 >= n or stmts[q] != "=" or stmts[q + 1] != ">":
+            raise _JSExprFail("F800 not an arrow get trap")
+        q = _js_skip_ws(stmts, q + 2)
+        if q >= n or stmts[q] not in "'\"":
+            raise _JSExprFail("F800 arrow body not a string")
+        lit, q = _js_parse_string(stmts, q)
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, "}")
+    state["parts"] += 1  # the trap is shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return lit, q
+
+
+def _js_f800_parse_member(stmts, q):
+    """Parse `.NAME` or `['NAME']` at stmts[q] (F800). Returns (name, next_index)."""
+    n = len(stmts)
+    q = _js_skip_ws(stmts, q)
+    if q < n and stmts[q] == ".":
+        q = _js_skip_ws(stmts, q + 1)
+        return _js_parse_ident(stmts, q)
+    if q < n and stmts[q] == "[":
+        q = _js_skip_ws(stmts, q + 1)
+        if q >= n or stmts[q] not in "'\"":
+            raise _JSExprFail("F800 member not a string")
+        name, q = _js_parse_string(stmts, q)
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, "]")
+        return name, q
+    raise _JSExprFail("F800 not a member read")
+
+
+def _js_f800_parse_literal_tail(stmts, q, val, depth, state):
+    """Parse `(+'LIT')*` at stmts[q], appending to val (F800, F746 discipline)."""
+    n = len(stmts)
+    while True:
+        t = _js_skip_ws(stmts, q)
+        if t >= n or stmts[t] != "+":
+            break
+        t = _js_skip_ws(stmts, t + 1)
+        if t >= n or stmts[t] not in "'\"":
+            raise _JSExprFail("F800 tail not a literal")
+        _tail, t = _js_parse_string(stmts, t)
+        if len(val) + len(_tail) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F800 concat too long")
+        val = val + _tail
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        state["ops"] += 1
+        q = t
+    return val, q
+
+
+def _js_parse_f800_proxy_residual_iife(text, i, depth, state):
+    """Parse the F800 Proxy get-trap residual twins (F800).
+
+    F800 (LOW, wave-385 attack round 53): F642 (CLOSED, wave-376
+    lane 3) models get traps, but var-bound proxies with
+    function-form get bodies and Proxy.revocable miss while node
+    resolves them exactly:
+      `(function(){var p=new Proxy({},{get:function(t,k){return 'f1';}});return p.anything+'f2';})()`
+      `(function(){var r=Proxy.revocable({k:'f1'},{});return r.proxy.k+'f2';})()`
+    (Round-52's Proxy.revocable BLOCK note was incorrect for these
+    shapes; verified miss.)
+
+    Node-exact desugar (v24.20.0). Twin 1: the constant-return
+    get trap makes every property read on the proxy resolve to
+    the returned literal (the target literal is parsed and
+    discarded -- the trap never consults it). Twin 2:
+    `Proxy.revocable(TARGET, {})` returns `{proxy, revoke}`;
+    with the empty handler every trap forwards to the target
+    (F587 discipline), so `r.proxy.k` reads the target's data
+    property node-exactly.
+
+    Disjointness: tried after F799. Twin 1 requires a `var
+    p=new Proxy(` head with a constant-return get handler --
+    F535/F587 fail closed on the handler (non-passthrough,
+    non-empty) and every earlier route requires its own binding
+    family (red-first verified: 2 BREAK on the open tree). Twin 2
+    requires the `Proxy.revocable(` head, which no earlier route
+    accepts. None falls through to the parenthesized-additive
+    path.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-constant or wrong-arity get body, extra handler keys, a
+    non-empty revocable handler, a non-string target property, a
+    `revoke()` call in the fragment (the engine throws -- the
+    revoked read is unmodeled), a non-literal tail, extra
+    statements, call args on the IIFE. Method-shorthand get
+    handlers are a documented residual.
+    Returns (value, next_index), or None when the head does not
+    match or a guard fails. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        dkw, q = _js_match_decl_kw(stmts, sj)
+        if dkw is None:
+            raise _JSExprFail("F800 decl not var/let/const")
+        q = _js_skip_ws(stmts, q)
+        pname, q = _js_parse_ident(stmts, q)
+        if pname == "arguments":
+            raise _JSExprFail("F800 proxy named arguments")
+        if pname == "Proxy":
+            # `var Proxy=new Proxy(...)` / `var
+            # Proxy=Proxy.revocable(...)`: the binding shadows the
+            # global, so the RHS constructor reference is the
+            # hoisted undefined var -- node throws TypeError.
+            # Refuse rather than emit a value for throwing code.
+            raise _JSExprFail("F800 shadows global Proxy")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, "=")
+        q = _js_skip_ws(stmts, q)
+        nk = _js_match_kw(stmts, q, "new")
+        if nk is not None:
+            # Twin 1: `var p=new Proxy(TARGET,{get:...});`
+            nk = _js_skip_ws(stmts, nk)
+            cname, nk = _js_parse_ident(stmts, nk)
+            if cname != "Proxy":
+                raise _JSExprFail("F800 not a Proxy construction")
+            nk = _js_skip_ws(stmts, nk)
+            nk = _js_expect(stmts, nk, "(")
+            nk = _js_skip_ws(stmts, nk)
+            _tprops, nk = _js_parse_f535_object(stmts, nk, depth,
+                                               state)
+            nk = _js_skip_ws(stmts, nk)
+            nk = _js_expect(stmts, nk, ",")
+            const_lit, nk = _js_f800_parse_const_get_handler(
+                stmts, nk, depth, state)
+            nk = _js_skip_ws(stmts, nk)
+            nk = _js_expect(stmts, nk, ")")
+            nk = _js_skip_ws(stmts, nk)
+            nk = _js_expect(stmts, nk, ";")
+            state["parts"] += 1  # the construction is shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            rk = _js_match_kw(stmts, _js_skip_ws(stmts, nk),
+                              "return")
+            if rk is None:
+                raise _JSExprFail("F800 body not return")
+            rq = _js_skip_ws(stmts, rk)
+            rname, rq = _js_parse_ident(stmts, rq)
+            if rname != pname:
+                raise _JSExprFail("F800 return not the proxy")
+            _mname, rq = _js_f800_parse_member(stmts, rq)
+            val = const_lit
+            state["ops"] += 1  # the read is obfuscation-shaped
+            val, rq = _js_f800_parse_literal_tail(stmts, rq, val,
+                                                 depth, state)
+            rq = _js_skip_ws(stmts, rq)
+            rq = _js_expect(stmts, rq, ";")
+        else:
+            # Twin 2: `var r=Proxy.revocable(TARGET,{});`
+            if not stmts.startswith("Proxy", q) or \
+                    (q + 5 < n and stmts[q + 5] in _JS_IDENT_CONT):
+                raise _JSExprFail("F800 not Proxy.revocable")
+            q = _js_skip_ws(stmts, q + 5)
+            q = _js_expect(stmts, q, ".")
+            q = _js_skip_ws(stmts, q)
+            mname, q = _js_parse_ident(stmts, q)
+            if mname != "revocable":
+                raise _JSExprFail("F800 not revocable")
+            q = _js_skip_ws(stmts, q)
+            q = _js_expect(stmts, q, "(")
+            q = _js_skip_ws(stmts, q)
+            tprops, q = _js_parse_f535_object(stmts, q, depth,
+                                             state)
+            q = _js_skip_ws(stmts, q)
+            q = _js_expect(stmts, q, ",")
+            q = _js_skip_ws(stmts, q)
+            q = _js_expect(stmts, q, "{")
+            q = _js_skip_ws(stmts, q)
+            q = _js_expect(stmts, q, "}")
+            q = _js_skip_ws(stmts, q)
+            q = _js_expect(stmts, q, ")")
+            q = _js_skip_ws(stmts, q)
+            q = _js_expect(stmts, q, ";")
+            state["parts"] += 1  # the construction is shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            rk = _js_match_kw(stmts, _js_skip_ws(stmts, q),
+                              "return")
+            if rk is None:
+                raise _JSExprFail("F800 body not return")
+            rq = _js_skip_ws(stmts, rk)
+            rname, rq = _js_parse_ident(stmts, rq)
+            if rname != pname:
+                raise _JSExprFail("F800 return not the revocable")
+            pm, rq = _js_f800_parse_member(stmts, rq)
+            if pm != "proxy":
+                raise _JSExprFail("F800 not the proxy member")
+            km, rq = _js_f800_parse_member(stmts, rq)
+            kval = tprops.get(km)
+            if not isinstance(kval, str) or \
+                    isinstance(kval, _JSNumStr):
+                raise _JSExprFail("F800 key not a plain string")
+            val = kval
+            state["ops"] += 1  # the read is obfuscation-shaped
+            val, rq = _js_f800_parse_literal_tail(stmts, rq, val,
+                                                 depth, state)
+            rq = _js_skip_ws(stmts, rq)
+            rq = _js_expect(stmts, rq, ";")
+        if _js_skip_ws(stmts, rq) != n:
+            raise _JSExprFail("F800 trailing statements")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
 def _js_f792_parse_return_additive(text, j, mname, is_map, groups,
                                   state):
     """Parse the F792 `return` additive at text[j].
@@ -72006,6 +72585,42 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f792_saved_parts; state['ops'] = _f792_saved_ops
         if _f792 is not None:
             val, i = _f792
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F799: (function(){class S extends String|Array{}var|let|const x=
+        #   new S(ARGS);return READ(+ 'LIT')*;})() -- subclassed
+        #   builtin reads. Tried after F792: every accepted shape
+        #   carries a leading `class NAME extends String|Array{}`
+        #   declaration with an empty body, which no earlier route
+        #   accepts (red-first verified: 2 BREAK on the open tree).
+        #   None falls through to the parenthesized-additive path.
+        #   The F792 hook and its trailing `return` are untouched
+        #   (wave-379 lesson).
+        _f799_saved_parts = state['parts']; _f799_saved_ops = state['ops']
+        _f799 = _js_parse_f799_subclass_builtin_iife(text, i, depth,
+                                                    state)
+        if _f799 is None:
+            state['parts'] = _f799_saved_parts; state['ops'] = _f799_saved_ops
+        if _f799 is not None:
+            val, i = _f799
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F800: (function(){var p=new Proxy(T,{get:function(P1,P2)
+        #   {return 'LIT';}});return p.MEM(+ 'LIT')*;})() and
+        #   (function(){var r=Proxy.revocable(T,{});return
+        #   r.proxy.MEM(+ 'LIT')*;})() -- Proxy get-trap residuals.
+        #   Tried after F799: twin 1 requires a constant-return get
+        #   handler (F535/F587 fail closed on it); twin 2 requires
+        #   the `Proxy.revocable(` head, which no earlier route
+        #   accepts (red-first verified: 2 BREAK on the open tree).
+        #   None falls through to the parenthesized-additive path.
+        #   The F799 hook and its trailing `return` are untouched
+        #   (wave-379 lesson).
+        _f800_saved_parts = state['parts']; _f800_saved_ops = state['ops']
+        _f800 = _js_parse_f800_proxy_residual_iife(text, i, depth,
+                                                  state)
+        if _f800 is None:
+            state['parts'] = _f800_saved_parts; state['ops'] = _f800_saved_ops
+        if _f800 is not None:
+            val, i = _f800
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
