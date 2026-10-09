@@ -26073,6 +26073,785 @@ def _js_parse_f728_nextvalue_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f752_iter_member(text, j):
+    """Parse an iterator-producing member at text[j] (F752).
+
+    `.values()` / `.keys()` or `[Symbol.iterator]()`. Returns
+    (member, next_index) with member in {"values", "keys",
+    "iterator"}. `.entries()` and any other member fail closed --
+    the yielded pair is not a string. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ".":
+        name, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        if name not in ("values", "keys"):
+            raise _JSExprFail("F752 not an iterator member")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        return name, j
+    if j < n and text[j] == "[":
+        j = _js_skip_ws(text, j + 1)
+        sym, j = _js_parse_ident(text, j)
+        if sym != "Symbol":
+            raise _JSExprFail("F752 not Symbol.iterator")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ".")
+        it, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if it != "iterator":
+            raise _JSExprFail("F752 not Symbol.iterator")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "]")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        return "iterator", j
+    raise _JSExprFail("F752 no iterator member")
+
+
+def _js_parse_f752_iter_source(text, j, depth, state, bound):
+    """Parse a builtin-iterator source at text[j] (F752).
+
+    Returns (items, next_index): items is the ordered list of
+    string iteration values, node-exact (v24.20.0). Sources:
+    `[LITS][Symbol.iterator]()` (array), `'LIT'[Symbol.iterator]()`
+    (code-point iteration), `new Set([LITS])` member, `new
+    Map([[k,v],...])` `.values()`/`.keys()` (string keys only --
+    numeric keys fail closed, the engine yields numbers), and the
+    var-bound twins `B.values()` / `B.keys()` / `B[Symbol.iterator]()`
+    / `B[Symbol.iterator]()` where B is bound to a new Set / new
+    Map / array literal. Array `.keys()` fails closed (index keys
+    are numbers in the engine). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        items, j = _js_parse_string_literal_list(text, j + 1,
+                                                 state, "]")
+        member, j = _js_parse_f752_iter_member(text, j)
+        if member == "keys":
+            raise _JSExprFail("F752 array keys are numeric")
+        return items, j
+    if j < n and text[j] in "'\"":
+        s, j = _js_parse_string(text, j)
+        member, j = _js_parse_f752_iter_member(text, j)
+        if member != "iterator":
+            raise _JSExprFail("F752 string has no values/keys")
+        # The engine iterates strings by code point (v24.20.0);
+        # Python str iteration is code-point iteration too.
+        return list(s), j
+    mk = _js_match_kw(text, j, "new")
+    if mk is not None:
+        k2 = _js_skip_ws(text, mk)
+        nm, k2 = _js_parse_ident(text, k2)
+        if nm == "Set":
+            items, j = _js_parse_f602_set_elements(text, j, depth,
+                                                   state)
+            member, j = _js_parse_f752_iter_member(text, j)
+            # Set.prototype.keys is an alias of values (v24.20.0).
+            return items, j
+        if nm == "Map":
+            pairs, j = _js_parse_new_map_head(text, j, depth, state)
+            member, j = _js_parse_f752_iter_member(text, j)
+            if member == "values":
+                return [v for _, _, v in pairs], j
+            keys = []
+            for (kkind, kkey), _k, _v in pairs:
+                if kkind != "s":
+                    raise _JSExprFail("F752 map numeric key")
+                keys.append(kkey)
+            return keys, j
+        raise _JSExprFail("F752 not a Set/Map source")
+    if j < n and text[j] in _JS_IDENT_START:
+        name, k = _js_parse_ident(text, j)
+        if name not in bound:
+            raise _JSExprFail("F752 unbound iterator source")
+        kind, bitems = bound[name]
+        member, k = _js_parse_f752_iter_member(text, k)
+        if kind == "map":
+            keys, vals = bitems
+            return (vals if member == "values" else keys), k
+        if member == "keys" and kind == "array":
+            raise _JSExprFail("F752 array keys are numeric")
+        # Set .keys() is an alias of .values() (v24.20.0).
+        return bitems, k
+    raise _JSExprFail("F752 not an iterator source")
+
+
+def _js_parse_f752_bindable(text, j, depth, state):
+    """Parse a var-bindable iterator origin at text[j] (F752).
+
+    `new Set([LITS])`, `[LITS]`, or `new Map([[k,v],...])`.
+    Returns ((kind, items), next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        items, j = _js_parse_string_literal_list(text, j + 1,
+                                                 state, "]")
+        return ("array", items), j
+    mk = _js_match_kw(text, j, "new")
+    if mk is not None:
+        k2 = _js_skip_ws(text, mk)
+        nm, k2 = _js_parse_ident(text, k2)
+        if nm == "Set":
+            items, j = _js_parse_f602_set_elements(text, j, depth,
+                                                   state)
+            return ("set", items), j
+        if nm == "Map":
+            pairs, j = _js_parse_new_map_head(text, j, depth, state)
+            keys = []
+            vals = []
+            for (kkind, kkey), _k, v in pairs:
+                if kkind != "s":
+                    raise _JSExprFail("F752 map numeric key")
+                keys.append(kkey)
+                vals.append(v)
+            # The member parse below selects keys vs values; keep
+            # both (validated string-only).
+            return ("map", (keys, vals)), j
+    raise _JSExprFail("F752 not bindable")
+
+
+def _js_parse_f752_next_value(stmts, k, itname, items, counter, state):
+    """Parse `IT.next().value` at stmts[k] (F752).
+
+    counter is a one-element list holding the calls made so far;
+    the n-th call delivers items[n-1] (node v24.20.0). A call past
+    exhaustion fails closed (the engine yields `undefined` -- never
+    decoded), as do non-empty `.next()` args and a non-`.value`
+    member. At most 16 calls; F452 parts charged per call. Returns
+    (value, next_index). Never evals.
+    """
+    n = len(stmts)
+    name, k = _js_parse_ident(stmts, k)
+    if name != itname:
+        raise _JSExprFail("F752 not the iterator")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ".")
+    m1, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+    if m1 != "next":
+        raise _JSExprFail("F752 not .next()")
+    k = _js_call_empty_parens(stmts, k)
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ".")
+    m2, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+    if m2 != "value":
+        raise _JSExprFail("F752 not .value")
+    if counter[0] >= 16:
+        raise _JSExprFail("F752 too many next calls")
+    state["parts"] += 1  # F452: charge per next call
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    if counter[0] >= len(items):
+        # Engine `undefined` past exhaustion -- never decoded.
+        raise _JSExprFail("F752 next past exhaustion")
+    val = items[counter[0]]
+    counter[0] += 1
+    return val, k
+
+
+def _js_parse_f752_builtin_iter_iife(text, i, depth, state):
+    """Parse builtin-iterator `.next().value` reads at text[i] (F752).
+
+    `(function(){[var|let|const B=new Set([LITS])|[LITS]|
+    new Map(PAIRS);]*var|let|const IT=<iterator source>;
+    [var|let|const ACC='LIT';](ACC+=IT.next().value;|
+    ACC=IT.next().value;|var|let|const X=IT.next().value;)*
+    return ADD;})()` where ADD is a string-only additive of `'LIT'`,
+    `IT.next().value`, ACC, and bound-read idents.
+
+    F728 (CLOSED wave-383) models direct `.next().value` reads on
+    DECLARED GENERATOR iterators only; builtin iterators (array
+    `[Symbol.iterator]()`, string code points, `Set.values()` /
+    `.keys()`, `Map.values()` / `.keys()`) have no modeled path
+    (red-first verified: 2 BREAK on the open tree). Node-exact
+    desugar (v24.20.0): the n-th `IT.next()` delivers items[n-1];
+    a call past exhaustion yields `undefined` and fails closed;
+    `.next()` takes no arguments (non-empty args fail closed, the
+    F728 precedent); only `.value` is read. Set iteration is
+    insertion order; Map `.values()`/`.keys()` are insertion order
+    with later-wins duplicate keys (the F494 discipline); string
+    iteration is by code point.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-iterator source, `.entries()` / other members, Map numeric
+    keys, array `.keys()`, a second iterator binding, a rebound
+    iterator/accumulator name, `.next()` past exhaustion or past 16
+    calls, non-`.value` members, extra statements, `arguments`
+    bindings, call args on the IIFE, `this` anywhere. Tried after
+    F728: F728's grammar requires the `function*` generator head,
+    which this route rejects, so no previously-decoded input
+    changes behavior. Returns (value, next_index), or None. Never
+    evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("F752 too deep")
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        k = _js_skip_ws(stmts, 0)
+        bound = {}
+        itname = None
+        items = None
+        # Bound origins and the iterator declaration.
+        while True:
+            k = _js_skip_ws(stmts, k)
+            dk, dnext = _js_match_decl_kw(stmts, k)
+            if dk is None:
+                raise _JSExprFail("F752 expected declaration")
+            k = _js_skip_ws(stmts, dnext)
+            name, k = _js_parse_ident(stmts, k)
+            if name in ("arguments", "this"):
+                raise _JSExprFail("F752 reserved binding")
+            if name in bound or name == itname:
+                raise _JSExprFail("F752 rebound name")
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, "=")
+            k = _js_skip_ws(stmts, k)
+            if itname is None:
+                kk = k
+                sp, so = state["parts"], state["ops"]
+                try:
+                    items, kk = _js_parse_f752_iter_source(
+                        stmts, kk, depth, state, bound)
+                except _JSExprFail:
+                    items = None
+                    # Speculative source parse missed: restore the
+                    # budget it charged so the bindable attempt below
+                    # (and later hooks) are not starved.
+                    state["parts"], state["ops"] = sp, so
+                if items is not None:
+                    itname = name
+                    k = _js_skip_ws(stmts, kk)
+                    k = _js_expect(stmts, k, ";")
+                    break
+            try:
+                (bkind, bitems), k = _js_parse_f752_bindable(
+                    stmts, k, depth, state)
+            except _JSExprFail:
+                raise _JSExprFail("F752 bad binding")
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, ";")
+            bound[name] = (bkind, bitems)
+        counter = [0]
+        accname = None
+        accval = ""
+        reads = {}
+        # Optional accumulator + accumulation statements.
+        while True:
+            k = _js_skip_ws(stmts, k)
+            if _js_match_kw(stmts, k, "return") is not None:
+                break
+            dk, dnext = _js_match_decl_kw(stmts, k)
+            if dk is not None:
+                k2 = _js_skip_ws(stmts, dnext)
+                xname, k2 = _js_parse_ident(stmts, k2)
+                if xname in ("arguments", "this") or xname in reads \
+                        or xname == itname or xname in bound \
+                        or xname == accname:
+                    raise _JSExprFail("F752 bad read binding")
+                k2 = _js_skip_ws(stmts, k2)
+                k2 = _js_expect(stmts, k2, "=")
+                k2 = _js_skip_ws(stmts, k2)
+                if k2 < n and stmts[k2] in "'\"":
+                    # Accumulator initializer.
+                    if accname is not None:
+                        raise _JSExprFail("F752 second accumulator")
+                    aval, k2 = _js_parse_string(stmts, k2)
+                    k2 = _js_skip_ws(stmts, k2)
+                    k2 = _js_expect(stmts, k2, ";")
+                    accname, accval = xname, aval
+                    k = k2
+                    continue
+                v, k2 = _js_parse_f752_next_value(
+                    stmts, k2, itname, items, counter, state)
+                k2 = _js_skip_ws(stmts, k2)
+                k2 = _js_expect(stmts, k2, ";")
+                reads[xname] = v
+                k = k2
+                continue
+            # ACC+=TERM; / ACC=TERM;.
+            aname, k2 = _js_parse_ident(stmts, k)
+            if aname != accname:
+                # The accumulation target must be the declared
+                # accumulator: any other ident is unbound here (node
+                # throws / leaves the return value untouched), so
+                # accepting it would mis-decode.
+                raise _JSExprFail("F752 bad accum target")
+            k2 = _js_skip_ws(stmts, k2)
+            plus = False
+            if k2 < n and stmts.startswith("+=", k2):
+                plus = True
+                k2 = _js_skip_ws(stmts, k2 + 2)
+            elif k2 < n and stmts[k2] == "=" and not stmts.startswith(
+                    ("==", "=>"), k2):
+                k2 = _js_skip_ws(stmts, k2 + 1)
+            else:
+                raise _JSExprFail("F752 bad accum op")
+            v, k2 = _js_parse_f752_next_value(stmts, k2, itname,
+                                              items, counter, state)
+            k2 = _js_skip_ws(stmts, k2)
+            k2 = _js_expect(stmts, k2, ";")
+            accval = accval + v if plus else v
+            k = k2
+        # return ADD; -- literals, IT.next().value, ACC, bound reads.
+        k = _js_skip_ws(stmts, _js_match_kw(stmts, k, "return"))
+        parts = []
+        while True:
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] in "'\"":
+                v, k = _js_parse_string(stmts, k)
+                parts.append(v)
+            elif k < n and stmts[k] in _JS_IDENT_START:
+                nm, k2 = _js_parse_ident(stmts, k)
+                k3 = _js_skip_ws(stmts, k2)
+                if k3 < n and stmts[k3] == ".":
+                    v, k = _js_parse_f752_next_value(
+                        stmts, k, itname, items, counter, state)
+                    parts.append(v)
+                elif nm == accname:
+                    parts.append(accval)
+                    k = k2
+                elif nm in reads:
+                    parts.append(reads[nm])
+                    k = k2
+                else:
+                    raise _JSExprFail("F752 additive bad ident")
+            else:
+                raise _JSExprFail("F752 additive bad term")
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] == "+":
+                k = _js_skip_ws(stmts, k + 1)
+                continue
+            break
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == ";":
+            k += 1
+        k = _js_skip_ws(stmts, k)
+        if k != n:
+            raise _JSExprFail("F752 trailing junk")
+        rval = "".join(parts)
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F752 concat too long")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+def _js_parse_f753_spread_source(text, j, depth, state):
+    """Parse `...SRC` at text[j] (F753).
+
+    SRC is an array literal of string literals, `new Set([LITS])`
+    (SameValueZero-deduped insertion order, the F602 discipline),
+    or `new Map([[k,v],...]).values()` (insertion order, the F494
+    discipline). Returns (values, next_index): the ordered argument
+    values the spread expands to (node v24.20.0). Never evals.
+    """
+    n = len(text)
+    if j + 3 > n or not text.startswith("...", j):
+        raise _JSExprFail("F753 not spread")
+    j = _js_skip_ws(text, j + 3)
+    if j < n and text[j] == "[":
+        vals, j = _js_parse_string_literal_list(text, j + 1,
+                                                state, "]")
+        return vals, j
+    mk = _js_match_kw(text, j, "new")
+    if mk is not None:
+        k2 = _js_skip_ws(text, mk)
+        nm, _k2 = _js_parse_ident(text, k2)
+        if nm == "Set":
+            elems, j = _js_parse_f602_set_elements(text, j, depth,
+                                                   state)
+            return elems, j
+        if nm == "Map":
+            arr, j = _js_parse_new_map_values(text, j, depth, state)
+            return list(arr.elements), j
+    raise _JSExprFail("F753 bad spread source")
+
+
+def _js_parse_f753_call_args(text, j, depth, state, array_only=False,
+                           require_spread=False):
+    """Parse `(lit|...SRC)(, ...)* )` at text[j] (F753).
+
+    A general call-argument list where each argument is a string
+    literal or a spread source (node v24.20.0: spreads expand in
+    place, in order). Returns (values, next_index). When array_only
+    is set, only `...[LITS]` spreads are admitted (the arrow-IIFE
+    twin stays disjoint from F608/F615, which own the Set/Map
+    spread forms). When require_spread is set, at least one spread
+    argument must be present -- literal-only call args stay with
+    F735/F736 (disjointness). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    args = []
+    saw_spread = False
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ")":
+        if require_spread:
+            raise _JSExprFail("F753 no spread arg")
+        return args, j + 1
+    while True:
+        j = _js_skip_ws(text, j)
+        if j + 3 <= n and text.startswith("...", j):
+            if array_only:
+                jj = _js_skip_ws(text, j + 3)
+                if jj >= n or text[jj] != "[":
+                    raise _JSExprFail("F753 arrow non-array spread")
+            vals, j = _js_parse_f753_spread_source(text, j, depth,
+                                                   state)
+            args.extend(vals)
+            saw_spread = True
+        elif j < n and text[j] in "'\"":
+            v, j = _js_parse_string_carrier_tolerant(text, j)
+            args.append(v)
+            state["parts"] += 1  # F452: charge per literal arg
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        else:
+            raise _JSExprFail("F753 bad call arg")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            continue
+        if j < n and text[j] == ")":
+            if require_spread and not saw_spread:
+                raise _JSExprFail("F753 no spread arg")
+            return args, j + 1
+        raise _JSExprFail("F753 call args not closed")
+
+
+def _js_parse_f753_args_join_body(stmts, k, state):
+    """Parse the arguments-join body at stmts[k] (F753).
+
+    `var|let|const S='LIT';for(var|let|const I=0;
+    I<arguments.length;I++)S+=arguments[I];return S;` with the
+    `S=S+arguments[I]` and braced-body twins and `++I` / `I+=1`
+    update twins (all node-verified). Returns (init, sname,
+    next_index). Never evals.
+    """
+    n = len(stmts)
+    dk, dnext = _js_match_decl_kw(stmts, k)
+    if dk is None:
+        raise _JSExprFail("F753 join no decl")
+    k = _js_skip_ws(stmts, dnext)
+    sname, k = _js_parse_ident(stmts, k)
+    if sname in ("arguments", "this"):
+        raise _JSExprFail("F753 join reserved")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, "=")
+    k = _js_skip_ws(stmts, k)
+    if k >= n or stmts[k] not in "'\"":
+        raise _JSExprFail("F753 join init not literal")
+    init, k = _js_parse_string(stmts, k)
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ";")
+    k = _js_skip_ws(stmts, k)
+    fk = _js_match_kw(stmts, k, "for")
+    if fk is None:
+        raise _JSExprFail("F753 join no for")
+    k = _js_skip_ws(stmts, fk)
+    k = _js_expect(stmts, k, "(")
+    k = _js_skip_ws(stmts, k)
+    dk, dnext = _js_match_decl_kw(stmts, k)
+    if dk is None:
+        raise _JSExprFail("F753 join no loop decl")
+    k = _js_skip_ws(stmts, dnext)
+    iname, k = _js_parse_ident(stmts, k)
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, "=")
+    k = _js_skip_ws(stmts, k)
+    znum, k = _js_parse_number(stmts, k)
+    if znum != 0:
+        raise _JSExprFail("F753 join not zero-init")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ";")
+    k = _js_skip_ws(stmts, k)
+    i2, k = _js_parse_ident(stmts, k)
+    if i2 != iname:
+        raise _JSExprFail("F753 join cond ident")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, "<")
+    k = _js_skip_ws(stmts, k)
+    a1, k = _js_parse_ident(stmts, k)
+    if a1 != "arguments":
+        raise _JSExprFail("F753 join not arguments")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ".")
+    ln, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+    if ln != "length":
+        raise _JSExprFail("F753 join not length")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ";")
+    k = _js_skip_ws(stmts, k)
+    # Update: I++ | ++I | I+=1.
+    if k + 2 <= n and stmts.startswith("++", k):
+        i3, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k + 2))
+    else:
+        i3, k = _js_parse_ident(stmts, k)
+        k = _js_skip_ws(stmts, k)
+        if k + 2 <= n and stmts.startswith("++", k):
+            k = _js_skip_ws(stmts, k + 2)
+        elif k + 3 <= n and stmts.startswith("+=", k):
+            one, k = _js_parse_number(stmts, _js_skip_ws(stmts,
+                                                         k + 2))
+            if one != 1:
+                raise _JSExprFail("F753 join bad update")
+            k = _js_skip_ws(stmts, k)
+        else:
+            raise _JSExprFail("F753 join bad update")
+    if i3 != iname:
+        raise _JSExprFail("F753 join update ident")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ")")
+    k = _js_skip_ws(stmts, k)
+    braced = False
+    if k < n and stmts[k] == "{":
+        braced = True
+        k = _js_skip_ws(stmts, k + 1)
+    s2, k = _js_parse_ident(stmts, k)
+    if s2 != sname:
+        raise _JSExprFail("F753 join accum ident")
+    k = _js_skip_ws(stmts, k)
+    if k + 2 <= n and stmts.startswith("+=", k):
+        k = _js_skip_ws(stmts, k + 2)
+    elif k < n and stmts[k] == "=" and not stmts.startswith(
+            ("==", "=>"), k):
+        k = _js_skip_ws(stmts, k + 1)
+        s3, k = _js_parse_ident(stmts, k)
+        if s3 != sname:
+            raise _JSExprFail("F753 join accum self")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "+")
+        k = _js_skip_ws(stmts, k)
+    else:
+        raise _JSExprFail("F753 join bad accum op")
+    a2, k = _js_parse_ident(stmts, k)
+    if a2 != "arguments":
+        raise _JSExprFail("F753 join not arguments")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, "[")
+    i4, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+    if i4 != iname:
+        raise _JSExprFail("F753 join index ident")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, "]")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ";")
+    if braced:
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "}")
+    k = _js_skip_ws(stmts, k)
+    rk = _js_match_kw(stmts, k, "return")
+    if rk is None:
+        raise _JSExprFail("F753 join no return")
+    k = _js_skip_ws(stmts, rk)
+    s4, k = _js_parse_ident(stmts, k)
+    if s4 != sname:
+        raise _JSExprFail("F753 join return ident")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ";")
+    return init, sname, k
+
+
+def _js_parse_f753_spread_call_iife(text, i, depth, state):
+    """Parse spread-argument calls at text[i] (F753).
+
+    `(function(){function NAME(P1..Pn){return ADD;}
+    return NAME(lit|...SRC, ...)[+'LIT'...];})()` -- the F614
+    additive body applied to spread-expanded args;
+    `(function(){function NAME(){var S='LIT';
+    for(var I=0;I<arguments.length;I++)S+=arguments[I];return S;}
+    return NAME(...SRC);})()` -- the arguments-join twin; and the
+    var-bound function-expression twin
+    `(function(){var|let|const NAME=function(P){return ADD;};
+    return NAME(...SRC);})()`.
+
+    Node-exact desugar (v24.20.0): each `...SRC` expands in place
+    (array literal, `new Set` dedupe, `new Map().values()`); extra
+    args are dropped, fewer args than params fail closed (the
+    F556/F614 arity precedent); the arguments-join body
+    concatenates every passed argument in order. F452 parts are
+    charged per spread element and literal arg; the result is
+    bounded by _MAX_DECODE_BYTES.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    spread of a non-literal source, non-literal call args, a body
+    that is not the F614 additive grammar or the exact
+    arguments-join shape, params on the join twin, `this` /
+    nested calls / member reads in bodies, generator/async
+    functions, `new` construct calls, a callee name mismatch,
+    `arguments` bindings. Tried after F752: F752's grammar
+    requires an iterator-source declaration head, which this
+    route rejects, so no previously-decoded input changes
+    behavior. Disjoint from F735/F736 (literal-only call args).
+    Returns (value, next_index), or None. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("F753 too deep")
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        k = _js_skip_ws(stmts, 0)
+        fk = _js_match_kw(stmts, k, "function")
+        if fk is not None:
+            k = _js_skip_ws(stmts, fk)
+            name, k = _js_parse_ident(stmts, k)
+            if name in ("arguments", "this"):
+                raise _JSExprFail("F753 reserved name")
+            k = _js_skip_ws(stmts, k)
+            params, k = _js_parse_fn_params(stmts, k)
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, "{")
+            k = _js_skip_ws(stmts, k)
+            if _js_match_kw(stmts, k, "return") is not None:
+                rk = _js_match_kw(stmts, k, "return")
+                body, k = _js_parse_f614_additive_body(
+                    stmts, rk, params, state)
+                k = _js_skip_ws(stmts, k)
+                if k < n and stmts[k] == ";":
+                    k = _js_skip_ws(stmts, k + 1)
+                k = _js_skip_ws(stmts, k)
+                k = _js_expect(stmts, k, "}")
+                mode = "additive"
+                init = None
+            else:
+                if params:
+                    raise _JSExprFail("F753 join with params")
+                init, _sname, k = _js_parse_f753_args_join_body(
+                    stmts, k, state)
+                k = _js_skip_ws(stmts, k)
+                k = _js_expect(stmts, k, "}")
+                mode = "join"
+                body = None
+        else:
+            dk, dnext = _js_match_decl_kw(stmts, k)
+            if dk is None:
+                raise _JSExprFail("F753 not a function")
+            k = _js_skip_ws(stmts, dnext)
+            name, k = _js_parse_ident(stmts, k)
+            if name in ("arguments", "this"):
+                raise _JSExprFail("F753 reserved name")
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, "=")
+            k = _js_skip_ws(stmts, k)
+            params, body, k = _js_parse_f614_fn_target(
+                stmts, k, depth, state)
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, ";")
+            mode = "additive"
+            init = None
+        # return NAME(args)[+'LIT'...];
+        k = _js_skip_ws(stmts, k)
+        rk = _js_match_kw(stmts, k, "return")
+        if rk is None:
+            raise _JSExprFail("F753 no return")
+        k = _js_skip_ws(stmts, rk)
+        cnm, k = _js_parse_ident(stmts, k)
+        if cnm != name:
+            raise _JSExprFail("F753 callee mismatch")
+        args, k = _js_parse_f753_call_args(stmts, k, depth, state,
+                                           require_spread=True)
+        tail = []
+        while True:
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] == "+":
+                k = _js_skip_ws(stmts, k + 1)
+                if k >= n or stmts[k] not in "'\"":
+                    raise _JSExprFail("F753 tail not literal")
+                tv, k = _js_parse_string_carrier_tolerant(stmts, k)
+                tail.append(tv)
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+            else:
+                break
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, ";")
+        k = _js_skip_ws(stmts, k)
+        if k != n:
+            raise _JSExprFail("F753 trailing junk")
+        if mode == "join":
+            rval = init + "".join(args) + "".join(tail)
+        else:
+            if len(args) < len(params):
+                # F556/F614 arity precedent: missing params are
+                # `undefined` in the engine -- fail closed.
+                raise _JSExprFail("F753 fewer args than params")
+            rval = _js_f556_apply(params, body,
+                                  args[:len(params)]) + "".join(tail)
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F753 concat too long")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+def _js_parse_f753_arrow_spread_iife(text, i, depth, state):
+    """Parse `((P1..Pn)=>ADD)(...[LITS], ...)` at text[i] (F753).
+
+    The arrow-IIFE twin of the spread-argument call: the F614
+    additive body applied to spread-expanded ARRAY-LITERAL args
+    only. Set/Map spread sources stay with F608/F615 (this route
+    rejects them, so the grammars are disjoint); the `...rest`
+    param form stays with F577. Node-exact arity (v24.20.0):
+    extras dropped, fewer args than params fail closed. Tried
+    after F608: F608 requires a `...new Set(...)` argument, which
+    this route rejects, so no previously-decoded input changes
+    behavior. Returns (value, next_index), or None. Never evals.
+    """
+    n = len(text)
+    if i >= n or text[i] != "(":
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("F753 too deep")
+        j = _js_skip_ws(text, i + 1)
+        if j >= n or text[j] != "(":
+            raise _JSExprFail("F753 not arrow iife")
+        params, j = _js_parse_fn_params(text, j)
+        j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail("F753 arrow without =>")
+        body, j = _js_parse_f614_additive_body(text, j + 2, params,
+                                               state)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        args, j = _js_parse_f753_call_args(text, j, depth, state,
+                                           array_only=True,
+                                           require_spread=True)
+        if len(args) < len(params):
+            raise _JSExprFail("F753 fewer args than params")
+        rval = _js_f556_apply(params, body, args[:len(params)])
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F753 concat too long")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return _js_parse_postfix(text, j, rval, depth, state)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
 def _js_parse_f679_statement_iife(text, i, depth, state):
     """Parse `(function(){STMT* return ADD;})()` at text[i] (F679).
 
@@ -57335,6 +58114,20 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f608 is not None:
             val, i = _f608
             return _js_parse_postfix(text, i, val, depth, state)
+        # F753 (arrow twin): ((P1..Pn)=>ADD)(...[LITS], ...) --
+        # arrow IIFE with array-literal spread call args. Tried
+        # after F608: F608 requires a `...new Set(...)` argument,
+        # which this route rejects (array-only spreads), so no
+        # previously-decoded input changes behavior. Disjoint
+        # from F577 (rest param). None falls through to F611
+        # like F608.
+        _f753a_saved_parts = state['parts']; _f753a_saved_ops = state['ops']
+        _f753a = _js_parse_f753_arrow_spread_iife(text, i, depth,
+                                                 state)
+        if _f753a is None:
+            state['parts'] = _f753a_saved_parts; state['ops'] = _f753a_saved_ops
+        if _f753a is not None:
+            return _f753a
         # F611: (function(){var|const|let NAME='LIT'|atob('LIT');
         #   return EXPR;})() -- single value-bound IIFE whose
         #   initializer is a string literal or an atob fragment
@@ -57565,6 +58358,44 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f728_saved_parts; state['ops'] = _f728_saved_ops
         if _f728 is not None:
             val, i = _f728
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F752: (function(){[DECL B=<Set|Map|array>;]*
+        #   DECL IT=<builtin-iterator source>;
+        #   [DECL ACC='LIT';](ACC+=IT.next().value;|
+        #   ACC=IT.next().value;|DECL X=IT.next().value;)*
+        #   return ADD;})() -- `.next().value` reads on builtin
+        #   iterators (array/string `[Symbol.iterator]()`,
+        #   `Set.values()`/`.keys()`, `Map.values()`/`.keys()`).
+        #   Tried after F728: F728's grammar requires the
+        #   `function*` generator head, which this route rejects
+        #   (the source parse fails on `function*`), so no
+        #   previously-decoded input changes behavior. None falls
+        #   through to F663 like F728.
+        _f752_saved_parts = state['parts']; _f752_saved_ops = state['ops']
+        _f752 = _js_parse_f752_builtin_iter_iife(text, i, depth, state)
+        if _f752 is None:
+            state['parts'] = _f752_saved_parts; state['ops'] = _f752_saved_ops
+        if _f752 is not None:
+            val, i = _f752
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F753: (function(){function NAME(P1..Pn){return ADD;}
+        #   return NAME(lit|...SRC, ...)[+'LIT'...];})() and the
+        #   arguments-join twin (function NAME(){
+        #   var S='LIT';for(var I=0;I<arguments.length;I++)
+        #   S+=arguments[I];return S;}) and the var-bound
+        #   function-expression twin -- spread-argument calls with
+        #   the F614 additive body. Tried after F752: F752's
+        #   grammar requires an iterator-source declaration head,
+        #   which this route rejects, so no previously-decoded
+        #   input changes behavior. Disjoint from F735/F736
+        #   (literal-only call args). None falls through to F663
+        #   like F752.
+        _f753_saved_parts = state['parts']; _f753_saved_ops = state['ops']
+        _f753 = _js_parse_f753_spread_call_iife(text, i, depth, state)
+        if _f753 is None:
+            state['parts'] = _f753_saved_parts; state['ops'] = _f753_saved_ops
+        if _f753 is not None:
+            val, i = _f753
             return _js_parse_postfix(text, i, val, depth, state)
         # F663: (function(){DECL o=Object.fromEntries(ENTRIES);
         #   return o.M(+o.M)*;})() -- member reads on a var-bound

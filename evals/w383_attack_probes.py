@@ -737,28 +737,28 @@ def test_r51_f749_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f750_s1_open():
-    """F752 OPEN (F728 residual: builtin-iterator .next().value): miss reproduces."""
-    miss = _misses("(function(){var it=['%s','%s'][Symbol.iterator]();var s='';s+=it.next().value;s+=it.next().value;return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f750_s1_closed():
+    """F752 CLOSED (F728 residual: builtin-iterator .next().value): blocks coded."""
+    hit = _blocked("(function(){var it=['%s','%s'][Symbol.iterator]();var s='';s+=it.next().value;s+=it.next().value;return s;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r51_f750_s2_open():
-    """F752 OPEN (F728 residual: builtin-iterator .next().value): miss reproduces."""
-    miss = _misses("(function(){var s=new Set(['%s','%s']);var it=s.values();var r='';r+=it.next().value;r+=it.next().value;return r;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f750_s2_closed():
+    """F752 CLOSED (F728 residual: builtin-iterator .next().value): blocks coded."""
+    hit = _blocked("(function(){var s=new Set(['%s','%s']);var it=s.values();var r='';r+=it.next().value;r+=it.next().value;return r;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r51_f751_s1_open():
-    """F753 OPEN (spread argument lists (call + construct)): miss reproduces."""
-    miss = _misses("(function(){function h(){var s='';for(var i=0;i<arguments.length;i++)s+=arguments[i];return s;}return h(...['%s','%s']);})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f751_s1_closed():
+    """F753 CLOSED (spread argument lists (call + construct)): blocks coded."""
+    hit = _blocked("(function(){function h(){var s='';for(var i=0;i<arguments.length;i++)s+=arguments[i];return s;}return h(...['%s','%s']);})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r51_f751_s2_open():
-    """F753 OPEN (spread argument lists (call + construct)): miss reproduces."""
-    miss = _misses("(function(){function h(a,b){return a+b;}return h(...['%s','%s']);})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f751_s2_closed():
+    """F753 CLOSED (spread argument lists (call + construct)): blocks coded."""
+    hit = _blocked("(function(){function h(a,b){return a+b;}return h(...['%s','%s']);})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_r51_f752_s1_open():
