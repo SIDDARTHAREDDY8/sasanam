@@ -52152,6 +52152,1182 @@ def _js_parse_f800_proxy_residual_iife(text, i, depth, state):
     except _JSExprFail:
         return None
 
+# ---------------------------------------------------------------------------
+# F849: throw/catch value flows (primitive throws, {message} throws)
+# ---------------------------------------------------------------------------
+
+def _js_f849_parse_throw_operand(stmts, j, depth, state):
+    """Parse the `throw` operand at stmts[j] (F849).
+
+    Returns (kind, value, next_index): kind 'str' for a plain string
+    literal (`throw 'LIT'`), kind 'msg' for an object literal with
+    exactly one plain-string `message` property
+    (`throw {message:'LIT'}` / `throw {'message':'LIT'}`). `new
+    Error(...)` / `new TypeError(...)` constructions (F750) and the
+    cause-options form (F787) fail closed here; idents, numbers, and
+    multi-property objects fail closed. Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, j)
+    if j < n and stmts[j] in "'\"":
+        lit, j = _js_parse_string(stmts, j)
+        if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+            raise _JSExprFail("F849 throw lit not plain")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        return "str", lit, j
+    if j < n and stmts[j] == "{":
+        props, j = _js_parse_f535_object(stmts, j, depth, state)
+        keys = [k for k in props.keys() if isinstance(k, str)]
+        if len(props) != 1 or len(keys) != 1 or keys[0] != "message":
+            raise _JSExprFail("F849 throw obj not {message}")
+        lit = props["message"]
+        if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+            raise _JSExprFail("F849 throw message not plain")
+        return "msg", lit, j
+    raise _JSExprFail("F849 throw operand not modeled")
+
+
+def _js_f849_parse_catch_additive(stmts, j, cname, kind, thrown, state):
+    """Parse `TERM (+ TERM)*` at stmts[j] (F849).
+
+    TERM is a plain string literal, the bare catch param (only when
+    the throwable is a string literal -- the engine binds the param
+    to the thrown value), or `C.message` / `C['message']` /
+    `C["message"]` (only when the throwable is `{message:'LIT'}`).
+    Cross-combos fail closed: `'LIT'.message` is `undefined` and a
+    thrown object stringifies to `[object Object]` -- both outside
+    the string-only discipline. Returns (value, next_index) with
+    the value bounded by _MAX_DECODE_BYTES. Never evals.
+    """
+    n = len(stmts)
+    out = []
+    while True:
+        j = _js_skip_ws(stmts, j)
+        if j >= n:
+            raise _JSExprFail("F849 term overrun")
+        if stmts[j] in "'\"":
+            lit, j = _js_parse_string(stmts, j)
+            if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+                raise _JSExprFail("F849 term not plain")
+            out.append(lit)
+        elif stmts[j] in _JS_IDENT_START:
+            name, j = _js_parse_ident(stmts, j)
+            if name != cname:
+                raise _JSExprFail("F849 term not the catch param")
+            q = _js_skip_ws(stmts, j)
+            if q < n and stmts[q] == ".":
+                mname, q = _js_parse_ident(stmts,
+                                           _js_skip_ws(stmts, q + 1))
+                if mname != "message":
+                    raise _JSExprFail("F849 not a message read")
+                if kind != "msg":
+                    raise _JSExprFail("F849 message read on string")
+                out.append(thrown)
+                j = q
+            elif q < n and stmts[q] == "[":
+                q = _js_skip_ws(stmts, q + 1)
+                if q >= n or stmts[q] not in "'\"":
+                    raise _JSExprFail("F849 bracket not a string")
+                mname, q = _js_parse_string(stmts, q)
+                if mname != "message":
+                    raise _JSExprFail("F849 not a message read")
+                q = _js_skip_ws(stmts, q)
+                q = _js_expect(stmts, q, "]")
+                if kind != "msg":
+                    raise _JSExprFail("F849 message read on string")
+                out.append(thrown)
+                j = q
+            else:
+                if kind != "str":
+                    raise _JSExprFail("F849 bare param on object")
+                out.append(thrown)
+        else:
+            raise _JSExprFail("F849 term not modeled")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        q = _js_skip_ws(stmts, j)
+        if q < n and stmts[q] == "+":
+            j = q + 1
+            continue
+        break
+    val = "".join(out)
+    if len(val) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F849 concat too long")
+    return val, j
+
+
+def _js_parse_f849_throw_catch_iife(text, i, depth, state):
+    """Parse `(function(){try{throw 'LIT';}catch(C){return ADD;}})()`
+    and the `{message:'LIT'}`-throw twin (F849).
+
+    The engine binds the catch param to the thrown value: for a
+    string-literal throw the bare param is the literal; for a
+    `{message:'LIT'}` throw, `C.message` / `C['message']` is the
+    literal (node-exact, v24.20.0). The return additive's terms are
+    plain string literals plus the param reads above; cross-combos
+    (`.message` on a string throw, bare param on an object throw)
+    fail closed. `catch` without a binding, `finally` clauses,
+    statements before `throw`, unbound `throw x`, and `throw new
+    Error(...)` (F750/F787) all fail closed. Disjoint from F750
+    (requires `[new] CTOR(` after `throw`) and F787 (requires the
+    two-argument cause options form) -- their throw parsers reject
+    primitive/object-literal operands, and every earlier route
+    fails closed on the `try{` head (red-first verified: 2 BREAK on
+    the open tree), so no previously-decoded input changes
+    behavior. Returns (value, next_index) or None. Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts = state["parts"]
+    saved_ops = state["ops"]
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            raise _JSExprFail("F849 not our head")
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        tk = _js_match_kw(stmts, sj, "try")
+        if tk is None:
+            raise _JSExprFail("F849 no try")
+        sj = _js_skip_ws(stmts, tk)
+        sj = _js_expect(stmts, sj, "{")
+        th = _js_match_kw(stmts, _js_skip_ws(stmts, sj), "throw")
+        if th is None:
+            raise _JSExprFail("F849 no throw")
+        kind, thrown, sj = _js_f849_parse_throw_operand(
+            stmts, _js_skip_ws(stmts, th), depth, state)
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "}")
+        ck = _js_match_kw(stmts, _js_skip_ws(stmts, sj), "catch")
+        if ck is None:
+            raise _JSExprFail("F849 no catch")
+        sj = _js_skip_ws(stmts, ck)
+        sj = _js_expect(stmts, sj, "(")
+        cname, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+        if cname == "arguments":
+            raise _JSExprFail("F849 catch param is arguments")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "{")
+        rk = _js_match_kw(stmts, _js_skip_ws(stmts, sj), "return")
+        if rk is None:
+            raise _JSExprFail("F849 catch without return")
+        val, sj = _js_f849_parse_catch_additive(
+            stmts, _js_skip_ws(stmts, rk), cname, kind, thrown, state)
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "}")
+        if _js_skip_ws(stmts, sj) != n:
+            raise _JSExprFail("F849 trailing statements")
+        state["ops"] += 1
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        state["parts"] = saved_parts
+        state["ops"] = saved_ops
+        return None
+
+
+# ---------------------------------------------------------------------------
+# F850: Proxy set-trap writes on an inline empty target
+# ---------------------------------------------------------------------------
+
+def _js_f850_parse_trap_params(stmts, j):
+    """Parse `(P1,P2,P3)` at stmts[j] (F850).
+
+    Returns (names, next_index). Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "(")
+    names = []
+    for _ in range(3):
+        j = _js_skip_ws(stmts, j)
+        name, j = _js_parse_ident(stmts, j)
+        if name == "arguments":
+            raise _JSExprFail("F850 trap param is arguments")
+        if name in names:
+            # Duplicate params are legal in sloppy mode (last
+            # binding wins), which breaks the positional T/K/V
+            # model -- fail closed (spec review 2026-10-09).
+            raise _JSExprFail("F850 duplicate trap param")
+        names.append(name)
+        j = _js_skip_ws(stmts, j)
+        if len(names) < 3:
+            j = _js_expect(stmts, j, ",")
+    j = _js_expect(stmts, j, ")")
+    return names, j
+
+
+def _js_f850_parse_trap_body(stmts, j, params, state):
+    """Parse `{T[K]=V[+'LIT'];[return true|false;]}` at stmts[j]
+    (F850).
+
+    T/K/V are the trap's first/second/third params. The write
+    stores the assigned value (with the optional literal suffix
+    appended) into the tracked target; a missing return is the
+    F675 idiom (the block returns undefined, falsy -- same sloppy-
+    mode semantics as `return false`). Returns (append_or_None,
+    next_index) past the body's closing brace. Never evals.
+    """
+    t, k, v = params
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "{")
+    j = _js_skip_ws(stmts, j)
+    t0, j = _js_parse_ident(stmts, j)
+    if t0 != t:
+        raise _JSExprFail("F850 trap write not on target")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "[")
+    k0, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if k0 != k:
+        raise _JSExprFail("F850 trap write not on key")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "]")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "=")
+    j = _js_skip_ws(stmts, j)
+    v0, j = _js_parse_ident(stmts, j)
+    if v0 != v:
+        raise _JSExprFail("F850 trap write not the value")
+    append = None
+    q = _js_skip_ws(stmts, j)
+    if q < len(stmts) and stmts[q] == "+":
+        q = _js_skip_ws(stmts, q + 1)
+        if q >= len(stmts) or stmts[q] not in "'\"":
+            raise _JSExprFail("F850 trap append not a literal")
+        append, q = _js_parse_string(stmts, q)
+        if not isinstance(append, str) or isinstance(append, _JSNumStr):
+            raise _JSExprFail("F850 trap append not plain")
+        j = q
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ";")
+    j = _js_skip_ws(stmts, j)
+    r = _js_match_kw(stmts, j, "return")
+    if r is not None:
+        # `return true;` or `return false;` (or no return at all):
+        # the IIFE body is always sloppy (the decl is the first
+        # statement, so no 'use strict' prologue can appear), and
+        # in sloppy mode a falsy trap result leaves the
+        # already-executed write in place instead of throwing
+        # (node-exact, v24.20.0).
+        tr = _js_match_kw(stmts, _js_skip_ws(stmts, r), "true")
+        if tr is None:
+            tr = _js_match_kw(stmts, _js_skip_ws(stmts, r), "false")
+        if tr is None:
+            raise _JSExprFail("F850 trap return not true/false")
+        j = _js_skip_ws(stmts, tr)
+        j = _js_expect(stmts, j, ";")
+        j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "}")
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return append, j
+
+
+def _js_f850_parse_concise_trap_body(stmts, j, params, state):
+    """Parse `T[K]=V[+'LIT']` at stmts[j] (F850).
+
+    The concise-arrow twin of _js_f850_parse_trap_body: no braces
+    and no `return true` (the arrow returns the assigned value; a
+    falsy result is sloppy-mode-harmless, so the write stands --
+    node-exact, v24.20.0). Returns (append_or_None, next_index).
+    Never evals.
+    """
+    t, k, v = params
+    j = _js_skip_ws(stmts, j)
+    t0, j = _js_parse_ident(stmts, j)
+    if t0 != t:
+        raise _JSExprFail("F850 trap write not on target")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "[")
+    k0, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if k0 != k:
+        raise _JSExprFail("F850 trap write not on key")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "]")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "=")
+    j = _js_skip_ws(stmts, j)
+    v0, j = _js_parse_ident(stmts, j)
+    if v0 != v:
+        raise _JSExprFail("F850 trap write not the value")
+    append = None
+    q = _js_skip_ws(stmts, j)
+    if q < len(stmts) and stmts[q] == "+":
+        q = _js_skip_ws(stmts, q + 1)
+        if q >= len(stmts) or stmts[q] not in "'\"":
+            raise _JSExprFail("F850 trap append not a literal")
+        append, q = _js_parse_string(stmts, q)
+        if not isinstance(append, str) or isinstance(append, _JSNumStr):
+            raise _JSExprFail("F850 trap append not plain")
+        j = q
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return append, j
+
+
+def _js_f850_skip_fn_name(stmts, j):
+    """Skip an optional `function` name at stmts[j] (F850).
+
+    Returns the index to parse params from: just after the name
+    when a name is followed by `(`, else the input index. Never
+    evals.
+    """
+    n = len(stmts)
+    if j < n and (stmts[j].isalpha() or stmts[j] in "_$"):
+        try:
+            _nm, q2 = _js_parse_ident(stmts, j)
+            q2 = _js_skip_ws(stmts, q2)
+            if q2 < n and stmts[q2] == "(":
+                return q2
+        except _JSExprFail:
+            pass
+    return j
+
+
+def _js_f850_parse_handler(stmts, j, state):
+    """Parse `{set:SETFN}` at stmts[j] (F850).
+
+    SETFN is `function[NAME](P1,P2,P3){...}`,
+    `(P1,P2,P3)=>{...}`, the concise `(P1,P2,P3)=>T[K]=V[+'LIT']`,
+    or the method shorthand `set(P1,P2,P3){...}`. Returns
+    (append_or_None, next_index) past the handler's closing brace.
+    Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "{")
+    sk = _js_match_kw(stmts, _js_skip_ws(stmts, j), "set")
+    if sk is None:
+        raise _JSExprFail("F850 handler not a set trap")
+    j = _js_skip_ws(stmts, sk)
+    if j < n and stmts[j] == ":":
+        j = _js_skip_ws(stmts, j + 1)
+        fk = _js_match_kw(stmts, j, "function")
+        if fk is not None:
+            j = _js_f850_skip_fn_name(stmts, _js_skip_ws(stmts, fk))
+            params, j = _js_f850_parse_trap_params(stmts, j)
+            append, j = _js_f850_parse_trap_body(stmts, j, params,
+                                                 state)
+        else:
+            params, j = _js_f850_parse_trap_params(stmts, j)
+            j = _js_skip_ws(stmts, j)
+            if j + 1 >= n or stmts[j] != "=" or stmts[j + 1] != ">":
+                raise _JSExprFail("F850 not an arrow set trap")
+            j = _js_skip_ws(stmts, j + 2)
+            if j < n and stmts[j] == "{":
+                append, j = _js_f850_parse_trap_body(stmts, j, params,
+                                                     state)
+            else:
+                append, j = _js_f850_parse_concise_trap_body(
+                    stmts, j, params, state)
+    elif j < n and stmts[j] == "(":
+        params, j = _js_f850_parse_trap_params(stmts, j)
+        append, j = _js_f850_parse_trap_body(stmts, j, params, state)
+    else:
+        raise _JSExprFail("F850 set trap not a function")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "}")
+    return append, j
+
+
+def _js_f850_parse_write(stmts, j, pname, state):
+    """Parse `PNAME.K='LIT';` / `PNAME['K']='LIT';` at stmts[j]
+    (F850).
+
+    Returns ((key, value), next_index). Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, j)
+    wname, j = _js_parse_ident(stmts, j)
+    if wname != pname:
+        raise _JSExprFail("F850 write not on the proxy")
+    j = _js_skip_ws(stmts, j)
+    if j < n and stmts[j] == ".":
+        key, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j + 1))
+    elif j < n and stmts[j] == "[":
+        j = _js_skip_ws(stmts, j + 1)
+        if j >= n or stmts[j] not in "'\"":
+            raise _JSExprFail("F850 write key not a string")
+        key, j = _js_parse_string(stmts, j)
+        j = _js_skip_ws(stmts, j)
+        j = _js_expect(stmts, j, "]")
+    else:
+        raise _JSExprFail("F850 write not a member")
+    if key == "__proto__":
+        raise _JSExprFail("F850 __proto__ write")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "=")
+    j = _js_skip_ws(stmts, j)
+    if j >= n or stmts[j] not in "'\"":
+        raise _JSExprFail("F850 write value not a literal")
+    lit, j = _js_parse_string(stmts, j)
+    if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+        raise _JSExprFail("F850 write value not plain")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ";")
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return (key, lit), j
+
+
+def _js_f850_parse_slice_int(stmts, j):
+    """Parse an optionally-negative integer literal at stmts[j]
+    (F850).
+
+    Returns (int, next_index). Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, j)
+    neg = False
+    if j < n and stmts[j] == "-":
+        neg = True
+        j = _js_skip_ws(stmts, j + 1)
+    k = j
+    while k < n and stmts[k] in "0123456789":
+        k += 1
+    if k == j:
+        raise _JSExprFail("F850 slice arg not an integer")
+    val = int(stmts[j:k])
+    return -val if neg else val, k
+
+
+def _js_f850_parse_return(stmts, j, pname, stored, state):
+    """Parse `PNAME.MEM[.slice(A[,B])](+'LIT')*` at stmts[j] (F850).
+
+    With no get trap the engine reads the member through the proxy
+    from the tracked target; `.slice` applies Python-slice
+    semantics (verified identical to node v24.20.0, including
+    negative and out-of-range indices). Returns (value,
+    next_index) with the value bounded by _MAX_DECODE_BYTES. Never
+    evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, j)
+    rname, j = _js_parse_ident(stmts, j)
+    if rname != pname:
+        raise _JSExprFail("F850 return not the proxy")
+    j = _js_skip_ws(stmts, j)
+    if j < n and stmts[j] == ".":
+        mname, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j + 1))
+    elif j < n and stmts[j] == "[":
+        j = _js_skip_ws(stmts, j + 1)
+        if j >= n or stmts[j] not in "'\"":
+            raise _JSExprFail("F850 member not a string")
+        mname, j = _js_parse_string(stmts, j)
+        j = _js_skip_ws(stmts, j)
+        j = _js_expect(stmts, j, "]")
+    else:
+        raise _JSExprFail("F850 return not a member read")
+    if mname == "__proto__":
+        raise _JSExprFail("F850 __proto__ read")
+    if mname not in stored:
+        raise _JSExprFail("F850 read of unwritten key")
+    val = stored[mname]
+    j = _js_skip_ws(stmts, j)
+    if j < n and stmts[j] == ".":
+        k = _js_skip_ws(stmts, j + 1)
+        if k < n and stmts.startswith("slice", k) and \
+                (k + 5 >= n or stmts[k + 5] not in _JS_IDENT_CONT):
+            k = _js_skip_ws(stmts, k + 5)
+            k = _js_expect(stmts, k, "(")
+            a, k = _js_f850_parse_slice_int(stmts, k)
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] == ",":
+                b, k = _js_f850_parse_slice_int(
+                    stmts, _js_skip_ws(stmts, k + 1))
+                k = _js_skip_ws(stmts, k)
+            else:
+                b = None
+            k = _js_expect(stmts, k, ")")
+            val = val[a:b]
+            state["ops"] += 1
+            j = k
+    while True:
+        q = _js_skip_ws(stmts, j)
+        if q >= n or stmts[q] != "+":
+            break
+        q = _js_skip_ws(stmts, q + 1)
+        if q >= n or stmts[q] not in "'\"":
+            raise _JSExprFail("F850 tail not a literal")
+        tail, q = _js_parse_string(stmts, q)
+        if not isinstance(tail, str) or isinstance(tail, _JSNumStr):
+            raise _JSExprFail("F850 tail not plain")
+        if len(val) + len(tail) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F850 concat too long")
+        val = val + tail
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = q
+    if len(val) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F850 value too long")
+    return val, j
+
+
+def _js_parse_f850_set_trap_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const P=new Proxy({},{set:SETFN});
+    P.K='LIT';return P.K[.slice(A[,B])](+'LIT')*;})()` (F850).
+
+    The set trap fires on the single write statement, executing the
+    modeled `T[K]=V[+'LIT']` write into the tracked (initially
+    empty) target; with no get trap the return read falls through
+    to the target (node-exact, v24.20.0). `return true;`,
+    `return false;`, or no return are accepted -- the IIFE body is
+    always sloppy (the decl is the first statement, so no
+    'use strict' prologue can appear), and in sloppy mode a falsy
+    trap result leaves the already-executed write in place instead
+    of throwing (node-exact, v24.20.0); `__proto__` keys,
+    non-empty targets, extra handler keys, non-literal writes,
+    multiple writes, reads of unwritten keys, and `var Proxy`
+    shadowing all fail closed. Disjoint from
+    F675 (requires a var-bound target ident -- the inline `{`
+    target fails its target parse), F642/F666/F670 (require
+    get/apply/has keys or a literal binding section), F686/F689
+    (require ownKeys/get keys), and F800 (requires a `get` handler
+    key or the revocable head): every earlier route fails closed
+    on these shapes (red-first verified: 2 BREAK on the open tree),
+    so no previously-decoded input changes behavior. Returns
+    (value, next_index) or None. Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts = state["parts"]
+    saved_ops = state["ops"]
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            raise _JSExprFail("F850 not our head")
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        dkw, q = _js_match_decl_kw(stmts, sj)
+        if dkw is None:
+            raise _JSExprFail("F850 no decl")
+        pname, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, q))
+        if pname in ("arguments", "Proxy"):
+            raise _JSExprFail("F850 bad binding name")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "=")
+        sj = _js_skip_ws(stmts, sj)
+        nk = _js_match_kw(stmts, sj, "new")
+        if nk is None:
+            raise _JSExprFail("F850 not new Proxy")
+        cname, nk = _js_parse_ident(stmts, _js_skip_ws(stmts, nk))
+        if cname != "Proxy":
+            raise _JSExprFail("F850 not a Proxy construction")
+        nk = _js_skip_ws(stmts, nk)
+        nk = _js_expect(stmts, nk, "(")
+        nk = _js_skip_ws(stmts, nk)
+        if nk >= n or stmts[nk] != "{":
+            raise _JSExprFail("F850 target not inline")
+        nk = _js_skip_ws(stmts, nk + 1)
+        if nk >= n or stmts[nk] != "}":
+            raise _JSExprFail("F850 target not empty")
+        nk = _js_skip_ws(stmts, nk + 1)
+        nk = _js_expect(stmts, nk, ",")
+        append, nk = _js_f850_parse_handler(stmts, nk, state)
+        nk = _js_skip_ws(stmts, nk)
+        nk = _js_expect(stmts, nk, ")")
+        nk = _js_skip_ws(stmts, nk)
+        nk = _js_expect(stmts, nk, ";")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        (wkey, wlit), nk = _js_f850_parse_write(stmts, nk, pname,
+                                                state)
+        stored = {wkey: (wlit + append) if append else wlit}
+        if len(stored[wkey]) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F850 write too long")
+        rk = _js_match_kw(stmts, _js_skip_ws(stmts, nk), "return")
+        if rk is None:
+            raise _JSExprFail("F850 no return")
+        val, rq = _js_f850_parse_return(stmts, _js_skip_ws(stmts, rk),
+                                        pname, stored, state)
+        rq = _js_skip_ws(stmts, rq)
+        rq = _js_expect(stmts, rq, ";")
+        if _js_skip_ws(stmts, rq) != n:
+            raise _JSExprFail("F850 trailing statements")
+        state["ops"] += 1
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        state["parts"] = saved_parts
+        state["ops"] = saved_ops
+        return None
+
+
+# ---------------------------------------------------------------------------
+# F851: nested empty-handler Proxies
+# ---------------------------------------------------------------------------
+
+def _js_f851_parse_return(stmts, j, pname, props, state):
+    """Parse `PNAME.MEM(+'LIT')*` at stmts[j] (F851).
+
+    Returns (value, next_index) with the value bounded by
+    _MAX_DECODE_BYTES. Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, j)
+    rname, j = _js_parse_ident(stmts, j)
+    if rname != pname:
+        raise _JSExprFail("F851 return not the proxy")
+    j = _js_skip_ws(stmts, j)
+    if j < n and stmts[j] == ".":
+        mname, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j + 1))
+    elif j < n and stmts[j] == "[":
+        j = _js_skip_ws(stmts, j + 1)
+        if j >= n or stmts[j] not in "'\"":
+            raise _JSExprFail("F851 member not a string")
+        mname, j = _js_parse_string(stmts, j)
+        j = _js_skip_ws(stmts, j)
+        j = _js_expect(stmts, j, "]")
+    else:
+        raise _JSExprFail("F851 return not a member read")
+    if mname == "__proto__":
+        raise _JSExprFail("F851 __proto__ read")
+    if mname not in props:
+        raise _JSExprFail("F851 missing member")
+    val = props[mname]
+    while True:
+        q = _js_skip_ws(stmts, j)
+        if q >= n or stmts[q] != "+":
+            break
+        q = _js_skip_ws(stmts, q + 1)
+        if q >= n or stmts[q] not in "'\"":
+            raise _JSExprFail("F851 tail not a literal")
+        tail, q = _js_parse_string(stmts, q)
+        if not isinstance(tail, str) or isinstance(tail, _JSNumStr):
+            raise _JSExprFail("F851 tail not plain")
+        if len(val) + len(tail) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F851 concat too long")
+        val = val + tail
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = q
+    if len(val) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F851 value too long")
+    return val, j
+
+
+def _js_parse_f851_nested_proxy_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const P=new Proxy(new Proxy(...,
+    {PROPS},{}),{});return P.MEM(+'LIT')*;})()` (F851).
+
+    2..8 nested `new Proxy` wrappers with all-empty handlers; the
+    innermost target is a plain-string object literal parsed by
+    _js_parse_f535_object. The engine forwards the member read
+    through every empty handler to the innermost target
+    (node-exact, v24.20.0). A non-empty handler anywhere, a
+    non-object or non-literal innermost target, a missing or
+    non-string member, `var Proxy` shadowing, or a single
+    (non-nested) Proxy all fail closed. Disjoint from F800
+    (requires a `get` handler key or the revocable head), F489
+    (receiver-level: the target must be a `{` literal, failing on
+    the inner `new`), F675/F707 (require var-bound target idents),
+    and F686/F689 (require ownKeys/get handler keys) -- every
+    earlier route fails closed on these shapes (red-first
+    verified: 2 BREAK on the open tree), so no previously-decoded
+    input changes behavior. Returns (value, next_index) or None.
+    Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts = state["parts"]
+    saved_ops = state["ops"]
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            raise _JSExprFail("F851 not our head")
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        dkw, q = _js_match_decl_kw(stmts, sj)
+        if dkw is None:
+            raise _JSExprFail("F851 no decl")
+        pname, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, q))
+        if pname in ("arguments", "Proxy"):
+            raise _JSExprFail("F851 bad binding name")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "=")
+        total = 0
+        nk = _js_skip_ws(stmts, sj)
+        while True:
+            kw = _js_match_kw(stmts, nk, "new")
+            if kw is None:
+                break
+            cname, kw = _js_parse_ident(stmts, _js_skip_ws(stmts, kw))
+            if cname != "Proxy":
+                raise _JSExprFail("F851 not a Proxy construction")
+            kw = _js_skip_ws(stmts, kw)
+            kw = _js_expect(stmts, kw, "(")
+            total += 1
+            if total > 8:
+                raise _JSExprFail("F851 too deep")
+            nk = _js_skip_ws(stmts, kw)
+        if total < 2:
+            raise _JSExprFail("F851 not nested")
+        nk = _js_skip_ws(stmts, nk)
+        if nk >= n or stmts[nk] != "{":
+            raise _JSExprFail("F851 target not an object")
+        props, nk = _js_parse_f535_object(stmts, nk, depth, state)
+        plain = {}
+        for pk_, pv in props.items():
+            if not isinstance(pk_, str) or \
+                    not isinstance(pv, str) or \
+                    isinstance(pv, _JSNumStr):
+                raise _JSExprFail("F851 prop not plain string")
+            plain[pk_] = pv
+        for _ in range(total):
+            nk = _js_skip_ws(stmts, nk)
+            nk = _js_expect(stmts, nk, ",")
+            nk = _js_skip_ws(stmts, nk)
+            nk = _js_expect(stmts, nk, "{")
+            nk = _js_skip_ws(stmts, nk)
+            nk = _js_expect(stmts, nk, "}")
+            nk = _js_skip_ws(stmts, nk)
+            nk = _js_expect(stmts, nk, ")")
+        nk = _js_skip_ws(stmts, nk)
+        nk = _js_expect(stmts, nk, ";")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        rk = _js_match_kw(stmts, _js_skip_ws(stmts, nk), "return")
+        if rk is None:
+            raise _JSExprFail("F851 no return")
+        val, rq = _js_f851_parse_return(stmts, _js_skip_ws(stmts, rk),
+                                        pname, plain, state)
+        rq = _js_skip_ws(stmts, rq)
+        rq = _js_expect(stmts, rq, ";")
+        if _js_skip_ws(stmts, rq) != n:
+            raise _JSExprFail("F851 trailing statements")
+        state["ops"] += 1
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        state["parts"] = saved_parts
+        state["ops"] = saved_ops
+        return None
+
+
+# ---------------------------------------------------------------------------
+# F852: getOwnPropertyDescriptor-trap descriptor reads on an inline target
+# ---------------------------------------------------------------------------
+
+def _js_f852_parse_params(stmts, j):
+    """Parse `(P1,P2)` at stmts[j] (F852).
+
+    Returns (names, next_index). Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "(")
+    names = []
+    for _ in range(2):
+        j = _js_skip_ws(stmts, j)
+        name, j = _js_parse_ident(stmts, j)
+        if name == "arguments":
+            raise _JSExprFail("F852 trap param is arguments")
+        if name in names:
+            # Duplicate params are legal in sloppy mode (last
+            # binding wins), which breaks the positional T/K
+            # model -- fail closed (spec review 2026-10-09).
+            raise _JSExprFail("F852 duplicate trap param")
+        names.append(name)
+        j = _js_skip_ws(stmts, j)
+        if len(names) < 2:
+            j = _js_expect(stmts, j, ",")
+    j = _js_expect(stmts, j, ")")
+    return names, j
+
+
+def _js_f852_parse_desc_object(stmts, j, params, state):
+    """Parse `{value:T[K],configurable:true}` (either key order) at
+    stmts[j] (F852).
+
+    The value member must read `T[K]` / `T['K']` / `T["K"]` with T/K
+    the trap's first/second params; exactly the two keys `value`
+    and `configurable` are allowed, and `configurable` must be the
+    literal `true`. Returns ("A", keymode, next_index) past the
+    closing brace, where keymode is 'param' or ('lit', key). Never
+    evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "{")
+    seen = {}
+    for _ in range(2):
+        j = _js_skip_ws(stmts, j)
+        if j < n and stmts[j] in "'\"":
+            kname, j = _js_parse_string(stmts, j)
+        elif j < n and stmts[j] in _JS_IDENT_START:
+            kname, j = _js_parse_ident(stmts, j)
+        else:
+            raise _JSExprFail("F852 descriptor key not modeled")
+        if kname in seen:
+            raise _JSExprFail("F852 dup descriptor key")
+        j = _js_skip_ws(stmts, j)
+        j = _js_expect(stmts, j, ":")
+        j = _js_skip_ws(stmts, j)
+        if kname == "value":
+            t0, j = _js_parse_ident(stmts, j)
+            if t0 != params[0]:
+                raise _JSExprFail("F852 value not on target")
+            j = _js_skip_ws(stmts, j)
+            j = _js_expect(stmts, j, "[")
+            j = _js_skip_ws(stmts, j)
+            if j < n and stmts[j] in "'\"":
+                lit, j = _js_parse_string(stmts, j)
+                keymode = ("lit", lit)
+            elif j < n and stmts[j] in _JS_IDENT_START:
+                k0, j = _js_parse_ident(stmts, j)
+                if k0 != params[1]:
+                    raise _JSExprFail("F852 value not on key param")
+                keymode = "param"
+            else:
+                raise _JSExprFail("F852 value key not modeled")
+            j = _js_skip_ws(stmts, j)
+            j = _js_expect(stmts, j, "]")
+            seen["value"] = keymode
+        elif kname == "configurable":
+            ck = _js_match_kw(stmts, j, "true")
+            if ck is None:
+                raise _JSExprFail("F852 configurable not true")
+            j = ck
+            seen["configurable"] = True
+        else:
+            raise _JSExprFail("F852 extra descriptor key")
+        j = _js_skip_ws(stmts, j)
+        if len(seen) < 2:
+            j = _js_expect(stmts, j, ",")
+    if set(seen.keys()) != {"value", "configurable"}:
+        raise _JSExprFail("F852 descriptor keys")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "}")
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return "A", seen["value"], j
+
+
+def _js_f852_parse_block_body(stmts, j, params, state):
+    """Parse `{BODY}` at stmts[j] (F852).
+
+    BODY twin A: `return {value:T[K],configurable:true};`. BODY
+    twin B: `var D=(Object|Reflect).getOwnPropertyDescriptor(T,K);
+    return D;`. Returns (params, mode, keymode, next_index) past
+    the closing brace. Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "{")
+    rk = _js_match_kw(stmts, _js_skip_ws(stmts, j), "return")
+    if rk is not None:
+        mode, keymode, j = _js_f852_parse_desc_object(
+            stmts, _js_skip_ws(stmts, rk), params, state)
+        j = _js_skip_ws(stmts, j)
+        j = _js_expect(stmts, j, ";")
+        j = _js_skip_ws(stmts, j)
+        j = _js_expect(stmts, j, "}")
+        return params, mode, keymode, j
+    dkw, j = _js_match_decl_kw(stmts, _js_skip_ws(stmts, j))
+    if dkw is None:
+        raise _JSExprFail("F852 body not return or decl")
+    dname, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if dname == "arguments":
+        raise _JSExprFail("F852 fwd var is arguments")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "=")
+    j = _js_skip_ws(stmts, j)
+    oname, j = _js_parse_ident(stmts, j)
+    if oname not in ("Object", "Reflect"):
+        raise _JSExprFail("F852 fwd not Object/Reflect")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ".")
+    mname, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if mname != "getOwnPropertyDescriptor":
+        raise _JSExprFail("F852 fwd not gopd")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "(")
+    t0, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if t0 != params[0]:
+        raise _JSExprFail("F852 fwd not on target param")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ",")
+    k0, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if k0 != params[1]:
+        raise _JSExprFail("F852 fwd not on key param")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ")")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ";")
+    rk = _js_match_kw(stmts, _js_skip_ws(stmts, j), "return")
+    if rk is None:
+        raise _JSExprFail("F852 fwd without return")
+    rname, j = _js_parse_ident(stmts, _js_skip_ws(stmts, rk))
+    if rname != dname:
+        raise _JSExprFail("F852 fwd return not the var")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ";")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "}")
+    return params, "B", None, j
+
+
+def _js_f852_parse_fn_value(stmts, j, state):
+    """Parse the gopd-trap function value at stmts[j] (F852).
+
+    `function[NAME](P1,P2){BODY}`, `(P1,P2)=>{BODY}`, or the
+    concise-arrow `(P1,P2)=>({value:T[K],configurable:true})`.
+    Returns (params, mode, keymode, next_index) past the function.
+    Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, j)
+    fk = _js_match_kw(stmts, j, "function")
+    if fk is not None:
+        j = _js_f850_skip_fn_name(stmts, _js_skip_ws(stmts, fk))
+        params, j = _js_f852_parse_params(stmts, j)
+        return _js_f852_parse_block_body(stmts, j, params, state)
+    params, j = _js_f852_parse_params(stmts, j)
+    j = _js_skip_ws(stmts, j)
+    if j + 1 >= n or stmts[j] != "=" or stmts[j + 1] != ">":
+        raise _JSExprFail("F852 not an arrow gopd trap")
+    j = _js_skip_ws(stmts, j + 2)
+    if j < n and stmts[j] == "{":
+        return _js_f852_parse_block_body(stmts, j, params, state)
+    if j < n and stmts[j] == "(":
+        mode, keymode, j = _js_f852_parse_desc_object(
+            stmts, j + 1, params, state)
+        j = _js_skip_ws(stmts, j)
+        j = _js_expect(stmts, j, ")")
+        if mode != "A":
+            raise _JSExprFail("F852 concise not a descriptor")
+        return params, mode, keymode, j
+    raise _JSExprFail("F852 arrow body not modeled")
+
+
+def _js_f852_parse_handler(stmts, j, state):
+    """Parse `{getOwnPropertyDescriptor:GFN}` at stmts[j] (F852).
+
+    GFN is a function expression, an arrow, or the method
+    shorthand `getOwnPropertyDescriptor(P1,P2){BODY}`. Returns
+    (params, mode, keymode, next_index) past the handler's closing
+    brace. Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "{")
+    gk = _js_match_kw(stmts, _js_skip_ws(stmts, j),
+                      "getOwnPropertyDescriptor")
+    if gk is None:
+        raise _JSExprFail("F852 handler not a gopd trap")
+    j = _js_skip_ws(stmts, gk)
+    if j < n and stmts[j] == ":":
+        params, mode, keymode, j = _js_f852_parse_fn_value(
+            stmts, _js_skip_ws(stmts, j + 1), state)
+    elif j < n and stmts[j] == "(":
+        params, j = _js_f852_parse_params(stmts, j)
+        params, mode, keymode, j = _js_f852_parse_block_body(
+            stmts, j, params, state)
+    else:
+        raise _JSExprFail("F852 gopd trap not a function")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "}")
+    return params, mode, keymode, j
+
+
+def _js_parse_f852_gopd_trap_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const P=new Proxy({PROPS},
+    {getOwnPropertyDescriptor:GFN});return (Object|Reflect).
+    getOwnPropertyDescriptor(P,'K').value(+'LIT')*;})()` (F852).
+
+    The gopd call invokes the trap with (target, key); twin A's
+    data descriptor carries `value: target[key]` (the
+    `configurable:true` literal is required, mirroring F707), and
+    twin B forwards to the target's own descriptor, so `.value`
+    reads the tracked target's member node-exactly (v24.20.0);
+    twin B fails closed when the read key is an accessor property
+    (the engine reports `.value` as `undefined` for accessors --
+    decoding the getter's resolved value would mis-decode). A
+    twin-A literal value key must equal the requested key; extra
+    descriptor keys, non-function traps, extra handler keys,
+    non-empty-target reads, and `var Proxy` shadowing all fail
+    closed. Disjoint from F707 (requires a var-bound target ident
+    -- the inline `{` target fails its target parse), F686 (the
+    two-key ownKeys/gOPD handler fails this single-key parse),
+    and F813 (requires an `Object.defineProperty` statement):
+    every earlier route fails closed on these shapes (red-first
+    verified: 2 BREAK on the open tree), so no previously-decoded
+    input changes behavior. Returns (value, next_index) or None.
+    Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts = state["parts"]
+    saved_ops = state["ops"]
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            raise _JSExprFail("F852 not our head")
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        dkw, q = _js_match_decl_kw(stmts, sj)
+        if dkw is None:
+            raise _JSExprFail("F852 no decl")
+        pname, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, q))
+        if pname in ("arguments", "Proxy"):
+            raise _JSExprFail("F852 bad binding name")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "=")
+        sj = _js_skip_ws(stmts, sj)
+        nk = _js_match_kw(stmts, sj, "new")
+        if nk is None:
+            raise _JSExprFail("F852 not new Proxy")
+        cname, nk = _js_parse_ident(stmts, _js_skip_ws(stmts, nk))
+        if cname != "Proxy":
+            raise _JSExprFail("F852 not a Proxy construction")
+        nk = _js_skip_ws(stmts, nk)
+        nk = _js_expect(stmts, nk, "(")
+        nk = _js_skip_ws(stmts, nk)
+        if nk >= n or stmts[nk] != "{":
+            raise _JSExprFail("F852 target not inline")
+        props, nk = _js_parse_f535_object(stmts, nk, depth, state,
+                                            accessor_aware=True)
+        plain = {}
+        accessors = set()
+        for pk_, pv in props.items():
+            if not isinstance(pk_, str):
+                raise _JSExprFail("F852 prop key not plain")
+            if isinstance(pv, _JSAccessor):
+                # Twin B forwards the target's own descriptor: for
+                # an accessor property node reports .value as
+                # undefined, so twin B must fail closed on
+                # accessor-valued targets (spec review 2026-10-09).
+                # Twin A evaluates t[k], invoking the getter --
+                # node-exact with the unwrapped value.
+                accessors.add(pk_)
+                pv = pv.value
+            if not isinstance(pv, str) or \
+                    isinstance(pv, _JSNumStr):
+                raise _JSExprFail("F852 prop not plain string")
+            plain[pk_] = pv
+        nk = _js_skip_ws(stmts, nk)
+        nk = _js_expect(stmts, nk, ",")
+        _params, mode, keymode, nk = _js_f852_parse_handler(
+            stmts, nk, state)
+        nk = _js_skip_ws(stmts, nk)
+        nk = _js_expect(stmts, nk, ")")
+        nk = _js_skip_ws(stmts, nk)
+        nk = _js_expect(stmts, nk, ";")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        rk = _js_match_kw(stmts, _js_skip_ws(stmts, nk), "return")
+        if rk is None:
+            raise _JSExprFail("F852 no return")
+        q = _js_skip_ws(stmts, rk)
+        oname, q = _js_parse_ident(stmts, q)
+        if oname not in ("Object", "Reflect"):
+            raise _JSExprFail("F852 return not Object/Reflect")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ".")
+        mname, q = _js_parse_ident(stmts, _js_skip_ws(stmts, q))
+        if mname != "getOwnPropertyDescriptor":
+            raise _JSExprFail("F852 return not gopd")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, "(")
+        rname, q = _js_parse_ident(stmts, _js_skip_ws(stmts, q))
+        if rname != pname:
+            raise _JSExprFail("F852 gopd not on the proxy")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ",")
+        q = _js_skip_ws(stmts, q)
+        if q >= n or stmts[q] not in "'\"":
+            raise _JSExprFail("F852 gopd key not a string")
+        key, q = _js_parse_string(stmts, q)
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ")")
+        q = _js_skip_ws(stmts, q)
+        if q < n and stmts[q] == ".":
+            vname, q = _js_parse_ident(stmts, _js_skip_ws(stmts, q + 1))
+            if vname != "value":
+                raise _JSExprFail("F852 not a value read")
+        elif q < n and stmts[q] == "[":
+            q = _js_skip_ws(stmts, q + 1)
+            if q >= n or stmts[q] not in "'\"":
+                raise _JSExprFail("F852 value read not a string")
+            vname, q = _js_parse_string(stmts, q)
+            if vname != "value":
+                raise _JSExprFail("F852 not a value read")
+            q = _js_skip_ws(stmts, q)
+            q = _js_expect(stmts, q, "]")
+        else:
+            raise _JSExprFail("F852 return not a value read")
+        if keymode is not None and keymode != "param" and \
+                keymode[1] != key:
+            raise _JSExprFail("F852 literal key mismatch")
+        if key not in plain:
+            raise _JSExprFail("F852 key not in target")
+        if mode == "B" and key in accessors:
+            # Twin B forwards the target's own descriptor: for an
+            # accessor property the engine reports .value as
+            # undefined, so decoding the getter's resolved value
+            # would mis-decode -- fail closed (spec review
+            # 2026-10-09).
+            raise _JSExprFail("F852 twin B on accessor")
+        val = plain[key]
+        while True:
+            w = _js_skip_ws(stmts, q)
+            if w >= n or stmts[w] != "+":
+                break
+            w = _js_skip_ws(stmts, w + 1)
+            if w >= n or stmts[w] not in "'\"":
+                raise _JSExprFail("F852 tail not a literal")
+            tail, w = _js_parse_string(stmts, w)
+            if not isinstance(tail, str) or isinstance(tail, _JSNumStr):
+                raise _JSExprFail("F852 tail not plain")
+            if len(val) + len(tail) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F852 concat too long")
+            val = val + tail
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            q = w
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F852 value too long")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ";")
+        if _js_skip_ws(stmts, q) != n:
+            raise _JSExprFail("F852 trailing statements")
+        state["ops"] += 1
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        state["parts"] = saved_parts
+        state["ops"] = saved_ops
+        return None
+
+
+
 def _js_f792_parse_return_additive(text, j, mname, is_map, groups,
                                   state):
     """Parse the F792 `return` additive at text[j].
@@ -84186,6 +85362,92 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f810_saved_parts; state['ops'] = _f810_saved_ops
         if _f810 is not None:
             val, i = _f810
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F849: (function(){try{throw 'LIT'|{message:'LIT'};}catch(C){
+        #   return ADD;}})() -- throw/catch value flows: the engine
+        #   binds the catch param to the thrown value (the bare param
+        #   for a string-literal throw; C.message for a {message}
+        #   throw), and the return additive concatenates plain
+        #   literals with those reads. Tried after F810: F750
+        #   requires `throw [new] CTOR(` and F787 the two-argument
+        #   cause options form; F655 requires `finally`; no other
+        #   earlier route accepts a `try{` head (red-first verified:
+        #   2 BREAK on the open tree), so no previously-decoded
+        #   input changes behavior. The F810 hook and its trailing
+        #   `return` are untouched (wave-379 lesson). Budget
+        #   snapshot/restore on miss (wave-383 lesson).
+        _f849_saved_parts = state['parts']; _f849_saved_ops = state['ops']
+        _f849 = _js_parse_f849_throw_catch_iife(text, i, depth, state)
+        if _f849 is None:
+            state['parts'] = _f849_saved_parts; state['ops'] = _f849_saved_ops
+        if _f849 is not None:
+            val, i = _f849
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F850: (function(){var|let|const P=new Proxy({},{set:SETFN});
+        #   P.K='LIT';return P.K[.slice(A[,B])](+'LIT')*;})() --
+        #   Proxy set-trap fragment writes on an inline empty
+        #   target: the trap fires on the single write statement,
+        #   storing the value (plus the optional literal suffix)
+        #   into the tracked target, and the return read falls
+        #   through to the target. Tried after F849: F675 requires
+        #   a var-bound target ident (the inline `{` target fails
+        #   its target parse); F642/F666/F670 require get/apply/has
+        #   keys or a literal binding section; F686/F689 require
+        #   ownKeys/get keys; F800 requires a `get` handler key or
+        #   the revocable head (red-first verified: 2 BREAK on the
+        #   open tree), so no previously-decoded input changes
+        #   behavior. The F849 hook and its trailing `return` are
+        #   untouched (wave-379 lesson). Budget snapshot/restore
+        #   on miss (wave-383 lesson).
+        _f850_saved_parts = state['parts']; _f850_saved_ops = state['ops']
+        _f850 = _js_parse_f850_set_trap_iife(text, i, depth, state)
+        if _f850 is None:
+            state['parts'] = _f850_saved_parts; state['ops'] = _f850_saved_ops
+        if _f850 is not None:
+            val, i = _f850
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F851: (function(){var|let|const P=new Proxy(new Proxy(...,
+        #   {PROPS},{}),{});return P.MEM(+'LIT')*;})() -- nested
+        #   empty-handler Proxies: the engine forwards the member
+        #   read through every empty handler to the innermost
+        #   target. Tried after F850: F489 is receiver-level (its
+        #   target must be a `{` literal, failing on the inner
+        #   `new`); F800 requires a `get` handler key or the
+        #   revocable head; F675/F707 require var-bound target
+        #   idents; F686/F689 require ownKeys/get handler keys
+        #   (red-first verified: 2 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior. The F850
+        #   hook and its trailing `return` are untouched (wave-379
+        #   lesson). Budget snapshot/restore on miss (wave-383
+        #   lesson).
+        _f851_saved_parts = state['parts']; _f851_saved_ops = state['ops']
+        _f851 = _js_parse_f851_nested_proxy_iife(text, i, depth, state)
+        if _f851 is None:
+            state['parts'] = _f851_saved_parts; state['ops'] = _f851_saved_ops
+        if _f851 is not None:
+            val, i = _f851
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F852: (function(){var|let|const P=new Proxy({PROPS},
+        #   {getOwnPropertyDescriptor:GFN});return (Object|Reflect).
+        #   getOwnPropertyDescriptor(P,'K').value(+'LIT')*;})() --
+        #   getOwnPropertyDescriptor-trap descriptor reads on an
+        #   inline target: twin A returns {value:target[key],
+        #   configurable:true}; twin B forwards to the target's
+        #   own descriptor. Tried after F851: F707 requires a
+        #   var-bound target ident (the inline `{` target fails its
+        #   target parse); F686's two-key ownKeys/gOPD handler fails
+        #   this single-key parse; F813 requires an
+        #   Object.defineProperty statement (red-first verified: 2
+        #   BREAK on the open tree), so no previously-decoded input
+        #   changes behavior. The F851 hook and its trailing
+        #   `return` are untouched (wave-379 lesson). Budget
+        #   snapshot/restore on miss (wave-383 lesson).
+        _f852_saved_parts = state['parts']; _f852_saved_ops = state['ops']
+        _f852 = _js_parse_f852_gopd_trap_iife(text, i, depth, state)
+        if _f852 is None:
+            state['parts'] = _f852_saved_parts; state['ops'] = _f852_saved_ops
+        if _f852 is not None:
+            val, i = _f852
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
