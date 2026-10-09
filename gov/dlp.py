@@ -40252,6 +40252,496 @@ def _js_parse_f734_symbol_member_iife(text, i, depth, state):
         return None
 
 
+def _js_f756_eval_cond(text, j, bools):
+    """Evaluate an F756 ternary condition to a bool (F756).
+
+    COND = [!] (true | false | bound-boolean-name). The engine
+    applies ToBoolean to the condition; for booleans that is the
+    identity, so the model is node-exact (v24.20.0). Any other
+    condition shape (comparisons, member reads, calls, non-boolean
+    bindings) fails closed -- the input keeps its pre-existing
+    miss. Never evals.
+    """
+    n = len(text)
+    q = _js_skip_ws(text, j)
+    neg = False
+    if q < n and text[q] == "!":
+        if q + 1 < n and text[q + 1] == "=":
+            raise _JSExprFail("F756 cond not a negation")
+        neg = True
+        q = _js_skip_ws(text, q + 1)
+    m = _js_match_kw(text, q, "true")
+    if m is not None:
+        val, q = True, m
+    else:
+        m = _js_match_kw(text, q, "false")
+        if m is not None:
+            val, q = False, m
+        elif q < n and text[q] in _JS_IDENT_START:
+            name, q = _js_parse_ident(text, q)
+            if name not in bools:
+                raise _JSExprFail("F756 cond unbound")
+            val = bools[name]
+        else:
+            raise _JSExprFail("F756 cond not constant")
+    return (not val) if neg else val, q
+
+
+def _js_f756_branch(text, j, strs):
+    """Parse one F756 ternary branch: a string literal or a bound string name.
+
+    Returns (value, next_index). The _JSNumStr discipline mirrors
+    F710/F720: numeric-string provenance is not modeled here.
+    Never evals.
+    """
+    n = len(text)
+    q = _js_skip_ws(text, j)
+    if q < n and text[q] in "'\"":
+        val, q = _js_parse_string(text, q)
+        if not isinstance(val, str) or isinstance(val, _JSNumStr):
+            raise _JSExprFail("F756 branch not a plain string")
+        return val, q
+    if q < n and text[q] in _JS_IDENT_START:
+        name, q = _js_parse_ident(text, q)
+        if name not in strs:
+            raise _JSExprFail("F756 branch unbound")
+        return strs[name], q
+    raise _JSExprFail("F756 branch not modeled")
+
+
+def _js_f756_ternary_at(text, j, bools, strs):
+    """Parse `COND ? A : B` at text[j] (F756); returns (value, next_index).
+
+    The condition is evaluated by _js_f756_eval_cond; each branch
+    is a string literal or a bound string name. A `??` after the
+    condition is the nullish operator, not a ternary -- fail
+    closed. Never evals.
+    """
+    n = len(text)
+    cond, q = _js_f756_eval_cond(text, j, bools)
+    q = _js_skip_ws(text, q)
+    if q >= n or text[q] != "?" or (q + 1 < n and text[q + 1] == "?"):
+        raise _JSExprFail("F756 ternary without ?")
+    aval, q = _js_f756_branch(text, q + 1, strs)
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ":")
+    bval, q = _js_f756_branch(text, q, strs)
+    return (aval if cond else bval), q
+
+
+def _js_parse_f756_ternary_iife(text, i, depth, state):
+    """Parse `(function(){DECL;* return ADD;})()` with a constant-condition ternary (F756).
+
+    F756 (LOW, filed 2026-10-08 by wave-383 attack round 51): the
+    decoder has no conditional-expression production, so a
+    fragment selected by a provably-constant ternary leaves the
+    credential readable while the decoder produces zero variants:
+      `(function(){var c=true;return (c?'f1':'z')+'f2';})()`
+      `(function(){var c=false;var x=c?'z':'f1';return x+'f2';})()`
+    Node-exact (v24.20.0): the condition grammar is boolean
+    literals, bound boolean names, and `!` of those -- the
+    engine's ToBoolean is the identity there, so the selected
+    branch is exact.
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (shared F654 head); no params,
+      no name, no async.
+    - declarations: `var|let|const NAME=true|false|'LIT';` and
+      the ternary-binding twin
+      `var|let|const NAME=COND?'A':'B';` (branches are string
+      literals or bound string names). Rebinding a name fails
+      closed; `arguments` and reserved-word names fail closed.
+    - return: `TERM (+ TERM)*;` where TERM is a string literal,
+      a bound string name, or a parenthesized ternary
+      `(COND?'A':'B')`. A bare (unparenthesized) ternary in the
+      return additive fails closed -- the engine's precedence
+      would extend it over the `+` tail, so decoding it as an
+      operand would mis-decode.
+    - exactly `()` invocation; no trailing statements.
+
+    Tried after F734: every accepted shape carries a
+    parenthesized ternary or a ternary decl initializer, which
+    no earlier route accepts (F710/F718/F720/F721/F722 need
+    their membership-condition heads; F679 needs accumulation
+    statements; red-first verified: 2 BREAK on the open tree).
+    Only previously fail-closed inputs are newly decoded, so no
+    previously-decoded input changes behavior. None falls
+    through to the F757 route. F452 parts charged per
+    declaration and additive term; the IIFE wrapper charges one
+    op. Returns (value, next_index), or None when text[i] is not
+    this shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        bools = {}
+        strs = {}
+        saw_ternary = False
+        while True:
+            _kw, m = _js_match_decl_kw(text, sj)
+            if _kw is None:
+                break
+            m = _js_skip_ws(text, m)
+            name, m = _js_parse_ident(text, m)
+            if (name == "arguments" or name in _F611_RESERVED
+                    or name in bools or name in strs):
+                raise _JSExprFail("F756 bad decl")
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, "=")
+            if m < n and text[m] == "=":
+                raise _JSExprFail("F756 decl not =")
+            m = _js_skip_ws(text, m)
+            if m < n and text[m] in "'\"":
+                val, m = _js_parse_string(text, m)
+                if not isinstance(val, str) or isinstance(val, _JSNumStr):
+                    raise _JSExprFail("F756 decl not a plain string")
+                strs[name] = val
+            elif m < n and text[m] == "(":
+                # The parenthesized-ternary decl twin
+                # (`var y=(c?'f1':'z');`) -- a one-token neighbor
+                # of the filed shape, node-exact like it.
+                q = _js_expect(text, m, "(")
+                val, q = _js_f756_ternary_at(text, q, bools, strs)
+                q = _js_skip_ws(text, q)
+                m = _js_expect(text, q, ")")
+                strs[name] = val
+                saw_ternary = True
+            else:
+                # A string-alias decl (`var x=s;`) is a node-exact
+                # copy of the bound value (v24.20.0); anything
+                # else must be a boolean or a ternary.
+                q0 = _js_skip_ws(text, m)
+                aname, aq = (None, m)
+                if q0 < n and text[q0] in _JS_IDENT_START:
+                    aname, aq = _js_parse_ident(text, q0)
+                aq2 = _js_skip_ws(text, aq)
+                if (aname is not None and aname in strs
+                        and not (aq2 < n and text[aq2] == "?")):
+                    strs[name] = strs[aname]
+                    m = aq
+                else:
+                    cond, q = _js_f756_eval_cond(text, m, bools)
+                    q2 = _js_skip_ws(text, q)
+                    if (q2 < n and text[q2] == "?"
+                            and not (q2 + 1 < n and text[q2 + 1] == "?")):
+                        val, m = _js_f756_ternary_at(text, m, bools, strs)
+                        strs[name] = val
+                        saw_ternary = True
+                    else:
+                        bools[name] = cond
+                        m = q
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, ";")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = m
+        rk = _js_match_kw(text, _js_skip_ws(text, sj), "return")
+        if rk is None:
+            raise _JSExprFail("F756 no return")
+        sj = _js_skip_ws(text, rk)
+        parts = []
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "(":
+                q = _js_expect(text, sj, "(")
+                term, q = _js_f756_ternary_at(text, q, bools, strs)
+                q = _js_skip_ws(text, q)
+                sj = _js_expect(text, q, ")")
+                saw_ternary = True
+            elif sj < n and text[sj] in "'\"":
+                term, sj = _js_parse_string(text, sj)
+                if not isinstance(term, str) or isinstance(term, _JSNumStr):
+                    raise _JSExprFail("F756 term not a plain string")
+            elif sj < n and text[sj] in _JS_IDENT_START:
+                name, sj = _js_parse_ident(text, sj)
+                if name not in strs:
+                    raise _JSExprFail("F756 return unbound")
+                term = strs[name]
+            else:
+                raise _JSExprFail("F756 return term not modeled")
+            parts.append(term)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("concat too long")
+        if not saw_ternary:
+            # Disjointness: a ternary-free body belongs to an
+            # earlier route -- do not claim it.
+            return None
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F756 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_f757_expect_new_target(text, j):
+    """Match `new.target` at text[j] (F757); returns the index past `target`.
+
+    The trailing ident boundary is enforced by _js_match_kw, so
+    `new.targetx` fails closed. Never evals.
+    """
+    q = _js_skip_ws(text, j)
+    m = _js_match_kw(text, q, "new")
+    if m is None:
+        raise _JSExprFail("F757 not new.target")
+    q = _js_skip_ws(text, m)
+    q = _js_expect(text, q, ".")
+    q = _js_skip_ws(text, q)
+    m = _js_match_kw(text, q, "target")
+    if m is None:
+        raise _JSExprFail("F757 not new.target")
+    return m
+
+
+def _js_f757_this_assign(stmts, ctor_name):
+    """Parse `this.MEM = NEWT [===|!== NAME] ? 'A' : 'B';` (F757).
+
+    *stmts* is the constructor-body substring. Returns (member,
+    selected_value). The modeled condition is provably decidable:
+    `new.target` inside a constructor invoked via `new` is the
+    invoked constructor itself (truthy), so a bare `new.target`
+    test selects the then-branch; `=== NAME` / `!== NAME` must
+    name the invoked constructor (then true / false
+    respectively) -- any other name throws ReferenceError in the
+    engine (node v24.20.0 verified) and fails closed.
+    `__proto__` targets fail closed (the engine changes the
+    prototype, not an own data property). Branches must be plain
+    string literals (the _JSNumStr discipline). Never evals.
+    """
+    n = len(stmts)
+    q = _js_skip_ws(stmts, 0)
+    m = _js_match_kw(stmts, q, "this")
+    if m is None:
+        raise _JSExprFail("F757 not this-assign")
+    q = _js_skip_ws(stmts, m)
+    q = _js_expect(stmts, q, ".")
+    mem, q = _js_parse_ident(stmts, _js_skip_ws(stmts, q))
+    if mem == "__proto__":
+        raise _JSExprFail("F757 __proto__ assign")
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, "=")
+    if q < n and stmts[q] == "=":
+        raise _JSExprFail("F757 assign not =")
+    q = _js_skip_ws(stmts, q)
+    q = _js_f757_expect_new_target(stmts, q)
+    q = _js_skip_ws(stmts, q)
+    cond = True
+    if stmts.startswith("===", q):
+        q = _js_skip_ws(stmts, q + 3)
+        rhs, q = _js_parse_ident(stmts, q)
+        if rhs != ctor_name:
+            # The engine evaluates the RHS ident: an unbound name
+            # throws ReferenceError (node v24.20.0 verified) --
+            # fail closed rather than mis-decode.
+            raise _JSExprFail("F757 new.target name mismatch")
+    elif stmts.startswith("!==", q):
+        q = _js_skip_ws(stmts, q + 3)
+        rhs, q = _js_parse_ident(stmts, q)
+        if rhs != ctor_name:
+            raise _JSExprFail("F757 new.target name mismatch")
+        cond = False
+    elif q < n and stmts[q] == "=":
+        raise _JSExprFail("F757 new.target bad comparison")
+    q = _js_skip_ws(stmts, q)
+    if q >= n or stmts[q] != "?" or (q + 1 < n and stmts[q + 1] == "?"):
+        raise _JSExprFail("F757 ternary without ?")
+    aval, q = _js_parse_string(stmts, _js_skip_ws(stmts, q + 1))
+    if not isinstance(aval, str) or isinstance(aval, _JSNumStr):
+        raise _JSExprFail("F757 branch not a plain string")
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, ":")
+    bval, q = _js_parse_string(stmts, _js_skip_ws(stmts, q))
+    if not isinstance(bval, str) or isinstance(bval, _JSNumStr):
+        raise _JSExprFail("F757 branch not a plain string")
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, ";")
+    q = _js_skip_ws(stmts, q)
+    if q != n:
+        raise _JSExprFail("F757 assign trailing")
+    return mem, (aval if cond else bval)
+
+
+def _js_parse_f757_newtarget_iife(text, i, depth, state):
+    """Parse `(function(){CTOR;return new C().M(+'LIT')*;})()` (F757).
+
+    F757 (LOW, filed 2026-10-08 by wave-383 attack round 51): the
+    decoder has no `new.target` production, so `new.target===C`
+    guards and `new.target` truthiness tests select the fragment
+    while the decoder produces zero variants:
+      `(function(){function C(){this.x=new.target===C?'f1':'z';}
+      return new C().x+'f2';})()`
+      `(function(){class D{constructor(){this.v=new.target?'f1':'z';}}
+      return new D().v+'f2';})()`
+    Node-exact (v24.20.0): `new.target` inside a constructor
+    invoked via `new C()` is C itself (truthy), so the modeled
+    condition is provably decidable -- the bare form and the
+    `===`/`!==` name comparisons all evaluate exactly.
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (shared F654 head); no params,
+      no name, no async.
+    - constructor: `function C(){this.M=TERN;}` (exactly one
+      statement) or `class C{constructor(){this.M=TERN;}}` (no
+      extends, no other members). TERN =
+      `new.target[===|!== NAME]?'A':'B'` via
+      _js_f757_this_assign.
+    - return: `new C().M` (no call args; the read member must
+      match the assigned member) followed by zero or more
+      `+'LIT'` terms.
+    - exactly `()` invocation; no trailing statements.
+
+    Tried after F756: every accepted shape carries a
+    `new.target` condition head, which no earlier route accepts
+    (red-first verified: 2 BREAK on the open tree). Only
+    previously fail-closed inputs are newly decoded, so no
+    previously-decoded input changes behavior. None falls
+    through to the parenthesized-additive path. F452 parts
+    charged per additive tail term; the IIFE wrapper charges one
+    op. Returns (value, next_index), or None when text[i] is not
+    this shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        ctor_name = None
+        member = None
+        cval = None
+        fk = _js_match_kw(text, sj, "function")
+        if fk is not None:
+            q = _js_skip_ws(text, fk)
+            ctor_name, q = _js_parse_ident(text, q)
+            if ctor_name == "arguments" or ctor_name in _F611_RESERVED:
+                raise _JSExprFail("F757 bad ctor name")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "(")
+            q = _js_expect(text, _js_skip_ws(text, q), ")")
+            cbrace = _js_skip_ws(text, q)
+            if cbrace >= n or text[cbrace] != "{":
+                raise _JSExprFail("F757 no ctor body")
+            cstart, cend, q = _js_span_braced(text, cbrace)
+            member, cval = _js_f757_this_assign(text[cstart:cend],
+                                               ctor_name)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = q
+        else:
+            ck = _js_match_kw(text, sj, "class")
+            if ck is None:
+                return None
+            q = _js_skip_ws(text, ck)
+            ctor_name, q = _js_parse_ident(text, q)
+            if ctor_name == "arguments" or ctor_name in _F611_RESERVED:
+                raise _JSExprFail("F757 bad class name")
+            cbrace = _js_skip_ws(text, q)
+            if cbrace >= n or text[cbrace] != "{":
+                raise _JSExprFail("F757 no class body")
+            cstart, cend, q = _js_span_braced(text, cbrace)
+            cq = _js_skip_ws(text, cstart)
+            cm = _js_match_kw(text, cq, "constructor")
+            if cm is None:
+                raise _JSExprFail("F757 no constructor")
+            cq = _js_skip_ws(text, cm)
+            cq = _js_expect(text, cq, "(")
+            cq = _js_expect(text, _js_skip_ws(text, cq), ")")
+            bbrace = _js_skip_ws(text, cq)
+            if bbrace >= n or text[bbrace] != "{":
+                raise _JSExprFail("F757 no ctor body")
+            bstart, bend, cq = _js_span_braced(text, bbrace)
+            member, cval = _js_f757_this_assign(text[bstart:bend],
+                                               ctor_name)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if _js_skip_ws(text, cq) != cend:
+                raise _JSExprFail("F757 class trailing")
+            sj = q
+        rk = _js_match_kw(text, _js_skip_ws(text, sj), "return")
+        if rk is None:
+            raise _JSExprFail("F757 no return")
+        q = _js_skip_ws(text, rk)
+        nk = _js_match_kw(text, q, "new")
+        if nk is None:
+            raise _JSExprFail("F757 no new")
+        q = _js_skip_ws(text, nk)
+        rname, q = _js_parse_ident(text, q)
+        if rname != ctor_name:
+            raise _JSExprFail("F757 new name mismatch")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "(")
+        q = _js_expect(text, _js_skip_ws(text, q), ")")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ".")
+        rmem, q = _js_parse_ident(text, _js_skip_ws(text, q))
+        if rmem != member:
+            raise _JSExprFail("F757 member mismatch")
+        val = cval
+        while True:
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != "+":
+                break
+            q = _js_skip_ws(text, q + 1)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F757 tail not a literal")
+            tail, q = _js_parse_string(text, q)
+            if not isinstance(tail, str) or isinstance(tail, _JSNumStr):
+                raise _JSExprFail("F757 tail not a plain string")
+            if len(val) + len(tail) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("concat too long")
+            val = val + tail
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        q = _js_skip_ws(text, q)
+        if q != inner_end:
+            raise _JSExprFail("F757 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
 def _js_f67x_lookup(obj, key):
     """Resolve *key* on a _JSObj holding F67x bodies (F673/F674).
 
@@ -57909,6 +58399,40 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             text, i, depth, state)
         if _f734 is not None:
             val, i = _f734
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F756: (function(){DECL;* return ADD;})() -- ternary
+        #   conditional reads on provably-constant boolean
+        #   conditions. Tried after F734: every accepted shape
+        #   carries a parenthesized ternary `(COND?...:...)` in
+        #   the return additive or a ternary decl initializer,
+        #   which no earlier route accepts (F710/F718/F720/F721/
+        #   F722 need their membership-condition heads; F679
+        #   needs accumulation statements; red-first verified: 2
+        #   BREAK on the open tree). None falls through to the
+        #   F757 route. The F734 hook and its trailing `return`
+        #   are untouched (wave-379 lesson).
+        _f756_saved_parts = state['parts']; _f756_saved_ops = state['ops']
+        _f756 = _js_parse_f756_ternary_iife(text, i, depth, state)
+        if _f756 is None:
+            state['parts'] = _f756_saved_parts; state['ops'] = _f756_saved_ops
+        if _f756 is not None:
+            val, i = _f756
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F757: (function(){function C(){this.M=new.target[===C]?'A':'B';}
+        #   return new C().M(+'LIT')*;})() and the class twin --
+        #   new.target-conditional fragment reads. Tried after
+        #   F756: every accepted shape carries a `new.target`
+        #   condition head, which no earlier route accepts
+        #   (red-first verified: 2 BREAK on the open tree). None
+        #   falls through to the parenthesized-additive path.
+        #   The F756 hook and its trailing `return` are untouched
+        #   (wave-379 lesson).
+        _f757_saved_parts = state['parts']; _f757_saved_ops = state['ops']
+        _f757 = _js_parse_f757_newtarget_iife(text, i, depth, state)
+        if _f757 is None:
+            state['parts'] = _f757_saved_parts; state['ops'] = _f757_saved_ops
+        if _f757 is not None:
+            val, i = _f757
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
