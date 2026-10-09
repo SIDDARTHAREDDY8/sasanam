@@ -19342,10 +19342,23 @@ def _js_parse_f572_return_expr(text, j, depth, state, env):
         if kt >= n or text[kt] != "+":
             break
         kt = _js_skip_ws(text, kt + 1)
-        if kt >= n or text[kt] not in "'\"":
-            raise _JSExprFail("F593 additive tail not a string")
-        tail, kt = _js_parse_string(text, kt)
-        if not isinstance(tail, str) or isinstance(tail, _JSNumStr):
+        if kt < n and text[kt] in _JS_IDENT_START:
+            # F798: a weakmap-chain term (`wm.get(k2)`) -- the head
+            # chain already resolved to a string, and the engine's
+            # `+` on two strings concatenates. A chain that does
+            # not resolve to a string fails closed (never
+            # mis-decoded; the decoder models no object-to-string
+            # coercion here).
+            cval, kt = _js_parse_f572_weakmap_chain(
+                text, kt, depth, state, env)
+            if isinstance(cval, _JSNumStr) or not isinstance(cval, str):
+                raise _JSExprFail("F798 additive tail not a string")
+            tail = cval
+        elif kt < n and text[kt] in "'\"":
+            tail, kt = _js_parse_string(text, kt)
+            if not isinstance(tail, str) or isinstance(tail, _JSNumStr):
+                raise _JSExprFail("F593 additive tail not a string")
+        else:
             raise _JSExprFail("F593 additive tail not a string")
         val += tail
         state["parts"] += 1  # the concatenation is obfuscation-shaped
@@ -19459,30 +19472,45 @@ def _js_parse_f572_weakmap_iife(text, i, depth, state):
                 k = _js_skip_ws(text, k2 + 1)
                 continue
             k = _js_skip_ws(text, nk)
-            name, k = _js_parse_ident(text, k)
-            k = _js_skip_ws(text, k)
-            if k >= n or text[k] != "=":
-                return None
-            k = _js_skip_ws(text, k + 1)
-            if k < n and text[k] == "{":
-                _props, k = _js_parse_f535_object(text, k, depth, state)
-                uid_next[0] += 1
-                env[name] = ("obj", uid_next[0])
-            elif (text.startswith("new", k)
-                    and (k + 3 >= n
-                         or text[k + 3] not in _JS_IDENT_CONT)):
-                wmap, k = _js_parse_f572_weakmap_new(
-                    text, k, depth, state, env)
-                env[name] = ("weakmap", wmap)
-            else:
-                return None
+            # F798: one or more comma-separated declarators
+            # (`var k1={},k2={};`) -- the engine binds each
+            # declarator left to right; each object literal mints
+            # its own identity exactly like separate `var`
+            # statements (rebinding replaces, matching the
+            # engine). A trailing comma with no declarator is a
+            # SyntaxError in the engine -- fail closed.
+            while True:
+                name, k = _js_parse_ident(text, k)
+                k = _js_skip_ws(text, k)
+                if k >= n or text[k] != "=":
+                    return None
+                k = _js_skip_ws(text, k + 1)
+                if k < n and text[k] == "{":
+                    _props, k = _js_parse_f535_object(text, k, depth, state)
+                    uid_next[0] += 1
+                    env[name] = ("obj", uid_next[0])
+                elif (text.startswith("new", k)
+                        and (k + 3 >= n
+                             or text[k + 3] not in _JS_IDENT_CONT)):
+                    wmap, k = _js_parse_f572_weakmap_new(
+                        text, k, depth, state, env)
+                    env[name] = ("weakmap", wmap)
+                else:
+                    return None
+                k = _js_skip_ws(text, k)
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    return None
+                if k < n and text[k] == ",":
+                    k = _js_skip_ws(text, k + 1)
+                    if k >= n or text[k] not in _JS_IDENT_START:
+                        return None
+                    continue
+                break
             k = _js_skip_ws(text, k)
             if k >= n or text[k] != ";":
                 return None
             k = _js_skip_ws(text, k + 1)
-            state["parts"] += 1
-            if state["parts"] > _JS_EXPR_MAX_PARTS:
-                return None
         rk = _js_match_kw(text, k, "return")
         if rk is None:
             return None
@@ -19739,6 +19767,231 @@ def _js_parse_f687_weakset_iife(text, i, depth, state):
         k = _js_skip_ws(text, k)
         if k < n and text[k] == ";":
             k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "}":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # invocation args: the filed shapes take none
+        k = k + 1
+    except _JSExprFail:
+        return None
+    state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+    return val, k
+
+
+def _js_f798_parse_str_term(text, k, env):
+    """Parse one F798 additive term at text[k]: a string literal or a
+    str-bound name. Returns (value_str, next_index). Never evals."""
+    n = len(text)
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] in "'\"":
+        v, k = _js_parse_string(text, k)
+        if not isinstance(v, str) or isinstance(v, _JSNumStr):
+            raise _JSExprFail("F798 term not a string")
+        return v, k
+    if k < n and text[k] in _JS_IDENT_START:
+        name, k = _js_parse_ident(text, k)
+        b = env.get(name)
+        if b is None or b[0] != "str":
+            raise _JSExprFail("F798 term not a bound string")
+        return b[1], k
+    raise _JSExprFail("F798 term not a string")
+
+
+def _js_parse_f798_weakset_ternary_iife(text, i, depth, state):
+    """Parse `(function(){DECL*;return ADD;})()` (F798).
+
+    WeakSet membership-ternary assignment reads, node-exact
+    (v24.20.0). Body grammar (all other shapes fail closed):
+      - `var|const|let NAME = new WeakSet();` -- an empty WeakSet
+        binding (a constructor iterable argument fails closed);
+      - `var|const|let NAME = {...};` -- an object-identity binding
+        (the F572/F687 discipline: each declaration mints a fresh
+        uid; rebinding replaces, matching the engine);
+      - `w.add(k);` -- statement-form membership add on a
+        weakset-bound w with an obj-bound key k (the engine's
+        in-place mutation);
+      - `var|const|let X = COND?'LIT':'LIT';` -- COND is
+        `[!]w.has(k)` on a weakset-bound w with an obj-bound key
+        (parsed by _js_parse_f687_weakset_has); X binds the
+        selected literal, exactly like the engine's ternary;
+      - `return ADD;` -- ADD is a string-only additive of `'LIT'`
+        and str-bound names.
+    The condition evaluates exactly like the engine: `w.has(k)`
+    is true iff k's binding identity is in w's member set. The
+    filed shape binds the ternary to a var and returns `x+'f2'`,
+    which F687's grammar (parenthesized ternary directly in the
+    return) does not cover -- disjoint by the return head (`(` is
+    not a string term, so this function returns None there and
+    F687, tried first, owns it). Returns (value_str, next_index),
+    or None when the head does not match. Bounded by
+    _JS_EXPR_MAX_PARTS and _MAX_DECODE_BYTES. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+    if k is None:
+        return None
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] in _JS_IDENT_START:
+        # Optional name (engine-exact; ignored).
+        try:
+            _, k = _js_parse_ident(text, k)
+        except _JSExprFail:
+            return None
+        k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        return None
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != ")":
+        return None
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "{":
+        return None
+    k = _js_skip_ws(text, k + 1)
+    env = {}
+    uid_next = [0]
+    try:
+        while True:
+            k = _js_skip_ws(text, k)
+            kk, nk = _js_match_decl_kw(text, k)
+            if kk is None:
+                # Statement-form add on a weakset-bound var:
+                # `w.add(k);` -- the engine's in-place mutation.
+                # Anything else ends the body (the return match
+                # below decides).
+                try:
+                    sname, k2 = _js_parse_ident(text, k)
+                except _JSExprFail:
+                    break
+                sbinding = env.get(sname)
+                k2 = _js_skip_ws(text, k2)
+                if (sbinding is None or sbinding[0] != "weakset"
+                        or k2 >= n or text[k2] != "."):
+                    break
+                # Committed: a weakset-bound head with a member --
+                # malformed shapes fail closed.
+                wset = sbinding[1]
+                k2 = _js_skip_ws(text, k2 + 1)
+                smname, k2 = _js_parse_ident(text, k2)
+                if smname != "add":
+                    raise _JSExprFail("F798 statement not an add")
+                k2 = _js_skip_ws(text, k2)
+                if k2 >= n or text[k2] != "(":
+                    raise _JSExprFail("F798 add without paren")
+                k2 = _js_skip_ws(text, k2 + 1)
+                skname, k2 = _js_parse_ident(text, k2)
+                if env.get(skname, (None,))[0] != "obj":
+                    raise _JSExprFail("F798 add key not a bound object")
+                k2 = _js_skip_ws(text, k2)
+                if k2 >= n or text[k2] != ")":
+                    raise _JSExprFail("F798 add unterminated")
+                k2 = _js_skip_ws(text, k2 + 1)
+                if k2 >= n or text[k2] != ";":
+                    raise _JSExprFail("F798 add statement unterminated")
+                wset.add(env[skname][1])  # in-place: engine mutates
+                state["ops"] += 1  # the add is obfuscation-shaped
+                k = _js_skip_ws(text, k2 + 1)
+                continue
+            k = _js_skip_ws(text, nk)
+            # F798: comma-separated declarators (`var k={},j={};`) --
+            # the engine binds each left to right; object and
+            # WeakSet declarators may chain, a ternary-assignment
+            # declarator terminates the list (a `,` after it fails
+            # closed -- conservative under-decode).
+            while True:
+                name, k = _js_parse_ident(text, k)
+                k = _js_skip_ws(text, k)
+                if k >= n or text[k] != "=":
+                    return None
+                k = _js_skip_ws(text, k + 1)
+                chained = False
+                if k < n and text[k] == "{":
+                    _props, k = _js_parse_f535_object(text, k, depth, state)
+                    uid_next[0] += 1
+                    env[name] = ("obj", uid_next[0])
+                    chained = True
+                elif (text.startswith("new", k)
+                        and (k + 3 >= n
+                             or text[k + 3] not in _JS_IDENT_CONT)):
+                    wk = _js_match_kw(text, _js_skip_ws(text, k + 3),
+                                      "WeakSet")
+                    if wk is None:
+                        return None
+                    wk = _js_skip_ws(text, wk)
+                    if wk >= n or text[wk] != "(":
+                        return None
+                    wk = _js_skip_ws(text, wk + 1)
+                    if wk >= n or text[wk] != ")":
+                        # A constructor iterable argument fails closed
+                        # (the filed shapes build membership via add).
+                        return None
+                    env[name] = ("weakset", set())
+                    k = wk + 1
+                    chained = True
+                else:
+                    # F798: `X = COND?'LIT':'LIT'` ternary assignment.
+                    # Anything that is not a has()-conditional fails
+                    # closed via _js_parse_f687_weakset_has.
+                    cond, k = _js_parse_f687_weakset_has(text, k, env, state)
+                    k = _js_skip_ws(text, k)
+                    if k >= n or text[k] != "?":
+                        raise _JSExprFail("F798 ternary without ?")
+                    then_lit, k = _js_parse_string(text, _js_skip_ws(text, k + 1))
+                    if not isinstance(then_lit, str) or isinstance(
+                            then_lit, _JSNumStr):
+                        raise _JSExprFail("F798 ternary branch not a string")
+                    k = _js_skip_ws(text, k)
+                    if k >= n or text[k] != ":":
+                        raise _JSExprFail("F798 ternary without :")
+                    else_lit, k = _js_parse_string(text, _js_skip_ws(text, k + 1))
+                    if not isinstance(else_lit, str) or isinstance(
+                            else_lit, _JSNumStr):
+                        raise _JSExprFail("F798 ternary branch not a string")
+                    env[name] = ("str", then_lit if cond else else_lit)
+                k = _js_skip_ws(text, k)
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    return None
+                if chained and k < n and text[k] == ",":
+                    k = _js_skip_ws(text, k + 1)
+                    if k >= n or text[k] not in _JS_IDENT_START:
+                        return None
+                    continue
+                break
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ";":
+                return None
+            k = _js_skip_ws(text, k + 1)
+        rk = _js_match_kw(text, k, "return")
+        if rk is None:
+            return None
+        val, k = _js_f798_parse_str_term(text, _js_skip_ws(text, rk), env)
+        while True:
+            kt = _js_skip_ws(text, k)
+            if kt >= n or text[kt] != "+":
+                break
+            tval, kt = _js_f798_parse_str_term(
+                text, _js_skip_ws(text, kt + 1), env)
+            if len(val) + len(tval) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F798 concat too long")
+            val = val + tval
+            state["parts"] += 1  # the concatenation is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many additive parts")
+            k = kt
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ";":
+            return None
+        k = _js_skip_ws(text, k + 1)
         if k >= n or text[k] != "}":
             return None
         k = _js_skip_ws(text, k + 1)
@@ -28889,6 +29142,458 @@ def _js_parse_f728_nextvalue_iife(text, i, depth, state):
         rval = "".join(parts)
         if len(rval) > _MAX_DECODE_BYTES:
             raise _JSExprFail("F728 concat too long")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        return None
+
+
+def _js_f797_parse_gen_body(text, j, state):
+    """Parse a generator body with `yield*` delegation (F797).
+
+    Statements: `yield 'LIT';`, `yield* NAME();`, and an optional
+    trailing `return 'LIT';`. Returns (items, ret_or_None,
+    next_index) where items is a list of ("yield", lit) |
+    ("delegate", name). F452: parts charged per item. The `yield`
+    term admits the F677 parenthesized form (`yield('LIT');`).
+    Never evals.
+    """
+    n = len(text)
+    items = []
+    ret = None
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "}":
+            j += 1
+            break
+        _rk = _js_match_kw(text, j, "return")
+        if _rk is not None:
+            j = _js_skip_ws(text, _rk)
+            if j >= n or text[j] not in "'\"":
+                raise _JSExprFail("F797 return not literal")
+            ret, j = _js_parse_string(text, j)
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ";":
+                j += 1
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != "}":
+                raise _JSExprFail("F797 return not last")
+            j += 1
+            break
+        _yk = _js_match_kw(text, j, "yield")
+        if _yk is None:
+            raise _JSExprFail("F797 body not yields")
+        j = _js_skip_ws(text, _yk)
+        if j < n and text[j] == "*":
+            # `yield* NAME();` -- delegation to a declared
+            # generator's iterator (the engine creates a fresh
+            # iterator per delegation).
+            j = _js_skip_ws(text, j + 1)
+            if j >= n or text[j] not in _JS_IDENT_START:
+                raise _JSExprFail("F797 delegate not a name")
+            dname, j = _js_parse_ident(text, j)
+            if dname == "arguments":
+                raise _JSExprFail("F797 delegate is arguments")
+            j = _js_call_empty_parens(text, j)
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ";":
+                j += 1
+            items.append(("delegate", dname))
+        else:
+            if j < n and text[j] == "(":
+                j = _js_skip_ws(text, j + 1)
+                _paren = True
+            else:
+                _paren = False
+            if j >= n or text[j] not in "'\"":
+                raise _JSExprFail("F797 yield not literal")
+            _yv, j = _js_parse_string(text, j)
+            if _paren:
+                j = _js_expect(text, j, ")")
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ";":
+                j += 1
+            items.append(("yield", _yv))
+        state["parts"] += 1  # F452: charge per body item
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+    if not items:
+        raise _JSExprFail("F797 body empty")
+    return items, ret, j
+
+
+def _js_f797_flat_yields(gens, name, state, _seen=()):
+    """Resolve a generator's flat yield sequence through `yield*`
+    delegation (F797). gens maps names to (items, ret). Returns
+    (flat_yields, ret).
+
+    Each `yield*` delegation creates a fresh iterator in the engine,
+    so the callee's sequence is inlined anew at each delegation
+    site (sibling delegations do not interfere -- the seen-set is
+    per path). A delegation cycle fails closed: the engine throws
+    RangeError on infinite delegation (node v24.20.0 verified), so
+    refusing is node-exact. Delegation to an undeclared name fails
+    closed (the engine throws TypeError). F452: parts charged per
+    emitted flat yield, bounding exponential expansion. Never
+    evals.
+    """
+    if name in _seen:
+        raise _JSExprFail("F797 delegation cycle")
+    if name not in gens:
+        raise _JSExprFail("F797 delegate unknown generator")
+    items, ret = gens[name]
+    out = []
+    for kind, v in items:
+        if kind == "yield":
+            out.append(v)
+        else:
+            sub, _ = _js_f797_flat_yields(gens, v, state, _seen + (name,))
+            out.extend(sub)
+        state["parts"] += 1  # F452: charge per emitted yield
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+    return out, ret
+
+
+def _js_parse_f797_yieldstar_iife(text, i, depth, state):
+    """Parse yield* delegation IIFEs (F797).
+
+    `(function(){function* A(){...}[function* B(){...}]*var|let|const IT=GEN();return ADD;})()`
+    where at least one declared generator body contains a
+    `yield* NAME();` delegation, and ADD is a string-only additive
+    of `'LIT'` and `IT.next().value` terms (the F728 additive).
+
+    Node-exact desugar (v24.20.0): the n-th `IT.next()` call
+    delivers flat[n-1] as `{value, done:false}`; the call after the
+    last flat yield delivers the iterator's own trailing return as
+    `{value, done:true}` (a delegating statement's value is
+    discarded -- only the callee's YIELDS inline, not its return);
+    any later call delivers `undefined` -- the decoder refuses that
+    coded (fail closed, never mis-decoded). `.next()` takes no
+    arguments; only `.value` is read. Returns (value, next_index),
+    or None when the head does not match or a guard fails. Bounded:
+    at most 16 `.next()` calls, F452 parts charged per call,
+    _MAX_DECODE_BYTES on the result. Never evals.
+
+    Disjoint from F728 (which owns the delegation-free
+    single-generator shape -- this function requires at least one
+    `yield*` delegation across the declared generators, and F728's
+    body grammar rejects `yield*`). Bounds (all fail closed):
+    a non-generator head, an anonymous generator, a non-literal
+    yield, a delegation cycle or to an undeclared name, a
+    non-empty `.next()` argument list, a member other than
+    `.value`, a rebound iterator name, a `.next()` call past
+    exhaustion, extra statements, `arguments` bindings, call args
+    on the IIFE.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        k = _js_skip_ws(stmts, 0)
+        gens = {}
+        has_delegate = False
+        while True:
+            fk = _js_match_kw(stmts, k, "function")
+            if fk is None:
+                break
+            k = _js_skip_ws(stmts, fk)
+            if k >= n or stmts[k] != "*":
+                raise _JSExprFail("F797 not a generator")
+            k = _js_skip_ws(stmts, k + 1)
+            if k >= n or stmts[k] not in _JS_IDENT_START:
+                raise _JSExprFail("F797 generator not named")
+            gname, k = _js_parse_ident(stmts, k)
+            if gname in gens or gname == "arguments":
+                raise _JSExprFail("F797 generator redeclared")
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, "(")
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, ")")
+            k = _js_expect(stmts, k, "{")
+            items, ret, k = _js_f797_parse_gen_body(stmts, k, state)
+            gens[gname] = (items, ret)
+            if any(kind == "delegate" for kind, _ in items):
+                has_delegate = True
+            k = _js_skip_ws(stmts, k)
+        if not gens:
+            raise _JSExprFail("F797 no generator")
+        if not has_delegate:
+            # F728 owns the delegation-free shape.
+            raise _JSExprFail("F797 no delegation")
+        # `var|let|const IT=GEN();`
+        k = _js_skip_ws(stmts, k)
+        dk = (_js_match_kw(stmts, k, "var")
+              or _js_match_kw(stmts, k, "let")
+              or _js_match_kw(stmts, k, "const"))
+        if dk is None:
+            raise _JSExprFail("F797 iter decl not var/let/const")
+        k = _js_skip_ws(stmts, dk)
+        itname, k = _js_parse_ident(stmts, k)
+        if itname in gens or itname == "arguments":
+            raise _JSExprFail("F797 iter shadows")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "=")
+        g2, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+        if g2 not in gens:
+            raise _JSExprFail("F797 iter not a declared generator")
+        k = _js_skip_ws(stmts, k)
+        k = _js_call_empty_parens(stmts, k)
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == ";":
+            k += 1
+        flat, fret = _js_f797_flat_yields(gens, g2, state)
+        if not flat:
+            raise _JSExprFail("F797 empty yield sequence")
+        # `return ADD;` -- the F728 additive.
+        k = _js_skip_ws(stmts, k)
+        rk = _js_match_kw(stmts, k, "return")
+        if rk is None:
+            raise _JSExprFail("F797 no return")
+        k = _js_skip_ws(stmts, rk)
+        parts = []
+        calls = 0
+        while True:
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] in "'\"":
+                v, k = _js_parse_string(stmts, k)
+                parts.append(v)
+            elif k < n and stmts[k] in _JS_IDENT_START:
+                rn, k = _js_parse_ident(stmts, k)
+                if rn != itname:
+                    raise _JSExprFail("F797 additive unknown ident")
+                k = _js_skip_ws(stmts, k)
+                k = _js_expect(stmts, k, ".")
+                nm, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+                if nm != "next":
+                    raise _JSExprFail("F797 not .next()")
+                k = _js_call_empty_parens(stmts, k)
+                k = _js_skip_ws(stmts, k)
+                k = _js_expect(stmts, k, ".")
+                vm, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+                if vm != "value":
+                    raise _JSExprFail("F797 not .value")
+                if calls >= 16:
+                    raise _JSExprFail("F797 too many next calls")
+                state["parts"] += 1  # F452: charge per next call
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                if calls < len(flat):
+                    parts.append(flat[calls])
+                elif calls == len(flat) and fret is not None:
+                    parts.append(fret)
+                else:
+                    # Engine `undefined` -- never decoded.
+                    raise _JSExprFail("F797 next past exhaustion")
+                calls += 1
+            else:
+                raise _JSExprFail("F797 additive bad term")
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] == "+":
+                k = _js_skip_ws(stmts, k + 1)
+                continue
+            break
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == ";":
+            k += 1
+        k = _js_skip_ws(stmts, k)
+        if k != n:
+            raise _JSExprFail("F797 trailing junk")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        rval = "".join(parts)
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F797 concat too long")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f797_genmethod_iife(text, i, depth, state):
+    """Parse object-literal generator-method IIFEs (F797).
+
+    `(function(){var|let|const O={*m(){...}[,*n(){...}]*};return ADD;})()`
+    where each method body is a generator body (see
+    _js_f797_parse_gen_body) and ADD is a string-only additive of
+    `'LIT'` and `O.m().next().value` terms. A method body may
+    delegate via `yield*` to a generator declared ahead of the
+    object (`function* G(){...}var O={*m(){yield* G();}};...`) --
+    the delegation resolves against those declarations, exactly
+    like the engine (a method may not delegate to a sibling
+    method: the engine throws ReferenceError there, so this
+    function fails closed on it).
+
+    Node-exact desugar (v24.20.0): each `O.m()` call creates a
+    FRESH iterator, so every `O.m().next().value` term
+    independently delivers that method's first flat yield (no
+    shared call counter -- `o.m().next().value+o.m().next().value`
+    is 'f1'+'f1', verified). A method whose flat yield sequence is
+    empty fails closed (the engine delivers `undefined`, which the
+    decoder never decodes). `.next()` takes no arguments; only
+    `.value` is read. Returns (value, next_index), or None when
+    the head does not match or a guard fails. Bounded by
+    _JS_EXPR_MAX_PARTS and _MAX_DECODE_BYTES. Never evals.
+
+    Disjoint from F728/F656 (which require `function*`
+    declaration heads -- this requires a `var O={` head).
+    Bounds (all fail closed): a non-generator method (`*`
+    required), a data property in the literal, a method with
+    parameters, an unknown method name, a non-empty `.next()`
+    argument list, a member other than `.value`, extra statements,
+    `arguments` bindings, call args on the IIFE.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        k = _js_skip_ws(stmts, 0)
+        # Optional leading generator declarations, for `yield*`
+        # delegation out of method bodies (F797).
+        gens = {}
+        while True:
+            fk = _js_match_kw(stmts, k, "function")
+            if fk is None:
+                break
+            k = _js_skip_ws(stmts, fk)
+            if k >= n or stmts[k] != "*":
+                raise _JSExprFail("F797 not a generator")
+            k = _js_skip_ws(stmts, k + 1)
+            if k >= n or stmts[k] not in _JS_IDENT_START:
+                raise _JSExprFail("F797 generator not named")
+            gname, k = _js_parse_ident(stmts, k)
+            if gname in gens or gname == "arguments":
+                raise _JSExprFail("F797 generator redeclared")
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, "(")
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, ")")
+            k = _js_expect(stmts, k, "{")
+            gitems, gret, k = _js_f797_parse_gen_body(stmts, k, state)
+            gens[gname] = (gitems, gret)
+            k = _js_skip_ws(stmts, k)
+        dk = (_js_match_kw(stmts, k, "var")
+              or _js_match_kw(stmts, k, "let")
+              or _js_match_kw(stmts, k, "const"))
+        if dk is None:
+            raise _JSExprFail("F797 method obj not declared")
+        k = _js_skip_ws(stmts, dk)
+        oname, k = _js_parse_ident(stmts, k)
+        if oname == "arguments":
+            raise _JSExprFail("F797 obj shadows arguments")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "=")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "{")
+        methods = {}
+        while True:
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] == "}":
+                k += 1
+                break
+            if k >= n or stmts[k] != "*":
+                raise _JSExprFail("F797 obj not generator methods")
+            k = _js_skip_ws(stmts, k + 1)
+            if k >= n or stmts[k] not in _JS_IDENT_START:
+                raise _JSExprFail("F797 method not named")
+            mname, k = _js_parse_ident(stmts, k)
+            if mname in methods or mname == "arguments":
+                raise _JSExprFail("F797 method redeclared")
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, "(")
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, ")")
+            k = _js_expect(stmts, k, "{")
+            items, ret, k = _js_f797_parse_gen_body(stmts, k, state)
+            # A method body may delegate to the leading declared
+            # generators (never to a sibling method -- the engine
+            # throws ReferenceError there, so resolving against
+            # `gens` alone is node-exact).
+            combined = dict(gens)
+            if "__m" in combined:
+                raise _JSExprFail("F797 method name collision")
+            combined["__m"] = (items, ret)
+            flat, _ = _js_f797_flat_yields(combined, "__m", state)
+            if not flat:
+                raise _JSExprFail("F797 method empty yield sequence")
+            # Fresh iterator per `O.m()` call in the engine -- the
+            # term always delivers the first flat yield.
+            methods[mname] = flat[0]
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] == ",":
+                k = _js_skip_ws(stmts, k + 1)
+                continue
+            if k < n and stmts[k] == "}":
+                k += 1
+                break
+            raise _JSExprFail("F797 obj malformed")
+        if not methods:
+            raise _JSExprFail("F797 obj has no methods")
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == ";":
+            k += 1
+        # `return ADD;`
+        k = _js_skip_ws(stmts, k)
+        rk = _js_match_kw(stmts, k, "return")
+        if rk is None:
+            raise _JSExprFail("F797 no return")
+        k = _js_skip_ws(stmts, rk)
+        parts = []
+        while True:
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] in "'\"":
+                v, k = _js_parse_string(stmts, k)
+                parts.append(v)
+            elif k < n and stmts[k] in _JS_IDENT_START:
+                rn, k = _js_parse_ident(stmts, k)
+                if rn != oname:
+                    raise _JSExprFail("F797 additive unknown ident")
+                k = _js_skip_ws(stmts, k)
+                k = _js_expect(stmts, k, ".")
+                mn, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+                if mn not in methods:
+                    raise _JSExprFail("F797 unknown method")
+                k = _js_skip_ws(stmts, k)
+                k = _js_call_empty_parens(stmts, k)
+                k = _js_skip_ws(stmts, k)
+                k = _js_expect(stmts, k, ".")
+                nm, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+                if nm != "next":
+                    raise _JSExprFail("F797 not .next()")
+                k = _js_call_empty_parens(stmts, k)
+                k = _js_skip_ws(stmts, k)
+                k = _js_expect(stmts, k, ".")
+                vm, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+                if vm != "value":
+                    raise _JSExprFail("F797 not .value")
+                state["parts"] += 1  # F452: charge per method read
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                parts.append(methods[mn])
+            else:
+                raise _JSExprFail("F797 additive bad term")
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] == "+":
+                k = _js_skip_ws(stmts, k + 1)
+                continue
+            break
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == ";":
+            k += 1
+        k = _js_skip_ws(stmts, k)
+        if k != n:
+            raise _JSExprFail("F797 trailing junk")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        rval = "".join(parts)
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F797 concat too long")
         return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
     except _JSExprFail:
         return None
@@ -70174,6 +70879,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f687 is not None:
             val, i = _f687
             return _js_parse_postfix(text, i, val, depth, state)
+        # F798: (function(){var ws=new WeakSet();var k={};ws.add(k);
+        #   var x=ws.has(k)?'f1':'zz';return x+'f2';})() -- WeakSet
+        #   membership-ternary assignment reads (F687's residual:
+        #   F687 requires the parenthesized ternary directly in the
+        #   return; this binds the ternary to a var). Tried after
+        #   F687: disjoint return heads (a `(` return is not a
+        #   string term, so this returns None there), so no
+        #   previously-decoded input changes behavior. None falls
+        #   through like F687.
+        _f798w_saved_parts = state['parts']; _f798w_saved_ops = state['ops']
+        _f798w = _js_parse_f798_weakset_ternary_iife(text, i, depth, state)
+        if _f798w is None:
+            state['parts'] = _f798w_saved_parts; state['ops'] = _f798w_saved_ops
+        if _f798w is not None:
+            val, i = _f798w
+            return _js_parse_postfix(text, i, val, depth, state)
         # F710: (function(){var s=new Set(['k']);
         # return (s.has('k')?'f1':'xx')+'f2';})() -- Set
         # membership-marker conditional reads via Set.has on
@@ -71777,6 +72498,34 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f728_saved_parts; state['ops'] = _f728_saved_ops
         if _f728 is not None:
             val, i = _f728
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F797: (function(){function* A(){...}[function* B(){...}]*
+        #   var|let|const IT=GEN();return ADD;})() with at least one
+        #   `yield*` delegation across the declared generators --
+        #   F728's residual (F728's body grammar rejects `yield*`).
+        #   Tried after F728: disjoint by the delegation
+        #   requirement, so no previously-decoded input changes
+        #   behavior. None falls through like F728.
+        _f797a_saved_parts = state['parts']; _f797a_saved_ops = state['ops']
+        _f797a = _js_parse_f797_yieldstar_iife(text, i, depth, state)
+        if _f797a is None:
+            state['parts'] = _f797a_saved_parts; state['ops'] = _f797a_saved_ops
+        if _f797a is not None:
+            val, i = _f797a
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F797: (function(){var|let|const O={*m(){...}[,*n(){...}]*};return ADD;})()
+        #   -- object-literal generator methods with direct
+        #   `O.m().next().value` reads (F728's residual; F728/F656
+        #   require `function*` declaration heads). Tried after the
+        #   yield* branch: disjoint heads (`var O={` vs
+        #   `function*`), so no previously-decoded input changes
+        #   behavior. None falls through like F728.
+        _f797b_saved_parts = state['parts']; _f797b_saved_ops = state['ops']
+        _f797b = _js_parse_f797_genmethod_iife(text, i, depth, state)
+        if _f797b is None:
+            state['parts'] = _f797b_saved_parts; state['ops'] = _f797b_saved_ops
+        if _f797b is not None:
+            val, i = _f797b
             return _js_parse_postfix(text, i, val, depth, state)
         # F752: (function(){[DECL B=<Set|Map|array>;]*
         #   DECL IT=<builtin-iterator source>;
