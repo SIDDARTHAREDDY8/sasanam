@@ -7021,7 +7021,24 @@ def _js_parse_array_from(text, j, state):
     if j < n and text[j] == "[":
         arr, j = _js_parse_array(text, j, 0, state)
     elif j < n and text[j] == "{":
-        arr, j = _js_parse_arraylike_recv(text, j, 0, state)
+        # F963: Array.from({length:N}, INDEXMAP) -- tried before the
+        # arraylike receiver. `{length:N}` alone fails that path
+        # closed today, and the production requires the exact
+        # `{length:INT}` shape plus the index-conditional mapper, so
+        # no previously-decoded input changes behavior (red-first
+        # verified: 3 BREAK on the open tree). Budget
+        # snapshot/restore on miss (wave-383 lesson).
+        _f963fl_saved = dict(state)
+        try:
+            arr, j = _js_parse_f963_from_length(text, j, state)
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != ")":
+                raise _JSExprFail("F963 from without close paren")
+            return arr, j + 1
+        except _JSExprFail:
+            state.clear()
+            state.update(_f963fl_saved)
+            arr, j = _js_parse_arraylike_recv(text, j, 0, state)
     elif _js_match_kw(text, j, "new") is not None:
         # new Set(...) (a bare `new Map` iterates entries, not
         # values, so _js_parse_new_set fails it closed -- never
@@ -7084,7 +7101,21 @@ def _js_parse_array_from(text, j, state):
             except _JSExprFail:
                 state.clear()
                 state.update(_f939m_saved)
-                raise
+                # F963: Array.from(SRC, (x,i)=>i===K?'L1':'L2'|'L1':x)
+                # -- tried after the F939 fromCharCode mapper, which
+                # fails closed on ternary callbacks, so no
+                # previously-decoded input changes behavior.
+                # Budget snapshot/restore on miss (wave-383 lesson).
+                _f963m_saved = dict(state)
+                try:
+                    _me, _marr = _js_parse_f963_index_map(text, _mf,
+                                                          arr, depth,
+                                                          state)
+                    _mapped = _marr.elements
+                except _JSExprFail:
+                    state.clear()
+                    state.update(_f963m_saved)
+                    raise
             arr = _JSArr(_mapped)
             _stringifies = False
         if _stringifies:
@@ -65256,6 +65287,912 @@ def _js_parse_f940_fcc_reduce(text, i, value, name, depth, state):
     state["ops"] += 1  # the fromCharCode reduce is obfuscation-shaped
     return acc, j + 1
 
+# ---------------------------------------------------------------- F961/F962/F963/F964
+
+class _JSIter:
+    """Internal: a manually-drained array iterator (F961).
+
+    Models `['LIT',...].entries()` / `.values()` (node v24.20.0):
+    entries() yields [index-string, element] pairs, values() yields
+    elements; `.next()` advances and returns (value, done); reading
+    `.value` of a done iterator is undefined in the engine (fail
+    closed here). Never evals.
+    """
+
+    __slots__ = ("kind", "elements", "pos")
+
+    def __init__(self, kind, elements):
+        self.kind = kind
+        self.elements = elements
+        self.pos = 0
+
+
+def _js_f961_iter_next(it, state):
+    """Advance *it* one step (F961); returns the yielded value.
+
+    Entries-kind yields the [index-string, element] pair (as a plain
+    2-list); values-kind yields the element. A read past the end is
+    engine-undefined -- fail closed. Charges one part per step.
+    Never evals.
+    """
+    if it.pos >= len(it.elements):
+        raise _JSExprFail("F961 next past end")
+    idx = it.pos
+    it.pos += 1
+    state["parts"] += 1  # each .next() is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    if it.kind == "entries":
+        return [str(idx), it.elements[idx]]
+    return it.elements[idx]
+
+
+def _js_f961_parse_iter_init(text, j, state):
+    """Parse `['LIT',...].entries()` / `.values()` at text[j] (F961).
+
+    Returns (_JSIter, next_index). String-literal elements only;
+    anything else fails closed. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F961 not an array literal")
+    elements, j = _js_parse_string_literal_list(text, j + 1, state,
+                                                "]")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("F961 not a member call")
+    kind, j = _js_match_entries_values_member(text,
+                                              _js_skip_ws(text, j + 1))
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("F961 entries/values without parens")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("F961 entries/values with args")
+    return _JSIter(kind, elements), j + 1
+
+
+def _js_f961_parse_next_value(text, j, ename, it, state):
+    """Parse `E.next().value[0|1]?` at text[j] (F961).
+
+    Returns (str, idx). A read past the end, indexing a values-kind
+    `.value`, or a non-string result fails closed (the engine yields
+    undefined there -- outside the string-only discipline). Never
+    evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if not text.startswith(ename, j):
+        raise _JSExprFail("F961 not the iterator")
+    k = j + len(ename)
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("F961 bad iterator name")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ".":
+        raise _JSExprFail("F961 bad iterator use")
+    k = _js_skip_ws(text, k + 1)
+    nm, k = _js_parse_ident(text, k)
+    if nm != "next":
+        raise _JSExprFail("F961 not next()")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("F961 next without parens")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("F961 next with args")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != ".":
+        raise _JSExprFail("F961 next without .value")
+    vm, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+    if vm != "value":
+        raise _JSExprFail("F961 not .value")
+    val = _js_f961_iter_next(it, state)
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == "[":
+        k = _js_skip_ws(text, k + 1)
+        dstart = k
+        while k < n and text[k].isdigit():
+            k += 1
+        if k == dstart:
+            raise _JSExprFail("F961 bad index")
+        idx = int(text[dstart:k])
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "]":
+            raise _JSExprFail("F961 unclosed index")
+        k += 1
+        if not isinstance(val, list) or idx not in (0, 1):
+            # values-kind yields a bare string (string indexing is
+            # out of scope); entries pairs index 0/1 only.
+            raise _JSExprFail("F961 bad pair index")
+        val = val[idx]
+    if not isinstance(val, str):
+        raise _JSExprFail("F961 non-string value")
+    return val, k
+
+
+def _js_f961_parse_operand(text, j, ename, it, state, bound):
+    """Parse one F961 additive operand at text[j]; returns (str, idx).
+
+    Operands: a string literal; `E.next().value` / `E.next().value[0|1]`
+    (E the bound iterator name); a name bound by an earlier
+    `var X=E.next().value[0|1];` step; `[...E].join('SEP')` (drains
+    the remainder); `[...['LIT',...].values()].join('SEP')` (the inline
+    spread twin). The join separator is a string literal (or absent
+    -- engine comma). Anything else fails closed. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        lit, j = _js_parse_string(text, j)
+        return lit, j
+    if ename is not None and text.startswith(ename, j):
+        k = j + len(ename)
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F961 bad iterator name")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ".":
+            return _js_f961_parse_next_value(text, j, ename, it,
+                                             state)
+        raise _JSExprFail("F961 bad iterator use")
+    if bound:
+        # A name bound by an earlier `var X=E.next().value[0|1];` step.
+        try:
+            nm, k = _js_parse_ident(text, j)
+        except _JSExprFail:
+            nm, k = None, j
+        if nm is not None and nm in bound:
+            return bound[nm], k
+    if text.startswith("[...", j):
+        # [...E].join('SEP') or [...['LIT',...].values()].join('SEP')
+        k = _js_skip_ws(text, j + 4)
+        if ename is not None and text.startswith(ename, k):
+            k2 = k + len(ename)
+            if k2 < n and text[k2] in _JS_IDENT_CONT:
+                raise _JSExprFail("F961 bad spread name")
+            k = k2
+            sit = it
+        elif k < n and text[k] == "[":
+            sit, k = _js_f961_parse_iter_init(text, k, state)
+            if sit.kind != "values":
+                raise _JSExprFail("F961 inline spread not values()")
+        else:
+            raise _JSExprFail("F961 bad spread source")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "]":
+            raise _JSExprFail("F961 unclosed spread")
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ".":
+            raise _JSExprFail("F961 spread without join")
+        jm, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+        if jm != "join":
+            raise _JSExprFail("F961 spread without join")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "(":
+            raise _JSExprFail("F961 join without parens")
+        k = _js_skip_ws(text, k + 1)
+        if k < n and text[k] in "'\"":
+            sep, k = _js_parse_string(text, k)
+        elif k < n and text[k] == ")":
+            sep = ","
+        else:
+            raise _JSExprFail("F961 bad join separator")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ")":
+            raise _JSExprFail("F961 join not closed")
+        k += 1
+        rest = []
+        while True:
+            try:
+                r = _js_f961_iter_next(sit, state)
+            except _JSExprFail:
+                break
+            if isinstance(r, list):
+                # entries-kind: the engine stringifies each spread pair
+                # as "i,el" under join (node v24.20.0).
+                r = "%s,%s" % (r[0], r[1])
+            if not isinstance(r, str):
+                raise _JSExprFail("F961 spread non-string")
+            rest.append(r)
+        return sep.join(rest), k
+    raise _JSExprFail("F961 bad operand")
+
+
+def _js_f961_parse_additive(text, j, ename, it, state, bound):
+    """Parse the F961 `+`-joined operand list; returns (str, idx)."""
+    acc, j = _js_f961_parse_operand(text, j, ename, it, state, bound)
+    n = len(text)
+    while True:
+        k = _js_skip_ws(text, j)
+        if k >= n or text[k] != "+":
+            return acc, j
+        piece, j = _js_f961_parse_operand(text, k + 1, ename, it,
+                                          state, bound)
+        if len(acc) + len(piece) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F961 result too long")
+        acc += piece
+
+
+def _js_f961_stmt_decode(text):
+    """Decode F961 statement sequences (whole-text, _decode_layer hook).
+
+    `var|let|const E=['LIT',...].entries()|values();`
+    [`var|let|const X=E.next().value[0|1];` ...]
+    `var|let|const T=<ADD>;` where <ADD> is the F961 additive
+    (string literals, `E.next().value[0|1]`, earlier-bound `X`
+    names, `[...E].join('SEP')`, the inline
+    `[...['LIT',...].values()].join('SEP')` twin -- the inline twin
+    also stands alone as `var|let|const T=<ADD>;` without a leading
+    binding).
+
+    Node-exact (v24.20.0): `.next()` advances left-to-right across
+    the whole statement sequence, so `e.next().value[1]+e.next().value[1]`
+    yields elements 0 then 1 -- a textual substitution would be
+    node-wrong (both reads would see element 0), hence the
+    stateful iterator. Intermediate `var X=` steps bind at their
+    position (left-to-right), matching the engine. Reading past the
+    end, indexing a values-kind `.value`, or a non-string result all
+    fail closed (the engine yields undefined there -- outside the
+    string-only discipline). Returns the decoded string, or None.
+    Never evals.
+    """
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        kw, j = _js_match_decl_kw(text, j)
+        if kw is None:
+            return None
+        j = _js_skip_ws(text, j)
+        ename, it, j = _js_f961_try_binding(text, j, state)
+        bound = {}
+        first = True
+        while True:
+            # The bare form (`var T=<ADD>;` with no leading binding)
+            # already consumed its declaration keyword above.
+            if ename is not None or not first:
+                kw, j = _js_match_decl_kw(text, j)
+                if kw is None:
+                    return None
+                j = _js_skip_ws(text, j)
+            first = False
+            xname, j = _js_parse_ident(text, j)
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != "=":
+                return None
+            if ename is not None:
+                # Narrow intermediate step? `var X=E.next().value[0|1];`
+                # -- binds at this position only when more statements
+                # follow (a lone narrow final statement is the result
+                # itself). The probe is speculative: snapshot the
+                # iterator position and budget first (wave-383 lesson).
+                _f961_pos = it.pos
+                _f961_bsaved = dict(state)
+                try:
+                    ival, ik = _js_f961_parse_next_value(text, j + 1,
+                                                        ename, it,
+                                                        state)
+                    ik = _js_skip_ws(text, ik)
+                    if ik < n and text[ik] == ";":
+                        if _js_skip_ws(text, ik + 1) != n:
+                            if xname in bound or xname == ename:
+                                return None
+                            bound[xname] = ival
+                            j = _js_skip_ws(text, ik + 1)
+                            continue
+                        return ival
+                except _JSExprFail:
+                    pass
+                it.pos = _f961_pos
+                state.clear()
+                state.update(_f961_bsaved)
+            val, j = _js_f961_parse_additive(text, j + 1, ename, it,
+                                             state, bound)
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != ";":
+                return None
+            if _js_skip_ws(text, j + 1) != n:
+                return None
+            return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f961_try_binding(text, j, state):
+    """Parse the optional F961 leading iterator binding (F961).
+
+    `E=['LIT',...].entries()|values();` -- returns (ename, iter,
+    next_index), or (None, None, j) when the text at *j* is not a
+    binding (the bare `var T=<ADD>;` form). Never evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, j)
+    try:
+        ename, k = _js_parse_ident(text, k)
+    except _JSExprFail:
+        return None, None, j
+    if ename == "arguments" or ename in _F611_RESERVED:
+        return None, None, j
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "=":
+        return None, None, j
+    try:
+        it, k = _js_f961_parse_iter_init(text, k + 1, state)
+    except _JSExprFail:
+        return None, None, j
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ";":
+        return None, None, j
+    return ename, it, _js_skip_ws(text, k + 1)
+
+
+def _js_f962_copywithin(elements, target, start, end):
+    """Apply copyWithin(target, start[, end]) node-exactly (F962).
+
+    Integer args with ToIntegerOrInfinity semantics (the narrow
+    grammar admits integer literals only, so int() is exact);
+    negative indices count from the end, all clamped to [0, len].
+    The copy reads through a snapshot (memmove semantics --
+    node-verified v24.20.0). Returns the new element list.
+    Never evals.
+    """
+    ln = len(elements)
+    def _clamp(v):
+        return max(0, min(ln, ln + v if v < 0 else v))
+    t, s, e = _clamp(target), _clamp(start), _clamp(end)
+    out = list(elements)
+    snap = list(elements[s:e])
+    for off, v in enumerate(snap):
+        if t + off < ln:
+            out[t + off] = v
+    return out
+
+
+def _js_f962_parse_int(text, j):
+    """Parse an optionally-negative integer literal (F962)."""
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    neg = False
+    if j < n and text[j] == "-":
+        neg = True
+        j = _js_skip_ws(text, j + 1)
+    d0 = j
+    while j < n and text[j].isdigit():
+        j += 1
+    if j == d0:
+        raise _JSExprFail("F962 bad integer")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        raise _JSExprFail("F962 bad integer")
+    return (-int(text[d0:j]) if neg else int(text[d0:j])), j
+
+
+def _js_f962_parse_operand(text, j, aname, elements):
+    """Parse one F962 additive operand; returns (str, idx).
+
+    Operands: string literals and `A[INT]` index reads (0 <= INT <
+    len -- an out-of-range read is engine-undefined, fail closed).
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        return _js_parse_string(text, j)
+    if text.startswith(aname, j):
+        k = j + len(aname)
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F962 bad array name")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "[":
+            raise _JSExprFail("F962 bad index read")
+        idx, k = _js_f962_parse_int(text, k + 1)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "]":
+            raise _JSExprFail("F962 unclosed index")
+        if idx < 0 or idx >= len(elements):
+            raise _JSExprFail("F962 index out of range")
+        el = elements[idx]
+        if not isinstance(el, str):
+            raise _JSExprFail("F962 non-string element")
+        return el, k + 1
+    raise _JSExprFail("F962 bad operand")
+
+
+def _js_f962_parse_additive(text, j, aname, elements, state):
+    """Parse the F962 `+`-joined operand list; returns (str, idx)."""
+    n = len(text)
+    acc, j = _js_f962_parse_operand(text, j, aname, elements)
+    while True:
+        k = _js_skip_ws(text, j)
+        if k >= n or text[k] != "+":
+            return acc, j
+        piece, j = _js_f962_parse_operand(text, k + 1, aname,
+                                          elements)
+        if len(acc) + len(piece) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F962 result too long")
+        acc += piece
+
+
+def _js_f962_stmt_decode(text):
+    """Decode F962 statement sequences (whole-text, _decode_layer hook).
+
+    `var|let|const A=['LIT',...];A.copyWithin(T,S[,E]);`
+    `var|let|const T=<ADD>;` where <ADD> is `+`-joined string
+    literals and `A[INT]` reads evaluated against the mutated array.
+
+    Node-exact (v24.20.0): copyWithin's integer args (negatives count
+    from the end, all clamped), memmove snapshot semantics, and
+    index reads against the post-mutation array. Anything outside
+    the narrow grammar (non-literal elements, non-integer args,
+    extra statements, out-of-range reads) fails closed. Returns the
+    decoded string, or None. Never evals.
+    """
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        kw, j = _js_match_decl_kw(text, j)
+        if kw is None:
+            return None
+        j = _js_skip_ws(text, j)
+        aname, j = _js_parse_ident(text, j)
+        if aname == "arguments" or aname in _F611_RESERVED:
+            return None
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "=":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != "[":
+            return None
+        elements, j = _js_parse_string_literal_list(text, j + 1,
+                                                    state, "]")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        # A.copyWithin(T,S[,E]);
+        mname, j = _js_parse_ident(text, j)
+        if mname != aname:
+            return None
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ".":
+            return None
+        cm, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        if cm != "copyWithin":
+            return None
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "(":
+            return None
+        target, j = _js_f962_parse_int(text, j + 1)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ",":
+            return None
+        start, j = _js_f962_parse_int(text, j + 1)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            end, j = _js_f962_parse_int(text, j + 1)
+            j = _js_skip_ws(text, j)
+        else:
+            end = len(elements)
+        if j >= n or text[j] != ")":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != ";":
+            return None
+        elements = _js_f962_copywithin(elements, target, start,
+                                       end)
+        j = _js_skip_ws(text, j + 1)
+        kw, j = _js_match_decl_kw(text, j)
+        if kw is None:
+            return None
+        j = _js_skip_ws(text, j)
+        _tname, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "=":
+            return None
+        val, j = _js_f962_parse_additive(text, j + 1, aname,
+                                         elements, state)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            return None
+        if _js_skip_ws(text, j + 1) != n:
+            return None
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f963_parse_cb(text, i):
+    """Parse an F963 index-conditional map callback at text[i].
+
+    `(x,i)=>i===K?'L1':'L2'` / `(x,i)=>i===K?'L1':x` (arrow) or the
+    `function(x,i){return ...;}` twin. Returns (xname, iname, k,
+    then_lit, else_lit_or_None, next_index) where else None means
+    the bare-`x` (identity-element) branch. `===` and `==` both
+    admit (i is always a number -- node-exact). Anything else fails
+    closed. Never evals.
+    """
+    n = len(text)
+    i = _js_skip_ws(text, i)
+    is_fn = False
+    fk = _js_match_kw(text, i, "function")
+    if fk is not None:
+        is_fn = True
+        i = fk
+    i = _js_skip_ws(text, i)
+    if i >= n or text[i] != "(":
+        raise _JSExprFail("F963 bad callback params")
+    i = _js_skip_ws(text, i + 1)
+    xname, i = _js_parse_ident(text, i)
+    i = _js_skip_ws(text, i)
+    if i >= n or text[i] != ",":
+        raise _JSExprFail("F963 callback needs (x,i)")
+    i = _js_skip_ws(text, i + 1)
+    iname, i = _js_parse_ident(text, i)
+    i = _js_skip_ws(text, i)
+    if i >= n or text[i] != ")":
+        raise _JSExprFail("F963 bad callback params")
+    i = _js_skip_ws(text, i + 1)
+    if is_fn:
+        if i >= n or text[i] != "{":
+            raise _JSExprFail("F963 bad function body")
+        i = _js_skip_ws(text, i + 1)
+        rk = _js_match_kw(text, i, "return")
+        if rk is None:
+            raise _JSExprFail("F963 no return")
+        i = _js_skip_ws(text, rk)
+    else:
+        if i + 1 >= n or text[i] != "=" or text[i + 1] != ">":
+            raise _JSExprFail("F963 not an arrow")
+        i = _js_skip_ws(text, i + 2)
+    # i===K / i==K
+    cn, i = _js_parse_ident(text, i)
+    if cn != iname:
+        raise _JSExprFail("F963 condition not on index")
+    i = _js_skip_ws(text, i)
+    if text.startswith("===", i):
+        i += 3
+    elif text.startswith("==", i):
+        i += 2
+    else:
+        raise _JSExprFail("F963 bad comparison")
+    i = _js_skip_ws(text, i)
+    d0 = i
+    while i < n and text[i].isdigit():
+        i += 1
+    if i == d0:
+        raise _JSExprFail("F963 bad index literal")
+    kval = int(text[d0:i])
+    i = _js_skip_ws(text, i)
+    if i >= n or text[i] != "?":
+        raise _JSExprFail("F963 not a ternary")
+    i = _js_skip_ws(text, i + 1)
+    if i >= n or text[i] not in "'\"":
+        raise _JSExprFail("F963 then not a literal")
+    then_lit, i = _js_parse_string(text, i)
+    i = _js_skip_ws(text, i)
+    if i >= n or text[i] != ":":
+        raise _JSExprFail("F963 bad ternary")
+    i = _js_skip_ws(text, i + 1)
+    else_lit = None
+    if i < n and text[i] in "'\"":
+        else_lit, i = _js_parse_string(text, i)
+    else:
+        en, i = _js_parse_ident(text, i)
+        if en != xname:
+            raise _JSExprFail("F963 else not literal or x")
+    if is_fn:
+        i = _js_skip_ws(text, i)
+        if i < n and text[i] == ";":
+            i = _js_skip_ws(text, i + 1)
+        if i >= n or text[i] != "}":
+            raise _JSExprFail("F963 bad function close")
+        i += 1
+    return xname, iname, kval, then_lit, else_lit, i
+
+
+def _js_f963_apply_cb(elements, cb, state):
+    """Apply an F963 parsed callback to *elements* (F963).
+
+    *cb* is the _js_f963_parse_cb tuple; *elements* the _JSArr element
+    list (holes fail closed unless the callback never reads the
+    element -- the bare-`x` else branch on a hole is engine-undefined).
+    Returns the mapped element list. Never evals.
+    """
+    xname, iname, kval, then_lit, else_lit, _ = cb
+    if len(elements) > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("F963 too many elements")
+    out = []
+    for idx, el in enumerate(elements):
+        if idx == kval:
+            out.append(then_lit)
+        elif else_lit is not None:
+            out.append(else_lit)
+        else:
+            if not isinstance(el, str):
+                raise _JSExprFail("F963 else-x on non-string")
+            out.append(el)
+        state["parts"] += 1  # each mapped element is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+    total = sum(len(e) for e in out if isinstance(e, str))
+    if total > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F963 result too long")
+    return out
+
+
+def _js_parse_f963_index_map(text, i, value, depth, state):
+    """Parse `.map(INDEXMAP)` on a _JSArr (F963); returns (_JSArr, idx).
+
+    Tried after the F437 family (identity + entries-projection) and
+    F939 (fromCharCode): none parses an index-conditional ternary
+    callback, so no previously-decoded input changes behavior
+    (red-first verified: 3 BREAK on the open tree). The receiver
+    must be a _JSArr (the dispatch site guarantees it). Budget
+    snapshot/restore on miss (wave-383 lesson). Never evals.
+    """
+    _saved = dict(state)
+    try:
+        cb = _js_f963_parse_cb(text, i)
+    except _JSExprFail:
+        state.clear()
+        state.update(_saved)
+        raise
+    xname, iname, kval, then_lit, else_lit, j = cb
+    if not all(isinstance(e, str) for e in value.elements):
+        state.clear()
+        state.update(_saved)
+        raise _JSExprFail("F963 map over non-string element")
+    try:
+        mapped = _js_f963_apply_cb(value.elements, cb, state)
+    except _JSExprFail:
+        state.clear()
+        state.update(_saved)
+        raise
+    j = _js_skip_ws(text, j)
+    if j >= len(text) or text[j] != ")":
+        state.clear()
+        state.update(_saved)
+        raise _JSExprFail("F963 map not closed")
+    state["ops"] += 1  # the index-conditional map is obfuscation-shaped
+    return _JSArr(mapped), j + 1
+
+
+def _js_parse_f963_from_length(text, j, state):
+    """Parse `Array.from({length:N}, INDEXMAP)` at text[j] (F963).
+
+    *j* is at the `{` of the source object. The source must be exactly
+    `{length:INTLIT}` (ws-tolerant, non-negative, bounded) -- the
+    engine's array-like length read; any other property fails closed
+    (the F508 arraylike receiver owns those). The mapper is the F963
+    index-conditional callback; holes never reach a bare-`x` else
+    (engine-undefined -- fail closed). Tried before the F508
+    arraylike path: `{length:N}` alone fails that path closed today,
+    so no previously-decoded input changes behavior (red-first
+    verified: 3 BREAK on the open tree). Returns (_JSArr, idx) with idx
+    AT the closing `)` (the caller consumes it). Budget
+    snapshot/restore on miss (wave-383 lesson). Never evals.
+    """
+    n = len(text)
+    _saved = dict(state)
+    try:
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "{":
+            raise _JSExprFail("F963 not an object source")
+        j = _js_skip_ws(text, j + 1)
+        lname, j = _js_parse_ident(text, j)
+        if lname != "length":
+            raise _JSExprFail("F963 not a length source")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ":":
+            raise _JSExprFail("F963 bad length")
+        j = _js_skip_ws(text, j + 1)
+        d0 = j
+        while j < n and text[j].isdigit():
+            j += 1
+        if j == d0:
+            raise _JSExprFail("F963 bad length literal")
+        count = int(text[d0:j])
+        if count > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("F963 length too large")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "}":
+            raise _JSExprFail("F963 length source not exact")
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != ",":
+            raise _JSExprFail("F963 from without mapper")
+        cb = _js_f963_parse_cb(text, j + 1)
+        _me = cb[5]
+        # Holes: the engine passes undefined as x; only the
+        # index-selected literal / literal-else branches are modeled.
+        _xname, _iname, _kval, _then, _else, _ = cb
+        if _else is None:
+            raise _JSExprFail("F963 else-x over holes")
+        mapped = _js_f963_apply_cb([None] * count, cb, state)
+        j = _js_skip_ws(text, _me)
+        if j >= n or text[j] != ")":
+            raise _JSExprFail("F963 from not closed")
+        state["ops"] += 1  # the from-length map is obfuscation-shaped
+        return _JSArr(mapped), j
+    except _JSExprFail:
+        state.clear()
+        state.update(_saved)
+        raise
+
+
+def _js_f964_parse_params(text, j):
+    """Parse `new Function('p1',...,'BODY')` params+body (F964).
+
+    Returns (params, body, next_index) with params the declared
+    parameter names (each a fresh non-reserved ident) and body the
+    raw body string. All args must be string literals; at least one
+    param plus the body. Never evals.
+    """
+    n = len(text)
+    args = []
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("F964 Function without parens")
+    j = _js_skip_ws(text, j + 1)
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F964 arg not a literal")
+        lit, j = _js_parse_string(text, j)
+        args.append(lit)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            continue
+        if j < n and text[j] == ")":
+            j += 1
+            break
+        raise _JSExprFail("F964 bad ctor args")
+    if len(args) < 2:
+        raise _JSExprFail("F964 needs params + body")
+    params, body = args[:-1], args[-1]
+    seen = set()
+    for p in params:
+        k = 0
+        try:
+            pname, k = _js_parse_ident(p, 0)
+        except _JSExprFail:
+            raise _JSExprFail("F964 bad param name")
+        if k != len(p) or pname in _F611_RESERVED or \
+                pname == "arguments" or pname in seen:
+            # Duplicate params are last-wins in the engine, but a
+            # duplicate is never needed for laundering -- fail closed
+            # (documented narrowness).
+            raise _JSExprFail("F964 bad param name")
+        seen.add(pname)
+    return params, body, j
+
+
+def _js_f964_body_value(params, body):
+    """Evaluate an F964 Function body string node-exactly (F964).
+
+    The body must be exactly `return p1+p2+...;` (ws-tolerant,
+    trailing semicolon optional) where every operand is a declared
+    param -- anything else (a literal, an undeclared name, any other
+    statement) fails closed: the engine would read a live binding
+    or throw. Returns the operand name list. Never evals.
+    """
+    k = _js_skip_ws(body, 0)
+    rk = _js_match_kw(body, k, "return")
+    if rk is None:
+        raise _JSExprFail("F964 body not return")
+    k = _js_skip_ws(body, rk)
+    names = []
+    while True:
+        nm, k = _js_parse_ident(body, k)
+        if nm not in params:
+            raise _JSExprFail("F964 body reads undeclared")
+        names.append(nm)
+        k = _js_skip_ws(body, k)
+        if k < len(body) and body[k] == "+":
+            k = _js_skip_ws(body, k + 1)
+            continue
+        break
+    if k < len(body) and body[k] == ";":
+        k = _js_skip_ws(body, k + 1)
+    if k != len(body):
+        raise _JSExprFail("F964 body trailing junk")
+    if not names:
+        raise _JSExprFail("F964 empty body")
+    return names
+
+
+def _js_f964_stmt_decode(text):
+    """Decode F964 statement sequences (whole-text, _decode_layer hook).
+
+    `var|let|const F=new Function('p1',...,'pn','return p1+...+pn;');`
+    `var|let|const T=F('L1',...,'Ln');` -- the declared-parameter
+    twin of F893's literal-body Function production.
+
+    Node-exact (v24.20.0): the call binds each arg to its param, so
+    the body evaluates to the concatenation of the arg literals.
+    Bounds (all fail closed): non-literal args anywhere, arg count
+    != param count (the engine pads/truncates -- outside the narrow
+    grammar), non-`return`-additive bodies, bodies reading
+    undeclared names, reserved/duplicate param names. Returns the
+    decoded string, or None. Never evals.
+    """
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        kw, j = _js_match_decl_kw(text, j)
+        if kw is None:
+            return None
+        j = _js_skip_ws(text, j)
+        fname, j = _js_parse_ident(text, j)
+        if fname == "arguments" or fname in _F611_RESERVED:
+            return None
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "=":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        nk = _js_match_kw(text, j, "new")
+        if nk is not None:
+            j = _js_skip_ws(text, nk)
+        nm, j = _js_parse_ident(text, j)
+        if nm != "Function":
+            return None
+        params, body, j = _js_f964_parse_params(text, j)
+        names = _js_f964_body_value(params, body)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        kw, j = _js_match_decl_kw(text, j)
+        if kw is None:
+            return None
+        j = _js_skip_ws(text, j)
+        _tname, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "=":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        fn, j = _js_parse_ident(text, j)
+        if fn != fname:
+            return None
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "(":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        callargs = []
+        while True:
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] not in "'\"":
+                return None
+            lit, j = _js_parse_string(text, j)
+            callargs.append(lit)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                return None
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ",":
+                j = _js_skip_ws(text, j + 1)
+                continue
+            if j < n and text[j] == ")":
+                j += 1
+                break
+            return None
+        if len(callargs) != len(params):
+            return None
+        bound = dict(zip(params, callargs))
+        val = "".join(bound[p] for p in names)
+        if len(val) > _MAX_DECODE_BYTES:
+            return None
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            return None
+        if _js_skip_ws(text, j + 1) != n:
+            return None
+        return val
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f896_dataview_iife(text, i, depth, state):
     """Parse the DataView non-Uint8-width IIFEs (F896).
 
@@ -89882,6 +90819,20 @@ def _js_apply_method_at(text, i, name, value, depth, state):
                 except _JSExprFail:
                     state.clear()
                     state.update(_f939_saved)
+                    # F963: index-conditional ternary map -- tried
+                    # after F939. Neither the F437 family nor F939
+                    # parses an `i===K?...:...` callback, so no
+                    # previously-decoded input changes behavior
+                    # (red-first verified: 3 BREAK on the open tree).
+                    # Budget snapshot/restore on miss (wave-383 lesson).
+                    _f963_saved = dict(state)
+                    try:
+                        return _js_parse_f963_index_map(text, _ms,
+                                                        value, depth,
+                                                        state)
+                    except _JSExprFail:
+                        state.clear()
+                        state.update(_f963_saved)
                 raise _e0
             _pidx = 0 if _kind == "keys" else 1
             if not all(isinstance(_e, _JSArr)
@@ -107058,6 +108009,18 @@ def _decode_layer(text):
                 _add(decoded)
                 if len(variants) >= _MAX_CANDIDATES:
                     return variants
+    # F961/F962/F964: narrow whole-text statement-sequence decoders.
+    # Each returns the decoded string or None; all filed shapes BREAK
+    # on the open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Ordered after
+    # the F501 rewrite for the same reason.
+    for _stmtdec in (_js_f961_stmt_decode, _js_f962_stmt_decode,
+                     _js_f964_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
     # JS string-expression runs (F430/F434/F437/F457): strict static decode of
     # quoted '+' concatenation, template literals (literal-only ${...}),
     # String.fromCharCode,
