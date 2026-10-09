@@ -3691,6 +3691,18 @@ def _js_parse_fcc_dispatch(text, paren, dname, depth, state):
                 raise _JSExprFail("fromCharCode apply argsArray not array")
             val, i = _js_parse_fromcharcode_args_inner(text, i + 1, "]",
                                                        state=state)
+            # F952: postfix array transforms on the argsArray --
+            # [codes].toReversed() / .toSorted((a,b)=>0) /
+            # .with(0,cp) / .toSpliced(0,1). Tried after the plain
+            # form: the `.` head is disjoint from the `)` the plain
+            # form requires next, so no previously-decoded input
+            # changes behavior. Snapshot/restore on miss (wave-383
+            # rule).
+            _f952p, _f952o = state["parts"], state["ops"]
+            try:
+                val, i = _js_parse_f952_postfix(text, i, val, state)
+            except _JSExprFail:
+                state["parts"], state["ops"] = _f952p, _f952o
         i = _js_skip_ws(text, i)
         if i >= n or text[i] != ")":
             raise _JSExprFail("fromCharCode apply with extra args")
@@ -3700,6 +3712,121 @@ def _js_parse_fcc_dispatch(text, paren, dname, depth, state):
     val, i = _js_parse_fromcharcode_args_inner(text, i, ")", state=state)
     state["ops"] += 1  # the dispatch call is obfuscation-shaped
     return val, i
+
+
+def _js_parse_f952_postfix(text, i, val, state):
+    """Apply one F952 array transform to a decoded argsArray string.
+
+    F952 (LOW, filed 2026-10-09 by wave-390 attack round 58):
+    `[codes].toReversed()` / `.toSorted((a,b)=>0)` / `.with(0,cp)`
+    / `.toSpliced(0,1)` applied to the fromCharCode argument array
+    before `.apply` defeat the F643/F500 argument grammar. *val* is
+    the already-decoded codepoint string; every codepoint passed
+    through _safe_chr (BMP by construction -- fromCharCode is
+    ToUint16, and _safe_chr rejects the rest), so transforming the
+    decoded string is exactly transforming the code list.
+
+    Node-exact (v24.20.0):
+    - toReversed() takes no arguments; the reversed string is
+      returned.
+    - toSorted((a,b)=>0): a constant-0 comparator is a stable
+      no-op (node's sort is stable) -- the string is returned
+      unchanged. Only the exact two-ident `=>0` comparator is
+      modeled; anything else fails closed.
+    - with(index, cp): literal non-negative index and F458-spelling
+      codepoint; out-of-range indices fail closed (the engine
+      throws RangeError -- the decoder never decodes a throw).
+    - toSpliced(start, deleteCount): literal non-negative start and
+      delete count, no inserted items; out-of-range fails closed.
+    A missing `.` (the plain form) returns (val, i) unchanged.
+    Returns (new_val, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != ".":
+        return val, i
+    j = _js_skip_ws(text, j + 1)
+    name = None
+    for cand in ("toReversed", "toSorted", "with", "toSpliced"):
+        if text.startswith(cand, j):
+            k = j + len(cand)
+            if k >= n or text[k] not in _JS_IDENT_CONT:
+                name = cand
+                j = k
+                break
+    if name is None:
+        raise _JSExprFail("F952 not a modeled transform")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("F952 transform without paren")
+    j = _js_skip_ws(text, j + 1)
+    if name == "toReversed":
+        if j >= n or text[j] != ")":
+            raise _JSExprFail("F952 toReversed with args")
+        val = val[::-1]
+        j += 1
+    elif name == "toSorted":
+        # Exactly `(P1,P2)=>0` -- any other comparator fails closed.
+        if j >= n or text[j] != "(":
+            raise _JSExprFail("F952 toSorted comparator not arrow")
+        j = _js_skip_ws(text, j + 1)
+        _p1, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ",":
+            raise _JSExprFail("F952 toSorted comparator arity")
+        j = _js_skip_ws(text, j + 1)
+        _p2, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ")":
+            raise _JSExprFail("F952 toSorted comparator arity")
+        j = _js_skip_ws(text, j + 1)
+        if not text.startswith("=>", j):
+            raise _JSExprFail("F952 toSorted not arrow")
+        j = _js_skip_ws(text, j + 2)
+        if j >= n or text[j] != "0":
+            raise _JSExprFail("F952 toSorted comparator not zero")
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != ")":
+            raise _JSExprFail("F952 toSorted extra args")
+        j += 1
+        # Stable no-op: val unchanged.
+    elif name == "with":
+        idx, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ",":
+            raise _JSExprFail("F952 with without value")
+        cp, j = _js_parse_fcc_number(text, _js_skip_ws(text, j + 1))
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ")":
+            raise _JSExprFail("F952 with extra args")
+        j += 1
+        if idx >= len(val):
+            raise _JSExprFail("F952 with out of range")
+        ch = _safe_chr(cp)
+        if ch is None:
+            raise _JSExprFail("F952 with bad codepoint")
+        val = val[:idx] + ch + val[idx + 1:]
+    else:  # toSpliced
+        start, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ",":
+            raise _JSExprFail("F952 toSpliced without count")
+        cnt, j = _js_parse_fcc_number(text, _js_skip_ws(text, j + 1))
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ")":
+            # Inserted items are not modeled -- fail closed.
+            raise _JSExprFail("F952 toSpliced with items")
+        j += 1
+        if start > len(val) or start + cnt > len(val):
+            raise _JSExprFail("F952 toSpliced out of range")
+        val = val[:start] + val[start + cnt:]
+    if len(val) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F952 too long")
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    state["ops"] += 1  # the transform call is obfuscation-shaped
+    return val, j
 
 
 class _JSArr:
@@ -8945,6 +9072,12 @@ def _js_parse_reflect_construct(text, i, depth, state):
     if j < n and text[j] in _JS_IDENT_CONT:
         raise _JSExprFail("Reflectx is not Reflect")
     j = _js_skip_ws(text, j)
+    if j < n and text[j] == "?" and j + 1 < n and text[j + 1] == ".":
+        # F490: Reflect?.construct -- `?.` adjacent (engine
+        # SyntaxError otherwise, node v24.20.0 verified); Reflect
+        # is provably non-null so ?. === . (F951: the String-target
+        # production needs this for the `?.` variant).
+        j += 1
     if j < n and text[j] == "[":
         # F498: Reflect['construct'] -- bracket-string member access,
         # node-identical to the dot form (node v24.20.0 verified).
@@ -8973,10 +9106,24 @@ def _js_parse_reflect_construct(text, i, depth, state):
         raise _JSExprFail("Reflect.construct without paren")
     j = _js_skip_ws(text, j + 1)
     if is_bracket:
+        # F951: the bracket form also accepts the bare String
+        # target (tried before the Array-only ctor ref).
+        _bj = _js_skip_ws(text, j)
+        if text.startswith("String", _bj):
+            _be = _bj + len("String")
+            if _be >= n or text[_be] not in _JS_IDENT_CONT:
+                _, j = _js_parse_ident(text, _bj)
+                return _js_parse_f951_construct_string(text, j, state)
         j = _js_parse_array_ctor_ref(text, j)
     else:
         # Target: exactly the bare Array identifier (F468 scope).
         tgt, j = _js_parse_ident(text, j)
+        if tgt == "String":
+            # F951: Reflect.construct(String, [LIT]) -- the String
+            # constructor coerces its single argument (node
+            # v24.20.0); extra args would be ignored by the engine
+            # but fail closed here (narrow scope).
+            return _js_parse_f951_construct_string(text, j, state)
         if tgt != "Array":
             raise _JSExprFail("Reflect.construct non-Array target")
     j = _js_skip_ws(text, j)
@@ -8995,6 +9142,104 @@ def _js_parse_reflect_construct(text, i, depth, state):
         # identity -- fails closed.
         raise _JSExprFail("Reflect.construct with extra args")
     return arr, j + 1
+
+
+def _js_parse_f951_string_args_array(text, j, state):
+    """Parse `, [LIT]` -- the F951 String-constructor argsArray.
+
+    Zero or one string literals (via _js_parse_string_literal_array);
+    more fail closed (narrow scope -- the engine would ignore extras,
+    but the decoder never guesses). Returns (value, next_index)
+    where value is the single literal or "" for the empty array.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F951 without args")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F951 args not array")
+    arr, j = _js_parse_string_literal_array(text, j, state)
+    if len(arr.elements) > 1:
+        raise _JSExprFail("F951 multi-arg")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("F951 extra args")
+    val = arr.elements[0] if arr.elements else ""
+    if len(val) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F951 too long")
+    return val, j + 1
+
+
+def _js_parse_f951_construct_string(text, j, state):
+    """Parse `Reflect.construct(String, [LIT])` past the target (F951).
+
+    F951 (LOW, filed 2026-10-09 by wave-390 attack round 58):
+    Reflect.construct(String,['f1'])+'f2' coerces node-exactly
+    (v24.20.0) while F780 models Reflect.construct for this-binding
+    constructors only. Node-exact desugar: `new String('f1')` wraps
+    the single argument; the decoder's string discipline models the
+    wrapped value (ToPrimitive is identity on the wrapped string
+    for the additive/member positions the decoder reaches). The
+    result is obfuscation-shaped (ops charged). Never evals.
+    """
+    val, j = _js_parse_f951_string_args_array(text, j, state)
+    state["ops"] += 1  # the Reflect call is obfuscation-shaped
+    return val, j
+
+
+def _js_parse_f951_reflect_apply_string(text, i, depth, state):
+    """Parse `Reflect.apply(String, thisArg, [LIT])` at text[i] (F951).
+
+    F951 (LOW, filed 2026-10-09 by wave-390 attack round 58):
+    Reflect.apply(String,null,['f1'])+'f2' coerces node-exactly
+    (v24.20.0) while F943 covers Reflect.apply for fromCharCode
+    anchors only. Node-exact desugar: `String('f1')` is the
+    primitive 'f1'; the thisArg is ignored by the String function
+    (parsed via _js_parse_dispatch_thisarg, F486 precedent). The
+    dot form, the F490 `?.` form, and the F480 bracket-string
+    member form are modeled identically (node v24.20.0 verified).
+    The result is obfuscation-shaped (ops charged). Never evals.
+    """
+    n = len(text)
+    j = i + len("Reflect")
+    if j < n and text[j] in _JS_IDENT_CONT:
+        raise _JSExprFail("Reflectx is not Reflect")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "?" and j + 1 < n and text[j + 1] == ".":
+        # F490: Reflect?.apply -- `?.` adjacent; Reflect is
+        # provably non-null so ?. === . (same normalization as
+        # _js_parse_reflect_call).
+        j += 1
+    if j < n and text[j] == "[":
+        _mname, j = _js_parse_reflect_member_key(text, j, depth, state)
+        if _mname != "apply":
+            raise _JSExprFail("F951 not apply")
+    else:
+        if j >= n or text[j] != ".":
+            raise _JSExprFail("Reflect without dot")
+        j = _js_skip_ws(text, j + 1)
+        if not text.startswith("apply", j):
+            raise _JSExprFail("F951 not apply")
+        k = j + len("apply")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("applyx is not apply")
+        j = k
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("F951 without paren")
+    j = _js_skip_ws(text, j + 1)
+    tgt, j = _js_parse_ident(text, j)
+    if tgt != "String":
+        raise _JSExprFail("F951 target not String")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F951 without thisArg")
+    _, j = _js_parse_dispatch_thisarg(text, j + 1, depth, state)
+    val, j = _js_parse_f951_string_args_array(text, j, state)
+    state["ops"] += 1  # the Reflect call is obfuscation-shaped
+    return val, j
 
 
 def _js_extend_concat_apply_args(text, j, elements, depth, state):
@@ -10661,6 +10906,20 @@ def _js_parse_reflect_call(text, i, depth, state):
         return _js_parse_f513_reflect_bind(text, _bpeek[1], depth, state)
     if _bpeek is not None and _bpeek[0] == "call":
         return _js_parse_f521_call_dispatch(text, _bpeek[1], depth, state)
+    # F951: Reflect.apply(String, thisArg, [LIT]) -- the String
+    # constructor coerces its single argument to a primitive string
+    # (node v24.20.0); the thisArg is ignored. Tried before the
+    # target peek (which fails closed on non-Array heads); the
+    # callee re-parses from i (defense-in-depth), so a peek
+    # mis-route fails closed there.
+    _f951j = _js_skip_ws(text, j)
+    if _f951j < n and text[_f951j] == "(":
+        _f951k = _js_skip_ws(text, _f951j + 1)
+        if text.startswith("String", _f951k):
+            _f951e = _f951k + len("String")
+            if _f951e >= n or text[_f951e] not in _JS_IDENT_CONT:
+                return _js_parse_f951_reflect_apply_string(
+                    text, i, depth, state)
     _ptarget = _js_peek_reflect_apply_target(text, j)
     if _ptarget == "concat":
         return _js_parse_reflect_apply_concat(text, i, depth, state)
@@ -32391,6 +32650,108 @@ def _js_f679_sim_trycatch(text, j, env, state, depth):
     return j
 
 
+def _js_f679_sim_trycatchfinally(text, j, env, state, depth):
+    """Simulate `try{STMTS}catch(IDENT){STMTS}finally{STMTS}` (F950).
+
+    F950 (LOW, filed 2026-10-09 by wave-390 attack round 58): a
+    credential thrown and caught (or assembled in finally) resolves
+    node-exactly while the decoder had no throw/catch value-flow
+    production -- F679's try-catch fails closed on `finally`, and
+    F655's try-finally fails closed on `catch`.
+
+    Node-exact (v24.20.0) for the modeled subset: the try block
+    runs; the first `throw 'LIT'` (or bound-string throw) transfers
+    to the catch with the parameter bound to the thrown string (the
+    F740 integer-throw discipline is mirrored verbatim: the catch
+    parameter binds the poison sentinel when never referenced,
+    fails closed when referenced); the catch block then runs; the
+    finally block ALWAYS runs afterwards -- on normal completion,
+    after a caught throw, and before a propagating abrupt
+    completion (throw/break) continues outward. The catch
+    parameter shadows for the catch block only (restored after).
+    Disjoint from _js_f679_sim_trycatch by the required `finally`
+    clause (which the old production rejects), so no
+    previously-decoded input changes behavior. Returns the index
+    just past the finally `}`. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F950 too deep")
+    j = _js_skip_ws(text, _js_match_kw(text, j, "try"))
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    tbs, tbe, j = _js_span_braced(text, j - 1)
+    j = _js_skip_ws(text, j)
+    ck = _js_match_kw(text, j, "catch")
+    if ck is None:
+        raise _JSExprFail("F950 try without catch")
+    j = _js_expect(text, _js_skip_ws(text, ck), "(")
+    cname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if cname == "arguments" or cname in _F611_RESERVED:
+        raise _JSExprFail("F950 bad catch param")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    cbs, cbe, j = _js_span_braced(text, j - 1)
+    j = _js_skip_ws(text, j)
+    fk = _js_match_kw(text, j, "finally")
+    if fk is None:
+        raise _JSExprFail("F950 try-catch without finally")
+    j = _js_expect(text, _js_skip_ws(text, fk), "{")
+    fbs, fbe, j = _js_span_braced(text, j - 1)
+    lex = _js_f679_lexset(state)
+    had_lex = cname in lex
+    lex.add(cname)
+    saved = env.get(cname, _JS_F679_ABSENT)
+    try:
+        try:
+            _js_f679_sim_inner(text, _js_skip_ws(text, tbs), tbe, env,
+                               state, depth + 1)
+        except _JSF679Throw as thr:
+            if isinstance(thr.value, str):
+                env[cname] = (thr.value, True)
+            else:
+                # F740 discipline, mirrored from
+                # _js_f679_sim_trycatch.
+                if _js_f679_catch_param_referenced(text, cbs, cbe,
+                                                  cname):
+                    raise _JSExprFail("F950 catch param referenced")
+                env[cname] = (_JS_F679_POISON, True)
+            _js_f679_charge(state)
+            _js_f679_sim_inner(text, _js_skip_ws(text, cbs), cbe, env,
+                               state, depth + 1)
+        finally:
+            # Node-exact: finally runs on normal completion, after a
+            # caught throw, and before a propagating abrupt
+            # completion (throw/break) continues outward.
+            _js_f679_sim_inner(text, _js_skip_ws(text, fbs), fbe, env,
+                               state, depth + 1)
+    finally:
+        if saved is _JS_F679_ABSENT:
+            env.pop(cname, None)
+        else:
+            env[cname] = saved
+        if not had_lex:
+            lex.discard(cname)
+    return j
+
+
+def _js_f679_sim_try_dispatch(text, j, env, state, depth):
+    """Dispatch try/catch/finally (F950) vs try/catch (F679).
+
+    Tries the F950 try/catch/finally production first with
+    snapshot/restore on miss (wave-383 rule: a failed speculative
+    attempt must not starve later hooks' scan budget); falls back
+    to the F679 try/catch production. Disjoint by the `finally`
+    clause. Never evals.
+    """
+    _svp, _svo = state["parts"], state["ops"]
+    try:
+        return _js_f679_sim_trycatchfinally(text, j, env, state,
+                                            depth)
+    except _JSExprFail:
+        state["parts"], state["ops"] = _svp, _svo
+    return _js_f679_sim_trycatch(text, j, env, state, depth)
+
+
 def _js_f679_sim_inner(text, j, inner_end, env, state, depth):
     """Simulate F679 body statements from j to inner_end.
 
@@ -32432,7 +32793,7 @@ def _js_f679_sim_inner(text, j, inner_end, env, state, depth):
                          ("for", _js_f679_sim_for),
                          ("while", _js_f679_sim_while),
                          ("do", _js_f679_sim_dowhile),
-                         ("try", _js_f679_sim_trycatch)):
+                         ("try", _js_f679_sim_try_dispatch)):
             wk = _js_match_kw(text, j, wkw)
             if wk is not None:
                 j = wfn(text, j, env, state, depth + 1)
@@ -32496,7 +32857,7 @@ def _js_f679_top_stmt(text, j, inner_end, env, state, depth):
                      ("for", _js_f679_sim_for),
                      ("while", _js_f679_sim_while),
                      ("do", _js_f679_sim_dowhile),
-                     ("try", _js_f679_sim_trycatch)):
+                     ("try", _js_f679_sim_try_dispatch)):
         wk = _js_match_kw(text, j, wkw)
         if wk is not None:
             return wfn(text, j, env, state, depth)
@@ -103744,6 +104105,587 @@ def _js_f586_shift_ok(text, s):
             or _js_match_kw(text, j, "WeakRef") is not None)
 
 
+def _js_f949_scan_to_semi(text, i):
+    """Scan from text[i] to the `;` at depth 0 (F949).
+
+    String-aware; backticks, `/`, and unbalanced brackets fail
+    closed (return None). Returns the index just past the `;`.
+    Never evals.
+    """
+    n = len(text)
+    depth = 0
+    while i < n:
+        c = text[i]
+        if c in "'\"":
+            q = c
+            i += 1
+            while i < n and text[i] != q:
+                if text[i] == "\\":
+                    i += 1
+                    if i >= n:
+                        return None
+                i += 1
+            if i >= n:
+                return None
+            i += 1
+            continue
+        if c == "`" or c == "/":
+            return None
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth < 0:
+                return None
+        elif c == ";" and depth == 0:
+            return i + 1
+        i += 1
+    return None
+
+
+def _js_f949_scan_balanced(text, i, open_c, close_c):
+    """Scan a balanced open_c...close_c at text[i] (F949).
+
+    Returns the index just past the matching close, or None.
+    String-aware. Never evals.
+    """
+    n = len(text)
+    if i >= n or text[i] != open_c:
+        return None
+    depth = 0
+    while i < n:
+        c = text[i]
+        if c in "'\"":
+            q = c
+            i += 1
+            while i < n and text[i] != q:
+                if text[i] == "\\":
+                    i += 1
+                    if i >= n:
+                        return None
+                i += 1
+            if i >= n:
+                return None
+            i += 1
+            continue
+        if c == "`" or c == "/":
+            return None
+        if c == open_c:
+            depth += 1
+        elif c == close_c:
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return None
+
+
+def _js_f949_try_end(text, i):
+    """Return the index just past a `try` statement at text[i] (F949).
+
+    *i* is at the `try` keyword (already keyword-validated). Scans
+    the `try{...}` block plus any `catch(...){...}` / `finally{...}`
+    clauses using the brace scanner. Returns None when the shape is
+    not a complete try statement. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i + 3)
+    if j >= n or text[j] != "{":
+        return None
+    try:
+        _, _, j = _js_span_braced(text, j)
+    except _JSExprFail:
+        return None
+    while True:
+        j = _js_skip_ws(text, j)
+        ck = _js_match_kw(text, j, "catch")
+        if ck is not None:
+            j = _js_skip_ws(text, ck)
+            if j < n and text[j] == "(":
+                d = 1
+                j += 1
+                while j < n and d > 0:
+                    if text[j] == "(":
+                        d += 1
+                    elif text[j] == ")":
+                        d -= 1
+                    j += 1
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != "{":
+                return None
+            try:
+                _, _, j = _js_span_braced(text, j)
+            except _JSExprFail:
+                return None
+            continue
+        fk = _js_match_kw(text, j, "finally")
+        if fk is not None:
+            j = _js_skip_ws(text, fk)
+            if j >= n or text[j] != "{":
+                return None
+            try:
+                _, _, j = _js_span_braced(text, j)
+            except _JSExprFail:
+                return None
+            break
+        break
+    return j
+
+
+def _js_f949_scan_stmt(text, i):
+    """Scan one complete statement at text[i] (F949/F950).
+
+    *i* is at the statement head (post-whitespace). Handles the
+    statement classes the F949/F950 rewrites accept: var/let/const
+    (to `;`), function and class declarations (balanced body),
+    try/catch/finally (via _js_f949_try_end), for (header + body
+    statement), labeled statements (`ident:` + statement), bare
+    blocks `{...}`, and -- as a fallback -- expression statements
+    (to `;`; the rewrite classifies them, accepting only the
+    trailing accumulator). Anything else fails closed (returns
+    None). Never evals.
+    """
+    n = len(text)
+    for kw in ("var", "let", "const"):
+        ke = i + len(kw)
+        if text.startswith(kw, i) and (
+                ke >= n or text[ke] not in _JS_IDENT_CONT):
+            return _js_f949_scan_to_semi(text, i)
+    ke = i + 8
+    if text.startswith("function", i) and (
+            ke >= n or text[ke] not in _JS_IDENT_CONT):
+        # function[*] [name] (params) {body} -- skip to the body.
+        j = ke
+        if j < n and text[j] == "*":
+            j += 1
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] not in "([{":
+            # named: skip the name.
+            while j < n and text[j] in _JS_IDENT_CONT:
+                j += 1
+            j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "(":
+            return None
+        j = _js_f949_scan_balanced(text, j, "(", ")")
+        if j is None:
+            return None
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "{":
+            return None
+        return _js_f949_scan_balanced(text, j, "{", "}")
+    ke = i + 5
+    if text.startswith("class", i) and (
+            ke >= n or text[ke] not in _JS_IDENT_CONT):
+        # class [name] [extends heritage] {body} -- skip to the body.
+        j = _js_skip_ws(text, ke)
+        if j < n and text[j] != "{":
+            # Not anonymous: either a name, or the `extends`
+            # keyword (anonymous class with heritage).
+            _is_extends = text.startswith("extends", j) and (
+                j + 7 >= n or text[j + 7] not in _JS_IDENT_CONT)
+            if not _is_extends:
+                # Skip the name.
+                while j < n and text[j] in _JS_IDENT_CONT:
+                    j += 1
+                j = _js_skip_ws(text, j)
+        # `extends ...` -- skip to the body brace (balanced scan
+        # would stop at the wrong brace if the heritage has one;
+        # heritage expressions with braces are rare -- fail closed
+        # on `{` before the class body by scanning straight to it
+        # only when no paren/bracket intervenes).
+        if j < n and text.startswith("extends", j) and (
+                j + 7 >= n or text[j + 7] not in _JS_IDENT_CONT):
+            j = _js_skip_ws(text, j + 7)
+            # Heritage is an expression; scan it conservatively:
+            # stop at the first `{` at depth 0.
+            d = 0
+            while j < n:
+                cj = text[j]
+                if cj in "'\"":
+                    q = cj
+                    j += 1
+                    while j < n and text[j] != q:
+                        if text[j] == "\\":
+                            j += 1
+                        j += 1
+                    j += 1
+                    continue
+                if cj == "`" or cj == "/":
+                    return None
+                if cj in "([{":
+                    if cj == "{" and d == 0:
+                        break
+                    d += 1
+                elif cj in ")]}":
+                    d -= 1
+                    if d < 0:
+                        return None
+                j += 1
+        if j >= n or text[j] != "{":
+            return None
+        return _js_f949_scan_balanced(text, j, "{", "}")
+    if text.startswith("try", i) and (
+            i + 3 >= n or text[i + 3] not in _JS_IDENT_CONT):
+        return _js_f949_try_end(text, i)
+    if text.startswith("for", i) and (
+            i + 3 >= n or text[i + 3] not in _JS_IDENT_CONT):
+        # for (head) body -- the head may contain `;`.
+        j = _js_skip_ws(text, i + 3)
+        if j >= n or text[j] != "(":
+            return None
+        j = _js_f949_scan_balanced(text, j, "(", ")")
+        if j is None:
+            return None
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            return None
+        if text[j] == "{":
+            return _js_f949_scan_balanced(text, j, "{", "}")
+        # Single-statement body.
+        return _js_f949_scan_stmt(text, j)
+    # Labeled statement: `ident:` + statement.
+    j = i
+    while j < n and text[j] in _JS_IDENT_CONT:
+        j += 1
+    if j > i and text[i] in _JS_IDENT_START:
+        k = _js_skip_ws(text, j)
+        if k < n and text[k] == ":":
+            return _js_f949_scan_stmt(text, _js_skip_ws(text, k + 1))
+    # Bare block `{...}` (labeled-block bodies and standalone blocks).
+    if i < n and text[i] == "{":
+        return _js_f949_scan_balanced(text, i, "{", "}")
+    # Expression statement (the trailing `R op= E;` accumulator) --
+    # scanned to `;`; the rewrite classifies it (body rejects it).
+    return _js_f949_scan_to_semi(text, i)
+
+
+def _js_f949_split_topstmts(text):
+    """Split *text* into top-level statements (F949).
+
+    Returns the list of statement source strings, or None when the
+    text is not a clean statement sequence. Uses _js_f949_scan_stmt
+    so `;`-less statements (function/class/try/for/labeled) split
+    correctly. Never evals.
+    """
+    n = len(text)
+    stmts = []
+    i = 0
+    while True:
+        while i < n and text[i] in " \t\n\r":
+            i += 1
+        if i >= n:
+            break
+        j = _js_f949_scan_stmt(text, i)
+        if j is None:
+            return None
+        stmts.append(text[i:j])
+        i = j
+    return stmts if stmts else None
+
+
+def _js_f949_split_declarators(decl_text):
+    """Split a var/let/const declarator list at top-level commas (F949).
+
+    String- and bracket-aware; backticks and `/` fail closed (same
+    discipline as _js_f949_split_topstmts). Returns the declarator
+    strings, or None on unbalanced brackets. Never evals.
+    """
+    n = len(decl_text)
+    parts = []
+    depth = 0
+    cur = 0
+    i = 0
+    while i < n:
+        c = decl_text[i]
+        if c in "'\"":
+            q = c
+            i += 1
+            while i < n and decl_text[i] != q:
+                if decl_text[i] == "\\":
+                    i += 1
+                    if i >= n:
+                        return None
+                i += 1
+            if i >= n:
+                return None
+            i += 1
+            continue
+        if c == "`" or c == "/":
+            return None
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth < 0:
+                return None
+        elif c == "," and depth == 0:
+            parts.append(decl_text[cur:i])
+            cur = i + 1
+        i += 1
+    if depth != 0:
+        return None
+    parts.append(decl_text[cur:])
+    return parts
+
+
+def _js_f949_is_ident(name):
+    """True when *name* is a plain JS identifier (F949)."""
+    if not name or name[0] not in _JS_IDENT_START:
+        return False
+    return all(c in _JS_IDENT_CONT for c in name[1:])
+
+
+def _js_f949_split_plain_assign(d):
+    """Split `R = ADD` at the first top-level plain `=` (F949).
+
+    Returns (R, ADD), or (None, None) when there is no top-level
+    plain assignment (`==`, `=>`, `<=`, `>=`, `!=` do not count;
+    string- and bracket-aware). Never evals.
+    """
+    n = len(d)
+    depth = 0
+    i = 0
+    while i < n:
+        c = d[i]
+        if c in "'\"":
+            q = c
+            i += 1
+            while i < n and d[i] != q:
+                if d[i] == "\\":
+                    i += 1
+                    if i >= n:
+                        return None, None
+                i += 1
+            if i >= n:
+                return None, None
+            i += 1
+            continue
+        if c == "`" or c == "/":
+            return None, None
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth < 0:
+                return None, None
+        elif c == "=" and depth == 0:
+            prev = d[i - 1] if i > 0 else ""
+            nxt = d[i + 1] if i + 1 < n else ""
+            if prev in "=!<>" or nxt in "=>":
+                i += 1
+                continue
+            lhs = d[:i].strip()
+            if not _js_f949_is_ident(lhs):
+                return None, None
+            return lhs, d[i + 1:].strip()
+        i += 1
+    return None, None
+
+
+_F949_AUG_OPS = ("**=", "<<=", ">>=", ">>>=", "&&=", "||=", "??=",
+                 "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=")
+
+
+def _js_f949_split_augassign(tail):
+    """Split a trailing `R op= E;` accumulator statement (F949).
+
+    Returns the bound name R, or None when the tail is not a plain
+    or compound assignment to an identifier (`==`/`=>` never
+    match). Never evals.
+    """
+    n = len(tail)
+    i = 0
+    while i < n and tail[i] in " \t\n\r":
+        i += 1
+    j = i
+    while j < n and tail[j] in _JS_IDENT_CONT:
+        j += 1
+    name = tail[i:j]
+    if not name or name[0] not in _JS_IDENT_START:
+        return None
+    k = j
+    while k < n and tail[k] in " \t\n\r":
+        k += 1
+    for op in _F949_AUG_OPS:
+        if tail.startswith(op, k):
+            return name
+    if tail.startswith("=", k):
+        nxt = tail[k + 1] if k + 1 < n else ""
+        if nxt not in "=>":
+            return name
+    return None
+
+
+def _js_f949_rewrite_topstmt(text):
+    """Rewrite a top-level statement sequence as its IIFE twin (F949).
+
+    F949 (LOW, filed 2026-10-09 by wave-390 attack round 58): eleven
+    builtin classes the decoder models inside IIFE bodies miss as
+    top-level statement sequences -- structuredClone member reads,
+    generator yield accumulation, manual .next().value reads, class
+    static blocks, class static fields, Proxy.revocable member reads,
+    WeakRef deref member reads, array destructuring binds,
+    Object.values().join, Map values spread join, and labeled-block
+    break assembly -- because the statement sims only thread IIFE
+    bodies.
+
+    Node-exact rewrite (v24.20.0): a whole-text sequence of
+    statements (`var`/`let`/`const` declarations, `function` /
+    `function*` declarations, `class` declarations, `for`
+    statements, labeled statements, and -- for F950 composition --
+    `try`/`catch`/`finally` statements, all re-emitted verbatim;
+    the head statement may be any of these, not just a binding)
+    followed by a result statement (`var|let|const R = ADD;` --
+    multi-declarator trailing forms split into separate
+    declarations -- or a trailing `R op= E;` accumulator) becomes
+    `(function(){<bindings>return <ADD|R>;})()`. The rewrite is
+    semantics-preserving for the accepted classes: no `this`,
+    `arguments`, or escaping closures cross the function boundary;
+    labels/breaks are function-scoped; declaration hoisting is
+    identical; and the IIFE statement sims fail closed on any
+    `return`/`break`/`continue`/`this`/`arguments`/unbound names
+    inside a re-emitted statement, so only the
+    semantics-preserving subset can decode. (Implicit sloppy-mode
+    globals -- assignments to undeclared names -- fail closed: the
+    sims require bound names. This is a deliberate boundary, not
+    a mis-decode.) Anything else -- a leading `(`, a non-accepted
+    statement before the tail, an empty statement, a result
+    statement that is not an assignment -- fails closed (returns
+    None). The twin is decoded through the existing IIFE
+    statement sims, which validate every binding; a twin that
+    fails closed there yields no variant.
+
+    Returns the twin text, or None. Never evals.
+    """
+    n = len(text)
+    i = 0
+    while i < n and text[i] in " \t\n\r":
+        i += 1
+    if i >= n or text[i] == "(":
+        return None
+    head_ok = False
+    for kw in ("var", "let", "const", "function", "class", "try", "for"):
+        k = i + len(kw)
+        if text.startswith(kw, i) and (
+                k >= n or text[k] not in _JS_IDENT_CONT):
+            head_ok = True
+            break
+    if not head_ok:
+        # Labeled statement head: `ident:` (HARD-1, spec review:
+        # the head gate must not exclude try/for/labeled -- the
+        # finding's own shapes lead with them).
+        j = i
+        while j < n and text[j] in _JS_IDENT_CONT:
+            j += 1
+        if j > i and text[i] in _JS_IDENT_START:
+            k = j
+            while k < n and text[k] in " \t\n\r":
+                k += 1
+            if k < n and text[k] == ":":
+                head_ok = True
+    if not head_ok:
+        return None
+    if ";" not in text:
+        return None
+    try:
+        stmts = _js_f949_split_topstmts(text)
+    except RecursionError:
+        # H1 (standards review): _js_f949_scan_stmt self-recurses
+        # for `for` bodies and labeled statements; a deeply nested
+        # input would raise RecursionError. Fail closed (None) --
+        # a DLP scanner must never raise on attacker input.
+        return None
+    if not stmts:
+        return None
+    body = []
+    for s in stmts[:-1]:
+        st = s.strip()
+        if not st:
+            return None
+        # Strip one trailing `;` (var/let/const statements carry
+        # it; `;`-less statements do not).
+        if st.endswith(";"):
+            st = st[:-1].strip()
+            if not st:
+                return None
+        kind = None
+        for k in ("var", "let", "const"):
+            ke = len(k)
+            if st.startswith(k) and (
+                    ke >= len(st) or st[ke] not in _JS_IDENT_CONT):
+                kind = "decl"
+                break
+        if kind is None:
+            if st.startswith("function") and (
+                    len(st) == 8 or st[8] not in _JS_IDENT_CONT):
+                kind = "func"
+            elif st.startswith("class") and (
+                    len(st) == 5 or st[5] not in _JS_IDENT_CONT):
+                kind = "class"
+            elif st.startswith("try") and (
+                    len(st) == 3 or st[3] not in _JS_IDENT_CONT):
+                kind = "try"
+            elif st.startswith("for") and (
+                    len(st) == 3 or st[3] not in _JS_IDENT_CONT):
+                kind = "for"
+            else:
+                # Labeled statement: `ident:` + statement.
+                j = 0
+                while j < len(st) and st[j] in _JS_IDENT_CONT:
+                    j += 1
+                if j > 0 and st[0] in _JS_IDENT_START:
+                    k = j
+                    while k < len(st) and st[k] in " \t\n\r":
+                        k += 1
+                    if k < len(st) and st[k] == ":":
+                        kind = "labeled"
+        if kind == "decl":
+            # Re-emit with its `;` (declaration statements).
+            body.append(st + ";")
+        elif kind in ("func", "class", "try", "for", "labeled"):
+            # `;`-less statements: re-emitted verbatim (no trailing
+            # `;` -- an empty statement would fail the sim closed).
+            # Sound because the IIFE statement sims are the
+            # validators -- they fail closed on return/break/
+            # continue/this/arguments inside, and for the modeled
+            # subset function-wrapping is semantics-preserving.
+            body.append(st)
+        else:
+            return None
+    tail = stmts[-1].strip()
+    if not tail:
+        return None
+    if tail.endswith(";"):
+        tail = tail[:-1].strip()
+        if not tail:
+            return None
+    ret = None
+    kw = None
+    for k in ("var", "let", "const"):
+        ke = len(k)
+        if tail.startswith(k) and (
+                ke >= len(tail) or tail[ke] not in _JS_IDENT_CONT):
+            kw = k
+            break
+    if kw is not None:
+        decls = _js_f949_split_declarators(tail[len(kw):])
+        if not decls:
+            return None
+        for d in decls[:-1]:
+            body.append(kw + " " + d.strip() + ";")
+        _rname, add = _js_f949_split_plain_assign(decls[-1])
+        if _rname is None or not add:
+            return None
+        ret = "return " + add + ";"
+    else:
+        rname = _js_f949_split_augassign(tail)
+        if rname is None:
+            return None
+        body.append(tail + ";")
+        ret = "return " + rname + ";"
+    return "(function(){" + "".join(body) + ret + "})()"
+
+
 def _try_js_expr_decode_f586(text, s):
     """Decode one JS expression at match position *s*, retrying at the
     grouping paren for parenthesized new-expression receivers (F586).
@@ -104081,6 +105023,21 @@ def _decode_layer(text):
     _value_text = _js_resolve_value_bindings(text)
     if _value_text is not None:
         decoded = _try_js_expr_decode_all(_value_text)
+        if decoded is not None:
+            _add(decoded)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F949: top-level statement sequences whose IIFE twins decode
+    # (node-exact whole-text rewrite -- see _js_f949_rewrite_topstmt).
+    # Models the 11 builtin classes the IIFE statement sims handle
+    # but that miss as top-level statement sequences
+    # (structuredClone, generator yield/.next(), class static
+    # blocks/fields, Proxy.revocable, WeakRef, destructuring,
+    # Object.values, Map spread, labeled blocks). Ordered after F501
+    # to preserve the pre-existing variant order exactly (F441).
+    _topstmt_text = _js_f949_rewrite_topstmt(text)
+    if _topstmt_text is not None:
+        decoded = _try_js_expr_decode_all(_topstmt_text)
         if decoded is not None:
             _add(decoded)
             if len(variants) >= _MAX_CANDIDATES:
