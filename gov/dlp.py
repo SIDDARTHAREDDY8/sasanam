@@ -44179,6 +44179,767 @@ def _js_parse_f642_terminal_member(text, i):
     raise _JSExprFail("F642 terminal not a member")
 
 
+def _js_f758_rest_body_operand(text, j, plains, rest_name, rest_vals,
+                               state):
+    """Parse one F758 body operand at text[j]: a string literal, a bare
+    plain-param identifier, `REST.join('SEP')` / `REST.join()`, or
+    `REST[INT]` (canonical decimal, bounds-checked). Returns (str,
+    next_index). Never evals."""
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n:
+        raise _JSExprFail("F758 empty operand")
+    c = text[j]
+    if c in "'\"":
+        return _js_parse_string(text, j)
+    if c in _JS_IDENT_START:
+        name, k = _js_parse_ident(text, j)
+        k2 = _js_skip_ws(text, k)
+        if name == rest_name:
+            if k2 < n and text[k2] == ".":
+                mname, k3 = _js_parse_ident(text,
+                                            _js_skip_ws(text, k2 + 1))
+                if mname != "join":
+                    raise _JSExprFail("F758 rest member not join")
+                k3 = _js_expect(text, k3, "(")
+                k3 = _js_skip_ws(text, k3)
+                if k3 < n and text[k3] == ")":
+                    sep = ","
+                    k3 += 1
+                else:
+                    sep, k3 = _js_parse_string(text, k3)
+                    k3 = _js_expect(text, k3, ")")
+                state["parts"] += 1  # the join is obfuscation-shaped
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                return sep.join(rest_vals), k3
+            if k2 < n and text[k2] == "[":
+                kk = _js_skip_ws(text, k2 + 1)
+                d0 = kk
+                while kk < n and text[kk] in _ASCII_DIGITS:
+                    kk += 1
+                if kk == d0:
+                    raise _JSExprFail("F758 rest index not int")
+                if kk - d0 > 1 and text[d0] == "0":
+                    raise _JSExprFail("F758 rest index not canonical")
+                idx = int(text[d0:kk])
+                kk = _js_expect(text, kk, "]")
+                if idx >= len(rest_vals):
+                    # The engine yields undefined here (stringified
+                    # to "undefined" in concatenation) -- outside the
+                    # string-only discipline: fail closed, never
+                    # mis-decode.
+                    raise _JSExprFail("F758 rest index out of range")
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                return rest_vals[idx], kk
+            raise _JSExprFail("F758 bare rest in body")
+        if name in plains:
+            if k2 < n and text[k2] in ".[(":
+                # A plain param is a STRING in the engine; member
+                # reads and calls on it are outside this production
+                # (the F608 discipline).
+                raise _JSExprFail("F758 non-bare plain param")
+            return plains[name], k
+        raise _JSExprFail("F758 unbound ident")
+    raise _JSExprFail("F758 bad operand")
+
+
+def _js_f758_rest_body_additive(text, plains, rest_name, rest_vals,
+                                state):
+    """Parse the F758 body additive `OP (+ OP)*` (F758).
+
+    OP is a string literal, a bare plain-param identifier, or a
+    rest-param read (`REST.join('SEP')` / `REST.join()` /
+    `REST[INT]`). Returns (value, next_index). Never evals."""
+    n = len(text)
+    val, j = _js_f758_rest_body_operand(text, 0, plains, rest_name,
+                                        rest_vals, state)
+    while True:
+        k = _js_skip_ws(text, j)
+        if k >= n or text[k] != "+":
+            return val, j
+        rhs, j = _js_f758_rest_body_operand(text, k + 1, plains,
+                                            rest_name, rest_vals,
+                                            state)
+        if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F758 concat too long")
+        val = val + rhs
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+
+
+def _js_parse_f758_rest_param_iife(text, i, depth, state):
+    """Parse `(function(){function NAME(P1,...,Pn,...REST){return ADD;}return NAME('LIT',...);})()` (F758).
+
+    F758 (LOW, attack round 51): rest parameters bypass the bounded
+    static JS-expression decoder -- the decoder models arguments
+    indexing (F558, CLOSED) but not rest parameters:
+    `function h(...xs){return xs.join('');}` called as
+    `h('f1','f2')`, and the mixed twin `function
+    h(a,...rest){return a+rest[0];}`.
+
+    Node-exact desugar (v24.20.0): the IIFE body holds exactly one
+    function declaration whose parameter list is zero or more plain
+    identifiers followed by a single rest parameter (the rest
+    parameter must be last -- engine syntax). The body is exactly
+    `return ADD;` with ADD an additive of string literals, bare
+    plain-param identifiers, and rest-param reads. The terminal is
+    exactly `return NAME('LIT',...);` -- all call args are string
+    literals. Plain params bind positionally; the rest parameter
+    gathers the remaining args into an array (node-exact: extra
+    args are never dropped when a rest parameter is present).
+    `REST.join('SEP')` joins with the literal separator
+    (`join()` uses `,` -- engine-exact); `REST[INT]` indexes with a
+    canonical decimal integer, bounds-checked.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - no rest parameter (pure plain-param functions belong to
+      F735/F736 -- disjoint by construction), default /
+      destructured params, duplicate param names, a param named
+      `arguments`, `function*` generators;
+    - bodies that are not exactly `return ADD;`, `this` /
+      `arguments` / `super` in the body, non-bare uses of plain
+      params, bare `REST` in the body, rest members other than
+      `.join`, non-literal join separators, non-canonical or
+      out-of-range rest indices (the engine yields undefined --
+      outside the string-only discipline);
+    - non-literal call args, fewer args than plain params (the
+      engine coerces missing params to undefined -- the F524
+      discipline), calling a different function than the declared
+      one, extra statements, a directive prologue.
+    Tried after F735/F736: that route rejects rest parameters at
+    its param parse and rejects `.join`/indexing bodies at its
+    bound-additive parse (red-first verified: 2 BREAK each on the
+    open tree), so no previously-decoded input changes behavior.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_f655_head(text, i)
+        if brace is None:
+            raise _JSExprFail("F758 not our head")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        m = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        fk = _js_match_kw(stmts, sj, "function")
+        if fk is None:
+            raise _JSExprFail("F758 no function decl")
+        q = _js_skip_ws(stmts, fk)
+        if q < m and stmts[q] == "*":
+            raise _JSExprFail("F758 generator")
+        name, q = _js_parse_ident(stmts, q)
+        if name == "arguments":
+            raise _JSExprFail("F758 fn named arguments")
+        q = _js_expect(stmts, q, "(")
+        plains = []
+        rest = None
+        q = _js_skip_ws(stmts, q)
+        if q < m and stmts[q] == ")":
+            q += 1
+        else:
+            while True:
+                q = _js_skip_ws(stmts, q)
+                if stmts.startswith("...", q):
+                    q = _js_skip_ws(stmts, q + 3)
+                    rname, q = _js_parse_ident(stmts, q)
+                    if (rname == "arguments" or rname in plains
+                            or rname == name):
+                        raise _JSExprFail("F758 bad rest name")
+                    rest = rname
+                    q = _js_skip_ws(stmts, q)
+                    q = _js_expect(stmts, q, ")")
+                    break
+                pname, q = _js_parse_ident(stmts, q)
+                if (pname == "arguments" or pname in plains
+                        or pname == name):
+                    raise _JSExprFail("F758 bad param")
+                q = _js_skip_ws(stmts, q)
+                if (q < m and stmts[q] == "="
+                        and not stmts.startswith(("==", "=>"), q)):
+                    # Default params belong to F736 -- disjoint.
+                    raise _JSExprFail("F758 default param")
+                plains.append(pname)
+                state["parts"] += 1  # the param is obfuscation-shaped
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                q = _js_skip_ws(stmts, q)
+                if q < m and stmts[q] == ",":
+                    q += 1
+                    continue
+                q = _js_expect(stmts, q, ")")
+                break
+        if rest is None:
+            raise _JSExprFail("F758 no rest param")
+        bq = _js_skip_ws(stmts, q)
+        if bq >= m or stmts[bq] != "{":
+            raise _JSExprFail("F758 body not braced")
+        bs, be, q = _js_span_braced(stmts, bq)
+        body = stmts[bs:be]
+        rk = _js_match_kw(body, _js_skip_ws(body, 0), "return")
+        if rk is None:
+            raise _JSExprFail("F758 body not return")
+        ae = len(body)
+        while ae > rk and body[ae - 1] in " \t\n\r":
+            ae -= 1
+        if ae <= rk or body[ae - 1] != ";":
+            raise _JSExprFail("F758 body not ;-terminated")
+        add = body[rk:ae - 1]
+        # Lexically-scoped names the static decoder cannot resolve
+        # fail closed (the F577/F608 discipline).
+        segs = _js_split_code_strings(add)
+        code = "".join(s for is_code, s in segs if is_code)
+        for kw in ("this", "arguments", "super"):
+            if _js_code_find_idents(code, kw):
+                raise _JSExprFail("F758 body references " + kw)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        q = _js_skip_ws(stmts, q)
+        if q < m and stmts[q] == ";":
+            # An `;` after a function declaration is engine-legal
+            # (ASI -- the F668 precedent).
+            q = _js_skip_ws(stmts, q + 1)
+        rk = _js_match_kw(stmts, q, "return")
+        if rk is None:
+            raise _JSExprFail("F758 no terminal return")
+        q = _js_skip_ws(stmts, rk)
+        callee, q = _js_parse_ident(stmts, q)
+        if callee != name:
+            raise _JSExprFail("F758 call of other fn")
+        q = _js_expect(stmts, q, "(")
+        args = []
+        q = _js_skip_ws(stmts, q)
+        if q < m and stmts[q] == ")":
+            q += 1
+        else:
+            while True:
+                q = _js_skip_ws(stmts, q)
+                if q >= m or stmts[q] not in "'\"":
+                    raise _JSExprFail("F758 arg not literal")
+                arg, q = _js_parse_string(stmts, q)
+                args.append(arg)
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                q = _js_skip_ws(stmts, q)
+                if q < m and stmts[q] == ",":
+                    q += 1
+                    continue
+                q = _js_expect(stmts, q, ")")
+                break
+        if len(args) < len(plains):
+            raise _JSExprFail("F758 arity")
+        plains_env = dict(zip(plains, args))
+        rest_vals = args[len(plains):]
+        val, aj = _js_f758_rest_body_additive(add, plains_env, rest,
+                                             rest_vals, state)
+        aj = _js_skip_ws(add, aj)
+        if aj != len(add):
+            raise _JSExprFail("F758 body trailing text")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ";")
+        q = _js_skip_ws(stmts, q)
+        if q != m:
+            raise _JSExprFail("F758 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the nested call is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_f759_parse_setter_body(sbody, param, state):
+    """Parse an F759 setter body: one-or-more `this.FIELD=PARAM;` /
+    `this.FIELD='LIT';` statements. Returns [(field, ("param",) |
+    ("lit", value))]. Never evals."""
+    m = len(sbody)
+    stmts = []
+    j = _js_skip_ws(sbody, 0)
+    while True:
+        j = _js_skip_ws(sbody, j)
+        if j >= m:
+            break
+        if (not sbody.startswith("this", j)
+                or (j + 4 < m and sbody[j + 4] in _JS_IDENT_CONT)):
+            raise _JSExprFail("F759 setter stmt not this-write")
+        j = _js_skip_ws(sbody, j + 4)
+        if j >= m or sbody[j] != ".":
+            raise _JSExprFail("F759 setter not member write")
+        fname, j = _js_parse_ident(sbody, _js_skip_ws(sbody, j + 1))
+        j = _js_skip_ws(sbody, j)
+        if (j >= m or sbody[j] != "="
+                or sbody.startswith(("==", "=>"), j)):
+            raise _JSExprFail("F759 setter bad assign")
+        j = _js_skip_ws(sbody, j + 1)
+        if j < m and sbody[j] in "'\"":
+            lit, j = _js_parse_string(sbody, j)
+            rhs = ("lit", lit)
+        elif j < m and sbody[j] in _JS_IDENT_START:
+            rname, j = _js_parse_ident(sbody, j)
+            if rname != param:
+                raise _JSExprFail("F759 setter rhs not param")
+            rhs = ("param",)
+        else:
+            raise _JSExprFail("F759 setter bad rhs")
+        j = _js_expect(sbody, j, ";")
+        stmts.append((fname, rhs))
+        state["parts"] += 1  # the write is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+    if not stmts:
+        raise _JSExprFail("F759 empty setter body")
+    return stmts
+
+
+def _js_f759_parse_object(text, j, state):
+    """Parse an F759 `{...}` object literal at text[j] == '{'.
+
+    Records string-literal data props, setters
+    (`set NAME(PARAM){STMT;}`), and getters
+    (`get NAME(){return ADD;}`). Returns (data, accessors,
+    last_kind, next_index): data maps name -> str; accessors maps
+    name -> {"get": additive-text-or-None, "set":
+    (param, [(field, rhs)])-or-None} -- a `get` and a `set` for the
+    same name MERGE into one accessor (node-exact: the engine's
+    DefineOwnProperty merges them, verified v24.20.0); last_kind
+    maps name -> "data" | "accessor" (a data definition replaces an
+    accessor and vice versa -- engine-exact later-wins). Never
+    evals.
+    """
+    n = len(text)
+    data = {}
+    accessors = {}
+    last_kind = {}
+    j = _js_expect(text, j, "{")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "}":
+        return data, accessors, last_kind, j + 1
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("F759 object unterminated")
+        if text[j] in "'\"":
+            key, j = _js_parse_string(text, j)
+        elif text[j] in _JS_IDENT_START:
+            key, j = _js_parse_ident(text, j)
+        else:
+            # Methods, computed keys, and anonymous Symbol() keys
+            # fail closed.
+            raise _JSExprFail("F759 bad object key")
+        if key == "__proto__":
+            raise _JSExprFail("F759 __proto__")
+        k = _js_skip_ws(text, j)
+        if key == "set" and not (k < n and text[k] == ":"):
+            sname, k = _js_parse_ident(text, k)
+            k = _js_expect(text, k, "(")
+            param, k = _js_parse_ident(text, k)
+            if param == "arguments":
+                raise _JSExprFail("F759 setter param arguments")
+            k = _js_expect(text, k, ")")
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "{":
+                raise _JSExprFail("F759 setter body not braced")
+            ss, se, k = _js_span_braced(text, k)
+            sstmts = _js_f759_parse_setter_body(text[ss:se], param,
+                                                state)
+            spec = accessors.get(sname)
+            if spec is None or last_kind.get(sname) != "accessor":
+                spec = {"get": None, "set": None}
+                accessors[sname] = spec
+            spec["set"] = (param, sstmts)
+            last_kind[sname] = "accessor"
+            if sname in data:
+                del data[sname]
+            j = k
+        elif key == "get" and not (k < n and text[k] == ":"):
+            gname, k = _js_parse_ident(text, k)
+            k = _js_expect(text, k, "(")
+            k = _js_expect(text, k, ")")
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "{":
+                raise _JSExprFail("F759 getter body not braced")
+            gs, ge, k = _js_span_braced(text, k)
+            gbody = text[gs:ge]
+            grk = _js_match_kw(gbody, _js_skip_ws(gbody, 0), "return")
+            if grk is None:
+                raise _JSExprFail("F759 getter not return")
+            ge2 = len(gbody)
+            while ge2 > grk and gbody[ge2 - 1] in " \t\n\r":
+                ge2 -= 1
+            if ge2 <= grk or gbody[ge2 - 1] != ";":
+                raise _JSExprFail("F759 getter not ;-terminated")
+            spec = accessors.get(gname)
+            if spec is None or last_kind.get(gname) != "accessor":
+                spec = {"get": None, "set": None}
+                accessors[gname] = spec
+            spec["get"] = gbody[grk:ge2 - 1]
+            last_kind[gname] = "accessor"
+            if gname in data:
+                del data[gname]
+            j = k
+        else:
+            # A data property literally named "set"/"get"
+            # (`{set:'f1'}`) is still modeled -- the colon check
+            # above routes it here.
+            j = _js_expect(text, k, ":")
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] not in "'\"":
+                raise _JSExprFail("F759 data value not literal")
+            val, j = _js_parse_string(text, j)
+            data[key] = val
+            last_kind[key] = "data"
+            if key in accessors:
+                del accessors[key]
+        state["parts"] += 1  # the property is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "}":
+                return data, accessors, last_kind, j + 1
+            continue
+        if j < n and text[j] == "}":
+            return data, accessors, last_kind, j + 1
+        raise _JSExprFail("F759 bad object")
+
+
+def _js_f759_getter_operand(text, j, fields, state):
+    """Parse one F759 getter operand: a string literal or a bare
+    `this.FIELD` read (the field must be bound -- the engine yields
+    undefined otherwise, outside the string-only discipline).
+    Returns (str, next_index). Never evals."""
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n:
+        raise _JSExprFail("F759 empty getter operand")
+    if text[j] in "'\"":
+        return _js_parse_string(text, j)
+    if (text.startswith("this", j)
+            and (j + 4 >= n or text[j + 4] not in _JS_IDENT_CONT)):
+        k = _js_skip_ws(text, j + 4)
+        if k >= n or text[k] != ".":
+            raise _JSExprFail("F759 getter not member read")
+        fname, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+        k2 = _js_skip_ws(text, k)
+        if k2 < n and text[k2] in ".[(":
+            raise _JSExprFail("F759 getter chained read")
+        if fname not in fields:
+            raise _JSExprFail("F759 this-field unbound")
+        return fields[fname], k
+    raise _JSExprFail("F759 bad getter operand")
+
+
+def _js_f759_eval_getter(add, fields, state):
+    """Evaluate an F759 getter additive against *fields* (F759).
+
+    Operands are string literals and bare `this.FIELD` reads,
+    joined by top-level `+`. Returns the string value. Never evals.
+    """
+    n = len(add)
+    val, j = _js_f759_getter_operand(add, 0, fields, state)
+    while True:
+        k = _js_skip_ws(add, j)
+        if k >= n or add[k] != "+":
+            break
+        rhs, j = _js_f759_getter_operand(add, k + 1, fields, state)
+        if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F759 concat too long")
+        val = val + rhs
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+    j = _js_skip_ws(add, j)
+    if j != n:
+        raise _JSExprFail("F759 getter trailing text")
+    return val
+
+
+def _js_f759_write_field(fname, val, accessors, last_kind, fields,
+                         active, state):
+    """Apply an F759 `this.FNAME = val` write (F759).
+
+    A write to an accessor WITH a setter re-invokes that setter
+    (the engine's [[Set]] -- node-exact chaining); anything else
+    stores into the field map (the engine creates the property
+    when absent). A write to a getter-only accessor fails closed
+    (this production files setter flows; the engine's sloppy-mode
+    silent ignore assembles no credential here). Never evals.
+    """
+    if last_kind.get(fname) == "accessor":
+        spec = accessors[fname]
+        if spec["set"] is None:
+            raise _JSExprFail("F759 write to getter-only")
+        _js_f759_invoke_setter(fname, val, accessors, last_kind,
+                               fields, active, state)
+        return
+    fields[fname] = val
+    if fname not in last_kind:
+        # The engine creates the property on first write.
+        last_kind[fname] = "data"
+
+
+def _js_f759_invoke_setter(sname, val, accessors, last_kind, fields,
+                           active, state):
+    """Invoke the F759 setter *sname* with value *val* (F759).
+
+    Binds the setter's param to *val* and applies each
+    `this.FIELD=...` statement. Re-entrant invocation fails closed
+    (the engine recurses until RangeError -- node v24.20.0
+    verified). Never evals.
+    """
+    if sname in active:
+        raise _JSExprFail("F759 re-entrant setter")
+    param, sstmts = accessors[sname]["set"]
+    active.add(sname)
+    try:
+        for fname, rhs in sstmts:
+            rval = val if rhs[0] == "param" else rhs[1]
+            _js_f759_write_field(fname, rval, accessors, last_kind,
+                                 fields, active, state)
+            state["parts"] += 1  # the write is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+    finally:
+        active.discard(sname)
+    state["ops"] += 1  # the setter invocation is obfuscation-shaped
+
+
+def _js_f759_assign(pname, aval, accessors, last_kind, fields, state):
+    """Apply an F759 `o.PNAME='LIT';` statement (F759).
+
+    An accessor WITH a setter invokes the setter with the literal;
+    a data property is overwritten (engine-exact); an unknown
+    member is created as a data property (engine-exact).
+    Assignment to a getter-only accessor fails closed. Never evals.
+    """
+    if last_kind.get(pname) == "accessor":
+        spec = accessors[pname]
+        if spec["set"] is None:
+            raise _JSExprFail("F759 assign to getter-only")
+        _js_f759_invoke_setter(pname, aval, accessors, last_kind,
+                               fields, set(), state)
+    else:
+        fields[pname] = aval
+        if pname not in last_kind:
+            last_kind[pname] = "data"
+
+
+def _js_f759_read(pname, accessors, last_kind, fields, state):
+    """Resolve an F759 `o.PNAME` read (F759).
+
+    Accessors WITH a getter evaluate against the current fields;
+    data properties and setter-written fields read the field map;
+    reads of setter-only accessors or unknown members fail closed
+    (the engine yields undefined -- outside the string-only
+    discipline). Never evals.
+    """
+    kind = last_kind.get(pname)
+    if kind == "accessor":
+        spec = accessors[pname]
+        if spec["get"] is None:
+            raise _JSExprFail("F759 read of setter-only")
+        return _js_f759_eval_getter(spec["get"], fields, state)
+    if kind == "data":
+        return fields[pname]
+    raise _JSExprFail("F759 read of unknown")
+
+
+def _js_f759_return_operand(text, j, oname, accessors, last_kind,
+                            fields, state):
+    """Parse one F759 return operand: a string literal or a bare
+    `o.PNAME` / `o['PNAME']` member read. Returns (str,
+    next_index). Never evals."""
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n:
+        raise _JSExprFail("F759 empty return operand")
+    if text[j] in "'\"":
+        return _js_parse_string(text, j)
+    if text[j] in _JS_IDENT_START:
+        tname, k = _js_parse_ident(text, j)
+        if tname != oname:
+            raise _JSExprFail("F759 return of other object")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ".":
+            pname, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+        elif k < n and text[k] == "[":
+            pname, k = _js_parse_bracket_member(text, k)
+        else:
+            raise _JSExprFail("F759 return not a member read")
+        k2 = _js_skip_ws(text, k)
+        if k2 < n and text[k2] in ".[(":
+            raise _JSExprFail("F759 return chained read")
+        return _js_f759_read(pname, accessors, last_kind, fields,
+                             state), k
+    raise _JSExprFail("F759 bad return operand")
+
+
+def _js_f759_return_additive(text, j, oname, accessors, last_kind,
+                             fields, state):
+    """Parse the F759 return-terminal additive `return OP (+ OP)*`
+    at text[j] (F759). OP is a string literal or a bare
+    `o.PNAME` / `o['PNAME']` member read. Returns (value,
+    next_index). Never evals."""
+    rk = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if rk is None:
+        raise _JSExprFail("F759 no terminal return")
+    j = _js_skip_ws(text, rk)
+    val, j = _js_f759_return_operand(text, j, oname, accessors,
+                                     last_kind, fields, state)
+    while True:
+        k = _js_skip_ws(text, j)
+        if k >= len(text) or text[k] != "+":
+            return val, j
+        rhs, j = _js_f759_return_operand(text, k + 1, oname, accessors,
+                                         last_kind, fields, state)
+        if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F759 concat too long")
+        val = val + rhs
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+
+
+def _js_parse_f759_setter_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const o={...};o.P='LIT';[...]return ADD;})()` with setter fragment flows (F759).
+
+    F759 (LOW, attack round 51): setter value flows bypass the
+    bounded static JS-expression decoder -- the decoder models
+    getters (F535, CLOSED) but not setters: `o.x='f1'` through a
+    setter stores the fragment, readable via the backing field
+    node-exactly while the decoder produces zero variants.
+
+    Node-exact desugar (v24.20.0): the IIFE declares one object
+    with string-literal data properties, setters
+    (`set NAME(PARAM){this.FIELD=PARAM;}` -- one or more
+    `this.FIELD=...` writes per body), and getters
+    (`get NAME(){return ADD;}` over string literals and bare
+    `this.FIELD` reads). A `get` and a `set` for the same name
+    merge into one accessor (the engine's DefineOwnProperty
+    semantics -- verified v24.20.0); a data definition replaces an
+    accessor and vice versa (later-wins). One or more
+    `o.P='LIT';` statements follow: an accessor WITH a setter
+    invokes the setter (writing through `this` chains into
+    further setters node-exactly); a data property is overwritten;
+    an unknown member is created. The terminal is `return ADD;`
+    with ADD an additive of string literals and bare `o.P` /
+    `o['P']` member reads (accessors WITH a getter evaluate
+    against the current fields).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - objects without accessors (plain objects belong to earlier
+      routes), methods, computed keys, `__proto__`, non-literal
+      data values, setter bodies that are not `this.FIELD=...`
+      writes, getter bodies that are not `return ADD;`,
+      `this`-chained reads;
+    - re-entrant setters (the engine recurses until RangeError),
+      reads of setter-only accessors or unknown members (the
+      engine yields undefined), writes/assignments to
+      getter-only accessors, non-literal assignment right-hand
+      sides, non-`;`-terminated statements, trailing statements, a
+      directive prologue.
+    Tried after F758: every earlier route requires its own
+    binding family or statement head and fails closed on an
+    object literal with setters (F535 fails closed on setters;
+    F642 fails closed on setters and multi-property objects --
+    red-first verified: 2 BREAK each on the open tree), so no
+    previously-decoded input changes behavior. Returns (value,
+    next_index), or None when text[i] is not this shape. Never
+    evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_f655_head(text, i)
+        if brace is None:
+            raise _JSExprFail("F759 not our head")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        m = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        dkw, dnext = _js_match_decl_kw(stmts, sj)
+        if dkw is None:
+            raise _JSExprFail("F759 no decl")
+        q = _js_skip_ws(stmts, dnext)
+        oname, q = _js_parse_ident(stmts, q)
+        if oname == "arguments":
+            raise _JSExprFail("F759 obj named arguments")
+        q = _js_expect(stmts, q, "=")
+        q = _js_skip_ws(stmts, q)
+        if q >= m or stmts[q] != "{":
+            raise _JSExprFail("F759 obj not literal")
+        data, accessors, last_kind, q = _js_f759_parse_object(
+            stmts, q, state)
+        if not accessors:
+            # Plain objects belong to earlier routes -- disjoint.
+            raise _JSExprFail("F759 no accessors")
+        q = _js_expect(stmts, q, ";")
+        fields = dict(data)
+        while True:
+            q = _js_skip_ws(stmts, q)
+            if q >= m:
+                raise _JSExprFail("F759 body without return")
+            if _js_match_kw(stmts, q, "return") is not None:
+                break
+            tname, q = _js_parse_ident(stmts, q)
+            if tname != oname:
+                raise _JSExprFail("F759 assign to other object")
+            q = _js_skip_ws(stmts, q)
+            if q < m and stmts[q] == ".":
+                pname, q = _js_parse_ident(stmts,
+                                           _js_skip_ws(stmts, q + 1))
+            elif q < m and stmts[q] == "[":
+                pname, q = _js_parse_bracket_member(stmts, q)
+            else:
+                raise _JSExprFail("F759 bad assign member")
+            q = _js_skip_ws(stmts, q)
+            if (q >= m or stmts[q] != "="
+                    or stmts.startswith(("==", "=>"), q)):
+                raise _JSExprFail("F759 bad assign op")
+            q = _js_skip_ws(stmts, q + 1)
+            if q >= m or stmts[q] not in "'\"":
+                raise _JSExprFail("F759 assign rhs not literal")
+            aval, q = _js_parse_string(stmts, q)
+            q = _js_expect(stmts, q, ";")
+            _js_f759_assign(pname, aval, accessors, last_kind, fields,
+                            state)
+            state["parts"] += 1  # the statement is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        val, q = _js_f759_return_additive(stmts, q, oname, accessors,
+                                          last_kind, fields, state)
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ";")
+        q = _js_skip_ws(stmts, q)
+        if q != m:
+            raise _JSExprFail("F759 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f642_getter_varbound_iife(text, i, depth, state):
     """Parse `(function(){[DECL X='LIT'(,X='LIT')*;]+WRAPPER;TERM})()` (F642).
 
@@ -57199,6 +57960,35 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                       state)
         if _f735f736 is not None:
             val, i = _f735f736
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F758: (function(){function NAME(P1,...,Pn,...REST){return
+        #   ADD;}return NAME('LIT',...);})() -- rest-parameter reads.
+        #   Tried after F735/F736: that route rejects rest
+        #   parameters at its param parse and rejects .join/indexing
+        #   bodies at its bound-additive parse (red-first verified:
+        #   2 BREAK each on the open tree), so no previously-decoded
+        #   input changes behavior.
+        _f758_saved_parts = state['parts']; _f758_saved_ops = state['ops']
+        _f758 = _js_parse_f758_rest_param_iife(text, i, depth, state)
+        if _f758 is None:
+            state['parts'] = _f758_saved_parts; state['ops'] = _f758_saved_ops
+        if _f758 is not None:
+            val, i = _f758
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F759: (function(){var|let|const o={...};
+        #   o.P='LIT';[...]return ADD;})() -- setter value flows.
+        #   Tried after F758: every earlier route requires its own
+        #   binding family or statement head and fails closed on an
+        #   object literal with setters (F535 fails closed on
+        #   setters; F642 fails closed on setters and multi-property
+        #   objects -- red-first verified: 2 BREAK each on the open
+        #   tree), so no previously-decoded input changes behavior.
+        _f759_saved_parts = state['parts']; _f759_saved_ops = state['ops']
+        _f759 = _js_parse_f759_setter_iife(text, i, depth, state)
+        if _f759 is None:
+            state['parts'] = _f759_saved_parts; state['ops'] = _f759_saved_ops
+        if _f759 is not None:
+            val, i = _f759
             return _js_parse_postfix(text, i, val, depth, state)
         # F696: (new String('LIT')) / (new String()) --
         # parenthesized boxed-String construction, engine-identical

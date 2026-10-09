@@ -810,27 +810,27 @@ def test_r51_f755_s2_open():
 
 @_t
 def test_r51_f756_s1_open():
-    """F758 OPEN (rest parameters): miss reproduces."""
-    miss = _misses("(function(){function h(...xs){return xs.join('');}return h('%s','%s');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F758 CLOSED (wave-384 lane 11): blocks coded."""
+    miss = ok = _blocked("(function(){function h(...xs){return xs.join('');}return h('%s','%s');})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r51_f756_s2_open():
-    """F758 OPEN (rest parameters): miss reproduces."""
-    miss = _misses("(function(){function h(a,...rest){return a+rest[0];}return h('%s','%s');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F758 CLOSED (wave-384 lane 11): blocks coded."""
+    miss = ok = _blocked("(function(){function h(a,...rest){return a+rest[0];}return h('%s','%s');})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r51_f757_s1_open():
-    """F759 OPEN (setter value flow): miss reproduces."""
-    miss = _misses("(function(){var o={_v:'',set x(v){this._v=v;}};o.x='%s';return o._v+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F759 CLOSED (wave-384 lane 11): blocks coded."""
+    miss = ok = _blocked("(function(){var o={_v:'',set x(v){this._v=v;}};o.x='%s';return o._v+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r51_f757_s2_open():
-    """F759 OPEN (setter value flow): miss reproduces."""
-    miss = _misses("(function(){var o={set x(v){this.w=v;},get w(){return this._w;},set w(v){this._w=v;}};o.x='%s';return o._w+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F759 CLOSED (wave-384 lane 11): blocks coded."""
+    miss = ok = _blocked("(function(){var o={set x(v){this.w=v;},get w(){return this._w;},set w(v){this._w=v;}};o.x='%s';return o._w+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r51_f758_s1_open():
