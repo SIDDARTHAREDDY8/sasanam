@@ -24104,28 +24104,47 @@ def _js_f655_case_span(text, j, n):
     raise _JSExprFail("F655 unterminated switch")
 
 
+def _js_f655_switch_disc(text, j):
+    """Parse one F655 switch discriminant / case label at text[j].
+
+    An integer literal (the F655 subset, via `_js_parse_number`)
+    or a string literal (F741). Returns (tag, value, next_index)
+    with tag "i" or "s". Node-exact: `switch` matches with `===`,
+    so a string label never matches an integer discriminant and
+    vice versa -- the tag keeps the comparison type-faithful.
+    Never evals.
+    """
+    n = len(text)
+    if j < n and text[j] in "'\"":
+        val, q = _js_parse_string(text, j)
+        return "s", val, q
+    val, q = _js_parse_number(text, j)
+    return "i", val, q
+
+
 def _js_f655_sim_switch(text, j, env, state, depth):
-    """Simulate `switch(INT){case INT: STMTS; ...}` at text[j] (F655).
+    """Simulate `switch(DISC){case LBL: STMTS; ...}` at text[j] (F655).
 
     Node-exact (v24.20.0) for the modeled subset: the discriminant
-    and every case label are integer literals (a fractional literal
-    fails closed -- `_js_parse_number` would silently truncate);
-    strict-equality match; fallthrough from the matching case
-    through subsequent cases until a bare `break;` or the end;
-    `default:` runs only when no case matches (a duplicate
-    `default:` is a node SyntaxError -- fail closed); a labeled
-    `break LBL;` propagates to an enclosing labeled block. Bodies
-    hold accumulation/break statements only. Returns the index just
-    past `}`. Never evals."""
+    and every case label are integer literals (F655) or string
+    literals (F741); a fractional literal fails closed --
+    `_js_parse_number` would silently truncate; strict-equality
+    match on the tagged (type, value) pair; fallthrough from the
+    matching case through subsequent cases until a bare `break;`
+    or the end; `default:` runs only when no case matches (a
+    duplicate `default:` is a node SyntaxError -- fail closed); a
+    labeled `break LBL;` propagates to an enclosing labeled block.
+    Bodies hold accumulation/break statements only. Returns the
+    index just past `}`. Never evals."""
     n = len(text)
     if depth >= _JS_EXPR_MAX_DEPTH:
         raise _JSExprFail("too deep")
     j = _js_skip_ws(text, _js_match_kw(text, j, "switch"))
     j = _js_expect(text, j, "(")
     j = _js_skip_ws(text, j)
-    disc, j = _js_parse_number(text, j)
+    dtag, disc, j = _js_f655_switch_disc(text, j)
     j = _js_skip_ws(text, j)
-    if j < n and text[j] == ".":
+    if dtag == "i" and j < n and text[j] == ".":
         raise _JSExprFail("F655 fractional switch")
     j = _js_expect(text, j, ")")
     j = _js_expect(text, _js_skip_ws(text, j), "{")
@@ -24141,13 +24160,13 @@ def _js_f655_sim_switch(text, j, env, state, depth):
         ck = _js_match_kw(text, j, "case")
         if ck is not None:
             q = _js_skip_ws(text, ck)
-            cval, q = _js_parse_number(text, q)
+            ctag, cval, q = _js_f655_switch_disc(text, q)
             q = _js_skip_ws(text, q)
-            if q < n and text[q] == ".":
+            if ctag == "i" and q < n and text[q] == ".":
                 raise _JSExprFail("F655 fractional case")
             q = _js_expect(text, q, ":")
             bs, be, j = _js_f655_case_span(text, _js_skip_ws(text, q), n)
-            cases.append((cval, bs, be))
+            cases.append((ctag, cval, bs, be))
             continue
         dk = _js_match_kw(text, j, "default")
         if dk is not None:
@@ -24156,22 +24175,22 @@ def _js_f655_sim_switch(text, j, env, state, depth):
             seen_default = True
             q = _js_expect(text, _js_skip_ws(text, dk), ":")
             bs, be, j = _js_f655_case_span(text, _js_skip_ws(text, q), n)
-            cases.append((None, bs, be))
+            cases.append((None, None, bs, be))
             continue
         raise _JSExprFail("F655 bad switch clause")
     start = None
-    for idx, (cval, _bs, _be) in enumerate(cases):
-        if cval is not None and cval == disc:
+    for idx, (ctag, cval, _bs, _be) in enumerate(cases):
+        if ctag is not None and ctag == dtag and cval == disc:
             start = idx
             break
     if start is None:
-        for idx, (cval, _bs, _be) in enumerate(cases):
-            if cval is None:
+        for idx, (ctag, _cval, _bs, _be) in enumerate(cases):
+            if ctag is None:
                 start = idx
                 break
     if start is not None:
         for idx in range(start, len(cases)):
-            _cval, bs, be = cases[idx]
+            _ctag, _cval, bs, be = cases[idx]
             try:
                 _js_f655_sim_inner(text, bs, be, env, state, depth)
             except _JSF655Break as brk:
@@ -24468,6 +24487,68 @@ class _JSF679Throw(Exception):
         self.value = value
 
 
+_JS_F679_POISON = object()
+"""Sentinel for a catch parameter bound to a non-string throw (F740).
+
+`throw 0;` binds the catch parameter to the number 0 in the
+engine, which the string/int/object env model cannot represent.
+When the parameter is never referenced in the catch body the
+binding is unobservable, so it is bound to this sentinel; every
+read path fails closed on it (see `_js_f679_kind`), and the
+pre-scan `_js_f679_catch_param_referenced` fails closed first
+when the parameter IS referenced. Never escapes into a decode:
+the return additive only flattens `str` bindings and the
+try/catch restores the outer binding afterwards. Never evals."""
+
+
+_JS_UNDEFINED = object()
+"""Sentinel for an uninitialized `var|let` binding (F740).
+
+`var r;` binds `r` to `undefined` in the engine. It is modeled
+as this sentinel (kind "u", see `_js_f679_kind`) rather than the
+string "undefined" because `undefined` is falsy and only
+`==`/`===`-equal to itself -- a plain string would mis-decode
+truthiness and comparisons (spec-review catch). Node-exact
+(v24.20.0) value semantics: string concatenation renders
+"undefined" (`undefined+'x'` -> "undefinedx"); a lone condition
+is falsy; `===`/`==` against anything but `undefined` is False;
+ordered comparisons are False (NaN semantics); member reads
+throw (fail closed). The sentinel flows as a VALUE through
+string operands, branches, and ternaries; it renders as
+"undefined" only when concatenated with a real string
+(`undefined+'x'` -> "undefinedx", `'x'+undefined` ->
+"xundefined"); `undefined+undefined` is NaN in the engine --
+unrepresentable here, so it fails closed (see
+`_js_f679_concat_parts`). Never evals."""
+
+
+def _js_f679_rendered_len(v):
+    """Rendered length of an F679 string-or-undefined value."""
+    return 9 if v is _JS_UNDEFINED else len(v)
+
+
+def _js_f679_concat_parts(parts):
+    """Fold engine `+` over F679 string/undefined parts (F740).
+
+    Each part is a `str` or the _JS_UNDEFINED sentinel. Node-exact
+    (v24.20.0): if either side of `+` is a string the result is
+    string concatenation with `undefined` rendered as
+    "undefined"; `undefined+undefined` is NaN (numeric add) --
+    unrepresentable in the env model, so it fails closed (a miss,
+    never a mis-decode). A single part is returned as-is, so
+    `s = r` with `r` uninitialized keeps the binding undefined.
+    Never evals.
+    """
+    acc = parts[0]
+    for p in parts[1:]:
+        if acc is _JS_UNDEFINED and p is _JS_UNDEFINED:
+            raise _JSExprFail("F679 undefined+undefined is NaN")
+        left = "undefined" if acc is _JS_UNDEFINED else acc
+        right = "undefined" if p is _JS_UNDEFINED else p
+        acc = left + right
+    return acc
+
+
 _JS_F679_MAX_ITERS = 32  # bound on loop iterations per F679 loop
 _JS_F679_MAX_KEYS = 64  # bound on for-in keys per F679 loop
 _JS_F679_ABSENT = object()  # sentinel for env save/restore
@@ -24499,13 +24580,25 @@ def _js_f679_lexset(state):
 
 
 def _js_f679_kind(val):
-    """Classify an F679 env value: "s" (str), "i" (int), "o" (dict).
+    """Classify an F679 env value: "s" (str), "i" (int), "o" (dict),
+    "p" (the _JS_F679_POISON sentinel, F740), "u" (the
+    _JS_UNDEFINED sentinel, F740).
 
     The F679 environment stores plain Python values. A `var`
     re-declaration (engine-hoisted assignment) can change a
     binding's kind -- downstream kind checks then fail closed
-    (never mis-decode). Never evals.
+    (never mis-decode). The poison sentinel is never a readable
+    value: every read path fails closed on kind "p" (the
+    pre-scan in `_js_f679_sim_trycatch` fails closed first when
+    the poisoned name is referenced). The undefined sentinel has
+    node-exact value semantics (see `_JS_UNDEFINED`): it
+    concatenates as "undefined", is falsy, and only equals
+    itself. Never evals.
     """
+    if val is _JS_F679_POISON:
+        return "p"
+    if val is _JS_UNDEFINED:
+        return "u"
     if isinstance(val, dict):
         return "o"
     if isinstance(val, str):
@@ -24561,6 +24654,11 @@ def _js_f679_operand(text, j, env):
     kind = _js_f679_kind(val)
     if kind == "o":
         raise _JSExprFail("F679 cond object")
+    if kind == "p":
+        # F740: a catch parameter bound to a non-string throw is
+        # never readable -- the pre-scan fails closed first, this
+        # is defense in depth.
+        raise _JSExprFail("F679 cond poison")
     return kind, val, q
 
 
@@ -24573,8 +24671,10 @@ def _js_f679_eval_cond(text, j, env):
     coercion for the ordered comparisons fails closed);
     integers allow all six. Mixed kinds fail closed (engine
     coercion -- never mis-decode). A lone operand uses engine
-    truthiness ("" -> False, 0 -> False). Returns (bool,
-    next_index). Never evals.
+    truthiness ("" -> False, 0 -> False, undefined -> False).
+    F740: `undefined` (kind "u") only loosely/strictly equals
+    itself; every ordered comparison involving it is False (NaN
+    semantics, v24.20.0). Returns (bool, next_index). Never evals.
     """
     kind, aval, q = _js_f679_operand(text, j, env)
     q = _js_skip_ws(text, q)
@@ -24589,9 +24689,23 @@ def _js_f679_eval_cond(text, j, env):
             return aval, q
         if kind == "s":
             return len(aval) > 0, q
+        if kind == "u":
+            return False, q
         return aval != 0, q
     q = _js_skip_ws(text, q)
     bkind, bval, q = _js_f679_operand(text, q, env)
+    if kind == "u" or bkind == "u":
+        if kind == "u" and bkind == "u":
+            result = {"===": True, "!==": False, "==": True,
+                      "!=": False, "<": False, "<=": False,
+                      ">": False, ">=": False}[op]
+        elif op in ("===", "=="):
+            result = False
+        elif op in ("!==", "!="):
+            result = True
+        else:
+            result = False
+        return result, q
     if bkind != kind:
         raise _JSExprFail("F679 cond mixed kinds")
     if kind == "i":
@@ -24669,7 +24783,12 @@ def _js_f679_str_branch(text, j, env):
     if name not in env:
         raise _JSExprFail("F679 branch unbound")
     val, _m = env[name]
-    if _js_f679_kind(val) != "s":
+    kind = _js_f679_kind(val)
+    if kind == "u":
+        # F740: the undefined VALUE flows through the ternary
+        # (stringified only at a real-string concatenation).
+        return _JS_UNDEFINED, q
+    if kind != "s":
         raise _JSExprFail("F679 branch not a string")
     return val, q
 
@@ -24711,8 +24830,17 @@ def _js_f679_str_operand(text, j, env):
         if rq2 < n and (text[rq2] == "?"
                         or text.startswith(_JS_F679_CMP_OPS, rq2)):
             return _js_f679_ternary_rhs(text, q, env)
-        if rname in env and _js_f679_kind(env[rname][0]) == "s":
-            return env[rname][0], rq
+        if rname in env:
+            rk = _js_f679_kind(env[rname][0])
+            if rk == "s":
+                return env[rname][0], rq
+            if rk == "u":
+                # F740: the undefined VALUE flows through (it
+                # renders as "undefined" only when concatenated
+                # with a real string -- see _js_f679_concat_parts).
+                # Member reads were dispatched above and fail
+                # closed (the engine throws on `undefined.length`).
+                return _JS_UNDEFINED, rq
         raise _JSExprFail("F679 bad str operand")
     raise _JSExprFail("F679 bad str operand")
 
@@ -24733,7 +24861,8 @@ def _js_f679_sim_str_accum(text, j, env, state):
     if name not in env:
         raise _JSExprFail("F679 accum unbound")
     val, mutable = env[name]
-    if _js_f679_kind(val) != "s":
+    kind = _js_f679_kind(val)
+    if kind not in ("s", "u"):
         raise _JSExprFail("F679 accum not a string")
     if not mutable:
         raise _JSExprFail("F679 accum const")
@@ -24748,21 +24877,33 @@ def _js_f679_sim_str_accum(text, j, env, state):
     else:
         raise _JSExprFail("F679 bad accum op")
     rhs, q = _js_f679_str_operand(text, q, env)
+    # F740: operands may be the _JS_UNDEFINED sentinel -- they
+    # fold with engine `+` semantics (see _js_f679_concat_parts).
+    parts = [rhs]
+    total = _js_f679_rendered_len(rhs)
     while True:
         q2 = _js_skip_ws(text, q)
         if (q2 < n and text[q2] == "+"
                 and not text.startswith(("++", "+="), q2)):
             op2, q = _js_f679_str_operand(text, q2 + 1, env)
-            if len(rhs) + len(op2) > _MAX_DECODE_BYTES:
+            parts.append(op2)
+            total += _js_f679_rendered_len(op2)
+            if total > _MAX_DECODE_BYTES:
                 raise _JSExprFail("F679 concat too long")
-            rhs = rhs + op2
             _js_f679_charge(state)  # the extra operand is obfuscation-shaped
         else:
             break
     q = _js_skip_ws(text, q)
     q = _js_expect(text, q, ";")
-    newval = val + rhs if is_plus else rhs
-    if len(newval) > _MAX_DECODE_BYTES:
+    if is_plus:
+        # `NAME += EXPR` is `NAME = NAME + EXPR`.
+        head = val if kind == "s" else _JS_UNDEFINED
+        newval = _js_f679_concat_parts([head] + parts)
+    else:
+        # Plain assignment: the folded value replaces the binding
+        # (a lone undefined keeps it uninitialized -- node-exact).
+        newval = _js_f679_concat_parts(parts)
+    if _js_f679_rendered_len(newval) > _MAX_DECODE_BYTES:
         raise _JSExprFail("F679 concat too long")
     env[name] = (newval, mutable)
     _js_f679_charge(state)
@@ -24822,10 +24963,13 @@ def _js_f679_decl(text, j, env, state, depth, nested=False):
     """Parse one F679 declaration at text[j] (F679).
 
     `var|let|const NAME='LIT';` (the F655 string form),
-    `var|let|const NAME=INT;` (integer), or
+    `var|let|const NAME=INT;` (integer),
     `var|let|const NAME={k:'LIT',...};` (object literal via the
     F535 grammar -- every key a plain string, every value a
-    string). Name rules mirror F655 for the top level (fresh,
+    string), or `var|let NAME;` (F740: uninitialized -- bound to
+    the _JS_UNDEFINED sentinel, which has node-exact value
+    semantics; `const NAME;` is a node SyntaxError -- fail
+    closed). Name rules mirror F655 for the top level (fresh,
     non-reserved, not `arguments`); multi-declarator
     `var a=.., b=..` fails closed. With nested=True (loop
     inits/bodies), a `var` re-declaration of an existing
@@ -24859,6 +25003,26 @@ def _js_f679_decl(text, j, env, state, depth, nested=False):
             raise _JSExprFail("F679 var shadows lexical")
         reinit = True
     q = _js_skip_ws(text, q)
+    if q < n and text[q] == ";":
+        # F740: `var|let NAME;` -- uninitialized declaration.
+        # Node-exact (v24.20.0): the binding starts as `undefined`,
+        # bound here to the _JS_UNDEFINED sentinel (a plain
+        # "undefined" string would mis-decode truthiness and
+        # comparisons -- spec-review catch). `const NAME;` is a
+        # node SyntaxError -- fail closed. A `var` re-declaration
+        # without an initializer is a no-op in the engine (it does
+        # NOT reset the binding -- node-verified); re-declaring a
+        # `const` is a SyntaxError -- fail closed.
+        if kw == "const":
+            raise _JSExprFail("F679 const not initialized")
+        if reinit:
+            _old, omut = env[name]
+            if not omut:
+                raise _JSExprFail("F679 redecl const")
+        else:
+            env[name] = (_JS_UNDEFINED, True)
+        _js_f679_charge(state)
+        return q + 1
     if q >= n or text[q] != "=" or text.startswith(("==", "=>"), q):
         raise _JSExprFail("F679 decl not initialized")
     q = _js_skip_ws(text, q + 1)
@@ -24894,19 +25058,30 @@ def _js_f679_decl(text, j, env, state, depth, nested=False):
 
 
 def _js_f679_sim_throw(text, j, env):
-    """Parse `throw 'LIT';` / `throw BOUND;` at text[j] (F679) and
-    raise _JSF679Throw with the thrown string. Never returns.
-    Never evals."""
+    """Parse `throw 'LIT';` / `throw BOUND;` / `throw INT;` /
+    `throw BOUNDINT;` at text[j] (F679; integer throws are F740)
+    and raise _JSF679Throw with the thrown value. A non-string
+    throw binds the catch parameter to _JS_F679_POISON (see
+    `_js_f679_sim_trycatch`) -- it is never readable. Never
+    returns. Never evals."""
     n = len(text)
     q = _js_skip_ws(text, _js_match_kw(text, j, "throw"))
     if q < n and text[q] in "'\"":
         tval, q = _js_parse_string(text, q)
+    elif q < n and (text[q] in _ASCII_DIGITS or text[q] == "-"):
+        tval, q = _js_f679_parse_int(text, q)
     else:
         tname, q = _js_parse_ident(text, q)
         if tname not in env:
             raise _JSExprFail("F679 throw unbound")
         tval, _m = env[tname]
-        if _js_f679_kind(tval) != "s":
+        tk = _js_f679_kind(tval)
+        if tk == "p":
+            # F740: rethrow of a poisoned catch parameter -- the
+            # pre-scan fails closed first; this is defense in
+            # depth.
+            raise _JSExprFail("F679 throw poison")
+        if tk not in ("s", "i"):
             raise _JSExprFail("F679 throw not a string")
     q = _js_expect(text, q, ";")
     raise _JSF679Throw(tval)
@@ -25256,14 +25431,46 @@ def _js_f679_sim_dowhile(text, j, env, state, depth):
     return j
 
 
+def _js_f679_catch_param_referenced(text, bs, be, name):
+    """True if *name* occurs as a standalone identifier in
+    text[bs:be] outside string literals (F740).
+
+    Conservative by design: property names (`o.e`), comments,
+    and shadowed occurrences all count as references -- the
+    caller fails closed on a True result, never mis-decodes.
+    String-literal spans are skipped with escape handling so a
+    mere mention of the name inside a literal is not a
+    reference. Never evals.
+    """
+    nl = len(name)
+    k = bs
+    while k < be:
+        c = text[k]
+        if c in "'\"":
+            k = _js_skip_quoted(text, k)
+            continue
+        if c in _JS_IDENT_START and text.startswith(name, k):
+            e = k + nl
+            if e <= be and (e >= len(text)
+                            or text[e] not in _JS_IDENT_CONT) \
+                    and (k == 0 or text[k - 1] not in _JS_IDENT_CONT):
+                return True
+        k += 1
+    return False
+
+
 def _js_f679_sim_trycatch(text, j, env, state, depth):
     """Simulate `try{STMTS}catch(IDENT){STMTS}` at text[j] (F679).
 
     Node-exact (v24.20.0) for the modeled subset: the try block
     runs; the first `throw 'LIT'` (or bound-string throw)
     transfers to the catch with the parameter bound to the thrown
-    string; statements before the throw execute normally. A
-    `finally` clause fails closed (F655's try-finally production
+    string; statements before the throw execute normally. F740:
+    an integer throw (`throw 0;` / `throw BOUNDINT;`) transfers
+    too -- the catch parameter is bound to the poison sentinel
+    when it is never referenced in the catch body (unobservable,
+    node-exact), and the shape fails closed when it is
+    referenced. A `finally` clause fails closed (F655's try-finally production
     is disjoint -- it requires `finally` and fails closed on
     `catch`). A break inside either block propagates to the
     enclosing loop (there is no finally to run). The catch
@@ -25297,7 +25504,20 @@ def _js_f679_sim_trycatch(text, j, env, state, depth):
         _js_f679_sim_inner(text, _js_skip_ws(text, tbs), tbe, env,
                            state, depth + 1)
     except _JSF679Throw as thr:
-        env[cname] = (thr.value, True)
+        if isinstance(thr.value, str):
+            env[cname] = (thr.value, True)
+        else:
+            # F740: a non-string throw (e.g. `throw 0;`) binds the
+            # catch parameter to a non-string in the engine, which
+            # the env model cannot represent. When the parameter
+            # is referenced anywhere in the catch body the shape
+            # fails closed (never mis-decode); when it is never
+            # referenced the binding is unobservable, so it is
+            # bound to the poison sentinel (unreadable by
+            # construction -- see `_js_f679_kind`).
+            if _js_f679_catch_param_referenced(text, cbs, cbe, cname):
+                raise _JSExprFail("F679 catch param referenced")
+            env[cname] = (_JS_F679_POISON, True)
         _js_f679_charge(state)
         _js_f679_sim_inner(text, _js_skip_ws(text, cbs), cbe, env,
                            state, depth + 1)
@@ -25384,7 +25604,7 @@ def _js_f679_sim_inner(text, j, inner_end, env, state, depth):
                     raise _JSExprFail("F679 stmt unbound")
                 val, _mut = env[name]
                 kind = _js_f679_kind(val)
-                if kind == "s":
+                if kind in ("s", "u"):
                     j = _js_f679_sim_str_accum(text, j, env, state)
                 elif kind == "i":
                     j = _js_f679_sim_int_stmt(text, j, env, state)
@@ -25437,7 +25657,7 @@ def _js_f679_top_stmt(text, j, inner_end, env, state, depth):
             raise _JSExprFail("F679 stmt unbound")
         val, _mut = env[name]
         kind = _js_f679_kind(val)
-        if kind == "s":
+        if kind in ("s", "u"):
             return _js_f679_sim_str_accum(text, j, env, state)
         if kind == "i":
             return _js_f679_sim_int_stmt(text, j, env, state)
@@ -26256,8 +26476,12 @@ def _js_parse_f679_statement_iife(text, i, depth, state):
                 break
             sj = _js_f679_top_stmt(text, sj, inner_end, env, state,
                                   depth)
-        bindings = {nm: val for nm, (val, _mut) in env.items()
-                    if isinstance(val, str)}
+        bindings = {nm: ("undefined" if val is _JS_UNDEFINED else val)
+                    for nm, (val, _mut) in env.items()
+                    if isinstance(val, str) or val is _JS_UNDEFINED}
+        # F740: an uninitialized binding renders "undefined" in the
+        # return additive (v24.20.0); the poison sentinel never
+        # reaches here (it is restored/popped after the catch).
         rval, sj = _js_parse_f645_bound_additive(
             text, _js_skip_ws(text, rk), depth, state, bindings)
         sj = _js_skip_ws(text, sj)
@@ -57074,8 +57298,14 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   plain sequential bodies; F611 accepts exactly one
         #   declaration (it fails closed on the second statement),
         #   so no previously-decoded input changes behavior.
+        #   Snapshot/restore on miss (F733 lesson, wave-384 lane 2):
+        #   a failed F655 attempt must not leave consumed parts/ops
+        #   budget behind for later disjoint hooks.
+        _f655_saved_parts = state['parts']; _f655_saved_ops = state['ops']
         _f655 = _js_parse_f655_multistatement_iife(text, i, depth,
                                                   state)
+        if _f655 is None:
+            state['parts'] = _f655_saved_parts; state['ops'] = _f655_saved_ops
         if _f655 is not None:
             val, i = _f655
             return _js_parse_postfix(text, i, val, depth, state)

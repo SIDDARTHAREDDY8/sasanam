@@ -28,9 +28,11 @@ New findings (21, all LOW, all OPEN), filed F740-F760:
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F713 (lane-7 kept) + F714-F737 (round 50), F740-F760 (this round).
+F713 (lane-7 kept) + F714-F737 (round 50), F742-F760 (this round;
+F740/F741 closed wave-384).
 
-Closed pins (must BLOCK, else BREAK): F700-F712 (wave-382 closures).
+Closed pins (must BLOCK, else BREAK): F700-F712 (wave-382 closures),
+F740/F741 (wave-384 closures).
 
 Rides-with-documented-scope (validated, NOT filed):
 - F723 variant (Object.create proto-chain getter, filed shape verbatim) -- still misses; same open finding, not re-filed.
@@ -594,27 +596,27 @@ def test_r50_f736_s2_open():
 
 @_t
 def test_r51_f738_s1_open():
-    """F740 OPEN (try/catch value flows): miss reproduces."""
-    miss = _misses("(function(){var r;try{throw '%s';}catch(e){r=e;}return r+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F740 CLOSED (wave-384): block verified."""
+    blocked = not _misses("(function(){var r;try{throw '%s';}catch(e){r=e;}return r+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 @_t
 def test_r51_f738_s2_open():
-    """F740 OPEN (try/catch value flows): miss reproduces."""
-    miss = _misses("(function(){var r='';try{r+='%s';throw 0;}catch(e){r+='%s';}return r;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F740 CLOSED (wave-384): block verified."""
+    blocked = not _misses("(function(){var r='';try{r+='%s';throw 0;}catch(e){r+='%s';}return r;})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 @_t
 def test_r51_f739_s1_open():
-    """F741 OPEN (switch fallthrough value flows): miss reproduces."""
-    miss = _misses("(function(){var x='%s';switch('k'){case 'k':x+='%s';}return x;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F741 CLOSED (wave-384): block verified."""
+    blocked = not _misses("(function(){var x='%s';switch('k'){case 'k':x+='%s';}return x;})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 @_t
 def test_r51_f739_s2_open():
-    """F741 OPEN (switch fallthrough value flows): miss reproduces."""
-    miss = _misses("(function(){var x='%s';switch('z'){default:x+='%s';}return x;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F741 CLOSED (wave-384): block verified."""
+    blocked = not _misses("(function(){var x='%s';switch('z'){default:x+='%s';}return x;})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 @_t
 def test_r51_f740_s1_open():
