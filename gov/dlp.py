@@ -41272,6 +41272,677 @@ def _js_parse_f820_reverse_iife(text, i, depth, state):
 
 
 
+def _js_f841_iife_head(text, i):
+    """Parse the `(function(){` head shared by the F841-F844 IIFEs.
+
+    Returns (sj, inner_start, inner_end, j): sj just inside the body
+    brace, (inner_start, inner_end) the body span, j just past the
+    body's closing brace. Raises _JSExprFail when text[i] is not an
+    anonymous zero-param function IIFE head. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("F841 head not paren")
+    k = _js_skip_ws(text, j + 1)
+    if not text.startswith("function", k):
+        raise _JSExprFail("F841 head not function")
+    k2 = k + len("function")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        raise _JSExprFail("F841 named function")
+    j = _js_skip_ws(text, k2)
+    j = _js_expect(text, j, "(")
+    j = _js_expect(text, j, ")")
+    brace = _js_skip_ws(text, j)
+    j = _js_expect(text, brace, "{")
+    inner_start, inner_end, j = _js_span_braced(text, brace)
+    return _js_skip_ws(text, inner_start), inner_start, inner_end, j
+
+
+def _js_f841_array_decl(text, sj, state):
+    """Parse `var|let|const NAME=[STR,...];` (F841-F843 decl).
+
+    The F644 string-array grammar (string literals only; `[]`
+    allowed -- F841's filed shape). Returns (aname, elems, sj) with
+    elems a fresh list of str. Raises _JSExprFail on any other
+    shape. `const` is fine: later statements mutate, never
+    reassign (F681 precedent). Never evals.
+    """
+    n = len(text)
+    _dname, dm = _js_match_decl_kw(text, sj)
+    if _dname is None:
+        raise _JSExprFail("F841 decl not var/const/let")
+    sj = _js_skip_ws(text, dm)
+    aname, sj = _js_parse_ident(text, sj)
+    if aname == "arguments" or aname in _F611_RESERVED:
+        raise _JSExprFail("F841 reserved binding name")
+    sj = _js_expect(text, _js_skip_ws(text, sj), "=")
+    elems, sj = _js_parse_f644_string_array(text, _js_skip_ws(text, sj),
+                                            state)
+    sj = _js_expect(text, _js_skip_ws(text, sj), ";")
+    return aname, list(elems), sj
+
+
+def _js_f841_iife_tail(text, j):
+    """Parse the IIFE `()` invocation tail (F841-F844).
+
+    j is just past the body's closing brace. Returns the index just
+    past `()`. Raises _JSExprFail on any other tail. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    return j
+
+
+def _js_f841_join_elems(sep, elems):
+    """Join *elems* with *sep* (F841/F842 shared mechanics).
+
+    Holes (None elements, from F842 indexed assignment) stringify
+    as '' -- engine-exact for Array.prototype.join (node
+    v24.20.0). Pure. Never evals.
+    """
+    return sep.join(e if e is not None else "" for e in elems)
+
+
+def _js_f841_join_sep_after_dot(text, sj, inner_end, state):
+    """Parse `join('SEP');` / `join();` with sj just past the `.`
+    (F841/F842/F844-family shared mechanics).
+
+    The F681/F434 join discipline (F820 grammar): string-literal
+    separator or the engine-default `,`. Consumes through the `;`
+    and enforces no trailing statements (`sj == inner_end`).
+    Returns (sep, sj). Never evals.
+    """
+    n = len(text)
+    jname, sj = _js_parse_ident(text, _js_skip_ws(text, sj))
+    if jname != "join":
+        raise _JSExprFail("F841 return not join")
+    sj = _js_skip_ws(text, sj)
+    sj = _js_expect(text, sj, "(")
+    sj = _js_skip_ws(text, sj)
+    if sj < n and text[sj] == ")":
+        sep = ","
+        sj += 1
+    elif sj < n and text[sj] in "'\"":
+        sep, sj = _js_parse_string(text, sj)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ")")
+    else:
+        raise _JSExprFail("F841 join separator not a literal")
+    sj = _js_expect(text, _js_skip_ws(text, sj), ";")
+    sj = _js_skip_ws(text, sj)
+    if sj != inner_end:
+        raise _JSExprFail("F841 trailing statements")
+    return sep, sj
+
+
+def _js_f841_join_sep(text, sj, inner_end, aname, state):
+    """Parse `return NAME.join('SEP');` / `NAME.join();` (F841-F844).
+
+    The F681/F434 join discipline (F820 grammar): string-literal
+    separator or the engine-default `,`. Consumes through the `;`
+    and enforces no trailing statements (`sj == inner_end`).
+    Returns (sep, sj). Never evals.
+    """
+    m = _js_match_kw(text, sj, "return")
+    if m is None:
+        raise _JSExprFail("F841 no return")
+    sj = _js_skip_ws(text, m)
+    rname, sj = _js_parse_ident(text, sj)
+    if rname != aname:
+        raise _JSExprFail("F841 return not over bound array")
+    sj = _js_expect(text, _js_skip_ws(text, sj), ".")
+    return _js_f841_join_sep_after_dot(text, sj, inner_end, state)
+
+
+def _js_f841_join_tail(text, sj, inner_end, aname, elems, state):
+    """Join *elems* per the parsed `return NAME.join(...)` (F841/F842).
+
+    Holes (None elements, from F842 indexed assignment) stringify
+    as '' -- engine-exact for join (node v24.20.0). The result is
+    bounded by _MAX_DECODE_BYTES. Returns (result, sj). Never
+    evals.
+    """
+    sep, sj = _js_f841_join_sep(text, sj, inner_end, aname, state)
+    result = _js_f841_join_elems(sep, elems)
+    if len(result) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F841 join too long")
+    state["ops"] += 1  # the join is obfuscation-shaped
+    return result, sj
+
+
+def _js_parse_f841_push_join_iife(text, i, depth, state):
+    """Parse `(function(){DECL A=[...];A.push(...);+;
+    return A.join('SEP')/A.join();})()` (F841).
+
+    push-built array join beyond F681/F820: F681's statement loop
+    models only splice/fill (a `push` statement fails closed
+    there); F820 requires copyWithin/reverse; F644 accepts no
+    statements (red-first verified: 2 BREAK on the open tree).
+    Node-exact (v24.20.0):
+    - decl: `var|let|const NAME=[STR,...];` -- the F644
+      string-array grammar (`[]` allowed); `const` is fine
+      (mutation is not reassignment, F681 precedent).
+    - statements: one or more `NAME.push(ARG,...);` -- each ARG a
+      string literal (the F644 discipline; template literals and
+      non-literals fail closed). Zero-arg `push()` is a node-exact
+      no-op (returns the length, discarded in statement position).
+      The push return value is never consumed (statement
+      position only).
+    - return: `NAME.join('SEP');` / `NAME.join();` (the
+      F681/F434 join discipline).
+    - invocation: exactly `()`.
+    Disjoint: F681 fails closed on the `push` method name; F820
+    requires copyWithin/reverse; no earlier route models a
+    `NAME.push(` statement. Tried after F820.
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    named function, params, directive prologue, zero push
+    statements, reassignment of NAME, push on another ident,
+    non-literal push arg, push used as a value, non-literal join
+    separator, extra/reordered/trailing statements.
+    F452: 1 part + 1 op per push statement. Returns (value,
+    next_index), or None when text[i] is not this shape. Never
+    evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        sj, _inner_start, inner_end, j = _js_f841_iife_head(text, i)
+        aname, elems, sj = _js_f841_array_decl(text, sj, state)
+        pushed = 0
+        while True:
+            mark = sj
+            try:
+                sname, sj = _js_parse_ident(text, sj)
+            except _JSExprFail:
+                sj = mark
+                break
+            if sname != aname:
+                sj = mark
+                break
+            sj = _js_skip_ws(text, sj)
+            # A `(` here would be a call of NAME as a function --
+            # not our shape; only `.push(` continues.
+            if sj >= n or text[sj] != ".":
+                sj = mark
+                break
+            mname, sj = _js_parse_ident(text, _js_skip_ws(text, sj + 1))
+            if mname != "push":
+                sj = mark
+                break
+            sj = _js_expect(text, _js_skip_ws(text, sj), "(")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == ")":
+                sj += 1  # zero-arg push(): node-exact no-op
+            else:
+                while True:
+                    sj = _js_skip_ws(text, sj)
+                    if sj >= n or text[sj] not in "'\"":
+                        raise _JSExprFail("F841 push arg not a string")
+                    arg, sj = _js_parse_string(text, sj)
+                    elems.append(arg)
+                    sj = _js_skip_ws(text, sj)
+                    if sj < n and text[sj] == ",":
+                        sj = sj + 1
+                        continue
+                    break
+                sj = _js_expect(text, sj, ")")
+            sj = _js_expect(text, _js_skip_ws(text, sj), ";")
+            pushed += 1
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1  # the push is obfuscation-shaped
+        if pushed < 1:
+            raise _JSExprFail("F841 no push statements")
+        result, sj = _js_f841_join_tail(text, sj, inner_end, aname,
+                                        elems, state)
+        j = _js_f841_iife_tail(text, j)
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return result, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f842_indexed_assign_iife(text, i, depth, state):
+    """Parse `(function(){DECL A=[...];A[INT]='LIT';+;
+    return A.join('SEP')/A.join()/A.slice(I[,J]).join('SEP');})()`
+    (F842).
+
+    Indexed-assignment array join beyond F681/F820: F681's
+    statement loop models only splice/fill (an indexed assignment
+    fails closed there); F820 requires copyWithin/reverse
+    (red-first verified: 2 BREAK on the open tree). Node-exact
+    (v24.20.0):
+    - decl: `var|let|const NAME=[STR,...];` (the F644 grammar).
+    - statements: one or more `NAME[UINT]='LIT';` -- UINT a
+      canonical non-negative integer literal (no leading zeros:
+      `a[01]` is legacy-octal in sloppy mode and a SyntaxError in
+      strict mode, so it fails closed as a scope boundary).
+      Indices beyond the current length extend the array with
+      holes (None), which join stringifies as '' -- engine-exact.
+      Out-of-scope indices fail closed: negative, fractional,
+      non-literal, or larger than _MAX_DECODE_BYTES (a
+      materialization bound; larger indices are a documented
+      residual).
+    - return: `NAME.join('SEP');` / `NAME.join();` (the F681/F434
+      join discipline), or `NAME.slice(I[,J]).join('SEP');` /
+      `.join();` -- I/J literal ints via _js_parse_slice_int,
+      clamped by _js_slice_bound (F466, engine-exact); holes
+      survive the slice and join as ''.
+    - invocation: exactly `()`.
+    Disjoint: F681 fails closed on indexed-assignment statements;
+    F820 requires copyWithin/reverse; no earlier route models a
+    `NAME[INT]=` statement. Tried after F841.
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    named function, params, directive prologue, zero indexed
+    assignments, reassignment of NAME, `==`/`===` (not an
+    assignment), non-literal index or value, extra/reordered/
+    trailing statements.
+    F452: 1 part + 1 op per indexed assignment. Returns (value,
+    next_index), or None when text[i] is not this shape. Never
+    evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        sj, _inner_start, inner_end, j = _js_f841_iife_head(text, i)
+        aname, elems, sj = _js_f841_array_decl(text, sj, state)
+        assigned = 0
+        while True:
+            mark = sj
+            try:
+                sname, sj = _js_parse_ident(text, sj)
+            except _JSExprFail:
+                sj = mark
+                break
+            if sname != aname:
+                sj = mark
+                break
+            sj = _js_skip_ws(text, sj)
+            if sj >= n or text[sj] != "[":
+                sj = mark
+                break
+            k = _js_skip_ws(text, sj + 1)
+            d0 = k
+            while k < n and text[k] in _ASCII_DIGITS:
+                k += 1
+            if k == d0:
+                raise _JSExprFail("F842 index not an integer")
+            if k - d0 > 1 and text[d0] == "0":
+                raise _JSExprFail("F842 non-canonical index literal")
+            idx = int(text[d0:k])
+            if idx > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F842 index too large")
+            sj = _js_skip_ws(text, k)
+            sj = _js_expect(text, sj, "]")
+            sj = _js_expect(text, _js_skip_ws(text, sj), "=")
+            if sj < n and text[sj] == "=":
+                raise _JSExprFail("F842 == is not an assignment")
+            sj = _js_skip_ws(text, sj)
+            if sj >= n or text[sj] not in "'\"":
+                raise _JSExprFail("F842 assigned value not a string")
+            val, sj = _js_parse_string(text, sj)
+            sj = _js_expect(text, _js_skip_ws(text, sj), ";")
+            while len(elems) <= idx:
+                elems.append(None)
+            elems[idx] = val
+            assigned += 1
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1  # the assignment is obfuscation-shaped
+        if assigned < 1:
+            raise _JSExprFail("F842 no indexed assignments")
+        # Return: plain join, or slice(I[,J]).join (filed s2).
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F842 no return")
+        rj = _js_skip_ws(text, m)
+        rname, rj = _js_parse_ident(text, rj)
+        if rname != aname:
+            raise _JSExprFail("F842 return not over bound array")
+        rj = _js_expect(text, _js_skip_ws(text, rj), ".")
+        rmname, rj = _js_parse_ident(text, _js_skip_ws(text, rj))
+        if rmname == "slice":
+            rj = _js_expect(text, _js_skip_ws(text, rj), "(")
+            lo, rj = _js_parse_slice_int(text, _js_skip_ws(text, rj))
+            rj = _js_skip_ws(text, rj)
+            if rj < n and text[rj] == ",":
+                hi, rj = _js_parse_slice_int(text,
+                                             _js_skip_ws(text, rj + 1))
+                rj = _js_skip_ws(text, rj)
+            else:
+                hi = None
+            rj = _js_expect(text, rj, ")")
+            elen = len(elems)
+            lo2 = _js_slice_bound(lo, elen)
+            hi2 = _js_slice_bound(hi, elen) if hi is not None else elen
+            sub = elems[lo2:hi2]
+            rj = _js_expect(text, _js_skip_ws(text, rj), ".")
+            sep, rj = _js_f841_join_sep_after_dot(text, rj, inner_end,
+                                                  state)
+            result = _js_f841_join_elems(sep, sub)
+            if len(result) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F842 join too long")
+            state["ops"] += 1  # the slice+join is obfuscation-shaped
+            sj = rj
+        elif rmname == "join":
+            result, sj = _js_f841_join_tail(text, sj, inner_end, aname,
+                                            elems, state)
+        else:
+            raise _JSExprFail("F842 return not join")
+        j = _js_f841_iife_tail(text, j)
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return result, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f843_length_truncate_iife(text, i, depth, state):
+    """Parse `(function(){DECL A=[...];A.length=LEN;
+    return A.join('SEP')/A.join();})()` (F843).
+
+    length-truncation array join beyond F681/F820: no earlier
+    route models a `.length=` statement (red-first verified:
+    2 BREAK on the open tree). Node-exact (v24.20.0):
+    - decl: `var|let|const NAME=[STR,...];` (the F644 grammar).
+    - statement: exactly one `NAME.length=LEN;` -- LEN a
+      non-negative integer literal, or a string literal of ASCII
+      digits (the engine coerces via ToUint32; other strings,
+      fractional, or negative lengths throw RangeError in the
+      engine -- and a throwing shape yields no credential, so
+      failing closed is the node-exact outcome, never a
+      mis-decode). LEN > 2**32-1 throws RangeError likewise.
+      N < len: truncate; N >= len: the engine extends with holes,
+      which join as '' -- modeled arithmetically (never
+      materialized) and bounded by _MAX_DECODE_BYTES.
+    - return: `NAME.join('SEP');` / `NAME.join();` (the F681/F434
+      join discipline).
+    - invocation: exactly `()`.
+    Disjoint: no earlier route accepts a `.length=` statement.
+    Tried after F842.
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    named function, params, directive prologue, reassignment of
+    NAME, non-literal length, more than one statement,
+    extra/reordered/trailing statements.
+    F452: 1 op for the length store. Returns (value, next_index),
+    or None when text[i] is not this shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        sj, _inner_start, inner_end, j = _js_f841_iife_head(text, i)
+        aname, elems, sj = _js_f841_array_decl(text, sj, state)
+        # Statement: exactly one `NAME.length=LEN;`
+        sj = _js_skip_ws(text, sj)
+        sname, sj = _js_parse_ident(text, sj)
+        if sname != aname:
+            raise _JSExprFail("F843 length not on bound array")
+        sj = _js_expect(text, _js_skip_ws(text, sj), ".")
+        lname, sj = _js_parse_ident(text, _js_skip_ws(text, sj))
+        if lname != "length":
+            raise _JSExprFail("F843 statement not length")
+        sj = _js_expect(text, _js_skip_ws(text, sj), "=")
+        if sj < n and text[sj] == "=":
+            raise _JSExprFail("F843 == is not an assignment")
+        sj = _js_skip_ws(text, sj)
+        if sj < n and text[sj] in "'\"":
+            s, sj = _js_parse_string(text, sj)
+            if not s or any(c not in _ASCII_DIGITS for c in s):
+                raise _JSExprFail("F843 length string not digits")
+            ln = int(s)
+        else:
+            k = sj
+            while k < n and text[k] in _ASCII_DIGITS:
+                k += 1
+            if k == sj:
+                raise _JSExprFail("F843 length not an integer")
+            if k - sj > 1 and text[sj] == "0":
+                raise _JSExprFail("F843 non-canonical length literal")
+            ln = int(text[sj:k])
+            sj = k
+        if ln > 0xFFFFFFFF:
+            # The engine throws RangeError: no credential flows --
+            # fail closed is the node-exact outcome.
+            raise _JSExprFail("F843 length out of range")
+        sj = _js_expect(text, _js_skip_ws(text, sj), ";")
+        state["ops"] += 1  # the length store is obfuscation-shaped
+        elen = len(elems)
+        if ln < elen:
+            elems = elems[:ln]
+            ext = 0
+        else:
+            ext = ln - elen  # holes the engine adds; join as ''
+        sep, sj = _js_f841_join_sep(text, sj, inner_end, aname, state)
+        base = sep.join(elems)
+        if ext:
+            # Length extension: the engine appends holes, which
+            # join as '' -- only the separator contributes per
+            # extra slot (node-exact, v24.20.0). Computed
+            # arithmetically, never materialized; bounded by
+            # _MAX_DECODE_BYTES.
+            if len(base) + len(sep) * ext > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F843 join too long")
+            result = base + sep * ext
+        else:
+            result = base
+            if len(result) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F843 join too long")
+        state["ops"] += 1  # the join is obfuscation-shaped
+        j = _js_f841_iife_tail(text, j)
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return result, j
+    except _JSExprFail:
+        return None
+
+
+
+def _js_f844_parse_int_index(text, j):
+    """Parse `[+-]?UINT([+-]UINT)*` at text[j] (F844).
+
+    An integer-valued index expression for numeric object-key
+    reads: plain literals (`0`), and additive/subtractive forms
+    (`2-2`, `1+1-2`). A leading sign is allowed; each operand is
+    canonical digits (no leading zeros -- `01` is legacy-octal in
+    sloppy mode and a SyntaxError in strict mode, so it fails
+    closed as a scope boundary). Hex, floats, parens, and
+    identifiers fail closed. |v| > 2**53 fails closed (the
+    engine's float64 diverges from the digit string there, F477
+    precedent). Returns (value, next_index) with trailing
+    whitespace skipped. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    neg = False
+    if j < n and text[j] in "+-":
+        neg = text[j] == "-"
+        j = _js_skip_ws(text, j + 1)
+    k = j
+    while k < n and text[k] in _ASCII_DIGITS:
+        k += 1
+    if k == j:
+        raise _JSExprFail("F844 index not an integer")
+    if k - j > 1 and text[j] == "0":
+        raise _JSExprFail("F844 non-canonical index literal")
+    v = int(text[j:k])
+    if neg:
+        v = -v
+    j = k
+    while True:
+        jj = _js_skip_ws(text, j)
+        if jj >= n or text[jj] not in "+-":
+            break
+        op = text[jj]
+        kk = _js_skip_ws(text, jj + 1)
+        m = kk
+        while m < n and text[m] in _ASCII_DIGITS:
+            m += 1
+        if m == kk:
+            raise _JSExprFail("F844 index operand not an integer")
+        if m - kk > 1 and text[kk] == "0":
+            raise _JSExprFail("F844 non-canonical index literal")
+        d = int(text[kk:m])
+        v = v - d if op == "-" else v + d
+        j = m
+    if abs(v) > 2 ** 53:
+        raise _JSExprFail("F844 index too large")
+    return v, _js_skip_ws(text, j)
+
+
+def _js_f844_bracket_read(text, sj, aname, obj, state):
+    """Parse `NAME[INTEXPR]` at text[sj] and resolve it (F844).
+
+    NAME must be the bound object ident. The index converts via
+    ToPropertyKey (node-exact: int -> str(int); -0 -> '0', which
+    the int grammar yields as 0). The resolved value must be a
+    plain str -- nested objects, arrays, and _JSNumStr fail closed
+    (F711). Missing keys fail closed (the engine yields
+    `undefined`, which never carries a credential fragment here).
+    Returns (value, sj). Never evals.
+    """
+    n = len(text)
+    sj = _js_skip_ws(text, sj)
+    rname, sj = _js_parse_ident(text, sj)
+    if rname != aname:
+        raise _JSExprFail("F844 read not over bound object")
+    sj = _js_skip_ws(text, sj)
+    sj = _js_expect(text, sj, "[")
+    v, sj = _js_f844_parse_int_index(text, sj)
+    sj = _js_expect(text, sj, "]")
+    key = str(v)
+    val = _jsobj_lookup(obj, key)
+    if val is None:
+        raise _JSExprFail("F844 missing key")
+    if type(val) is not str:
+        raise _JSExprFail("F844 value not a string")
+    state["ops"] += 1  # the keyed read is obfuscation-shaped
+    return val, sj
+
+
+def _js_parse_f844_numeric_key_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const O={INT:'LIT',..};
+    return O[INTEXPR](+ADD)*;})()` (F844).
+
+    Numeric object-key reads beyond F671: F671's bracket member
+    requires a string literal (`o['0']`); a numeric bracket
+    (`o[0]`, `o[2-2]`) fails closed there (red-first verified:
+    2 BREAK on the open tree). Node-exact (v24.20.0):
+    - decl: `var|let|const NAME={...};` via _js_parse_f535_object
+      (decimal integer literal keys become their digit strings;
+      `__proto__` fails closed inside; non-canonical digit keys
+      like `01` fail closed -- the engine normalizes legacy-octal
+      keys, so decoding them would be node-inexact; duplicate keys
+      later-wins is inherited, engine-exact).
+    - return: `NAME[INTEXPR]` where INTEXPR is an integer literal
+      or additive/subtractive integer expression
+      (_js_f844_parse_int_index), converted via ToPropertyKey;
+      then `(+ADD)*` with ADD operands string literals or further
+      `NAME[INTEXPR]` reads (the F820 additive tail discipline).
+    - invocation: exactly `()`.
+    Disjoint: F671 requires string-literal brackets; no earlier
+    route models a numeric bracket read. Tried after F843.
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    named function, params, directive prologue, reassignment of
+    NAME, non-canonical digit keys (`01` -- legacy-octal
+    normalization), string-literal brackets (the F671 twin -- this
+    hook never fires there), non-integer/fractional/hex indices,
+    missing keys, non-string values, non-string ADD operands,
+    extra/reordered/trailing statements.
+    F452: parts via the object-literal parse; 1 op per keyed
+    read. The result is bounded by _MAX_DECODE_BYTES. Returns
+    (value, next_index), or None when text[i] is not this shape.
+    Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        sj, _inner_start, inner_end, j = _js_f841_iife_head(text, i)
+        # Decl: `var|let|const NAME={...};`
+        _dname, dm = _js_match_decl_kw(text, sj)
+        if _dname is None:
+            raise _JSExprFail("F844 decl not var/const/let")
+        sj = _js_skip_ws(text, dm)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments" or oname in _F611_RESERVED:
+            raise _JSExprFail("F844 reserved binding name")
+        sj = _js_expect(text, _js_skip_ws(text, sj), "=")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "{":
+            raise _JSExprFail("F844 decl not an object literal")
+        props, sj = _js_parse_f535_object(text, sj, depth, state)
+        for _k in props:
+            # Non-canonical digit keys (`01`, `00`): the engine
+            # normalizes legacy-octal keys in sloppy mode (later
+            # wins: `{1:'a',01:'b'}` reads 'b' for `o[1]`, node
+            # v24.20.0), but _js_parse_f535_object stores raw digit
+            # strings -- decoding would be node-INEXACT. Fail closed
+            # (scope boundary, mirrors the read-side canonical-index
+            # rule; the shared F535 parser is left untouched).
+            if (type(_k) is str and len(_k) > 1 and _k[0] == "0"
+                    and all(c in _ASCII_DIGITS for c in _k)):
+                raise _JSExprFail("F844 non-canonical object key")
+        sj = _js_expect(text, _js_skip_ws(text, sj), ";")
+        obj = _JSObj(props)
+        # Return: `NAME[INTEXPR](+ADD)*;`
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F844 no return")
+        result, sj = _js_f844_bracket_read(text, _js_skip_ws(text, m),
+                                            oname, obj, state)
+        sj = _js_skip_ws(text, sj)
+        while sj < n and text[sj] == "+":
+            _rhs_j = _js_skip_ws(text, sj + 1)
+            rhs = None
+            # A `NAME[` read twin first (mirrors the F820 tail).
+            try:
+                _nm = text[_rhs_j:_rhs_j + len(oname)]
+                _after = _rhs_j + len(oname)
+                if _nm == oname and (_after >= n or
+                                     text[_after] not in _JS_IDENT_CONT):
+                    _rk = _js_skip_ws(text, _after)
+                    if _rk < n and text[_rk] == "[":
+                        rhs, sj = _js_f844_bracket_read(text, _rhs_j,
+                                                        oname, obj,
+                                                        state)
+            except _JSExprFail:
+                rhs = None
+            if rhs is None:
+                rhs, sj = _js_parse_primary(text, sj + 1, depth, state)
+                if type(rhs) is not str:
+                    raise _JSExprFail("F844 ADD operand not a string")
+            if len(result) + len(rhs) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F844 concat too long")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            result = result + rhs
+            sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F844 trailing statements")
+        if len(result) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F844 result too long")
+        j = _js_f841_iife_tail(text, j)
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return result, j
+    except _JSExprFail:
+        return None
+
+
+
 def _js_parse_f684_defaultref_params_iife(text, i, depth, state):
     """Parse `(function({K=V,...}={}){return ADD;})(...)` (F684a).
 
@@ -79716,6 +80387,52 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f820r_saved_parts; state['ops'] = _f820r_saved_ops
         if _f820r is not None:
             return _f820r
+        # F841: (function(){DECL A=[...];A.push(...);+;
+        # return A.join('SEP')/A.join();})() -- push-built array join.
+        # None falls through (fails closed inside; F681's statement
+        # loop rejects the `push` method name and F820 requires
+        # copyWithin/reverse, so no previously-decoded input changes
+        # behavior).
+        _f841_saved_parts = state['parts']; _f841_saved_ops = state['ops']
+        _f841 = _js_parse_f841_push_join_iife(text, i, depth, state)
+        if _f841 is None:
+            state['parts'] = _f841_saved_parts; state['ops'] = _f841_saved_ops
+        if _f841 is not None:
+            return _f841
+        # F842: (function(){DECL A=[...];A[INT]='LIT';+;
+        # return A.join('SEP')/A.join()/A.slice(I[,J]).join('SEP');})()
+        # -- indexed-assignment array join. None falls through (fails
+        # closed inside; F681's statement loop rejects indexed
+        # assignments and F820 requires copyWithin/reverse, so no
+        # previously-decoded input changes behavior).
+        _f842_saved_parts = state['parts']; _f842_saved_ops = state['ops']
+        _f842 = _js_parse_f842_indexed_assign_iife(text, i, depth, state)
+        if _f842 is None:
+            state['parts'] = _f842_saved_parts; state['ops'] = _f842_saved_ops
+        if _f842 is not None:
+            return _f842
+        # F843: (function(){DECL A=[...];A.length=LEN;
+        # return A.join('SEP')/A.join();})() -- length-truncation
+        # array join. None falls through (fails closed inside; no
+        # earlier route accepts a `.length=` statement, so no
+        # previously-decoded input changes behavior).
+        _f843_saved_parts = state['parts']; _f843_saved_ops = state['ops']
+        _f843 = _js_parse_f843_length_truncate_iife(text, i, depth, state)
+        if _f843 is None:
+            state['parts'] = _f843_saved_parts; state['ops'] = _f843_saved_ops
+        if _f843 is not None:
+            return _f843
+        # F844: (function(){var|let|const O={INT:'LIT',..};
+        # return O[INTEXPR](+ADD)*;})() -- numeric object-key reads.
+        # None falls through (fails closed inside; F671 requires
+        # string-literal brackets, so no previously-decoded input
+        # changes behavior).
+        _f844_saved_parts = state['parts']; _f844_saved_ops = state['ops']
+        _f844 = _js_parse_f844_numeric_key_iife(text, i, depth, state)
+        if _f844 is None:
+            state['parts'] = _f844_saved_parts; state['ops'] = _f844_saved_ops
+        if _f844 is not None:
+            return _f844
         # F684a: (function({K=V,..}={}){return ADD;})(...) --
         # default-referencing-earlier-params destructuring. None
         # falls through (fails closed inside; F645's flat shapes
