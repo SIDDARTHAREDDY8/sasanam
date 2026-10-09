@@ -38060,7 +38060,7 @@ def _js_f831_reflect_construct_named(text, j, ctors, state):
     if q < n and text[q] == ",":
         raise _JSExprFail("F831 construct newTarget")
     q = _js_expect(text, q, ")")
-    params, assigns = ctors[cname]
+    params, assigns, _methods = ctors[cname]
     _js_f672_charge(state)
     return cname, _js_f780_bind(params, assigns, args), q
 
@@ -38135,7 +38135,7 @@ def _js_f82x_parse_method_call(text, j, ctors, protos, vcnames, env, state,
                     break
                 raise _JSExprFail("F82x new args malformed")
             q = _js_expect(text, q, ")")
-            params, assigns = ctors[cname]
+            params, assigns, _methods = ctors[cname]
             inst = _js_f780_bind(params, assigns, args)
         else:
             vname, q = _js_parse_ident(text, j)
@@ -38153,7 +38153,7 @@ def _js_f82x_parse_method_call(text, j, ctors, protos, vcnames, env, state,
         raise _JSExprFail("F82x not a method read")
     q = _js_expect(text, q, "(")
     q = _js_expect(text, q, ")")
-    _params, assigns = ctors[cname]
+    _params, assigns, _methods = ctors[cname]
     if any(k == mname for k, _ in assigns):
         # Own data property shadows the prototype in the engine;
         # calling it throws -- fail closed, never mis-decode.
@@ -38264,7 +38264,7 @@ def _js_f82x_hybrid_iife(text, i, depth, state, ctor_kind, method_kind,
                     params, q = _js_f780_parse_params(text, q)
                 assigns, q = _js_f780_parse_ctor_body(
                     text, _js_skip_ws(text, q), params, state)
-                ctors[cname] = (params, assigns)
+                ctors[cname] = (params, assigns, {})
                 protos.setdefault(cname, {})
                 _js_f672_charge(state)
                 sj = q
@@ -38293,7 +38293,7 @@ def _js_f82x_hybrid_iife(text, i, depth, state, ctor_kind, method_kind,
                 q = _js_skip_ws(text, q)
                 if q >= n or text[q] != "}":
                     raise _JSExprFail("F82x class extra members")
-                ctors[cname] = (params, assigns)
+                ctors[cname] = (params, assigns, {})
                 protos.setdefault(cname, {})
                 _js_f672_charge(state)
                 sj = q + 1

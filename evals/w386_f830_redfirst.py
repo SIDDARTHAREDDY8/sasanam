@@ -26,7 +26,7 @@ _B = "456789" + "abcdef"
 SHAPES = [
     ("s1",
      "(function(){function C(){this.x='%s';}C.prototype.m=function()"
-     "{return 'f1';};return new C().m()+'%s';})()" % (_A, _B),
+     "{return '%s';};return new C().m()+'%s';})()" % (_A, _A, _B),
      True),
 ]
 

@@ -88,7 +88,7 @@ def test_p0_footer_state():
                  "F773, F774, F775, F776, F777, F778, F779, F780, F781, "
                  "F782, F783, F784, F785, F786, F787, F788, F789, F790, "
                  "F791, F792, F793, F794.")
-    ok = ("Next free finding: **F795**" in text
+    ok = ("Next free finding: **F921**" in text
           and ("Open findings: " + open_list) in text
           and "(F764 filed" in text and "CLOSED 2026-10-09 wave-385 lane 2" in text
           and "(F765 filed" in text)

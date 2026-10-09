@@ -394,7 +394,7 @@ def test_p8_pin_footer():
     import gov.decision_codes as dc
     ok = (TAXONOMY_PIN == 2143 and len(dc.TAXONOMY) > 0)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and ("Next free finding: **F795**" in text)  # Wave-378 lane 6: F661 CLOSED; footer repoint open F655-F660 / next F662  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762) # Wave-384 merge: F738-F761 CLOSED; F762-F794 OPEN (next F795)
+    ok = ok and ("Next free finding: **F921**" in text)  # Wave-378 lane 6: F661 CLOSED; footer repoint open F655-F660 / next F662  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762) # Wave-384 merge: F738-F761 CLOSED; F762-F794 OPEN (next F795)
     ok = ok and ("Open findings: F762, F763, F764, F765, F766, F767, F768, F769, F770, F771, F772, F773, F774, F775, F776, F777, F778, F779, F780, F781, F782, F783, F784, F785, F786, F787, F788, F789, F790, F791, F792, F793, F794." in text)  # Wave-378 lane 6: F661 CLOSED; footer repoint open F655-F660 / next F662  # Wave-379 lane 6: F668 CLOSED (lane-local)  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762) # Wave-384 merge: F738-F761 CLOSED; F762-F794 OPEN (next F795)
     ok = ok and (_dlp is not None)
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)

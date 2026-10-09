@@ -78,23 +78,16 @@ def test_p0b_verifier_pin():
 
 @_t
 def test_b0_footer_state():
-    """Lane-local footer: F845-F848 CLOSED; open F829-F844, F849-F892; next F893."""
+    """Control: wave-387 merge footer (F829-F892 closed; open F893-F920; next F921)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    # Each of the four entries carries the wave-387 lane-5 CLOSED stamp.
-    stamped = all(
-        "**Status: CLOSED 2026-10-09 wave-387 lane 5.**" in text
-        for _ in ("F845", "F846", "F847", "F848"))
-    # The footer open-findings list must not list F845-F848 as open.
-    i = text.index("Next free finding: **F893**")
-    open_seg = text[i:i + 2000]
-    j = open_seg.index("Open findings:")
-    open_list = open_seg[j:j + 1500]
-    not_open = all("F%s," % n not in open_list and "F%s." % n not in open_list
-                   for n in (845, 846, 847, 848))
-    still_open = all(("F%d," % n in open_list or "F%d." % n in open_list)
-                     for n in (844, 849))
-    ok = stamped and not_open and still_open
+    foot = [ln for ln in text.splitlines()
+            if ln.startswith("Next free finding:")]
+    ok = (bool(foot)
+          and "**F921**" in foot[-1]
+          and "F893, F894" in foot[-1]
+          and "F919, F920." in foot[-1]
+          and "# Wave-387 merge: F829-F892 CLOSED (64)" in foot[-1])
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

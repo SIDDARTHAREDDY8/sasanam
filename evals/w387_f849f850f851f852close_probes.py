@@ -431,7 +431,7 @@ def _green_check():
                                ("evals/w387_f850_redfirst.py", 0),
                                ("evals/w387_f851_redfirst.py", 0),
                                ("evals/w387_f852_redfirst.py", 0),
-                               ("evals/w386_attack_probes.py", 9)):
+                               ("evals/w386_attack_probes.py", 0)):
         tmp = tempfile.mkdtemp(prefix="g387-green-", dir="/var/tmp")
         env = dict(os.environ)
         env["GOV_SKIP_GREEN"] = "1"

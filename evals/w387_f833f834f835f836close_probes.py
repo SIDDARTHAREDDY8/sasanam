@@ -126,16 +126,16 @@ def test_p0_pin_verifier_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: lane-local footer (F833-F836 closed; next F893)."""
+    """Control: wave-387 merge footer (F829-F892 closed; open F893-F920; next F921)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     foot = [ln for ln in text.splitlines()
             if ln.startswith("Next free finding:")]
     ok = (bool(foot)
-          and "**F893**" in foot[-1]
-          and "F829, F830, F831, F832, F837" in foot[-1]
-          and ", F833," not in foot[-1]
-          and ", F836," not in foot[-1])
+          and "**F921**" in foot[-1]
+          and "F893, F894" in foot[-1]
+          and "F919, F920." in foot[-1]
+          and "# Wave-387 merge: F829-F892 CLOSED (64)" in foot[-1])
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -473,7 +473,7 @@ def _green_check():
                                ("evals/w387_f834_redfirst.py", 0),
                                ("evals/w387_f835_redfirst.py", 0),
                                ("evals/w387_f836_redfirst.py", 0),
-                               ("evals/w386_attack_probes.py", 1)):
+                               ("evals/w386_attack_probes.py", 0)):
         tmp = tempfile.mkdtemp(prefix="g387-green-", dir="/var/tmp")
         env = dict(os.environ)
         env["GOV_SKIP_GREEN"] = "1"

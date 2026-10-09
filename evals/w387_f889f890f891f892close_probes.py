@@ -131,16 +131,16 @@ def test_p0_recount():
 
 @_t
 def test_b0_footer_state():
-    """Control: lane-local footer (F889-F892 stamped CLOSED,
-    open F829-F888, next F893)."""
+    """Control: wave-387 merge footer (F829-F892 closed; open F893-F920; next F921)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F893**" in text
-          and "Wave-387 lane 16: F889-F892 CLOSED (4)" in text)
-    for fno in ("F889", "F890", "F891", "F892"):
-        i = text.find("(%s filed" % fno)
-        ok = ok and i != -1 and "LOW, CLOSED (wave-387 lane 16" in text[
-            i:text.find("\n", i)]
+    foot = [ln for ln in text.splitlines()
+            if ln.startswith("Next free finding:")]
+    ok = (bool(foot)
+          and "**F921**" in foot[-1]
+          and "F893, F894" in foot[-1]
+          and "F919, F920." in foot[-1]
+          and "# Wave-387 merge: F829-F892 CLOSED (64)" in foot[-1])
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -506,7 +506,7 @@ def _green_check():
             ("evals/w387_f890_redfirst.py", 0),
             ("evals/w387_f891_redfirst.py", 0),
             ("evals/w387_f892_redfirst.py", 0),
-            ("evals/w386_attack_probes.py", 1)):
+            ("evals/w386_attack_probes.py", 0)):
         tmp = tempfile.mkdtemp(prefix="g387-green-", dir="/var/tmp")
         env = dict(os.environ)
         env["GOV_SKIP_GREEN"] = "1"

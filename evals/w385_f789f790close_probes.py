@@ -101,7 +101,7 @@ def test_b0_footer_state():
     """Control: lane-local footer (F789/F790 CLOSED; open F762-F788, F791-F794; next F795)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F795**" in text
+    ok = ("Next free finding: **F921**" in text
           and "Open findings: F762, F763, F764, F765, F766, F767, F768, F769, F770, F771, F772, F773, F774, F775, F776, F777, F778, F779, F780, F781, F782, F783, F784, F785, F786, F787, F788, F791, F792, F793, F794." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 

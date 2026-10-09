@@ -137,18 +137,16 @@ def test_p0_pin_verifier_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: lane-local footer (F881-F884 closed, next F893)."""
+    """Control: wave-387 merge footer (F829-F892 closed; open F893-F920; next F921)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F893**" in text
-          and "Open findings: F829, F830, F831, F832, F833, F834, "
-              "F835, F836, F837, F838, F839, F840, F841, F842, F843, "
-              "F844, F845, F846, F847, F848, F849, F850, F851, F852, "
-              "F853, F854, F855, F856, F857, F858, F859, F860, F861, "
-              "F862, F863, F864, F865, F866, F867, F868, F869, F870, "
-              "F871, F872, F873, F874, F875, F876, F877, F878, F879, "
-              "F880, F885, F886, F887, F888, F889, F890, F891, F892."
-              in text)
+    foot = [ln for ln in text.splitlines()
+            if ln.startswith("Next free finding:")]
+    ok = (bool(foot)
+          and "**F921**" in foot[-1]
+          and "F893, F894" in foot[-1]
+          and "F919, F920." in foot[-1]
+          and "# Wave-387 merge: F829-F892 CLOSED (64)" in foot[-1])
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -547,7 +545,7 @@ def _green_check():
                                ("evals/w387_f882_redfirst.py", 0),
                                ("evals/w387_f883_redfirst.py", 0),
                                ("evals/w387_f884_redfirst.py", 0),
-                               ("evals/w386_attack_probes.py", 5)):
+                               ("evals/w386_attack_probes.py", 0)):
         tmp = tempfile.mkdtemp(prefix="g387-green-", dir="/var/tmp")
         env = dict(os.environ)
         env["GOV_SKIP_GREEN"] = "1"
@@ -575,8 +573,8 @@ def _green_check():
 
 @_t
 def test_p7_green_check():
-    """Depth-1 green check: 4 red-firsts 0 BREAK + w386_attack 5 BREAK
-    (footer + 4 F881/F882 open pins; merge-owned)."""
+    """Depth-1 green check: 4 red-firsts 0 BREAK + w386_attack 0 BREAK
+    (refreshed at wave-387 merge; merge-owned)."""
     return _green_check()
 
 
