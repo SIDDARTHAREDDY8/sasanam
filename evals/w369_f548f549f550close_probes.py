@@ -95,7 +95,7 @@ sys.path.insert(0, REPO_ROOT)
 import gov.dlp as dlp  # noqa: E402
 from gov.dlp import _try_js_expr_decode, find_credential  # noqa: E402
 
-TAXONOMY_PIN = 2144  # Wave-369 lane 2: pin 2144 (Watcher v1 merge: 2135 -> 2140); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+TAXONOMY_PIN = 2143  # Wave-369 lane 2: pin 2143 (Watcher v1 merge: 2135 -> 2140); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 # Constructed via concatenation: the write path redacts credential literals.
 _A1 = "xoxb-" + "0123"
@@ -440,9 +440,9 @@ def p8_perf_bound():
 
 
 def p9_pin_and_footer():
-    """Pin stays 2144; re.compile stays 28; F548/F549/F550 CLOSED in  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    """Pin stays 2143; re.compile stays 28; F548/F549/F550 CLOSED in  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     FINDINGS; lane-local footer."""
-    if TAXONOMY_PIN != 2144:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    if TAXONOMY_PIN != 2143:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
         return ("BREAK", "pin moved: %s" % TAXONOMY_PIN)
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     if len(re.findall(r"re\.compile\(", src)) != 28:
@@ -454,7 +454,7 @@ def p9_pin_and_footer():
         return ("BREAK", "lane-local footer wrong")
     if "Next free finding: **%s**" % FOOTER_NEXT not in text:
         return ("BREAK", "next-free footer wrong")
-    return ("HELD", "pin 2144; 28 re.compile; F548/F549/F550 CLOSED; "  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    return ("HELD", "pin 2143; 28 re.compile; F548/F549/F550 CLOSED; "  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
             "footer F547,F551-F569/next F570 (wave-369 lane 2)")
 
 

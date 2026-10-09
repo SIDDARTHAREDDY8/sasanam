@@ -16,7 +16,7 @@ the identity-map filed twin). Zero new re.compile (28 stays).
 Conventions: module-level staging, depth-1 green check honoring
 GOV_SKIP_GREEN=1 (unique-suffixed TMPDIRs), fresh /var/tmp/g377-*
 TMPDIRs, no in-repo git in self-pins, concatenation-constructed
-credentials, pin 2144, $0-spend-by-construction (evals-only: no  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+credentials, pin 2143, $0-spend-by-construction (evals-only: no  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 realmodel_harness / ModelDriver / provider refs).
 """
 import os
@@ -31,7 +31,7 @@ import gov.dlp as _dlp  # noqa: E402
 from gov.dlp import find_credential  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TAXONOMY_PIN = 2144  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+TAXONOMY_PIN = 2143  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 # Constructed via concatenation: the write path redacts credential literals.
 _A = "xoxb-" + "0123"
@@ -441,10 +441,10 @@ def test_p8_junk_quiet():
 # ------------------------------------------------ p9 pin + footer
 
 def test_p9_pin_and_footer():
-    """Pin 2144; merge footer: open F662-F671 / next F672."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    """Pin 2143; merge footer: open F662-F671 / next F672."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     lines = open(os.path.join(REPO_ROOT, "evals",
                               "FINDINGS.md"), encoding="utf-8").read()
-    ok_pin = TAXONOMY_PIN == 2144  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    ok_pin = TAXONOMY_PIN == 2143  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     foot = [ln for ln in lines.splitlines()
             if ln.startswith("Next free finding:")]
     last = foot[-1] if foot else ""

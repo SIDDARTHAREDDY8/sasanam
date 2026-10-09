@@ -47,7 +47,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2144  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+TAXONOMY_PIN = 2143  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 _results = []
 
@@ -445,7 +445,7 @@ def _r7():
 # Pin + footer probes.
 # ---------------------------------------------------------------------------
 
-@probe("P8-pin-taxonomy-2144-sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+@probe("P8-pin-taxonomy-2143-sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 def _p8():
     from gov import decision_codes as DC
     codes = sorted(DC.TAXONOMY)
@@ -458,7 +458,7 @@ def _p8():
             "advisory-input-unpinned": "authority"}
     for code, domain in sorted(want.items()):
         assert DC.TAXONOMY[code]["domain"] == domain, code
-    _held("P8-pin-taxonomy-2144-sorted", "2144/2144/0 sorted; new codes ok")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    _held("P8-pin-taxonomy-2143-sorted", "2143/2143/0 sorted; new codes ok")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
 @probe("P9-footer-open-f433-f434-f435-next-f436")

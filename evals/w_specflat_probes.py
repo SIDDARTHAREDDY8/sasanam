@@ -37,7 +37,7 @@ from gov.adapters.mcp_adapter import (  # noqa: E402
     verify_spec_flat_pin,
 )
 
-LANE_PIN = 2144  # taxonomy pin at build time; informational only  # Wave-385: pin 2140 -> 2144
+LANE_PIN = 2140  # taxonomy pin at build time; informational only
 
 
 def _flagged(name, description, schema):

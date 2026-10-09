@@ -32,7 +32,7 @@ registered decision code `policy-delta-mode-weakened`:
       PolicyEngine verdict deny -> allow (the genuine-weakening leg of
       the red-first), and warn likewise.
   P9  determinism: same delta twice -> byte-identical report + digest.
-  P10 pin 2144, raw-literal taxonomy uniqueness, central registration  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+  P10 pin 2143, raw-literal taxonomy uniqueness, central registration  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
       of policy-delta-mode-weakened, footer open F437-F441 / next F442.
 
 $0 spend. No network. Scratch files live under /var/tmp only.
@@ -66,8 +66,8 @@ FOOTER_OPEN = "F762, F763, F764, F765, F766, F767, F768, F769, F770, F771, F772,
 FOOTER_NEXT = "F795"  # Wave-378 merge: F655-F661 CLOSED; F662-F671 filed OPEN (next F672)  # Wave-371 merge: F583-F596 CLOSED (lanes 1-7); F597-F605 OPEN (next F606)  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-379 merge: F662-F671 CLOSED (lanes 1-7); F672-F685 filed OPEN (next F686)  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762) # Wave-384 merge: F738-F761 CLOSED; F762-F794 OPEN (next F795)
 
 
-TAXONOMY_PIN = 2144  # Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
-EXPECTED_PIN_MSG = "2144/2144/0 sorted"  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+TAXONOMY_PIN = 2143  # Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+EXPECTED_PIN_MSG = "2143/2143/0 sorted"  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
 def _check(name, cond, detail=""):
@@ -253,7 +253,7 @@ def p9_determinism():
 
 # -------------------------------------------------------------------------- P10
 def p10_pin_footer_registration():
-    """Pin 2144, raw-literal taxonomy uniqueness, central registration  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    """Pin 2143, raw-literal taxonomy uniqueness, central registration  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     of the new code, footer open F437-F441 / next F442."""
     codes = sorted(_dc.TAXONOMY)
     ok = (len(codes) == TAXONOMY_PIN
@@ -272,7 +272,7 @@ def p10_pin_footer_registration():
     footer = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = ok and ("Next free finding: **%s**" % FOOTER_NEXT) in footer
     ok = ok and ("Open findings: %s." % FOOTER_OPEN) in footer
-    return _check("p10: pin 2144, footer F437-F441/next F442", ok,  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    return _check("p10: pin 2143, footer F437-F441/next F442", ok,  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
                   footer[-60:])
 
 

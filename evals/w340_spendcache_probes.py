@@ -33,7 +33,7 @@ P8 (red-capable): the estimator agrees with
   (single source of truth after the move).
 P9 (red-capable): persisted cache format is versioned JSON keyed by
   64-hex digests; atomic write leaves no .tmp behind.
-P10 (pin): TAXONOMY_PIN == 2144 and the registry holds 2127 codes.  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+P10 (pin): TAXONOMY_PIN == 2143 and the registry holds 2127 codes.  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 Verdicts: HELD = behavior matches the pin; BREAK = genuine defect;
 ERROR = probe/harness problem. No findings manufactured.
@@ -68,7 +68,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-TAXONOMY_PIN = 2144  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+TAXONOMY_PIN = 2143  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 _EXPECTED_BREAKS = set()  # never {} (wave-331 lesson); breaks documented above
 
@@ -321,16 +321,16 @@ def p9_persisted_format():
 
 
 def p10_pin():
-    """TAXONOMY_PIN == 2144 and the registry holds 2127 codes."""  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    """TAXONOMY_PIN == 2143 and the registry holds 2127 codes."""  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     try:
         sys.path.insert(0, os.path.join(REPO_ROOT))
         from gov.decision_codes import TAXONOMY
     except Exception:
         return "ERROR", "P10", traceback.format_exc(limit=3)
-    if TAXONOMY_PIN != 2144:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
-        return "BREAK", "P10", "TAXONOMY_PIN = %r, want 2144" % TAXONOMY_PIN  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
-    if len(TAXONOMY) != 2144:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
-        return "BREAK", "P10", "registry has %d codes, want 2144" % len(TAXONOMY)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    if TAXONOMY_PIN != 2143:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+        return "BREAK", "P10", "TAXONOMY_PIN = %r, want 2143" % TAXONOMY_PIN  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    if len(TAXONOMY) != 2143:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+        return "BREAK", "P10", "registry has %d codes, want 2143" % len(TAXONOMY)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     return "HELD", "P10", "pin 2131; registry 2127 codes"
 
 

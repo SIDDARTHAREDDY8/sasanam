@@ -52,7 +52,7 @@ Model note: 2/2 prompts returned usable hints (0 timeouts); the second call was 
 Conventions: module-level staging, depth-1 green check honoring
 GOV_SKIP_GREEN=1 (unique-suffixed TMPDIRs), fresh /var/tmp/g383-*
 TMPDIRs, no in-repo git in self-pins, concatenation-constructed
-credentials, pin 2144, $0-spend-by-construction (model spend logged  # Wave-385: pin 2143 -> 2144
+credentials, pin 2143, $0-spend-by-construction (model spend logged
 separately in the realmodel ledger).
 """
 
@@ -72,7 +72,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2144  # steal lane A repoint  # Wave-385: pin 2143 -> 2144
+TAXONOMY_PIN = 2143  # steal lane A repoint
 
 from gov import dlp
 from gov.dlp import _try_js_expr_decode_all
@@ -102,8 +102,8 @@ def _misses(payload):
 
 @_t
 def test_p0_pin_taxonomy():
-    """Pin stays 2144; registry loads."""  # Wave-385: pin 2143 -> 2144
-    ok = TAXONOMY_PIN == 2144 and len(TAXONOMY) > 0  # Wave-385: pin 2143 -> 2144
+    """Pin stays 2143; registry loads."""
+    ok = TAXONOMY_PIN == 2143 and len(TAXONOMY) > 0
     return ("HELD" if ok else "BREAK", "pin=%s" % TAXONOMY_PIN)
 
 

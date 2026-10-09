@@ -37,7 +37,7 @@ sys.path.insert(0, REPO_ROOT)
 
 from gov import dlp  # noqa: E402
 
-TAXONOMY_PIN = 2144  # Wave-362 lane 3; pin stays 2135; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+TAXONOMY_PIN = 2143  # Wave-362 lane 3; pin stays 2135; Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 CODES = "120,111,120,98,45,48,49,50,51,52,53,54,55,56,57,97,98,99,100,101,102"
 
@@ -165,8 +165,8 @@ def p4_compositions():
 
 
 def p5_pin_and_footer():
-    """Pin stays 2144; F505 entry present; anchor covers fromCodePoint."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
-    if TAXONOMY_PIN != 2144:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    """Pin stays 2143; F505 entry present; anchor covers fromCodePoint."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    if TAXONOMY_PIN != 2143:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
         return ("BREAK", "pin moved: %s" % TAXONOMY_PIN)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     if "F505" not in text:
@@ -176,7 +176,7 @@ def p5_pin_and_footer():
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     if len(re.findall(r"re\.compile\(", src)) != 28:
         return ("BREAK", "re.compile count moved")
-    return ("HELD", "pin 2144; F505 entry present; anchor covers fromCodePoint")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    return ("HELD", "pin 2143; F505 entry present; anchor covers fromCodePoint")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
 def _green_check():

@@ -288,11 +288,11 @@ def p_pin_taxonomy():
     import re
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    ok = (len(lits) == 2144 and len(set(lits)) == len(lits)  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    ok = (len(lits) == 2143 and len(set(lits)) == len(lits)  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
           and lits == sorted(lits)
-          and len(dc.TAXONOMY) == 2144)  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
-    return _held("pin-taxonomy-2144-sorted", ok,  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
-                 "2144/2144/0 sorted" if ok  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+          and len(dc.TAXONOMY) == 2143)  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    return _held("pin-taxonomy-2143-sorted", ok,  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+                 "2143/2143/0 sorted" if ok  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
                  else "taxonomy drift: %d literals" % len(lits))
@@ -322,7 +322,7 @@ PROBES = [
     ("expired-between-queue-and-execution",
      p_expired_between_queue_and_execution),
     ("human-edited-args-break-scope", p_human_edited_args_break_scope),
-    ("pin-taxonomy-2144-sorted", p_pin_taxonomy),  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    ("pin-taxonomy-2143-sorted", p_pin_taxonomy),  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
     ("footer-state", p_footer_state),

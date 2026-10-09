@@ -43,7 +43,7 @@ classes, class expressions, uninitialized-field reads
 Conventions: module-level staging, depth-1 green check honoring
 GOV_SKIP_GREEN=1 (unique-suffixed TMPDIRs), fresh /var/tmp/g379-*
 TMPDIRs, no in-repo git in self-pins, concatenation-constructed
-credentials, pin 2144, $0-spend-by-construction (evals-only: no  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+credentials, pin 2143, $0-spend-by-construction (evals-only: no  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 realmodel_harness / ModelDriver / provider refs).
 """
 import os
@@ -60,7 +60,7 @@ import gov.dlp as _dlp  # noqa: E402
 from gov.dlp import find_credential  # noqa: E402
 import gov.decision_codes as dc  # noqa: E402
 
-TAXONOMY_PIN = 2144  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+TAXONOMY_PIN = 2143  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 # Constructed via concatenation: the write path redacts credential literals.
 _A = "xoxb-" + "0123"
@@ -540,12 +540,12 @@ def test_p7_node_differential():
 
 
 def test_p8_pin_footer():
-    """Pin 2144; lane-local footer: open F673-F685, next F686 (F672 CLOSED wave-380 lane 1)."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    """Pin 2143; lane-local footer: open F673-F685, next F686 (F672 CLOSED wave-380 lane 1)."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     import re
     p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                      "FINDINGS.md")
     text = open(p, encoding="utf-8").read()
-    ok = (TAXONOMY_PIN == 2144 and len(dc.TAXONOMY) > 0  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    ok = (TAXONOMY_PIN == 2143 and len(dc.TAXONOMY) > 0  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
           and "Next free finding: **F795**." in text  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762) # Wave-384 merge: F738-F761 CLOSED; F762-F794 OPEN (next F795)
           and "Open findings: F762, F763, F764, F765, F766, F767, F768, F769, F770, F771, F772, F773, F774, F775, F776, F777, F778, F779, F780, F781, F782, F783, F784, F785, F786, F787, F788, F789, F790, F791, F792, F793, F794."  # Wave-380 merge: F672-F685 CLOSED; footer repoint open F686-F699 / next F700  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762) # Wave-384 merge: F738-F761 CLOSED; F762-F794 OPEN (next F795)
           in text)

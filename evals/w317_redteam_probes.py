@@ -35,7 +35,7 @@ P7 (2): F399 seam -- the escalate-terminal ratchet fires at the 4th
 P8 (1): F403 re-probe -- decision_packet standalone offline import still
     broken on the OPEN tree (lane 1 owns the closure; not closed here).
 P9 (2): regressions -- footer (open none / next F409; F405 closed),
-    pin taxonomy 2144/2144/0 sorted.  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    pin taxonomy 2143/2143/0 sorted.  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
 P10 (3): robustness acceptance gaming -- enum budget respected,
@@ -919,7 +919,7 @@ def _p9_footer():
                  "footer pins open F521, F522, F523, F524, F525 / next F526")  # Wave-364 merge: F513-F520 CLOSED; F521-F525 filed OPEN (next F526)
 
 
-@probe("P9-pin-taxonomy-2144-sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+@probe("P9-pin-taxonomy-2143-sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
 def _p9_pin():
@@ -929,14 +929,14 @@ def _p9_pin():
                                             "decision_codes.py"),
                                encoding="utf-8").read())
     except Exception as exc:  # noqa: BLE001
-        return _error("P9-pin-taxonomy-2144-sorted", "%r" % (exc,))  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
-    if len(lits) != 2144 or len(set(lits)) != 2144:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
-        return _break("P9-pin-taxonomy-2144-sorted",  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
-                      "got %d literals / %d unique (want 2144/2144)"  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+        return _error("P9-pin-taxonomy-2143-sorted", "%r" % (exc,))  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    if len(lits) != 2143 or len(set(lits)) != 2143:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+        return _break("P9-pin-taxonomy-2143-sorted",  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+                      "got %d literals / %d unique (want 2143/2143)"  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
                       % (len(lits), len(set(lits))))
     if lits != sorted(lits):
-        return _break("P9-pin-taxonomy-2144-sorted", "literals not sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
-    return _held("P9-pin-taxonomy-2144-sorted", "2144/2144/0 sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+        return _break("P9-pin-taxonomy-2143-sorted", "literals not sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+    return _held("P9-pin-taxonomy-2143-sorted", "2143/2143/0 sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
 

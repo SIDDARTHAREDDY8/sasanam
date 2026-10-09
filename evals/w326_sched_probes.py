@@ -45,7 +45,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 2144  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+TAXONOMY_PIN = 2143  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 _results = []
 
@@ -471,7 +471,7 @@ def _p14():
 # Pin + footer state probes.
 # ---------------------------------------------------------------------------
 
-@probe("P15-pin-taxonomy-2144-sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+@probe("P15-pin-taxonomy-2143-sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 def _p15():
     from gov import decision_codes as DC
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
@@ -480,7 +480,7 @@ def _p15():
         r'\"code\":\s*[\"\']([^\"\']+)[\"\']', src)
     # Uniqueness on raw source literals (the wave-260 lesson: the
     # deduped dict cannot see duplicate literals).
-    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2144, (#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    assert len(codes) == len(set(codes)) == TAXONOMY_PIN == 2143, (#Wave-333 merge: pin 2069 -> 2106 (+8 revocation-push-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened)  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
         len(codes), len(set(codes)))
     assert codes == sorted(codes), "taxonomy not sorted"
     for code in ("supplychain-scan-malformed",
@@ -493,7 +493,7 @@ def _p15():
         assert code in DC.TAXONOMY, "new code %r not registered" % code
         entry = DC.TAXONOMY[code]
         assert entry["domain"] == "supplychain", entry
-    _held("P15-pin-taxonomy-2144-sorted", "2144/2144/0 sorted; new codes ok")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    _held("P15-pin-taxonomy-2143-sorted", "2143/2143/0 sorted; new codes ok")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
 @probe("P16-footer-open-f433-f434-f435-next-f436")

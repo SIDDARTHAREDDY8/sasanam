@@ -46,7 +46,7 @@ F691/F698 (plain-object descriptors, no Proxy).
 Conventions: module-level staging, depth-1 green check honoring
 GOV_SKIP_GREEN=1 (unique-suffixed TMPDIRs), fresh /var/tmp/g382-*
 TMPDIRs, no in-repo git in self-pins, concatenation-constructed
-credentials, pin 2144, $0-spend-by-construction.  # Wave-385: pin 2143 -> 2144
+credentials, pin 2143, $0-spend-by-construction.
 """
 import os
 
@@ -65,7 +65,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2144  # no new decision codes this lane  # Wave-385: pin 2143 -> 2144
+TAXONOMY_PIN = 2143  # no new decision codes this lane
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -525,8 +525,8 @@ def test_p6_perf():
 
 @_t
 def test_p7_pin_taxonomy():
-    """Taxonomy pin 2144 (no new decision codes this lane)."""  # Wave-385: pin 2143 -> 2144
-    ok = (TAXONOMY_PIN == 2144 and len(TAXONOMY) > 0)  # Wave-385: pin 2143 -> 2144
+    """Taxonomy pin 2143 (no new decision codes this lane)."""
+    ok = (TAXONOMY_PIN == 2143 and len(TAXONOMY) > 0)
     return ("HELD" if ok else "BREAK", "pin=%s" % TAXONOMY_PIN)
 
 

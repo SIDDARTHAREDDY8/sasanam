@@ -96,7 +96,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2144  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); no new decision codes this lane; Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+TAXONOMY_PIN = 2143  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); no new decision codes this lane; Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 from gov import dlp  # noqa: E402
 from gov import guac_graph  # noqa: E402
@@ -444,10 +444,10 @@ def p11_node_differential():
 
 # ---------------------------------------------------------- P12: pin/footer
 def p12_pin_footer():
-    assert TAXONOMY_PIN == 2144, "pin moved"  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    assert TAXONOMY_PIN == 2143, "pin moved"  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
-    assert guac_graph.TAXONOMY_PIN == 2144, \
-        "guac_graph.TAXONOMY_PIN=%r want 2144" % (guac_graph.TAXONOMY_PIN,)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    assert guac_graph.TAXONOMY_PIN == 2143, \
+        "guac_graph.TAXONOMY_PIN=%r want 2143" % (guac_graph.TAXONOMY_PIN,)  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     import re as _re
     assert _re.compile("").pattern == "", "re sanity"
     assert len(_re.findall(r"re\.compile", open(

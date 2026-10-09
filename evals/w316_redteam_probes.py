@@ -582,9 +582,9 @@ def _p5_footer():
                  "open F436 / next F437")
 
 
-@probe("P5-pin-taxonomy-2144-sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+@probe("P5-pin-taxonomy-2143-sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 def _p5_pin():
-    """Taxonomy pin 2144/2144/0 on raw source literals, sorted, unique  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    """Taxonomy pin 2143/2143/0 on raw source literals, sorted, unique  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
     (wave-260 lesson: assert on literals, not the deduped dict)."""
@@ -592,18 +592,18 @@ def _p5_pin():
                encoding="utf-8").read()
     lits = re.findall(r'"code":\s*\'([^\']+)\'', src)
     lits += re.findall(r'"code":\s*"([^"]+)"', src)
-    if len(lits) != 2144:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
-        return _break("P5-pin-taxonomy-2144-sorted",  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    if len(lits) != 2143:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
+        return _break("P5-pin-taxonomy-2143-sorted",  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
                       "literals %d != pin 2027" % len(lits))
     if len(set(lits)) != len(lits):
-        return _break("P5-pin-taxonomy-2144-sorted",  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+        return _break("P5-pin-taxonomy-2143-sorted",  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
                       "duplicate code literals in source")
     if sorted(lits) != lits:
-        return _break("P5-pin-taxonomy-2144-sorted", "literals not sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+        return _break("P5-pin-taxonomy-2143-sorted", "literals not sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     if len(DC.TAXONOMY) != 2140:  # Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*)
-        return _break("P5-pin-taxonomy-2144-sorted",  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+        return _break("P5-pin-taxonomy-2143-sorted",  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
                       "TAXONOMY dict has %d" % len(DC.TAXONOMY))
-    return _held("P5-pin-taxonomy-2144-sorted", "2144/2144/0 sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    return _held("P5-pin-taxonomy-2143-sorted", "2143/2143/0 sorted")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
 

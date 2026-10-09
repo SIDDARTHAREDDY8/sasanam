@@ -40,7 +40,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-TAXONOMY_PIN = 2144  # no new decision codes this lane  # Wave-385: pin 2143 -> 2144
+TAXONOMY_PIN = 2143  # no new decision codes this lane
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -69,7 +69,7 @@ def _misses(payload):
 @_t
 def test_p0_pin_taxonomy():
     """Control: taxonomy pin is 2140."""
-    ok = TAXONOMY_PIN == 2144 and len(TAXONOMY) > 0  # Wave-385: pin 2143 -> 2144
+    ok = TAXONOMY_PIN == 2143 and len(TAXONOMY) > 0
     return ("HELD" if ok else "BREAK", "pin=%s" % TAXONOMY_PIN)
 
 

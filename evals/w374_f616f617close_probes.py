@@ -61,7 +61,7 @@ from gov import dlp  # noqa: E402
 _A1 = "xoxb-" + "0123"
 _A2 = "456789" + "abcdef"
 
-TAXONOMY_PIN = 2144  # Wave-373 merge: pin 2144 (F595, F606-F611 closed); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+TAXONOMY_PIN = 2143  # Wave-373 merge: pin 2143 (F595, F606-F611 closed); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
 def _blocked(payload):
@@ -420,9 +420,9 @@ def p8_node_differential():
 
 # ---------------------------------------------------------- P9: pin + footer
 def p9_pin_footer():
-    """Pin stays 2144; footer shows the lane-local open set."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    """Pin stays 2143; footer shows the lane-local open set."""  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     from gov import guac_graph  # noqa: E402
-    pin_ok = TAXONOMY_PIN == 2144 and guac_graph.TAXONOMY_PIN == 2144  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    pin_ok = TAXONOMY_PIN == 2143 and guac_graph.TAXONOMY_PIN == 2143  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     footer_ok = ("Next free finding: **F795**" in text  # Wave-375 lane 5: footer repoint open F621-F625, F628-F634, F636-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762) # Wave-384 merge: F738-F761 CLOSED; F762-F794 OPEN (next F795)

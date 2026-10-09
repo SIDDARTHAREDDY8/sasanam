@@ -58,7 +58,7 @@ from gov.adapters import openai_agents as OAI_SHIM  # noqa: E402
 # the closed tree (wave-331 lesson: empty set, never {}).
 _EXPECTED_BREAKS = set()
 
-TAXONOMY_PIN = 2144  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+TAXONOMY_PIN = 2143  # Wave-342 lane 6: pin 2131 -> 2127 (-4 family-fallback base-class codes).; Wave-343 merge: pin 2131 -> 2134 (+3 ownership-*); Wave-347 lane 6: pin 2134 -> 2135 (+1 policy-delta-mode-weakened); Watcher v1 merge: pin 2135 -> 2140 (+5 vendor-watch-*); Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 _results = []
 
@@ -305,9 +305,9 @@ def P1g():
 # ---------------------------------------------------------------------------
 
 def P2a():
-    """Pin 2131: taxonomy 2144/2144/0 sorted-unique on raw literals  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    """Pin 2131: taxonomy 2143/2143/0 sorted-unique on raw literals  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     (wave-260 lesson)."""
-    pid = "P2a-pin-taxonomy-2144-sorted"  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    pid = "P2a-pin-taxonomy-2143-sorted"  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     src = open(os.path.join(REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     found = re.findall(r'"code"\s*:\s*\'([^\']+)\'', src)
@@ -318,7 +318,7 @@ def P2a():
     if found != sorted(found):
         _break(pid, "code literals not sorted")
         return
-    _held(pid, "taxonomy 2144/2144/0 sorted-unique on raw literals")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    _held(pid, "taxonomy 2143/2143/0 sorted-unique on raw literals")  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
 
 
 def P2b():
@@ -360,7 +360,7 @@ _PROBES = [
     ("P1e-guardrail-exposes-attributes", P1e),
     ("P1f-wrapped-entry-correspondence", P1f),
     ("P1g-undeclared-name-refused-despite-name-coincidence", P1g),
-    ("P2a-pin-taxonomy-2144-sorted", P2a),  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)  # Wave-385: pin 2143 -> 2144
+    ("P2a-pin-taxonomy-2143-sorted", P2a),  # Steal lane A (seqgate): pin 2140 -> 2143 (+3 seqgate-*)
     ("P2b-footer-open-f433-f434-f435-next-f436", P2b),
 ]
 
