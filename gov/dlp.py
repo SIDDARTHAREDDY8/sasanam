@@ -3072,12 +3072,13 @@ def _js_parse_coerced_string_arg(text, i, depth, state, label):
     return _js_stringify_coercible(arg, label), i
 
 
-def _js_parse_fromcharcode(text, i):
+def _js_parse_fromcharcode(text, i, state=None):
     """Parse String.fromCharCode(n, ...) at text[i]; returns (value, idx)."""
-    return _js_parse_fromcharcode_args(text, i + len("String.fromCharCode"))
+    return _js_parse_fromcharcode_args(text, i + len("String.fromCharCode"),
+                                       state=state)
 
 
-def _js_parse_fromcodepoint(text, i):
+def _js_parse_fromcodepoint(text, i, state=None):
     """Parse String.fromCodePoint(n, ...) at text[i] (F505);
     returns (value, idx).
 
@@ -3088,10 +3089,53 @@ def _js_parse_fromcodepoint(text, i):
     0..0x10FFFF except lone surrogates, which fail closed. Spread
     array-literal operands decode engine-exactly. Never evals.
     """
-    return _js_parse_fromcharcode_args(text, i + len("String.fromCodePoint"))
+    return _js_parse_fromcharcode_args(text, i + len("String.fromCodePoint"),
+                                       state=state)
 
 
-def _js_parse_fromcharcode_spread_inner(text, i):
+def _js_parse_f742_getuint8_arg(text, i, state):
+    """Parse `v.getUint8(k)` at text[i] (F742); returns (char, idx).
+
+    v must name a DataView tracked in state["_f742_dataviews"]
+    (a bytearray, zero-initialized like the engine, mutated only by
+    modeled setUint8 statements); k is an F458 integer literal. An
+    out-of-range k is a RangeError in the engine -- fail closed.
+    The env is set only by _js_parse_f742_dataview_iife around its
+    return additive; without it this fails closed exactly as the
+    F458 grammar did before, so no previously-decoded input
+    changes behavior. Never evals.
+    """
+    n = len(text)
+    env = state.get("_f742_dataviews") if state else None
+    if not env:
+        raise _JSExprFail("F742 no dataview env")
+    name, j = _js_parse_ident(text, i)
+    buf = env.get(name)
+    if buf is None:
+        raise _JSExprFail("F742 unknown dataview")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("F742 getUint8 needs dot")
+    j = _js_skip_ws(text, j + 1)
+    m = _js_match_kw(text, j, "getUint8")
+    if m is None:
+        raise _JSExprFail("F742 not getUint8")
+    j = _js_skip_ws(text, m)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("F742 getUint8 needs paren")
+    idx, j = _js_parse_fcc_number(text, _js_skip_ws(text, j + 1))
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("F742 getUint8 needs rparen")
+    if idx < 0 or idx >= len(buf):
+        raise _JSExprFail("F742 getUint8 out of range")
+    ch = _safe_chr(buf[idx])
+    if ch is None:
+        raise _JSExprFail("F742 bad byte")
+    return ch, j + 1
+
+
+def _js_parse_fromcharcode_spread_inner(text, i, state=None):
     """Parse `[n, n, ...]` at text[i] (F500); returns (value, idx_after_bracket).
 
     The array-literal operand of a fromCharCode spread: integer-literal
@@ -3100,7 +3144,10 @@ def _js_parse_fromcharcode_spread_inner(text, i):
     i = _js_skip_ws(text, i)
     if i >= len(text) or text[i] != "[":
         raise _JSExprFail("fromCharCode spread needs array")
-    return _js_parse_fromcharcode_args_inner(text, i + 1, "]")
+    # Spread operands stay integer-literal-only (F500/F643); the
+    # F742 getUint8 alternative is not modeled inside spreads.
+    return _js_parse_fromcharcode_args_inner(text, i + 1, "]",
+                                             state=None)
 
 
 def _f643_ta_u8(v):
@@ -3221,7 +3268,8 @@ def _js_parse_f643_typed_array(text, i):
         raise _JSExprFail("bad typed-array args")
 
 
-def _js_parse_fromcharcode_args_inner(text, i, closer, allow_spread=False):
+def _js_parse_fromcharcode_args_inner(text, i, closer, allow_spread=False,
+                                       state=None):
     """Parse `n (, n)* <closer>` -- the F458 fromCharCode codepoint-list
     grammar (F458 / F480 / F486); returns (value, idx).
 
@@ -3256,12 +3304,24 @@ def _js_parse_fromcharcode_args_inner(text, i, closer, allow_spread=False):
             out.append(val)
             total += len(val)
         else:
-            val, i = _js_parse_fcc_number(text, i)  # F458: engine spellings
-            ch = _safe_chr(val)
-            if ch is None:
-                raise _JSExprFail("bad codepoint")
-            out.append(ch)
-            total += 1
+            try:
+                val, i = _js_parse_fcc_number(text, i)  # F458: engine spellings
+            except _JSExprFail:
+                # F742: `v.getUint8(k)` byte reads against a
+                # var-bound DataView (env in state, set only by
+                # _js_parse_f742_dataview_iife). Without the env
+                # this raises exactly as the F458 grammar did
+                # before, so no previously-decoded input changes
+                # behavior.
+                ch, i = _js_parse_f742_getuint8_arg(text, i, state)
+                out.append(ch)
+                total += 1
+            else:
+                ch = _safe_chr(val)
+                if ch is None:
+                    raise _JSExprFail("bad codepoint")
+                out.append(ch)
+                total += 1
         if total > _JS_EXPR_MAX_CODEPOINTS:
             raise _JSExprFail("too many codepoints")
         i = _js_skip_ws(text, i)
@@ -3273,7 +3333,7 @@ def _js_parse_fromcharcode_args_inner(text, i, closer, allow_spread=False):
         raise _JSExprFail("bad fromCharCode args")
 
 
-def _js_parse_fromcharcode_args(text, j):
+def _js_parse_fromcharcode_args(text, j, state=None):
     """Parse the '(n, ...)' argument list of a String.fromCharCode-shaped
     call (F458 / F480); returns (value, idx).
 
@@ -3291,7 +3351,8 @@ def _js_parse_fromcharcode_args(text, j):
     if i >= len(text) or text[i] != "(":
         raise _JSExprFail("fromCharCode without paren")
     return _js_parse_fromcharcode_args_inner(text, i + 1, ")",
-                                             allow_spread=True)
+                                             allow_spread=True,
+                                             state=state)
 
 
 def _js_parse_dispatch_thisarg(text, i, depth, state):
@@ -3412,14 +3473,15 @@ def _js_parse_fcc_dispatch(text, paren, dname, depth, state):
         else:
             if i >= n or text[i] != "[":
                 raise _JSExprFail("fromCharCode apply argsArray not array")
-            val, i = _js_parse_fromcharcode_args_inner(text, i + 1, "]")
+            val, i = _js_parse_fromcharcode_args_inner(text, i + 1, "]",
+                                                       state=state)
         i = _js_skip_ws(text, i)
         if i >= n or text[i] != ")":
             raise _JSExprFail("fromCharCode apply with extra args")
         state["ops"] += 1  # the dispatch call is obfuscation-shaped
         return val, i + 1
     # dname == "call": inline codepoints, ')'-terminated (F458 grammar)
-    val, i = _js_parse_fromcharcode_args_inner(text, i, ")")
+    val, i = _js_parse_fromcharcode_args_inner(text, i, ")", state=state)
     state["ops"] += 1  # the dispatch call is obfuscation-shaped
     return val, i
 
@@ -38596,10 +38658,15 @@ def _js_f726_toprimitive_string(props, depth, state):
     Bodies are
     evaluated with `this` = the receiver, mirroring
     _js_f697_toprimitive; a body that does not resolve to a string
-    fails closed (the engine would try the next method on a
-    non-primitive return, but a throwing body propagates -- falling
-    through on an unevaluable body would over-decode, F697
-    parity). Never evals.
+    fails closed. Rationale (node v24.20.0): a body returning an
+    Object makes the engine throw TypeError (correctly refused);
+    but a body returning a non-string PRIMITIVE (number/boolean)
+    does NOT throw -- the engine String()-coerces it -- so this
+    fail-closed is a genuine decoder miss on a live channel,
+    filed as F762 (fail-safe direction: never mis-decoded).
+    Falling through on an unevaluable body would over-decode,
+    so unevaluable bodies stay refused (F697 parity). Never
+    evals.
     """
     recv = _JSObj(props)
     tp = props.get(("symbol", "toPrimitive"))
@@ -41917,10 +41984,14 @@ def _js_f697_toprimitive(props, depth, state):
     non-callables as absent), and the inherited
     Object.prototype.valueOf returns the object itself
     (non-primitive, skipped). A method body that does not resolve
-    to a string fails closed (never mis-decoded): the engine only
-    tries the next method when the call RETURNS a non-primitive --
-    a throwing body propagates, so falling through on an
-    unevaluable body would over-decode. The documented residual is
+    to a string fails closed (never mis-decoded). Rationale (node
+    v24.20.0): a body returning an Object makes the engine throw
+    (valueOf/toString fall through to the next method;
+    @@toPrimitive propagates the throw) -- correctly refused;
+    but a body returning a non-string PRIMITIVE (number/boolean)
+    does NOT throw -- the engine String()-coerces it -- so this
+    fail-closed is a genuine decoder miss on a live channel,
+    filed as F762 (fail-safe direction). The documented residual is
     the `this.missing` (undefined-returning) body, which the engine
     would continue past but the decoder fails closed on. Never
     evals.
@@ -42059,6 +42130,363 @@ def _js_parse_f697_toprimitive_iife(text, i, depth, state):
         sj = _js_skip_ws(text, sj)
         if sj != inner_end:
             raise _JSExprFail("F697 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f743_toprimitive_assign_iife(text, i, depth, state):
+    """Parse `(function(){var o={...};o[Symbol.toPrimitive]=function(){return ADD;};return ADD2;})()` (F743).
+
+    F697 (CLOSED) models the literal `[Symbol.toPrimitive]` method
+    but not the ASSIGNED form: `o[Symbol.toPrimitive]=function`
+    fires the coercion node-exactly (v24.20.0) while the decoder
+    produces zero variants. The assignment installs the method on
+    the var-bound object (later-wins, node-exact); the return
+    coerces bare bound idents -- and `String(o)` terms -- via
+    _js_f697_toprimitive. Disjoint from F697: F697 requires an own
+    coercion method in the literal and fails closed on the
+    assignment statement; this requires at least one assignment
+    and fails closed without it. Tried after F697.
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a non-function assigned value (the engine throws TypeError
+      -- the F761 residual, kept open);
+    - an arrow/other function form, a non-ident param, a body
+      that is not a single `return ADD;`, an ADD that does not
+      resolve to a string (the engine throws -- no fallback is
+      modeled); a body referencing a param fails closed in the
+      shared F67x evaluator (a bare ident is not a valid term);
+    - `o[Symbol['toPrimitive']]` bracket-string keys (F697's
+      documented residual), assignments to other keys, an unbound
+      target, extra statements, member/call terms on the bound
+      object, `String(x)` on other idents.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    if not _js_peek_arguments_iife_head(text, i):
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j) + len("function")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            return None  # not a decl
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            return None
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "{":
+            return None  # not an object binding
+        props, sj = _js_parse_f697_object(text, sj, depth, state)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        # One or more `o[Symbol.toPrimitive] = function...;`
+        # statements (later-wins, node-exact).
+        saw_assign = False
+        while True:
+            k = _js_skip_ws(text, sj)
+            if _js_match_kw(text, k, "return") is not None:
+                break
+            nm, k = _js_parse_ident(text, k)
+            if nm != oname:
+                raise _JSExprFail("F743 foreign statement")
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, "[")
+            k = _js_skip_ws(text, k)
+            m2 = _js_match_kw(text, k, "Symbol")
+            if m2 is None:
+                raise _JSExprFail("F743 bad computed key")
+            k = _js_skip_ws(text, m2)
+            if k >= n or text[k] != ".":
+                raise _JSExprFail("F743 bad computed key")
+            k = _js_skip_ws(text, k + 1)
+            m2 = _js_match_kw(text, k, "toPrimitive")
+            if m2 is None:
+                raise _JSExprFail("F743 bad computed key")
+            k = _js_skip_ws(text, m2)
+            k = _js_expect(text, k, "]")
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, "=")
+            k = _js_skip_ws(text, k)
+            m2 = _js_match_kw(text, k, "function")
+            if m2 is None:
+                # A non-function assigned value throws TypeError
+                # in the engine (F761's residual) -- fail closed.
+                raise _JSExprFail("F743 assigned value not a function")
+            k = _js_skip_ws(text, m2)
+            if k < n and text[k] in _JS_IDENT_START:
+                # Optional function name -- engine-identical.
+                _, k = _js_parse_ident(text, k)
+                k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, "(")
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] != ")":
+                while True:
+                    _, k = _js_parse_ident(text, k)
+                    k = _js_skip_ws(text, k)
+                    if k < n and text[k] == ",":
+                        k = _js_skip_ws(text, k + 1)
+                        continue
+                    break
+            k = _js_expect(text, k, ")")
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "{":
+                raise _JSExprFail("F743 function needs a body")
+            bstart, bend, k2 = _js_span_braced(text, k)
+            add_text, kend = _js_scan_f67x_body_text(text, bstart,
+                                                     bend)
+            if _js_skip_ws(text, kend) != bend:
+                raise _JSExprFail("F743 body trailing")
+            props[("symbol", "toPrimitive")] = _JSF67xBody("method",
+                                                          add_text)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            k = _js_skip_ws(text, k2)
+            k = _js_expect(text, k, ";")
+            saw_assign = True
+            sj = _js_skip_ws(text, k)
+        if not saw_assign:
+            return None  # no assignment -- F697's shapes
+        # `return ADD;` -- string literals, the bare bound ident,
+        # and `String(o)` terms coerce via _js_f697_toprimitive.
+        m2 = _js_match_kw(text, sj, "return")
+        sj = _js_skip_ws(text, m2)
+        total = None
+        saw_coerce = False
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                term, sj = _js_parse_string(text, sj)
+            elif (text.startswith("String", sj)
+                    and (sj + 6 >= n
+                         or text[sj + 6] not in _JS_IDENT_CONT)):
+                q = _js_skip_ws(text, sj + 6)
+                if q >= n or text[q] != "(":
+                    raise _JSExprFail("F743 bad String term")
+                q = _js_skip_ws(text, q + 1)
+                nm2, q = _js_parse_ident(text, q)
+                if nm2 != oname:
+                    raise _JSExprFail("F743 String of unbound")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, ")")
+                term = _js_f697_toprimitive(props, depth, state)
+                saw_coerce = True
+                sj = q
+            else:
+                name, k = _js_parse_ident(text, sj)
+                if name != oname:
+                    raise _JSExprFail("F743 unbound term")
+                k = _js_skip_ws(text, k)
+                if k < n and text[k] in ".[(":
+                    # A member read or call -- F674's shapes.
+                    raise _JSExprFail("F743 member/call term")
+                term = _js_f697_toprimitive(props, depth, state)
+                saw_coerce = True
+                sj = k
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        if not saw_coerce:
+            return None  # a literal-only body -- earlier
+            # grammars own it
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F743 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f742_dataview_iife(text, i, depth, state):
+    """Parse `(function(){var v=new DataView(new ArrayBuffer(N));v.setUint8(i,b);*return ADD;})()` (F742).
+
+    F434 (CLOSED) models String.fromCharCode integer-literal args
+    but not DataView byte reads: fragment bytes written via
+    setUint8 and read back via getUint8 flow into fromCharCode
+    node-exactly (v24.20.0) while the decoder produces zero
+    variants. The route tracks the var-bound buffer
+    (zero-initialized, like the engine), applies integer-literal
+    setUint8 writes (ToUint8 wrap, node-exact for ints), and
+    stashes the env in state["_f742_dataviews"] while the return
+    additive parses -- the fromCharCode arg grammar resolves
+    `v.getUint8(k)` reads against it (see
+    _js_parse_f742_getuint8_arg). The env is restored afterwards;
+    without the env the arg alternative fails closed, so no
+    previously-decoded input changes behavior. Disjoint from
+    every earlier route: none binds `new DataView` (red-first
+    verified: 2 BREAK on the open tree). Tried after F735/F736.
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a non-literal buffer length, a length above 65536 (OOM
+      guard), other set widths (setInt8/setUint16/...), a
+      getUint8 out of range (the engine throws RangeError),
+      non-integer set values, a reassigned binding, any other
+      statement between the decl and the return, a non-string
+      return.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    if not _js_peek_arguments_iife_head(text, i):
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j) + len("function")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            return None  # not a decl
+        sj = _js_skip_ws(text, m)
+        vname, sj = _js_parse_ident(text, sj)
+        if vname == "arguments":
+            return None
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        # `new DataView(new ArrayBuffer(N))`
+        m2 = _js_match_kw(text, sj, "new")
+        if m2 is None:
+            return None
+        sj = _js_skip_ws(text, m2)
+        m2 = _js_match_kw(text, sj, "DataView")
+        if m2 is None:
+            return None
+        sj = _js_skip_ws(text, m2)
+        sj = _js_expect(text, sj, "(")
+        sj = _js_skip_ws(text, sj)
+        m2 = _js_match_kw(text, sj, "new")
+        if m2 is None:
+            raise _JSExprFail("F742 DataView needs new ArrayBuffer")
+        sj = _js_skip_ws(text, m2)
+        m2 = _js_match_kw(text, sj, "ArrayBuffer")
+        if m2 is None:
+            raise _JSExprFail("F742 DataView needs ArrayBuffer")
+        sj = _js_skip_ws(text, m2)
+        sj = _js_expect(text, sj, "(")
+        buflen, sj = _js_parse_fcc_number(text, _js_skip_ws(text,
+                                                           sj))
+        if buflen < 0 or buflen > 65536:
+            raise _JSExprFail("F742 bad buffer length")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ")")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ")")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        buf = bytearray(buflen)
+        # `v.setUint8(i, b);` statements.
+        while True:
+            k = _js_skip_ws(text, sj)
+            if _js_match_kw(text, k, "return") is not None:
+                sj = k
+                break
+            nm, k = _js_parse_ident(text, k)
+            if nm != vname:
+                raise _JSExprFail("F742 foreign statement")
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ".":
+                raise _JSExprFail("F742 statement needs dot")
+            k = _js_skip_ws(text, k + 1)
+            m2 = _js_match_kw(text, k, "setUint8")
+            if m2 is None:
+                raise _JSExprFail("F742 only setUint8 modeled")
+            k = _js_skip_ws(text, m2)
+            k = _js_expect(text, k, "(")
+            idx, k = _js_parse_fcc_number(text, _js_skip_ws(text,
+                                                           k))
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, ",")
+            k = _js_skip_ws(text, k)
+            neg = False
+            if k < n and text[k] == "-":
+                # Engine ToUint8 wraps negatives (-1 -> 255);
+                # the F458 grammar rejects signs, so handle the
+                # minus here (node v24.20.0).
+                neg = True
+                k = _js_skip_ws(text, k + 1)
+            byte, k = _js_parse_fcc_number(text, k)
+            if neg:
+                byte = -byte
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, ")")
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, ";")
+            if idx < 0 or idx >= len(buf):
+                # The engine throws RangeError -- fail closed.
+                raise _JSExprFail("F742 setUint8 out of range")
+            buf[idx] = byte % 256  # ToUint8, node-exact for ints
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = k
+        m = _js_match_kw(text, sj, "return")
+        sj = _js_skip_ws(text, m)
+        prev_env = state.get("_f742_dataviews")
+        env = dict(prev_env) if prev_env else {}
+        env[vname] = buf
+        state["_f742_dataviews"] = env
+        try:
+            total, sj = _js_parse_additive(text, sj, depth, state)
+        finally:
+            if prev_env is None:
+                state.pop("_f742_dataviews", None)
+            else:
+                state["_f742_dataviews"] = prev_env
+        if not isinstance(total, str):
+            raise _JSExprFail("F742 return not a string")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F742 trailing statements")
         j = _js_skip_ws(text, j)
         j = _js_expect(text, j, ")")
         j = _js_skip_ws(text, j)
@@ -55910,7 +56338,7 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                     state["ops"] += 1
                     return _js_parse_postfix(text, i, val, depth,
                                              state)
-            val, i = _js_parse_fromcharcode_args(text, _mj)
+            val, i = _js_parse_fromcharcode_args(text, _mj, state=state)
             state["ops"] += 1  # the call itself is obfuscation-shaped
             return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("String.fromCharCode", i):
@@ -55927,7 +56355,7 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                 depth, state)
                 state["ops"] += 1  # the dispatch is obfuscation-shaped
                 return _js_parse_postfix(text, i, val, depth, state)
-        val, i = _js_parse_fromcharcode(text, i)
+        val, i = _js_parse_fromcharcode(text, i, state=state)
         state["ops"] += 1  # the call itself is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("String.fromCodePoint", i):
@@ -55948,7 +56376,7 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         _k = _js_skip_ws(text, i + len("String.fromCodePoint"))
         if _k < len(text) and text[_k] == ".":
             raise _JSExprFail("fromCodePoint dispatch not modeled")
-        val, i = _js_parse_fromcodepoint(text, i)
+        val, i = _js_parse_fromcodepoint(text, i, state=state)
         state["ops"] += 1  # the call itself is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("String", i):
@@ -57200,6 +57628,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f735f736 is not None:
             val, i = _f735f736
             return _js_parse_postfix(text, i, val, depth, state)
+        # F742: (function(){var v=new DataView(new
+        #   ArrayBuffer(N));v.setUint8(i,b);*return ADD;})() --
+        #   DataView byte laundering into String.fromCharCode
+        #   (F434's residual). Tried after F735/F736: no earlier
+        #   route binds `new DataView` (red-first verified: 2
+        #   BREAK each on the open tree), so no previously-decoded
+        #   input changes behavior. F735/F736's hook and its
+        #   trailing `return` are untouched (wave-379 lesson).
+        _f742_saved_parts = state['parts']; _f742_saved_ops = state['ops']
+        _f742 = _js_parse_f742_dataview_iife(text, i, depth,
+                                             state)
+        if _f742 is None:
+            state['parts'] = _f742_saved_parts; state['ops'] = _f742_saved_ops
+        if _f742 is not None:
+            val, i = _f742
+            return _js_parse_postfix(text, i, val, depth, state)
         # F696: (new String('LIT')) / (new String()) --
         # parenthesized boxed-String construction, engine-identical
         # to the unparenthesized form (node v24.20.0). Tried before
@@ -57704,6 +58148,24 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                state)
         if _f697 is not None:
             val, i = _f697
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F743: (function(){var o={...};
+        #   o[Symbol.toPrimitive]=function(){return ADD;};*return
+        #   ADD2;})() -- ASSIGNED Symbol.toPrimitive coercion
+        #   (F697's residual). Tried after F697: F697 requires an
+        #   own coercion method in the literal and fails closed on
+        #   the assignment statement; this requires at least one
+        #   assignment and fails closed without it, so no
+        #   previously-decoded input changes behavior. F697's hook
+        #   and its trailing `return` are untouched (wave-379
+        #   lesson).
+        _f743_saved_parts = state['parts']; _f743_saved_ops = state['ops']
+        _f743 = _js_parse_f743_toprimitive_assign_iife(text, i, depth,
+                                                       state)
+        if _f743 is None:
+            state['parts'] = _f743_saved_parts; state['ops'] = _f743_saved_ops
+        if _f743 is not None:
+            val, i = _f743
             return _js_parse_postfix(text, i, val, depth, state)
         # F701: (function(){DECL o={LIT};DECL c={...o};
         #   return ADD;})() -- spread-copy of a var-bound object

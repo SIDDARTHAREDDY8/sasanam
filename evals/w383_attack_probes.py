@@ -593,253 +593,253 @@ def test_r50_f736_s2_open():
 
 
 @_t
-def test_r51_f738_s1_open():
+def test_r51_f740_s1_open():
     """F740 OPEN (try/catch value flows): miss reproduces."""
     miss = _misses("(function(){var r;try{throw '%s';}catch(e){r=e;}return r+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f738_s2_open():
+def test_r51_f740_s2_open():
     """F740 OPEN (try/catch value flows): miss reproduces."""
     miss = _misses("(function(){var r='';try{r+='%s';throw 0;}catch(e){r+='%s';}return r;})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f739_s1_open():
+def test_r51_f741_s1_open():
     """F741 OPEN (switch fallthrough value flows): miss reproduces."""
     miss = _misses("(function(){var x='%s';switch('k'){case 'k':x+='%s';}return x;})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f739_s2_open():
+def test_r51_f741_s2_open():
     """F741 OPEN (switch fallthrough value flows): miss reproduces."""
     miss = _misses("(function(){var x='%s';switch('z'){default:x+='%s';}return x;})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f740_s1_open():
-    """F742 OPEN (DataView byte laundering): miss reproduces."""
-    miss = _misses("(function(){var v=new DataView(new ArrayBuffer(4));v.setUint8(0,120);v.setUint8(1,111);return String.fromCharCode(v.getUint8(0),v.getUint8(1))+'xb-0123'+'%s';})()" % (_A,))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f742_s1_closed():
+    """F742 CLOSED (wave-384 lane 3): DataView byte laundering blocks coded."""
+    ok = _blocked("(function(){var v=new DataView(new ArrayBuffer(4));v.setUint8(0,120);v.setUint8(1,111);return String.fromCharCode(v.getUint8(0),v.getUint8(1))+'xb-0123'+'%s';})()" % (_A,))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r51_f740_s2_open():
-    """F742 OPEN (DataView byte laundering): miss reproduces."""
-    miss = _misses("(function(){var v=new DataView(new ArrayBuffer(2));v.setUint8(0,120);v.setUint8(1,111);return String.fromCharCode(v.getUint8(0))+'o'+'xb-0123'+'%s';})()" % (_A,))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f742_s2_closed():
+    """F742 CLOSED (wave-384 lane 3): DataView byte laundering blocks coded."""
+    ok = _blocked("(function(){var v=new DataView(new ArrayBuffer(2));v.setUint8(0,120);v.setUint8(1,111);return String.fromCharCode(v.getUint8(0))+'o'+'xb-0123'+'%s';})()" % (_A,))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r51_f741_s1_open():
-    """F743 OPEN (F697 residual: assigned Symbol.toPrimitive): miss reproduces."""
-    miss = _misses("(function(){var o={};o[Symbol.toPrimitive]=function(){return '%s';};return o+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f743_s1_closed():
+    """F743 CLOSED (wave-384 lane 3): assigned Symbol.toPrimitive blocks coded."""
+    ok = _blocked("(function(){var o={};o[Symbol.toPrimitive]=function(){return '%s';};return o+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r51_f741_s2_open():
-    """F743 OPEN (F697 residual: assigned Symbol.toPrimitive): miss reproduces."""
-    miss = _misses("(function(){var o={};o[Symbol.toPrimitive]=function(hint){return '%s';};return String(o)+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f743_s2_closed():
+    """F743 CLOSED (wave-384 lane 3): assigned Symbol.toPrimitive blocks coded."""
+    ok = _blocked("(function(){var o={};o[Symbol.toPrimitive]=function(hint){return '%s';};return String(o)+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r51_f742_s1_open():
+def test_r51_f744_s1_open():
     """F744 OPEN (F683 residual: value-replacement reviver): miss reproduces."""
     miss = _misses('(function(){return JSON.parse(\'{"k":"x"}\',function(k,v){return k===\'k\'?\'%s\':v;}).k+\'%s\';})()' % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f742_s2_open():
+def test_r51_f744_s2_open():
     """F744 OPEN (F683 residual: value-replacement reviver): miss reproduces."""
     miss = _misses('(function(){var r=JSON.parse(\'{"a":1}\',function(k,v){return k===\'\'?\'%s\':v;});return r+\'%s\';})()' % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f743_s1_open():
+def test_r51_f745_s1_open():
     """F745 OPEN (Set.prototype.union (ES2025)): miss reproduces."""
     miss = _misses("(function(){var s=new Set(['%s']).union(new Set(['%s']));return [...s].join('');})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f743_s2_open():
+def test_r51_f745_s2_open():
     """F745 OPEN (Set.prototype.union (ES2025)): miss reproduces."""
     miss = _misses("(function(){var a=new Set(['%s']);var b=new Set(['%s']);return [...a.union(b)].join('');})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f744_s1_open():
+def test_r51_f746_s1_open():
     """F746 OPEN (class extends builtin construction): miss reproduces."""
     miss = _misses("(function(){class M extends Map{}var m=new M();m.set('k','%s');return [...m.values()].join('')+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f744_s2_open():
+def test_r51_f746_s2_open():
     """F746 OPEN (class extends builtin construction): miss reproduces."""
     miss = _misses("(function(){class M extends Map{}var m=new M([['k','%s']]);var s='';for(var v of m.values())s+=v;return s+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f745_s1_open():
+def test_r51_f747_s1_open():
     """F747 OPEN (F647 residual: missing-key nullish-LEFT + ??=): miss reproduces."""
     miss = _misses("(function(){var o={};return (o.x??'%s')+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f745_s2_open():
+def test_r51_f747_s2_open():
     """F747 OPEN (F647 residual: missing-key nullish-LEFT + ??=): miss reproduces."""
     miss = _misses("(function(){var x=null;var y=x??'%s';return y+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f746_s1_open():
+def test_r51_f748_s1_open():
     """F748 OPEN (logical assignment ||= / &&=): miss reproduces."""
     miss = _misses("(function(){var x;x||='%s';x+='%s';return x;})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f746_s2_open():
+def test_r51_f748_s2_open():
     """F748 OPEN (logical assignment ||= / &&=): miss reproduces."""
     miss = _misses("(function(){var o={x:'%s'};o.x&&=o.x+'%s';return o.x;})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f747_s1_open():
+def test_r51_f749_s1_open():
     """F749 OPEN (destructuring defaults): miss reproduces."""
     miss = _misses("(function(){var {x='%s',y='%s'}={};return x+y;})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f747_s2_open():
+def test_r51_f749_s2_open():
     """F749 OPEN (destructuring defaults): miss reproduces."""
     miss = _misses("(function(){var {x:q='%s'}={};return q+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f748_s1_open():
+def test_r51_f750_s1_open():
     """F750 OPEN (Error .message reads): miss reproduces."""
     miss = _misses("(function(){try{throw new Error('%s');}catch(e){return e.message+'%s';}})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f748_s2_open():
+def test_r51_f750_s2_open():
     """F750 OPEN (Error .message reads): miss reproduces."""
     miss = _misses("(function(){function f(){throw new RangeError('%s');}try{f();}catch(e){return e.message+'%s';}})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f749_s1_open():
+def test_r51_f751_s1_open():
     """F751 OPEN (Reflect.ownKeys / Object.keys map-reads): miss reproduces."""
     miss = _misses("(function(){var o={x:'%s',y:'%s'};return Reflect.ownKeys(o).map(function(k){return o[k];}).join('');})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f749_s2_open():
+def test_r51_f751_s2_open():
     """F751 OPEN (Reflect.ownKeys / Object.keys map-reads): miss reproduces."""
     miss = _misses("(function(){var o={};o.x='%s';o.y='%s';var s='';Reflect.ownKeys(o).forEach(function(k){s+=o[k];});return s;})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f750_s1_open():
+def test_r51_f752_s1_open():
     """F752 OPEN (F728 residual: builtin-iterator .next().value): miss reproduces."""
     miss = _misses("(function(){var it=['%s','%s'][Symbol.iterator]();var s='';s+=it.next().value;s+=it.next().value;return s;})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f750_s2_open():
+def test_r51_f752_s2_open():
     """F752 OPEN (F728 residual: builtin-iterator .next().value): miss reproduces."""
     miss = _misses("(function(){var s=new Set(['%s','%s']);var it=s.values();var r='';r+=it.next().value;r+=it.next().value;return r;})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f751_s1_open():
+def test_r51_f753_s1_open():
     """F753 OPEN (spread argument lists (call + construct)): miss reproduces."""
     miss = _misses("(function(){function h(){var s='';for(var i=0;i<arguments.length;i++)s+=arguments[i];return s;}return h(...['%s','%s']);})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f751_s2_open():
+def test_r51_f753_s2_open():
     """F753 OPEN (spread argument lists (call + construct)): miss reproduces."""
     miss = _misses("(function(){function h(a,b){return a+b;}return h(...['%s','%s']);})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f752_s1_open():
+def test_r51_f754_s1_open():
     """F754 OPEN (delete operator statements): miss reproduces."""
     miss = _misses("(function(){var o={x:'%s',y:'junk'};delete o.y;return o.x+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f752_s2_open():
+def test_r51_f754_s2_open():
     """F754 OPEN (delete operator statements): miss reproduces."""
     miss = _misses("(function(){var o={x:'%s',y:'junk'};delete o['y'];return o.x+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f753_s1_open():
+def test_r51_f755_s1_open():
     """F755 OPEN (F535 residual: computed string-name getters): miss reproduces."""
     miss = _misses("(function(){var o={get ['x'](){return '%s';}};return o.x+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f753_s2_open():
+def test_r51_f755_s2_open():
     """F755 OPEN (F535 residual: computed string-name getters): miss reproduces."""
     miss = _misses("(function(){var o={get ['x'](){return '%s';}};return o['x']+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f754_s1_open():
+def test_r51_f756_s1_open():
     """F756 OPEN (ternary conditional value flow): miss reproduces."""
     miss = _misses("(function(){var c=true;return (c?'%s':'z')+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f754_s2_open():
+def test_r51_f756_s2_open():
     """F756 OPEN (ternary conditional value flow): miss reproduces."""
     miss = _misses("(function(){var c=false;var x=c?'z':'%s';return x+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f755_s1_open():
+def test_r51_f757_s1_open():
     """F757 OPEN (new.target): miss reproduces."""
     miss = _misses("(function(){function C(){this.x=new.target===C?'%s':'z';}return new C().x+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f755_s2_open():
+def test_r51_f757_s2_open():
     """F757 OPEN (new.target): miss reproduces."""
     miss = _misses("(function(){class D{constructor(){this.v=new.target?'%s':'z';}}return new D().v+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f756_s1_open():
+def test_r51_f758_s1_open():
     """F758 OPEN (rest parameters): miss reproduces."""
     miss = _misses("(function(){function h(...xs){return xs.join('');}return h('%s','%s');})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f756_s2_open():
+def test_r51_f758_s2_open():
     """F758 OPEN (rest parameters): miss reproduces."""
     miss = _misses("(function(){function h(a,...rest){return a+rest[0];}return h('%s','%s');})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f757_s1_open():
+def test_r51_f759_s1_open():
     """F759 OPEN (setter value flow): miss reproduces."""
     miss = _misses("(function(){var o={_v:'',set x(v){this._v=v;}};o.x='%s';return o._v+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f757_s2_open():
+def test_r51_f759_s2_open():
     """F759 OPEN (setter value flow): miss reproduces."""
     miss = _misses("(function(){var o={set x(v){this.w=v;},get w(){return this._w;},set w(v){this._w=v;}};o.x='%s';return o._w+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f758_s1_open():
+def test_r51_f760_s1_open():
     """F760 OPEN (template-nested member reads): miss reproduces."""
     miss = _misses("(function(){var o={x:'%s'};return `${o.x}%s`;})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f758_s2_open():
+def test_r51_f760_s2_open():
     """F760 OPEN (template-nested member reads): miss reproduces."""
     miss = _misses("(function(){var o={x:'%s',y:'%s'};return `${o.x}${o.y}`;})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
