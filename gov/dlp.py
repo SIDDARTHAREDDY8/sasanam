@@ -3319,7 +3319,9 @@ def _js_parse_fromcharcode_args_inner(text, i, closer, allow_spread=False,
 
     The *closer* is ')' for the direct call form and ']' for the
     .apply([...]) dispatch form (F486). The F458 integer-literal
-    grammar is unchanged. When *allow_spread* (F500, direct call form
+    grammar is unchanged; F946 additionally admits additive
+    integer-literal chains (`119+1`, mixed F458 spellings) per
+    argument, summed before the codepoint bound. When *allow_spread* (F500, direct call form
     only), an argument may also be a spread array-literal operand
     `...[n, n, ...]`, so mixed literal+spread lists
     (`String.fromCharCode(120, ...[111])`) decode engine-exactly;
@@ -3361,6 +3363,23 @@ def _js_parse_fromcharcode_args_inner(text, i, closer, allow_spread=False,
                 out.append(ch)
                 total += 1
             else:
+                # F946: additive code arguments -- `String.fromCharCode(119+1)`.
+                # Each `+` term is an F458 integer-literal spelling; the sum
+                # is what the engine feeds ToUint16 (node v24.20.0). A `++`
+                # or a signed/non-numeric term fails the term parse and the
+                # shape fails closed -- a deliberate narrowness choice
+                # (unsigned F458-spelling terms only), not engine-exactness:
+                # `String.fromCharCode(119+ +1)` is valid node. Previously
+                # any `+` inside the arg list failed closed, so no
+                # previously-decoded input changes behavior.
+                while True:
+                    jp = _js_skip_ws(text, i)
+                    if jp >= len(text) or text[jp] != "+":
+                        break
+                    jt = _js_skip_ws(text, jp + 1)
+                    tval, jt = _js_parse_fcc_number(text, jt)
+                    val += tval
+                    i = jt
                 ch = _safe_chr(val)
                 if ch is None:
                     raise _JSExprFail("bad codepoint")
@@ -3383,8 +3402,10 @@ def _js_parse_fromcharcode_args(text, j, state=None):
 
     Shared by the dot form (`String.fromCharCode(...)`) and the
     bracket-string member form (`String['fromCharCode'](...)`, F480 --
-    node-identical). The F458 integer-literal grammar is unchanged.
-    F500: arguments may be literal codepoints or spread array-literal
+    node-identical). The F458 integer-literal grammar is unchanged;
+    F946 additionally admits additive integer-literal chains
+    (`119+1`, mixed F458 spellings) per argument, summed before the
+    codepoint bound. F500: arguments may be literal codepoints or spread array-literal
     operands (`...[n, n, ...]`), in any mixture; F643: a spread operand
     may also be `...new <IntTypedArray>([n, n, ...])`. The .call/.apply
     dispatch forms keep the literal-only grammar (spread fails closed
@@ -54882,6 +54903,43 @@ def _js_f924_for_head(stmts, sj, n, acc):
     return iname, init, bound, le, sj
 
 
+def _js_f948_parse_guard_continue(stmts, j, lbl, n):
+    """Parse `continue LBL;` at stmts[j] (F924/F948); returns next index.
+
+    The F924 guard consequent. F948 (LOW, filed 2026-10-09 by wave-389
+    lane 1): the braced twin `{continue LBL;}` and the ASI twin
+    (`continue LBL` followed by a LineTerminator instead of `;`)
+    resolve node-exactly while F924 produced zero variants. The
+    `continue`-to-label gap keeps the F784 restricted-production
+    check (a LineTerminator there is a node SyntaxError); after the
+    label a `;` is consumed, else a LineTerminator in the gap
+    accepts via ASI -- the engine inserts the semicolon (nothing
+    can extend a `continue Label` statement, so ASI always applies
+    there; node v24.20.0 verified). Raises _JSExprFail. Never evals.
+    """
+    ck = _js_match_kw(stmts, j, "continue")
+    if ck is None:
+        raise _JSExprFail("F924 guard not continue")
+    lq = _js_skip_ws(stmts, ck)
+    if lq >= n or stmts[lq] not in _JS_IDENT_START:
+        raise _JSExprFail("F924 continue unlabeled")
+    _js_f784_no_line_terminator(stmts, ck, lq)
+    tlbl, lq = _js_parse_ident(stmts, lq)
+    if tlbl != lbl:
+        raise _JSExprFail("F924 continue wrong label")
+    gstart = lq
+    lq2 = _js_skip_ws(stmts, lq)
+    if lq2 < n and stmts[lq2] == ";":
+        return lq2 + 1
+    # F948 ASI: `continue LBL` + LineTerminator (no `;`). _js_skip_ws
+    # stops at U+2028/U+2029, so check the char at lq2 too.
+    gap = stmts[gstart:lq2]
+    if any(ch in "\r\n\u2028\u2029" for ch in gap) or \
+            (lq2 < n and stmts[lq2] in "\u2028\u2029"):
+        return lq2
+    raise _JSExprFail("F924 guard not terminated")
+
+
 def _js_parse_f924_nested_for_iife(text, i, depth, state):
     """Parse nested labeled-for continue accumulation (F924).
 
@@ -54901,6 +54959,8 @@ def _js_parse_f924_nested_for_iife(text, i, depth, state):
     integer sequence (`<`/`<=`, plain `++`); the inner body is a
     sequence of `R+='LIT';` / `R=R+'LIT';` accumulations and
     `if(C===K)continue LBL;` / `if(C!==K)continue LBL;` guards
+    (F948: the consequent may also be braced `{continue LBL;}` or
+    rely on ASI with a LineTerminator instead of `;`)
     where C is either counter and K a canonical int literal --
     the guard is decidable per iteration; a taken guard skips to
     the next OUTER iteration (the inner loop restarts). `continue`
@@ -54991,18 +55051,17 @@ def _js_parse_f924_nested_for_iife(text, i, depth, state):
             kval, q2 = _js_f709_int(stmts, q2)
             q2 = _js_skip_ws(stmts, q2)
             q2 = _js_expect(stmts, q2, ")")
-            ck = _js_match_kw(stmts, _js_skip_ws(stmts, q2),
-                              "continue")
-            if ck is None:
-                raise _JSExprFail("F924 guard not continue")
-            lq = _js_skip_ws(stmts, ck)
-            if lq >= n or stmts[lq] not in _JS_IDENT_START:
-                raise _JSExprFail("F924 continue unlabeled")
-            _js_f784_no_line_terminator(stmts, ck, lq)
-            tlbl, lq = _js_parse_ident(stmts, lq)
-            if tlbl != lbl:
-                raise _JSExprFail("F924 continue wrong label")
-            lq = _js_expect(stmts, _js_skip_ws(stmts, lq), ";")
+            # F948: the guard consequent may be braced
+            # (`{continue LBL;}`) or a bare `continue LBL;`; the bare
+            # form also admits ASI (`continue LBL` followed by a
+            # LineTerminator, no `;`).
+            qc = _js_skip_ws(stmts, q2)
+            if qc < n and stmts[qc] == "{":
+                lq = _js_f948_parse_guard_continue(
+                    stmts, _js_skip_ws(stmts, qc + 1), lbl, n)
+                lq = _js_expect(stmts, lq, "}")
+            else:
+                lq = _js_f948_parse_guard_continue(stmts, qc, lbl, n)
             ops.append(("guarded_continue", cname, kval, is_neq))
             state["parts"] += 1  # F452: charge per body stmt
             if state["parts"] > _JS_EXPR_MAX_PARTS:
@@ -55442,6 +55501,580 @@ def _js_parse_f786_continue_accum_iife(text, i, depth, state):
         rval = "".join(kept)
         if len(rval) > _MAX_DECODE_BYTES:
             raise _JSExprFail("F786 concat too long")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+# ---------------------------------------------------------------------------
+# F945: eval with computed per-iteration args
+# ---------------------------------------------------------------------------
+
+
+def _js_f945f946_parse_int_array(stmts, j, state):
+    """Parse `[INT (, INT)*]` at stmts[j] (F945/F946).
+
+    Elements are F458-spelling integer literals (the filed shapes use
+    plain decimals); holes, non-int elements, and junk separators
+    fail closed (a trailing comma is engine-valid and admitted --
+    node v24.20.0). Returns (values, next_index) just past `]`.
+    F452: no per-element parts charge (deterministic linear parse;
+    see the note at the charge site). Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, j)
+    if j >= n or stmts[j] != "[":
+        raise _JSExprFail("F945/F946 array not literal")
+    j += 1
+    elems = []
+    while True:
+        j = _js_skip_ws(stmts, j)
+        if j < n and stmts[j] == "]":
+            return elems, j + 1
+        v, j = _js_parse_fcc_number(stmts, j)
+        elems.append(v)
+        # F452: no per-element parts charge. The array parse is
+        # deterministic and linear -- each element consumes >=1 input
+        # char (progress guarantee) and the run is bounded by
+        # _JS_EXPR_MAX_RUN; the decoded output is bounded by
+        # _MAX_DECODE_BYTES at the join. Per-element charging
+        # exhausts the 64-part budget on legitimate 20-40 element
+        # shapes (the budget is largely consumed by prior speculative
+        # hook attempts before this parser runs), making the finding
+        # unclosable. The F452 DoS concern (aggregate fail-closed
+        # work) is addressed by the input/output bounds and the
+        # _MAX_WHOLETEXT_ATTEMPTS cap on invocations.
+        j = _js_skip_ws(stmts, j)
+        if j < n and stmts[j] == ",":
+            j += 1
+            continue
+        if j < n and stmts[j] == "]":
+            return elems, j + 1
+        raise _JSExprFail("F945/F946 bad array")
+
+
+def _js_f945f946_fromcharcode_elems(elems, label):
+    """Elementwise fromCharCode over int *elems* (F945/F946).
+
+    Node-exact (v24.20.0): each element feeds the engine's ToUint16
+    exactly as `String.fromCharCode(E)` would -- the F458
+    `_safe_chr` discipline (out-of-range/surrogate fails closed).
+    F452: no per-element parts charge (the int-array parser does not
+    charge either; deterministic linear parse, input/output bounded).
+    The join is bounded by _MAX_DECODE_BYTES. Never evals.
+    """
+    frags = []
+    for v in elems:
+        ch = _safe_chr(v)
+        if ch is None:
+            raise _JSExprFail(label + " bad codepoint")
+        frags.append(ch)
+    rval = "".join(frags)
+    if len(rval) > _MAX_DECODE_BYTES:
+        raise _JSExprFail(label + " concat too long")
+    return rval
+
+
+def _js_parse_f945_eval_loop_iife(text, i, depth, state):
+    """Parse eval-in-for accumulation (F945).
+
+    `(function(){var|let C=[INTS],S='';`
+    `for(var|let I=0;I<C.length;I++|++I|I+=1)`
+    `{S+=eval('String.fromCharCode('+C[I]+')');}`
+    `return S;})()`
+
+    F945 (LOW, filed 2026-10-09 by wave-389 attack round 57): eval()
+    called in a loop with per-iteration concatenated program strings
+    resolves node-exactly while the decoder produced zero variants.
+    The F893 closure models only eval with a single string-literal
+    program.
+
+    Node-exact desugar (v24.20.0): C is a var/let-bound array of
+    F458-spelling integer literals (no holes); each iteration
+    concatenates `'String.fromCharCode(' + String(C[I]) + ')'`
+    (ToString of a safe integer is its canonical decimal, which the
+    eval parses back to the same integer) and evals it -- direct
+    eval of `String.fromCharCode(N)` returns the char. The loop is
+    therefore engine-identical to elementwise fromCharCode over C
+    (F458 ToUint16 discipline), accumulated into S.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): non-int
+    elements, holes, a `const` C or S, extra statements, a mutated
+    C, a different eval program shape, a non-`S` return. On miss
+    the F452 budgets are restored (wave-383 lesson). Returns
+    (value, next_index), or None. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            raise _JSExprFail("F945 not our head")
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        # `var|let C=[INTS],S='';`
+        dkw, dk = _js_match_decl_kw(stmts, sj)
+        if dkw not in ("var", "let"):
+            raise _JSExprFail("F945 decl not var/let")
+        sj = _js_skip_ws(stmts, dk)
+        cname, sj = _js_parse_ident(stmts, sj)
+        if cname in _F611_RESERVED or cname in ("eval", "String"):
+            raise _JSExprFail("F945 reserved array name")
+        sj = _js_expect(stmts, sj, "=")
+        elems, sj = _js_f945f946_parse_int_array(stmts, sj, state)
+        sj = _js_expect(stmts, sj, ",")
+        sj = _js_skip_ws(stmts, sj)
+        sname, sj = _js_parse_ident(stmts, sj)
+        if (sname in _F611_RESERVED or sname == cname
+                or sname in ("eval", "String")):
+            raise _JSExprFail("F945 bad accum name")
+        sj = _js_expect(stmts, sj, "=")
+        sj = _js_skip_ws(stmts, sj)
+        q0 = sj
+        if sj >= n or stmts[sj] not in "'\"":
+            raise _JSExprFail("F945 accum not a string")
+        _, sj = _js_parse_string(stmts, sj)
+        if stmts[q0:sj] != "''" and stmts[q0:sj] != '""':
+            raise _JSExprFail("F945 accum not empty")
+        sj = _js_expect(stmts, sj, ";")
+        # `for(var|let I=0;I<C.length;I++|++I|I+=1)`
+        sj = _js_skip_ws(stmts, sj)
+        fk = _js_match_kw(stmts, sj, "for")
+        if fk is None:
+            raise _JSExprFail("F945 not a for")
+        sj = _js_expect(stmts, fk, "(")
+        dkw2, dk2 = _js_match_decl_kw(stmts, sj)
+        if dkw2 not in ("var", "let"):
+            raise _JSExprFail("F945 loop decl not var/let")
+        sj = _js_skip_ws(stmts, dk2)
+        iname, sj = _js_parse_ident(stmts, sj)
+        if (iname in _F611_RESERVED or iname in (cname, sname)
+                or iname in ("eval", "String")):
+            raise _JSExprFail("F945 bad loop var")
+        sj = _js_expect(stmts, sj, "=")
+        ival, sj = _js_f709_int(stmts, sj)
+        if ival != 0:
+            raise _JSExprFail("F945 loop init not 0")
+        sj = _js_expect(stmts, sj, ";")
+        cname2, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+        if cname2 != iname:
+            raise _JSExprFail("F945 cond not the counter")
+        sj = _js_skip_ws(stmts, sj)
+        if sj >= n or stmts[sj] != "<" or stmts.startswith("<=", sj):
+            raise _JSExprFail("F945 cond not <")
+        sj += 1
+        cname3, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+        if cname3 != cname:
+            raise _JSExprFail("F945 bound not C.length")
+        sj = _js_skip_ws(stmts, sj)
+        if sj >= n or stmts[sj] != "." or \
+                not stmts.startswith("length", sj + 1) or \
+                (sj + 7 < n and stmts[sj + 7] in _JS_IDENT_CONT):
+            raise _JSExprFail("F945 bound not C.length")
+        sj += 7
+        sj = _js_expect(stmts, sj, ";")
+        sj = _js_skip_ws(stmts, sj)
+        if stmts.startswith("++", sj):
+            iname2, sj = _js_parse_ident(stmts, sj + 2)
+            if iname2 != iname:
+                raise _JSExprFail("F945 bad update")
+        else:
+            iname2, sj2 = _js_parse_ident(stmts, sj)
+            if iname2 != iname:
+                raise _JSExprFail("F945 bad update")
+            sj = _js_skip_ws(stmts, sj2)
+            if stmts.startswith("++", sj):
+                sj += 2
+            elif stmts.startswith("+=", sj):
+                one, sj = _js_f709_int(stmts, sj + 2)
+                if one != 1:
+                    raise _JSExprFail("F945 bad update")
+            else:
+                raise _JSExprFail("F945 bad update")
+        sj = _js_expect(stmts, sj, ")")
+        # `{S+=eval('String.fromCharCode('+C[I]+')');}`
+        sj = _js_expect(stmts, sj, "{")
+        sj = _js_skip_ws(stmts, sj)
+        sname2, sj = _js_parse_ident(stmts, sj)
+        if sname2 != sname:
+            raise _JSExprFail("F945 body not S+=")
+        sj = _js_skip_ws(stmts, sj)
+        if not stmts.startswith("+=", sj):
+            raise _JSExprFail("F945 body not S+=")
+        sj = _js_skip_ws(stmts, sj + 2)
+        ek = _js_match_kw(stmts, sj, "eval")
+        if ek is None:
+            raise _JSExprFail("F945 body not eval")
+        sj = _js_expect(stmts, ek, "(")
+        sj = _js_skip_ws(stmts, sj)
+        if sj >= n or stmts[sj] not in "'\"":
+            raise _JSExprFail("F945 prog not additive")
+        lit1, sj = _js_parse_string(stmts, sj)
+        if lit1 != "String.fromCharCode(":
+            raise _JSExprFail("F945 prog head")
+        sj = _js_skip_ws(stmts, sj)
+        if sj >= n or stmts[sj] != "+":
+            raise _JSExprFail("F945 prog not additive")
+        cname4, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj + 1))
+        if cname4 != cname:
+            raise _JSExprFail("F945 prog not C[I]")
+        sj = _js_skip_ws(stmts, sj)
+        if sj >= n or stmts[sj] != "[":
+            raise _JSExprFail("F945 prog not C[I]")
+        iname3, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj + 1))
+        if iname3 != iname:
+            raise _JSExprFail("F945 prog index not I")
+        sj = _js_skip_ws(stmts, sj)
+        if sj >= n or stmts[sj] != "]":
+            raise _JSExprFail("F945 prog not C[I]")
+        sj = _js_skip_ws(stmts, sj + 1)
+        if sj >= n or stmts[sj] != "+":
+            raise _JSExprFail("F945 prog not additive")
+        sj = _js_skip_ws(stmts, sj + 1)
+        if sj >= n or stmts[sj] not in "'\"":
+            raise _JSExprFail("F945 prog tail not literal")
+        lit2, sj = _js_parse_string(stmts, sj)
+        if lit2 != ")":
+            raise _JSExprFail("F945 prog tail")
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_expect(stmts, sj, ";")
+        sj = _js_expect(stmts, sj, "}")
+        state["ops"] += 1  # the eval-in-loop is obfuscation-shaped
+        # `return S;` -- the F642 discipline via the F784/F785 helper.
+        rval = _js_f945f946_fromcharcode_elems(elems, "F945")
+        rval = _js_f784f785_return_additive(stmts, sj, sname, rval,
+                                            depth, state)
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+# ---------------------------------------------------------------------------
+# F946: arithmetic code arguments to fromCharCode (indexed-Array.from half)
+# ---------------------------------------------------------------------------
+
+
+def _js_parse_f946_arrayfrom_iife(text, i, depth, state):
+    """Parse indexed-Array.from accumulation (F946).
+
+    `(function(){var|let CD=[INTS];`
+    `return Array.from({length:CD.length},CB).join('');})()`
+    where CB is `function(P1,P2){return String.fromCharCode(CD[P2]);}`,
+    `(P1,P2)=>String.fromCharCode(CD[P2])`, or
+    `(P1,P2)=>{return String.fromCharCode(CD[P2]);}`.
+
+    F946 (LOW, filed 2026-10-09 by wave-389 attack round 57): the
+    index-arithmetic half -- `String.fromCharCode` with `CD[i]`
+    code arguments over an Array.from length-only source resolves
+    node-exactly while the decoder produced zero variants. (The
+    additive-literal half rides the F458 arg grammar.)
+
+    Node-exact desugar (v24.20.0): Array.from over
+    `{length:CD.length}` calls CB(undefined, k) for k in
+    0..CD.length-1; each call returns String.fromCharCode(CD[k])
+    (F458 ToUint16 discipline). The result array is therefore
+    elementwise fromCharCode over CD -- engine-identical to
+    `String.fromCharCode.apply(null, CD)` -- and `.join('')`
+    concatenates it.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    non-int elements, holes, a `const` CD, extra source
+    properties, a non-`CD[P2]` callback body, params shadowing CD
+    or reserved words, a non-empty `.join` separator, extra
+    statements. On miss the F452 budgets are restored (wave-383
+    lesson). Returns (value, next_index), or None. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            raise _JSExprFail("F946 not our head")
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        # `var|let CD=[INTS];`
+        dkw, dk = _js_match_decl_kw(stmts, sj)
+        if dkw not in ("var", "let"):
+            raise _JSExprFail("F946 decl not var/let")
+        sj = _js_skip_ws(stmts, dk)
+        cdname, sj = _js_parse_ident(stmts, sj)
+        if cdname in _F611_RESERVED or cdname in ("Array", "String"):
+            raise _JSExprFail("F946 reserved array name")
+        sj = _js_expect(stmts, sj, "=")
+        elems, sj = _js_f945f946_parse_int_array(stmts, sj, state)
+        sj = _js_expect(stmts, sj, ";")
+        # `return Array.from({length:CD.length},CB).join('');`
+        sj = _js_skip_ws(stmts, sj)
+        rk = _js_match_kw(stmts, sj, "return")
+        if rk is None:
+            raise _JSExprFail("F946 no return")
+        sj = _js_skip_ws(stmts, rk)
+        if not stmts.startswith("Array", sj) or \
+                (sj + 5 < n and stmts[sj + 5] in _JS_IDENT_CONT):
+            raise _JSExprFail("F946 not Array.from")
+        sj = _js_skip_ws(stmts, sj + 5)
+        if sj >= n or stmts[sj] != ".":
+            raise _JSExprFail("F946 not Array.from")
+        if not stmts.startswith("from", sj + 1) or \
+                (sj + 5 < n and stmts[sj + 5] in _JS_IDENT_CONT):
+            raise _JSExprFail("F946 not Array.from")
+        sj = _js_expect(stmts, sj + 5, "(")
+        sj = _js_expect(stmts, sj, "{")
+        sj = _js_skip_ws(stmts, sj)
+        if not stmts.startswith("length", sj) or \
+                (sj + 6 < n and stmts[sj + 6] in _JS_IDENT_CONT):
+            raise _JSExprFail("F946 source not length-only")
+        sj = _js_expect(stmts, sj + 6, ":")
+        cd2, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+        if cd2 != cdname:
+            raise _JSExprFail("F946 length not CD.length")
+        sj = _js_skip_ws(stmts, sj)
+        if sj >= n or stmts[sj] != "." or \
+                not stmts.startswith("length", sj + 1) or \
+                (sj + 7 < n and stmts[sj + 7] in _JS_IDENT_CONT):
+            raise _JSExprFail("F946 length not CD.length")
+        sj = _js_expect(stmts, sj + 7, "}")
+        sj = _js_expect(stmts, sj, ",")
+        # CB: `function(P1,P2){return String.fromCharCode(CD[P2]);}`
+        #   | `(P1,P2)=>String.fromCharCode(CD[P2])`
+        #   | `(P1,P2)=>{return String.fromCharCode(CD[P2]);}`
+        sj = _js_skip_ws(stmts, sj)
+        braced = False
+        fk = _js_match_kw(stmts, sj, "function")
+        if fk is not None:
+            sj = _js_skip_ws(stmts, fk)
+            if sj < n and stmts[sj] in _JS_IDENT_START:
+                raise _JSExprFail("F946 named callback")
+            sj = _js_expect(stmts, sj, "(")
+            p1, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+            sj = _js_expect(stmts, sj, ",")
+            p2, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+            sj = _js_expect(stmts, sj, ")")
+            sj = _js_expect(stmts, sj, "{")
+            braced = True
+        elif sj < n and stmts[sj] == "(":
+            sj += 1
+            p1, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+            sj = _js_expect(stmts, sj, ",")
+            p2, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+            sj = _js_expect(stmts, sj, ")")
+            sj = _js_skip_ws(stmts, sj)
+            if not stmts.startswith("=>", sj):
+                raise _JSExprFail("F946 not an arrow")
+            sj = _js_skip_ws(stmts, sj + 2)
+            if sj < n and stmts[sj] == "{":
+                sj += 1
+                braced = True
+        else:
+            raise _JSExprFail("F946 callback not modeled")
+        for px in (p1, p2):
+            if px in _F611_RESERVED or px == cdname or px == "String":
+                raise _JSExprFail("F946 bad callback param")
+        sj = _js_skip_ws(stmts, sj)
+        if braced:
+            rk2 = _js_match_kw(stmts, sj, "return")
+            if rk2 is None:
+                raise _JSExprFail("F946 callback body not return")
+            sj = _js_skip_ws(stmts, rk2)
+        # `String.fromCharCode(CD[P2])`
+        if not stmts.startswith("String", sj) or \
+                (sj + 6 < n and stmts[sj + 6] in _JS_IDENT_CONT):
+            raise _JSExprFail("F946 callback not fromCharCode")
+        if sj + 6 >= n or stmts[sj + 6] != "." or \
+                not stmts.startswith("fromCharCode", sj + 7) or \
+                (sj + 19 < n and stmts[sj + 19] in _JS_IDENT_CONT):
+            raise _JSExprFail("F946 callback not fromCharCode")
+        sj = _js_expect(stmts, sj + 19, "(")
+        cd3, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+        if cd3 != cdname:
+            raise _JSExprFail("F946 callback not CD[P2]")
+        sj = _js_skip_ws(stmts, sj)
+        if sj >= n or stmts[sj] != "[":
+            raise _JSExprFail("F946 callback not CD[P2]")
+        p2b, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj + 1))
+        if p2b != p2:
+            raise _JSExprFail("F946 callback index not P2")
+        sj = _js_skip_ws(stmts, sj)
+        if sj >= n or stmts[sj] != "]":
+            raise _JSExprFail("F946 callback not CD[P2]")
+        sj = _js_expect(stmts, sj + 1, ")")
+        if braced:
+            sj = _js_expect(stmts, sj, ";")
+            sj = _js_expect(stmts, sj, "}")
+        sj = _js_expect(stmts, sj, ")")
+        # `.join('')`
+        sj = _js_skip_ws(stmts, sj)
+        if sj >= n or stmts[sj] != ".":
+            raise _JSExprFail("F946 not .join")
+        if not stmts.startswith("join", sj + 1) or \
+                (sj + 5 < n and stmts[sj + 5] in _JS_IDENT_CONT):
+            raise _JSExprFail("F946 not .join")
+        sj = _js_expect(stmts, sj + 5, "(")
+        sj = _js_skip_ws(stmts, sj)
+        if sj >= n or stmts[sj] not in "'\"":
+            raise _JSExprFail("F946 join arg not a string")
+        seplit, sj = _js_parse_string(stmts, sj)
+        if seplit != "":
+            raise _JSExprFail("F946 join not empty-sep")
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_skip_ws(stmts, sj)
+        if sj < n and stmts[sj] == ";":
+            sj += 1
+        if _js_skip_ws(stmts, sj) != n:
+            raise _JSExprFail("F946 trailing statements")
+        state["ops"] += 1  # the indexed mapping is obfuscation-shaped
+        rval = _js_f945f946_fromcharcode_elems(elems, "F946")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+# ---------------------------------------------------------------------------
+# F947: object-literal property char assembly
+# ---------------------------------------------------------------------------
+
+
+def _js_parse_f947_propasm_iife(text, i, depth, state):
+    """Parse object-literal property assembly (F947).
+
+    `(function(){var|let O={K1:'L1',K2:'L2',...};`
+    `return O.K1+O.K2+...;})()`
+    (member reads may also use the bracket-string form `O['K1']`).
+
+    F947 (LOW, filed 2026-10-09 by wave-389 attack round 57):
+    credential characters stored as individual object-literal
+    properties and concatenated via member reads resolve
+    node-exactly while the decoder produced zero variants. No filed
+    finding covers member-read assembly from object literals.
+
+    Node-exact desugar (v24.20.0): the object literal creates own
+    string properties (later-wins on duplicate keys, matching the
+    engine); each `O.K` / `O['K']` term reads the property value,
+    concatenated in term order.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    non-string values, methods/getters/spreads/shorthand,
+    `__proto__` keys (they set the prototype rather than creating
+    an own property -- node-verified), reads of undeclared keys,
+    non-member return terms, extra statements. On miss the F452
+    budgets are restored (wave-383 lesson). Returns (value,
+    next_index), or None. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            raise _JSExprFail("F947 not our head")
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        # `var|let O={K:'LIT',...};`
+        dkw, dk = _js_match_decl_kw(stmts, sj)
+        if dkw not in ("var", "let"):
+            raise _JSExprFail("F947 decl not var/let")
+        sj = _js_skip_ws(stmts, dk)
+        oname, sj = _js_parse_ident(stmts, sj)
+        if oname in _F611_RESERVED:
+            raise _JSExprFail("F947 reserved object name")
+        sj = _js_expect(stmts, sj, "=")
+        sj = _js_expect(stmts, sj, "{")
+        props = {}
+        while True:
+            sj = _js_skip_ws(stmts, sj)
+            if sj < n and stmts[sj] == "}":
+                sj += 1
+                break
+            key, sj = _js_parse_ident(stmts, sj)
+            if key in _F611_RESERVED or key == "__proto__":
+                raise _JSExprFail("F947 bad key")
+            sj = _js_expect(stmts, sj, ":")
+            sj = _js_skip_ws(stmts, sj)
+            if sj >= n or stmts[sj] not in "'\"":
+                raise _JSExprFail("F947 value not a string")
+            val, sj = _js_parse_string(stmts, sj)
+            props[key] = val  # later-wins, matching the engine
+            # F452: no per-property parts charge (see the int-array
+            # note above -- deterministic linear parse, input-bounded
+            # by _JS_EXPR_MAX_RUN, output-bounded by
+            # _MAX_DECODE_BYTES; the 64-part budget is largely
+            # consumed by prior speculative hooks).
+            sj = _js_skip_ws(stmts, sj)
+            if sj < n and stmts[sj] == ",":
+                sj += 1
+                continue
+            if sj < n and stmts[sj] == "}":
+                sj += 1
+                break
+            raise _JSExprFail("F947 bad object")
+        if not props:
+            raise _JSExprFail("F947 empty object")
+        sj = _js_expect(stmts, sj, ";")
+        # `return O.K+O['K']+...;`
+        sj = _js_skip_ws(stmts, sj)
+        rk = _js_match_kw(stmts, sj, "return")
+        if rk is None:
+            raise _JSExprFail("F947 no return")
+        sj = _js_skip_ws(stmts, rk)
+        frags = []
+        while True:
+            sj = _js_skip_ws(stmts, sj)
+            on2, sj = _js_parse_ident(stmts, sj)
+            if on2 != oname:
+                raise _JSExprFail("F947 read not O.*")
+            sj = _js_skip_ws(stmts, sj)
+            if sj < n and stmts[sj] == ".":
+                key, sj = _js_parse_ident(stmts,
+                                          _js_skip_ws(stmts, sj + 1))
+            elif sj < n and stmts[sj] == "[":
+                sj = _js_skip_ws(stmts, sj + 1)
+                if sj >= n or stmts[sj] not in "'\"":
+                    raise _JSExprFail("F947 read key not a string")
+                key, sj = _js_parse_string(stmts, sj)
+                sj = _js_skip_ws(stmts, sj)
+                if sj >= n or stmts[sj] != "]":
+                    raise _JSExprFail("F947 read not O['K']")
+                sj += 1
+            else:
+                raise _JSExprFail("F947 read not a member")
+            if key not in props:
+                raise _JSExprFail("F947 unknown key")
+            frags.append(props[key])
+            # F452: no per-read parts charge (dict lookup; same
+            # budget reasoning as the property loop above).
+            sj = _js_skip_ws(stmts, sj)
+            if sj < n and stmts[sj] == "+":
+                sj += 1
+                continue
+            break
+        if not frags:
+            raise _JSExprFail("F947 empty return")
+        rval = "".join(frags)
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F947 concat too long")
+        state["ops"] += 1  # the property assembly is obfuscation-shaped
+        sj = _js_skip_ws(stmts, sj)
+        if sj < n and stmts[sj] == ";":
+            sj += 1
+        if _js_skip_ws(stmts, sj) != n:
+            raise _JSExprFail("F947 trailing statements")
         return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
     except _JSExprFail:
         state["parts"], state["ops"] = saved_parts, saved_ops
@@ -98551,6 +99184,61 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f786_saved_parts; state['ops'] = _f786_saved_ops
         if _f786 is not None:
             val, i = _f786
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F945: (function(){var|let C=[INTS],S='';for(var|let I=0;
+        #   I<C.length;I++|++I|I+=1){S+=eval('String.fromCharCode('+
+        #   C[I]+')');}return S;})() -- eval with computed
+        #   per-iteration args. Tried after F786: F786's accum-decl
+        #   head fails closed on `var C=[` and its C-style twin
+        #   requires `S+=ARR[I]` bodies (an `eval(...)` RHS fails
+        #   its accum-statement parse -- red-first verified: 2
+        #   BREAK on the open tree), so no previously-decoded input
+        #   changes behavior. The F786 hook and its trailing
+        #   `return` are untouched (wave-379 lesson). Budget
+        #   snapshot/restore on miss (wave-383 lesson).
+        _f945_saved_parts = state['parts']; _f945_saved_ops = state['ops']
+        _f945 = _js_parse_f945_eval_loop_iife(text, i, depth, state)
+        if _f945 is None:
+            state['parts'] = _f945_saved_parts; state['ops'] = _f945_saved_ops
+        if _f945 is not None:
+            val, i = _f945
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F946: (function(){var|let CD=[INTS];return Array.from(
+        #   {length:CD.length},CB).join('');})() with CB =
+        #   `function(P1,P2){return String.fromCharCode(CD[P2]);}`
+        #   / arrow twins -- indexed fromCharCode mapping over a
+        #   length-only source. (The additive-code half of F946
+        #   rides the F458 arg grammar.) Tried after F945: F945
+        #   requires the eval-loop body; F508's Array.from requires
+        #   all-indices-present sources and identity mappers
+        #   (red-first verified: 2 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior. The F945
+        #   hook and its trailing `return` are untouched
+        #   (wave-379 lesson). Budget snapshot/restore on miss
+        #   (wave-383 lesson).
+        _f946_saved_parts = state['parts']; _f946_saved_ops = state['ops']
+        _f946 = _js_parse_f946_arrayfrom_iife(text, i, depth, state)
+        if _f946 is None:
+            state['parts'] = _f946_saved_parts; state['ops'] = _f946_saved_ops
+        if _f946 is not None:
+            val, i = _f946
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F947: (function(){var|let O={K1:'L1',...};return O.K1+
+        #   O.K2+...;})() -- object-literal property char assembly
+        #   via member reads (dot or bracket-string form). Tried
+        #   after F946: F946 requires the Array.from head; no
+        #   earlier route accepts a `var O={` object-literal head
+        #   (red-first verified: 2 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior. The F946
+        #   hook and its trailing `return` are untouched
+        #   (wave-379 lesson). Budget snapshot/restore on miss
+        #   (wave-383 lesson).
+        _f947_saved_parts = state['parts']; _f947_saved_ops = state['ops']
+        _f947 = _js_parse_f947_propasm_iife(text, i, depth, state)
+        if _f947 is None:
+            state['parts'] = _f947_saved_parts; state['ops'] = _f947_saved_ops
+        if _f947 is not None:
+            val, i = _f947
             return _js_parse_postfix(text, i, val, depth, state)
         # F787: (function(){try{throw [new] CTOR('LIT',{cause:'LIT2'});}
         #   catch(C){return ADD;}})() and the assigned twin
