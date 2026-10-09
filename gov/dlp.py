@@ -20425,6 +20425,524 @@ def _js_parse_f671_member_reads_iife(text, i, depth, state):
         return None
 
 
+def _js_f748_guard_assign(expr_text, ts, te):
+    """Fail when a bound name is (re)assigned inside an expression (F748).
+
+    The F611/F501 reassignment guard extended to every compound and
+    logical assignment operator: a bound name followed by `=`, `+=`,
+    `-=`, `*=`, `/=`, `%=`, `**=`, `<<=`, `>>=`, `>>>=`, `&=`, `|=`,
+    `^=`, `&&=`, `||=`, `??=`, or adjacent to `++`/`--` would make
+    the substitution environment stale, so the expression is refused
+    coded. `==`/`===`/`=>` are comparisons, not assignments, and
+    pass. Raises _JSExprFail. Never evals.
+    """
+    n = len(expr_text)
+    j = te
+    while j < n and expr_text[j] in " \t\n\r":
+        j += 1
+    if expr_text[j:j + 4] == ">>>=":
+        raise _JSExprFail("f748 assignment in expression")
+    if expr_text[j:j + 3] in ("||=", "&&=", "??=", "**=", "<<=",
+                              ">>="):
+        raise _JSExprFail("f748 assignment in expression")
+    two = expr_text[j:j + 2]
+    if two in ("+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
+               "++", "--"):
+        raise _JSExprFail("f748 assignment in expression")
+    if expr_text[j:j + 1] == "=" and two not in ("==", "=>"):
+        raise _JSExprFail("f748 assignment in expression")
+    pp = ts - 1
+    while pp >= 0 and expr_text[pp] in " \t\n\r":
+        pp -= 1
+    if pp >= 1 and expr_text[pp - 1:pp + 1] in ("++", "--"):
+        raise _JSExprFail("f748 assignment in expression")
+
+
+def _js_f748_subst_expr(expr_text, env):
+    """Rewrite an additive expression with a statement-built env (F748/F749).
+
+    env maps bound names to a plain string, a dict of member strings
+    (object-literal bindings), or None (declared but unbound).
+    Every value-position name token (the F611/F501 token discipline
+    via _js_ident_tokens -- never inside string literals, never
+    property names) is replaced by its quoted value; `NAME.MEMBER`
+    on a dict-bound name is replaced as one span. Unbound names are
+    left in place -- the additive grammar fails closed on the bare
+    ident. Raises _JSExprFail on anything the substitution cannot
+    model node-exactly (a bare dict read, a member read on a
+    string, a missing member, a reassignment). Never evals.
+    """
+    toks = _js_ident_tokens(expr_text)
+    n = len(expr_text)
+    out = []
+    pos = 0
+    for tname, ts, te in toks:
+        if ts < pos:
+            continue  # consumed inside an earlier NAME.MEMBER span
+        if tname not in env:
+            continue
+        if ts > 0 and (expr_text[ts - 1] in _JS_IDENT_CONT
+                       or expr_text[ts - 1] in ".$"):
+            continue  # property-name position -- never substituted
+        val = env[tname]
+        j = te
+        while j < n and expr_text[j] in " \t\n\r":
+            j += 1
+        dot_member = j < n and expr_text[j] == "."
+        if isinstance(val, dict):
+            if not dot_member:
+                # A bare bound ident reads "[object Object]" in the
+                # engine -- never decoded (F671 discipline).
+                raise _JSExprFail("f748 bare object read")
+            k = j + 1
+            while k < n and expr_text[k] in " \t\n\r":
+                k += 1
+            mname, k = _js_parse_ident(expr_text, k)
+            if mname not in val:
+                raise _JSExprFail("f748 missing member")
+            _js_f748_guard_assign(expr_text, ts, k)
+            out.append(expr_text[pos:ts])
+            out.append(_js_f611_quote(val[mname]))
+            pos = k
+            continue
+        if val is None:
+            continue  # unbound: the additive fails closed
+        if dot_member:
+            # `NAME.MEMBER` on a plain string reads undefined in
+            # the engine -- refuse coded rather than mis-decode.
+            raise _JSExprFail("f748 member on string")
+        _js_f748_guard_assign(expr_text, ts, te)
+        out.append(expr_text[pos:ts])
+        out.append(_js_f611_quote(val))
+        pos = te
+    out.append(expr_text[pos:])
+    return "".join(out)
+
+
+def _js_f748_scan_expr(text, j):
+    """Scan an expression to its terminating `;` (F748/F749).
+
+    Returns (expr_text, next_index) with next_index just past the
+    `;`. Depth-tracks `()[]{}` and string literals exactly like the
+    F611 return scanner; a template literal or unbalanced input
+    fails closed. Never evals.
+    """
+    n = len(text)
+    q = None
+    pdepth = 0
+    m = j
+    while m < n:
+        c = text[m]
+        if q is not None:
+            if c == "\\":
+                m += 2
+                continue
+            if c == q:
+                q = None
+        elif c in "'\"":
+            q = c
+        elif c == "`":
+            raise _JSExprFail("f748 template in expression")
+        elif c in "([{":
+            pdepth += 1
+        elif c in ")]}":
+            pdepth -= 1
+            if pdepth < 0:
+                raise _JSExprFail("f748 unbalanced expression")
+        elif c == ";" and pdepth == 0:
+            break
+        m += 1
+    else:
+        raise _JSExprFail("f748 unterminated expression")
+    if q is not None or pdepth != 0:
+        raise _JSExprFail("f748 unbalanced expression")
+    return text[j:m], m + 1
+
+
+def _js_f748_truthy(value):
+    """Node-exact ToBoolean over the F748 value domain (v24.20.0).
+
+    Values are plain strings, object-literal dicts, or None
+    (declared-but-unbound, i.e. undefined): '' and undefined are
+    falsy; objects are always truthy; every other string is truthy.
+    Never evals.
+    """
+    if value is None:
+        return False
+    if isinstance(value, dict):
+        return True
+    return len(value) > 0
+
+
+def _js_f748_eval_additive(expr_text, env, depth, state):
+    """Evaluate an additive expression under the F748 env (F748).
+
+    Substitutes the environment into the expression text
+    (_js_f748_subst_expr) and parses the rewritten text with the
+    normal additive grammar, so every downstream decoder, bound,
+    and fail-closed rule applies unchanged. Returns the decoded
+    string. Raises _JSExprFail. Never evals.
+    """
+    rewritten = _js_f748_subst_expr(expr_text, env)
+    try:
+        val, rend = _js_parse_additive(rewritten, 0, depth + 1,
+                                       state)
+    except _JSExprFail:
+        raise _JSExprFail("f748 rhs not additive")
+    if rend != len(rewritten):
+        raise _JSExprFail("f748 rhs trailing input")
+    return val
+
+
+def _js_parse_f748_logassign_iife(text, i, depth, state):
+    """Parse `(function(){DECL; STMT+; return EXPR;})()` (F748).
+
+    Logical-assignment (`||=` / `&&=` / `??=`) and `+=` statements
+    over a single var/let/const binding: the decoder had no
+    logical-assignment production, so `x||='f1'` /
+    `o.x&&=o.x+'f2'` sequences were invisible:
+    `(function(){var x;x||='f1';x+='f2';return x;})()` and
+    `(function(){var o={x:'f1'};o.x&&=o.x+'f2';return o.x;})()`
+    node-evaluate to the exact credential (v24.20.0) while the
+    decoder produced zero variants.
+
+    Node-exact desugar (v24.20.0): the declaration binds one name
+    to a string literal, an object literal of string values
+    (`_js_parse_object_literal_keys_values`), or nothing
+    (`var`/`let`-only -- `const` without an initializer is a
+    SyntaxError in the engine). Each statement `TARGET OP RHS;`
+    evaluates RHS additively under the current environment, then
+    applies the operator: `||=` assigns when the target is falsy,
+    `&&=` assigns when truthy, `??=` assigns when the target is
+    undefined, `+=` concatenates (ToString(undefined) is
+    "undefined", node-exact). TARGET is a bound name or a
+    `NAME.MEMBER` step on an object binding. The return is
+    rewritten by substituting the final environment
+    (_js_f748_subst_expr, the F611/F501 token discipline) and
+    parsed by the normal additive grammar.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a second declarator, a non-string/non-object initializer, a
+      template literal in any statement;
+    - an undeclared statement target, a member step on a
+      non-object binding, a missing member, a computed member;
+    - rebinding the plain name of a `const` declaration (the
+      engine throws TypeError -- member writes on a const-bound
+      object stay legal and are modeled);
+    - reassignment of a bound name inside the return expression;
+    - a named function, parameters, a directive prologue, extra
+      statements after return, non-empty call args.
+    Tried after F671: every earlier IIFE route requires an
+    immediate `return` after its declaration section (or a
+    different statement grammar) and fails closed on the
+    assignment-statement shape; this requires at least one
+    assignment statement and fails closed on every shape they
+    accept, so no previously-decoded input changes behavior. None
+    falls through to the parenthesized-additive path like F671.
+    Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+        if k is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            # Optional name (engine-exact; ignored) -- F611 twin.
+            _, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # params: the filed shapes take none
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "{":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        dkw, k = _js_match_decl_kw(text, k)
+        if dkw is None:
+            return None
+        k = _js_skip_ws(text, k)
+        name, k = _js_parse_ident(text, k)
+        if name in _F611_RESERVED or name == "arguments":
+            raise _JSExprFail("f748 reserved declarator")
+        k = _js_skip_ws(text, k)
+        env = {}
+        if (k < n and text[k] == "="
+                and text[k + 1:k + 2] not in ("=", ">")):
+            k = _js_skip_ws(text, k + 1)
+            if k < n and text[k] in "'\"":
+                init_val, k = _js_parse_string(text, k)
+                env[name] = init_val
+            elif k < n and text[k] == "{":
+                okeys, ovals, k = \
+                    _js_parse_object_literal_keys_values(
+                        text, k, depth, state)
+                env[name] = dict(zip(okeys, ovals))
+            else:
+                raise _JSExprFail("f748 initializer not modeled")
+        else:
+            if dkw == "const":
+                raise _JSExprFail("f748 const without initializer")
+            env[name] = None  # declared but unbound (undefined)
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ",":
+            raise _JSExprFail("f748 multi-declarator")
+        k = _js_expect(text, k, ";")
+        k = _js_skip_ws(text, k)
+        # Statement sequence: TARGET (||=|&&=|??=|+=) RHS ;
+        saw_stmt = False
+        while True:
+            rk = _js_match_kw(text, k, "return")
+            if rk is not None:
+                break
+            tname, k = _js_parse_ident(text, k)
+            if tname not in env:
+                raise _JSExprFail("f748 undeclared target")
+            member = None
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ".":
+                k = _js_skip_ws(text, k + 1)
+                member, k = _js_parse_ident(text, k)
+                if not isinstance(env[tname], dict):
+                    raise _JSExprFail("f748 member on non-object")
+                if member not in env[tname]:
+                    raise _JSExprFail("f748 missing member")
+            k = _js_skip_ws(text, k)
+            if text[k:k + 3] in ("||=", "&&=", "??="):
+                op = text[k:k + 3]
+                k += 3
+            elif text[k:k + 2] == "+=":
+                op = "+="
+                k += 2
+            else:
+                raise _JSExprFail("f748 operator not modeled")
+            k = _js_skip_ws(text, k)
+            rhs_text, k = _js_f748_scan_expr(text, k)
+            rhs_val = _js_f748_eval_additive(rhs_text, env, depth,
+                                             state)
+            if member is None:
+                if dkw == "const":
+                    # The engine throws TypeError on any plain-name
+                    # rebinding of a const -- refuse coded.
+                    raise _JSExprFail("f748 const reassignment")
+                cur = env[tname]
+            else:
+                cur = env[tname][member]
+            if op == "||=":
+                if not _js_f748_truthy(cur):
+                    new_val = rhs_val
+                else:
+                    new_val = None
+            elif op == "&&=":
+                if _js_f748_truthy(cur):
+                    new_val = rhs_val
+                else:
+                    new_val = None
+            elif op == "??=":
+                if cur is None:
+                    new_val = rhs_val
+                else:
+                    new_val = None
+            else:  # +=
+                if isinstance(cur, dict):
+                    raise _JSExprFail("f748 plus on object")
+                base = "undefined" if cur is None else cur
+                new_val = base + rhs_val
+            if new_val is not None:
+                if member is None:
+                    env[tname] = new_val
+                else:
+                    env[tname][member] = new_val
+            state["ops"] += 1  # the assignment is obfuscation-shaped
+            saw_stmt = True
+            k = _js_skip_ws(text, k)
+        if not saw_stmt:
+            # Disjointness gate: F611/F661 own the decl+return
+            # shape; without a statement this route refuses.
+            return None
+        e = _js_skip_ws(text, rk)
+        ret_text, k = _js_f748_scan_expr(text, e)
+        val = _js_f748_eval_additive(ret_text, env, depth, state)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "}":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # invocation args: the filed shapes take none
+        k = k + 1
+    except _JSExprFail:
+        return None
+    state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+    return val, k
+
+
+def _js_parse_f749_destructure_default_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const {PAT}=SRC;return EXPR;})()` (F749).
+
+    Object-pattern destructuring with default initializers: the
+    decoder modeled plain destructuring (F545, CLOSED) but not
+    defaults, so `var {x='f1',y='f2'}={}` and the renamed twin
+    `var {x:q='f1'}={}` were invisible:
+    `(function(){var {x='f1',y='f2'}={};return x+y;})()` and
+    `(function(){var {x:q='f1'}={};return q+'f2';})()`
+    node-evaluate to the exact credential (v24.20.0) while the
+    decoder produced zero variants.
+
+    Node-exact desugar (v24.20.0): the pattern binds one or two
+    names; each element is `KEY` (shorthand, key and name are the
+    ident), `KEY:NAME` (renamed), each optionally followed by
+    `=DEFAULT` with a string-literal default. KEY is an ident or
+    string literal. The source is an object literal of string
+    values (`_js_parse_object_literal_keys_values` -- duplicate
+    keys later-wins, `__proto__` fails closed). A binding takes
+    the source value when the key is present, else the default;
+    with neither, the name stays unbound and reads of it fail
+    closed (the engine's undefined is never decoded). The return
+    is rewritten by substituting the bindings
+    (_js_f748_subst_expr, the F611/F501 token discipline) and
+    parsed by the normal additive grammar.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a non-object-literal source, a non-string default, holes,
+      rest elements, nested patterns, computed keys, more than two
+      bindings, duplicate names, reserved-word names;
+    - array destructuring with defaults (documented residual);
+    - reassignment of a bound name inside the return expression;
+    - a named function, parameters, a directive prologue, extra
+      statements, non-empty call args.
+    Tried after F748: F545 requires an `=arguments` source and
+    fails closed on every shape this accepts; F611/F661/F671
+    require ident declarators and fail closed on the `{` pattern
+    head; this requires the destructuring head and fails closed
+    on every shape they accept, so no previously-decoded input
+    changes behavior. None falls through to the
+    parenthesized-additive path like F748. Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+        if k is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            # Optional name (engine-exact; ignored) -- F611 twin.
+            _, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # params: the filed shapes take none
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "{":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        dkw, k = _js_match_decl_kw(text, k)
+        if dkw is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "{":
+            return None  # not a destructuring head
+        k = _js_skip_ws(text, k + 1)
+        pattern = []
+        while True:
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] in "'\"":
+                key, k = _js_parse_string(text, k)
+            else:
+                key, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+            pname = key
+            if k < n and text[k] == ":":
+                k = _js_skip_ws(text, k + 1)
+                pname, k = _js_parse_ident(text, k)
+                k = _js_skip_ws(text, k)
+            default = None
+            if (k < n and text[k] == "="
+                    and text[k + 1:k + 2] not in ("=", ">")):
+                k = _js_skip_ws(text, k + 1)
+                if k >= n or text[k] not in "'\"":
+                    raise _JSExprFail("f749 default not a string")
+                default, k = _js_parse_string(text, k)
+                state["parts"] += 1  # the default is a fragment
+                k = _js_skip_ws(text, k)
+            pattern.append((key, pname, default))
+            if k < n and text[k] == ",":
+                k = _js_skip_ws(text, k + 1)
+                continue
+            if k < n and text[k] == "}":
+                k += 1
+                break
+            raise _JSExprFail("f749 bad pattern")
+        if not 1 <= len(pattern) <= 2:
+            raise _JSExprFail("f749 pattern arity")
+        pnames = [p for _, p, _ in pattern]
+        if len(set(pnames)) != len(pnames):
+            raise _JSExprFail("f749 duplicate names")
+        for _, pname, _ in pattern:
+            if pname in _F611_RESERVED or pname == "arguments":
+                raise _JSExprFail("f749 reserved name")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "=")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "{":
+            raise _JSExprFail("f749 source not an object literal")
+        skeys, svals, k = _js_parse_object_literal_keys_values(
+            text, k, depth, state)
+        src = dict(zip(skeys, svals))
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ";")
+        k = _js_skip_ws(text, k)
+        rk = _js_match_kw(text, k, "return")
+        if rk is None:
+            raise _JSExprFail("f749 return required")
+        e = _js_skip_ws(text, rk)
+        ret_text, k = _js_f748_scan_expr(text, e)
+        env = {}
+        for key, pname, default in pattern:
+            sval = src.get(key)
+            if sval is None:
+                env[pname] = default  # None default: unbound
+            else:
+                env[pname] = sval
+        val = _js_f748_eval_additive(ret_text, env, depth, state)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "}":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # invocation args: the filed shapes take none
+        k = k + 1
+    except _JSExprFail:
+        return None
+    state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+    return val, k
+
+
 def _js_parse_args_laundered_iife(text, i, depth, state):
     """Parse `(function(){var A=SRC;return BODY})(lit, ...)` or
     `(function(...A){return BODY})(lit, ...)` at text[i] (F516).
@@ -57387,6 +57905,40 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                 state)
         if _f671 is not None:
             val, i = _f671
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F748: (function(){DECL; STMT+; return EXPR;})() --
+        # logical-assignment (||= / &&= / ??=) and += statements
+        # over one var/let/const binding. Tried after F671: every
+        # earlier IIFE route requires an immediate `return` after
+        # its declaration section (or a different statement
+        # grammar) and fails closed on the assignment-statement
+        # shape; this requires >=1 assignment statement and fails
+        # closed on every shape they accept, so no
+        # previously-decoded input changes behavior. None falls
+        # through to the parenthesized-additive path like F671.
+        _f748_saved_parts = state['parts']; _f748_saved_ops = state['ops']
+        _f748 = _js_parse_f748_logassign_iife(text, i, depth, state)
+        if _f748 is None:
+            state['parts'] = _f748_saved_parts; state['ops'] = _f748_saved_ops
+        if _f748 is not None:
+            val, i = _f748
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F749: (function(){var|let|const {K0(=D0)?,K1(=D1)?}=SRC;
+        #   return EXPR;})() -- object-pattern destructuring with
+        # string-literal default initializers. Tried after F748:
+        # F545 requires an `=arguments` source, F611/F661/F671
+        # require ident declarators, and all fail closed on the
+        # `{` destructuring head; this requires the destructuring
+        # head and fails closed on every shape they accept, so no
+        # previously-decoded input changes behavior. None falls
+        # through to the parenthesized-additive path like F748.
+        _f749_saved_parts = state['parts']; _f749_saved_ops = state['ops']
+        _f749 = _js_parse_f749_destructure_default_iife(text, i, depth,
+                                                        state)
+        if _f749 is None:
+            state['parts'] = _f749_saved_parts; state['ops'] = _f749_saved_ops
+        if _f749 is not None:
+            val, i = _f749
             return _js_parse_postfix(text, i, val, depth, state)
         # F668: (function(){function NAME(s){return ADD;}
         #   return NAME`T`;})() and the var-bound function-expression

@@ -689,28 +689,28 @@ def test_r51_f745_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f746_s1_open():
-    """F748 OPEN (logical assignment ||= / &&=): miss reproduces."""
-    miss = _misses("(function(){var x;x||='%s';x+='%s';return x;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f746_s1_closed():
+    """F748 CLOSED: still blocks."""
+    ok = _blocked("(function(){var x;x||='%s';x+='%s';return x;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f748=%s" % ok)
 
 @_t
-def test_r51_f746_s2_open():
-    """F748 OPEN (logical assignment ||= / &&=): miss reproduces."""
-    miss = _misses("(function(){var o={x:'%s'};o.x&&=o.x+'%s';return o.x;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f746_s2_closed():
+    """F748 CLOSED: still blocks."""
+    ok = _blocked("(function(){var o={x:'%s'};o.x&&=o.x+'%s';return o.x;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f748=%s" % ok)
 
 @_t
-def test_r51_f747_s1_open():
-    """F749 OPEN (destructuring defaults): miss reproduces."""
-    miss = _misses("(function(){var {x='%s',y='%s'}={};return x+y;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f747_s1_closed():
+    """F749 CLOSED: still blocks."""
+    ok = _blocked("(function(){var {x='%s',y='%s'}={};return x+y;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f749=%s" % ok)
 
 @_t
-def test_r51_f747_s2_open():
-    """F749 OPEN (destructuring defaults): miss reproduces."""
-    miss = _misses("(function(){var {x:q='%s'}={};return q+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f747_s2_closed():
+    """F749 CLOSED: still blocks."""
+    ok = _blocked("(function(){var {x:q='%s'}={};return q+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "f749=%s" % ok)
 
 @_t
 def test_r51_f748_s1_open():
