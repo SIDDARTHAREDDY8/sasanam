@@ -6495,16 +6495,18 @@ def _js_f966_scope_ok(text, decl_end, use_pos):
 def _js_f966_has_dynamic_rebind(text, gname, dstart, dend):
     """Check for a dynamic-rebinding vector for *gname* (F966 H2).
 
-    A direct `eval(...)`, indirect `(0,eval)(...)`, or
-    `Function(...)`/`new Function(...)` call whose string argument
-    mentions *gname* can rebind the generator at runtime (sloppy
-    mode: later declaration wins), so the static whole-text binding
-    may be wrong -- fail closed. Returns True when such a vector
-    is present: an `eval`/`Function` identifier followed by `(`
-    (outside strings/templates/comments) AND *gname* appearing in
-    a string/template literal outside [*dstart*, *dend*). The
-    check is conservative (a miss, never a mis-decode). Never
-    evals.
+    A direct `eval(...)`, indirect `(0,eval)(...)` /
+    `eval.call(...)`, or `Function(...)`/`new Function(...)` call
+    whose string argument mentions *gname* can rebind the generator
+    at runtime (sloppy mode: later declaration wins), so the static
+    whole-text binding may be wrong -- fail closed. Returns True
+    when such a vector is present: a standalone `eval`/`Function`
+    identifier (not a `.` property access, outside
+    strings/templates/comments) AND *gname* appearing in a
+    string/template literal outside [*dstart*, *dend*). The check
+    is intentionally broad (any standalone `eval`/`Function`
+    identifier counts, not just syntactic calls) -- a miss, never
+    a mis-decode. Never evals.
     """
     n = len(text)
     k = 0
@@ -6548,8 +6550,13 @@ def _js_f966_has_dynamic_rebind(text, gname, dstart, dend):
                 j += 1
             word = text[k:j]
             if word == "eval" or word == "Function":
-                q = _js_skip_ws(text, j)
-                if q < n and text[q] == "(":
+                # Standalone identifier (not x.eval) -- any eval/
+                # Function reference is a potential dynamic vector
+                # (direct, indirect, .call/.apply forms).
+                b = k - 1
+                while b >= 0 and text[b] in " \t\n\r":
+                    b -= 1
+                if b < 0 or text[b] != ".":
                     has_eval_call = True
             k = j
             continue

@@ -148,6 +148,9 @@ def test_p2_generalizations():
         _f965_shape([_A, _B], decl="let"),
         # F965: escaped chars in the program cook node-exactly
         "(function(){var parts=['%s','%s'];return eval('`x\\n${parts[0]}${parts[1]}`');})()" % (_A, _B),
+        # F965 H3: backslash+LF line continuation in the string arg
+        # cooks node-exactly (removed) -- still blocks
+        "(function(){var parts=['%s','%s'];return eval('`${parts[0]}\\\n${parts[1]}`');})()" % (_A, _B),
         # F966: var-bound generator twin
         "var gen=function*(){yield '%s';yield '%s';};var RESULT=[...gen()].reduce((a,b)=>a+b);" % (_A, _B),
         # F966: named var-bound generator expression twin
@@ -190,6 +193,11 @@ def test_p3_fail_closed():
         "(function(){var parts=['%s',x];return eval('`${parts[0]}${parts[1]}`');})()" % (_A,),
         # F966: duplicate declarations
         "function*gen(){yield '%s';}function*gen(){yield '%s';}var R=[...gen()].reduce((a,b)=>a+b);" % (_A, _B),
+        # F966 H1: async generator -- engine throws TypeError (not sync-iterable)
+        "async function*gen(){yield '%s';yield '%s';}var R=[...gen()].reduce((a,b)=>a+b);" % (_A, _B),
+        # F966 H2: dynamic rebinding via eval -- static binding untrustworthy
+        "function*gen(){yield 'jj';}eval(\"function* gen(){yield '%s';yield '%s';}\");var R=[...gen()].reduce((a,b)=>a+b);" % (_A, _B),
+        "function*gen(){yield 'jj';}(0,eval)(\"function* gen(){yield '%s';yield '%s';}\");var R=[...gen()].reduce((a,b)=>a+b);" % (_A, _B),
         # F966: reassigned binding
         "function*gen(){yield '%s';}gen=5;var R=[...gen()].reduce((a,b)=>a+b);" % (_A,),
         # F966: call with args
