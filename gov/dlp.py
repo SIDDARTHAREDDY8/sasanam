@@ -69195,6 +69195,793 @@ def _js_parse_f637_operand(stmts, sj, alias, elems, bound, depth,
     return _js_f556_apply(params, body, args), sj
 
 
+# ---------------------------------------------------------------------------
+# F809: non-IIFE closure value flows (Promise-executor assignments and
+# curried nested closures)
+# ---------------------------------------------------------------------------
+
+def _js_parse_f809_executor_iife(text, i, depth, state):
+    """Parse `(function(){DECL*;new Promise(function(P){STMT*;});return ADD;})()` (F809).
+
+    F809 (LOW, filed 2026-10-09 by wave-385 attack round 53): the
+    decoder is IIFE-scoped -- a Promise executor body assigning
+    outer vars resolves node-exactly while the decoder produces
+    zero variants:
+      `(function(){var r;new Promise(function(res){r='f1';res();});
+        return r+'f2';})()`
+    Node-exact desugar (v24.20.0): the Promise constructor invokes
+    the executor SYNCHRONOUSLY with (resolve, reject), so every
+    `NAME='LIT'` assignment in the executor body takes effect
+    before the IIFE's `return`. The resolve/reject params are
+    values the engine discards for our purposes; bare `P();`
+    calls on the executor's own params are no-ops.
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (the F654 sync head); no params,
+      no name, no async.
+    - one or more `var|let|const NAME;` / `NAME='LIT';` declarations
+      (plain-string initializers only; multi-declarator lists fail
+      closed). Reading an uninitialized name in the return fails
+      closed (the engine would stringify `undefined` -- refusing
+      is fail-safe).
+    - `new Promise(function(P1..Pk){STMT*;});` -- anonymous,
+      non-generator executor; params must be plain identifiers,
+      distinct, and must not collide with the declared names (a
+      colliding param would shadow the outer binding in the
+      engine -- failing closed is the only safe model). Each
+      statement is either `NAME='LIT';` (NAME a declared outer
+      var, never a param) or `P();` (a zero-arg call on an
+      executor param -- the res()/rej() no-op). `return`,
+      nested functions, `this`, and any other statement fail
+      closed.
+    - `return ADD;` where ADD is a `+`-additive of string
+      literals and declared names (initialized only).
+    - exactly `()` invocation; no trailing statements.
+
+    Disjointness: no earlier route accepts a
+    `new Promise(function(` statement head -- F618's promise
+    machinery is expression-level (`Promise.resolve('LIT')`,
+    `Promise.all/race([...]).then`) and fails closed on the
+    `new`-constructor statement form (red-first verified:
+    2 BREAK on the open tree), so no previously-decoded input
+    changes behavior. F452: one part per declaration, per
+    executor statement, and per return term; the wrapper charges
+    one op. Returns (value, next_index), or None. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        q = _js_skip_ws(text, inner_start)
+        env = {}
+        consts = set()
+        while True:
+            dkw, dq = _js_match_decl_kw(text, q)
+            if dkw is None:
+                break
+            dq = _js_skip_ws(text, dq)
+            name, dq = _js_parse_ident(text, dq)
+            if name in env or name in _F611_RESERVED or name == "arguments":
+                raise _JSExprFail("F809 bad decl name")
+            dq = _js_skip_ws(text, dq)
+            val = None
+            if dq < n and text[dq] == "=":
+                dq = _js_skip_ws(text, dq + 1)
+                if dq >= n or text[dq] not in "'\"":
+                    raise _JSExprFail("F809 decl init not a literal")
+                lit, dq = _js_parse_string(text, dq)
+                if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+                    raise _JSExprFail("F809 decl init not a plain string")
+                val = lit
+            elif dkw == "const":
+                # `const r;` is a SyntaxError in the engine -- the
+                # whole IIFE never runs. Fail closed.
+                raise _JSExprFail("F809 const without initializer")
+            dq = _js_skip_ws(text, dq)
+            dq = _js_expect(text, dq, ";")
+            env[name] = val
+            if dkw == "const":
+                consts.add(name)
+            state["parts"] += 1  # F452: each declaration is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            q = dq
+        if not env:
+            raise _JSExprFail("F809 no declarations")
+        nk = _js_match_kw(text, _js_skip_ws(text, q), "new")
+        if nk is None:
+            raise _JSExprFail("F809 not new")
+        q = _js_skip_ws(text, nk)
+        pm, q = _js_parse_ident(text, q)
+        if pm != "Promise":
+            raise _JSExprFail("F809 not Promise")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "(")
+        q = _js_skip_ws(text, q)
+        fk = _js_match_kw(text, q, "function")
+        if fk is None:
+            raise _JSExprFail("F809 executor not a function")
+        q = _js_skip_ws(text, fk)
+        if q < n and text[q] == "*":
+            raise _JSExprFail("F809 executor generator")
+        if q < n and text[q] in _JS_IDENT_START:
+            raise _JSExprFail("F809 named executor")
+        params, q = _js_parse_fn_params(text, q)
+        for p in params:
+            if p in env or p in _F611_RESERVED or p == "arguments":
+                raise _JSExprFail("F809 executor param collision")
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] != "{":
+            raise _JSExprFail("F809 executor without body")
+        fstart, fend, q = _js_span_braced(text, q)
+        sq = _js_skip_ws(text, fstart)
+        while sq < fend:
+            sq = _js_skip_ws(text, sq)
+            if sq >= fend:
+                break
+            if text[sq] not in _JS_IDENT_START:
+                raise _JSExprFail("F809 executor bad statement")
+            nm, nq = _js_parse_ident(text, sq)
+            nq2 = _js_skip_ws(text, nq)
+            if (nq2 < fend and text[nq2] == "="
+                    and not (nq2 + 1 < fend and text[nq2 + 1] == "=")):
+                # NAME='LIT'; -- must target a declared outer var.
+                if nm in params or nm not in env or nm in _F611_RESERVED:
+                    raise _JSExprFail("F809 executor bad assign target")
+                if nm in consts:
+                    # Reassigning a `const` throws TypeError in the
+                    # engine -- the IIFE never returns. Fail closed.
+                    raise _JSExprFail("F809 executor assigns to const")
+                aq = _js_skip_ws(text, nq2 + 1)
+                if aq >= fend or text[aq] not in "'\"":
+                    raise _JSExprFail("F809 executor assign not a literal")
+                lit, aq = _js_parse_string(text, aq)
+                if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+                    raise _JSExprFail("F809 executor assign not a plain string")
+                aq = _js_skip_ws(text, aq)
+                aq = _js_expect(text, aq, ";")
+                env[nm] = lit
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                sq = aq
+                continue
+            if nq2 < fend and text[nq2] == "(":
+                # P(); -- the res()/rej() no-op on an executor param.
+                if nm not in params:
+                    raise _JSExprFail("F809 executor bad call")
+                cq = _js_skip_ws(text, nq2 + 1)
+                cq = _js_expect(text, cq, ")")
+                cq = _js_skip_ws(text, cq)
+                cq = _js_expect(text, cq, ";")
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                sq = cq
+                continue
+            raise _JSExprFail("F809 executor bad statement")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ")")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        rk = _js_match_kw(text, _js_skip_ws(text, q), "return")
+        if rk is None:
+            raise _JSExprFail("F809 no return")
+        q = _js_skip_ws(text, rk)
+        parts = []
+        saw_name = False
+        while True:
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] in "'\"":
+                lit, q = _js_parse_string(text, q)
+                if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+                    raise _JSExprFail("F809 return term not a string")
+                parts.append(lit)
+            elif q < n and text[q] in _JS_IDENT_START:
+                nm, q = _js_parse_ident(text, q)
+                if nm not in env:
+                    raise _JSExprFail("F809 return reads undeclared name")
+                v = env[nm]
+                if v is None:
+                    raise _JSExprFail("F809 return reads uninitialized name")
+                parts.append(v)
+                saw_name = True
+            else:
+                raise _JSExprFail("F809 return bad term")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == "+":
+                q += 1
+                continue
+            break
+        if not saw_name:
+            raise _JSExprFail("F809 no name term")
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("concat too long")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        q = _js_skip_ws(text, q)
+        if q != inner_end:
+            raise _JSExprFail("F809 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+def _js_parse_f809_curry_iife(text, i, depth, state):
+    """Parse `(function(){function F(P1..Pn){return function(Q1..Qm){return ADD;};}return ADD2;})()` (F809).
+
+    F809 (LOW, filed 2026-10-09 by wave-385 attack round 53): the
+    decoder is IIFE-scoped -- a curried nested closure resolves
+    node-exactly while the decoder produces zero variants:
+      `(function(){function f(a){return function(b){return a+b;};}
+        return f('f1')('f2');})()`
+    Node-exact desugar (v24.20.0): `f('f1')` evaluates the outer
+    function, returning the inner closure with `a` captured;
+    `('f2')` invokes it with `b='f2'`; the inner ADD evaluates
+    with both bindings.
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (the F654 sync head).
+    - `function NAME(P1..Pn){return function(Q1..Qm){return ADD;}[;]}` --
+      named, non-generator outer declaration; the outer body is
+      exactly the inner-function return (no other statements).
+      The inner ADD is the F614 additive body over the combined
+      param list (outer + inner); inner params shadowing outer
+      params fail closed (the engine would shadow -- refusing is
+      the only safe static model). Param names must not be
+      reserved/`arguments`.
+    - `return ADD2;` where ADD2 is a `+`-additive of string
+      literals and >=1 curried call terms `NAME(L1..Ln)(M1..Mm)`
+      with exact literal arities (the engine coerces missing
+      args to `undefined` -- arity mismatch fails closed,
+      fail-safe).
+    - exactly `()` invocation; no trailing statements.
+
+    Disjointness: F753's named-function-call grammar requires
+    the F614 `return ADD` body (this requires the
+    `return function(` head, which F753's additive body rejects)
+    and F735/F736 require literal-only call args without the
+    second call paren (red-first verified: 2 BREAK on the open
+    tree), so no previously-decoded input changes behavior.
+    F452: the F614 additive parse charges per operand; one part
+    per call arg and per return term; the wrapper charges one
+    op. Returns (value, next_index), or None. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        q = _js_skip_ws(text, inner_start)
+        fk = _js_match_kw(text, q, "function")
+        if fk is None:
+            return None
+        q = _js_skip_ws(text, fk)
+        fname, q = _js_parse_ident(text, q)
+        if fname == "arguments" or fname in _F611_RESERVED:
+            raise _JSExprFail("F809 bad function name")
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == "*":
+            raise _JSExprFail("F809 outer generator")
+        oparams, q = _js_parse_fn_params(text, q)
+        for p in oparams:
+            if p in _F611_RESERVED or p == "arguments":
+                raise _JSExprFail("F809 bad outer param")
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] != "{":
+            raise _JSExprFail("F809 outer without body")
+        fstart, fend, q = _js_span_braced(text, q)
+        bq = _js_skip_ws(text, fstart)
+        rk = _js_match_kw(text, bq, "return")
+        if rk is None:
+            raise _JSExprFail("F809 outer body not a return")
+        bq = _js_skip_ws(text, rk)
+        fk2 = _js_match_kw(text, bq, "function")
+        if fk2 is None:
+            raise _JSExprFail("F809 outer body not returning a function")
+        bq = _js_skip_ws(text, fk2)
+        if bq < n and text[bq] == "*":
+            raise _JSExprFail("F809 inner generator")
+        if bq < n and text[bq] in _JS_IDENT_START:
+            inm, bq2 = _js_parse_ident(text, bq)
+            if inm in _F611_RESERVED or inm == "arguments":
+                raise _JSExprFail("F809 bad inner name")
+            bq = _js_skip_ws(text, bq2)
+        iparams, bq = _js_parse_fn_params(text, bq)
+        for p in iparams:
+            if p in _F611_RESERVED or p == "arguments":
+                raise _JSExprFail("F809 bad inner param")
+            if p in oparams:
+                raise _JSExprFail("F809 param shadowing")
+        allparams = oparams + iparams
+        bq = _js_skip_ws(text, bq)
+        if bq >= n or text[bq] != "{":
+            raise _JSExprFail("F809 inner without body")
+        istart, iend, bq = _js_span_braced(text, bq)
+        iq = _js_skip_ws(text, istart)
+        irk = _js_match_kw(text, iq, "return")
+        if irk is None:
+            raise _JSExprFail("F809 inner body not a return")
+        iq = _js_skip_ws(text, irk)
+        body, iq = _js_parse_f614_additive_body(text, iq, allparams, state)
+        iq = _js_skip_ws(text, iq)
+        iq = _js_expect(text, iq, ";")
+        if _js_skip_ws(text, iq) != iend:
+            raise _JSExprFail("F809 inner body trailing statements")
+        bq = _js_skip_ws(text, bq)
+        if bq < n and text[bq] == ";":
+            bq = _js_skip_ws(text, bq + 1)
+        if _js_skip_ws(text, bq) != fend:
+            raise _JSExprFail("F809 outer body trailing statements")
+        q = _js_skip_ws(text, q)
+        rk = _js_match_kw(text, _js_skip_ws(text, q), "return")
+        if rk is None:
+            raise _JSExprFail("F809 no return")
+        q = _js_skip_ws(text, rk)
+        parts = []
+        saw_curry = False
+        while True:
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] in "'\"":
+                lit, q = _js_parse_string(text, q)
+                if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+                    raise _JSExprFail("F809 return term not a string")
+                parts.append(lit)
+            elif q < n and text[q] in _JS_IDENT_START:
+                nm, q = _js_parse_ident(text, q)
+                if nm != fname:
+                    raise _JSExprFail("F809 return calls unknown function")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, "(")
+                args1 = []
+                q = _js_skip_ws(text, q)
+                if not (q < n and text[q] == ")"):
+                    while True:
+                        q = _js_skip_ws(text, q)
+                        if q >= n or text[q] not in "'\"":
+                            raise _JSExprFail("F809 curry arg not a literal")
+                        lit, q = _js_parse_string(text, q)
+                        if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+                            raise _JSExprFail("F809 curry arg not a plain string")
+                        args1.append(lit)
+                        state["parts"] += 1
+                        if state["parts"] > _JS_EXPR_MAX_PARTS:
+                            raise _JSExprFail("too many parts")
+                        q = _js_skip_ws(text, q)
+                        if q < n and text[q] == ",":
+                            q = _js_skip_ws(text, q + 1)
+                            continue
+                        break
+                q = _js_expect(text, q, ")")
+                if len(args1) != len(oparams):
+                    raise _JSExprFail("F809 curry arity mismatch")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, "(")
+                args2 = []
+                q = _js_skip_ws(text, q)
+                if not (q < n and text[q] == ")"):
+                    while True:
+                        q = _js_skip_ws(text, q)
+                        if q >= n or text[q] not in "'\"":
+                            raise _JSExprFail("F809 curry arg2 not a literal")
+                        lit, q = _js_parse_string(text, q)
+                        if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+                            raise _JSExprFail("F809 curry arg2 not a plain string")
+                        args2.append(lit)
+                        state["parts"] += 1
+                        if state["parts"] > _JS_EXPR_MAX_PARTS:
+                            raise _JSExprFail("too many parts")
+                        q = _js_skip_ws(text, q)
+                        if q < n and text[q] == ",":
+                            q = _js_skip_ws(text, q + 1)
+                            continue
+                        break
+                q = _js_expect(text, q, ")")
+                if len(args2) != len(iparams):
+                    raise _JSExprFail("F809 curry arity2 mismatch")
+                parts.append(_js_f556_apply(allparams, body, args1 + args2))
+                saw_curry = True
+            else:
+                raise _JSExprFail("F809 return bad term")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == "+":
+                q += 1
+                continue
+            break
+        if not saw_curry:
+            raise _JSExprFail("F809 no curry term")
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("concat too long")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        q = _js_skip_ws(text, q)
+        if q != inner_end:
+            raise _JSExprFail("F809 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+# ---------------------------------------------------------------------------
+# F810: this-returning method chains
+# ---------------------------------------------------------------------------
+
+def _js_parse_f810_method_body(fbody, state):
+    """Parse a method body for the F810 chain model.
+
+    Accepted bodies (all node-exact, v24.20.0):
+    - `return this;` -- identity (the receiver is unchanged).
+    - `[this.M='L';]* return this;` -- assignments then identity.
+    - `return this.M[+'L'*];` -- member read with literal tail.
+    - `[this.M='L';]* return this.M2[+'L'*];` -- assignments then
+      member read.
+    - `return 'L'[+'L'*];` -- literal return.
+    Anything else fails closed. Returns a descriptor tuple:
+    ("ret-this",) | ("assign-ret-this", [(mem, lit), ...]) |
+    ("ret-thismem", mem, tail) |
+    ("assign-ret-thismem", [(mem, lit), ...], mem, tail) |
+    ("ret-lit", value). Never evals.
+    """
+    n = len(fbody)
+    j = _js_skip_ws(fbody, 0)
+    assigns = []
+    while True:
+        tk = _js_match_kw(fbody, j, "this")
+        if tk is None:
+            break
+        k = _js_skip_ws(fbody, tk)
+        if k >= n or fbody[k] != ".":
+            break
+        mem, k = _js_parse_ident(fbody, _js_skip_ws(fbody, k + 1))
+        if (not isinstance(mem, str) or isinstance(mem, _JSNumStr)
+                or mem in _F611_RESERVED):
+            raise _JSExprFail("F810 bad assign member")
+        if mem == "__proto__":
+            # Node silently ignores `this.__proto__='L'` (the read
+            # returns the real prototype, i.e. "[object Object]"),
+            # so modeling it as a data prop mis-decodes. Fail
+            # closed, mirroring the obj-literal key rejection.
+            raise _JSExprFail("F810 __proto__ assign member")
+        k = _js_skip_ws(fbody, k)
+        if (k >= n or fbody[k] != "="
+                or (k + 1 < n and fbody[k + 1] == "=")):
+            raise _JSExprFail("F810 assign not plain =")
+        k = _js_skip_ws(fbody, k + 1)
+        if k >= n or fbody[k] not in "'\"":
+            raise _JSExprFail("F810 assign not a literal")
+        lit, k = _js_parse_string(fbody, k)
+        if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+            raise _JSExprFail("F810 assign not a plain string")
+        k = _js_skip_ws(fbody, k)
+        k = _js_expect(fbody, k, ";")
+        assigns.append((mem, lit))
+        state["parts"] += 1  # F452: each assignment is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(fbody, k)
+    rk = _js_match_kw(fbody, j, "return")
+    if rk is None:
+        raise _JSExprFail("F810 body not a return")
+    j = _js_skip_ws(fbody, rk)
+    tk = _js_match_kw(fbody, j, "this")
+    if tk is not None:
+        j = _js_skip_ws(fbody, tk)
+        if j < n and fbody[j] == ".":
+            mem, j = _js_parse_ident(fbody, _js_skip_ws(fbody, j + 1))
+            if not isinstance(mem, str) or isinstance(mem, _JSNumStr):
+                raise _JSExprFail("F810 bad return member")
+            tail = ""
+            while True:
+                j = _js_skip_ws(fbody, j)
+                if j >= n or fbody[j] != "+":
+                    break
+                j = _js_skip_ws(fbody, j + 1)
+                if j >= n or fbody[j] not in "'\"":
+                    raise _JSExprFail("F810 return tail not a literal")
+                lit, j = _js_parse_string(fbody, j)
+                if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+                    raise _JSExprFail("F810 return tail not a plain string")
+                tail += lit
+                if len(tail) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+            j = _js_skip_ws(fbody, j)
+            j = _js_expect(fbody, j, ";")
+            if _js_skip_ws(fbody, j) != n:
+                raise _JSExprFail("F810 body trailing statements")
+            if assigns:
+                return ("assign-ret-thismem", assigns, mem, tail)
+            return ("ret-thismem", mem, tail)
+        j = _js_skip_ws(fbody, j)
+        j = _js_expect(fbody, j, ";")
+        if _js_skip_ws(fbody, j) != n:
+            raise _JSExprFail("F810 body trailing statements")
+        if assigns:
+            return ("assign-ret-this", assigns)
+        return ("ret-this",)
+    if j >= n or fbody[j] not in "'\"":
+        raise _JSExprFail("F810 return not this or literal")
+    lit, j = _js_parse_string(fbody, j)
+    if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+        raise _JSExprFail("F810 return not a plain string")
+    tail = lit
+    while True:
+        j = _js_skip_ws(fbody, j)
+        if j >= n or fbody[j] != "+":
+            break
+        j = _js_skip_ws(fbody, j + 1)
+        if j >= n or fbody[j] not in "'\"":
+            raise _JSExprFail("F810 return tail not a literal")
+        lit, j = _js_parse_string(fbody, j)
+        if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+            raise _JSExprFail("F810 return tail not a plain string")
+        tail += lit
+        if len(tail) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("concat too long")
+    j = _js_skip_ws(fbody, j)
+    j = _js_expect(fbody, j, ";")
+    if _js_skip_ws(fbody, j) != n:
+        raise _JSExprFail("F810 body trailing statements")
+    if assigns:
+        raise _JSExprFail("F810 assigns with literal return")
+    return ("ret-lit", tail)
+
+
+def _js_parse_f810_obj_literal(text, j, state):
+    """Parse `{k:function(){BODY}[,k2:'LIT']*}` at text[j] (F810).
+
+    Methods are `key:function(){...}` (anonymous, zero params,
+    non-generator); data props are plain string literals.
+    Identifier or string-literal keys; `__proto__`, getters,
+    setters, method shorthand, spreads, computed keys, arrow
+    functions, and non-literal values all fail closed. Duplicate
+    keys are later-wins (node v24.20.0). Returns (props,
+    next_index) where props maps key -> ("func", bodyinfo) |
+    ("str", value). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "{")
+    props = {}
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "}":
+        return props, j + 1
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] in "'\"":
+            key, j = _js_parse_string(text, j)
+        elif j < n and text[j] in _JS_IDENT_START:
+            key, j = _js_parse_ident(text, j)
+        else:
+            raise _JSExprFail("F810 bad object key")
+        if (not isinstance(key, str) or isinstance(key, _JSNumStr)
+                or key in _F611_RESERVED):
+            raise _JSExprFail("F810 bad object key")
+        if key == "__proto__":
+            raise _JSExprFail("F810 __proto__ key")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ":")
+        j = _js_skip_ws(text, j)
+        fk = _js_match_kw(text, j, "function")
+        if fk is not None:
+            q = _js_skip_ws(text, fk)
+            if q < n and text[q] == "*":
+                raise _JSExprFail("F810 method generator")
+            if q < n and text[q] in _JS_IDENT_START:
+                raise _JSExprFail("F810 named method")
+            params, q = _js_parse_fn_params(text, q)
+            if params:
+                raise _JSExprFail("F810 method with params")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != "{":
+                raise _JSExprFail("F810 method without body")
+            fstart, fend, q = _js_span_braced(text, q)
+            bodyinfo = _js_parse_f810_method_body(text[fstart:fend], state)
+            props[key] = ("func", bodyinfo)
+            j = q
+        elif j < n and text[j] in "'\"":
+            lit, j = _js_parse_string(text, j)
+            if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+                raise _JSExprFail("F810 data prop not a plain string")
+            props[key] = ("str", lit)
+        else:
+            raise _JSExprFail("F810 prop not a method or literal")
+        state["parts"] += 1  # F452: each property is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "}":
+                return props, j + 1
+            continue
+        if j < n and text[j] == "}":
+            return props, j + 1
+        raise _JSExprFail("F810 bad object literal")
+
+
+def _js_parse_f810_chain_iife(text, i, depth, state):
+    """Parse `(function(){DECL o={...};return ADD;})()` with method chains (F810).
+
+    F810 (LOW, filed 2026-10-09 by wave-385 attack round 53): the
+    decoder has no method-chain production -- `o.a().b()` where `a`
+    returns `this` resolves node-exactly while the decoder
+    produces zero variants:
+      `(function(){var o={a:function(){return this;},
+        b:function(){return 'f1';}};return o.a().b()+'f2';})()`
+      `(function(){var o={a:function(){this.v='f1';return this;},
+        b:function(){return this.v;}};return o.a().b()+'f2';})()`
+    Node-exact desugar (v24.20.0): each `.m()` step invokes the
+    method with `this` bound to the current receiver (the object
+    literal's props, updated in place by `this.M='L'`
+    assignments). `return this` leaves the receiver unchanged;
+    `return this.M` / `return 'L'` produce a string value, after
+    which any further `.m()` throws in the engine (fail closed
+    here). A chain whose every step returns `this` evaluates to
+    the object itself -- the engine would stringify
+    `[object Object]`; failing closed is fail-safe.
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (the F654 sync head).
+    - `var|let|const o={...};` -- the F810 object literal
+      (methods + plain-string data props).
+    - `return ADD;` where ADD is a `+`-additive of string
+      literals and chain terms `o.m1().m2()...` with >=2 method
+      calls (single calls are the already-decoded twins --
+      requiring >=2 keeps this route disjoint). Each call is
+      zero-arg; the dot form only (`?.` and bracket-string
+      member forms fail closed).
+    - exactly `()` invocation; no trailing statements.
+
+    Disjointness: F663 requires `DECL o=Object.fromEntries(...)`;
+    F611/F612 require literal/atob/enumeration initializers;
+    every other IIFE route fails closed on the
+    `key:function(){...}` object-literal head (red-first verified:
+    2 BREAK on the open tree), so no previously-decoded input
+    changes behavior. F452: one part per property, per chain
+    step, and per return term; the wrapper charges one op.
+    Returns (value, next_index), or None. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        q = _js_skip_ws(text, inner_start)
+        dkw, dq = _js_match_decl_kw(text, q)
+        if dkw is None:
+            raise _JSExprFail("F810 no declaration")
+        dq = _js_skip_ws(text, dq)
+        oname, dq = _js_parse_ident(text, dq)
+        if oname in _F611_RESERVED or oname == "arguments":
+            raise _JSExprFail("F810 bad object name")
+        dq = _js_skip_ws(text, dq)
+        dq = _js_expect(text, dq, "=")
+        props, dq = _js_parse_f810_obj_literal(text, _js_skip_ws(text, dq),
+                                               state)
+        dq = _js_skip_ws(text, dq)
+        dq = _js_expect(text, dq, ";")
+        q = dq
+        rk = _js_match_kw(text, _js_skip_ws(text, q), "return")
+        if rk is None:
+            raise _JSExprFail("F810 no return")
+        q = _js_skip_ws(text, rk)
+        parts = []
+        saw_chain = False
+        while True:
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] in "'\"":
+                lit, q = _js_parse_string(text, q)
+                if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+                    raise _JSExprFail("F810 return term not a string")
+                parts.append(lit)
+            elif q < n and text[q] in _JS_IDENT_START:
+                nm, q = _js_parse_ident(text, q)
+                if nm != oname:
+                    raise _JSExprFail("F810 chain on unknown object")
+                recv = dict(props)
+                steps = 0
+                final = None
+                while True:
+                    q = _js_skip_ws(text, q)
+                    if q >= n or text[q] != ".":
+                        break
+                    mname, q = _js_parse_ident(text, _js_skip_ws(text, q + 1))
+                    q = _js_skip_ws(text, q)
+                    q = _js_expect(text, q, "(")
+                    q = _js_skip_ws(text, q)
+                    q = _js_expect(text, q, ")")
+                    if not isinstance(recv, dict):
+                        raise _JSExprFail("F810 chain on non-object")
+                    if mname not in recv:
+                        raise _JSExprFail("F810 unknown method")
+                    kind = recv[mname]
+                    if kind[0] != "func":
+                        raise _JSExprFail("F810 not a method")
+                    bodyinfo = kind[1]
+                    steps += 1
+                    state["parts"] += 1  # F452: each chain step
+                    if state["parts"] > _JS_EXPR_MAX_PARTS:
+                        raise _JSExprFail("too many parts")
+                    tag = bodyinfo[0]
+                    if tag == "ret-this":
+                        pass
+                    elif tag == "assign-ret-this":
+                        for amem, alit in bodyinfo[1]:
+                            recv[amem] = ("str", alit)
+                    elif tag == "ret-thismem":
+                        _t, mem, tail = bodyinfo
+                        if mem not in recv or recv[mem][0] != "str":
+                            raise _JSExprFail("F810 member not a string")
+                        final = recv[mem][1] + tail
+                        recv = None
+                    elif tag == "assign-ret-thismem":
+                        _t, assigns, mem, tail = bodyinfo
+                        for amem, alit in assigns:
+                            recv[amem] = ("str", alit)
+                        if mem not in recv or recv[mem][0] != "str":
+                            raise _JSExprFail("F810 member not a string")
+                        final = recv[mem][1] + tail
+                        recv = None
+                    elif tag == "ret-lit":
+                        final = bodyinfo[1]
+                        recv = None
+                    else:
+                        raise _JSExprFail("F810 bad body tag")
+                if steps < 2:
+                    raise _JSExprFail("F810 not a chain")
+                if recv is not None:
+                    raise _JSExprFail("F810 chain yields the object")
+                parts.append(final)
+                saw_chain = True
+            else:
+                raise _JSExprFail("F810 return bad term")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == "+":
+                q += 1
+                continue
+            break
+        if not saw_chain:
+            raise _JSExprFail("F810 no chain term")
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("concat too long")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        q = _js_skip_ws(text, q)
+        if q != inner_end:
+            raise _JSExprFail("F810 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
 def _js_parse_primary(text, i, depth, state, _forbid_template=False):
     """Parse one primary (literal / fromCharCode / parens / number / array /
     Array constructor / Reflect.construct).
@@ -72006,6 +72793,49 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f792_saved_parts; state['ops'] = _f792_saved_ops
         if _f792 is not None:
             val, i = _f792
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F809: (function(){DECL*;new Promise(function(P){STMT*;});
+        #   return ADD;})() -- Promise-executor assignments to outer
+        #   bindings (the executor runs synchronously, node
+        #   v24.20.0), and (function(){function F(P1..Pn){return
+        #   function(Q1..Qm){return ADD;};}return
+        #   F(L1..Ln)(M1..Mm)[+...];})() -- curried nested closures
+        #   (F614's residual). Tried after F792: no earlier route
+        #   accepts a `new Promise(function(` statement head or a
+        #   `return function(` outer-body head (red-first verified:
+        #   2 BREAK each on the open tree), so no previously-decoded
+        #   input changes behavior. The F792 hook and its trailing
+        #   `return` are untouched (wave-379 lesson). Budget
+        #   snapshot/restore on miss (wave-383 lesson).
+        _f809_saved_parts = state['parts']; _f809_saved_ops = state['ops']
+        _f809 = _js_parse_f809_executor_iife(text, i, depth, state)
+        if _f809 is None:
+            # Per-hook snapshot/restore (wave-383 rule): the
+            # executor hook's speculative charges must not bleed
+            # into the curry hook's attempt.
+            state['parts'] = _f809_saved_parts; state['ops'] = _f809_saved_ops
+            _f809 = _js_parse_f809_curry_iife(text, i, depth, state)
+        if _f809 is None:
+            state['parts'] = _f809_saved_parts; state['ops'] = _f809_saved_ops
+        if _f809 is not None:
+            val, i = _f809
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F810: (function(){DECL o={k:function(){BODY},...};
+        #   return ADD;})() with >=1 >=2-call method-chain term --
+        #   this-returning method chains. Tried after F809: F809's
+        #   grammars require a `new Promise(function(` statement or
+        #   a `function`-declaration head, which the object-literal
+        #   declaration head fails closed on (red-first verified:
+        #   2 BREAK on the open tree), so no previously-decoded
+        #   input changes behavior. The F809 hook and its trailing
+        #   `return` are untouched (wave-379 lesson). Budget
+        #   snapshot/restore on miss (wave-383 lesson).
+        _f810_saved_parts = state['parts']; _f810_saved_ops = state['ops']
+        _f810 = _js_parse_f810_chain_iife(text, i, depth, state)
+        if _f810 is None:
+            state['parts'] = _f810_saved_parts; state['ops'] = _f810_saved_ops
+        if _f810 is not None:
+            val, i = _f810
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
