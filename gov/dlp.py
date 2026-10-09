@@ -388,8 +388,13 @@ _JSFUCK_RUN = re.compile(r"[\[\]()!+\-]{64,}")
 # validate them. NOTE: a non-whitespace terminator (e.g. '!') is NOT
 # consumed, so it survives decoding and breaks consecutiveness -- only
 # backslash- and whitespace-terminated escapes form runs.
+# F944: the u\{1,6 hex\} alternative lets \u{...} code-point escapes
+# form runs; the strict decoder (_decode_one_escape, shared with the
+# JS string-literal path) validates them -- empty braces, 7+ digits,
+# >0x10FFFF, unterminated, and lone surrogates all fail the run
+# closed, exactly like the string-literal path.
 _ESC_RUN = re.compile(
-    r"(?:\\(?:u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|x[0-9a-fA-F]{2}"
+    r"(?:\\(?:u[0-9a-fA-F]{4}|u\{[0-9a-fA-F]{1,6}\}|U[0-9a-fA-F]{8}|x[0-9a-fA-F]{2}"
     r"|[0-9a-fA-F]{1,6}(?:\r\n|[ \t\n\f])"
     r"|[0-9a-fA-F]{1,6}|[0-7]{1,3}))+")
 # F429: numeric HTML entities (&#x..; / &#..;), 1+ (F432: a single
@@ -1833,6 +1838,26 @@ def _decode_one_escape(run, i):
     n = len(run)
     c = run[i + 1]
     if c == "u":
+        if i + 2 < n and run[i + 2] == "{":
+            # F944: \u{...} code-point escape -- 1-6 hex digits,
+            # value <= 0x10FFFF (node v24.20.0). Empty braces, 7+
+            # digits, a value > 0x10FFFF, or a missing `}` are a
+            # SyntaxError in the engine -- all fail closed here.
+            # Lone surrogates fail closed via _safe_chr, the same
+            # discipline as the \uXXXX branch above (credential
+            # rules are ASCII-only, so the refusal cannot hide a
+            # credential).
+            j = i + 3
+            k = j
+            while k < n and k < j + 6 and run[k] in _HEX_DIGITS:
+                k += 1
+            if k == j or k >= n or run[k] != "}":
+                return None
+            val = int(run[j:k], 16)
+            if val > 0x10FFFF:
+                return None
+            ch = _safe_chr(val)
+            return (ch, k + 1) if ch is not None else None
         h = run[i + 2:i + 6]
         if len(h) != 4 or any(ch not in _HEX_DIGITS for ch in h):
             return None
@@ -3484,6 +3509,124 @@ def _js_parse_of_dispatch(text, paren, dname, depth, state):
     return elements, i
 
 
+def _f943_is_canonical_index(key):
+    """True when a quoted object key is a canonical integer index.
+
+    The engine reads only canonical decimal index strings
+    (ToString(ToUint32(i))); a quoted "007" or "-1" names a property
+    the engine never reads as an index (node v24.20.0). Never evals.
+    """
+    if not key or not all(ch in _ASCII_DIGITS for ch in key):
+        return False
+    try:
+        v = int(key)
+    except ValueError:
+        # Over the int/str digit limit: not a readable index.
+        return False
+    return 0 <= v and str(v) == key
+
+
+def _js_parse_f943_arraylike_args(text, i, state):
+    """Parse `{0:v0, ..., length:N}` at text[i] == '{' (F943).
+
+    F943 (LOW, wave-389 attack round 57): `String.fromCharCode.apply`
+    with an array-like (non-array) arguments object resolves
+    node-exactly while the decoder produced zero variants.
+
+    The array-like argsArray of a `.apply()` dispatch: the engine
+    reads `length`, then indices 0..length-1 by numeric key, so the
+    value is exactly the F458 int-literal codepoint list. Keys are
+    unquoted decimal ints, quoted canonical integer-index strings,
+    or `length` (ident or string-literal); values are F458 integer
+    literals. A quoted non-canonical key ("007", "-1") names a
+    property the engine never reads -- ignored, engine-exact (node
+    v24.20.0). Every index 0..N-1 must be present (later-wins on
+    duplicates, engine-exact) and `length` must equal N -- a missing
+    index reads `undefined` in the engine (ToUint16 -> 0), which the
+    static model refuses rather than mis-decodes. Extra non-index
+    keys are ignored exactly as the engine ignores them. A trailing
+    comma is engine-legal and accepted. Returns (value, next_index)
+    positioned after `}`. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i + 1)
+    codes = {}
+    length = None
+    if j < n and text[j] == "}":
+        raise _JSExprFail("F943 empty array-like")
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("unterminated array-like")
+        if text[j] in "'\"":
+            key, j = _js_parse_string(text, j)
+            if key == "length":
+                is_length = True
+            elif _f943_is_canonical_index(key):
+                # Quoted canonical integer index: the engine reads it.
+                is_length = False
+            else:
+                # Any other quoted property ("007", "-1", "Length"):
+                # the engine never reads it as an index -- ignored
+                # like any extra key (node v24.20.0).
+                is_length = None
+        elif text[j] in _ASCII_DIGITS:
+            k = j
+            while k < n and text[k] in _ASCII_DIGITS:
+                k += 1
+            key = text[j:k]
+            j = k
+            is_length = False
+        elif text[j] in _JS_IDENT_START:
+            key, j = _js_parse_ident(text, j)
+            is_length = (key == "length")
+            if not is_length:
+                raise _JSExprFail("F943 array-like key not an index")
+        else:
+            raise _JSExprFail("F943 array-like key not an index")
+        j = _js_expect(text, j, ":")
+        val, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+        state["parts"] += 1  # F452: charge per entry
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        if is_length:
+            length = val
+        elif is_length is False:
+            codes[int(key)] = val
+        # else: extra property -- ignored (the engine never reads it)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "}":
+                j += 1
+                break
+            continue
+        if j < n and text[j] == "}":
+            j += 1
+            break
+        raise _JSExprFail("bad array-like")
+    if length is None:
+        raise _JSExprFail("F943 array-like without length")
+    if any(idx < 0 or idx >= length for idx in codes):
+        raise _JSExprFail("F943 array-like index out of range")
+    if any(idx not in codes for idx in range(length)):
+        # The engine reads undefined -> ToUint16 0; refuse rather
+        # than mis-decode.
+        raise _JSExprFail("F943 array-like missing index")
+    out = []
+    for idx in range(length):
+        ch = _safe_chr(codes[idx])
+        if ch is None:
+            raise _JSExprFail("bad codepoint")
+        # ToUint16 wrap: String.fromCharCode applies ToUint16 to
+        # each argument (node v24.20.0) -- the F897 node-exactness
+        # discipline; BMP chars are unaffected by the mask.
+        out.append(chr(ord(ch) & 0xFFFF))
+        if len(out) > _JS_EXPR_MAX_CODEPOINTS:
+            raise _JSExprFail("too many codepoints")
+    return "".join(out), j
+
+
 def _js_parse_fcc_dispatch(text, paren, dname, depth, state):
     """Parse `String.fromCharCode.call(thisArg, codes...)` /
     `String.fromCharCode.apply(thisArg, [codes...])` with text[paren] ==
@@ -3514,6 +3657,14 @@ def _js_parse_fcc_dispatch(text, paren, dname, depth, state):
         if _js_match_kw(text, i, "new") is not None:
             # F643: .apply(null, new Uint8Array([...]))
             val, i = _js_parse_f643_typed_array(text, i)
+        elif i < n and text[i] == "{":
+            # F943: .apply(thisArg, {0:.., length:N}) -- array-like
+            # argsArray (the engine reads length then indices
+            # 0..length-1). Previously failed closed as "not
+            # array"; the `{` head is disjoint from the `[` and
+            # `new` heads, so no previously-decoded input changes
+            # behavior.
+            val, i = _js_parse_f943_arraylike_args(text, i, state)
         else:
             if i >= n or text[i] != "[":
                 raise _JSExprFail("fromCharCode apply argsArray not array")
@@ -96590,6 +96741,577 @@ _F899_OBJECT_PROTO_KEYS = frozenset((
 ))
 
 
+def _js_f943_wrap_fcc(val):
+    """Apply the String.fromCharCode ToUint16 wrap (F941/F942/F943).
+
+    F943 (LOW, wave-389 attack round 57): the engine applies ToUint16
+    to every fromCharCode argument (node v24.20.0); BMP chars are
+    unaffected by the mask. The
+    F897 node-exactness discipline, applied to the new
+    productions so astral codepoints decode exactly as the engine
+    does. Never evals.
+    """
+    return "".join(chr(ord(c) & 0xFFFF) for c in val)
+
+
+def _js_parse_f943_ctor_alias(text, i, depth, state):
+    """Parse `'LIT'.constructor.fromCharCode(...)` /
+    `'LIT'.constructor['fromCharCode'](...)` at text[i] (F943).
+
+    F943 (LOW, wave-389 attack round 57): the fromCharCode builtin
+    reached through the `''.constructor` alias resolves
+    node-exactly (`''.constructor === String`, v24.20.0) while the
+    decoder produced zero variants. Desugars to the direct
+    fromCharCode path: the argument list reuses the F458/F500
+    grammar (_js_parse_fromcharcode_args), the same integer-literal
+    spellings, spread operands, codepoint bounds, and fail-closed
+    classes as the canonical form -- faithful by construction.
+    The receiver literal's value is irrelevant (any string's
+    constructor is String); a parenthesized receiver or any other
+    `.constructor` member fails closed. Returns (value, next_index),
+    or None on miss (budgets restored). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    i = _js_skip_ws(text, i)
+    if i >= n or text[i] not in "'\"":
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        _, j = _js_parse_string(text, i)
+        j = _js_expect(text, j, ".")
+        _mk = _js_match_kw(text, _js_skip_ws(text, j), "constructor")
+        if _mk is None:
+            raise _JSExprFail("F943 not .constructor")
+        j = _js_parse_f943_fcc_member(text, _mk)
+        val, j = _js_parse_fromcharcode_args(text, j, state=state)
+        val = _js_f943_wrap_fcc(val)
+        state["ops"] += 1  # the aliased call is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+def _js_parse_f943_fcc_member(text, j):
+    """Parse `.fromCharCode` / `['fromCharCode']` at text[j] (F943).
+
+    F943 (LOW, wave-389 attack round 57): the shared member-head for
+    the non-canonical fromCharCode anchors -- dot and bracket-string
+    forms both resolve node-exactly (v24.20.0), F480 precedent.
+
+    The member-read head shared by the F943 anchor parsers:
+    engine-identical dot and bracket-string forms (F480
+    precedent). Returns next_index. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        fname, j = _js_parse_string(text, _js_skip_ws(text, j + 1))
+        if fname != "fromCharCode":
+            raise _JSExprFail("F943 not fromCharCode")
+        j = _js_expect(text, j, "]")
+        return j
+    j = _js_expect(text, j, ".")
+    if _js_match_kw(text, _js_skip_ws(text, j),
+                    "fromCharCode") is None:
+        raise _JSExprFail("F943 not fromCharCode")
+    _fcm = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+    return _fcm
+
+
+def _js_parse_f943_reflect_apply(text, i, depth, state):
+    """Parse `Reflect.apply(String.fromCharCode,thisArg,[CODES])`
+    at text[i] (F943).
+
+    F943 (LOW, wave-389 attack round 57): Reflect.apply with the
+    fromCharCode builtin as its target resolves node-exactly while
+    the decoder produced zero variants. Desugars to the F486
+    dispatch path: the target must be the canonical builtin (dot
+    or bracket-string member, F480 precedent -- anything else
+    fails closed), the thisArg is parsed but ignored (fromCharCode
+    ignores `this`, F486 discipline), and the argsArray is the
+    F458 integer-literal list (`]`-terminated, the same grammar as
+    `.apply(thisArg, [...])`). Returns (value, next_index), or None
+    on miss (budgets restored). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    i = _js_skip_ws(text, i)
+    if _js_match_kw(text, i, "Reflect") is None:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        j = _js_skip_ws(text, i + len("Reflect"))
+        j = _js_expect(text, j, ".")
+        _amk = _js_match_kw(text, _js_skip_ws(text, j), "apply")
+        if _amk is None:
+            raise _JSExprFail("F943 not Reflect.apply")
+        j = _amk
+        j = _js_expect(text, j, "(")
+        if _js_match_kw(text, _js_skip_ws(text, j), "String") is None:
+            raise _JSExprFail("F943 target not String")
+        _mk2 = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        j = _js_parse_f943_fcc_member(text, _mk2)
+        j = _js_expect(text, j, ",")
+        _, j = _js_parse_dispatch_thisarg(text, j, depth, state)
+        j = _js_expect(text, j, ",")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "[":
+            raise _JSExprFail("F943 Reflect.apply argsArray not array")
+        val, j = _js_parse_fromcharcode_args_inner(text, j + 1, "]",
+                                                   state=state)
+        j = _js_expect(text, j, ")")
+        val = _js_f943_wrap_fcc(val)
+        state["ops"] += 1  # the reflective call is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+def _js_parse_f941_recursion_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const C=[INT,...];function
+    F(P){return P>=C.length|P===C.length?'':String.fromCharCode(C[P])+F(P+1);}return F(0)(+'LIT')*;})()` (F941).
+
+    F941 (LOW, wave-389 attack round 57): recursive char-by-char
+    assembly via String.fromCharCode resolves node-exactly while
+    the decoder produced zero variants. Node-exact desugar
+    (v24.20.0): the guard stops the recursion at the array length
+    (both `>=` and `===` spellings), the base case is the empty
+    string, and each step prepends `String.fromCharCode(C[P])`,
+    so the value is exactly the codepoint string (ToUint16-wrapped,
+    the F897 discipline). The call must be `F(0)` -- any other
+    start index fails closed (a different slice is a different
+    value).
+
+    Disjoint from every earlier route: no earlier production
+    accepts a function-declaration statement inside the IIFE body
+    (red-first verified: 2 BREAK on the open tree), so no
+    previously-decoded input changes behavior. None falls through
+    to the parenthesized-additive path.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-int-array decl (typed arrays fail closed, documented), a
+    non-empty base case, a flipped `F(P+1)+fromCharCode` body, a
+    non-`P+1` recursive step (skips change the value), extra
+    function params, extra statements, call args on the IIFE. On
+    miss the F452 budgets are restored (wave-383 lesson). Returns
+    (value, next_index), or None. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    j = _js_skip_ws(text, j + 1)  # the head returns the `{` index
+    n = len(text)
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        cname, ckind, cval, j = _js_f897_parse_decl(text, j, state)
+        if ckind != "intarray":
+            raise _JSExprFail("F941 array not an int literal")
+        _mkw = _js_match_kw(text, _js_skip_ws(text, j),
+                          "function")
+        if _mkw is None:
+            raise _JSExprFail("F941 not a function decl")
+        j = _mkw
+        fname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if fname in ("arguments",) or fname in _F611_RESERVED:
+            raise _JSExprFail("F941 bad function name")
+        j = _js_expect(text, j, "(")
+        pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if pname in ("arguments",) or pname in _F611_RESERVED:
+            raise _JSExprFail("F941 bad param name")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "{")
+        _mkw = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if _mkw is None:
+            raise _JSExprFail("F941 body not return")
+        j = _mkw
+        gname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if gname != pname:
+            raise _JSExprFail("F941 guard not the param")
+        j = _js_skip_ws(text, j)
+        if text.startswith(">=", j):
+            j = _js_skip_ws(text, j + 2)
+        elif text.startswith("===", j):
+            j = _js_skip_ws(text, j + 3)
+        else:
+            raise _JSExprFail("F941 guard operator not modeled")
+        lname, j = _js_parse_ident(text, j)
+        if lname != cname:
+            raise _JSExprFail("F941 guard not the array")
+        j = _js_expect(text, j, ".")
+        _mkw = _js_match_kw(text, _js_skip_ws(text, j), "length")
+        if _mkw is None:
+            raise _JSExprFail("F941 guard not .length")
+        j = _mkw
+        j = _js_expect(text, j, "?")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F941 base not a literal")
+        base, j = _js_parse_string(text, j)
+        if base != "":
+            raise _JSExprFail("F941 base not empty")
+        j = _js_expect(text, j, ":")
+        if _js_match_kw(text, _js_skip_ws(text, j), "String") is None:
+            raise _JSExprFail("F941 step not fromCharCode")
+        _mk3 = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        j = _js_parse_f943_fcc_member(text, _mk3)
+        j = _js_expect(text, j, "(")
+        iname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if iname != cname:
+            raise _JSExprFail("F941 step not the array")
+        j = _js_expect(text, j, "[")
+        xname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if xname != pname:
+            raise _JSExprFail("F941 index not the param")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "+")
+        rname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if rname != fname:
+            raise _JSExprFail("F941 step not self-recursive")
+        j = _js_expect(text, j, "(")
+        aname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if aname != pname:
+            raise _JSExprFail("F941 recursive arg not the param")
+        j = _js_expect(text, j, "+")
+        step, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+        if step != 1:
+            raise _JSExprFail("F941 recursive step not +1")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        _mkw = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if _mkw is None:
+            raise _JSExprFail("F941 body not return")
+        j = _mkw
+        sname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if sname != fname:
+            raise _JSExprFail("F941 return not the function")
+        j = _js_expect(text, j, "(")
+        start, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+        if start != 0:
+            raise _JSExprFail("F941 start index not 0")
+        j = _js_expect(text, j, ")")
+        val = _js_f943_wrap_fcc(cval)
+        val, j = _js_f897_parse_tail(text, j, val, state)
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        state["ops"] += 1  # the recursion is obfuscation-shaped
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+def _js_parse_f942_generator_spread_iife(text, i, depth, state):
+    """Parse `(function(){function* G(){var|let|const
+    C=[INT,...];for(var|let|const X of C[;]yield X[;])}return
+    String.fromCharCode(...G())(+'LIT')*;})()` (F942).
+
+    F942 (LOW, wave-389 attack round 57): `String.fromCharCode`
+    over a spread generator resolves node-exactly while the
+    decoder produced zero variants (F897 models apply/call over
+    int arrays and typed arrays only). Node-exact desugar
+    (v24.20.0): the generator yields the bound int array's
+    elements in order (the for-of yield loop), so the spread is
+    exactly the codepoint list (ToUint16-wrapped, the F897
+    discipline).
+
+    Disjoint from every earlier route: no earlier production
+    accepts a `function*` generator declaration inside the IIFE
+    body (red-first verified: 2 BREAK on the open tree; F656
+    models immediately-invoked generator *expressions*, a
+    different head), so no previously-decoded input changes
+    behavior. None falls through to the parenthesized-additive
+    path.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-int-array decl, a yield of anything but the loop var, a
+    spread of anything but the generator call, extra statements,
+    call args on the IIFE. On miss the F452 budgets are restored
+    (wave-383 lesson). Returns (value, next_index), or None.
+    Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    j = _js_skip_ws(text, j + 1)  # the head returns the `{` index
+    n = len(text)
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        _mkw = _js_match_kw(text, _js_skip_ws(text, j),
+                          "function")
+        if _mkw is None:
+            raise _JSExprFail("F942 not a generator decl")
+        j = _mkw
+        j = _js_expect(text, j, "*")
+        gname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if gname in ("arguments",) or gname in _F611_RESERVED:
+            raise _JSExprFail("F942 bad generator name")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "{")
+        cname, ckind, cval, j = _js_f897_parse_decl(text, j, state)
+        if ckind != "intarray":
+            raise _JSExprFail("F942 array not an int literal")
+        _mkw = _js_match_kw(text, _js_skip_ws(text, j), "for")
+        if _mkw is None:
+            raise _JSExprFail("F942 body not for-of")
+        j = _mkw
+        j = _js_expect(text, j, "(")
+        dkw, j = _js_match_decl_kw(text, _js_skip_ws(text, j))
+        if dkw is None:
+            raise _JSExprFail("F942 for-of not a decl")
+        xname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if xname in ("arguments",) or xname in _F611_RESERVED:
+            raise _JSExprFail("F942 bad loop var")
+        _mkw = _js_match_kw(text, _js_skip_ws(text, j), "of")
+        if _mkw is None:
+            raise _JSExprFail("F942 loop not for-of")
+        j = _mkw
+        sname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if sname != cname:
+            raise _JSExprFail("F942 loop not over the array")
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        braced = False
+        if j < n and text[j] == "{":
+            braced = True
+            j = _js_skip_ws(text, j + 1)
+        if _js_match_kw(text, j, "yield") is None:
+            raise _JSExprFail("F942 body not yield")
+        j = _js_skip_ws(text, j + len("yield"))
+        yname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if yname != xname:
+            raise _JSExprFail("F942 yield not the loop var")
+        j = _js_expect(text, j, ";")
+        if braced:
+            j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, "}")
+        _mkw = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if _mkw is None:
+            raise _JSExprFail("F942 body not return")
+        j = _mkw
+        _mkw = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if _mkw is None:
+            raise _JSExprFail("F942 return not fromCharCode")
+        j = _js_parse_f943_fcc_member(text, _mkw)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("...", j):
+            raise _JSExprFail("F942 call not a spread")
+        j = _js_skip_ws(text, j + 3)
+        hname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if hname != gname:
+            raise _JSExprFail("F942 spread not the generator")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        val = _js_f943_wrap_fcc(cval)
+        val, j = _js_f897_parse_tail(text, j, val, state)
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        state["ops"] += 1  # the generator spread is obfuscation-shaped
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+def _js_parse_f943_bound_call_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const
+    F=Function.prototype.call.bind(String.fromCharCode);return
+    F(thisArg,CODES)(+'LIT')*;})()` and the `.apply.bind` twin with
+    `F(thisArg,[CODES])` (F943).
+
+    F943 (LOW, wave-389 attack round 57): the fromCharCode builtin
+    reached through `Function.prototype.call.bind(...)` resolves
+    node-exactly while the decoder produced zero variants (the
+    bound-call shape is F921-adjacent; filed here as a
+    dispatch-anchor residual). Node-exact desugar (v24.20.0):
+    `Function.prototype.call.bind(String.fromCharCode)` is a bound
+    `call` with the builtin as its this; invoking it with
+    `(thisArg, codes...)` is exactly
+    `String.fromCharCode.call(thisArg, codes...)` (the thisArg is
+    parsed but ignored, F486 discipline). The `.apply.bind` twin
+    takes the `[CODES]` argsArray. The codepoint list uses the
+    F458 grammar with the ToUint16 wrap (the F897 node-exactness
+    discipline).
+
+    Disjoint from every earlier route: F870/F920/F921 model
+    `.bind` on named functions and var-alias binds, never a
+    `Function.prototype.call.bind` decl head (red-first verified:
+    4 BREAK on the open tree), so no previously-decoded input
+    changes behavior. None falls through to the
+    parenthesized-additive path.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-builtin bind target, bound args on the `.bind` (arity
+    shifts the triple), extra statements, call args on the IIFE.
+    On miss the F452 budgets are restored (wave-383 lesson).
+    Returns (value, next_index), or None. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    j = _js_skip_ws(text, j + 1)  # the head returns the `{` index
+    n = len(text)
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        dkw, j = _js_match_decl_kw(text, _js_skip_ws(text, j))
+        if dkw is None:
+            raise _JSExprFail("F943 decl not var/let/const")
+        fname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if fname in ("arguments",) or fname in _F611_RESERVED:
+            raise _JSExprFail("F943 bad alias name")
+        j = _js_expect(text, j, "=")
+        _mkw = _js_match_kw(text, _js_skip_ws(text, j),
+                          "Function")
+        if _mkw is None:
+            raise _JSExprFail("F943 bind not Function.prototype")
+        j = _mkw
+        j = _js_expect(text, j, ".")
+        _mkw = _js_match_kw(text, _js_skip_ws(text, j),
+                          "prototype")
+        if _mkw is None:
+            raise _JSExprFail("F943 bind not .prototype")
+        j = _mkw
+        j = _js_expect(text, j, ".")
+        mk = _js_match_kw(text, _js_skip_ws(text, j), "call")
+        is_call = True
+        if mk is None:
+            mk = _js_match_kw(text, _js_skip_ws(text, j), "apply")
+            is_call = False
+        if mk is None:
+            raise _JSExprFail("F943 bind not call/apply")
+        j = mk
+        j = _js_expect(text, j, ".")
+        _mkw = _js_match_kw(text, _js_skip_ws(text, j), "bind")
+        if _mkw is None:
+            raise _JSExprFail("F943 not .bind")
+        j = _mkw
+        j = _js_expect(text, j, "(")
+        if _js_match_kw(text, _js_skip_ws(text, j), "String") is None:
+            raise _JSExprFail("F943 bind target not String")
+        _mk4 = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        j = _js_parse_f943_fcc_member(text, _mk4)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _mkw = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if _mkw is None:
+            raise _JSExprFail("F943 body not return")
+        j = _mkw
+        gname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if gname != fname:
+            raise _JSExprFail("F943 return not the alias")
+        j = _js_expect(text, j, "(")
+        _, j = _js_parse_dispatch_thisarg(text, j, depth, state)
+        j = _js_expect(text, j, ",")
+        j = _js_skip_ws(text, j)
+        if is_call:
+            val, j = _js_parse_fromcharcode_args_inner(
+                text, j, ")", state=state)
+        else:
+            if j >= n or text[j] != "[":
+                raise _JSExprFail("F943 apply twin needs array")
+            val, j = _js_parse_fromcharcode_args_inner(
+                text, j + 1, "]", state=state)
+            j = _js_expect(text, j, ")")
+        val = _js_f943_wrap_fcc(val)
+        val, j = _js_f897_parse_tail(text, j, val, state)
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        state["ops"] += 1  # the bound dispatch is obfuscation-shaped
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+def _js_parse_f943_direct_bind(text, i, depth, state):
+    """Parse `Function.prototype.call.bind(String.fromCharCode)(thisArg, CODES)`
+    / `Function.prototype.apply.bind(String.fromCharCode)(thisArg, [CODES])`
+    at text[i] (F943).
+
+    F943 (LOW, wave-389 attack round 57): the finding's literal fourth
+    shape -- the bound fromCharCode invoked directly, not via an IIFE
+    alias. Node-exact desugar (v24.20.0):
+    `Function.prototype.call.bind(String.fromCharCode)` is a bound
+    `call` with this=String.fromCharCode; invoking it as
+    `F(thisArg, CODES)` is `String.fromCharCode.call(thisArg, CODES)`.
+    The `.apply.bind` twin with `(thisArg, [CODES])` is
+    `String.fromCharCode.apply(thisArg, [CODES])`. The trailing
+    invocation reuses _js_parse_fcc_dispatch (F486), including the
+    F943 array-like extension -- faithful by construction. The
+    builtin member accepts the dot and bracket-string forms via
+    _js_parse_f943_fcc_member (F480 precedent).
+
+    Bounds (all fail closed -- rejected, never mis-decoded): any bind
+    target but the canonical fromCharCode member; bound arguments
+    beyond the target (arity shift -- the static dispatch grammar no
+    longer applies, same bound as the IIFE form); anything but the
+    exact `Function.prototype.call|apply.bind(` head -- disjoint from
+    F513's `Function.prototype.bind.call` and F921. Returns (value,
+    next_index), or None on miss (budgets restored). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    i = _js_skip_ws(text, i)
+    if _js_match_kw(text, i, "Function") is None:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        j = _js_skip_ws(text, i + len("Function"))
+        j = _js_expect(text, j, ".")
+        _mkw = _js_match_kw(text, _js_skip_ws(text, j), "prototype")
+        if _mkw is None:
+            raise _JSExprFail("F943 not .prototype")
+        j = _js_expect(text, _mkw, ".")
+        _mkw = _js_match_kw(text, _js_skip_ws(text, j), "call")
+        dname = "call"
+        if _mkw is None:
+            _mkw = _js_match_kw(text, _js_skip_ws(text, j), "apply")
+            dname = "apply"
+            if _mkw is None:
+                raise _JSExprFail("F943 not .call/.apply")
+        j = _js_expect(text, _mkw, ".")
+        _mkw = _js_match_kw(text, _js_skip_ws(text, j), "bind")
+        if _mkw is None:
+            raise _JSExprFail("F943 not .bind")
+        j = _js_expect(text, _mkw, "(")
+        _mkw = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if _mkw is None:
+            raise _JSExprFail("F943 bind target not String")
+        j = _js_parse_f943_fcc_member(text, _mkw)
+        j = _js_expect(text, j, ")")
+        # The trailing invocation: (thisArg, ...) under the F486
+        # dispatch grammar (array-like extension included).
+        paren = _js_skip_ws(text, j)
+        if paren >= n or text[paren] != "(":
+            raise _JSExprFail("F943 bound call without invocation")
+        val, j = _js_parse_fcc_dispatch(text, paren, dname, depth,
+                                       state)
+        val = _js_f943_wrap_fcc(val)
+        state["ops"] += 1  # the bound dispatch is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
 def _js_f899_parse_has_branch(text, j, tname, tprops):
     """Parse one has-ternary branch at text[j] (F899).
 
@@ -96630,6 +97352,42 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
     ddisp = _js_parse_function_dispatch(text, i, depth, state)
     if ddisp is not None:
         return ddisp
+    # F943: 'LIT'.constructor.fromCharCode(...) -- the fromCharCode
+    #   builtin reached through the ''.constructor alias
+    #   (''.constructor === String, node v24.20.0). Tried before
+    #   the string-literal branch (the shape starts with a quote):
+    #   the alias head is disjoint from every earlier route (a
+    #   string literal followed by `.constructor.fromCharCode`
+    #   fails every earlier grammar closed; red-first verified: 4
+    #   BREAK on the open tree), so no previously-decoded input
+    #   changes behavior. The helper restores the F452 budgets on
+    #   miss (wave-383 lesson).
+    _f943a = _js_parse_f943_ctor_alias(text, i, depth, state)
+    if _f943a is not None:
+        val, i = _f943a
+        return _js_parse_postfix(text, i, val, depth, state)
+    # F943: Reflect.apply(String.fromCharCode,thisArg,[CODES]) --
+    #   the builtin as a Reflect.apply target. Tried before the
+    #   String branch: the `Reflect` head is disjoint from every
+    #   earlier route (red-first verified: 4 BREAK on the open
+    #   tree), so no previously-decoded input changes behavior.
+    #   Budgets restored on miss (wave-383 lesson).
+    _f943r = _js_parse_f943_reflect_apply(text, i, depth, state)
+    if _f943r is not None:
+        val, i = _f943r
+        return _js_parse_postfix(text, i, val, depth, state)
+    # F943: Function.prototype.call.bind(String.fromCharCode)(thisArg,
+    #   CODES) and the .apply.bind twin -- the finding's literal
+    #   fourth shape, the bound builtin invoked directly. Tried
+    #   before the String branch: the `Function.prototype` head is
+    #   disjoint from F513's `Function.prototype.bind.call` head, from
+    #   F921, and from every earlier route (red-first verified), so no
+    #   previously-decoded input changes behavior. Budgets restored
+    #   on miss (wave-383 lesson).
+    _f943d = _js_parse_f943_direct_bind(text, i, depth, state)
+    if _f943d is not None:
+        val, i = _f943d
+        return _js_parse_postfix(text, i, val, depth, state)
     i = _js_skip_ws(text, i)
     if i >= len(text):
         raise _JSExprFail("empty")
@@ -98974,6 +99732,60 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f936_saved_parts; state['ops'] = _f936_saved_ops
         if _f936 is not None:
             val, i = _f936
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F941: (function(){var|let|const C=[INT,...];function
+        #   F(P){return P>=C.length|P===C.length?'':String.fromCharCode(C[P])+F(P+1);}return
+        #   F(0)(+'LIT')*;})() -- recursion-based char assembly.
+        #   Tried after F936: no earlier route accepts a
+        #   function-declaration statement in the IIFE body
+        #   (red-first verified: 2 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior. None falls
+        #   through to the parenthesized-additive path like F936.
+        #   Budget snapshot/restore on miss (wave-383 lesson).
+        _f941_saved_parts = state['parts']; _f941_saved_ops = state['ops']
+        _f941 = _js_parse_f941_recursion_iife(text, i, depth, state)
+        if _f941 is None:
+            state['parts'] = _f941_saved_parts; state['ops'] = _f941_saved_ops
+        if _f941 is not None:
+            val, i = _f941
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F942: (function(){function*
+        #   G(){var|let|const C=[INT,...];for(var|let|const X of
+        #   C[;]yield X[;])}return
+        #   String.fromCharCode(...G())(+'LIT')*;})() -- spread of a
+        #   generator into fromCharCode. Tried after F941: the
+        #   `function*` generator-decl head is disjoint from F941's
+        #   `function` decl head and from every earlier route
+        #   (red-first verified: 2 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior. None falls
+        #   through to the parenthesized-additive path like F941.
+        #   Budget snapshot/restore on miss (wave-383 lesson).
+        _f942_saved_parts = state['parts']; _f942_saved_ops = state['ops']
+        _f942 = _js_parse_f942_generator_spread_iife(text, i, depth,
+                                                     state)
+        if _f942 is None:
+            state['parts'] = _f942_saved_parts; state['ops'] = _f942_saved_ops
+        if _f942 is not None:
+            val, i = _f942
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F943: (function(){var|let|const
+        #   F=Function.prototype.call.bind(String.fromCharCode);
+        #   return F(thisArg,CODES)(+'LIT')*;})() and the
+        #   `.apply.bind` twin -- the fromCharCode builtin reached
+        #   through a bound Function.prototype dispatch. Tried
+        #   after F942: the `Function.prototype.call.bind` decl head
+        #   is disjoint from every earlier route (F870/F920/F921
+        #   model binds on named functions, never this head;
+        #   red-first verified: 4 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior. None falls
+        #   through to the parenthesized-additive path like F942.
+        #   Budget snapshot/restore on miss (wave-383 lesson).
+        _f943b_saved_parts = state['parts']; _f943b_saved_ops = state['ops']
+        _f943b = _js_parse_f943_bound_call_iife(text, i, depth, state)
+        if _f943b is None:
+            state['parts'] = _f943b_saved_parts; state['ops'] = _f943b_saved_ops
+        if _f943b is not None:
+            val, i = _f943b
             return _js_parse_postfix(text, i, val, depth, state)
         # F653: (function(){var|let|const FR=['LIT',...];var|let|const
         #   O={i:0};O[Symbol.iterator]=function(){var SELF=this;
