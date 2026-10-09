@@ -467,6 +467,18 @@ def test_r53_f821_s2_closed():
     hit = _blocked("(function(){var f=(a,b='%s')=>a+b;return f('%s');})()" % (_B, _A))
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
+@_t
+def test_r53_f829_s1_open():
+    """F829 OPEN: braced if-break in counted for body misses."""
+    miss = _misses("(function(){var r='';outer:for(var i=0;i<1;i++){r+='%s';if(1){break outer;}r+='xx';}return r+'%s';})()" % (_A, _B))
+    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+
+@_t
+def test_r53_f829_s2_open():
+    """F829 OPEN: braced if-break in for(;;) body misses."""
+    miss = _misses("(function(){var r='';outer:for(;;){if(1){r+='%s';break outer;}r+='xx';}return r+'%s';})()" % (_A, _B))
+    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+
 
 def _green_check():
     if os.environ.get("GOV_SKIP_GREEN") == "1":
