@@ -23648,6 +23648,192 @@ def _js_parse_f790_forof_iife(text, i, depth, state):
     state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
     return acc_val_cur, k
 
+
+def _js_parse_f817_swap_iife(text, i, depth, state):
+    """Parse `(function(){DECL; [P]=[E]; return ADD;})()` (F817).
+
+    F817 (LOW, attack round 53): F790 residual -- destructuring
+    *assignment* (swap/copy): `(function(){var a='f1',b='f2';
+    [a,b]=[b,a];return b+a;})()` node-evaluates to the exact
+    credential (v24.20.0) while the decoder produced zero variants.
+    F790 models declaration-pattern rest; F749 models declaration
+    patterns; neither models a bare `[P]=[E]` assignment statement.
+
+    Node-exact desugar (v24.20.0):
+    - decl: exactly one `var|let NAME='LIT',...;` statement with
+      1..8 declarators, each a plain string literal. `const` fails
+      closed (the engine throws TypeError on the swap -- node
+      verified). Names via _js_f790_check_name (reserved/arguments
+      fail closed).
+    - statement: exactly one `[N1,..,Nk]=[E1,..,Ek];` -- flat
+      array patterns, equal lengths, 1..8 elements; LHS all
+      decl-bound names; RHS each a decl-bound name or a string
+      literal; no `...`, no holes, no defaults, no nesting (all
+      fail closed -- the engine's sloppy-mode global assignment,
+      element skipping, and default semantics are never decoded).
+      RHS values are read left-to-right into temporaries, then
+      assigned to the LHS left-to-right (engine order).
+    - return: the F790 `OP (+ OP)*` additive over bound names and
+      string literals (reuses _js_f790_rest_additive; member reads
+      on the string-bound names fail closed inside).
+    - invocation: exactly `()`.
+    Disjoint: no earlier route accepts a `[`-headed statement --
+    F790's var-form requires `...` in a declaration pattern and
+    fails closed on a bare assignment (red-first verified: s2
+    BREAK on the open tree); F749's declaration grammar fails
+    closed on a bare assignment; the F655/F681/F773 statement
+    loops accept only decl/member-call statements. Tried after
+    F790. F790's hook and its trailing `return` are untouched
+    (wave-379 lesson).
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, params, a directive prologue, extra or
+      reordered statements, reassignment of the bound names, a
+      `const` decl, literal binding names (`null`/`true`/`false`
+      -- the engine rejects them with SyntaxError), unbound
+      LHS/RHS names, length mismatch, non-string inits,
+      non-empty call args.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+        if k is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            return None  # named function: fail closed (documented)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # params: the filed shapes take none
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "{":
+            return None
+        inner_start, inner_end, k = _js_span_braced(text, k)
+        sj = _js_skip_ws(text, inner_start)
+        # Decl: `var|let NAME='LIT',NAME='LIT',...;`
+        dkw, dm = _js_match_decl_kw(text, sj)
+        if dkw is None:
+            return None
+        if dkw == "const":
+            raise _JSExprFail("F817 const swap throws TypeError")
+        sj = _js_skip_ws(text, dm)
+        env = {}
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj >= n or text[sj] not in _JS_IDENT_START:
+                raise _JSExprFail("F817 bad binding name")
+            bname, sj = _js_parse_ident(text, sj)
+            _js_f790_check_name(bname)
+            if bname in ("null", "true", "false"):
+                raise _JSExprFail("F817 literal as binding name")
+            if bname in env:
+                raise _JSExprFail("F817 duplicate binding")
+            sj = _js_expect(text, _js_skip_ws(text, sj), "=")
+            sj = _js_skip_ws(text, sj)
+            if sj >= n or text[sj] not in "'\"":
+                raise _JSExprFail("F817 init not a string literal")
+            bval, sj = _js_parse_string(text, sj)
+            env[bname] = bval
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == ",":
+                sj = _js_skip_ws(text, sj + 1)
+                continue
+            break
+        if len(env) < 1:
+            raise _JSExprFail("F817 no bindings")
+        if len(env) > 8:
+            raise _JSExprFail("F817 too many bindings")
+        sj = _js_expect(text, sj, ";")
+        # Statement: `[N1,..,Nk]=[E1,..,Ek];`
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "[")
+        lhs = []
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if text.startswith("...", sj):
+                raise _JSExprFail("F817 rest in LHS pattern")
+            if sj >= n or text[sj] not in _JS_IDENT_START:
+                raise _JSExprFail("F817 bad LHS element")
+            lname, sj = _js_parse_ident(text, sj)
+            if lname not in env:
+                raise _JSExprFail("F817 unbound LHS name")
+            lhs.append(lname)
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == ",":
+                sj = _js_skip_ws(text, sj + 1)
+                continue
+            break
+        sj = _js_expect(text, sj, "]")
+        sj = _js_expect(text, _js_skip_ws(text, sj), "=")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "[")
+        rhs = []
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if text.startswith("...", sj):
+                raise _JSExprFail("F817 rest in RHS pattern")
+            if sj < n and text[sj] in "'\"":
+                lit, sj = _js_parse_string(text, sj)
+                rhs.append(("lit", lit))
+            elif sj < n and text[sj] in _JS_IDENT_START:
+                rname, sj = _js_parse_ident(text, sj)
+                if rname not in env:
+                    raise _JSExprFail("F817 unbound RHS name")
+                rhs.append(("name", rname))
+            else:
+                raise _JSExprFail("F817 bad RHS element")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == ",":
+                sj = _js_skip_ws(text, sj + 1)
+                continue
+            break
+        sj = _js_expect(text, sj, "]")
+        sj = _js_expect(text, _js_skip_ws(text, sj), ";")
+        if len(lhs) != len(rhs):
+            raise _JSExprFail("F817 pattern length mismatch")
+        if len(lhs) > 8:
+            raise _JSExprFail("F817 too many swap elements")
+        # Engine order: RHS values first, then assign left-to-right.
+        rvals = [payload if kind == "lit" else env[payload]
+                 for kind, payload in rhs]
+        for lname, rval in zip(lhs, rvals):
+            env[lname] = rval
+        state["ops"] += 1  # the swap statement is obfuscation-shaped
+        # Return: ADD over the bound names.
+        sj = _js_skip_ws(text, sj)
+        rk = _js_match_kw(text, sj, "return")
+        if rk is None:
+            raise _JSExprFail("F817 no return")
+        ret_text, sj = _js_f748_scan_expr(text, _js_skip_ws(text, rk))
+        benv = {nm: ("str", sv) for nm, sv in env.items()}
+        val = _js_f790_rest_additive(ret_text, benv, state)
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F817 trailing statements")
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F817 result too long")
+        state["ops"] += 1  # the return is obfuscation-shaped
+        # Invocation: exactly `()` (k is past the closing brace).
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "(")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, k
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_args_laundered_iife(text, i, depth, state):
     """Parse `(function(){var A=SRC;return BODY})(lit, ...)` or
     `(function(...A){return BODY})(lit, ...)` at text[i] (F516).
@@ -39723,6 +39909,238 @@ def _js_parse_f773_fill_stmt_iife(text, i, depth, state):
         if len(result) > _MAX_DECODE_BYTES:
             raise _JSExprFail("F773 result too long")
         state["ops"] += 1  # the indexed read is obfuscation-shaped
+        # Invocation: exactly `()` (j is past the closing brace).
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return result, j
+    except _JSExprFail:
+        return None
+
+
+# Sentinel for `new Array(N)` empty slots (F819). The engine's holes
+# join as the empty string and are overwritten by fill exactly like
+# present elements; a dedicated sentinel keeps the model honest.
+_F819_HOLE = object()
+
+
+def _js_parse_f819_fill_range_iife(text, i, depth, state):
+    """Parse `(function(){DECL; FILL+; return NAME.join(SEP);})()`
+    (F819).
+
+    F819 (LOW, attack round 53): F773 residual -- fill with range
+    args: `(function(){var a=new Array(3);a.fill('f1',0,1);
+    a.fill('f2',1,2);return a.join('');})()` and
+    `(function(){var a=['z','z'];a.fill('f1',-2,-1);a.fill('f2',-1);
+    return a.join('');})()` node-evaluate to the exact credential
+    (v24.20.0) while the decoder produced zero variants. F681
+    models 3-arg fill on array-literal decls only (its fill arg
+    list is exactly 3 and its decl rejects `new Array`); F773
+    models 1-arg fill with an indexed-read return.
+
+    Node-exact desugar (v24.20.0):
+    - decl: `var|let|const NAME=new Array(N);` (N a non-negative
+      integer literal -- fractional/negative N throw RangeError in
+      the engine, fail closed; a string N like `'3'` yields a
+      single-element array, not a length -- fail closed) or
+      `var|let|const NAME=['LIT',..];` (the F644 string-array
+      grammar). `const` is fine (mutation is not reassignment).
+      `new Array(N)` binds N empty slots (the _F819_HOLE sentinel).
+    - 1..8 fill statements on the bound ident, each
+      `NAME.fill('LIT')` / `NAME.fill('LIT',INT)` /
+      `NAME.fill('LIT',INT,INT)`; INT a literal int, negative
+      allowed; a fractional tail (e.g. `0.5`) is left unconsumed
+      by _js_parse_slice_int and fails closed at the `,`/`)`
+      expect (F681 parity). Engine fill: start defaults to 0,
+      end defaults to len; a negative index counts back from the
+      end; both are clamped to [0,len]; start>=end is a no-op;
+      elements [start,end) become the value.
+    - return: `NAME.join(SEP);` / `NAME.join();` (the F434 join
+      discipline; the default separator is `,`; holes join as the
+      empty string).
+    - invocation: exactly `()`.
+    Disjoint: requires the `new Array(N)` decl or at least one
+    1-arg/2-arg fill -- F681 fails closed on both (its decl
+    rejects `new Array`; its fill arg list is exactly 3, so a
+    1/2-arg fill raises inside its committed statement parse and
+    fails the whole shape closed); F773's return is an indexed
+    read, never `.join`. Red-first verified: both filed shapes
+    BREAK on the open tree. Tried after F773. F773's hook and its
+    trailing `return` are untouched (wave-379 lesson).
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, params, a directive prologue, extra or
+      reordered statements, reassignment of NAME, a `new Array`
+      with a non-literal/non-integer/negative N, non-literal
+      fill values or join separators, splice or non-fill
+      statements, more than 8 fills, non-empty call args.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        # Decl: `var|let|const NAME=new Array(N);` or
+        # `var|let|const NAME=['LIT',..];`
+        _dname, dm = _js_match_decl_kw(text, sj)
+        if _dname is None:
+            return None
+        sj = _js_skip_ws(text, dm)
+        aname, sj = _js_parse_ident(text, sj)
+        if aname == "arguments" or aname in _F611_RESERVED:
+            raise _JSExprFail("F819 reserved binding name")
+        if aname in ("null", "true", "false"):
+            raise _JSExprFail("F819 literal as binding name")
+        sj = _js_expect(text, _js_skip_ws(text, sj), "=")
+        sj = _js_skip_ws(text, sj)
+        is_new_array = False
+        if text.startswith("new", sj) and (
+                sj + 3 >= n or text[sj + 3] not in _JS_IDENT_CONT):
+            sj = _js_skip_ws(text, sj + 3)
+            cname, sj = _js_parse_ident(text, sj)
+            if cname != "Array":
+                raise _JSExprFail("F819 new not Array")
+            sj = _js_expect(text, _js_skip_ws(text, sj), "(")
+            sj = _js_skip_ws(text, sj)
+            if sj >= n or text[sj] == "-":
+                raise _JSExprFail("F819 negative array length")
+            alen, sj = _js_parse_number(text, sj)
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == ".":
+                raise _JSExprFail("F819 fractional array length")
+            sj = _js_expect(text, sj, ")")
+            is_new_array = True
+            elems = [_F819_HOLE] * alen
+        elif sj < n and text[sj] == "[":
+            elems, sj = _js_parse_f644_string_array(text, sj, state)
+        else:
+            return None
+        sj = _js_expect(text, _js_skip_ws(text, sj), ";")
+        # 1..8 fill statements on the bound array.
+        nstmt = 0
+        saw_short_fill = is_new_array
+        while True:
+            sj = _js_skip_ws(text, sj)
+            q = sj
+            try:
+                qname, q = _js_parse_ident(text, q)
+            except _JSExprFail:
+                break
+            if qname != aname:
+                break
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ".":
+                break
+            try:
+                mname, q = _js_parse_ident(text, _js_skip_ws(text,
+                                                             q + 1))
+            except _JSExprFail:
+                break
+            if mname != "fill":
+                break
+            # Committed: a fill statement on the bound array --
+            # malformed shapes fail closed from here.
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "(")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F819 fill value not a literal")
+            fval, q = _js_parse_string(text, q)
+            q = _js_skip_ws(text, q)
+            fstart, fend = 0, len(elems)
+            if q < n and text[q] == ",":
+                q = _js_skip_ws(text, q + 1)
+                fstart, q = _js_parse_slice_int(text, q)
+                q = _js_skip_ws(text, q)
+                if q < n and text[q] == ",":
+                    q = _js_skip_ws(text, q + 1)
+                    fend, q = _js_parse_slice_int(text, q)
+                    q = _js_skip_ws(text, q)
+                else:
+                    saw_short_fill = True
+            else:
+                saw_short_fill = True
+            q = _js_expect(text, q, ")")
+            ln = len(elems)
+            rs = ln + fstart if fstart < 0 else fstart
+            rs = max(0, min(rs, ln))
+            re_ = ln + fend if fend < 0 else fend
+            re_ = max(0, min(re_, ln))
+            for _fi in range(rs, re_):
+                elems[_fi] = fval
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            state["parts"] += 1  # the fill is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1  # the mutation is obfuscation-shaped
+            nstmt += 1
+            if nstmt > 8:
+                raise _JSExprFail("F819 too many fills")
+            sj = q
+        if nstmt == 0:
+            raise _JSExprFail("F819 no fill statement")
+        if not saw_short_fill:
+            # Array-literal decl with all 3-arg fills: F681's
+            # domain. Fail closed to keep the routes disjoint.
+            raise _JSExprFail("F819 shape belongs to F681")
+        # Return: `NAME.join(SEP);` / `NAME.join();`.
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F819 no return")
+        sj = _js_skip_ws(text, m)
+        rname, sj = _js_parse_ident(text, sj)
+        if rname != aname:
+            raise _JSExprFail("F819 return not over bound array")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ".")
+        jname, sj = _js_parse_ident(text, _js_skip_ws(text, sj))
+        if jname != "join":
+            raise _JSExprFail("F819 return not join")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "(")
+        sj = _js_skip_ws(text, sj)
+        if sj < n and text[sj] == ")":
+            sep = ","
+            sj += 1
+        elif sj < n and text[sj] in "'\"":
+            sep, sj = _js_parse_string(text, sj)
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, ")")
+        else:
+            raise _JSExprFail("F819 join separator not a literal")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F819 trailing statements")
+        result = sep.join("" if e is _F819_HOLE else e for e in elems)
+        if len(result) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F819 join too long")
+        state["ops"] += 1  # the join is obfuscation-shaped
         # Invocation: exactly `()` (j is past the closing brace).
         j = _js_skip_ws(text, j)
         j = _js_expect(text, j, ")")
@@ -77448,6 +77866,24 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f790 is not None:
             val, i = _f790
             return _js_parse_postfix(text, i, val, depth, state)
+        # F817: (function(){DECL; [P]=[E]; return ADD;})() --
+        #   destructuring swap/copy assignment (F790 residual).
+        #   Tried after F790: F790's var-form requires `...` in a
+        #   declaration pattern and fails closed on a bare
+        #   assignment; F749's declaration grammar fails closed on
+        #   a bare assignment (red-first verified: s2 BREAK on the
+        #   open tree); this requires the `[P]=[E];` statement and
+        #   fails closed on every shape F749/F790 accept, so no
+        #   previously-decoded input changes behavior. F790's hook
+        #   and its trailing `return` are untouched (wave-379
+        #   lesson).
+        _f817_saved_parts = state['parts']; _f817_saved_ops = state['ops']
+        _f817 = _js_parse_f817_swap_iife(text, i, depth, state)
+        if _f817 is None:
+            state['parts'] = _f817_saved_parts; state['ops'] = _f817_saved_ops
+        if _f817 is not None:
+            val, i = _f817
+            return _js_parse_postfix(text, i, val, depth, state)
         # F668: (function(){function NAME(s){return ADD;}
         #   return NAME`T`;})() and the var-bound function-expression
         #   twin -- custom tag-function templates. Tried after F661:
@@ -77972,6 +78408,19 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f773_saved_parts; state['ops'] = _f773_saved_ops
         if _f773 is not None:
             return _f773
+        # F819: (function(){DECL; FILL+; return NAME.join(SEP);})()
+        #   -- fill with range args / `new Array(N)` decl (F773
+        #   residual). None falls through (fails closed inside;
+        #   requires the `new Array(N)` decl or a 1/2-arg fill, so
+        #   F681's 3-arg-fill-on-literal domain and F773's
+        #   indexed-read return are never touched -- red-first
+        #   verified: both filed shapes BREAK on the open tree).
+        _f819_saved_parts = state['parts']; _f819_saved_ops = state['ops']
+        _f819 = _js_parse_f819_fill_range_iife(text, i, depth, state)
+        if _f819 is None:
+            state['parts'] = _f819_saved_parts; state['ops'] = _f819_saved_ops
+        if _f819 is not None:
+            return _f819
         # F684a: (function({K=V,..}={}){return ADD;})(...) --
         # default-referencing-earlier-params destructuring. None
         # falls through (fails closed inside; F645's flat shapes
