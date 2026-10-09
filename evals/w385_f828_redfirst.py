@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Red-first for F795: optional-chaining direct method calls.
+"""Red-first for F828: F781 class-ctor overstatement residual.
 
-The decoder models `.method(args)` on array/string receivers but the
-`?.method(args)` form resolves to a _JSMethodRef whose direct-call step
-is never dispatched to the method grammar: every modeled method is
-bypassable via `?.` (the receiver is provably non-null, so `?.` is
-engine-identical to `.` -- node v24.20.0).
-Filed 2026-10-09 03:26:22 UTC wave-385 lane 3.
+The wave-385 lane-10 F781 closure note claimed "empty function/class
+ctor decls" are modeled, but _js_parse_f781_proto_method_iife has no
+class branch: `class C{}C.prototype.m=function(){return 'f1';};` +
+`new C().m()` dispatches node-exactly while the decoder produces zero
+variants. Spec-axis review HARD finding; re-filed per the standing
+overstatement rule (never silently patched).
+Filed 2026-10-09 03:43:50 UTC, wave-385 lane 10.
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
 (node v24.20.0 verified.)
 """
@@ -24,18 +25,16 @@ _B = "456789" + "abcdef"
 
 SHAPES = [
     ("s1",
-     "['" + _A + "','" + _B + "']?.join('')",
+     "(function(){class C{}C.prototype.m=function(){return '%s';};"
+     "return new C().m()+'%s';})()" % (_A, _B),
      True),
     ("s2",
-     "[['" + _A + "'],['xx']]?.find(function(a){return true;})[0][0]+'" + _B + "'",
+     "(function(){class C{}C.prototype['m']=function(){return '%s';};"
+     "var o=new C();return o['m']()+'%s';})()" % (_A, _B),
      True),
 ]
 
 CONTROLS = [
-    # (name, payload, want_hit)
-    ("dot-join-blocks",
-     "['" + _A + "','" + _B + "'].join('')",
-     True),  # control: the dot form blocks coded
     ("junk-quiet",
      "'(function(){var s=\\\\'ab\\\\';return s;})()'", False),
 ]
@@ -55,8 +54,10 @@ def main():
         hit = find_credential(payload) is not None
         ok = hit == want_hit
         print("%s: %s" % (name, "HELD(control-ok)" if ok else "BREAK(control-bad)"))
-        held += 1 if ok else 0
-        breaks += 0 if ok else 1
+        if ok:
+            held += 1
+        else:
+            breaks += 1
     print("tally: %d BREAK / %d HELD" % (breaks, held))
     return 1 if breaks else 0
 

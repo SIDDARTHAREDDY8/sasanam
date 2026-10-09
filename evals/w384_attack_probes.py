@@ -502,28 +502,28 @@ def test_r52_f779_s2_closed():
     return ("HELD" if hit else "BREAK", "blocked=%s" % hit)
 
 @_t
-def test_r52_f780_s1_open():
-    """F780 OPEN: miss reproduces."""
-    miss = _misses("(function(){function C(x){this.x=x;}var o=new C('%s');return o.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f780_s1_closed():
+    """F780 CLOSED (wave-385 lane 10): coded refusal -- blocks."""
+    hit = _blocked("(function(){function C(x){this.x=x;}var o=new C('%s');return o.x+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r52_f780_s2_open():
-    """F780 OPEN: miss reproduces."""
-    miss = _misses("(function(){return Reflect.construct(function(x){this.x=x;},['%s']).x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f780_s2_closed():
+    """F780 CLOSED (wave-385 lane 10): coded refusal -- blocks."""
+    hit = _blocked("(function(){return Reflect.construct(function(x){this.x=x;},['%s']).x+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r52_f781_s1_open():
-    """F781 OPEN: miss reproduces."""
-    miss = _misses("(function(){function C(){}C.prototype.m=function(){return '%s';};return new C().m()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f781_s1_closed():
+    """F781 CLOSED (wave-385 lane 10): coded refusal -- blocks."""
+    hit = _blocked("(function(){function C(){}C.prototype.m=function(){return '%s';};return new C().m()+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r52_f781_s2_open():
-    """F781 OPEN: miss reproduces."""
-    miss = _misses("(function(){function C(){}C.prototype.m=function(){return '%s';};return new C()['m']()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f781_s2_closed():
+    """F781 CLOSED (wave-385 lane 10): coded refusal -- blocks."""
+    hit = _blocked("(function(){function C(){}C.prototype.m=function(){return '%s';};return new C()['m']()+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_r52_f782_s1_open():

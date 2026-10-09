@@ -18,7 +18,7 @@ arg shape. Filed shapes:
   (function(){return ['xx','f1','f2'].splice(1).join('');})()
   (function(){return ['xx','f1','f2','yy'].splice(1,2).join('');})()
 
-F795 (LOW, OPEN; filed 2026-10-09 03:26:22 UTC by this lane): NEW --
+F822 (LOW, OPEN; filed 2026-10-09 03:26:22 UTC by this lane): NEW --
 optional-chaining direct method calls (`?.method(args)`) miss every
 modeled method (the `?.` form resolves to a _JSMethodRef whose
 direct-call step is never dispatched). Documented here, stays OPEN.
@@ -120,14 +120,14 @@ def test_p0_no_new_recompile():
 
 @_t
 def test_b0_footer_state():
-    """Control: lane-local footer (F766/F767 closed, F795 filed)."""
+    """Control: lane-local footer (F766/F767 closed, F822 filed)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F796**" in text
           and "Open findings: F762, F763, F764, F765, F768, F769, F770, "
               "F771, F772, F773, F774, F775, F776, F777, F778, F779, F780, "
               "F781, F782, F783, F784, F785, F786, F787, F788, F789, F790, "
-              "F791, F792, F793, F794, F795." in text)
+              "F791, F792, F793, F794, F822." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -412,11 +412,11 @@ def test_p4_sibling_f681_mutation():
 
 
 @_t
-def test_p4_neighbor_f795_open():
-    """Neighbor F795 (filed this lane) still misses -- honest open shape."""
+def test_p4_neighbor_f822_open():
+    """Neighbor F822 (filed this lane) still misses -- honest open shape."""
     s = "['" + _A + "','" + _B + "']?.join('')"
     ok = _misses(s)
-    return ("HELD" if ok else "BREAK", "f795-open=%s" % ok)
+    return ("HELD" if ok else "BREAK", "f822-open=%s" % ok)
 
 
 # ------------------------------------------------ p5: quiet + honest
@@ -475,12 +475,12 @@ def _green_check():
     bad = []
     # w384_attack_probes.py expects 1 BREAK: its test_b0_footer_state
     # asserts the base footer (open F762-F794); the lane-local repoint
-    # (F766/F767 closed, F795 filed) moves it. The tree-wide footer
+    # (F766/F767 closed, F822 filed) moves it. The tree-wide footer
     # repoint is merge-owned (wave-305 lesson); all functional probes
-    # must HELD. The F795 red-first stays 2 BREAK (open finding).
+    # must HELD. The F822 red-first stays 2 BREAK (open finding).
     for batt, expect_break in (("evals/w384_f766_redfirst.py", 0),
                                ("evals/w384_f767_redfirst.py", 0),
-                               ("evals/w385_f795_redfirst.py", 2),
+                               ("evals/w385_f822_redfirst.py", 2),
                                ("evals/w384_attack_probes.py", 1)):
         tmp = tempfile.mkdtemp(prefix="g385-green-", dir="/var/tmp")
         env = dict(os.environ)
@@ -509,7 +509,7 @@ def _green_check():
 
 @_t
 def test_p7_green_check():
-    """Depth-1 green check: F766/F767 red-firsts (0 BREAK), F795
+    """Depth-1 green check: F766/F767 red-firsts (0 BREAK), F822
     red-first (2 BREAK, open finding), wave-384 attack battery
     (1 BREAK: the footer pin only, lane-local repoint; tree-wide
     repoint is merge-owned)."""
