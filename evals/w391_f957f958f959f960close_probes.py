@@ -96,9 +96,10 @@ def test_p0_pin_recompile():
 
 @_t
 def test_p0_footer_state():
-    """Lane-local footer: F957-F960 CLOSED; open F949-F956, F961-F966; next F967."""
+    """Merged footer: F957-F960 CLOSED (wave-391 lane 3); all F949-F966 CLOSED (18); next F988."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("F957" in text and "F960" in text and "F967" in text
+    ok = ("Next free finding: **F988**" in text
+          and "F949-F966 CLOSED (18)." in text
           and "Wave-391 lane 3" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 

@@ -38,6 +38,7 @@ _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
 _CRED = _A + _B
 _CODES = ",".join(str(ord(c)) for c in _CRED)
+_RCODES = ",".join(str(ord(c)) for c in _CRED[::-1])
 
 TESTS = []
 
@@ -60,11 +61,12 @@ def _misses(payload):
 
 @_t
 def test_b0_footer_state():
-    """Control: lane-local footer (F949-F987 open; next F988)."""
+    """Control: merged footer (F949-F966 closed; open F967-F987; next F988)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
     ok = ("Next free finding: **F988**" in text
-          and "F967, F968, F969, F970, F971, F972, F973, F974, F975, F976, F977, F978, F979, F980, F981, F982, F983, F984, F985, F986, F987.**" in text)
+          and "F949-F966 CLOSED (18)." in text
+          and "F967-F974, F977, F978, F980-F987 OPEN (18" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -93,8 +95,8 @@ def test_r59_f967_open():
 
 @_t
 def test_r59_f968_open():
-    """F968 OPEN: Object.fromEntries reassembly."""
-    miss = _misses("var o=Object.fromEntries([['a','xoxb-0123'],['b','456789abcdef']]);var RESULT=o.a+o.b;")
+    """F968 OPEN (residual): entries->fromEntries round-trip still breaks; literal-pair forms closed by merge composition."""
+    miss = _misses("var e=Object.entries({a:'xoxb-0123',b:'456789abcdef'});var o=Object.fromEntries(e);var RESULT=o.a+o.b;")
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 
@@ -135,23 +137,23 @@ def test_r59_f973_open():
 
 @_t
 def test_r59_f974_open():
-    """F974 OPEN: getter assembly."""
-    miss = _misses("var o={a:'xoxb-0123',b:'456789abcdef',get s(){return this.a+this.b;}};var RESULT=o.s;")
+    """F974 OPEN (residual): symbol-keyed member reads still break; plain getter forms closed by merge composition."""
+    miss = _misses("var k=Symbol.for('a');var o={};o[k]='xoxb-0123';var r={get s(){return o[k]+'456789abcdef';}};var RESULT=r.s;")
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 
 @_t
-def test_r59_f975_open():
-    """F975 OPEN: class private fields."""
+def test_r59_f975_closed():
+    """F975 CLOSED (wave-391 merge incidental: F949+F947 composition blocks all filed shapes)."""
     miss = _misses("class C{#x='xoxb-0123';get s(){return this.#x+'456789abcdef';}}var RESULT=new C().s;")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r59_f976_open():
-    """F976 OPEN: optional chaining."""
+def test_r59_f976_closed():
+    """F976 CLOSED (wave-391 merge incidental: F949+F947 composition blocks all filed shapes)."""
     miss = _misses("var o={a:'xoxb-0123'};var RESULT=(o?.a??'x')+'456789abcdef';")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
@@ -169,10 +171,10 @@ def test_r59_f978_open():
 
 
 @_t
-def test_r59_f979_open():
-    """F979 OPEN: Object.keys mapped reads."""
+def test_r59_f979_closed():
+    """F979 CLOSED (wave-391 merge incidental: F949+F947 composition blocks all filed shapes)."""
     miss = _misses("var o={a:'xoxb-0123',b:'456789abcdef'};var RESULT=Object.keys(o).map(function(k){return o[k];}).join('');")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
@@ -235,129 +237,129 @@ def test_r59_f987_open():
 # -------------------------------------- carried forward (round 58, still open)
 
 @_t
-def test_r58_f949_open():
-    """F949 OPEN (carried): F949 OPEN: top-level packaging misses."""
-    miss = _misses("var o=structuredClone({a:'%s',b:'%s'});var RESULT=o.a+o.b;")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r58_f949_closed():
+    """F949 CLOSED (wave-391 merge): now blocked."""
+    miss = _misses("var o=structuredClone({a:'%s',b:'%s'});var RESULT=o.a+o.b;" % (_A, _B))
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r58_f950_open():
-    """F950 OPEN (carried): F950 OPEN: throw/catch misses."""
-    miss = _misses("var s='';try{throw '%s';}catch(e){s=e;}finally{s+='%s';}var RESULT=s;")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r58_f950_closed():
+    """F950 CLOSED (wave-391 merge): now blocked."""
+    miss = _misses("var s='';try{throw '%s';}catch(e){s=e;}finally{s+='%s';}var RESULT=s;" % (_A, _B))
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r58_f951_open():
-    """F951 OPEN (carried): F951 OPEN: Reflect String misses."""
-    miss = _misses("var RESULT=Reflect.construct(String,['%s'])+'%s';")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r58_f951_closed():
+    """F951 CLOSED (wave-391 merge): now blocked."""
+    miss = _misses("var RESULT=Reflect.construct(String,['%s'])+'%s';" % (_A, _B))
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r58_f952_open():
-    """F952 OPEN (carried): F952 OPEN: toReversed apply misses."""
-    miss = _misses("var RESULT=String.fromCharCode.apply(null,[%s].toReversed());")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r58_f952_closed():
+    """F952 CLOSED (wave-391 merge): now blocked."""
+    miss = _misses("var RESULT=String.fromCharCode.apply(null,[%s].toReversed());" % (_RCODES,))
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r58_f953_open():
-    """F953 OPEN (carried): F953 OPEN: switch fallthrough misses."""
-    miss = _misses("var s='',i=0;switch(i){case 0:s+='%s';case 1:s+='%s';}var RESULT=s;")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r58_f953_closed():
+    """F953 CLOSED (wave-391 merge): now blocked."""
+    miss = _misses("var s='',i=0;switch(i){case 0:s+='%s';case 1:s+='%s';}var RESULT=s;" % (_A, _B))
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r58_f954_open():
-    """F954 OPEN (carried): F954 OPEN: TextDecoder subarray misses."""
-    miss = _misses("var RESULT=new TextDecoder().decode(new Uint8Array([0,%s,0]).subarray(1,22));")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r58_f954_closed():
+    """F954 CLOSED (wave-391 merge): now blocked."""
+    miss = _misses("var RESULT=new TextDecoder().decode(new Uint8Array([0,%s,0]).subarray(1,22));" % (_CODES,))
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r58_f955_open():
-    """F955 OPEN (carried): F955 OPEN: labeled for misses."""
-    miss = _misses("var s='';outer:for(var i=0;i<1;i++){s+='%s';for(var j=0;j<1;j++){s+='%s';break outer;}}var RESULT=s;")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r58_f955_closed():
+    """F955 CLOSED (wave-391 merge): now blocked."""
+    miss = _misses("var s='';outer:for(var i=0;i<1;i++){s+='%s';for(var j=0;j<1;j++){s+='%s';break outer;}}var RESULT=s;" % (_A, _B))
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r58_f956_open():
-    """F956 OPEN (carried): F956 OPEN: for-in misses."""
-    miss = _misses("var o={a:'%s',b:'%s'};var s='';for(var k in o){s+=o[k];}var RESULT=s;")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r58_f956_closed():
+    """F956 CLOSED (wave-391 merge): now blocked."""
+    miss = _misses("var o={a:'%s',b:'%s'};var s='';for(var k in o){s+=o[k];}var RESULT=s;" % (_A, _B))
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r58_f957_open():
-    """F957 OPEN (carried): F957 OPEN: searchParams misses."""
-    miss = _misses("var u=new URL('https://h/?k=%s');var RESULT=u.searchParams.get('k')+'%s';")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r58_f957_closed():
+    """F957 CLOSED (wave-391 merge): now blocked."""
+    miss = _misses("var u=new URL('https://h/?k=%s');var RESULT=u.searchParams.get('k')+'%s';" % (_A, _B))
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r58_f958_open():
-    """F958 OPEN (carried): F958 OPEN: regexp groups misses."""
-    miss = _misses("var m='%s|%s'.match(/(.*)\\|(.*)/);var RESULT=m[1]+m[2];")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r58_f958_closed():
+    """F958 CLOSED (wave-391 merge): now blocked."""
+    miss = _misses("var m='%s|%s'.match(/(.*)\\|(.*)/);var RESULT=m[1]+m[2];" % (_A, _B))
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r58_f959_open():
-    """F959 OPEN (carried): F959 OPEN: promise then misses."""
-    miss = _misses("var RESULT=await Promise.resolve('%s').then(a=>a+'%s');")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r58_f959_closed():
+    """F959 CLOSED (wave-391 merge): now blocked."""
+    miss = _misses("var RESULT=await Promise.resolve('%s').then(a=>a+'%s');" % (_A, _B))
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r58_f960_open():
-    """F960 OPEN (carried): F960 OPEN: WeakMap misses."""
-    miss = _misses("var wm=new WeakMap();var k={};wm.set(k,'%s');var RESULT=wm.get(k)+'%s';")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r58_f960_closed():
+    """F960 CLOSED (wave-391 merge): now blocked."""
+    miss = _misses("var wm=new WeakMap();var k={};wm.set(k,'%s');var RESULT=wm.get(k)+'%s';" % (_A, _B))
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r58_f961_open():
-    """F961 OPEN (carried): F961 OPEN: iterator next misses."""
-    miss = _misses("var e=['%s','%s'].entries();var RESULT=e.next().value[1]+e.next().value[1];")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r58_f961_closed():
+    """F961 CLOSED (wave-391 merge): now blocked."""
+    miss = _misses("var e=['%s','%s'].entries();var RESULT=e.next().value[1]+e.next().value[1];" % (_A, _B))
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r58_f962_open():
-    """F962 OPEN (carried): F962 OPEN: copyWithin misses."""
-    miss = _misses("var a=['p','%s','%s'];a.copyWithin(0,1);var RESULT=a[0]+a[1];")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r58_f962_closed():
+    """F962 CLOSED (wave-391 merge): now blocked."""
+    miss = _misses("var a=['p','%s','%s'];a.copyWithin(0,1);var RESULT=a[0]+a[1];" % (_A, _B))
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r58_f963_open():
-    """F963 OPEN (carried): F963 OPEN: fill+map misses."""
-    miss = _misses("var RESULT=new Array(2).fill('%s').map((x,i)=>i===0?'%s':x).join('');")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r58_f963_closed():
+    """F963 CLOSED (wave-391 merge): now blocked."""
+    miss = _misses("var RESULT=new Array(2).fill('%s').map((x,i)=>i===0?'%s':x).join('');" % (_B, _A))
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r58_f964_open():
-    """F964 OPEN (carried): F964 OPEN: Function params misses."""
-    miss = _misses("var f=new Function('p1','p2','return p1+p2;');var RESULT=f('%s','%s');")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r58_f964_closed():
+    """F964 CLOSED (wave-391 merge): now blocked."""
+    miss = _misses("var f=new Function('p1','p2','return p1+p2;');var RESULT=f('%s','%s');" % (_A, _B))
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r58_f965_open():
-    """F965 OPEN (carried): F965 OPEN: eval template misses."""
-    miss = _misses("var RESULT=(function(){var parts=['%s','%s'];return eval('`${parts[0]}${parts[1]}`');})();")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r58_f965_closed():
+    """F965 CLOSED (wave-391 merge): now blocked."""
+    miss = _misses("var RESULT=(function(){var parts=['%s','%s'];return eval('`${parts[0]}${parts[1]}`');})();" % (_A, _B))
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r58_f966_open():
-    """F966 OPEN (carried): F966 OPEN: gen reduce misses."""
-    miss = _misses("function*gen(){yield '%s';yield '%s';}var RESULT=[...gen()].reduce((a,b)=>a+b);")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r58_f966_closed():
+    """F966 CLOSED (wave-391 merge): now blocked."""
+    miss = _misses("function*gen(){yield '%s';yield '%s';}var RESULT=[...gen()].reduce((a,b)=>a+b);" % (_A, _B))
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 # ------------------------------------------------------- green check (depth-1)

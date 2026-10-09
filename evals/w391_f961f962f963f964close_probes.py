@@ -95,7 +95,7 @@ def test_p0_pin_recompile():
 
 @_t
 def test_p0_footer_lane_local():
-    """Lane-local footer: F961-F964 CLOSED; open F949-F960, F965-F966 (14); next F967."""
+    """Merged footer: F961-F964 CLOSED; open F967-F987 (21); next F988."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     ok = True
     notes = []
@@ -105,19 +105,12 @@ def test_p0_footer_lane_local():
             ok = False
             notes.append("%s not CLOSED" % f)
     footer = text[text.rfind("Next free finding:"):]
-    for f in ("F949", "F960", "F965", "F966"):
-        if f not in footer:
-            ok = False
-            notes.append("%s missing from footer opens" % f)
-    mopen = re.search(r"Open findings:([^*]*)\.", footer)
-    open_list = mopen.group(1) if mopen else ""
-    for f in ("F961", "F962", "F963", "F964"):
-        if re.search(r"\b%s\b" % f, open_list):
-            ok = False
-            notes.append("%s still open in footer" % f)
-    if "F967" not in footer:
+    if not re.search(r"F967-F987 OPEN \(21", footer):
         ok = False
-        notes.append("next-free not F967")
+        notes.append("open F967-F987 missing from footer")
+    if "F988" not in footer:
+        ok = False
+        notes.append("next-free not F988")
     return ("HELD" if ok else "BREAK", "; ".join(notes) or "footer ok")
 
 
