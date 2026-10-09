@@ -368,8 +368,8 @@ def test_p8_lane_footer():
         text = f.read()
     ok = ("**Status: CLOSED 2026-10-08 wave-377 lane 8.**" in text  # Wave-377 lane 8: F654 CLOSED
           and "**Status: CLOSED 2026-10-08 wave-378 lane 1.**" in text  # Wave-378 lane 1: F655 CLOSED
-          and "Open findings: F738, F739, F740, F741, F742, F743, F744, F745, F746, F747, F748, F749, F750, F751, F752, F753, F754, F755, F756, F757, F758, F759, F760, F761." in text  # Wave-378 lane 1: F655 CLOSED; footer repoint open F662-F671 / next F672  # Wave-379 lane 6: F668 CLOSED (lane-local)  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762)
-          and "Next free finding: **F762**." in text)  # Wave-378 lane 1: F655 CLOSED; footer repoint open F662-F671 / next F672  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762)
+          and "Open findings: F762, F763, F764, F765, F766, F767, F768, F769, F770, F771, F772, F773, F774, F775, F776, F777, F778, F779, F780, F781, F782, F783, F784, F785, F786, F787, F788, F789, F790, F791, F792, F793, F794." in text  # Wave-378 lane 1: F655 CLOSED; footer repoint open F662-F671 / next F672  # Wave-379 lane 6: F668 CLOSED (lane-local)  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762) # Wave-384 merge: F738-F761 CLOSED; F762-F794 OPEN (next F795)
+          and "Next free finding: **F795**." in text)  # Wave-378 lane 1: F655 CLOSED; footer repoint open F662-F671 / next F672  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762) # Wave-384 merge: F738-F761 CLOSED; F762-F794 OPEN (next F795)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 

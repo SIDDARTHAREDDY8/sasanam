@@ -493,7 +493,7 @@ def test_p6_pin_footer():
     """Pin 2143; wave-380 footer untouched (open F686-F699 / next F700)."""
     ok = (TAXONOMY_PIN == 2143 and len(TAXONOMY) > 0)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and ("Next free finding: **F762**" in text)  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762)
+    ok = ok and ("Next free finding: **F795**" in text)  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762) # Wave-384 merge: F738-F761 CLOSED; F762-F794 OPEN (next F795)
     ok = ok and ("Open findings: F700, F701, F702, F703, F704, F705, F706, "
                  "F707, F708, F709, F710, F711, F712." in text)
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)

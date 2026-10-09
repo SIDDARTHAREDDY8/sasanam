@@ -450,8 +450,8 @@ def test_p8_pin_footer():
     """Pin 2140; lane-local footer (F690+F692 CLOSED; open F686-F689, F691, F693-F699 / next F700)."""
     ok = (TAXONOMY_PIN == 2143 and len(TAXONOMY) > 0)
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ok and ("Next free finding: **F762**" in text)  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762)
-    ok = ok and ("Open findings: F738, F739, F740, F741, F742, F743, F744, F745, F746, F747, F748, F749, F750, F751, F752, F753, F754, F755, F756, F757, F758, F759, F760, F761." in text)  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762)
+    ok = ok and ("Next free finding: **F795**" in text)  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762) # Wave-384 merge: F738-F761 CLOSED; F762-F794 OPEN (next F795)
+    ok = ok and ("Open findings: F762, F763, F764, F765, F766, F767, F768, F769, F770, F771, F772, F773, F774, F775, F776, F777, F778, F779, F780, F781, F782, F783, F784, F785, F786, F787, F788, F789, F790, F791, F792, F793, F794." in text)  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762) # Wave-384 merge: F738-F761 CLOSED; F762-F794 OPEN (next F795)
     return ("HELD" if ok else "BREAK", "pin+footer=%s" % ok)
 
 

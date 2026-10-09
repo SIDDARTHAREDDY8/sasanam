@@ -475,7 +475,7 @@ def test_p7_pin_taxonomy_2140_sorted():
 def test_p7_footer_lane_local():
     """Merge footer: F644-F654 closed; open F662-F671 / next F672."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    want = "Next free finding: **F762**. **Open findings: F662, F663, F664, F665, F666, F667, F669, F670, F671.**"  # Wave-378 merge: F655-F661 CLOSED; F662-F671 filed OPEN (next F672)  # Wave-379 lane 6: F668 CLOSED (lane-local)  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762)
+    want = "Next free finding: **F795**. **Open findings: F662, F663, F664, F665, F666, F667, F669, F670, F671.**"  # Wave-378 merge: F655-F661 CLOSED; F662-F671 filed OPEN (next F672)  # Wave-379 lane 6: F668 CLOSED (lane-local)  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762) # Wave-384 merge: F738-F761 CLOSED; F762-F794 OPEN (next F795)
     ok = want in text  # Wave-377 merge: F644-F654 CLOSED; F655-F660 OPEN
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 

@@ -260,7 +260,7 @@ def p6_pin_and_footer():
         text = fh.read()
     footer_ok = (text.count("**Status: CLOSED 2026-10-07 wave-369 lane 6**") >= 3
                  and "F560/F562/F563 CLOSED 2026-10-07 wave-369 lane 6" in text
-                 and "Next free finding: **F762**" in text)  # Wave-369 lane 6: F560/F562/F563 CLOSED  # Wave-372 merge: footer repoint next F612  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762)
+                 and "Next free finding: **F795**" in text)  # Wave-369 lane 6: F560/F562/F563 CLOSED  # Wave-372 merge: footer repoint next F612  # Wave-373 merge: footer repoint open F612-F620 / next F621  # Wave-374 merge: footer repoint open F621-F635 / next F636  # Wave-374 merge: footer repoint open F621-F639 / next F640 # Wave-376 merge: F640-F643 CLOSED; F644-F654 OPEN (next F655)  # Wave-377 merge: footer repoint open F655-F660 / next F661  # Wave-377 merge: F661 FILED OPEN (merge red-first audit); footer repoint open F662-F671 / next F672  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762) # Wave-384 merge: F738-F761 CLOSED; F762-F794 OPEN (next F795)
     detail = "pin=%s codes=%d; footer-closed=%s" % (
         TAXONOMY_PIN, n, footer_ok)
     return (("HELD", detail)) if (pin_ok and footer_ok) \
