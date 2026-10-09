@@ -112,8 +112,8 @@ def test_b0_footer_state():
     """Control: footer shows F713-F760 open, next F759 (this lane)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F762**" in text  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762)
-          and "Open findings: F738, F739, F740, F741, F742, F743, F744, F745, F746, F747, F748, F749, F750, F751, F752, F753, F754, F755, F756, F757, F758, F759, F760, F761." in text)  # Wave-383 merge: F713-F737 CLOSED; F738-F761 OPEN (next F762)
+    ok = ("Next free finding: **F762**" in text  # Wave-384 lane 7: F750, F751 CLOSED; open F738-F749, F752-F761 (next F762)
+          and "Open findings: F738, F739, F740, F741, F742, F743, F744, F745, F746, F747, F748, F749, F752, F753, F754, F755, F756, F757, F758, F759, F760, F761." in text)  # Wave-384 lane 7: F750, F751 CLOSED; open F738-F749, F752-F761 (next F762)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -715,28 +715,28 @@ def test_r51_f747_s2_closed():
     return ("HELD" if ok else "BREAK", "f749=%s" % ok)
 
 @_t
-def test_r51_f750_s1_open():
-    """F750 OPEN (Error .message reads): miss reproduces."""
-    miss = _misses("(function(){try{throw new Error('%s');}catch(e){return e.message+'%s';}})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f748_s1_open():
+    """F750 CLOSED (wave-384 lane 7): blocks coded."""
+    miss = ok = _blocked("(function(){try{throw new Error('%s');}catch(e){return e.message+'%s';}})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r51_f750_s2_open():
-    """F750 OPEN (Error .message reads): miss reproduces."""
-    miss = _misses("(function(){function f(){throw new RangeError('%s');}try{f();}catch(e){return e.message+'%s';}})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f748_s2_open():
+    """F750 CLOSED (wave-384 lane 7): blocks coded."""
+    miss = ok = _blocked("(function(){function f(){throw new RangeError('%s');}try{f();}catch(e){return e.message+'%s';}})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r51_f751_s1_open():
-    """F751 OPEN (Reflect.ownKeys / Object.keys map-reads): miss reproduces."""
-    miss = _misses("(function(){var o={x:'%s',y:'%s'};return Reflect.ownKeys(o).map(function(k){return o[k];}).join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f749_s1_open():
+    """F751 CLOSED (wave-384 lane 7): blocks coded."""
+    miss = ok = _blocked("(function(){var o={x:'%s',y:'%s'};return Reflect.ownKeys(o).map(function(k){return o[k];}).join('');})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r51_f751_s2_open():
-    """F751 OPEN (Reflect.ownKeys / Object.keys map-reads): miss reproduces."""
-    miss = _misses("(function(){var o={};o.x='%s';o.y='%s';var s='';Reflect.ownKeys(o).forEach(function(k){s+=o[k];});return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f749_s2_open():
+    """F751 CLOSED (wave-384 lane 7): blocks coded."""
+    miss = ok = _blocked("(function(){var o={};o.x='%s';o.y='%s';var s='';Reflect.ownKeys(o).forEach(function(k){s+=o[k];});return s;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r51_f752_s1_open():
