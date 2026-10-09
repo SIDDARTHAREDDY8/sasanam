@@ -14354,19 +14354,69 @@ class _JSURLParams:
 
 
 class _JSURL:
-    """Statically-resolved URL (F576).
+    """Statically-resolved URL (F576/F858).
 
     query is the URL's raw query string (the text after '?' up to
     '#', node-exact for absolute URLs parsed by urllib.parse).
-    Only the .searchParams member is modeled (resolving to a
-    _JSURLParams over the query); every other member fails closed.
-    A resolved URL only flows through the _JSURL branch of
-    _js_parse_postfix (.searchParams); any other use fails closed.
+    fragment is the raw fragment (without '#'), username/password
+    the userinfo components, scheme the URL scheme (lowercased by
+    urlsplit, matching the engine's scheme normalization).
+    Only the .searchParams member was modeled (F576, resolving to a
+    _JSURLParams over the query); F858 adds .hash (the '#' + fragment,
+    '' when empty -- node-exact), .username and .password reads.
+    Every other member fails closed. A resolved URL only flows
+    through the _JSURL branch of _js_parse_postfix; any other use
+    fails closed.
     """
-    __slots__ = ("query",)
+    __slots__ = ("query", "fragment", "username", "password", "scheme")
 
-    def __init__(self, query):
+    def __init__(self, query, fragment="", username="", password="",
+                 scheme=""):
         self.query = query
+        self.fragment = fragment
+        self.username = username
+        self.password = password
+        self.scheme = scheme
+
+
+class _JSFormData:
+    """Statically-resolved FormData (F860).
+
+    entries is a list of (name, value) string-literal pairs in
+    insertion order. set() replaces every existing entry with the
+    name (engine-exact: the engine deletes all then appends one);
+    append() adds. .get returns the FIRST value with the name
+    (engine-exact, node v24.20.0); a missing name is null in the
+    engine, which the decoder never decodes -- fail closed (the F576
+    precedent). Values are string literals only: the engine
+    stringifies other values (USVString), which the decoder does not
+    model -- non-literal values fail closed (documented boundary).
+    A resolved FormData only flows through the _JSFormData branch of
+    _js_parse_postfix (.get); any other member fails closed.
+    """
+    __slots__ = ("entries",)
+
+    def __init__(self, entries):
+        self.entries = entries
+
+
+class _JSSegments:
+    """Statically-resolved Intl.Segmenter Segments iterable (F857).
+
+    segments is the list of grapheme-cluster strings, computed
+    node-exactly for ASCII-only input (v24.20.0): every ASCII char is
+    its own cluster except CR+LF, which the engine keeps as one
+    cluster (UAX #29 GB3, node-verified). Any non-ASCII char fails
+    closed at construction -- combining marks and emoji merge
+    clusters in ways the decoder does not model (documented
+    boundary). Only the for-of accumulation and the
+    Array.from().map().join() consumption forms are modeled; any
+    other use fails closed.
+    """
+    __slots__ = ("segments",)
+
+    def __init__(self, segments):
+        self.segments = segments
 class _JSWeakMap:
     """Statically-resolved WeakMap (F572).
 
@@ -74633,7 +74683,12 @@ def _js_parse_f576_new_url(text, i, depth, state):
         # is no meaningful searchParams -- fail closed, never
         # mis-decoded.
         raise _JSExprFail("F576 URL not absolute")
-    return _JSURL(split.query), j + 1
+    # F858: the fragment and userinfo ride along for the .hash /
+    # .username / .password members. urlsplit keeps the fragment and
+    # userinfo raw (no percent-decoding), matching the engine
+    # (node v24.20.0 verified); the scheme is lowercased by both.
+    return _JSURL(split.query, split.fragment, split.username,
+                  split.password, split.scheme), j + 1
 
 
 
@@ -80064,16 +80119,63 @@ def _js_parse_postfix(text, i, value, depth, state):
         # to the _JSURLParams over the URL's query string. Dot and
         # string-literal bracket forms both resolve; any other member
         # fails closed.
+        # F858: `.hash` (the '#' + fragment, '' when the fragment is
+        # empty -- node-exact), `.username` and `.password` reads.
+        # Dot and string-literal bracket forms both resolve; any
+        # other member fails closed.
         if isinstance(value, _JSURL):
             _mname, _mk = _js_f576_member_name(text, j, "url")
-            if _mname != "searchParams":
+            if _mname == "searchParams":
+                state["ops"] += 1  # the member read is obfuscation-shaped
+                _pairs = parse_qsl(value.query, keep_blank_values=True)
+                state["parts"] += len(_pairs) + 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                value, i = _JSURLParams(_pairs), _mk
+                continue
+            if _mname not in ("hash", "username", "password"):
                 raise _JSExprFail("url member not modeled")
             state["ops"] += 1  # the member read is obfuscation-shaped
-            _pairs = parse_qsl(value.query, keep_blank_values=True)
-            state["parts"] += len(_pairs) + 1
-            if state["parts"] > _JS_EXPR_MAX_PARTS:
-                raise _JSExprFail("too many parts")
-            value, i = _JSURLParams(_pairs), _mk
+            if _mname == "hash":
+                # Node-exact: the engine returns '#' + fragment, or
+                # '' when there is no fragment (an empty '#' also
+                # yields '' -- verified v24.20.0).
+                value, i = ("#" + value.fragment
+                            if value.fragment else ""), _mk
+            elif _mname == "username":
+                value, i = value.username, _mk
+            else:
+                value, i = value.password, _mk
+            continue
+        # F860: `.get` on a statically-resolved FormData. Returns the
+        # FIRST entry value (engine-exact, node v24.20.0); a missing
+        # name fails closed (the engine returns null, which the
+        # decoder never decodes -- the F576 precedent). Dot and
+        # string-literal bracket forms both resolve; any other member
+        # fails closed.
+        if isinstance(value, _JSFormData):
+            _mname, _mk = _js_f576_member_name(text, j, "formdata")
+            if _mname != "get":
+                raise _JSExprFail("formdata member not modeled")
+            _gk = _js_skip_ws(text, _mk)
+            if _gk >= len(text) or text[_gk] != "(":
+                raise _JSExprFail("formdata get without paren")
+            _gk = _js_skip_ws(text, _gk + 1)
+            if _gk >= len(text) or text[_gk] not in "'\"":
+                raise _JSExprFail("formdata get key not a literal")
+            _gkey, _gk = _js_parse_string(text, _gk)
+            _gk = _js_skip_ws(text, _gk)
+            if _gk >= len(text) or text[_gk] != ")":
+                raise _JSExprFail("formdata get unterminated")
+            _gval = None
+            for _ename, _eval in value.entries:
+                if _ename == _gkey:
+                    _gval = _eval
+                    break
+            if _gval is None:
+                raise _JSExprFail("formdata get missing name")
+            state["ops"] += 1  # the get is obfuscation-shaped
+            value, i = _gval, _gk + 1
             continue
         # F490: a step on a method reference -- dispatch it
         # (./?./bracket call/apply/bind) or apply the factory `(args)`.
@@ -82678,6 +82780,786 @@ def _js_parse_f810_chain_iife(text, i, depth, state):
         return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
     except _JSExprFail:
         state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+# Userinfo characters the engine passes through unencoded on
+# `u.username=` / `u.password=` assignment (F858). Derived empirically
+# against node v24.20.0 over all 128 ASCII code points: anything
+# outside this set (or any non-ASCII char) is percent-encoded by the
+# engine, which the decoder does not model -- such assignments fail
+# closed (documented boundary).
+_JS_F858_USERINFO_OK = frozenset(
+    "!$%&'()*+,-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_"
+    "abcdefghijklmnopqrstuvwxyz~")
+
+
+def _js_f857_graphemes(s):
+    """Split ASCII-only *s* into grapheme clusters (F857).
+
+    Node-exact (v24.20.0): CR+LF is a single cluster (UAX #29 GB3,
+    node-verified); every other ASCII char is its own cluster.
+    Raises _JSExprFail on any non-ASCII char (combining marks and
+    emoji merge clusters in ways the decoder does not model --
+    documented boundary). Never evals.
+    """
+    if any(ord(c) > 127 for c in s):
+        raise _JSExprFail("f857 non-ascii segment input")
+    out = []
+    k = 0
+    n = len(s)
+    while k < n:
+        if s[k] == "\r" and k + 1 < n and s[k + 1] == "\n":
+            out.append("\r\n")
+            k += 2
+        else:
+            out.append(s[k])
+            k += 1
+    return out
+
+
+def _js_f857_return_tail(text, q, val, state, what):
+    """Parse `(+ 'LIT')* ;` after an F857-F860 return receiver.
+
+    The filed shapes concatenate one trailing literal; the grammar
+    admits any number of `+ 'LIT'` steps, each bounded by
+    _MAX_DECODE_BYTES / _JS_EXPR_MAX_PARTS (F452). Returns (value,
+    next_index) with next_index past the `;`. Raises _JSExprFail.
+    Never evals.
+    """
+    n = len(text)
+    while True:
+        k = _js_skip_ws(text, q)
+        if k < n and text[k] == "+":
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] not in "'\"":
+                raise _JSExprFail(what + " tail not a literal")
+            lit, k = _js_parse_string(text, k)
+            if len(val) + len(lit) > _MAX_DECODE_BYTES:
+                raise _JSExprFail(what + " concat too long")
+            val = val + lit
+            state["parts"] += 1  # the concat is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            q = k
+            continue
+        break
+    q = _js_skip_ws(text, q)
+    if q >= n or text[q] != ";":
+        raise _JSExprFail(what + " return without semicolon")
+    return val, q + 1
+
+
+def _js_f859_parse_mutations(text, sj, pname, pairs, state, what):
+    """Parse `p.set('N','V');` / `p.append('N','V');` statements (F859/F860).
+
+    Engine-exact set/append semantics (F599/F648 precedent, node
+    v24.20.0): set() deletes every existing pair with the name then
+    appends the new one at the position of the first removed pair;
+    append() adds. Names/values must be string literals; other
+    members (sort/delete/has/...) fail the whole shape closed rather
+    than mis-decode (F599 precedent); a non-`pname` statement head
+    ends the loop (the caller then fails closed on the non-return).
+    Returns (pairs, next_index). Raises _JSExprFail. Never evals.
+    """
+    n = len(text)
+    while True:
+        q = _js_skip_ws(text, sj)
+        try:
+            rname, q = _js_parse_ident(text, q)
+        except _JSExprFail:
+            break
+        if rname != pname:
+            break
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] not in ".[":
+            break
+        try:
+            _mname, q = _js_f576_member_name(text, q, what)
+        except _JSExprFail:
+            break
+        if _mname not in ("append", "set"):
+            raise _JSExprFail(what + " member not append/set")
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] != "(":
+            raise _JSExprFail(what + " mutation without paren")
+        q = _js_skip_ws(text, q + 1)
+        if q >= n or text[q] not in "'\"":
+            raise _JSExprFail(what + " mutation name not a literal")
+        _mn, q = _js_parse_string(text, q)
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] != ",":
+            raise _JSExprFail(what + " mutation arity")
+        q = _js_skip_ws(text, q + 1)
+        if q >= n or text[q] not in "'\"":
+            raise _JSExprFail(what + " mutation value not a literal")
+        _mv, q = _js_parse_string(text, q)
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] != ")":
+            raise _JSExprFail(what + " mutation unterminated")
+        q = _js_skip_ws(text, q + 1)
+        if q >= n or text[q] != ";":
+            raise _JSExprFail(what + " mutation without semicolon")
+        if _mname == "append":
+            pairs.append((_mn, _mv))
+        else:
+            _seen = False
+            _np = []
+            for _pn, _pv in pairs:
+                if _pn != _mn:
+                    _np.append((_pn, _pv))
+                elif not _seen:
+                    _seen = True
+                    _np.append((_pn, _mv))
+            if not _seen:
+                _np.append((_mn, _mv))
+            pairs = _np
+        state["parts"] += 1  # the mutation is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        sj = q + 1
+    return pairs, sj
+
+
+def _js_f857_parse_segmenter_bind(text, sj, state):
+    """Parse `new Intl.Segmenter('LOC', OPTS).segment('LIT')` (F857).
+
+    Node-exact desugar (v24.20.0): the locale is a string literal
+    (grapheme segmentation of ASCII input is locale-independent per
+    UAX #29, so any literal locale is admitted); OPTS is omitted
+    (the engine defaults granularity to 'grapheme') or exactly
+    `{granularity:'grapheme'}` -- any other granularity or option
+    fails closed (documented boundary: word/sentence need ICU
+    tables the decoder does not model); the input must be a string
+    literal. Returns (_JSSegments, next_index). Raises _JSExprFail.
+    Never evals.
+    """
+    n = len(text)
+    _nk = _js_match_kw(text, sj, "new")
+    if _nk is None:
+        raise _JSExprFail("F857 binding not new")
+    _nk = _js_skip_ws(text, _nk)
+    _ik = _js_match_kw(text, _nk, "Intl")
+    if _ik is None:
+        raise _JSExprFail("F857 binding not Intl")
+    _ik = _js_skip_ws(text, _ik)
+    _ik = _js_expect(text, _ik, ".")
+    _ik = _js_skip_ws(text, _ik)
+    _sk = _js_match_kw(text, _ik, "Segmenter")
+    if _sk is None:
+        raise _JSExprFail("F857 binding not Segmenter")
+    _sk = _js_skip_ws(text, _sk)
+    _sk = _js_expect(text, _sk, "(")
+    _sk = _js_skip_ws(text, _sk)
+    if _sk >= n or text[_sk] not in "'\"":
+        raise _JSExprFail("F857 locale not a literal")
+    _loc, _sk = _js_parse_string(text, _sk)
+    _sk = _js_skip_ws(text, _sk)
+    if _sk < n and text[_sk] == ",":
+        _sk = _js_skip_ws(text, _sk + 1)
+        _sk = _js_expect(text, _sk, "{")
+        _sk = _js_skip_ws(text, _sk)
+        _oname, _sk = _js_parse_ident(text, _sk)
+        if _oname != "granularity":
+            raise _JSExprFail("F857 option not granularity")
+        _sk = _js_skip_ws(text, _sk)
+        _sk = _js_expect(text, _sk, ":")
+        _sk = _js_skip_ws(text, _sk)
+        if _sk >= n or text[_sk] not in "'\"":
+            raise _JSExprFail("F857 granularity not a literal")
+        _gval, _sk = _js_parse_string(text, _sk)
+        if _gval != "grapheme":
+            raise _JSExprFail("F857 granularity not grapheme")
+        _sk = _js_skip_ws(text, _sk)
+        _sk = _js_expect(text, _sk, "}")
+        _sk = _js_skip_ws(text, _sk)
+    _sk = _js_expect(text, _sk, ")")
+    _sk = _js_skip_ws(text, _sk)
+    _sk = _js_expect(text, _sk, ".")
+    _sk = _js_skip_ws(text, _sk)
+    _sg = _js_match_kw(text, _sk, "segment")
+    if _sg is None:
+        raise _JSExprFail("F857 not segment()")
+    _sk = _js_skip_ws(text, _sg)
+    _sk = _js_expect(text, _sk, "(")
+    _sk = _js_skip_ws(text, _sk)
+    if _sk >= n or text[_sk] not in "'\"":
+        raise _JSExprFail("F857 segment arg not a literal")
+    _inlit, _sk = _js_parse_string(text, _sk)
+    _sk = _js_skip_ws(text, _sk)
+    _sk = _js_expect(text, _sk, ")")
+    state["parts"] += 1  # the construction is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return _JSSegments(_js_f857_graphemes(_inlit)), _sk
+
+
+def _js_parse_f857_segmenter_iife(text, i, depth, state):
+    """Parse the Intl.Segmenter IIFE twins (F857).
+
+    `(function(){var s=new Intl.Segmenter('L',{granularity:'grapheme'}).segment('LIT');var r='';for(var x of s){r+=x.segment;}return r(+ 'LIT')*;})()`
+    and
+    `(function(){var s=new Intl.Segmenter('L',{granularity:'grapheme'}).segment('LIT');return Array.from(s).map(FN).join('SEP')(+ 'LIT')*;})()`
+    where FN is `function(x){return x.segment;}` or `x=>x.segment`.
+
+    Node-exact desugar (v24.20.0): the for-of accumulates each
+    segment's `.segment` string in order; the Array.from twin maps
+    the identity over segments and joins with the literal separator.
+    `x` is the Segments iterator's entry object; only the `.segment`
+    read is modeled.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    non-grapheme granularity / extra options / non-literal locale
+    or input / non-ASCII input (combining marks merge clusters);
+    a non-empty `r` initializer; loop forms other than
+    `for(var|let|const x of s)` with body exactly `r+=x.segment;`;
+    map callbacks other than the two admitted forms; a non-literal
+    join separator; reassignment of `s`; extra statements; a named
+    function; parameters; call args on the IIFE.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    n = len(text)
+    try:
+        inner_start, inner_end, j = _js_span_braced(text, j)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F857 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        sname, sj = _js_parse_ident(text, sj)
+        if sname == "arguments":
+            raise _JSExprFail("F857 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        _segs, sj = _js_f857_parse_segmenter_bind(
+            text, sj, state)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        state["parts"] += 1  # the binding is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        q = _js_skip_ws(text, sj)
+        if _js_match_kw(text, q, "return") is not None:
+            # Tail (b): return Array.from(s).map(FN).join('SEP')...;
+            q = _js_skip_ws(text, q + len("return"))
+            _ak = _js_match_kw(text, q, "Array")
+            if _ak is None:
+                raise _JSExprFail("F857 not Array.from")
+            q = _js_skip_ws(text, _ak)
+            q = _js_expect(text, q, ".")
+            q = _js_skip_ws(text, q)
+            _fk = _js_match_kw(text, q, "from")
+            if _fk is None:
+                raise _JSExprFail("F857 not Array.from")
+            q = _js_skip_ws(text, _fk)
+            q = _js_expect(text, q, "(")
+            q = _js_skip_ws(text, q)
+            iname, q = _js_parse_ident(text, q)
+            if iname != sname:
+                raise _JSExprFail("F857 Array.from other ident")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ")")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ".")
+            q = _js_skip_ws(text, q)
+            _mk = _js_match_kw(text, q, "map")
+            if _mk is None:
+                raise _JSExprFail("F857 not map")
+            q = _js_skip_ws(text, _mk)
+            q = _js_expect(text, q, "(")
+            q = _js_skip_ws(text, q)
+            _fnk = _js_match_kw(text, q, "function")
+            if _fnk is not None:
+                q = _js_skip_ws(text, _fnk)
+                q = _js_expect(text, q, "(")
+                q = _js_skip_ws(text, q)
+                xname, q = _js_parse_ident(text, q)
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, ")")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, "{")
+                q = _js_skip_ws(text, q)
+                _rk = _js_match_kw(text, q, "return")
+                if _rk is None:
+                    raise _JSExprFail("F857 map fn not return")
+                q = _js_skip_ws(text, _rk)
+                x2, q = _js_parse_ident(text, q)
+                if x2 != xname:
+                    raise _JSExprFail("F857 map fn other ident")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, ".")
+                q = _js_skip_ws(text, q)
+                _sg = _js_match_kw(text, q, "segment")
+                if _sg is None:
+                    raise _JSExprFail("F857 map fn not .segment")
+                q = _js_skip_ws(text, _sg)
+                q = _js_expect(text, q, ";")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, "}")
+            else:
+                xname, q = _js_parse_ident(text, q)
+                q = _js_skip_ws(text, q)
+                if not text.startswith("=>", q):
+                    raise _JSExprFail("F857 map callback not fn/arrow")
+                q = _js_skip_ws(text, q + 2)
+                x2, q = _js_parse_ident(text, q)
+                if x2 != xname:
+                    raise _JSExprFail("F857 map arrow other ident")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, ".")
+                q = _js_skip_ws(text, q)
+                _sg = _js_match_kw(text, q, "segment")
+                if _sg is None:
+                    raise _JSExprFail("F857 map arrow not .segment")
+                q = _sg
+            if xname in (sname,):
+                raise _JSExprFail("F857 map param shadows")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ")")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ".")
+            q = _js_skip_ws(text, q)
+            _jk = _js_match_kw(text, q, "join")
+            if _jk is None:
+                raise _JSExprFail("F857 not join")
+            q = _js_skip_ws(text, _jk)
+            q = _js_expect(text, q, "(")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F857 join sep not a literal")
+            _sep, q = _js_parse_string(text, q)
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ")")
+            val = _sep.join(_segs.segments)
+            state["parts"] += 1  # the join is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        else:
+            # Tail (a): var r='';for(var x of s){r+=x.segment;}return r...;
+            _kw2, m2 = _js_match_decl_kw(text, q)
+            if _kw2 is None:
+                raise _JSExprFail("F857 accum not var/const/let")
+            q = _js_skip_ws(text, m2)
+            rname, q = _js_parse_ident(text, q)
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "=")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F857 accum init not a literal")
+            _rinit, q = _js_parse_string(text, q)
+            if _rinit != "":
+                raise _JSExprFail("F857 accum init not empty")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            state["parts"] += 1  # the accumulator is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            q = _js_skip_ws(text, q)
+            _fk = _js_match_kw(text, q, "for")
+            if _fk is None:
+                raise _JSExprFail("F857 not for-of")
+            q = _js_skip_ws(text, _fk)
+            q = _js_expect(text, q, "(")
+            q = _js_skip_ws(text, q)
+            _kw3, m3 = _js_match_decl_kw(text, q)
+            if _kw3 is None:
+                raise _JSExprFail("F857 loop var not declared")
+            q = _js_skip_ws(text, m3)
+            xname, q = _js_parse_ident(text, q)
+            if xname in (sname, rname):
+                raise _JSExprFail("F857 loop var shadows")
+            q = _js_skip_ws(text, q)
+            _ok = _js_match_kw(text, q, "of")
+            if _ok is None:
+                raise _JSExprFail("F857 not for-of")
+            q = _js_skip_ws(text, _ok)
+            iname, q = _js_parse_ident(text, q)
+            if iname != sname:
+                raise _JSExprFail("F857 for-of other ident")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ")")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "{")
+            q = _js_skip_ws(text, q)
+            r2, q = _js_parse_ident(text, q)
+            if r2 != rname:
+                raise _JSExprFail("F857 body other ident")
+            q = _js_skip_ws(text, q)
+            if not text.startswith("+=", q):
+                raise _JSExprFail("F857 body not +=")
+            q = _js_skip_ws(text, q + 2)
+            x2, q = _js_parse_ident(text, q)
+            if x2 != xname:
+                raise _JSExprFail("F857 body loop var mismatch")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ".")
+            q = _js_skip_ws(text, q)
+            _sg = _js_match_kw(text, q, "segment")
+            if _sg is None:
+                raise _JSExprFail("F857 body not .segment")
+            q = _js_skip_ws(text, _sg)
+            q = _js_expect(text, q, ";")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "}")
+            val = "".join(_segs.segments)
+            state["parts"] += 1  # the loop is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            q = _js_skip_ws(text, q)
+            _rk = _js_match_kw(text, q, "return")
+            if _rk is None:
+                raise _JSExprFail("F857 body not return")
+            q = _js_skip_ws(text, _rk)
+            r3, q = _js_parse_ident(text, q)
+            if r3 != rname:
+                raise _JSExprFail("F857 returns other ident")
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F857 value too long")
+        val, q = _js_f857_return_tail(text, q, val, state, "F857")
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F857 value too long")
+        if q != inner_end:
+            raise _JSExprFail("F857 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f858_url_carrier_iife(text, i, depth, state):
+    """Parse the URL carrier IIFEs (F858).
+
+    `(function(){var u=new URL('LIT');[u.username='LIT';|u.password='LIT';]*return u<postfix>(+ 'LIT')*;})()`
+    where the return receiver is `u.hash`, `u.username`, or
+    `u.password` (each flowing through the normal postfix chain --
+    `.hash.slice(1)` included).
+
+    Node-exact desugar (v24.20.0): `.hash` is '#' + fragment ('' when
+    empty); `.username`/`.password` read the userinfo ('' default, or
+    the literal's own userinfo); assignments model the engine's
+    userinfo setter -- http(s) schemes only (the engine silently
+    ignores the assignment on other schemes, e.g. file:) and values
+    restricted to the userinfo pass-through set (anything the engine
+    would percent-encode fails closed).
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-URL binding (URLSearchParams belongs to the F576 family);
+    relative URLs (the engine throws); `.hash` assignment; other
+    members (`.search`, `.pathname`, `.href`, ...) -- documented
+    residuals; non-literal assignment values; userinfo values needing
+    percent-encoding; userinfo assignment on non-http(s) schemes;
+    extra statements; a named function; parameters; call args.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    n = len(text)
+    try:
+        inner_start, inner_end, j = _js_span_braced(text, j)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F858 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        uname, sj = _js_parse_ident(text, sj)
+        if uname == "arguments":
+            raise _JSExprFail("F858 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        _uval = _js_parse_f576_new_url(text, sj, depth, state)
+        if _uval is None:
+            raise _JSExprFail("F858 binding not new URL")
+        url, sj = _uval
+        if not isinstance(url, _JSURL):
+            # A URLSearchParams binding belongs to the F576/F599/
+            # F606/F610/F616/F617/F626/F648/F859 family.
+            raise _JSExprFail("F858 binding not a URL")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        state["parts"] += 1  # the binding is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        # Zero or more `u.username='LIT';` / `u.password='LIT';`.
+        while True:
+            q = _js_skip_ws(text, sj)
+            try:
+                rname, q = _js_parse_ident(text, q)
+            except _JSExprFail:
+                break
+            if rname != uname:
+                break
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] not in ".[":
+                break
+            try:
+                _mname, q = _js_f576_member_name(text, q, "F858")
+            except _JSExprFail:
+                break
+            if _mname not in ("username", "password"):
+                # .hash assignment and every other member are
+                # unmodeled -- the return check below fails the
+                # shape closed.
+                break
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != "=" \
+                    or text[q + 1:q + 2] in ("=", ">"):
+                raise _JSExprFail("F858 assign not =")
+            q = _js_skip_ws(text, q + 1)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F858 assign value not a literal")
+            _av, q = _js_parse_string(text, q)
+            if url.scheme not in ("http", "https"):
+                raise _JSExprFail("F858 userinfo on non-http(s)")
+            if any(ord(c) > 127 or c not in _JS_F858_USERINFO_OK
+                   for c in _av):
+                raise _JSExprFail("F858 userinfo needs encoding")
+            if _mname == "username":
+                url.username = _av
+            else:
+                url.password = _av
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ";":
+                raise _JSExprFail("F858 assign without semicolon")
+            state["parts"] += 1  # the assignment is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = q + 1
+        # return u<postfix>(+ 'LIT')*;
+        q = _js_skip_ws(text, sj)
+        rk = _js_match_kw(text, q, "return")
+        if rk is None:
+            raise _JSExprFail("F858 body not return")
+        q = _js_skip_ws(text, rk)
+        rname, q = _js_parse_ident(text, q)
+        if rname != uname:
+            raise _JSExprFail("F858 returns another ident")
+        val, q = _js_parse_postfix(text, q, url, depth, state)
+        if not isinstance(val, str):
+            raise _JSExprFail("F858 return not a string")
+        val, q = _js_f857_return_tail(text, q, val, state, "F858")
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F858 value too long")
+        if q != inner_end:
+            raise _JSExprFail("F858 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f859_params_get_iife(text, i, depth, state):
+    """Parse `(function(){DECL p=new URLSearchParams();[MUT;]*return p.get('K')(+ 'LIT')*;})()` (F859).
+
+    Statement-form URLSearchParams mutations with a `.get`
+    terminal: F648 (CLOSED) models the same no-arg constructor and
+    the same set/append mutations but only the `.getAll` terminal;
+    `.get('K')` returns the FIRST value with the name (engine-exact,
+    node v24.20.0) and resolves the filed shapes while the decoder
+    produced zero variants. A missing name is null in the engine,
+    which the decoder never decodes -- fail closed (the F576
+    precedent).
+
+    Disjoint from F648 (which requires the `.getAll` terminal and
+    fails closed on `.get`; F648 is tried earlier in the dispatch,
+    so no previously-decoded input changes behavior -- red-first
+    verified: 2 BREAK on the open tree).
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-empty constructor arg (F599 owns it), `new URL(...)`
+    bindings (F617), non-literal mutation names/values, extra
+    mutation args, mutation members other than append/set
+    (sort/delete/has/... -- F599 precedent), a receiver other than
+    the bare bound ident, a missing `;`; var-bound mutation
+    names/values (F616-class hybrid -- documented residual); a named
+    function, parameters, a directive prologue, extra statements,
+    reassignment of the var, non-empty call args.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    n = len(text)
+    try:
+        inner_start, inner_end, j = _js_span_braced(text, j)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F859 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        pname, sj = _js_parse_ident(text, sj)
+        if pname == "arguments":
+            raise _JSExprFail("F859 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        # No-arg constructor only: `new URLSearchParams()`. Any
+        # argument (even '') belongs to F599/F606/F610/F616.
+        _nk = _js_match_kw(text, sj, "new")
+        if _nk is None:
+            raise _JSExprFail("F859 binding not new")
+        _nk = _js_skip_ws(text, _nk)
+        _uk = _js_match_kw(text, _nk, "URLSearchParams")
+        if _uk is None:
+            raise _JSExprFail("F859 binding not URLSearchParams")
+        _uk = _js_skip_ws(text, _uk)
+        if _uk >= n or text[_uk] != "(":
+            raise _JSExprFail("F859 ctor without paren")
+        _uk = _js_skip_ws(text, _uk + 1)
+        if _uk >= n or text[_uk] != ")":
+            raise _JSExprFail("F859 ctor not no-arg")
+        sj = _uk + 1
+        pairs = []
+        state["parts"] += 1  # the binding is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        pairs, sj = _js_f859_parse_mutations(text, sj, pname, pairs,
+                                             state, "F859")
+        # return p.get('K')(+ 'LIT')*;
+        q = _js_skip_ws(text, sj)
+        rk = _js_match_kw(text, q, "return")
+        if rk is None:
+            raise _JSExprFail("F859 body not return")
+        q = _js_skip_ws(text, rk)
+        rname, q = _js_parse_ident(text, q)
+        if rname != pname:
+            raise _JSExprFail("F859 returns another ident")
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] not in ".[":
+            raise _JSExprFail("F859 return not a member read")
+        _mname, q = _js_f576_member_name(text, q, "F859")
+        if _mname != "get":
+            raise _JSExprFail("F859 return not get")
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] != "(":
+            raise _JSExprFail("F859 get without paren")
+        q = _js_skip_ws(text, q + 1)
+        if q >= n or text[q] not in "'\"":
+            raise _JSExprFail("F859 get key not a literal")
+        _gkey, q = _js_parse_string(text, q)
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] != ")":
+            raise _JSExprFail("F859 get unterminated")
+        _gval = None
+        for _pn2, _pv2 in pairs:
+            if _pn2 == _gkey:
+                _gval = _pv2
+                break
+        if _gval is None:
+            raise _JSExprFail("F859 get missing name")
+        q = _js_skip_ws(text, q + 1)
+        state["parts"] += 1  # the get is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        val, q = _js_f857_return_tail(text, q, _gval, state, "F859")
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F859 value too long")
+        if q != inner_end:
+            raise _JSExprFail("F859 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f860_formdata_iife(text, i, depth, state):
+    """Parse `(function(){DECL f=new FormData();[MUT;]*return f.get('K')(+ 'LIT')*;})()` (F860).
+
+    The decoder had no FormData production: `f.set('k','f1')` /
+    `f.append('k','f1')` then `f.get('k')` resolve node-exactly
+    (v24.20.0) while the decoder produced zero variants. The
+    mutation grammar is the F859 shared loop (engine-exact
+    set/append semantics, F599/F648 precedent); `.get('K')`
+    returns the FIRST value with the name, and a missing name is
+    null in the engine -- fail closed (the F576 precedent).
+
+    Disjoint from every earlier route: no earlier production
+    accepts a `new FormData` head (red-first verified: 2 BREAK on
+    the open tree); this requires the FormData head and fails
+    closed on every shape they accept.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    constructor argument (`new FormData(x)` throws in the engine
+    for non-form args -- documented boundary); non-literal
+    mutation names/values (the engine stringifies other values,
+    unmodeled); mutation members other than append/set; `.getAll`
+    and other terminals (documented residuals); a missing get name;
+    extra statements; a named function; parameters; call args.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    n = len(text)
+    try:
+        inner_start, inner_end, j = _js_span_braced(text, j)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F860 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        fname, sj = _js_parse_ident(text, sj)
+        if fname == "arguments":
+            raise _JSExprFail("F860 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        # No-arg constructor only: `new FormData()`. Any argument
+        # throws in the engine for non-form args (documented).
+        _nk = _js_match_kw(text, sj, "new")
+        if _nk is None:
+            raise _JSExprFail("F860 binding not new")
+        _nk = _js_skip_ws(text, _nk)
+        _fk = _js_match_kw(text, _nk, "FormData")
+        if _fk is None:
+            raise _JSExprFail("F860 binding not FormData")
+        _fk = _js_skip_ws(text, _fk)
+        if _fk >= n or text[_fk] != "(":
+            raise _JSExprFail("F860 ctor without paren")
+        _fk = _js_skip_ws(text, _fk + 1)
+        if _fk >= n or text[_fk] != ")":
+            raise _JSExprFail("F860 ctor not no-arg")
+        sj = _fk + 1
+        entries = []
+        state["parts"] += 1  # the binding is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        entries, sj = _js_f859_parse_mutations(text, sj, fname,
+                                               entries, state, "F860")
+        # return f.get('K')(+ 'LIT')*;
+        q = _js_skip_ws(text, sj)
+        rk = _js_match_kw(text, q, "return")
+        if rk is None:
+            raise _JSExprFail("F860 body not return")
+        q = _js_skip_ws(text, rk)
+        rname, q = _js_parse_ident(text, q)
+        if rname != fname:
+            raise _JSExprFail("F860 returns another ident")
+        # Through the _JSFormData postfix branch: .get('K') returns
+        # the first value (missing name fails closed); any other
+        # member fails closed. A bare `return f;` yields the
+        # _JSFormData itself, which is not a string -- fail closed.
+        val, q = _js_parse_postfix(text, q, _JSFormData(entries),
+                                   depth, state)
+        if not isinstance(val, str):
+            raise _JSExprFail("F860 return not a string")
+        val, q = _js_f857_return_tail(text, q, val, state, "F860")
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F860 value too long")
+        if q != inner_end:
+            raise _JSExprFail("F860 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
         return None
 
 
@@ -86395,6 +87277,55 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f852_saved_parts; state['ops'] = _f852_saved_ops
         if _f852 is not None:
             val, i = _f852
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F857: (function(){var s=new Intl.Segmenter('L',{granularity:'grapheme'}).segment('LIT');var r='';for(var x of s){r+=x.segment;}return r+'LIT';})()
+        #   and the Array.from(s).map(function(x){return x.segment;}).join('SEP') twin. Tried after F810: no earlier route accepts a
+        #   `new Intl.Segmenter` head (all `new` routes are Map/WeakRef/Proxy/URLSearchParams/URL/TextDecoder/String/Array), and this requires the
+        #   Segmenter head and fails closed on every shape they accept (red-first verified: 2 BREAK on the open tree), so no previously-decoded
+        #   input changes behavior. The F810 hook and its trailing `return` are untouched (wave-379 lesson). Budget
+        #   snapshot/restore on miss (wave-383 lesson).
+        _f857_saved_parts = state['parts']; _f857_saved_ops = state['ops']
+        _f857 = _js_parse_f857_segmenter_iife(text, i, depth, state)
+        if _f857 is None:
+            state['parts'] = _f857_saved_parts; state['ops'] = _f857_saved_ops
+        if _f857 is not None:
+            val, i = _f857
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F858: (function(){var u=new URL('LIT');[u.username='LIT';|u.password='LIT';]*return u.hash.slice(1)+'LIT';})() and the
+        #   u.username/u.password return twins. Tried after F857: every earlier URL route (F576/F599/F606/F610/F616/F617/F626/F648) requires a
+        #   .searchParams/.get/.getAll terminal in its own return grammar and fails closed on .hash/.username/.password returns, and this requires
+        #   the URL binding plus one of those three return receivers and fails closed on every shape they accept
+        #   (red-first verified: 2 BREAK on the open tree), so no previously-decoded input changes behavior. The F857 hook and its trailing
+        #   `return` are untouched (wave-379 lesson). Budget snapshot/restore on miss (wave-383 lesson).
+        _f858_saved_parts = state['parts']; _f858_saved_ops = state['ops']
+        _f858 = _js_parse_f858_url_carrier_iife(text, i, depth, state)
+        if _f858 is None:
+            state['parts'] = _f858_saved_parts; state['ops'] = _f858_saved_ops
+        if _f858 is not None:
+            val, i = _f858
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F859: (function(){var p=new URLSearchParams();p.set('k','f1');return p.get('k')+'f2';})(). Tried after F858: F648 (tried much earlier)
+        #   owns the same no-arg constructor and the same set/append mutations but requires the `.getAll` terminal and fails closed on `.get`
+        #   ("F648 return not getAll"); this requires the `.get` terminal and fails closed on `.getAll` and every other shape F648 accepts
+        #   (red-first verified: 2 BREAK on the open tree), so no previously-decoded input changes behavior. The F858 hook and its trailing
+        #   `return` are untouched (wave-379 lesson). Budget snapshot/restore on miss (wave-383 lesson).
+        _f859_saved_parts = state['parts']; _f859_saved_ops = state['ops']
+        _f859 = _js_parse_f859_params_get_iife(text, i, depth, state)
+        if _f859 is None:
+            state['parts'] = _f859_saved_parts; state['ops'] = _f859_saved_ops
+        if _f859 is not None:
+            val, i = _f859
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F860: (function(){var f=new FormData();f.set('k','f1');return f.get('k')+'f2';})(). Tried after F859: no earlier route accepts a
+        #   `new FormData` head, and this requires the FormData head and fails closed on every shape they accept (red-first verified: 2 BREAK on the
+        #   open tree), so no previously-decoded input changes behavior. The F859 hook and its trailing `return` are untouched (wave-379 lesson).
+        #   Budget snapshot/restore on miss (wave-383 lesson).
+        _f860_saved_parts = state['parts']; _f860_saved_ops = state['ops']
+        _f860 = _js_parse_f860_formdata_iife(text, i, depth, state)
+        if _f860 is None:
+            state['parts'] = _f860_saved_parts; state['ops'] = _f860_saved_ops
+        if _f860 is not None:
+            val, i = _f860
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")

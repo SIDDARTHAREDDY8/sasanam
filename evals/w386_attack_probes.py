@@ -60,11 +60,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: lane-local footer (F795-F822, F824-F833, F839-F882 open, next F883)."""
+    """Control: lane-local footer (F829-F856, F861-F899 open, next F900)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F883**" in text  # Wave-386 attack round 54
-          and "Open findings: F795, F796, F797, F798, F799, F805, F806, F807, F808, F809, F810, F811, F812, F813, F814, F815, F816, F817, F818, F819, F820, F821, F822, F824, F825, F826, F827, F828, F829, F830, F831, F832, F833, F839, F840, F841, F842, F843, F844, F845, F846, F847, F848, F849, F850, F851, F852, F853, F854, F855, F856, F857, F858, F859, F860, F861, F862, F863, F864, F865, F866, F867, F868, F869, F870, F871, F872, F873, F874, F875, F876, F877, F878, F879, F880, F881, F882, F883, F884, F880, F881, F882." in text)
+    ok = ("Next free finding: **F900**" in text  # Wave-387 lane 8: F857-F860 CLOSED (lane-local); new F893-F899
+          and "Open findings: F829, F830, F831, F832, F833, F834, F835, F836, F837, F838, F839, F840, F841, F842, F843, F844, F845, F846, F847, F848, F849, F850, F851, F852, F853, F854, F855, F856, F861, F862, F863, F864, F865, F866, F867, F868, F869, F870, F871, F872, F873, F874, F875, F876, F877, F878, F879, F880, F881, F882, F883, F884, F885, F886, F887, F888, F889, F890, F891, F892, F893, F894, F895, F896, F897, F898, F899." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -353,52 +353,52 @@ def test_r54_f856_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r54_f857_s1_open():
-    """F857 OPEN: miss reproduces."""
-    miss = _misses("(function(){var s=new Intl.Segmenter('en',{granularity:'grapheme'}).segment('%s');var r='';for(var x of s){r+=x.segment;}return r+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r54_f857_s1_closed():
+    """F857 CLOSED (wave-387 lane 8): Intl.Segmenter for-of: blocks coded."""
+    ok = _blocked("(function(){var s=new Intl.Segmenter('en',{granularity:'grapheme'}).segment('%s');var r='';for(var x of s){r+=x.segment;}return r+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r54_f857_s2_open():
-    """F857 OPEN: miss reproduces."""
-    miss = _misses("(function(){var s=new Intl.Segmenter('en',{granularity:'grapheme'}).segment('%s');return Array.from(s).map(function(x){return x.segment;}).join('')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r54_f857_s2_closed():
+    """F857 CLOSED (wave-387 lane 8): Intl.Segmenter Array.from/map/join: blocks coded."""
+    ok = _blocked("(function(){var s=new Intl.Segmenter('en',{granularity:'grapheme'}).segment('%s');return Array.from(s).map(function(x){return x.segment;}).join('')+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r54_f858_s1_open():
-    """F858 OPEN: miss reproduces."""
-    miss = _misses("(function(){var u=new URL('https://h/#%s');return u.hash.slice(1)+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r54_f858_s1_closed():
+    """F858 CLOSED (wave-387 lane 8): URL hash carrier: blocks coded."""
+    ok = _blocked("(function(){var u=new URL('https://h/#%s');return u.hash.slice(1)+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r54_f858_s2_open():
-    """F858 OPEN: miss reproduces."""
-    miss = _misses("(function(){var u=new URL('https://h/');u.username='%s';return u.username+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r54_f858_s2_closed():
+    """F858 CLOSED (wave-387 lane 8): URL username carrier: blocks coded."""
+    ok = _blocked("(function(){var u=new URL('https://h/');u.username='%s';return u.username+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r54_f859_s1_open():
-    """F859 OPEN: miss reproduces."""
-    miss = _misses("(function(){var p=new URLSearchParams();p.set('k','%s');return p.get('k')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r54_f859_s1_closed():
+    """F859 CLOSED (wave-387 lane 8): URLSearchParams set + get: blocks coded."""
+    ok = _blocked("(function(){var p=new URLSearchParams();p.set('k','%s');return p.get('k')+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r54_f859_s2_open():
-    """F859 OPEN: miss reproduces."""
-    miss = _misses("(function(){var p=new URLSearchParams();p.append('k','%s');return p.get('k')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r54_f859_s2_closed():
+    """F859 CLOSED (wave-387 lane 8): URLSearchParams append + get: blocks coded."""
+    ok = _blocked("(function(){var p=new URLSearchParams();p.append('k','%s');return p.get('k')+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r54_f860_s1_open():
-    """F860 OPEN: miss reproduces."""
-    miss = _misses("(function(){var f=new FormData();f.set('k','%s');return f.get('k')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r54_f860_s1_closed():
+    """F860 CLOSED (wave-387 lane 8): FormData set + get: blocks coded."""
+    ok = _blocked("(function(){var f=new FormData();f.set('k','%s');return f.get('k')+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r54_f860_s2_open():
-    """F860 OPEN: miss reproduces."""
-    miss = _misses("(function(){var f=new FormData();f.append('k','%s');f.append('k','x');return f.get('k')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r54_f860_s2_closed():
+    """F860 CLOSED (wave-387 lane 8): FormData append x2 + get: blocks coded."""
+    ok = _blocked("(function(){var f=new FormData();f.append('k','%s');f.append('k','x');return f.get('k')+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r54_f861_s1_open():
