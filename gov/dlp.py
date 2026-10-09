@@ -48582,15 +48582,19 @@ def _js_parse_f784_labeled_for_iife(text, i, depth, state):
 
     BODY is one or more statements, each `R+='LIT';` /
     `R=R+'LIT';`, `continue LBL;` / `continue;`, `break LBL;` /
-    `break;`, or the `if(BOOL)`-guarded twins with BOOL a
-    decidable literal (`true`/`false`/`!0`/`!1`/`1`/`0`).
+    `break;`, the `if(BOOL)`-guarded twins, or (F833) the braced
+    consequent twins `if(BOOL){ACCUM;...}` /
+    `if(BOOL){break [LBL];...}` / `if(BOOL){continue [LBL];...}`
+    with BOOL a decidable literal (`true`/`false`/`!0`/`!1`/`1`/`0`).
     Node-exact (v24.20.0): the counter runs the F709 integer
     sequence (`<` and `<=`); `continue` skips to the next
     iteration; `break` exits the loop; an `if(BOOL)` guard
     applies its truthiness to the consequent. A continue/break
     for another label is a node SyntaxError -- fail closed.
     Unlabeled jumps target the innermost loop, which is this one
-    by construction.
+    by construction. Empty braces, nested `if`, or other
+    statement kinds inside a braced consequent fail closed (the
+    F826 precedent).
 
     At most _JS_F679_MAX_ITERS iterations; F452 charges 1 part
     per iteration; the result is bounded by _MAX_DECODE_BYTES.
@@ -48705,6 +48709,68 @@ def _js_parse_f784_labeled_for_iife(text, i, depth, state):
                 q2 = _js_skip_ws(stmts, q2)
                 q2 = _js_expect(stmts, q2, ")")
                 q2 = _js_skip_ws(stmts, q2)
+                if q2 < n and stmts[q2] == "{":
+                    # F833: braced consequent block --
+                    # `if(BOOL){ACCUM;...}` /
+                    # `if(BOOL){break [LBL];...}` /
+                    # `if(BOOL){continue [LBL];...}`. Node-exact
+                    # (v24.20.0): the inner statements run in order
+                    # under the outer guard; a truthy `break`
+                    # exits the loop, a truthy `continue` starts
+                    # the next iteration; falsy-guarded jumps and
+                    # accums are skipped. Empty braces, nested
+                    # `if`, or any other statement kind fails
+                    # closed (the F826 precedent). A jump for
+                    # another label is a node SyntaxError -- fail
+                    # closed.
+                    bi0, bi1, q4 = _js_span_braced(stmts, q2)
+                    inner = stmts[bi0:bi1]
+                    iq = 0
+                    saw = False
+                    while True:
+                        iq = _js_skip_ws(inner, iq)
+                        if iq >= len(inner):
+                            break
+                        try:
+                            ilit, iq2 = _js_f784f785_accum_stmt(
+                                inner, iq, acc, depth, state)
+                        except _JSExprFail:
+                            iq2 = None
+                        if iq2 is not None:
+                            ops.append(("accum_if", ilit, truthy))
+                            state["parts"] += 1  # F452
+                            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                                raise _JSExprFail("too many parts")
+                            iq = iq2
+                            saw = True
+                            continue
+                        ick = _js_match_kw(inner, iq, "continue")
+                        iis_cont = ick is not None
+                        if not iis_cont:
+                            ick = _js_match_kw(inner, iq, "break")
+                        if ick is None:
+                            raise _JSExprFail(
+                                "F833 for brace stmt not modeled")
+                        ilq = _js_skip_ws(inner, ick)
+                        if (ilq < len(inner)
+                                and inner[ilq] in _JS_IDENT_START):
+                            _js_f784_no_line_terminator(inner, ick, ilq)
+                            itlbl, ilq = _js_parse_ident(inner, ilq)
+                            if itlbl != lbl:
+                                raise _JSExprFail(
+                                    "F833 jump wrong label")
+                        ilq = _js_skip_ws(inner, ilq)
+                        ilq = _js_expect(inner, ilq, ";")
+                        ops.append(("jump", iis_cont, truthy))
+                        state["parts"] += 1  # F452
+                        if state["parts"] > _JS_EXPR_MAX_PARTS:
+                            raise _JSExprFail("too many parts")
+                        iq = ilq
+                        saw = True
+                    if not saw:
+                        raise _JSExprFail("F833 empty braced consequent")
+                    sj = q4
+                    continue
             ck = _js_match_kw(stmts, q2, "continue")
             is_cont = ck is not None
             if not is_cont:
@@ -77483,6 +77549,183 @@ def _js_parse_f809_curry_iife(text, i, depth, state):
 
 
 # ---------------------------------------------------------------------------
+# F836: double-invoked parenthesized arrows
+# ---------------------------------------------------------------------------
+
+def _js_f836_zero_param_arrow(text, j):
+    """Parse `()=>LIT` / `()=>{return LIT;}` at text[j] (F836).
+
+    Zero-parameter arrow with a literal-only body. Returns
+    (literal, next_index). Any params, a non-literal body, `this`,
+    or `arguments` fails closed -- rejected, never mis-decoded.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F836 arrow without =>")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        bi0, bi1, j = _js_span_braced(text, j)
+        q = _js_skip_ws(text, bi0)
+        rk = _js_match_kw(text, q, "return")
+        if rk is None:
+            raise _JSExprFail("F836 arrow block without return")
+        q = _js_skip_ws(text, rk)
+        lit, q = _js_parse_string(text, q)
+        q = _js_skip_ws(text, q)
+        if q < len(text) and text[q] == ";":
+            q += 1
+        if _js_skip_ws(text, q) != bi1:
+            raise _JSExprFail("F836 arrow block trailing")
+        if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+            raise _JSExprFail("F836 arrow body not a plain string")
+        return lit, j
+    lit, j = _js_parse_string(text, j)
+    if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+        raise _JSExprFail("F836 arrow body not a plain string")
+    return lit, j
+
+
+def _js_parse_f836_double_arrow_iife(text, i, depth, state):
+    """Parse `(function(){return ADD;})()` with double-invoked
+    parenthesized-arrow terms (F836).
+
+    F836 (LOW, attack round 54): curried call-result invocation --
+    the decoder models single calls but not calls on call
+    results. `f('f1')('f2')` is covered by F809's curry hook, but
+    the parenthesized-arrow twin `(()=>()=>'f1')()()` resolves
+    node-exactly (v24.20.0) while the decoder produces zero
+    variants.
+
+    Node-exact desugar (v24.20.0): `(()=>INNER)()()` evaluates the
+    outer zero-param arrow to the inner zero-param arrow, then
+    invokes it; both bodies are literal-only, so the term's value
+    is the inner literal. The return is a `+`-additive of string
+    literals and double-call terms.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - params on either arrow, non-literal bodies, a non-arrow
+      outer body, `this`/`arguments` in a body;
+    - the single-invoke twin `(()=>'LIT')()` (a different gap --
+      the F835 family; documented residual), triple-or-more
+      invoke (the engine throws TypeError -- never decoded);
+    - extra statements, a non-`;`-terminated return, trailing
+      statements, a non-`()` IIFE invocation.
+    Tried after F809: F809 requires a `function`-declaration head
+    (this requires a bare `return` head carrying a
+    parenthesized-arrow double-call term); F821's arrow
+    production requires a var-bound arrow declaration (this has
+    none); every earlier route fails closed on the `(()=>` term
+    head (red-first verified: 2 BREAK on the open tree), so no
+    previously-decoded input changes behavior. The F809 hook and
+    its trailing `return` are untouched (wave-379 lesson).
+    F452: one part per return term, one extra part per
+    double-call term, one op for the wrapper (via
+    _js_parse_f6xx_iife_tail); snapshot/restore on miss
+    (wave-383 lesson). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        brace = _js_parse_f6xx_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        q = _js_skip_ws(text, inner_start)
+        rk = _js_match_kw(text, q, "return")
+        if rk is None:
+            raise _JSExprFail("F836 no return")
+        q = _js_skip_ws(text, rk)
+        parts = []
+        while True:
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] in "'\"":
+                lit, q = _js_parse_string(text, q)
+                if not isinstance(lit, str) or isinstance(
+                        lit, _JSNumStr):
+                    raise _JSExprFail("F836 return term not a string")
+                parts.append(lit)
+            elif q < n and text[q] == "(":
+                # `(()=>INNER)()()` -- the double-invoked
+                # parenthesized arrow. `INNER` is itself a
+                # zero-param arrow returning a string literal.
+                k = _js_skip_ws(text, q + 1)
+                # Outer arrow head: `()=>`.
+                k = _js_expect(text, k, "(")
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, ")")
+                k = _js_skip_ws(text, k)
+                if not text.startswith("=>", k):
+                    raise _JSExprFail("F836 outer without =>")
+                k = _js_skip_ws(text, k + 2)
+                if k < n and text[k] == "{":
+                    # Block-bodied outer: `{return INNER;}`.
+                    bi0, bi1, k = _js_span_braced(text, k)
+                    bq = _js_skip_ws(text, bi0)
+                    rk2 = _js_match_kw(text, bq, "return")
+                    if rk2 is None:
+                        raise _JSExprFail(
+                            "F836 outer block without return")
+                    ilit, bq = _js_f836_zero_param_arrow(
+                        text, _js_skip_ws(text, rk2))
+                    bq = _js_skip_ws(text, bq)
+                    if bq < len(text) and text[bq] == ";":
+                        bq += 1
+                    if _js_skip_ws(text, bq) != bi1:
+                        raise _JSExprFail("F836 outer block trailing")
+                else:
+                    # Expression-bodied outer: the inner arrow
+                    # itself.
+                    ilit, k = _js_f836_zero_param_arrow(text, k)
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, ")")  # close the wrap paren
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, "(")  # first invocation
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, ")")
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, "(")  # second invocation
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, ")")
+                state["parts"] += 1  # F452: the double call
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                parts.append(ilit)
+                q = k
+            else:
+                raise _JSExprFail("F836 return term not modeled")
+            state["parts"] += 1  # F452: per return term
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == "+":
+                q = q + 1
+                continue
+            break
+        if not parts:
+            raise _JSExprFail("F836 empty return")
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("concat too long")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        q = _js_skip_ws(text, q)
+        if q != inner_end:
+            raise _JSExprFail("F836 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+# ---------------------------------------------------------------------------
 # F810: this-returning method chains
 # ---------------------------------------------------------------------------
 
@@ -81173,6 +81416,26 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f809_saved_parts; state['ops'] = _f809_saved_ops
         if _f809 is not None:
             val, i = _f809
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F836: (function(){return ADD;})() with double-invoked
+        #   parenthesized-arrow terms `(()=>INNER)()()` (INNER a
+        #   zero-param arrow returning a string literal). Tried
+        #   after F809: F809 requires a `function`-declaration head
+        #   (this requires a bare `return` head carrying a
+        #   parenthesized-arrow double-call term); F821's arrow
+        #   production requires a var-bound arrow declaration (this
+        #   has none); every earlier route fails closed on the
+        #   `(()=>` term head (red-first verified: 2 BREAK on the
+        #   open tree), so no previously-decoded input changes
+        #   behavior. The F809 hook and its trailing `return` are
+        #   untouched (wave-379 lesson). Budget snapshot/restore on
+        #   miss (wave-383 lesson).
+        _f836_saved_parts = state['parts']; _f836_saved_ops = state['ops']
+        _f836 = _js_parse_f836_double_arrow_iife(text, i, depth, state)
+        if _f836 is None:
+            state['parts'] = _f836_saved_parts; state['ops'] = _f836_saved_ops
+        if _f836 is not None:
+            val, i = _f836
             return _js_parse_postfix(text, i, val, depth, state)
         # F810: (function(){DECL o={k:function(){BODY},...};
         #   return ADD;})() with >=1 >=2-call method-chain term --
