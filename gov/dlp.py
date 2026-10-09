@@ -42260,6 +42260,329 @@ def _js_parse_f760_template_member_iife(text, i, depth, state):
         return None
 
 
+def _js_f768_plain_string_elements(elements):
+    """Validate F768/F769 array elements are plain string literals.
+
+    Returns the element list, or raises _JSExprFail when any
+    element is not a plain string (holes/_JSNil, booleans,
+    numerics, nested arrays fail closed -- the entries pairing
+    and .at() indexing are only node-exact for dense
+    string-literal arrays; the decoder has no undefined value).
+    Never evals.
+    """
+    for e in elements:
+        if (not isinstance(e, str)
+                or isinstance(e, (_JSNumStr, _JSBigInt))):
+            raise _JSExprFail("F768/F769 non-string array element")
+    return elements
+
+
+def _js_parse_f768_spread_entries(text, i, depth, state):
+    """Parse `[...ARRLIT.entries()].map(P=>P[0|1])` at text[i] (F768).
+
+    F612 (CLOSED) covers var-bound Object.entries on objects, but
+    `Array.prototype.entries` spread into an array has no
+    production: `(function(){return
+    [...['f1','f2'].entries()].map(function(e){return
+    e[1];}).join('');})()` node-evaluates (v24.20.0) to the exact
+    credential while the decoder produces zero variants.
+    Node-exact desugar: the array iterator yields
+    [numeric-index, value] pairs in ascending order; the
+    mandatory `.map` projection (the F517 grammar via
+    `_js_parse_entries_projection`, which already recognizes
+    `function(e){return e[1];}`) picks values or keys; numeric
+    indices are modeled as _JSNumStr (string-behaved, numeric
+    provenance marked). The projected array threads through
+    `_js_parse_postfix` for the `.join('')` tail.
+    Disjoint from the F471 spread-copy: F471's source parse fails
+    closed on `.entries()` (not a postfix method), so no
+    previously-decoded input changes behavior (red-first
+    verified: 2 BREAK on the open tree).
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a non-array entries source, non-string elements, holes;
+    - `.entries` with arguments, a non-`entries` member;
+    - a missing `.map` projection or an unrecognized projection
+      callback (F517's mandatory-projection discipline --
+      unprojected pair arrays are not modeled).
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "[":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        if not text.startswith("...", j):
+            return None
+        j = _js_skip_ws(text, j + 3)
+        if j >= n or text[j] != "[":
+            return None  # not an array-literal entries source
+        arr, j = _js_parse_array(text, j, depth, state)
+        elems = _js_f768_plain_string_elements(arr.elements)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ".":
+            j = _js_skip_ws(text, j + 1)
+            m = _js_match_kw(text, j, "entries")
+            if m is None:
+                return None
+            j = m
+        elif j < n and text[j] == "[":
+            _mname, j = _js_parse_bracket_member(text, j)
+            if _mname != "entries":
+                return None
+        else:
+            return None
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "]")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ".")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "map")
+        if m is None:
+            raise _JSExprFail("F768 entries without map projection")
+        j = _js_skip_ws(text, m)
+        j = _js_expect(text, j, "(")
+        kind, j = _js_parse_entries_projection(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        if kind == "vals":
+            proj = _JSArr(list(elems))
+        else:
+            proj = _JSArr([_JSNumStr(str(k))
+                           for k in range(len(elems))])
+        state["ops"] += 1  # the entries+map idiom is
+                           # obfuscation-shaped
+        return proj, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f768_object_entries_array(text, i, depth, state):
+    """Parse `Object.entries(ARRLIT).map(P=>P[0|1])` at text[i] (F768).
+
+    The twin of `_js_parse_f768_spread_entries` for the
+    `Object.entries` spelling: `(function(){return
+    Object.entries(['f1','f2']).map(function(e){return
+    e[1];}).join('');})()` node-evaluates (v24.20.0) to the exact
+    credential while the decoder produces zero variants.
+    Node-exact desugar: Object.entries on an array yields
+    [string-index, value] pairs in ascending index order (indices
+    are STRINGS here, unlike the numeric indices of the array
+    iterator twin); the mandatory `.map` projection uses the F517
+    grammar. Disjoint from F517/F573/F634: F573 returns None on a
+    non-`{` argument, F634's reduce grammar fails closed on `[`,
+    and F517's enumeration source fails closed on `[`, so no
+    previously-decoded input changes behavior (red-first
+    verified: 2 BREAK on the open tree). Tried before F517's
+    route. Bounds: same as the spread twin, plus extra call
+    arguments fail closed (F517 parity).
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+        return None
+    if not text.startswith("Object", i):
+        return None
+    try:
+        j = i + len("Object")
+        if j < n and text[j] in _JS_IDENT_CONT:
+            return None  # Objectx -- fall through
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "[":
+            _mname, j = _js_parse_bracket_member(text, j)
+            if _mname != "entries":
+                return None  # not entries -- fall through
+        elif j < n and text[j] == ".":
+            j = _js_skip_ws(text, j + 1)
+            m = _js_match_kw(text, j, "entries")
+            if m is None:
+                return None  # not entries -- fall through
+            j = m
+        else:
+            return None
+        # The `entries` member commits the parse.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "[":
+            # Not an array literal -- F517's enumeration sources
+            # stay F517's.
+            return None
+        arr, j = _js_parse_array(text, j, depth, state)
+        elems = _js_f768_plain_string_elements(arr.elements)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ".")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "map")
+        if m is None:
+            raise _JSExprFail("F768 entries without map projection")
+        j = _js_skip_ws(text, m)
+        j = _js_expect(text, j, "(")
+        kind, j = _js_parse_entries_projection(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        if kind == "vals":
+            proj = _JSArr(list(elems))
+        else:
+            proj = _JSArr([str(k) for k in range(len(elems))])
+        state["ops"] += 1  # the entries+map idiom is
+                           # obfuscation-shaped
+        return proj, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f769_at_varbound_iife(text, i, depth, state):
+    """Parse `(function(){DECL a=ARRLIT;return ADD;})()` with
+    `a.at(INT)` read terms (F769).
+
+    The F547 `.at(INT)` production fires for inline array
+    literals, but on a var-bound array it misses:
+    `(function(){var a=['f1','f2'];return
+    a.at(0)+a.at(-1);})()` node-evaluates (v24.20.0) to the exact
+    credential while the decoder produces zero variants.
+    Node-exact desugar: the var binds a dense string-literal
+    array; the return is a `+`-joined additive of string literals
+    and `a.at(INT)` / `a['at'](INT)` reads, with the F547
+    element-read semantics (non-negative literal indices read
+    the element; negative indices count back from the end;
+    out-of-bounds reads are `undefined` in the engine and fail
+    closed -- the static decoder has no undefined value).
+    Disjoint: every accepted shape carries a var-bound
+    string-literal array with at least one `.at()` read term,
+    which no earlier route accepts (red-first verified: 2 BREAK
+    on the open tree). Tried after F757's route; the F757 hook
+    and its trailing `return` are untouched (wave-379 lesson).
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, multi-decl, non-empty call args, reassignment
+      (the grammar is constructive);
+    - a non-array binding, a binding named `arguments`,
+      non-string array elements, holes;
+    - a non-`.at` member term, an unbound receiver, a missing or
+      non-literal index, extra call args, out-of-bounds reads;
+    - a literal-only return (belongs to an earlier route -- not
+      claimed).
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    if not _js_peek_arguments_iife_head(text, i):
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j) + len("function")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            return None  # not a decl
+        sj = _js_skip_ws(text, m)
+        aname, sj = _js_parse_ident(text, sj)
+        if aname == "arguments":
+            return None
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "[":
+            return None  # not an array binding
+        arr, sj = _js_parse_array(text, sj, depth, state)
+        elems = _js_f768_plain_string_elements(arr.elements)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F769 no return")
+        sj = _js_skip_ws(text, m)
+        parts = []
+        saw_at = False
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                term, sj = _js_parse_string(text, sj)
+            else:
+                _rname, _q = _js_parse_ident(text, sj)
+                if _rname != aname:
+                    raise _JSExprFail("F769 term not bound ident")
+                sj = _js_skip_ws(text, _q)
+                if sj < n and text[sj] == ".":
+                    sj = _js_skip_ws(text, sj + 1)
+                    _am = _js_match_kw(text, sj, "at")
+                    if _am is None:
+                        raise _JSExprFail("F769 term not .at")
+                    sj = _am
+                elif sj < n and text[sj] == "[":
+                    _bname, sj = _js_parse_bracket_member(text, sj)
+                    if _bname != "at":
+                        raise _JSExprFail("F769 term not ['at']")
+                else:
+                    raise _JSExprFail("F769 term not an at-read")
+                sj = _js_skip_ws(text, sj)
+                sj = _js_expect(text, sj, "(")
+                idx, sj = _js_parse_slice_int(text,
+                                             _js_skip_ws(text, sj))
+                sj = _js_skip_ws(text, sj)
+                sj = _js_expect(text, sj, ")")
+                k = idx if idx >= 0 else len(elems) + idx
+                if k < 0 or k >= len(elems):
+                    raise _JSExprFail("F769 at out of bounds")
+                term = elems[k]
+                saw_at = True
+                state["ops"] += 1  # the element read is
+                                   # obfuscation-shaped
+            parts.append(term)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("concat too long")
+        if not saw_at:
+            # A literal-only return belongs to an earlier route.
+            return None
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F769 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f702f703_assign_getter_iife(text, i, depth, state):
     """Parse `(function(){DECL;* return ADD;})()` at text[i] (F702/F703).
 
@@ -64497,6 +64820,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f757 is not None:
             val, i = _f757
             return _js_parse_postfix(text, i, val, depth, state)
+        # F769: (function(){DECL a=ARRLIT;return ADD;})() with
+        #   `a.at(INT)` / `a['at'](INT)` read terms -- .at() on a
+        #   var-bound array. Tried after F757: every accepted shape
+        #   carries a var-bound string-literal array with at least
+        #   one `.at()` read term, which no earlier route accepts
+        #   (red-first verified: 2 BREAK on the open tree). None
+        #   falls through to the parenthesized-additive path.
+        #   The F757 hook and its trailing `return` are untouched
+        #   (wave-379 lesson).
+        _f769_saved_parts = state['parts']; _f769_saved_ops = state['ops']
+        _f769 = _js_parse_f769_at_varbound_iife(text, i, depth, state)
+        if _f769 is None:
+            state['parts'] = _f769_saved_parts; state['ops'] = _f769_saved_ops
+        if _f769 is not None:
+            val, i = _f769
+            return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
         val, i = _js_parse_additive(text, i + 1, depth + 1, state,
@@ -64563,6 +64902,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                          depth, state)
             # callee without a call paren -- fall through (fails
             # closed: not a decodable shape)
+        # F768: [...ARRLIT.entries()].map(P=>P[0|1]) -- array
+        #   entry-pair reads via the entries-iterator spread. Tried
+        #   before the ordinary array literal: F620 needs `()=>`
+        #   elements, the ctor checks need `.constructor`, and
+        #   F471's spread-copy fails closed on `.entries()` (not a
+        #   postfix method), so no previously-decoded input changes
+        #   behavior (red-first verified: 2 BREAK on the open
+        #   tree). None falls through to the ordinary array
+        #   literal like the other `[` forms.
+        _f768a_saved_parts = state['parts']; _f768a_saved_ops = state['ops']
+        _f768a = _js_parse_f768_spread_entries(text, i, depth, state)
+        if _f768a is None:
+            state['parts'] = _f768a_saved_parts; state['ops'] = _f768a_saved_ops
+        if _f768a is not None:
+            val, i = _f768a
+            return _js_parse_postfix(text, i, val, depth, state)
         val, i = _js_parse_array(text, i, depth, state)
         state["ops"] += 1  # an array literal is obfuscation-shaped
         return _js_parse_postfix(text, i, val, depth, state)
@@ -64916,6 +65271,23 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f634 is not None:
             val, i = _f634
             state["ops"] += 1  # the reduce call is obfuscation-shaped
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F768: Object.entries(ARRLIT) / Object['entries'](ARRLIT)
+        #   with a mandatory `.map(P=>P[0|1])` projection -- array
+        #   entry-pair reads. Tried before F517: F573 returns None
+        #   on a non-`{` argument, F634's reduce grammar fails
+        #   closed on `[`, and F517's enumeration source fails
+        #   closed on `[`, so no previously-decoded input changes
+        #   behavior (red-first verified: 2 BREAK on the open
+        #   tree). None falls through to F517 like the other
+        #   enumeration paths.
+        _f768b_saved_parts = state['parts']; _f768b_saved_ops = state['ops']
+        _f768b = _js_parse_f768_object_entries_array(text, i, depth,
+                                                     state)
+        if _f768b is None:
+            state['parts'] = _f768b_saved_parts; state['ops'] = _f768b_saved_ops
+        if _f768b is not None:
+            val, i = _f768b
             return _js_parse_postfix(text, i, val, depth, state)
         # F517: Object.entries(OBJ).map(P=>P[0|1]) -- entries
         # indirection with a mandatory projection. None falls through
