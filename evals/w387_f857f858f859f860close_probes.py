@@ -349,10 +349,26 @@ def test_p3_f857_x_index():
 
 @_t
 def test_p3_f858_pathname():
-    """F858 bound: .pathname misses (filed F895), never mis-decodes."""
+    """F912 (CLOSED wave-388 lane 5): .pathname is modeled node-exactly."""
     p = ("(function(){var u=new URL('https://h/%s');"
          "return u.pathname+'%s';})()" % (_A, _B))
-    return ("HELD" if _misses(p) else "BREAK", "miss=%s" % _misses(p))
+    return ("HELD" if _blocked(p) else "BREAK", "hit=%s" % _blocked(p))
+
+
+@_t
+def test_p3_f912_pathname_dotseg():
+    """F912 bound: dot-segment / backslash / empty paths fail closed."""
+    bad = [
+        "(function(){var u=new URL('https://h/a/../%s');"
+        "return u.pathname+'%s';})()" % (_A, _B),
+        "(function(){var u=new URL('https://h/%%2e%%2e/%s');"
+        "return u.pathname+'%s';})()" % (_A, _B),
+        "(function(){var u=new URL('https://h');"
+        "return u.pathname+'%s';})()" % _B,
+    ]
+    loud = [p for p in bad if not _misses(p)]
+    return ("HELD" if not loud else "BREAK",
+            "%d/%d fail closed" % (len(bad) - len(loud), len(bad)))
 
 
 @_t

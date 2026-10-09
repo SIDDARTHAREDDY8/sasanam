@@ -188,7 +188,7 @@ def p6_f576_bounds():
         "new URLSearchParams()",                      # no args
         "new URLSearchParams('a=b').get(x)",          # non-literal key
         "new URLSearchParams('a=b').post('a')",       # unmodeled member
-        "new URL('https://h/?a=b').pathname",         # unmodeled member
+        "new URL('https://h/?a=b').search",          # unmodeled member
         "new URLSearchParams('a=b').get('a','b')",    # extra get arg
         # F567: identifier-suffixed anchors stay honest-quiet
         "xnew URLSearchParams('a=%s').get('a')+'%s'" % (_A1, _A2),
