@@ -126,24 +126,25 @@ def test_b0_footer_state():
 
 
 @_t
-def test_b1_f824_open():
-    """F824 OPEN (filed 2026-10-09 03:37:08 UTC): non-integer drop miss."""
+def test_b1_f824_closed():
+    """F824 CLOSED 2026-10-09 wave-386 lane 15: non-integer drop now
+    blocks (pin flipped open->closed, wave-306 class)."""
     s1 = ("(function(){return [...['xx','" + _A + "','" + _B
            + "'].values().drop(1.5)].join('');})()")
     s2 = ("(function(){return [...['xx','" + _A + "','" + _B
            + "'].values().drop(\"1\")].join('');})()")
-    ok = _misses(s1) and _misses(s2)
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    ok = _blocked(s1) and _blocked(s2)
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 @_t
-def test_b1_f825_open():
-    """F825 OPEN (filed 2026-10-09 03:37:15 UTC): fromCharCode valueOf
-    miss."""
+def test_b1_f825_closed():
+    """F825 CLOSED 2026-10-09 wave-386 lane 15: fromCharCode valueOf
+    now blocks (pin flipped open->closed, wave-306 class)."""
     s = ("(function(){var o={valueOf:function(){return 120;}};"
          "return String.fromCharCode(o)+'oxb-0123'+'" + _B + "';})()")
-    ok = _misses(s)
-    return ("HELD" if ok else "BREAK", "miss=%s" % ok)
+    ok = _blocked(s)
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 
 # ------------------------------------------------ p1: filed shapes (must block)
