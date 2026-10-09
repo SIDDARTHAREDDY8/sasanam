@@ -13019,8 +13019,22 @@ def _js_parse_f535_getter_head(text, i):
         # F552: computed Symbol.for registry key on a getter --
         # `get [Symbol.for('k')](){return v;}`. The name is the
         # ("symbol", k) tuple, matching the data-property form.
-        skey, j = _js_parse_f552_symbol_for(text, i)
-        name = _js_symbol_key(skey)
+        # F755: computed string-name getter `get ['x'](){...}` --
+        # the bracketed string literal evaluates to the plain
+        # string name (node-exact: identical to `get 'x'`,
+        # v24.20.0). Only string literals are admitted: numeric,
+        # identifier, or other computed names fail closed
+        # (documented boundary).
+        q = _js_skip_ws(text, i + 1)
+        if q < n and text[q] in "'\"":
+            name, q = _js_parse_string(text, q)
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != "]":
+                raise _JSExprFail("bad computed getter name")
+            j = q + 1
+        else:
+            skey, j = _js_parse_f552_symbol_for(text, i)
+            name = _js_symbol_key(skey)
     elif c in _JS_IDENT_START:
         name, j = _js_parse_ident(text, i)
     else:
@@ -33549,6 +33563,192 @@ def _js_parse_f729_void_stmt_iife(text, i, depth, state):
         j = _js_expect(text, j, ")")
         state["ops"] += 1  # the iife wrapper is obfuscation-shaped
         return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f754_delete_stmt_iife(text, i, depth, state):
+    """Parse `(function(){DECL o=OBJLIT;[delete o.K;|delete o['K'];]+
+    return ADD;})()` at text[i] (F754).
+
+    The decoder has no delete-operator production: a delete
+    statement in the IIFE body fails the whole decode while node
+    evaluates the remaining reads node-exactly (v24.20.0). Filed
+    shapes:
+    `(function(){var o={x:'f1',y:'junk'};delete o.y;return o.x+'f2';})()`
+    and the bracket twin
+    `(function(){var o={x:'f1',y:'junk'};delete o['y'];return o.x+'f2';})()`.
+    Node-exact desugar (v24.20.0):
+    - `var|let|const o={...};` binds the F535 literal object
+      (parsed accessor-aware, F716 parity);
+    - `delete o.K;` / `delete o['K'];` removes the own property K
+      from the tracked object (data or accessor -- the engine
+      never invokes a getter on delete) or is a no-op when K is
+      absent (the engine returns true);
+    - `return ADD;` resolves member reads against the tracked
+      object exactly like the engine's own-property lookup (a
+      missing key -- including a deleted one -- is engine
+      undefined: fail closed, never mis-decoded).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, reassignment, non-`{}`-literal object binding;
+    - a delete whose target is not the bound ident (`delete o`
+      bare, `delete x`, `delete other.y`), a non-member delete
+      operand (`delete(o.y)` paren form), a non-literal key
+      (`delete o[0]`, `delete o[k]`), `__proto__` keys;
+    - a return term that is not a string literal or a bound member
+      read resolving to a plain string (deleted-key reads fail
+      closed: the engine yields undefined there).
+
+    Disjoint from every earlier route: no earlier route accepts a
+    `delete` statement head (F729 owns the `void` head;
+    F655/F679's statement dispatch fails closed on `delete`;
+    F716 requires `Reflect.set(`; red-first verified: 2 BREAK on
+    the open tree), so no previously-decoded input changes
+    behavior. Returns (value, next_index), or None when text[i]
+    is not this shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            raise _JSExprFail("F754 decl not var/const/let")
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            raise _JSExprFail("F754 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "{":
+            return None  # not an object-literal target
+        props, sj = _js_parse_f535_object(text, sj, depth, state,
+                                         accessor_aware=True)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        tracked = dict(props)
+        ndel = 0
+        while True:
+            q = _js_skip_ws(text, sj)
+            r = _js_match_kw(text, q, "return")
+            if r is not None:
+                sj = q
+                break
+            dk = _js_match_kw(text, q, "delete")
+            if dk is None:
+                raise _JSExprFail("F754 stmt not delete")
+            q = _js_skip_ws(text, dk)
+            tname, q = _js_parse_ident(text, q)
+            if tname != oname:
+                raise _JSExprFail("F754 delete target not bound")
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == ".":
+                q = _js_skip_ws(text, q + 1)
+                key, q = _js_parse_ident(text, q)
+            elif q < n and text[q] == "[":
+                qb = _js_skip_ws(text, q + 1)
+                if qb >= n or text[qb] not in "'\"":
+                    raise _JSExprFail(
+                        "F754 delete key not a string literal")
+                key, q = _js_parse_string(text, qb)
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, "]")
+            else:
+                raise _JSExprFail("F754 delete not a member")
+            if not key or key == "__proto__":
+                raise _JSExprFail("F754 delete bad key")
+            # Node-exact (v24.20.0): delete removes the own
+            # property (data or accessor -- never invoked) or is a
+            # no-op when the key is absent.
+            tracked.pop(key, None)
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            state["ops"] += 1  # the delete indirection is
+            # obfuscation-shaped
+            ndel += 1
+            sj = _js_skip_ws(text, q)
+        if ndel == 0:
+            raise _JSExprFail("F754 no delete statement")
+
+        def _f754_term(sj):
+            # One additive term: a string literal, or a member read
+            # on the bound object resolving to a plain string (the
+            # F716 term discipline).
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                return _js_parse_string(text, sj)
+            _rname, sj = _js_parse_ident(text, sj)
+            if _rname != oname:
+                raise _JSExprFail("F754 term not bound ident")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == ".":
+                sj = _js_skip_ws(text, sj + 1)
+                _mem, sj = _js_parse_ident(text, sj)
+            elif sj < n and text[sj] == "[":
+                _qb = _js_skip_ws(text, sj + 1)
+                if _qb < n and text[_qb] in "'\"":
+                    _mem, sj = _js_parse_bracket_member(text, sj)
+                else:
+                    raise _JSExprFail("F754 term key not a literal")
+            else:
+                raise _JSExprFail("F754 term not a member read")
+            if _mem == "__proto__":
+                raise _JSExprFail("F754 term __proto__")
+            _raw = tracked.get(_mem)
+            if _raw is None:
+                raise _JSExprFail("F754 term missing key")
+            _rv = _raw.value if isinstance(_raw, _JSAccessor) \
+                else _raw
+            if (not isinstance(_rv, str)
+                    or isinstance(_rv, (_JSNumStr, _JSBigInt))
+                    or _js_str_is_unsafe_int(_rv)):
+                raise _JSExprFail(
+                    "F754 term value not a plain string")
+            state["ops"] += 1  # the member read is
+            # obfuscation-shaped
+            return _rv, sj
+
+        m = _js_match_kw(text, sj, "return")
+        sj = _js_skip_ws(text, m)
+        total = None
+        while True:
+            _val, sj = _f754_term(sj)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = _val
+            else:
+                if len(total) + len(_val) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + _val
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F754 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
     except _JSExprFail:
         return None
 
@@ -57883,7 +58083,23 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f729_saved_parts; state['ops'] = _f729_saved_ops
         if _f729 is not None:
             return _f729
-
+        # F754: (function(){DECL o=OBJLIT;[delete o.K;|delete o['K'];]+
+        #   return ADD;})() -- delete-operator statements on a
+        #   var-bound object. Tried after F729: F729 requires a
+        #   `void` statement head; F716 requires `Reflect.set(`;
+        #   F655/F679's statement dispatch fails closed on
+        #   `delete`; no earlier route accepts a `delete` head
+        #   (red-first verified: 2 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior. None falls
+        #   through to the F733 route. The F729 hook and its
+        #   trailing `return` are untouched (wave-379 lesson).
+        _f754_saved_parts = state['parts']; _f754_saved_ops = state['ops']
+        _f754 = _js_parse_f754_delete_stmt_iife(text, i, depth, state)
+        if _f754 is None:
+            state['parts'] = _f754_saved_parts; state['ops'] = _f754_saved_ops
+        if _f754 is not None:
+            val, i = _f754
+            return _js_parse_postfix(text, i, val, depth, state)
         # F733: (function(){DECL;* return w.deref().MEM(+'LIT')*;})()
         #   -- var-bound WeakRef of a literal-fragment referent
         #   (data props or literal-returning getters). F734:
