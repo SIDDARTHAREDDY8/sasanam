@@ -4789,6 +4789,310 @@ def _js_parse_f746_subclass_map_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f814_map_decl(stmts, j, depth, state):
+    """Parse `var|let|const M=new Map([[...]]);` or `var|let|const M=new
+    Map();` at stmts[j] (F814).
+
+    Returns (mname, pairs, next_index) just past the `;`: pairs is the
+    later-wins [(kid, key, value)] list (`_js_parse_new_map_head`
+    form -- string/numeric literal keys, plain string-literal
+    values, node v24.20.0). A `const` binding is engine-legal here
+    (the for-of never reassigns the receiver; F657 parity). Returns
+    next_index just past `;`. Never evals.
+    """
+    n = len(stmts)
+    kw, j = _js_match_decl_kw(stmts, j)
+    if kw is None:
+        raise _JSExprFail("F814 map decl not var/let/const")
+    j = _js_skip_ws(stmts, j)
+    mname, j = _js_parse_ident(stmts, j)
+    if mname == "arguments":
+        raise _JSExprFail("F814 map named arguments")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "=")
+    j = _js_skip_ws(stmts, j)
+    k = _js_match_kw(stmts, j, "new")
+    if k is None:
+        raise _JSExprFail("F814 decl not new Map")
+    k = _js_match_kw(stmts, _js_skip_ws(stmts, k), "Map")
+    if k is None:
+        raise _JSExprFail("F814 decl not new Map")
+    k = _js_skip_ws(stmts, k)
+    if k >= n or stmts[k] != "(":
+        raise _JSExprFail("F814 new Map without paren")
+    k = _js_skip_ws(stmts, k + 1)
+    if k < n and stmts[k] == "[":
+        pairs, k = _js_parse_new_map_head(stmts, j, depth, state)
+    elif k < n and stmts[k] == ")":
+        pairs = []
+        k = k + 1
+    else:
+        raise _JSExprFail("F814 new Map arg not array or empty")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ";")
+    return mname, pairs, k
+
+
+def _js_parse_f814_set_tail(stmts, j, mname, pairs, state):
+    """Parse one `M.set('K','V');` tail at stmts[j] (F814).
+
+    M must name the bound Map; key and value are string literals
+    (F746 parity); later-wins on duplicate keys (node-exact
+    SameValueZero -- string keys only here, so ("s", k)). Returns
+    (pairs, next_index) just past `;`, or None when stmts[j] is not
+    a set-tail head. Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, j)
+    if j >= n or stmts[j] not in _JS_IDENT_START:
+        return None
+    sname, q = _js_parse_ident(stmts, j)
+    if sname != mname:
+        return None
+    q = _js_skip_ws(stmts, q)
+    if q >= n or stmts[q] != ".":
+        return None
+    mn, q = _js_parse_ident(stmts, _js_skip_ws(stmts, q + 1))
+    if mn != "set":
+        raise _JSExprFail("F814 map member not set")
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, "(")
+    q = _js_skip_ws(stmts, q)
+    if q >= n or stmts[q] not in "'\"":
+        raise _JSExprFail("F814 set key not a string")
+    skey, q = _js_parse_string(stmts, q)
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, ",")
+    q = _js_skip_ws(stmts, q)
+    if q >= n or stmts[q] not in "'\"":
+        raise _JSExprFail("F814 set value not a string")
+    sval, q = _js_parse_string(stmts, q)
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, ")")
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, ";")
+    kid = ("s", skey)
+    for idx, (ekid, _ek, _ev) in enumerate(pairs):
+        if ekid == kid:
+            pairs[idx] = (kid, skey, sval)
+            break
+    else:
+        pairs.append((kid, skey, sval))
+    state["parts"] += 1  # the mutation is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return pairs, q
+
+
+def _js_parse_f814_forof_head(stmts, j, mname, acc):
+    """Parse `for(var|let [A,B] of MNAME)` at stmts[j] (F814).
+
+    Returns (aname, bname, next_index) just past `)`. `const` fails
+    closed (F746 precedent -- documented residual); exactly two
+    destructured idents (a `[A]`-only destructure is a documented
+    residual); the iterated ident must name the bound Map; the
+    destructured names must not shadow the accumulator, the map, or
+    `arguments`, and A != B. Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, j)
+    k = _js_match_kw(stmts, j, "for")
+    if k is None:
+        raise _JSExprFail("F814 not a for-of")
+    j = _js_skip_ws(stmts, k)
+    j = _js_expect(stmts, j, "(")
+    j = _js_skip_ws(stmts, j)
+    dkw = _js_match_kw(stmts, j, "var")
+    if dkw is None:
+        dkw = _js_match_kw(stmts, j, "let")
+    if dkw is None:
+        raise _JSExprFail("F814 for-of decl not var/let")
+    j = _js_skip_ws(stmts, dkw)
+    if j >= n or stmts[j] != "[":
+        raise _JSExprFail("F814 for-of not pair destructuring")
+    j = _js_skip_ws(stmts, j + 1)
+    aname, j = _js_parse_ident(stmts, j)
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ",")
+    j = _js_skip_ws(stmts, j)
+    bname, j = _js_parse_ident(stmts, j)
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "]")
+    if aname == bname:
+        raise _JSExprFail("F814 destructured names not distinct")
+    for _nm in (aname, bname):
+        if _nm in (acc, mname, "arguments"):
+            raise _JSExprFail("F814 loop var shadows")
+    j = _js_skip_ws(stmts, j)
+    o = _js_match_kw(stmts, j, "of")
+    if o is None:
+        raise _JSExprFail("F814 for-of without of")
+    j = _js_skip_ws(stmts, o)
+    rname, j = _js_parse_ident(stmts, j)
+    if rname != mname:
+        raise _JSExprFail("F814 for-of over another ident")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ")")
+    return aname, bname, j
+
+
+def _js_parse_f814_map_forof_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const M=new Map([[...]]);[M.set('K','V');]*var|let S='';for(var|let [A,B] of M)S+=A|B;return S;})()` (F814).
+
+    F814 (LOW, wave-385 attack round 53): the decoder has no
+    Map-iteration production for `for(var [k,v] of map)` -- F746
+    (CLOSED) models `for(var v of m.values())` accumulation and
+    F712 (CLOSED) models var-bound Map iteration reads in the
+    return additive, but a for-of loop destructuring `[k,v]` pairs
+    over the bare Map has no production:
+    `(function(){var m=new Map([['a','f1'],['b','f2']]);var
+    s='';for(var [k,v] of m)s+=v;return s;})()` and the
+    `m.set(...)` twin both node-evaluate (v24.20.0) to the exact
+    credential while the decoder produces zero variants.
+
+    Node-exact desugar (v24.20.0): the Map entries are engine-exact
+    (`_js_parse_new_map_head` / F746 set-tail grammar -- string
+    literal keys/values, later-wins, insertion order); the for-of
+    iterates entries in insertion order destructuring each `[key,
+    value]` pair; `S+=A`/`S=S+A` accumulates the key per iteration
+    and `S+=B`/`S=S+B` the value (numeric keys fail closed via the
+    F711 _JSNumStr guard -- the engine stringifies them, but the
+    decoder's integer discipline refuses rather than widen).
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-Map declaration, `m.set` with non-literal args, a
+    reassigned map, `const` loop var (F746 precedent), a non-pair
+    destructure (`[A]`-only, nested patterns, defaults), iterating
+    `m.entries()`/another ident (documented residuals -- bare `m`
+    only), a body that is not `S+=A|B` / `S=S+A|B`, a non-empty
+    accumulator initializer, `const` accumulator, a return that is
+    not the accumulator, trailing statements, non-empty call args.
+    Tried after F746: F746 requires a `class` declaration head and
+    F712 requires a bare return additive (no statements), so no
+    previously-decoded input changes behavior (red-first verified:
+    2 BREAK on the open tree). The F746 hook and its trailing
+    `return` are untouched (wave-379 lesson). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            return None
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        # var|let|const M=new Map(...);
+        mname, pairs, sj = _js_parse_f814_map_decl(stmts, sj, depth,
+                                                   state)
+        state["parts"] += 1  # the map binding is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        # (M.set('K','V');)*
+        while True:
+            _st = _js_parse_f814_set_tail(stmts, sj, mname, pairs,
+                                          state)
+            if _st is None:
+                break
+            pairs, sj = _st
+        # var|let S='';
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, _js_skip_ws(stmts,
+                                                               sj))
+        if acc == mname:
+            raise _JSExprFail("F814 accumulator shadows map")
+        # for(var|let [A,B] of M)
+        aname, bname, sj = _js_parse_f814_forof_head(
+            stmts, sj, mname, acc)
+        # Body: `S+=X;` / `S=S+X;`, optionally braced (F746 parity).
+        sj = _js_skip_ws(stmts, sj)
+        braced = False
+        if sj < len(stmts) and stmts[sj] == "{":
+            braced = True
+            sj = _js_skip_ws(stmts, sj + 1)
+        sj = _js_skip_ws(stmts, sj)
+        _sname, sj = _js_parse_ident(stmts, sj)
+        if _sname != acc:
+            raise _JSExprFail("F814 accum body not S+=X")
+        sj = _js_skip_ws(stmts, sj)
+        if (sj + 1 < len(stmts) and stmts[sj] == "+"
+                and stmts[sj + 1] == "="):
+            sj = _js_skip_ws(stmts, sj + 2)
+        elif sj < len(stmts) and stmts[sj] == "=":
+            sj = _js_skip_ws(stmts, sj + 1)
+            _sname2, sj = _js_parse_ident(stmts, sj)
+            if _sname2 != acc:
+                raise _JSExprFail("F814 accum body not S=S+X")
+            sj = _js_skip_ws(stmts, sj)
+            if sj >= len(stmts) or stmts[sj] != "+":
+                raise _JSExprFail("F814 accum body not S=S+X")
+            sj = _js_skip_ws(stmts, sj + 1)
+        else:
+            raise _JSExprFail("F814 accum body not S+=X")
+        xname, sj = _js_parse_ident(stmts, sj)
+        if xname == aname:
+            use_key = True
+        elif xname == bname:
+            use_key = False
+        else:
+            raise _JSExprFail("F814 accum body wrong var")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        if braced:
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, "}")
+        # Accumulate over the entries in insertion order.
+        aval = ""
+        for (kid, kkey, vval) in pairs:
+            if use_key:
+                if kid[0] == "n":
+                    raise _JSExprFail("F814 numeric key fails closed")
+                _piece = kkey
+            else:
+                _piece = vval
+            if len(aval) + len(_piece) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F814 accum too long")
+            aval = aval + _piece
+            state["parts"] += 1  # F452: charge per iteration
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        state["ops"] += 1  # the for-of is obfuscation-shaped
+        # return S(+'LIT')*;
+        sj = _js_skip_ws(stmts, sj)
+        rk = _js_match_kw(stmts, sj, "return")
+        if rk is None:
+            raise _JSExprFail("F814 body not return")
+        sj = _js_skip_ws(stmts, rk)
+        tname, sj = _js_parse_ident(stmts, sj)
+        if tname != acc:
+            raise _JSExprFail("F814 return not the accum")
+        val = aval
+        sj = _js_skip_ws(stmts, sj)
+        while sj < len(stmts) and stmts[sj] == "+":
+            sj = _js_skip_ws(stmts, sj + 1)
+            if sj >= len(stmts) or stmts[sj] not in "'\"":
+                raise _JSExprFail("F814 tail not a literal")
+            _tail, sj = _js_parse_string(stmts, sj)
+            if len(val) + len(_tail) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F814 concat too long")
+            val = val + _tail
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1
+            sj = _js_skip_ws(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        if _js_skip_ws(stmts, sj) != len(stmts):
+            raise _JSExprFail("F814 trailing statements")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f712_map_iter_iife(text, i, depth, state):
     """Parse `(function(){[DECL M=new Map([[...]]);]* return ADD;})()`
     with var-bound Map iteration reads at text[i] (F712).
@@ -50109,6 +50413,357 @@ def _js_parse_f774_gopd_read_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f813_capture_decl(stmts, j, env, depth, state):
+    """Parse `var|let|const D=Object.getOwnPropertyDescriptor(TARGET,KEY);`
+    at stmts[j] (F813).
+
+    TARGET is an inline accessor-aware object literal or an env-bound
+    _JSObj; KEY is a string literal. Captures the own-property value
+    into env[D] as ("desc", value): a data property captures its str
+    value; an accessor property captures the _JSAccessor itself (the
+    re-installation re-binds the getter, so the getter must survive
+    the capture -- including F738 _JSThisMember markers, which
+    _jsobj_lookup resolves against the read's receiver, exactly like
+    the engine binds `this` to the receiver). Own-property only
+    (engine-exact: a missing key makes gopd yield undefined and the
+    later defineProperty throw TypeError -- fail closed).
+    _JSNumStr, bare _JSThisMember, and non-string non-accessor values
+    fail closed (F711 / F774 discipline); extra call args fail closed
+    (the F549 precedent -- the engine ignores them, the narrow
+    grammar refuses). Returns (dname, next_index) just past `;`, or
+    None when stmts[j] is not a descriptor-capture head (the caller
+    falls through); once the `getOwnPropertyDescriptor` member
+    commits the parse, malformed shapes raise _JSExprFail. Never
+    evals.
+    """
+    n = len(stmts)
+    kw, j = _js_match_decl_kw(stmts, j)
+    if kw is None:
+        return None
+    j = _js_skip_ws(stmts, j)
+    dname, j = _js_parse_ident(stmts, j)
+    if dname == "arguments" or dname in env:
+        raise _JSExprFail("F813 descriptor rebinding")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "=")
+    j = _js_skip_ws(stmts, j)
+    if not stmts.startswith("Object", j):
+        return None
+    k = j + len("Object")
+    if k < n and stmts[k] in _JS_IDENT_CONT:
+        return None  # Objectx -- not our head
+    k = _js_skip_ws(stmts, k)
+    if k >= n or stmts[k] != ".":
+        return None
+    k = _js_skip_ws(stmts, k + 1)
+    m = _js_match_kw(stmts, k, "getOwnPropertyDescriptor")
+    if m is None:
+        return None
+    # The member commits the parse: malformed shapes fail closed.
+    k = _js_skip_ws(stmts, m)
+    if k >= n or stmts[k] != "(":
+        raise _JSExprFail("F813 gopd without paren")
+    k = _js_skip_ws(stmts, k + 1)
+    if k < n and stmts[k] == "{":
+        props, k = _js_parse_f535_object(stmts, k, depth, state,
+                                         accessor_aware=True)
+        target = _JSObj(props)
+    elif k < n and stmts[k] in _JS_IDENT_START:
+        tname, k = _js_parse_ident(stmts, k)
+        if tname not in env or not isinstance(env[tname], _JSObj):
+            raise _JSExprFail("F813 gopd target not a bound object")
+        target = env[tname]
+    else:
+        raise _JSExprFail("F813 gopd target not an object")
+    k = _js_skip_ws(stmts, k)
+    if k >= n or stmts[k] != ",":
+        raise _JSExprFail("F813 gopd without key")
+    k = _js_skip_ws(stmts, k + 1)
+    if k >= n or stmts[k] not in "'\"":
+        raise _JSExprFail("F813 gopd key not a literal")
+    key, k = _js_parse_string(stmts, k)
+    k = _js_skip_ws(stmts, k)
+    if k >= n or stmts[k] != ")":
+        raise _JSExprFail("F813 gopd extra args")
+    k = k + 1
+    if key not in target.props:
+        raise _JSExprFail("F813 gopd missing key")
+    raw = target.props[key]
+    if isinstance(raw, _JSAccessor):
+        captured = raw
+    elif isinstance(raw, str) and not isinstance(raw, _JSNumStr):
+        captured = raw
+    else:
+        raise _JSExprFail("F813 descriptor value not decodable")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ";")
+    env[dname] = ("desc", captured)
+    state["ops"] += 1  # the descriptor capture is obfuscation-shaped
+    return dname, k
+
+
+def _js_parse_f813_reinstall_stmt(stmts, j, env, state):
+    """Parse `Object.defineProperty(ONAME,'KEY',DNAME);` at stmts[j] (F813).
+
+    ONAME must be env-bound to a _JSObj, KEY a string literal
+    (`__proto__` fails closed, F550 parity), DNAME an env-bound F813
+    descriptor capture. The install effect is engine-exact: the
+    target gains KEY -> the captured value (a data value installs as
+    a data property; a captured _JSAccessor re-installs the getter,
+    so later reads invoke it). The target is re-bound to a fresh
+    _JSObj (copy-on-install, F550 parity -- the captured descriptor
+    must survive even when ONAME is also the capture source).
+    Exactly three arguments; dot form only (`Object['defineProperty']`
+    fails closed, F550's documented residual). Returns next_index
+    just past `;`, or None when stmts[j] is not a reinstall head;
+    once the `defineProperty` member commits the parse, malformed
+    shapes raise _JSExprFail. Never evals.
+    """
+    n = len(stmts)
+    if not stmts.startswith("Object", j):
+        return None
+    k = j + len("Object")
+    if k < n and stmts[k] in _JS_IDENT_CONT:
+        return None  # Objectx -- not our head
+    k = _js_skip_ws(stmts, k)
+    if k >= n or stmts[k] != ".":
+        return None
+    k = _js_skip_ws(stmts, k + 1)
+    m = _js_match_kw(stmts, k, "defineProperty")
+    if m is None:
+        return None
+    # The member commits the parse: malformed shapes fail closed.
+    k = _js_skip_ws(stmts, m)
+    if k >= n or stmts[k] != "(":
+        raise _JSExprFail("F813 defineProperty without paren")
+    k = _js_skip_ws(stmts, k + 1)
+    if k >= n or stmts[k] not in _JS_IDENT_START:
+        raise _JSExprFail("F813 defineProperty target not an ident")
+    oname, k = _js_parse_ident(stmts, k)
+    if oname not in env or not isinstance(env[oname], _JSObj):
+        raise _JSExprFail("F813 defineProperty target not a bound object")
+    k = _js_skip_ws(stmts, k)
+    if k >= n or stmts[k] != ",":
+        raise _JSExprFail("F813 defineProperty without key")
+    k = _js_skip_ws(stmts, k + 1)
+    if k >= n or stmts[k] not in "'\"":
+        raise _JSExprFail("F813 defineProperty key not a literal")
+    key, k = _js_parse_string(stmts, k)
+    if key == "__proto__":
+        raise _JSExprFail("F813 __proto__ key fails closed")
+    k = _js_skip_ws(stmts, k)
+    if k >= n or stmts[k] != ",":
+        raise _JSExprFail("F813 defineProperty without descriptor")
+    k = _js_skip_ws(stmts, k + 1)
+    if k >= n or stmts[k] not in _JS_IDENT_START:
+        raise _JSExprFail("F813 defineProperty descriptor not a name")
+    dname, k = _js_parse_ident(stmts, k)
+    if dname not in env or not (isinstance(env[dname], tuple)
+                                and env[dname][0] == "desc"):
+        raise _JSExprFail("F813 defineProperty descriptor not captured")
+    k = _js_skip_ws(stmts, k)
+    if k >= n or stmts[k] != ")":
+        raise _JSExprFail("F813 defineProperty extra args")
+    k = _js_skip_ws(stmts, k + 1)
+    k = _js_expect(stmts, k, ";")
+    _captured = env[dname][1]
+    _new_props = dict(env[oname].props)
+    _new_props[key] = _captured
+    env[oname] = _JSObj(_new_props, env[oname].proto)
+    state["ops"] += 1  # the re-installation is obfuscation-shaped
+    return k
+
+
+def _js_parse_f813_return_term(stmts, j, env, state):
+    """Parse one F813 return-additive term at stmts[j].
+
+    A term is a string literal, or a member read `ONAME.key` /
+    `ONAME['key']` on an env-bound _JSObj resolved via _jsobj_lookup
+    (getters unwrap, F738 this-members resolve against the receiver,
+    _JSNumStr raises via the F711 guard -- all engine-exact). A
+    missing key fails closed (a laundering shape reading a missing
+    key recovers no credential). Returns (term_string, next_index),
+    or None when stmts[j] is not a term head. Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, j)
+    if j < n and stmts[j] in "'\"":
+        return _js_parse_string(stmts, j)
+    if j >= n or stmts[j] not in _JS_IDENT_START:
+        return None
+    oname, k = _js_parse_ident(stmts, j)
+    if oname not in env or not isinstance(env[oname], _JSObj):
+        return None
+    k = _js_skip_ws(stmts, k)
+    if k < n and stmts[k] == ".":
+        k = _js_skip_ws(stmts, k + 1)
+        key, k = _js_parse_ident(stmts, k)
+    elif k < n and stmts[k] == "[":
+        key, k = _js_parse_bracket_member(stmts, k)
+    else:
+        return None
+    val = _jsobj_lookup(env[oname], key)
+    if val is None:
+        raise _JSExprFail("F813 return term missing key")
+    if not isinstance(val, str) or isinstance(val, _JSNumStr):
+        raise _JSExprFail("F813 return term not a string")
+    return val, k
+
+
+def _js_parse_f813_gopd_reinstall_iife(text, i, depth, state):
+    """Parse `(function(){DECL;+ STMT;+ return ADD;})()` at text[i] (F813).
+
+    F813 (LOW, wave-385 attack round 53): F774 (CLOSED) models
+    `Object.getOwnPropertyDescriptor(o,'k').value` reads on var-bound
+    objects, but re-installing a captured descriptor via
+    `Object.defineProperty` has no production:
+    `(function(){var o={};var
+    d=Object.getOwnPropertyDescriptor({k:'f1'},'k');Object.defineProperty(o,'k',d);return
+    o.k+'f2';})()` and the accessor twin `(function(){var o={get
+    k(){return 'f1';}};var
+    d=Object.getOwnPropertyDescriptor(o,'k');var
+    o2={};Object.defineProperty(o2,'k',d);return o2.k+'f2';})()`
+    both node-evaluate (v24.20.0) to the exact credential while the
+    decoder produces zero variants.
+
+    Node-exact desugar (v24.20.0): each `var|let|const NAME={...};`
+    binds an accessor-aware object literal (F774 parity --
+    `__proto__` fails closed, duplicate keys later-wins); each
+    `var|let|const
+    D=Object.getOwnPropertyDescriptor(TARGET,'KEY');` captures the
+    own-property value (data: the str; accessor: the _JSAccessor,
+    preserved so the re-installation re-binds the getter); each
+    `Object.defineProperty(ONAME,'KEY',DNAME);` installs the captured
+    value on the bound target (copy-on-install); the return is a
+    `+`-joined additive of string literals and member reads on
+    env-bound objects (F671 term discipline: parts/ops charged,
+    `_MAX_DECODE_BYTES` bound).
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a named
+    function, parameters, a directive prologue, an unbound or
+    non-object capture target, a non-literal key, a missing key, a
+    _JSNumStr / non-string descriptor value, a `__proto__`
+    install key, a non-captured descriptor name, `set`-only
+    descriptors (reads yield undefined -- not decodable, F591
+    parity), extra call args, `Object['defineProperty']` bracket
+    heads, reassignment, rebinding, a binding named `arguments`,
+    non-empty call args. Residuals (documented, not silently
+    absorbed): the defineProperty return value used as an
+    expression; `?.` optional chains on the capture; symbol-keyed
+    descriptors. Tried after F774: every accepted shape carries a
+    `var D=Object.getOwnPropertyDescriptor(` decl head or an
+    `Object.defineProperty(IDENT,'lit',DNAME);` statement head,
+    which no earlier route accepts (F774's decl grammar binds only
+    object literals and its return terms are `.value` reads;
+    red-first verified: 2 BREAK on the open tree). None falls
+    through to the F775 route. The F774 hook and its trailing
+    `return` are untouched (wave-379 lesson). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_f655_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        env = {}
+        saw_capture = False
+        # DECL;+ -- object literals and descriptor captures, any order.
+        while True:
+            _cap = _js_parse_f813_capture_decl(stmts, sj, env, depth,
+                                               state)
+            if _cap is not None:
+                sj = _cap[1]
+                saw_capture = True
+                state["parts"] += 1  # each declaration is
+                # obfuscation-shaped
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                continue
+            _kw, m = _js_match_decl_kw(stmts, sj)
+            if _kw is None:
+                break
+            sj = _js_skip_ws(stmts, m)
+            name, sj = _js_parse_ident(stmts, sj)
+            if name == "arguments":
+                raise _JSExprFail("F813 binding named arguments")
+            if name in env:
+                raise _JSExprFail("F813 rebinding")
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, "=")
+            sj = _js_skip_ws(stmts, sj)
+            if sj >= len(stmts) or stmts[sj] != "{":
+                return None  # not an object literal -- not our shape
+            props, sj = _js_parse_f535_object(stmts, sj, depth + 1,
+                                              state,
+                                              accessor_aware=True)
+            env[name] = _JSObj(props)
+            state["ops"] += 1  # each declaration is obfuscation-shaped
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, ";")
+        if not saw_capture:
+            return None
+        # STMT;+ -- at least one re-installation.
+        saw_reinstall = False
+        while True:
+            _rs = _js_parse_f813_reinstall_stmt(
+                stmts, _js_skip_ws(stmts, sj), env, state)
+            if _rs is None:
+                break
+            sj = _rs
+            saw_reinstall = True
+            state["parts"] += 1  # each statement is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        if not saw_reinstall:
+            return None
+        # return ADD;
+        sj = _js_skip_ws(stmts, sj)
+        m = _js_match_kw(stmts, sj, "return")
+        if m is None:
+            return None
+        sj = _js_skip_ws(stmts, m)
+        total = None
+        while True:
+            _t813 = _js_parse_f813_return_term(stmts, sj, env, state)
+            if _t813 is None:
+                raise _JSExprFail("F813 return term not modeled")
+            term, sj = _t813
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            state["ops"] += 1  # each additive term is obfuscation-shaped
+            sj = _js_skip_ws(stmts, sj)
+            if sj < len(stmts) and stmts[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        sj = _js_skip_ws(stmts, sj)
+        if sj != len(stmts):
+            raise _JSExprFail("F813 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return _js_parse_postfix(text, j, total, depth, state)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f775_getproto_term(text, j, env, depth, state):
     """Parse one F775 `Object.getPrototypeOf(IDENT).MEMBER` term.
 
@@ -75284,6 +75939,23 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f746 is not None:
             val, i = _f746
             return _js_parse_postfix(text, i, val, depth, state)
+        # F814: (function(){var|let|const M=new Map([[...]]);
+        #   [M.set('K','V');]*var|let S='';for(var|let [A,B] of
+        #   M)S+=A|B;return S;})() -- for-of Map pair-destructuring
+        #   accumulation. Tried after F746: F746 requires a `class`
+        #   declaration head and F712 requires a bare return
+        #   additive (no statements), so no previously-decoded input
+        #   changes behavior (red-first verified: 2 BREAK on the
+        #   open tree). The F746 hook and its trailing `return`
+        #   are untouched (wave-379 lesson).
+        _f814_saved_parts = state['parts']; _f814_saved_ops = state['ops']
+        _f814 = _js_parse_f814_map_forof_iife(text, i, depth,
+                                             state)
+        if _f814 is None:
+            state['parts'] = _f814_saved_parts; state['ops'] = _f814_saved_ops
+        if _f814 is not None:
+            val, i = _f814
+            return _js_parse_postfix(text, i, val, depth, state)
         # F735/F736: (function(){[STMT;]* return TERM;})() with
         #   nested-function fragment sources -- `function
         #   G(){return ADD;}` declarations / `var G=function(){...};`
@@ -76310,6 +76982,26 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f774_saved_parts; state['ops'] = _f774_saved_ops
         if _f774 is not None:
             val, i = _f774
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F813: (function(){DECL;+ STMT;+ return ADD;})() --
+        #   descriptor re-installation reads
+        #   (`var D=Object.getOwnPropertyDescriptor(T,'K');` +
+        #   `Object.defineProperty(O,'K2',D);`). Tried after F774:
+        #   every accepted shape carries a
+        #   `var D=Object.getOwnPropertyDescriptor(` decl head or an
+        #   `Object.defineProperty(IDENT,'lit',DNAME);` statement head,
+        #   which no earlier route accepts (F774's decl grammar binds
+        #   only object literals and its return terms are `.value`
+        #   reads; red-first verified: 2 BREAK on the open tree).
+        #   None falls through to the F775 route. The F774 hook and
+        #   its trailing `return` are untouched (wave-379 lesson).
+        _f813_saved_parts = state['parts']; _f813_saved_ops = state['ops']
+        _f813 = _js_parse_f813_gopd_reinstall_iife(text, i, depth,
+                                                   state)
+        if _f813 is None:
+            state['parts'] = _f813_saved_parts; state['ops'] = _f813_saved_ops
+        if _f813 is not None:
+            val, i = _f813
             return _js_parse_postfix(text, i, val, depth, state)
         # F775: (function(){DECL;+ [STMT;*] return ADD;})() --
         #   explicit Object.getPrototypeOf(o).x member reads.

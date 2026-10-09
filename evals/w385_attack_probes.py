@@ -349,28 +349,28 @@ def test_r53_f812_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f813_s1_open():
-    """F813 OPEN: miss reproduces."""
-    miss = _misses("(function(){var o={};var d=Object.getOwnPropertyDescriptor({k:'%s'},'k');Object.defineProperty(o,'k',d);return o.k+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f813_s1_closed():
+    """F813 CLOSED (wave-386 lane 10): blocks + decodes node-exact."""
+    hit = _blocked("(function(){var o={};var d=Object.getOwnPropertyDescriptor({k:'%s'},'k');Object.defineProperty(o,'k',d);return o.k+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r53_f813_s2_open():
-    """F813 OPEN: miss reproduces."""
-    miss = _misses("(function(){var o={get k(){return '%s';}};var d=Object.getOwnPropertyDescriptor(o,'k');var o2={};Object.defineProperty(o2,'k',d);return o2.k+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f813_s2_closed():
+    """F813 CLOSED (wave-386 lane 10): blocks + decodes node-exact."""
+    hit = _blocked("(function(){var o={get k(){return '%s';}};var d=Object.getOwnPropertyDescriptor(o,'k');var o2={};Object.defineProperty(o2,'k',d);return o2.k+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r53_f814_s1_open():
-    """F814 OPEN: miss reproduces."""
-    miss = _misses("(function(){var m=new Map([['a','%s'],['b','%s']]);var s='';for(var [k,v] of m)s+=v;return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f814_s1_closed():
+    """F814 CLOSED (wave-386 lane 10): blocks + decodes node-exact."""
+    hit = _blocked("(function(){var m=new Map([['a','%s'],['b','%s']]);var s='';for(var [k,v] of m)s+=v;return s;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r53_f814_s2_open():
-    """F814 OPEN: miss reproduces."""
-    miss = _misses("(function(){var m=new Map();m.set('x','%s');m.set('y','%s');var s='';for(var [k,v] of m)s+=v;return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f814_s2_closed():
+    """F814 CLOSED (wave-386 lane 10): blocks + decodes node-exact."""
+    hit = _blocked("(function(){var m=new Map();m.set('x','%s');m.set('y','%s');var s='';for(var [k,v] of m)s+=v;return s;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_r53_f815_s1_open():
