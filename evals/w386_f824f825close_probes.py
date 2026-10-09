@@ -205,6 +205,16 @@ def test_p2_f824_inf():
 
 
 @_t
+def test_p2_f824_negzero():
+    """SOFT-1 (spec review): -0 is not a throw (node: -0 >= 0) --
+    drop(-0)/drop(-0.0)/drop("-0") keep the credential (blocked);
+    -1/-0.5/- still throw (quiet)."""
+    ok = all(_blocked(_drop(a)) for a in ("-0", "-0.0", '"-0"'))
+    ok = ok and all(_misses(_drop(a)) for a in ("-1", "-0.5", "-"))
+    return ("HELD" if ok else "BREAK", "negzero")
+
+
+@_t
 def test_p3_f824_throws():
     """Engine-throws args fail closed: -1, "-1", "abc", "1_0",
     "NaN" (RangeError -- !(n >= 0), node-verified)."""
