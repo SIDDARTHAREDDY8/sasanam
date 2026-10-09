@@ -58977,6 +58977,584 @@ def _js_f896_exec_read_loop(text, j, views, acc_name, state):
     return "".join(out), j
 
 
+def _js_parse_f93x_empty_obj_decl(stmts, j):
+    """Parse `var|let|const NAME={};` at stmts[j] (F930).
+
+    Returns (name, next_index) just past the `;`. Never evals.
+    """
+    kw, j = _js_match_decl_kw(stmts, j)
+    if kw is None:
+        raise _JSExprFail("F930 obj decl not var/let/const")
+    j = _js_skip_ws(stmts, j)
+    name, j = _js_parse_ident(stmts, j)
+    j = _js_expect(stmts, j, "=")
+    j = _js_expect(stmts, j, "{")
+    j = _js_expect(stmts, j, "}")
+    j = _js_expect(stmts, j, ";")
+    return name, j
+
+
+def _js_parse_f930_symbol_iterator_assign(stmts, j, oname, state):
+    """Parse `O[Symbol.iterator]=function* NAME?(){yield 'LIT';...;};` (F930).
+
+    The generator body must contain ONLY `yield 'LIT';` statements --
+    a bare `yield;`, `yield EXPR`, `yield*`, `return`, or any other
+    statement fails closed: the modeled class has no side channels,
+    so the for-of accumulation is exactly the yield join. The
+    optional generator name is engine-irrelevant for the iteration
+    (the binding is never read in the modeled class). Generator
+    params fail closed. Returns (yields, next_index) just past the
+    `;`. Never evals.
+    """
+    n = len(stmts)
+    o2, j = _js_parse_ident(stmts, j)
+    if o2 != oname:
+        raise _JSExprFail("F930 iterator assign other object")
+    j = _js_expect(stmts, j, "[")
+    sm = _js_match_kw(stmts, _js_skip_ws(stmts, j), "Symbol")
+    if sm is None:
+        raise _JSExprFail("F930 not Symbol")
+    j = _js_expect(stmts, sm, ".")
+    mk = _js_match_kw(stmts, _js_skip_ws(stmts, j), "iterator")
+    if mk is None:
+        raise _JSExprFail("F930 not iterator")
+    j = _js_expect(stmts, mk, "]")
+    j = _js_expect(stmts, j, "=")
+    fm = _js_match_kw(stmts, _js_skip_ws(stmts, j), "function")
+    if fm is None:
+        raise _JSExprFail("F930 not a function")
+    j = _js_expect(stmts, fm, "*")
+    j = _js_skip_ws(stmts, j)
+    if j < n and stmts[j] in _JS_IDENT_START:
+        _, j = _js_parse_ident(stmts, j)
+        j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "(")
+    j = _js_expect(stmts, j, ")")
+    j = _js_expect(stmts, j, "{")
+    yields = []
+    while True:
+        j = _js_skip_ws(stmts, j)
+        if j < n and stmts[j] == "}":
+            j += 1
+            break
+        ym = _js_match_kw(stmts, j, "yield")
+        if ym is None:
+            raise _JSExprFail("F930 generator non-yield statement")
+        j = _js_skip_ws(stmts, ym)
+        if j >= n or stmts[j] not in "'\"":
+            raise _JSExprFail("F930 yield not a string literal")
+        lit, j = _js_parse_string(stmts, j)
+        j = _js_expect(stmts, j, ";")
+        yields.append(lit)
+        state["parts"] += 1  # F452: charge per yield
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+    j = _js_expect(stmts, j, ";")
+    return yields, j
+
+
+def _js_parse_f93x_forof_accum(stmts, j, acc, src, state):
+    """Parse `for(var|let|const LV of SRC){ACC+=E;}` at stmts[j] (F930/F933).
+
+    LV is a plain ident or an `[A,B]` destructuring pair (duplicate
+    names fail closed); the loop braces are optional
+    (engine-identical, F533 precedent). src is a callback
+    `(stmts, j) -> (destructured, srcinfo, next)` raising
+    _JSExprFail on mismatch; the LV form must agree with the
+    source's destructured flag. The body must read exactly
+    `ACC+=E` where E is the loop element (the plain loopvar, or
+    the pair's second name). Returns (srcinfo, next_index) just
+    past the loop. Never evals.
+    """
+    n = len(stmts)
+    fm = _js_match_kw(stmts, j, "for")
+    if fm is None:
+        raise _JSExprFail("F93x no for")
+    j = _js_expect(stmts, fm, "(")
+    kw, j = _js_match_decl_kw(stmts, _js_skip_ws(stmts, j))
+    if kw is None:
+        raise _JSExprFail("F93x loopvar not var/let/const")
+    j = _js_skip_ws(stmts, j)
+    if j < n and stmts[j] == "[":
+        j = _js_skip_ws(stmts, j + 1)
+        iname, j = _js_parse_ident(stmts, j)
+        j = _js_expect(stmts, j, ",")
+        cname, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+        j = _js_expect(stmts, j, "]")
+        if iname == cname:
+            raise _JSExprFail("F93x duplicate loop names")
+        pair = True
+        names = (iname, cname)
+    else:
+        vname, j = _js_parse_ident(stmts, j)
+        pair = False
+        names = (vname,)
+    if acc in names:
+        raise _JSExprFail("F93x loopvar shadows accum")
+    j = _js_skip_ws(stmts, j)
+    om = _js_match_kw(stmts, j, "of")
+    if om is None:
+        raise _JSExprFail("F93x no of")
+    destructured, srcinfo, j = src(stmts, _js_skip_ws(stmts, om))
+    if destructured != pair:
+        raise _JSExprFail("F93x destructure/source mismatch")
+    j = _js_expect(stmts, j, ")")
+    j = _js_skip_ws(stmts, j)
+    braced = False
+    if j < n and stmts[j] == "{":
+        braced = True
+        j = _js_skip_ws(stmts, j + 1)
+    elem = names[1] if pair else names[0]
+    a2, j = _js_parse_ident(stmts, j)
+    if a2 != acc:
+        raise _JSExprFail("F93x accum mismatch")
+    j = _js_skip_ws(stmts, j)
+    if j + 1 >= n or stmts[j] != "+" or stmts[j + 1] != "=":
+        raise _JSExprFail("F93x body not +=")
+    j = _js_skip_ws(stmts, j + 2)
+    e2, j = _js_parse_ident(stmts, j)
+    if e2 != elem:
+        raise _JSExprFail("F93x body reads another ident")
+    j = _js_expect(stmts, j, ";")
+    j = _js_skip_ws(stmts, j)
+    if braced:
+        j = _js_expect(stmts, j, "}")
+        j = _js_skip_ws(stmts, j)
+    state["parts"] += 1  # the for-of is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return srcinfo, j
+
+
+def _js_f930_ident_src(oname):
+    """Build the F930 for-of source parser: `of ONAME` (the generator-iterable object)."""
+    def _src(stmts, j):
+        a, j = _js_parse_ident(stmts, j)
+        if a != oname:
+            raise _JSExprFail("F930 iterates another object")
+        return False, None, j
+    return _src
+
+
+def _js_f933_string_src(stmts, j):
+    """For-of source parser for F933: `of 'LIT'` (for-of over a string literal)."""
+    if j >= len(stmts) or stmts[j] not in "'\"":
+        raise _JSExprFail("F933 source not a string literal")
+    lit, j = _js_parse_string(stmts, j)
+    return False, lit, j
+
+
+def _js_f933_fromentries_src(stmts, j):
+    """For-of source parser for F933: `of Array.from('LIT').entries()`.
+
+    Only the string-literal source class is modeled (the F508
+    grammar's other sources fail closed there too); the engine's
+    Array.from over a string yields its code points, so the
+    destructured `[I,C]` accumulation of C is exactly the
+    literal. A mapFn argument fails closed.
+    """
+    n = len(stmts)
+    am = _js_match_kw(stmts, j, "Array")
+    if am is None:
+        raise _JSExprFail("F933 source not Array.from")
+    j = _js_expect(stmts, am, ".")
+    fm = _js_match_kw(stmts, _js_skip_ws(stmts, j), "from")
+    if fm is None:
+        raise _JSExprFail("F933 source not Array.from")
+    j = _js_expect(stmts, fm, "(")
+    j = _js_skip_ws(stmts, j)
+    if j >= n or stmts[j] not in "'\"":
+        raise _JSExprFail("F933 Array.from not a string literal")
+    lit, j = _js_parse_string(stmts, j)
+    j = _js_expect(stmts, j, ")")
+    j = _js_expect(stmts, j, ".")
+    em = _js_match_kw(stmts, _js_skip_ws(stmts, j), "entries")
+    if em is None:
+        raise _JSExprFail("F933 source not entries()")
+    j = _js_expect(stmts, em, "(")
+    j = _js_expect(stmts, j, ")")
+    return True, lit, j
+
+
+def _js_f93x_acc_term(acc, accval):
+    """Build the F930/F933 return-additive term parser: the accumulator ident reads its computed value."""
+    def _term(s, k):
+        a, k = _js_parse_ident(s, _js_skip_ws(s, k))
+        if a != acc:
+            return None
+        return accval, k
+    return _term
+
+
+def _js_f931_message_term(ename, msgval):
+    """Build the F931 return-additive term parser: `E.message` reads the final assigned value."""
+    def _term(s, k):
+        n = len(s)
+        a, k = _js_parse_ident(s, _js_skip_ws(s, k))
+        if a != ename:
+            return None
+        k = _js_skip_ws(s, k)
+        if k >= n or s[k] != ".":
+            return None
+        k = _js_skip_ws(s, k + 1)
+        mm = _js_match_kw(s, k, "message")
+        if mm is None or (mm < n and s[mm] in _JS_IDENT_CONT):
+            return None
+        return msgval, mm
+    return _term
+
+
+def _js_f932_unbox_term(sname, sval):
+    """Build the F932 return-additive term parser: `S.valueOf()`/`S.toString()` unbox the wrapper."""
+    def _term(s, k):
+        n = len(s)
+        a, k = _js_parse_ident(s, _js_skip_ws(s, k))
+        if a != sname:
+            return None
+        k = _js_skip_ws(s, k)
+        if k >= n or s[k] != ".":
+            return None
+        k = _js_skip_ws(s, k + 1)
+        mm = _js_match_kw(s, k, "valueOf")
+        if mm is None:
+            mm = _js_match_kw(s, k, "toString")
+        if mm is None or (mm < n and s[mm] in _JS_IDENT_CONT):
+            return None
+        k = _js_expect(s, mm, "(")
+        k = _js_expect(s, k, ")")
+        return sval, k
+    return _term
+
+
+def _js_parse_f931_message_assign(stmts, j, ename):
+    """Attempt `E.message='LIT';` at stmts[j] (F931).
+
+    Returns (value, next_index) just past the `;`, or None when the
+    statement is not a message assignment. `==`/`===` comparisons
+    are not assignments (never mis-decoded as a write);
+    non-literal RHS fails closed. Never evals.
+    """
+    n = len(stmts)
+    try:
+        e2, k = _js_parse_ident(stmts, j)
+    except _JSExprFail:
+        return None
+    if e2 != ename:
+        return None
+    k = _js_skip_ws(stmts, k)
+    if k >= n or stmts[k] != ".":
+        return None
+    k = _js_skip_ws(stmts, k + 1)
+    mm = _js_match_kw(stmts, k, "message")
+    if mm is None or (mm < n and stmts[mm] in _JS_IDENT_CONT):
+        return None
+    k = _js_skip_ws(stmts, mm)
+    if k >= n or stmts[k] != "=":
+        return None
+    if k + 1 < n and stmts[k + 1] == "=":
+        return None
+    k = _js_skip_ws(stmts, k + 1)
+    if k >= n or stmts[k] not in "'\"":
+        return None
+    try:
+        lit, k = _js_parse_string(stmts, k)
+    except _JSExprFail:
+        return None
+    k = _js_skip_ws(stmts, k)
+    if k >= n or stmts[k] != ";":
+        return None
+    return lit, k + 1
+
+
+def _js_parse_f93x_return_additive(stmts, j, state, term):
+    """Parse `return TERM(+'LIT')*;` at stmts[j] through end-of-body (F930-F933).
+
+    TERM is either a string literal or the hook's special term:
+    term(stmts, j) returns (value, next) or None (a _JSExprFail
+    inside is treated as no-match). Every operand is a string, so
+    each `+` is string concatenation (node v24.20.0); `++`/`+=`
+    after a term fail closed (the engine reads them differently).
+    Returns the concatenated value. Never evals.
+    """
+    n = len(stmts)
+    rm = _js_match_kw(stmts, _js_skip_ws(stmts, j), "return")
+    if rm is None:
+        raise _JSExprFail("F93x no return")
+    j = _js_skip_ws(stmts, rm)
+    val = None
+    while True:
+        j = _js_skip_ws(stmts, j)
+        if j < n and stmts[j] in "'\"":
+            lit, j = _js_parse_string(stmts, j)
+        else:
+            try:
+                t = term(stmts, j)
+            except _JSExprFail:
+                t = None
+            if t is None:
+                raise _JSExprFail("F93x bad additive term")
+            lit, j = t
+        val = lit if val is None else val + lit
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F93x concat too long")
+        state["parts"] += 1  # F452: charge per additive operand
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(stmts, j)
+        if j < n and stmts[j] == "+":
+            if j + 1 < n and stmts[j + 1] in "+=":
+                raise _JSExprFail("F93x not additive plus")
+            j += 1
+            continue
+        break
+    j = _js_skip_ws(stmts, j)
+    if j < n and stmts[j] == ";":
+        j += 1
+    if _js_skip_ws(stmts, j) != n:
+        raise _JSExprFail("F93x trailing statements")
+    return val
+
+
+def _js_parse_f930_geniter_forof_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const O={};O[Symbol.iterator]=function* NAME?(){yield 'LIT';...;};var|let S='';for(var|let|const V of O){S+=V;}return S(+'LIT')*;})()` (F930).
+
+    Node-exact desugar (v24.20.0): for-of over O calls the
+    generator-backed O[Symbol.iterator]() once and iterates its
+    yields in order; the generator body is restricted to
+    string-literal yields (no calls, no assignments, no returns),
+    so the accumulation is exactly the yield join -- no side
+    channel can smuggle a different value. The accumulator starts
+    empty and the loop body is exactly `S+=V`. Returns
+    (value, next_index), or None on mismatch or guard failure.
+    Bounded by the part/depth budgets; the wrapper charges one op
+    (obfuscation-shaped). Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-empty object literal, non-literal yields, bare `yield;`,
+    `yield*`, generator params, reassignment of O, a loop over any
+    other object, a non-`S+=V` body, call args on the IIFE.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        oname, sj = _js_parse_f93x_empty_obj_decl(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        yields, sj = _js_parse_f930_symbol_iterator_assign(
+            stmts, sj, oname, state)
+        sj = _js_skip_ws(stmts, sj)
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        _, sj = _js_parse_f93x_forof_accum(
+            stmts, sj, acc, _js_f930_ident_src(oname), state)
+        accval = "".join(yields)
+        if len(accval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F930 yields too long")
+        val = _js_parse_f93x_return_additive(
+            stmts, sj, state, _js_f93x_acc_term(acc, accval))
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f931_error_message_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const E=new Error('LIT'|);(E.message='LIT';)+return ADD;})()` (F931).
+
+    Node-exact desugar (v24.20.0): `message` is a writable own data
+    property of Error instances; each `E.message='LIT';` replaces it
+    (last wins -- the assignments precede the return, so every
+    `E.message` read in the return additive sees the final value).
+    The constructor argument is overwritten before any read and is
+    admitted only as absent or a string literal. ADD is a `+`
+    additive of string literals and `E.message` reads, so every
+    `+` is string concatenation. Returns (value, next_index), or
+    None on mismatch or guard failure. Bounded by the part/depth
+    budgets; the wrapper charges one op (obfuscation-shaped).
+    Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    non-Error constructors, non-literal ctor args, non-literal
+    message RHS, `==`/`===` comparisons, reads of other Error
+    members (`stack`, ...), bracket-form `E['message']`, any
+    statement between the assignments and the return.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        kw, sj = _js_match_decl_kw(stmts, sj)
+        if kw is None:
+            raise _JSExprFail("F931 decl not var/let/const")
+        sj = _js_skip_ws(stmts, sj)
+        ename, sj = _js_parse_ident(stmts, sj)
+        sj = _js_expect(stmts, sj, "=")
+        nm = _js_match_kw(stmts, _js_skip_ws(stmts, sj), "new")
+        if nm is None:
+            raise _JSExprFail("F931 not new")
+        em = _js_match_kw(stmts, _js_skip_ws(stmts, nm), "Error")
+        if em is None:
+            raise _JSExprFail("F931 not new Error")
+        sj = _js_expect(stmts, em, "(")
+        sj = _js_skip_ws(stmts, sj)
+        n = len(stmts)
+        if sj < n and stmts[sj] == ")":
+            sj += 1
+        elif sj < n and stmts[sj] in "'\"":
+            _, sj = _js_parse_string(stmts, sj)
+            sj = _js_expect(stmts, sj, ")")
+        else:
+            raise _JSExprFail("F931 Error arg not a string literal")
+        sj = _js_expect(stmts, sj, ";")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        msgval = None
+        while True:
+            a = _js_parse_f931_message_assign(
+                stmts, _js_skip_ws(stmts, sj), ename)
+            if a is None:
+                break
+            msgval, sj = a
+            state["parts"] += 1  # F452: charge per assignment
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        if msgval is None:
+            raise _JSExprFail("F931 no message assignment")
+        val = _js_parse_f93x_return_additive(
+            stmts, sj, state, _js_f931_message_term(ename, msgval))
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f932_string_wrapper_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const S=new String('LIT'|);return ADD;})()` (F932).
+
+    Node-exact desugar (v24.20.0): `new String('LIT')` boxes the
+    primitive; `.valueOf()`/`.toString()` unbox to the identical
+    primitive. ADD is a `+` additive of string literals and
+    `S.valueOf()`/`S.toString()` reads, so every `+` is string
+    concatenation. Returns (value, next_index), or None on
+    mismatch or guard failure. Bounded by the part/depth budgets;
+    the wrapper charges one op (obfuscation-shaped). Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    non-literal or multiple String args, other String members
+    (`.length`, `[0]`), method args (`s.valueOf('x')`),
+    bracket-form member access, `String('LIT')` without `new`
+    (the twin that already blocks -- untouched).
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        kw, sj = _js_match_decl_kw(stmts, sj)
+        if kw is None:
+            raise _JSExprFail("F932 decl not var/let/const")
+        sj = _js_skip_ws(stmts, sj)
+        sname, sj = _js_parse_ident(stmts, sj)
+        sj = _js_expect(stmts, sj, "=")
+        nm = _js_match_kw(stmts, _js_skip_ws(stmts, sj), "new")
+        if nm is None:
+            raise _JSExprFail("F932 not new")
+        sm = _js_match_kw(stmts, _js_skip_ws(stmts, nm), "String")
+        if sm is None:
+            raise _JSExprFail("F932 not new String")
+        sj = _js_expect(stmts, sm, "(")
+        sj = _js_skip_ws(stmts, sj)
+        n = len(stmts)
+        if sj < n and stmts[sj] == ")":
+            sval = ""
+            sj += 1
+        elif sj < n and stmts[sj] in "'\"":
+            sval, sj = _js_parse_string(stmts, sj)
+            sj = _js_expect(stmts, sj, ")")
+        else:
+            raise _JSExprFail("F932 String arg not a string literal")
+        sj = _js_expect(stmts, sj, ";")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        if len(sval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F932 literal too long")
+        val = _js_parse_f93x_return_additive(
+            stmts, sj, state, _js_f932_unbox_term(sname, sval))
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f933_string_forof_iife(text, i, depth, state):
+    """Parse `(function(){var|let S='';for(var|let|const V of 'LIT'){S+=V;}return S(+'LIT')*;})()` and `(function(){var|let S='';for(var|let|const [I,C] of Array.from('LIT').entries()){S+=C;}return S(+'LIT')*;})()` (F933).
+
+    Node-exact desugar (v24.20.0): for-of over a string iterates
+    its code points, and Array.from over a string yields the same
+    code-point array (`.entries()` pairs each with its index). The
+    exact `S+=E` body (E the loop element) re-joins the code
+    points, which is the identity -- the accumulator is exactly
+    the source literal (astral characters round-trip: the
+    engine's string iterator and the decoder's literal parse agree
+    on code points, node-verified). Returns (value, next_index),
+    or None on mismatch or guard failure. Bounded by the
+    part/depth budgets; the wrapper charges one op
+    (obfuscation-shaped). Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    non-literal Array.from sources, a mapFn argument,
+    `.values()`/`.keys()` instead of `.entries()`, a
+    destructuring loopvar over the bare string source,
+    accumulating the index element, a non-`S+=E` body, call args
+    on the IIFE.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        srcinfo = None
+        sj2 = sj
+        for src in (_js_f933_string_src, _js_f933_fromentries_src):
+            try:
+                srcinfo, sj2 = _js_parse_f93x_forof_accum(
+                    stmts, sj, acc, src, state)
+                break
+            except _JSExprFail:
+                continue
+        else:
+            raise _JSExprFail("F933 no for-of source")
+        sj = sj2
+        if len(srcinfo) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F933 literal too long")
+        val = _js_parse_f93x_return_additive(
+            stmts, sj, state, _js_f93x_acc_term(acc, srcinfo))
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f896_dataview_iife(text, i, depth, state):
     """Parse the DataView non-Uint8-width IIFEs (F896).
 
@@ -96342,6 +96920,83 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f896_saved_parts; state['ops'] = _f896_saved_ops
         if _f896 is not None:
             val, i = _f896
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F930: (function(){var|let|const O={};O[Symbol.iterator]=
+        #   function* NAME?(){yield 'LIT';...;};var|let S='';
+        #   for(var|let|const V of O){S+=V;}return S(+'LIT')*;})() --
+        #   generator-backed custom Symbol.iterator consumed by
+        #   for-of accumulation. Tried after F896: F653 requires
+        #   the `var FR=[...]` frag-array head and fails closed on
+        #   `var O={}`; F619 requires a `function*` declaration
+        #   head; no earlier route binds
+        #   `O[Symbol.iterator]=function*` (the F653 assign grammar
+        #   rejects the `*`) -- red-first verified: 2 BREAK on the
+        #   open tree -- so no previously-decoded input changes
+        #   behavior. Budget snapshot/restore on miss (wave-383
+        #   lesson).
+        _f930_saved_parts = state['parts']; _f930_saved_ops = state['ops']
+        _f930 = _js_parse_f930_geniter_forof_iife(text, i, depth,
+                                                  state)
+        if _f930 is None:
+            state['parts'] = _f930_saved_parts; state['ops'] = _f930_saved_ops
+        if _f930 is not None:
+            val, i = _f930
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F931: (function(){var|let|const E=new Error('LIT'|);
+        #   (E.message='LIT';)+return ADD;})() -- post-construction
+        #   Error.message assignment reads (ADD: a `+` additive of
+        #   string literals and `E.message` reads). Tried after
+        #   F930: F671 requires an object-literal initializer and
+        #   fails closed on `new Error`; F748's statement grammar
+        #   rejects plain `=` assignments -- red-first verified: 2
+        #   BREAK on the open tree -- so no previously-decoded
+        #   input changes behavior. Budget snapshot/restore on
+        #   miss (wave-383 lesson).
+        _f931_saved_parts = state['parts']; _f931_saved_ops = state['ops']
+        _f931 = _js_parse_f931_error_message_iife(text, i, depth,
+                                                  state)
+        if _f931 is None:
+            state['parts'] = _f931_saved_parts; state['ops'] = _f931_saved_ops
+        if _f931 is not None:
+            val, i = _f931
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F932: (function(){var|let|const S=new String('LIT'|);
+        #   return ADD;})() -- String-wrapper unboxing via
+        #   `S.valueOf()`/`S.toString()` in the return additive.
+        #   Tried after F931: F611 requires a literal/atob
+        #   initializer and fails closed on `new String`; F696 owns
+        #   the parenthesized `(new String('LIT'))` primary
+        #   (disjoint head) -- red-first verified: 2 BREAK on the
+        #   open tree -- so no previously-decoded input changes
+        #   behavior. Budget snapshot/restore on miss (wave-383
+        #   lesson).
+        _f932_saved_parts = state['parts']; _f932_saved_ops = state['ops']
+        _f932 = _js_parse_f932_string_wrapper_iife(text, i, depth,
+                                                   state)
+        if _f932 is None:
+            state['parts'] = _f932_saved_parts; state['ops'] = _f932_saved_ops
+        if _f932 is not None:
+            val, i = _f932
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F933: (function(){var|let S='';for(var|let|const V of
+        #   'LIT'){S+=V;}return S(+'LIT')*;})() and
+        #   (function(){var|let S='';for(var|let|const [I,C] of
+        #   Array.from('LIT').entries()){S+=C;}return S(+'LIT')*;})()
+        #   -- for-of over string characters (and the entries()
+        #   destructuring twin). Tried after F932: F651 requires an
+        #   array-literal/bound-array iteration source and fails
+        #   closed on a bare string literal; F654's sync-iterable
+        #   sources exclude strings; F533/F594 require `arguments`
+        #   forms -- red-first verified: 3 BREAK on the open tree --
+        #   so no previously-decoded input changes behavior.
+        #   Budget snapshot/restore on miss (wave-383 lesson).
+        _f933_saved_parts = state['parts']; _f933_saved_ops = state['ops']
+        _f933 = _js_parse_f933_string_forof_iife(text, i, depth,
+                                                 state)
+        if _f933 is None:
+            state['parts'] = _f933_saved_parts; state['ops'] = _f933_saved_ops
+        if _f933 is not None:
+            val, i = _f933
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
