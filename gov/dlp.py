@@ -16471,6 +16471,7 @@ _JS_POSTFIX_METHOD_NAMES = (
     "padStart", "padEnd", "at", "toReversed", "with", "split",
     "flatMap", "sort", "trim", "trimStart", "trimEnd",
     "charAt", "normalize",  # F762/F763: string indexed read / normalize
+    "substring", "substr",  # F764
 )
 # F682: the exact JS String.prototype.trim WhiteSpace +
 # LineTerminator set (ECMAScript spec, node v24.20.0 verified):
@@ -57526,6 +57527,264 @@ def _f603_regex_all_matches(value, body):
         pos = idx + len(lit)
 
 
+_F765_MAX_STEPS = 200000
+
+_F765_CLASS_EXTRA = ".:^$+*?()!"
+
+
+def _f765_parse_class(text, j):
+    """Parse a `[...]` character class at text[j] == '[' (F765).
+
+    Returns (frozenset_of_chars, negated, next_j). Items are ASCII
+    literal chars (the F603 set plus `.:^$+*?()!`, all literal inside
+    a class in the engine) and `X-Y` ranges. Range rule (node
+    v24.20.0): after an atom X, `-` followed by a valid atom Y forms
+    the range X..Y -- X may itself be `-` (`[--0]` is the range
+    U+002D-U+0030); a `-` not followed by `-Y` is literal (leading
+    `[-a]`, trailing `[a-]`); ord(X) > ord(Y) throws in the engine
+    ("Range out of order": `[b-a]`, `[a--0]`), so that fails closed.
+    A leading `^` negates. No escapes (fail closed, F603
+    discipline); `[` inside a class and `/` anywhere fail closed.
+    `[]` never matches and `[^]` matches any char in the engine --
+    both modeled exactly (empty char set, negation flag). Never
+    evals.
+    """
+    n = len(text)
+    j += 1
+    neg = False
+    if j < n and text[j] == "^":
+        neg = True
+        j += 1
+
+    def _litok(c):
+        return (c.isascii()
+                and (c.isalnum() or c in " _-," + _F765_CLASS_EXTRA
+                     or c == ":"))
+
+    chars = set()
+    while j < n and text[j] != "]":
+        c = text[j]
+        if c in "\\[/":
+            raise _JSExprFail("F765 class escape/nest/slash not modeled")
+        if not _litok(c):
+            raise _JSExprFail("F765 class char not modeled")
+        # Range X-Y? X is c; needs '-' next and a valid atom Y after.
+        # (A '-' not followed by '-Y' stays literal.)
+        if (j + 2 < n and text[j + 1] == "-" and text[j + 2] != "]"
+                and text[j + 2] != "/"):
+            d = text[j + 2]
+            if d in "\\[/":
+                raise _JSExprFail(
+                    "F765 class escape/nest/slash not modeled")
+            if not _litok(d):
+                raise _JSExprFail("F765 class char not modeled")
+            if ord(c) > ord(d):
+                raise _JSExprFail("F765 class range out of order")
+            for o in range(ord(c), ord(d) + 1):
+                chars.add(chr(o))
+            j += 3
+        else:
+            chars.add(c)
+            j += 1
+    if j >= n:
+        raise _JSExprFail("F765 unterminated class")
+    return frozenset(chars), neg, j + 1
+
+
+def _f765_parse_terms(text, j, in_group):
+    """Parse F765 regex terms at text[j] (F765).
+
+    Stops at `/` (top level) or `)` (in_group). Returns
+    (atoms, next_j, groups). Atoms: ("lit", ch) / ("class",
+    frozenset, negated) / ("group", [subatoms], gidx) / ("plus",
+    term). `+` needs a preceding term (the engine throws on `a++`
+    and on a leading `+`); groups nest at most one level; `*`, `?`,
+    `|`, `^`/`$` anchors, escapes, and backreferences fail closed.
+    Never evals.
+    """
+    n = len(text)
+    atoms = []
+    groups = []
+    while j < n and text[j] != "/" and (not in_group or text[j] != ")"):
+        c = text[j]
+        if c == "(":
+            if in_group:
+                raise _JSExprFail("F765 nested group not modeled")
+            sub, j, _subgroups = _f765_parse_terms(text, j + 1, True)
+            if j >= n or text[j] != ")":
+                raise _JSExprFail("F765 unterminated group")
+            if not sub:
+                raise _JSExprFail("F765 empty group")
+            j += 1
+            gidx = len(groups)
+            groups.append(True)
+            atoms.append(("group", sub, gidx))
+        elif c == "[":
+            cls, neg, j = _f765_parse_class(text, j)
+            atoms.append(("class", cls, neg))
+        elif c == "+":
+            if not atoms or atoms[-1][0] == "plus":
+                raise _JSExprFail("F765 bad quantifier")
+            atoms[-1] = ("plus", atoms[-1])
+            j += 1
+        elif c in "*?|^$\\":
+            raise _JSExprFail("F765 regex atom not modeled")
+        elif c.isascii() and (c.isalnum() or c in " _-,"
+                              or c == ":"):
+            # NOTE: '.' is deliberately ABSENT from the literal set
+            # above: outside a class it is the engine's any-char
+            # metachar, so it falls through to the else below and
+            # fails closed.
+            atoms.append(("lit", c))
+            j += 1
+        else:
+            raise _JSExprFail("F765 regex char not modeled")
+    return atoms, j, groups
+
+
+def _js_parse_f765_regex_literal(text, i):
+    """Parse a bounded char-class regex `/source/flags` at text[i] (F765).
+
+    The source admits ASCII literals (the F603 set, minus `.` which
+    is the engine's any-char), `[...]` classes (see
+    _f765_parse_class), the `+` quantifier on a single literal /
+    class / group, and one level of `(...)` capture groups. Returns
+    (atoms, flags, next_index). The body must be non-empty (`//`
+    opens a line comment in the engine). Flags are trailing ASCII
+    letters; the caller decides which flag sets are modeled.
+    Hand-parsed: no new regexes. Never evals.
+    """
+    n = len(text)
+    if i >= n or text[i] != "/":
+        raise _JSExprFail("F765 needs regex literal")
+    atoms, j, _groups = _f765_parse_terms(text, i + 1, False)
+    if not atoms:
+        raise _JSExprFail("F765 empty regex body")
+    if j >= n or text[j] != "/":
+        raise _JSExprFail("F765 unterminated regex")
+    j += 1
+    flags = []
+    while j < n and text[j].isascii() and text[j].isalpha():
+        flags.append(text[j])
+        j += 1
+    return atoms, "".join(flags), j
+
+
+def _f765_count_groups(atoms):
+    """Count capture groups in F765 atoms (top level + plus-wrapped)."""
+    n = 0
+    for a in atoms:
+        if a[0] == "group":
+            n += 1
+        elif a[0] == "plus" and a[1][0] == "group":
+            n += 1
+    return n
+
+
+def _f765_term_match(term, value, pos, groups, budget):
+    """All greedy-ordered (end, groups) outcomes of one term at pos (F765).
+
+    *groups* maps gidx -> (start, end). Every term consumes >= 1
+    char, so outcomes strictly advance. The `plus` branch returns
+    longest-end first with same-end duplicates dropped (first-seen
+    wins), reproducing the engine's greedy backtracking order for
+    this subset (node v24.20.0). *budget* is a [count] cap on total
+    matcher steps; exceeding it fails closed. Never evals.
+    """
+    budget[0] += 1
+    if budget[0] > _F765_MAX_STEPS:
+        raise _JSExprFail("F765 match too complex")
+    kind = term[0]
+    if kind == "lit":
+        if pos < len(value) and value[pos] == term[1]:
+            return [(pos + 1, groups)]
+        return []
+    if kind == "class":
+        chars, neg = term[1], term[2]
+        if pos < len(value) and (value[pos] in chars) != neg:
+            return [(pos + 1, groups)]
+        return []
+    if kind == "group":
+        _sub, gidx = term[1], term[2]
+        out = []
+        for (mid, g2) in _f765_atoms_match(_sub, value, pos, groups,
+                                           budget):
+            g3 = dict(g2)
+            g3[gidx] = (pos, mid)
+            out.append((mid, g3))
+        return out
+    # ("plus", subterm): one or more copies, greedy.
+    _sub = term[1]
+    copies = []
+    frontier = _f765_term_match(_sub, value, pos, groups, budget)
+    while frontier:
+        copies.extend(frontier)
+        nxt = []
+        for (e, g) in frontier:
+            nxt.extend(_f765_term_match(_sub, value, e, g, budget))
+        frontier = nxt
+    copies.sort(key=lambda t: -t[0])  # stable: consumption order kept
+    seen = set()
+    ordered = []
+    for (e, g) in copies:
+        if e not in seen:
+            seen.add(e)
+            ordered.append((e, g))
+    return ordered
+
+
+def _f765_atoms_match(atoms, value, pos, groups, budget):
+    """Match a term sequence at pos (F765).
+
+    Returns the list of (end, groups) in engine backtracking order
+    (lexicographic-descending on per-term ends): the first success
+    the caller takes is the engine's greedy result. Never evals.
+    """
+    outcomes = [(pos, groups)]
+    for term in atoms:
+        nxt = []
+        for (p, g) in outcomes:
+            nxt.extend(_f765_term_match(term, value, p, g, budget))
+        outcomes = nxt
+        if not outcomes:
+            return []
+    return outcomes
+
+
+def _f765_all_matches(value, atoms):
+    """Global leftmost scan of F765 atoms in value (F765).
+
+    Returns the list of (start, end, match_text, groups) in engine
+    order (node v24.20.0): at each scan position the greedy
+    backtracking match wins; the scan resumes at the match end.
+    Matches are never empty (every term consumes >= 1 char), so the
+    scan always advances. Group texts are code-point slices -- the
+    atoms are ASCII-only, so a match can never split a surrogate
+    pair and the text is engine-identical. Returns [] when nothing
+    matches (the caller fails closed: no match is null in the
+    engine) and also on matcher over-complexity. Never evals.
+    """
+    ngroups = _f765_count_groups(atoms)
+    out = []
+    pos = 0
+    n = len(value)
+    budget = [0]
+    try:
+        while pos <= n:
+            outcomes = _f765_atoms_match(atoms, value, pos, {}, budget)
+            if outcomes:
+                end, g = outcomes[0]
+                full = value[pos:end]
+                gs = [value[g[i][0]:g[i][1]] for i in range(ngroups)]
+                out.append((pos, end, full, gs))
+                pos = end
+            else:
+                pos += 1
+    except _JSExprFail:
+        return []
+    return out
+
+
 def _f688_apply_replace(value, matches, rep, fn_spec, state):
     """Apply an F688 alternation replace over precomputed matches.
 
@@ -57564,39 +57823,51 @@ def _f688_apply_replace(value, matches, rep, fn_spec, state):
 
 
 def _js_parse_f694_index_read(text, j, name, arr, state):
-    """Parse `m[INTLIT]` at text[j] over a bound F694 match array.
+    """Parse `m[INTLIT]` (or the matchAll twin `m[INTLIT][INTLIT]`) at
+    text[j] over a bound F694 match array.
 
-    *name* is the bound match binding; the index is a non-negative
-    integer literal. Out-of-bounds reads are engine-undefined and
-    fail closed (F547 discipline); non-string elements fail closed.
-    Returns (element, next_index). Never evals.
+    *name* is the bound match binding; indices are non-negative
+    integer literals. Out-of-bounds reads are engine-undefined and
+    fail closed (F547 discipline). A single index over a str element
+    returns it; the matchAll twin reads through one nested _JSArr
+    level (the engine's match-array element: `m[0]` is the match
+    array, `m[0][0]` its full-match string). A bare `m[i]` over a
+    nested array yields the array in the engine, not a string --
+    fail closed (no array-to-string coercion modeled). Non-string
+    terminal elements fail closed. Returns (element, next_index).
+    Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, j)
     nm, j = _js_parse_ident(text, j)
     if nm != name:
         raise _JSExprFail("F694 return not over match binding")
-    j = _js_skip_ws(text, j)
-    if j >= n or text[j] != "[":
-        raise _JSExprFail("F694 operand not an index read")
-    k = _js_skip_ws(text, j + 1)
-    d0 = k
-    while k < n and "0" <= text[k] <= "9":
+    elem = arr
+    for _level in (0, 1):
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "[":
+            if _level == 0:
+                raise _JSExprFail("F694 operand not an index read")
+            raise _JSExprFail("F694 index over non-string element")
+        k = _js_skip_ws(text, j + 1)
+        d0 = k
+        while k < n and "0" <= text[k] <= "9":
+            k += 1
+        if k == d0:
+            raise _JSExprFail("F694 index not an integer")
+        idx = int(text[d0:k])
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "]":
+            raise _JSExprFail("F694 index bracket not closed")
         k += 1
-    if k == d0:
-        raise _JSExprFail("F694 index not an integer")
-    idx = int(text[d0:k])
-    k = _js_skip_ws(text, k)
-    if k >= n or text[k] != "]":
-        raise _JSExprFail("F694 index bracket not closed")
-    k += 1
-    if idx >= len(arr.elements):
-        raise _JSExprFail("F694 index out of bounds")
-    elem = arr.elements[idx]
-    if not isinstance(elem, str):
-        raise _JSExprFail("F694 index over non-string element")
-    state["ops"] += 1  # the group read is obfuscation-shaped
-    return elem, k
+        if not isinstance(elem, _JSArr) or idx >= len(elem.elements):
+            raise _JSExprFail("F694 index out of bounds")
+        elem = elem.elements[idx]
+        state["ops"] += 1  # the index read is obfuscation-shaped
+        j = k
+        if isinstance(elem, str):
+            return elem, j
+    raise _JSExprFail("F694 index over non-string element")
 
 
 def _js_parse_f694_bound_additive(text, i, name, arr, state):
@@ -59021,6 +59292,77 @@ def _js_apply_method_at(text, i, name, value, depth, state):
             i += 1
         state["ops"] += 1  # the normalize call is obfuscation-shaped
         return value, i
+    if name == "substring":
+        # F764: "lit".substring(start[, end]) -- node-exact (v24.20.0).
+        # Both bounds clamp at 0 and at the length; when start > end
+        # the engine swaps them (so substring(9,0) == substring(0,9)).
+        # Non-literal bounds fail closed. Disjoint from the slice
+        # branch (method name). Non-BMP receivers fail closed
+        # (UTF-16/code-point divergence, F624 discipline);
+        # _JSNumStr/_JSBigInt receivers fail closed.
+        if not isinstance(value, str) or isinstance(
+                value, (_JSNumStr, _JSBigInt)):
+            raise _JSExprFail("substring on non-string")
+        if any(ord(ch) > 0xFFFF for ch in value):
+            raise _JSExprFail("substring on non-BMP string")
+        i = _js_skip_ws(text, i)
+        slen = len(value)
+        if i < len(text) and text[i] == ")":
+            lo, hi, i = 0, slen, i + 1
+        else:
+            start, i = _js_parse_slice_int(text, i)
+            i = _js_skip_ws(text, i)
+            if i < len(text) and text[i] == ",":
+                end, i = _js_parse_slice_int(text,
+                                             _js_skip_ws(text, i + 1))
+                i = _js_skip_ws(text, i)
+            else:
+                end = slen
+            if i >= len(text) or text[i] != ")":
+                raise _JSExprFail("bad substring")
+            i += 1
+            lo = 0 if start < 0 else (slen if start > slen else start)
+            hi = 0 if end < 0 else (slen if end > slen else end)
+            if lo > hi:
+                lo, hi = hi, lo
+        result = value[lo:hi]
+        state["ops"] += 1  # the substring call is obfuscation-shaped
+        return result, i
+    if name == "substr":
+        # F764: legacy "lit".substr(start[, length]) -- node-exact
+        # (v24.20.0). A negative start counts back from the length
+        # (clamped at 0, via _js_slice_bound); a negative length
+        # clamps to 0. Non-literal args fail closed. Disjoint from
+        # the slice/substring branches (method name); non-BMP and
+        # _JSNumStr/_JSBigInt receivers fail closed as above.
+        if not isinstance(value, str) or isinstance(
+                value, (_JSNumStr, _JSBigInt)):
+            raise _JSExprFail("substr on non-string")
+        if any(ord(ch) > 0xFFFF for ch in value):
+            raise _JSExprFail("substr on non-BMP string")
+        i = _js_skip_ws(text, i)
+        slen = len(value)
+        if i < len(text) and text[i] == ")":
+            lo, hi, i = 0, slen, i + 1
+        else:
+            start, i = _js_parse_slice_int(text, i)
+            i = _js_skip_ws(text, i)
+            if i < len(text) and text[i] == ",":
+                length, i = _js_parse_slice_int(text,
+                                                _js_skip_ws(text, i + 1))
+                i = _js_skip_ws(text, i)
+            else:
+                length = slen
+            if i >= len(text) or text[i] != ")":
+                raise _JSExprFail("bad substr")
+            i += 1
+            lo = _js_slice_bound(start, slen)
+            hi = lo + (0 if length < 0 else length)
+            if hi > slen:
+                hi = slen
+        result = value[lo:hi] if hi > lo else ""
+        state["ops"] += 1  # the substr call is obfuscation-shaped
+        return result, i
     if name == "flat":
         # F466: ['a','b'].flat() -- identity on flat arrays. F574:
         # flat(INTLIT) / flat(Infinity) -- node-exact recursive
@@ -59601,29 +59943,39 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         # F694: String.prototype.match with an F603 regex-plain
         # literal (literal chars + one capture-group level; no
         # alternation -- the '|' form fails closed, documented),
-        # node-exact (v24.20.0). Flags "" return the match array
-        # [full, g1, ..., gn]; flags "g" return the full matches
-        # [full1, full2, ...] (the engine discards groups); any other
-        # flags fail closed. No match is null in the engine -- the
-        # static decoder has no null value, so it fails closed. The
-        # result is a _JSArr, so var-bound index reads (m[1]) resolve
-        # engine-exactly. Matches are parts-charged (F452). Never
-        # evals.
+        # node-exact (v24.20.0). F765: bodies the F603 grammar
+        # rejects -- character classes and `+` quantifiers -- are
+        # tried under the bounded char-class grammar below; disjoint
+        # by construction (F603 raises on `[`, `+`, ...). Flags ""
+        # return the match array [full, g1, ..., gn]; flags "g" return
+        # the full matches [full1, full2, ...] (the engine discards
+        # groups); any other flags fail closed. No match is null in
+        # the engine -- the static decoder has no null value, so it
+        # fails closed. The result is a _JSArr, so var-bound index
+        # reads (m[1]) resolve engine-exactly. Matches are
+        # parts-charged (F452). Never evals.
         if not isinstance(value, str) or isinstance(value, (_JSNumStr, _JSBigInt)):
             raise _JSExprFail("F694 match on non-string")
         i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != "/":
             raise _JSExprFail("F694 match needs regex literal")
-        _m_body, _m_flags, i = _js_parse_f603_regex_literal(text, i)
+        _m_atoms = None  # F765 atoms; None => F603 plain body
+        try:
+            _m_body, _m_flags, i = _js_parse_f603_regex_literal(text, i)
+        except _JSExprFail:
+            _m_atoms, _m_flags, i = _js_parse_f765_regex_literal(text, i)
         if _m_flags not in ("", "g"):
-            raise _JSExprFail("F694 match flags not modeled")
+            raise _JSExprFail("F694/F765 match flags not modeled")
         i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != ")":
             raise _JSExprFail("bad match")
         i += 1
-        _mall = _f603_regex_all_matches(value, _m_body)
+        if _m_atoms is None:
+            _mall = _f603_regex_all_matches(value, _m_body)
+        else:
+            _mall = _f765_all_matches(value, _m_atoms)
         if not _mall:
-            raise _JSExprFail("F694 match no match")
+            raise _JSExprFail("F694/F765 match no match")
         if _m_flags == "g":
             _elems = [_m[2] for _m in _mall]
         else:
@@ -59637,8 +59989,10 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         return _JSArr(_elems), i
     if name == "matchAll":
         # F694: String.prototype.matchAll with an F603 regex-plain
-        # literal carrying the "g" flag, node-exact (v24.20.0). The
-        # engine throws TypeError without the global flag, so it
+        # literal carrying the "g" flag, node-exact (v24.20.0). F765:
+        # char-class / `+`-quantifier bodies fall back to the bounded
+        # char-class grammar (disjoint: F603 raises on `[`, `+`).
+        # The engine throws TypeError without the global flag, so it
         # fails closed here. The result is a _JSArr of _JSArr match
         # arrays ([full, g1, ..., gn] each): the engine's
         # `[...iter]` desugars through _js_parse_spread_copy's _JSArr
@@ -59651,16 +60005,23 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != "/":
             raise _JSExprFail("F694 matchAll needs regex literal")
-        _m_body, _m_flags, i = _js_parse_f603_regex_literal(text, i)
+        _m_atoms = None  # F765 atoms; None => F603 plain body
+        try:
+            _m_body, _m_flags, i = _js_parse_f603_regex_literal(text, i)
+        except _JSExprFail:
+            _m_atoms, _m_flags, i = _js_parse_f765_regex_literal(text, i)
         if _m_flags != "g":
-            raise _JSExprFail("F694 matchAll needs global flag")
+            raise _JSExprFail("F694/F765 matchAll needs global flag")
         i = _js_skip_ws(text, i)
         if i >= len(text) or text[i] != ")":
             raise _JSExprFail("bad matchAll")
         i += 1
         _elems = []
-        for _s, _e, _full, _gs in _f603_regex_all_matches(value,
-                                                         _m_body):
+        if _m_atoms is None:
+            _matches = _f603_regex_all_matches(value, _m_body)
+        else:
+            _matches = _f765_all_matches(value, _m_atoms)
+        for _s, _e, _full, _gs in _matches:
             _elems.append(_JSArr([_full] + _gs))
             state["parts"] += 1
             if state["parts"] > _JS_EXPR_MAX_PARTS:

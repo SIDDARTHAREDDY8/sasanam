@@ -308,28 +308,28 @@ def test_r52_f763_s2_closed():
     return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r52_f764_s1_open():
-    """F764 OPEN: miss reproduces."""
-    miss = _misses("(function(){var s='xx%s';return s.substr(-9)+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f764_s1_closed():
+    """F764 CLOSED (wave-385 lane 2): substr now blocks."""
+    hit = _blocked("(function(){var s='xx%s';return s.substr(-9)+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r52_f764_s2_open():
-    """F764 OPEN: miss reproduces."""
-    miss = _misses("(function(){var s='%sxx';return s.substring(9,0)+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f764_s2_closed():
+    """F764 CLOSED (wave-385 lane 2): substring arg-swap now blocks."""
+    hit = _blocked("(function(){var s='%sxx';return s.substring(9,0)+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r52_f765_s1_open():
-    """F765 OPEN: miss reproduces."""
-    miss = _misses("(function(){var m='xx%syy'.match(/xoxb-[0-9]+/);return m[0]+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f765_s1_closed():
+    """F765 CLOSED (wave-385 lane 2): char-class match now blocks."""
+    hit = _blocked("(function(){var m='xx%syy'.match(/xoxb-[0-9]+/);return m[0]+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r52_f765_s2_open():
-    """F765 OPEN: miss reproduces."""
-    miss = _misses("(function(){var m=[...'xx%syy'.matchAll(/xoxb-[0-9]+/g)];return m[0][0]+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f765_s2_closed():
+    """F765 CLOSED (wave-385 lane 2): char-class matchAll now blocks."""
+    hit = _blocked("(function(){var m=[...'xx%syy'.matchAll(/xoxb-[0-9]+/g)];return m[0][0]+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_r52_f766_s1_open():
