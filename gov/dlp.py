@@ -31790,12 +31790,19 @@ def _js_parse_f793_iter_helper_iife(text, i, depth, state):
             # _js_tonumber_str). The engine throws RangeError when
             # !(n >= 0) -- negatives AND NaN -- so those fail
             # closed, agreeing with the engine (no credential can
-            # leak from a throw). A `-` cannot lex (fail closed);
-            # anything else fails closed.
+            # leak from a throw). Only -0 passes the `-(n >= 0)`
+            # gate (node: -0 >= 0); anything else fails closed.
             if k < n and (stmts[k] == "'" or stmts[k] == '"'):
                 sval, k = _js_parse_string(stmts, k)
                 num = _js_tonumber_str(sval)
             else:
+                # A leading `-` is consumed for the -0 twin
+                # (node: -0 >= 0, so no throw; other negatives
+                # throw RangeError). `-` alone still fails closed
+                # below.
+                neg = k < n and stmts[k] == "-"
+                if neg:
+                    k += 1
                 d0 = k
                 while k < n and stmts[k] in "0123456789":
                     k += 1
@@ -31818,7 +31825,7 @@ def _js_parse_f793_iter_helper_iife(text, i, depth, state):
                 tok = stmts[d0:k]
                 if len(tok) > _JS_EXPR_MAX_INT_DIGITS:
                     raise _JSExprFail("F793 drop too big")
-                num = float(tok)  # no sign can lex: num >= 0
+                num = -float(tok) if neg else float(tok)
             if math.isnan(num) or not (num >= 0):
                 raise _JSExprFail("F824 drop RangeError")
             cnt = len(items) if math.isinf(num) else math.trunc(num)
