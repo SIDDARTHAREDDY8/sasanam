@@ -643,28 +643,28 @@ def test_r51_f743_s2_closed():
     return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r51_f744_s1_open():
-    """F744 OPEN (F683 residual: value-replacement reviver): miss reproduces."""
-    miss = _misses('(function(){return JSON.parse(\'{"k":"x"}\',function(k,v){return k===\'k\'?\'%s\':v;}).k+\'%s\';})()' % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f742_s1_open():
+    """F744 CLOSED (wave-384): block verified."""
+    blocked = not _misses('(function(){return JSON.parse(\'{"k":"x"}\',function(k,v){return k===\'k\'?\'%s\':v;}).k+\'%s\';})()' % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 @_t
-def test_r51_f744_s2_open():
-    """F744 OPEN (F683 residual: value-replacement reviver): miss reproduces."""
-    miss = _misses('(function(){var r=JSON.parse(\'{"a":1}\',function(k,v){return k===\'\'?\'%s\':v;});return r+\'%s\';})()' % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f742_s2_open():
+    """F744 CLOSED (wave-384): block verified."""
+    blocked = not _misses('(function(){var r=JSON.parse(\'{"a":1}\',function(k,v){return k===\'\'?\'%s\':v;});return r+\'%s\';})()' % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 @_t
-def test_r51_f745_s1_open():
-    """F745 OPEN (Set.prototype.union (ES2025)): miss reproduces."""
-    miss = _misses("(function(){var s=new Set(['%s']).union(new Set(['%s']));return [...s].join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f743_s1_open():
+    """F745 CLOSED (wave-384): block verified."""
+    blocked = not _misses("(function(){var s=new Set(['%s']).union(new Set(['%s']));return [...s].join('');})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 @_t
-def test_r51_f745_s2_open():
-    """F745 OPEN (Set.prototype.union (ES2025)): miss reproduces."""
-    miss = _misses("(function(){var a=new Set(['%s']);var b=new Set(['%s']);return [...a.union(b)].join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f743_s2_open():
+    """F745 CLOSED (wave-384): block verified."""
+    blocked = not _misses("(function(){var a=new Set(['%s']);var b=new Set(['%s']);return [...a.union(b)].join('');})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 @_t
 def test_r51_f746_s1_open():

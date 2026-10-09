@@ -19886,7 +19886,11 @@ def _js_parse_f611_varbound_iife(text, i, depth, state):
     fail-closed rule applies unchanged.
 
     Bounds (all fail closed -- rejected, never mis-decoded):
-    - the initializer is not a string literal or atob('LIT');
+    - the initializer is not a string literal, atob('LIT'), or an
+      F744 JSON.parse reviver call (the single-arg JSON.parse form
+      is not admitted -- pre-existing F541 varbound gap);
+    - an F744 reviver initializer whose transformed value is not a
+      plain string (bound-object member reads fail closed);
     - more than one declarator, a missing `;`, reassignment or
       rebinding of the bound name in the return expression;
     - a template literal anywhere in the rewritten scope;
@@ -19939,6 +19943,25 @@ def _js_parse_f611_varbound_iife(text, i, depth, state):
             state["ops"] += 1  # the decode call is obfuscation-shaped
         elif k < n and text[k] in "'\"":
             init_val, k = _js_parse_string(text, k)
+        elif text.startswith("JSON", k):
+            # F744: JSON.parse('LIT',function(k,v){return
+            # GUARD?'REPL':v;}) initializer -- the reviver-transformed
+            # value is the bound value. Only plain-string results
+            # substitute (a bound object with member reads fails
+            # closed here -- documented residual); the single-arg
+            # form is not admitted (pre-existing F541 varbound gap,
+            # unchanged). Budget snapshot/restore on miss (F452 /
+            # wave-383 lesson). (The JSONx ident-boundary check lives
+            # inside _js_parse_f744_replace_reviver.)
+            _f744vb_saved_parts = state['parts']
+            _f744vb_saved_ops = state['ops']
+            _f744v = _js_parse_f744_replace_reviver(text, k, depth,
+                                                    state)
+            if _f744v is None or not isinstance(_f744v[0], str):
+                state['parts'] = _f744vb_saved_parts
+                state['ops'] = _f744vb_saved_ops
+                return None
+            init_val, k = _f744v
         else:
             return None
         k = _js_skip_ws(text, k)
@@ -32959,6 +32982,205 @@ def _js_parse_f669_map_values_spread_iife(text, i, depth, state):
             raise _JSExprFail("F669 map spread not values/keys")
         value, sj = _js_parse_f669_spread_join(stmts, sj, values,
                                                state)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, value)
+    except _JSExprFail:
+        return None
+
+
+_F745_SET_METHODS = ("union", "intersection", "difference")
+
+
+def _js_f745_algebra(method, a_elements, b_elements):
+    """Node-exact (v24.20.0) ES2025 set algebra over deduped string-element lists.
+
+    union: A's insertion order, then B's elements not already
+    present; intersection: A's elements that occur in B, in A's
+    order; difference: A's elements absent from B, in A's order.
+    SameValueZero is === for strings. Never evals.
+    """
+    if method == "union":
+        _seen = set(a_elements)
+        _res = list(a_elements)
+        for _e in b_elements:
+            if _e not in _seen:
+                _seen.add(_e)
+                _res.append(_e)
+        return _res
+    _bset = set(b_elements)
+    if method == "intersection":
+        return [_e for _e in a_elements if _e in _bset]
+    return [_e for _e in a_elements if _e not in _bset]
+
+
+def _js_parse_f745_new_set(stmts, j, depth, state):
+    """Parse `new Set([LITS])` or `new Set()` at stmts[j] (F745).
+
+    The empty-ctor form is the node-exact empty set; the
+    literal form reuses the F602 element discipline (plain string
+    literals, SameValueZero first-occurrence dedup, F452
+    per-element parts charge). Returns (elements, next_index).
+    Never evals.
+    """
+    n = len(stmts)
+    q = _js_skip_ws(stmts, j)
+    _nk = _js_match_kw(stmts, q, "new")
+    if _nk is None:
+        raise _JSExprFail("F745 not new")
+    _se = _js_match_kw(stmts, _js_skip_ws(stmts, _nk), "Set")
+    if _se is None:
+        raise _JSExprFail("F745 not new Set")
+    _pk = _js_skip_ws(stmts, _se)
+    _pk = _js_expect(stmts, _pk, "(")
+    _pk = _js_skip_ws(stmts, _pk)
+    if _pk < n and stmts[_pk] == ")":
+        return [], _pk + 1
+    return _js_parse_f602_set_elements(stmts, q, depth, state)
+
+
+def _js_f745_set_operand(stmts, j, env, depth, state):
+    """Parse an F745 set operand at stmts[j]: `new Set([LITS])`,
+    `new Set()`, or a bound set name.
+
+    Returns (elements, next_index). Unbound names fail closed --
+    the engine throws TypeError when a set-algebra method runs on
+    a non-Set receiver/argument, so a miss here is never a
+    mis-decode. Never evals.
+    """
+    q = _js_skip_ws(stmts, j)
+    if _js_match_kw(stmts, q, "new") is not None:
+        return _js_parse_f745_new_set(stmts, q, depth, state)
+    name, q = _js_parse_ident(stmts, q)
+    if name not in env:
+        raise _JSExprFail("F745 unbound set name")
+    return list(env[name]), q
+
+
+def _js_parse_f745_set_expr(stmts, j, env, depth, state):
+    """Parse `OPERAND (.union|.intersection|.difference(ARG))*` at stmts[j] (F745).
+
+    Returns (elements, next_index, saw_algebra). Each algebra call
+    applies `_js_f745_algebra` node-exactly; each result element
+    charges one part (F452) and each call one op. A member that is
+    not a set-algebra method stops the chain WITHOUT consuming it,
+    leaving the caller to fail closed. Never evals.
+    """
+    n = len(stmts)
+    elements, j = _js_f745_set_operand(stmts, j, env, depth, state)
+    saw = False
+    while True:
+        q = _js_skip_ws(stmts, j)
+        if q >= n or stmts[q] != ".":
+            break
+        q = _js_skip_ws(stmts, q + 1)
+        try:
+            mname, q = _js_parse_ident(stmts, q)
+        except _JSExprFail:
+            break
+        if mname not in _F745_SET_METHODS:
+            break  # not algebra: do not consume; caller fails closed
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, "(")
+        q = _js_skip_ws(stmts, q)
+        b_elements, q = _js_f745_set_operand(stmts, q, env, depth,
+                                             state)
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ")")
+        elements = _js_f745_algebra(mname, elements, b_elements)
+        for _ in elements:
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("F745 too many parts")
+        state["ops"] += 1  # the algebra call is obfuscation-shaped
+        saw = True
+        j = q
+    return elements, j, saw
+
+
+def _js_parse_f745_decl(stmts, sj, env, depth, state):
+    """Parse `var|let|const NAME = SETEXPR;` at stmts[sj] (F745).
+
+    SETEXPR is an F745 set expression (plain `new Set([LITS])` or
+    a set-algebra call chain). Binds NAME in env. Returns (name,
+    elements, next_index, saw_algebra). Never evals.
+    """
+    n = len(stmts)
+    m = _js_match_kw(stmts, sj, "var")
+    if m is None:
+        m = _js_match_kw(stmts, sj, "let")
+    if m is None:
+        m = _js_match_kw(stmts, sj, "const")
+    if m is None:
+        raise _JSExprFail("F745 decl not var/let/const")
+    sj = _js_skip_ws(stmts, m)
+    name, sj = _js_parse_ident(stmts, sj)
+    if name in _F611_RESERVED or name == "arguments":
+        raise _JSExprFail("F745 set binding reserved")
+    sj = _js_skip_ws(stmts, sj)
+    sj = _js_expect(stmts, sj, "=")
+    sj = _js_skip_ws(stmts, sj)
+    elements, sj, saw = _js_parse_f745_set_expr(stmts, sj, env,
+                                                depth, state)
+    sj = _js_skip_ws(stmts, sj)
+    sj = _js_expect(stmts, sj, ";")
+    env[name] = elements
+    return name, elements, sj, saw
+
+
+def _js_parse_f745_set_algebra_iife(text, i, depth, state):
+    """Parse `(function(){(var|let|const NAME=SETEXPR;)+ return [...SETEXPR].join(SEP)(+'LIT')*;})()` (F745).
+
+    ES2025 set-algebra fragment assembly: var-bound and inline
+    `new Set([LITS])` operands composed with .union/.intersection/
+    .difference, spread-joined, with an optional additive literal
+    tail (the F713 tail discipline, shared helper). Node-exact
+    (v24.20.0) via `_js_f745_algebra`. At least one algebra call
+    must occur anywhere in the body: methodless shapes stay with
+    F669 (tried earlier), so no previously-decoded input changes
+    behavior.
+    Returns (value, next_index), or None on mismatch/guard
+    failure. Never evals.
+
+    Bounds (all fail closed): non-literal elements, unbound names,
+    non-Set receivers/args (the engine throws TypeError),
+    unmodeled members (`.add`/`.values()` etc.), extra statements,
+    non-literal join separators, call args on the IIFE.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        env = {}
+        saw_algebra = False
+        while True:
+            q = _js_skip_ws(stmts, sj)
+            if _js_match_kw(stmts, q, "return") is not None:
+                break
+            _name, _els, sj, _saw = _js_parse_f745_decl(
+                stmts, sj, env, depth, state)
+            saw_algebra = saw_algebra or _saw
+        q = _js_match_kw(stmts, sj, "return")
+        if q is None:
+            raise _JSExprFail("F745 body not return")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, "[")
+        q = _js_skip_ws(stmts, q)
+        if not stmts.startswith("...", q):
+            raise _JSExprFail("F745 return not spread")
+        q = _js_skip_ws(stmts, q + 3)
+        elements, q, _saw = _js_parse_f745_set_expr(stmts, q, env,
+                                                    depth, state)
+        saw_algebra = saw_algebra or _saw
+        if not saw_algebra:
+            # Methodless: F669's territory (tried first); stay a miss.
+            raise _JSExprFail("F745 no algebra call")
+        value, q = _js_parse_f713_join_tail(stmts, q, elements,
+                                            state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
         return _js_parse_f6xx_iife_tail(text, j, depth, state, value)
@@ -55830,6 +56052,184 @@ def _js_parse_f683_eq(text, j):
     raise _JSExprFail("F683 guard not an equality")
 
 
+def _js_f744_replace_walk(node, key, guard, repl, state, depth=0):
+    """Apply an F744 value-replacement reviver bottom-up over a json.loads value.
+
+    *guard* is ("typeof",) or ("key", KEY); *repl* is the string
+    literal the reviver returns in its consequent. The walk is
+    bottom-up (children before holders, list indices as string
+    keys -- exactly the engine's call order, v24.20.0). Unlike the
+    F683 append walk, a key-guard hit REPLACES the value with the
+    literal for any value type: the engine performs no coercion on
+    replacement (verified: a number/object at the key becomes the
+    string), so no fail-closed is needed there -- the replacement
+    is node-exact. A typeof-guard hit replaces string leaves only
+    (typeof is false for containers in the engine). Each
+    replacement charges the F430 parts budget; nesting beyond the
+    F541 JSON depth fails closed. Mutates the freshly-parsed
+    json.loads value in place. Never evals.
+    """
+    if depth > _JS_F541_MAX_JSON_DEPTH:
+        raise _JSExprFail("F744 JSON too deep")
+    if isinstance(node, dict):
+        for k in list(node.keys()):
+            node[k] = _js_f744_replace_walk(node[k], k, guard, repl,
+                                            state, depth + 1)
+    elif isinstance(node, list):
+        for _wi in range(len(node)):
+            node[_wi] = _js_f744_replace_walk(node[_wi], str(_wi),
+                                              guard, repl, state,
+                                              depth + 1)
+    _hit = ((guard[0] == "key" and key == guard[1])
+            or (guard[0] == "typeof" and isinstance(node, str)))
+    if _hit:
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("F744 too many replacements")
+        if len(repl) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F744 replacement too long")
+        return repl
+    return node
+
+
+def _js_parse_f744_replace_reviver(text, i, depth, state):
+    """Parse `JSON.parse('LIT',function(k,v){return GUARD?'REPL':v;})`
+    at text[i] (F744).
+
+    JSON reviver fragment assembly beyond F683: F683 models
+    append-style revivers (`v+'APP'`); this models
+    value-REPLACEMENT revivers where the consequent is a bare
+    string literal (`k==='k'?'f1':v`). Node-exact desugar
+    (v24.20.0): the JSON text parses via json.loads (invalid JSON
+    fails closed); the reviver walks the value bottom-up exactly as
+    the engine invokes it (children before holders, list indices as
+    string keys, the root called with key ""); the modeled
+    guard/consequent shapes are:
+    - `typeof v==='string'` (or `==`): every string leaf is
+      REPLACED by the literal;
+    - `k==='KEY'` (or `==`): the value at KEY is REPLACED by the
+      literal, whatever its type (the engine replaces without
+      coercion -- node-exact, unlike F683's append which fails
+      closed on non-strings).
+    The consequent must be exactly a string literal and the
+    alternate exactly `v`; the reviver must be an anonymous
+    two-param function with a single `return` body. The transformed
+    graph converts via _js_f541_json_value (its bool/null/float/
+    __proto__/depth bounds apply unchanged), and the caller
+    applies the postfix chain (.k / [0] member reads).
+    Disjoint from F683: F683 requires the `v+'APP'` consequent and
+    fails closed on a bare literal; this requires the literal and
+    fails closed on `v+...`. Returns (value, next_index) with the
+    closing paren consumed, or None when text[i] is not this shape.
+    The parse charges one op (obfuscation-shaped). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = i + len("JSON")
+        if j < n and text[j] in _JS_IDENT_CONT:
+            return None  # JSONx -- the F541 branch fails it closed
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ".")
+        j = _js_skip_ws(text, j)
+        _pk = _js_match_kw(text, j, "parse")
+        if _pk is None:
+            return None
+        j = _js_skip_ws(text, _pk)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            return None
+        _jstr, j = _js_parse_string(text, j)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ",":
+            return None  # single-arg: F541 owns it
+        j = _js_skip_ws(text, j + 1)
+        _fk = _js_match_kw(text, j, "function")
+        if _fk is None:
+            raise _JSExprFail("F744 reviver not a function")
+        j = _js_skip_ws(text, _fk)
+        if j < n and text[j] in _JS_IDENT_START:
+            raise _JSExprFail("F744 named reviver")
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        _kname, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ",")
+        j = _js_skip_ws(text, j)
+        _vname, j = _js_parse_ident(text, j)
+        if _kname == _vname:
+            raise _JSExprFail("F744 duplicate reviver params")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "{")
+        j = _js_skip_ws(text, j)
+        _rk = _js_match_kw(text, j, "return")
+        if _rk is None:
+            raise _JSExprFail("F744 reviver body not a return")
+        j = _js_skip_ws(text, _rk)
+        # GUARD := typeof v==='string' | k==='KEY' (== admitted;
+        # typeof always yields a string so ==/=== agree).
+        _tk = _js_match_kw(text, j, "typeof")
+        if _tk is not None:
+            j = _js_skip_ws(text, _tk)
+            _vn, j = _js_parse_ident(text, j)
+            if _vn != _vname:
+                raise _JSExprFail("F744 typeof not over v")
+            j = _js_skip_ws(text, j)
+            j = _js_parse_f683_eq(text, j)
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] not in "'\"":
+                raise _JSExprFail("F744 typeof guard not a literal")
+            _tn, j = _js_parse_string(text, j)
+            if _tn != "string":
+                raise _JSExprFail("F744 typeof guard not 'string'")
+            _guard = ("typeof",)
+        else:
+            _kn, j = _js_parse_ident(text, j)
+            if _kn != _kname:
+                raise _JSExprFail("F744 key guard not over k")
+            j = _js_skip_ws(text, j)
+            j = _js_parse_f683_eq(text, j)
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] not in "'\"":
+                raise _JSExprFail("F744 key guard not a literal")
+            _key, j = _js_parse_string(text, j)
+            _guard = ("key", _key)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "?")
+        j = _js_skip_ws(text, j)
+        # CONSEQUENT := 'REPL' -- a bare string literal (the F683
+        # `v+'APP'` form fails closed here; F683 owns it).
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F744 consequent not a literal")
+        _repl, j = _js_parse_string(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ":")
+        j = _js_skip_ws(text, j)
+        _an, j = _js_parse_ident(text, j)
+        if _an != _vname:
+            raise _JSExprFail("F744 alternate not v")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ";")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "}")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        try:
+            _jval = json.loads(_jstr)
+        except (ValueError, RecursionError):
+            raise _JSExprFail("F744 arg not valid JSON")
+        _jval = _js_f744_replace_walk(_jval, "", _guard, _repl, state)
+        _val = _js_f541_json_value(_jval, state)
+        state["ops"] += 1  # the reviver parse is obfuscation-shaped
+        return _val, j
+    except _JSExprFail:
+        return None
+
+
 def _js_f541_json_value(obj, state, depth=0):
     """Convert a json.loads result into the decoder's internal value
     graph (F541).
@@ -56982,6 +57382,24 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f600 is None:
             _f600 = _js_parse_f713_map_spread_join_tail_iife(
                 text, i, depth, state)
+        # F745: (function(){(var|let|const NAME=SETEXPR;)+
+        #   return [...SETEXPR].join(SEP);})() where SETEXPR includes
+        #   .union/.intersection/.difference calls -- ES2025
+        #   set-algebra fragment assembly. Tried after F713: F713 is
+        #   Map-based and fails closed on `new Set`; F669 requires a
+        #   methodless spread-consume return and fails closed on any
+        #   .union/.intersection/.difference member, and this route
+        #   requires at least one algebra call, so no
+        #   previously-decoded input changes behavior. Budget
+        #   snapshot/restore on miss (F452 / wave-383 lesson).
+        if _f600 is None:
+            _f745_saved_parts = state['parts']
+            _f745_saved_ops = state['ops']
+            _f600 = _js_parse_f745_set_algebra_iife(text, i, depth,
+                                                    state)
+            if _f600 is None:
+                state['parts'] = _f745_saved_parts
+                state['ops'] = _f745_saved_ops
         if _f600 is not None:
             val, i = _f600
             return _js_parse_postfix(text, i, val, depth, state)
@@ -58903,6 +59321,25 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f683_saved_parts; state['ops'] = _f683_saved_ops
         if _f683 is not None:
             val, i = _f683
+            return _js_parse_postfix(text, i, val, depth, state)
+    if text.startswith("JSON", i):
+        # F744: JSON.parse('LIT',function(k,v){return GUARD?'REPL':v;})
+        # -- value-replacement reviver fragment assembly (the F683
+        # residual: F683 models append-style revivers, not
+        # replacements). Tried after F683: F683 requires the
+        # `v+'APP'` consequent and fails closed on a bare literal;
+        # this route requires the literal consequent and fails
+        # closed on `v+...`, so no previously-decoded input changes
+        # behavior. Budget snapshot/restore on miss (F452 /
+        # wave-383 lesson).
+        _f744_saved_parts = state['parts']
+        _f744_saved_ops = state['ops']
+        _f744 = _js_parse_f744_replace_reviver(text, i, depth, state)
+        if _f744 is None:
+            state['parts'] = _f744_saved_parts
+            state['ops'] = _f744_saved_ops
+        if _f744 is not None:
+            val, i = _f744
             return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("JSON", i):
         # F541: JSON.parse('LITERAL') -- deserializing-builtin
