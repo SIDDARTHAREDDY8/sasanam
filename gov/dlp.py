@@ -12522,17 +12522,72 @@ class _JSAccessor:
     """A getter on a statically-parsed object (F549).
 
     Produced only by _js_parse_f535_object when accessor_aware=True:
-    wraps the getter's already-evaluated return value (str | _JSObj).
-    The engine invokes the getter on read; the static model already
-    holds the value (the return grammar has no `this`, so the
-    evaluation is argument-independent). Flows only into F549
-    descriptor construction; the _JSObj postfix member-read branch
-    unwraps it via _jsobj_lookup. Never evals.
+    wraps the getter's already-evaluated return value (str | _JSObj |
+    _JSThisMember). The engine invokes the getter on read; the static
+    model already holds the value for argument-independent bodies. A
+    `this`-dependent body (F738) cannot be evaluated at literal-parse
+    time -- it wraps a _JSThisMember marker resolved lazily against
+    the read's receiver by _jsobj_lookup (the engine binds `this` to
+    the receiver, node v24.20.0). Flows only into F549 descriptor
+    construction; the _JSObj postfix member-read branch unwraps it
+    via _jsobj_lookup. Never evals.
     """
     __slots__ = ("value",)
 
     def __init__(self, value):
         self.value = value
+
+
+class _JSThisMember:
+    """A `this`-dependent getter body, receiver-bound (F738).
+
+    Produced by _js_parse_f535_getter_value for exactly
+    `return this.IDENT;`. The engine invokes the getter with `this`
+    bound to the property read's receiver, so the static model
+    cannot evaluate it at literal-parse time (when `this` is
+    unbound). Instead the marker records the member key, and
+    _jsobj_lookup resolves it against the receiver at read time
+    (node-exact, v24.20.0 -- including shadowing, where the
+    receiver's own property wins over the holder's). Only ever
+    appears as _JSAccessor(_JSThisMember) or, for
+    non-accessor-aware literals, as a bare prop value; every read
+    path resolves it via _jsobj_lookup. Never evals.
+    """
+    __slots__ = ("key",)
+
+    def __init__(self, key):
+        self.key = key
+
+
+def _js_resolve_this_member(receiver, key, _depth=0):
+    """Resolve a F738 _JSThisMember against *receiver* (bounded).
+
+    The engine invokes a `this`-dependent getter with `this` bound
+    to the property read's receiver, so `this.KEY` is a member read
+    on the receiver (walking its prototype chain, node v24.20.0).
+    A nested _JSThisMember (or a self-referential `this.x` cycle)
+    recurses with a small depth bound -- the engine would recurse
+    until stack exhaustion on a true cycle, so failing closed here
+    is the conservative choice. A missing key returns None (the
+    engine yields undefined -- the caller fails closed, never
+    mis-decoding). Raises _JSExprFail on the F711 unsafe-integer
+    boundary, matching _jsobj_lookup. Never evals.
+    """
+    if _depth > 8:
+        raise _JSExprFail("F738 this-member recursion too deep")
+    cur = receiver
+    while cur is not None:
+        if key in cur.props:
+            v = cur.props[key]
+            v = v.value if isinstance(v, _JSAccessor) else v
+            if isinstance(v, _JSThisMember):
+                return _js_resolve_this_member(receiver, v.key,
+                                               _depth + 1)
+            if isinstance(v, _JSNumStr):
+                raise _JSExprFail("F711 unsafe integer member read")
+            return v
+        cur = cur.proto
+    return None
 
 
 def _jsobj_lookup(obj, key):
@@ -12541,17 +12596,22 @@ def _jsobj_lookup(obj, key):
     Returns the stored value (unwrapping _JSAccessor), or None when
     the key resolves nowhere. Getters were already evaluated at
     literal-parse time, matching the engine's read-time invocation
-    (node v24.20.0). Raises _JSExprFail when the resolved value is
-    a _JSNumStr (F711: only integer literals above 2**53 are
-    wrapped, at parse -- the engine's float64 diverges from the
-    canonical text there, so any read would mis-decode; fail
-    closed). Never evals.
+    (node v24.20.0) -- except F738 `this`-dependent getters, whose
+    _JSThisMember marker resolves against the read's receiver here
+    (the engine binds `this` to the receiver). Raises _JSExprFail
+    when the resolved value is a _JSNumStr (F711: only integer
+    literals above 2**53 are wrapped, at parse -- the engine's
+    float64 diverges from the canonical text there, so any read
+    would mis-decode; fail closed). Never evals.
     """
+    receiver = obj
     cur = obj
     while cur is not None:
         if key in cur.props:
             v = cur.props[key]
             v = v.value if isinstance(v, _JSAccessor) else v
+            if isinstance(v, _JSThisMember):
+                return _js_resolve_this_member(receiver, v.key)
             if isinstance(v, _JSNumStr):
                 raise _JSExprFail("F711 unsafe integer member read")
             return v
@@ -12988,15 +13048,60 @@ def _js_parse_f535_getter_value(text, i, depth, state):
     The engine evaluates the getter body as a plain expression, so
     the static model parses it with the additive grammar (string
     concatenation, nested member reads, nested getters, ...).
+    Two narrow productions precede it:
+
+    - F738: exactly `this.IDENT` -- the engine binds `this` to the
+      read's receiver, which the static model cannot know at
+      literal-parse time. Records a _JSThisMember marker resolved
+      lazily by _jsobj_lookup. Any other `this` use (binary
+      expressions, calls, `this['k']`) fails closed below, as
+      before -- the additive grammar has no `this`.
+    - F739: an object literal `{...}` -- the additive grammar
+      cannot parse one. Parsed with the literal-object grammar
+      (nested getters evaluate plain; a nested `this` getter
+      records a _JSThisMember resolved against the returned object
+      at read time -- node-exact, v24.20.0); the returned _JSObj
+      resolves member reads node-exactly, matching the engine's
+      fresh-per-invocation object (the model never mutates it, so
+      sharing is observationally identical).
+
     Results that are not strings or resolved objects (bare arrays,
     method references) fail closed -- they cannot be returned
     node-exactly here. Never evals.
     """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    # F738: `return this.IDENT;` (exactly -- nothing else in the
+    # return expression).
+    m = _js_match_kw(text, j, "this")
+    if m is not None and m < n and text[m] == ".":
+        k = _js_skip_ws(text, m + 1)
+        if k < n and text[k] in _JS_IDENT_START:
+            key, k = _js_parse_ident(text, k)
+            k2 = _js_skip_ws(text, k)
+            if k2 >= n or text[k2] in ";}":
+                state["ops"] += 1  # the this-member marker is
+                # obfuscation-shaped
+                return _JSThisMember(key), k
+        # Any other `this` shape falls through to the additive
+        # grammar, which fails closed on it (as before).
+    # F739: `return {...};` -- object-returning getter.
+    if j < n and text[j] == "{":
+        oprops, k = _js_parse_f535_object(text, j, depth + 1, state)
+        state["parts"] += 1  # the returned object literal itself
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        return _JSObj(oprops), k
     val, j = _js_parse_additive(text, i, depth, state)
     if isinstance(val, _JSMethodRef):
         raise _JSExprFail("method ref in getter")
     if isinstance(val, _JSArr):
         raise _JSExprFail("array in getter")
+    if isinstance(val, _JSThisMember):
+        # Unreachable: the F738 production above returns before the
+        # additive runs, and the additive grammar has no `this`.
+        # Defensive -- never mis-decode a marker as a value.
+        raise _JSExprFail("this-marker leaked into additive")
     if not isinstance(val, (str, _JSObj)):
         raise _JSExprFail("getter value not a string")
     return val, j
@@ -13837,10 +13942,12 @@ def _js_parse_descriptor_getter(text, k, depth, state):
     Returns (evaluated_value, next_index). The engine invokes the
     getter on property read; the static model evaluates the return
     expression with _js_parse_f535_getter_value (the F535 getter
-    grammar -- `this`-dependent bodies fail closed there, so the
-    evaluation is argument-independent, node v24.20.0 verified; an
-    arrow's `this` is lexical and equally unmodelable, so it fails
-    closed the same way). An optional function name is accepted
+    grammar -- a `this`-dependent body yields a _JSThisMember marker
+    (F738) instead of a value; consumers that require a plain string
+    fail closed on it, while member-read paths resolve it against
+    the read's receiver, node v24.20.0 verified; an arrow's `this`
+    is lexical and equally unmodelable, so it fails closed the same
+    way). An optional function name is accepted
     (engine-exact). Arrow getters take zero parameters -- any
     parameter fails closed (conservative, documented); the
     single-bare-param form (`x=>EXPR`) also fails closed. Never
@@ -14315,6 +14422,11 @@ def _js_parse_f549_gopd_object(text, i, depth, state):
             if k >= n or text[k] != ")":
                 raise _JSExprFail("gopd .get takes no args")
             val, k = raw.value, k + 1
+            if isinstance(val, _JSThisMember):
+                # F738: `.get()` returns the getter function in the
+                # engine; no single evaluated value exists for a
+                # receiver-bound body -- fail closed.
+                raise _JSExprFail("gopd .get on this-getter")
         else:
             raise _JSExprFail("gopd field not modeled")
     else:
@@ -37713,6 +37825,11 @@ def _js_parse_f691f698_descriptor_iife(text, i, depth, state):
                     # parity).
                     raise _JSExprFail("F691/F698 .get takes no args")
                 _raw = _raw.value
+                if isinstance(_raw, _JSThisMember):
+                    # F738: `.get()` returns the getter function in
+                    # the engine; the model has no single evaluated
+                    # value for a receiver-bound body -- fail closed.
+                    raise _JSExprFail("F691/F698 .get on this-getter")
                 k = k + 1
             state["ops"] += 1  # the descriptor indirection is
             # obfuscation-shaped
