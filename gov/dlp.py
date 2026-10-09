@@ -2220,7 +2220,7 @@ class _JSExprFail(Exception):
     """A JS-expression run is not strictly decodable (fail closed)."""
 
 
-_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|atob(?![_$A-Za-z0-9])|decodeURIComponent(?![_$A-Za-z0-9])|encodeURIComponent(?![_$A-Za-z0-9])|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|create|defineProperty|fromEntries|groupBy)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|Symbol(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|Number(?![_$A-Za-z0-9])|Promise(?![_$A-Za-z0-9])|Map[ \t\n\r]*\.[ \t\n\r]*groupBy(?![_$A-Za-z0-9])|new[ \t\n\r]+Map(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|new[ \t\n\r]+Proxy(?![_$A-Za-z0-9])|new[ \t\n\r]+URLSearchParams(?![_$A-Za-z0-9])|new[ \t\n\r]+URL(?![_$A-Za-z0-9])|new[ \t\n\r]+TextDecoder(?![_$A-Za-z0-9])|new[ \t\n\r]+String(?![_$A-Za-z0-9])|new[ \t\n\r]+Array(?![_$A-Za-z0-9])|\(String[ \t\n\r]*\.[ \t\n\r]*raw[ \t\n\r]*`|\(")
+_JS_EXPR_START = re.compile(r"['\"`\[]|String\.fromCharCode|String\.fromCodePoint|atob(?![_$A-Za-z0-9])|decodeURIComponent(?![_$A-Za-z0-9])|encodeURIComponent(?![_$A-Za-z0-9])|String[ \t\n\r]*(\(|\.[ \t\n\r]*raw([ \t\n\r]*\(|[ \t\n\r]*\.[ \t\n\r]*call[ \t\n\r]*\()|\[[ \t\n\r]*['\"])|Array(\(|[ \t\n\r]*(\.[ \t\n\r]*(of|apply|call|from)|\[[ \t\n\r]*['\"]))|Array[ \t\n\r]*\.[ \t\n\r]*prototype|String[ \t\n\r]*\.[ \t\n\r]*prototype|Function[ \t\n\r]*\.[ \t\n\r]*prototype|Reflect([ \t\n\r]*(\?\.|\.)[ \t\n\r]*(construct|apply|get)|[ \t\n\r]*\[[ \t\n\r]*['\"`\[])|Object([ \t\n\r]*\.[ \t\n\r]*(assign|getPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyNames|getOwnPropertyDescriptors|values|keys|entries|freeze|seal|preventExtensions|create|defineProperty|fromEntries|groupBy)|[ \t\n\r]*\[[ \t\n\r]*['\"])|structuredClone(?![_$A-Za-z0-9])|Symbol(?![_$A-Za-z0-9])|JSON(?![_$A-Za-z0-9])|Number(?![_$A-Za-z0-9])|Promise(?![_$A-Za-z0-9])|Map[ \t\n\r]*\.[ \t\n\r]*groupBy(?![_$A-Za-z0-9])|new[ \t\n\r]+Map(?![_$A-Za-z0-9])|new[ \t\n\r]+WeakRef(?![_$A-Za-z0-9])|new[ \t\n\r]+Proxy(?![_$A-Za-z0-9])|new[ \t\n\r]+URLSearchParams(?![_$A-Za-z0-9])|new[ \t\n\r]+URL(?![_$A-Za-z0-9])|new[ \t\n\r]+TextDecoder(?![_$A-Za-z0-9])|new[ \t\n\r]+String(?![_$A-Za-z0-9])|new[ \t\n\r]+Array(?![_$A-Za-z0-9])|\(String[ \t\n\r]*\.[ \t\n\r]*raw[ \t\n\r]*`|\(")
 # F536: the structuredClone anchor carries its own ident-boundary
 # lookahead so `structuredClonex(` never anchors (no wasted F512
 # total-attempt budget); the primary branch re-checks the boundary
@@ -14763,14 +14763,16 @@ def _js_parse_f565_from_entries(text, i, depth, state):
 
 
 def _js_parse_f539_object_identity(text, i, depth, state):
-    """Parse `Object.assign({}, OBJLIT, ...)` / `Object.freeze(OBJLIT)`
-    at text[i] (F539).
+    """Parse `Object.assign({}, OBJLIT, ...)` / `Object.freeze(OBJLIT)` /
+    `Object.seal(OBJLIT)` / `Object.preventExtensions(OBJLIT)` at
+    text[i] (F539; seal/preventExtensions added by F812).
 
     Identity-preserving builtins on parsed object literals: node
-    (v24.20.0) returns the assign TARGET and the freeze ARGUMENT, so
-    the decoded value is a _JSObj whose props are resolved exactly
-    like the F535 literal read -- member reads on the result route
-    through the _JSObj branch of _js_parse_postfix.
+    (v24.20.0) returns the assign TARGET and the freeze/seal/
+    preventExtensions ARGUMENT, so the decoded value is a _JSObj
+    whose props are resolved exactly like the F535 literal read --
+    member reads on the result route through the _JSObj branch of
+    _js_parse_postfix.
 
     - `Object.assign(TGT, SRC, ...)`: TGT must be the EMPTY object
       literal `{}` (ws-tolerant); every SRC must be an object literal
@@ -14786,13 +14788,16 @@ def _js_parse_f539_object_identity(text, i, depth, state):
       getter-only target accessor throws TypeError (node v24.20.0
       verified), so a later-wins merge would mis-decode a shape the
       engine rejects -- fail closed (documented residual).
-    - `Object.freeze(OBJLIT)`: exactly one argument, an object
-      literal; the engine returns the argument unchanged
-      (node-exact, freeze is identity on the value).
-    - Dot form only; `Object['assign']` / `Object['freeze']` fall
-      through (the F480 bracket block fails closed on non-`[]`
-      targets as before; freeze has no bracket form here --
-      documented residual).
+    - `Object.freeze(OBJLIT)` / `Object.seal(OBJLIT)` /
+      `Object.preventExtensions(OBJLIT)`: exactly one argument, an
+      object literal; the engine returns the argument unchanged
+      (node-exact -- all three are identity on the value; seal only
+      flips configurability and preventExtensions only blocks
+      extension, neither changing reads of existing data props).
+    - Dot form only; `Object['assign']` / `Object['freeze']` /
+      `Object['seal']` fall through (the F480 bracket block fails
+      closed on non-`[]` targets as before; none of the identity
+      builtins has a bracket form here -- documented residual).
 
     Returns (_JSObj, next_index), or None when text[i] is not an
     identity-builtin head (the caller falls through to the F471
@@ -14810,9 +14815,18 @@ def _js_parse_f539_object_identity(text, i, depth, state):
     j = _js_skip_ws(text, j + 1)
     is_assign = text.startswith("assign", j)
     is_freeze = text.startswith("freeze", j)
-    if not (is_assign or is_freeze):
+    is_seal = text.startswith("seal", j)
+    is_prevent = text.startswith("preventExtensions", j)
+    if not (is_assign or is_freeze or is_seal or is_prevent):
         return None
-    k = j + (len("assign") if is_assign else len("freeze"))
+    if is_assign:
+        k = j + len("assign")
+    elif is_freeze:
+        k = j + len("freeze")
+    elif is_seal:
+        k = j + len("seal")
+    else:
+        k = j + len("preventExtensions")
     if k < n and text[k] in _JS_IDENT_CONT:
         return None
     # The member commits the parse: malformed shapes fail closed.
@@ -14828,10 +14842,15 @@ def _js_parse_f539_object_identity(text, i, depth, state):
             return None
         raise _JSExprFail("freeze arg not an object")
     first, k = _js_parse_f535_object(text, k, depth, state)
-    if is_freeze:
+    if is_freeze or is_seal or is_prevent:
+        # F812: `Object.seal(OBJLIT)` / `Object.preventExtensions(OBJLIT)`
+        # are identity on the argument exactly like freeze (node
+        # v24.20.0): seal only flips configurability, preventExtensions
+        # only blocks extension -- reads of existing data props are
+        # unchanged, so the decoded value is the parsed literal.
         k = _js_skip_ws(text, k)
         if k >= n or text[k] != ")":
-            raise _JSExprFail("freeze takes one argument")
+            raise _JSExprFail("identity builtin takes one argument")
         return _JSObj(first), k + 1
     # Object.assign: the target must be the EMPTY literal.
     if first:
@@ -53049,9 +53068,11 @@ def _js_parse_f67x_object(text, i, depth, state, pre_env=None,
     getters are `get name(){return ADD;}` (the
     _js_parse_f535_getter_head grammar). Bodies are captured as raw
     additive text and validated at invocation time; `this`-free
-    bodies decode identically. `__proto__`, setters, method
-    shorthand, spreads, nested values, and non-literal data values
-    fail closed. Each property charges the F430 parts budget.
+    bodies decode identically. `__proto__`, setters, spreads,
+    nested values, and non-literal data values fail closed.
+    Shorthand methods `m(){...}` are modeled (F811) exactly like
+    the `name:function(){...}` method value -- only when this_bodies
+    is set. Each property charges the F430 parts budget.
     Never evals.
     """
     n = len(text)
@@ -53069,18 +53090,38 @@ def _js_parse_f67x_object(text, i, depth, state, pre_env=None,
             raise _JSExprFail("F67x unterminated object")
         c = text[j]
         if c == "[":
-            # Computed [IDENT] -- IDENT must name a string literal
-            # bound in pre_env (the F673 computed-key shape).
+            # Computed keys: `[IDENT]` bound to a string literal in
+            # pre_env (the F673 computed-key shape); `['LIT']`
+            # string-literal keys; additive `['a'+'b']` keys (F492
+            # fold) -- the F811 computed-method-name shapes. Anything
+            # else (numeric, unbound, call) fails closed.
             k = _js_skip_ws(text, j + 1)
-            cname, k = _js_parse_ident(text, k)
-            if (cname not in pre_env
-                    or not isinstance(pre_env[cname], str)):
-                raise _JSExprFail("F67x computed key not bound")
-            key = pre_env[cname]
-            k = _js_skip_ws(text, k)
-            if k >= n or text[k] != "]":
-                raise _JSExprFail("F67x bad computed key")
-            j = k + 1
+            if k < n and text[k] in "'\"":
+                # `['LIT']` -- or `['a'+'b']`, which falls back to
+                # the F492 fold below when `]` does not follow the
+                # first literal.
+                skey, sk = _js_parse_string(text, k)
+                sk = _js_skip_ws(text, sk)
+                if sk < n and text[sk] == "]":
+                    key, j = skey, sk + 1
+                else:
+                    key, j = _js_fold_bracket_key(text, j, depth,
+                                                  state)
+            else:
+                try:
+                    cname, kk = _js_parse_ident(text, k)
+                except _JSExprFail:
+                    cname, kk = None, k
+                if (cname is not None and cname in pre_env
+                        and isinstance(pre_env[cname], str)):
+                    key = pre_env[cname]
+                    kk = _js_skip_ws(text, kk)
+                    if kk >= n or text[kk] != "]":
+                        raise _JSExprFail("F67x bad computed key")
+                    j = kk + 1
+                else:
+                    key, j = _js_fold_bracket_key(text, j, depth,
+                                                  state)
         elif c in "'\"":
             key, j = _js_parse_string(text, j)
         elif c in _ASCII_DIGITS:
@@ -53096,11 +53137,35 @@ def _js_parse_f67x_object(text, i, depth, state, pre_env=None,
         if key == "__proto__":
             raise _JSExprFail("F67x __proto__ fails closed")
         k = _js_skip_ws(text, j)
-        if key == "get" and k < n and text[k] not in ":(":
+        if k < n and text[k] == "(":
+            # F811: shorthand method `m(){return ADD;}` (also
+            # `['m'](){}`, `[K](){}`, `['m'+'2'](){}` via the
+            # computed-key forms above). Zero-arg only -- any
+            # parameter fails closed. The body is captured exactly
+            # like the `name:function(){...}` method value and
+            # invoked at the call site with `this` = the receiver
+            # (node v24.20.0). A method literally named `get`/`set`
+            # (`{get(){...}}`) is admitted here -- the engine treats
+            # it as a method, not an accessor.
+            if not this_bodies:
+                raise _JSExprFail("F67x shorthand method not modeled")
+            fk = _js_skip_ws(text, k + 1)
+            if fk >= n or text[fk] != ")":
+                raise _JSExprFail("F67x method takes no args")
+            fk = _js_skip_ws(text, fk + 1)
+            if fk >= n or text[fk] != "{":
+                raise _JSExprFail("F67x method needs a body")
+            bstart, bend, fk2 = _js_span_braced(text, fk)
+            add_text, kend = _js_scan_f67x_body_text(text, bstart,
+                                                    bend)
+            if _js_skip_ws(text, kend) != bend:
+                raise _JSExprFail("F67x method body trailing")
+            props[key] = _JSF67xBody("method", add_text)
+            j = fk2
+        elif key == "get" and k < n and text[k] not in ":(":
             # Getter head: `get name(){return ADD;}`. A `get` followed
             # by ':' is a data property named "get"; a `get` followed
-            # by '(' is method shorthand (fails closed at the colon
-            # check below).
+            # by '(' is a shorthand method (handled above).
             if not this_bodies:
                 raise _JSExprFail("F67x getter not modeled")
             gname, gk = _js_parse_f535_getter_head(text, k)
@@ -54285,7 +54350,13 @@ def _js_parse_f674_term(text, j, oname, obj, depth, state):
         k = _js_skip_ws(text, k + 1)
         mname, k = _js_parse_ident(text, k)
     elif k < n and text[k] == "[":
-        mname, k = _js_parse_bracket_member(text, k)
+        try:
+            mname, k = _js_parse_bracket_member(text, k)
+        except _JSExprFail:
+            # F811: additive computed key `o['m'+'2']` -- the F492
+            # fold; the definition site admits the same key forms,
+            # so the call site must too (node-exact).
+            mname, k = _js_fold_bracket_key(text, k, depth, state)
     else:
         # A bare bound object ident reads "[object Object]" in the
         # engine -- never decoded.
@@ -54410,6 +54481,449 @@ def _js_parse_f674_this_bound_iife(text, i, depth, state):
         sj = _js_skip_ws(text, sj)
         if sj != inner_end:
             raise _JSExprFail("F674 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
+
+
+def _js_parse_f811_computed_method_iife(text, i, depth, state):
+    """Parse `(function(){var K='LIT';var o={[K](){return ADD;},...};
+    return ADD;})()` (F811).
+
+    F673 (CLOSED) models the `var k='x';var o={[k]:'LIT'};`
+    computed-key DATA shape, but a computed METHOD name
+    `{[k](){...}}` escapes it: the F67x object grammar fails closed
+    on shorthand methods when this_bodies is unset (the F673
+    computed-key shape), and F674 is single-declaration only.
+    Node-exact desugar (v24.20.0): each K binds its plain string
+    literal; o binds the object parsed by _js_parse_f67x_object
+    with pre_env={K: LIT, ...} and this_bodies=True (shorthand
+    methods and computed keys -- F811); the return is a `+`-joined
+    additive of string literals, member reads, and zero-arg method
+    calls on o (the _js_parse_f674_term grammar, `this` = o at
+    invocation). Multiple key declarators are supported
+    (`var a='m';var b='n';` or `var a='m',b='n';`); the object
+    declarator comes last (`var k='m',o={...};`).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, reassignment, non-empty call args;
+    - a declarator that is neither a plain string literal nor the
+      object literal; a declarator after the object; two object
+      declarators; no key declarator (the single-decl shape stays
+      F674's);
+    - an object with no method body (data-only shapes stay F673's --
+      the computed-key data shape is disjoint and stays theirs);
+    - a method call with arguments, on a missing key, or on a
+      data/getter property; a member read of a method without a
+      call; a bare bound ident.
+    Tried after F674: the two-declaration head is disjoint from
+    F674's single declaration and from F673's computed-key data
+    shape (which fails closed on shorthand methods); None falls
+    through like F674. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        # Declarators: one or more `K='LIT'` key bindings followed by
+        # exactly one `o={...}` object binding. Key bindings may be
+        # separate `var` statements or comma-joined
+        # (`var a='m';var b='n';` / `var a='m',b='n';` /
+        # `var k='m',o={...};`). At least one key binding is
+        # required -- the single-decl shape stays F674's.
+        pre_env = {}
+        oname = None
+        obj = None
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            return None  # not our shape
+        sj = m
+        while True:
+            sj = _js_skip_ws(text, sj)
+            dname, sj = _js_parse_ident(text, sj)
+            if dname == "arguments":
+                raise _JSExprFail("F811 binding named arguments")
+            if dname in pre_env or dname == oname:
+                raise _JSExprFail("F811 duplicate binding")
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, "=")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                if oname is not None:
+                    raise _JSExprFail("F811 key after object")
+                kval, sj = _js_parse_string(text, sj)
+                pre_env[dname] = kval
+            elif sj < n and text[sj] == "{":
+                if oname is not None:
+                    raise _JSExprFail("F811 two objects")
+                oprops, sj = _js_parse_f67x_object(
+                    text, sj, depth, state, pre_env=pre_env,
+                    this_bodies=True)
+                if not any(isinstance(v, _JSF67xBody)
+                           for v in oprops.values()):
+                    raise _JSExprFail("F811 needs a method body")
+                oname = dname
+                obj = _JSObj(oprops)
+            else:
+                return None  # not our shape
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == ",":
+                sj = sj + 1
+                continue
+            sj = _js_expect(text, sj, ";")
+            sj = _js_skip_ws(text, sj)
+            if oname is not None:
+                break
+            _kw2, m2 = _js_match_decl_kw(text, sj)
+            if _kw2 is None:
+                raise _JSExprFail("F811 decl expected")
+            sj = m2
+        if not pre_env:
+            return None  # no key binding -- not our shape
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F811 no return")
+        sj = _js_skip_ws(text, m)
+        total = None
+        while True:
+            term, sj = _js_parse_f674_term(text, sj, oname, obj,
+                                          depth, state)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            state["ops"] += 1  # the additive term is
+            # obfuscation-shaped
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F811 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
+
+
+def _js_parse_f812_sealed_iife(text, i, depth, state):
+    """Parse `(function(){DECL o=Object.seal(OBJLIT);return ADD;})()`
+    (F812; the freeze/preventExtensions twins decode identically).
+
+    F539 (extended by F812) models `Object.seal(...)` as an identity
+    builtin in VALUE position, but the F671 IIFE initializer only
+    accepts F535 object literals -- a var-bound sealed literal in an
+    IIFE return additive escapes it. Node-exact desugar (v24.20.0):
+    seal/freeze/preventExtensions return their argument unchanged,
+    so o binds the parsed literal and the return is a `+`-joined
+    additive of string literals and member reads on o (the
+    _js_parse_f671_member_term grammar). The initializer delegates
+    to _js_parse_f539_object_identity, so the multi-argument
+    `Object.assign({}, OBJLIT, ...)` identity form is admitted too
+    (node-exact -- F539 merges sources later-wins).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, multi-decl, reassignment, non-empty call args;
+    - an initializer that is not a single-argument identity builtin
+      over an object literal (Object.create initializers stay
+      F548/F704's; getters in the literal resolve via the F535
+      path exactly as the value-position seal does).
+    Tried after F811: the `Object.seal(` initializer head is
+    disjoint from every earlier IIFE route (none accepts a builtin
+    call initializer); None falls through like F811. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            return None  # not our shape
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            raise _JSExprFail("F812 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if not (text.startswith("Object", sj)
+                and (sj + 6 >= n
+                     or text[sj + 6] not in _JS_IDENT_CONT)):
+            return None  # not our shape
+        obj_r = _js_parse_f539_object_identity(text, sj, depth,
+                                                 state)
+        if obj_r is None:
+            return None  # not an identity builtin -- not our shape
+        obj, sj = obj_r
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F812 no return")
+        sj = _js_skip_ws(text, m)
+        env = {oname: obj}
+        total = None
+        while True:
+            term, sj = _js_parse_f671_member_term(text, sj, env,
+                                                 depth, state)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            state["ops"] += 1  # the member term is
+            # obfuscation-shaped
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F812 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
+
+
+def _js_parse_f812_create_assign_iife(text, i, depth, state):
+    """Parse `(function(){DECL o=Object.create(PROTO[,PROPS]);
+    o.K='LIT';...;return ADD;})()` (F812).
+
+    F548 (CLOSED) models `Object.create(PROTO[,PROPS])` in VALUE
+    position, but a var-bound create result MUTATED by a
+    post-binding assignment (`o.k='f1'`) escapes it: F673's create
+    branch expects the return immediately after the declaration,
+    and no earlier route accepts the assignment statement.
+    Node-exact desugar (v24.20.0): the assignment installs an own
+    data property (own props shadow the prototype, later
+    assignments win); the return is a `+`-joined additive of
+    string literals and member reads on the mutated object (the
+    _js_parse_f671_member_term grammar, resolving through the F548
+    prototype chain).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function, parameters, a directive prologue, extra
+      statements, multi-decl, reassignment of o itself, non-empty
+      call args;
+    - an assignment whose target is not exactly the bound ident, a
+      `__proto__` key on a non-null prototype (the engine invokes
+      the __proto__ setter -- documented boundary), a non-literal
+      key, or a non-literal value; zero assignments (that shape
+      stays F673's/F704's -- this production requires at least
+      one). A `__proto__` assignment on a null-prototype object
+      installs an own data property (node-exact) and is admitted.
+    Tried after the F812 sealed IIFE: the `o.K='LIT';` assignment
+    statement is disjoint from every earlier route; None falls
+    through like the sealed IIFE. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            return None  # not our shape
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            raise _JSExprFail("F812 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if not (text.startswith("Object", sj)
+                and (sj + 6 >= n
+                     or text[sj + 6] not in _JS_IDENT_CONT)):
+            return None  # not our shape
+        obj_r = _js_parse_f548_object_create(text, sj, depth,
+                                               state)
+        if obj_r is None:
+            return None  # not a create -- not our shape
+        obj, sj = obj_r
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        # One or more `o.K='LIT';` / `o['K']='LIT';` assignments.
+        nprops = dict(obj.props)
+        nassign = 0
+        while True:
+            astart = sj
+            try:
+                tname, ak = _js_parse_ident(text, sj)
+            except _JSExprFail:
+                break
+            if tname != oname:
+                break
+            ak = _js_skip_ws(text, ak)
+            if ak < n and text[ak] == ".":
+                ak = _js_skip_ws(text, ak + 1)
+                aname, ak = _js_parse_ident(text, ak)
+            elif ak < n and text[ak] == "[":
+                aname, ak = _js_parse_bracket_member(text, ak)
+            else:
+                break
+            if aname == "__proto__" and obj.proto is not None:
+                # On a non-null prototype the engine invokes the
+                # __proto__ SETTER (mutating the prototype -- never
+                # modeled); on a null prototype there is no setter
+                # in the chain, so the assignment installs an own
+                # data property (node v24.20.0) -- admitted below.
+                raise _JSExprFail("F812 __proto__ assignment fails "
+                                  "closed")
+            ak = _js_skip_ws(text, ak)
+            if ak >= n or text[ak] != "=":
+                break
+            # `==`/`===` is not an assignment -- rewind, not ours.
+            if ak + 1 < n and text[ak + 1] == "=":
+                break
+            ak = _js_skip_ws(text, ak + 1)
+            if ak >= n or text[ak] not in "'\"":
+                break
+            aval, ak = _js_parse_string_carrier_tolerant(text, ak)
+            ak = _js_skip_ws(text, ak)
+            if ak >= n or text[ak] != ";":
+                break
+            sj = ak + 1
+            nprops[aname] = aval
+            nassign += 1
+            state["parts"] += 1  # the assignment is
+            # obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(text, sj)
+        if nassign == 0:
+            # No assignment: the plain create shape stays
+            # F673's/F704's -- rewind and fall through.
+            return None
+        obj = _JSObj(nprops, proto=obj.proto)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F812 no return")
+        sj = _js_skip_ws(text, m)
+        env = {oname: obj}
+        total = None
+        while True:
+            term, sj = _js_parse_f671_member_term(text, sj, env,
+                                                 depth, state)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            state["ops"] += 1  # the member term is
+            # obfuscation-shaped
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F812 trailing statements")
         j = _js_skip_ws(text, j)
         j = _js_expect(text, j, ")")
         j = _js_skip_ws(text, j)
@@ -75538,6 +76052,51 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f674_saved_parts; state['ops'] = _f674_saved_ops
         if _f674 is not None:
             val, i = _f674
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F811: (function(){var K='LIT';var o={[K](){return ADD;},...};
+        #   return ADD;})() -- computed method names. Tried after
+        #   F674: the two-declaration head is disjoint from F674's
+        #   single declaration and from F673's computed-key DATA
+        #   shape (which fails closed on shorthand methods with
+        #   this_bodies=False); None falls through to the F812a
+        #   route like F674. F674's hook and its trailing `return`
+        #   are untouched (wave-379 lesson).
+        _f811_saved_parts = state['parts']; _f811_saved_ops = state['ops']
+        _f811 = _js_parse_f811_computed_method_iife(text, i, depth,
+                                                   state)
+        if _f811 is None:
+            state['parts'] = _f811_saved_parts; state['ops'] = _f811_saved_ops
+        if _f811 is not None:
+            val, i = _f811
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F812a: (function(){DECL o=Object.seal(OBJLIT);return ADD;})()
+        #   (freeze/preventExtensions twins) -- var-bound sealed
+        #   literal. Tried after F811: the `Object.seal(` initializer
+        #   head is disjoint from every earlier IIFE route (none
+        #   accepts a builtin-call initializer); None falls through
+        #   like F811. F811's hook and its trailing `return` are
+        #   untouched (wave-379 lesson).
+        _f812a_saved_parts = state['parts']; _f812a_saved_ops = state['ops']
+        _f812a = _js_parse_f812_sealed_iife(text, i, depth, state)
+        if _f812a is None:
+            state['parts'] = _f812a_saved_parts; state['ops'] = _f812a_saved_ops
+        if _f812a is not None:
+            val, i = _f812a
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F812b: (function(){DECL o=Object.create(PROTO[,PROPS]);
+        #   o.K='LIT';...;return ADD;})() -- create result mutated by
+        #   post-binding assignment. Tried after F812a: the
+        #   `o.K='LIT';` assignment statement is disjoint from every
+        #   earlier route (F673/F704 fail closed on it); None falls
+        #   through to F705 like F812a. F812a's hook and its
+        #   trailing `return` are untouched (wave-379 lesson).
+        _f812b_saved_parts = state['parts']; _f812b_saved_ops = state['ops']
+        _f812b = _js_parse_f812_create_assign_iife(text, i, depth,
+                                                  state)
+        if _f812b is None:
+            state['parts'] = _f812b_saved_parts; state['ops'] = _f812b_saved_ops
+        if _f812b is not None:
+            val, i = _f812b
             return _js_parse_postfix(text, i, val, depth, state)
         # F705: (function(){DECL o=OBJLIT;return ADD;})() --
         # Reflect.get(o,'KEY'[,{}]) terms in the return additive.
