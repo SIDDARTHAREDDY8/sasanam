@@ -91883,6 +91883,7 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f832_saved_parts; state['ops'] = _f832_saved_ops
         if _f832 is not None:
             val, i = _f832
+            return _js_parse_postfix(text, i, val, depth, state)
         # F880: (function(){DECL A=[...].toSorted([FN]);return
         #   A[I]+A[J]...;})() -- var-bound toSorted reads. Tried
         #   after F802: the `DECL A=[...].toSorted(` head is unique
