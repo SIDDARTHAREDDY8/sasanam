@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Red-first for F762: non-string primitive Symbol.toPrimitive returns not modeled.
+"""Red-first for F794: non-string primitive Symbol.toPrimitive returns not modeled.
 
 The decoder's ToPrimitive coercion (shared _js_f697_toprimitive, used by
 F697's literal form and F743's assigned form) fails closed when the
