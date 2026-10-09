@@ -29851,6 +29851,229 @@ def _js_parse_f752_builtin_iter_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f793_callback_additive(stmts, k, param, state):
+    """Parse the `ADD` in an F793 `.map` callback.
+
+    ADD is a `+`-joined additive of string literals and the single
+    param P. Returns (terms, next_index); terms is a list of
+    ("lit", s) / ("param", None). A foreign ident, a member/call
+    on the param, or any other term fails closed. Never evals.
+    """
+    n = len(stmts)
+    terms = []
+    while True:
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] in "'\"":
+            s, k = _js_parse_string(stmts, k)
+            terms.append(("lit", s))
+        elif k < n and stmts[k] in _JS_IDENT_START:
+            nm, k2 = _js_parse_ident(stmts, k)
+            if nm != param:
+                raise _JSExprFail("F793 callback foreign ident")
+            k2 = _js_skip_ws(stmts, k2)
+            if k2 < n and stmts[k2] in ".[(":
+                raise _JSExprFail("F793 callback param member")
+            terms.append(("param", None))
+            k = k2
+        else:
+            raise _JSExprFail("F793 callback bad term")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == "+":
+            k += 1
+            continue
+        break
+    if not terms:
+        raise _JSExprFail("F793 callback empty")
+    return terms, k
+
+
+def _js_parse_f793_map_callback(stmts, k, depth, state):
+    """Parse an F793 `.map` callback at stmts[k].
+
+    `function(P){return ADD;}`, `(P)=>ADD`, or `(P)=>{return ADD;}`
+    with ADD a string-only additive of literals and the single
+    param P (see _js_parse_f793_callback_additive). Returns
+    (param, terms, next_index). A second param, a non-param ident,
+    or a member/call on the param fails closed. Never evals.
+    """
+    n = len(stmts)
+    k = _js_skip_ws(stmts, k)
+    mk = _js_match_kw(stmts, k, "function")
+    if mk is not None:
+        k = _js_skip_ws(stmts, mk)
+        k = _js_expect(stmts, k, "(")
+        k = _js_skip_ws(stmts, k)
+        param, k = _js_parse_ident(stmts, k)
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, ")")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "{")
+        k = _js_skip_ws(stmts, k)
+        m = _js_match_kw(stmts, k, "return")
+        if m is None:
+            raise _JSExprFail("F793 callback no return")
+        k = _js_skip_ws(stmts, m)
+        terms, k = _js_parse_f793_callback_additive(stmts, k, param,
+                                                    state)
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, ";")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "}")
+        return param, terms, k
+    if k < n and stmts[k] == "(":
+        k = _js_skip_ws(stmts, k + 1)
+        param, k = _js_parse_ident(stmts, k)
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, ")")
+        k = _js_skip_ws(stmts, k)
+        if not stmts.startswith("=>", k):
+            raise _JSExprFail("F793 callback not an arrow")
+        k = _js_skip_ws(stmts, k + 2)
+        if k < n and stmts[k] == "{":
+            k = _js_skip_ws(stmts, k + 1)
+            m = _js_match_kw(stmts, k, "return")
+            if m is None:
+                raise _JSExprFail("F793 arrow no return")
+            k = _js_skip_ws(stmts, m)
+            terms, k = _js_parse_f793_callback_additive(
+                stmts, k, param, state)
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, ";")
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, "}")
+            return param, terms, k
+        terms, k = _js_parse_f793_callback_additive(stmts, k, param,
+                                                    state)
+        return param, terms, k
+    raise _JSExprFail("F793 callback not a function")
+
+
+def _js_parse_f793_iter_helper_iife(text, i, depth, state):
+    """Parse `(function(){return [...SRC.map(f)|.drop(n)].join('SEP');})()` (F793).
+
+    F752 (CLOSED wave-384 lane 8) models builtin-iterator
+    `.next().value` reads, but the ES2025 Iterator helpers have no
+    production: `.values().map(f)` and `.values().drop(n)` resolve
+    node-exactly (v24.20.0) while the decoder produces zero
+    variants. Node-exact desugar: SRC is an F752 inline iterator
+    source (array `[LITS]`, string code points, `new Set([LITS])`,
+    `new Map(PAIRS)` -- the F752 member rules apply unchanged);
+    `.map(f)` applies the callback to each item in order (the
+    callback is `function(P){return ADD;}` or the arrow twins,
+    ADD a string-only additive of literals and P); `.drop(n)`
+    drops the first n items (n a non-negative integer literal --
+    the engine throws RangeError on negatives, so they fail
+    closed; non-integers fail closed as unmodeled); the spread
+    collects the helper's iterator into an array joined by the
+    string-literal SEP.
+
+    Disjoint from F752: F752's grammar requires an
+    iterator-source DECLARATION (`DECL IT=<source>;`) and fails
+    closed on a bare `return`; this requires the bare-return
+    spread-join shape with no declarations and fails closed on
+    any declaration. Tried after F752. Returns (value,
+    next_index), or None. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("F793 too deep")
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        k = _js_skip_ws(stmts, 0)
+        m = _js_match_kw(stmts, k, "return")
+        if m is None:
+            raise _JSExprFail("F793 no return")
+        k = _js_skip_ws(stmts, m)
+        k = _js_expect(stmts, k, "[")
+        k = _js_skip_ws(stmts, k)
+        if k + 3 > n or not stmts.startswith("...", k):
+            raise _JSExprFail("F793 not a spread")
+        k = _js_skip_ws(stmts, k + 3)
+        # Inline iterator source only (no var bindings in this
+        # shape); the F752 member rules apply unchanged.
+        items, k = _js_parse_f752_iter_source(stmts, k, depth,
+                                              state, {})
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, ".")
+        hname, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+        if hname == "map":
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, "(")
+            _param, terms, k = _js_parse_f793_map_callback(
+                stmts, k, depth, state)
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, ")")
+            out = []
+            for it in items:
+                s = "".join(it if tkind == "param" else tval
+                            for tkind, tval in terms)
+                if len(s) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("F793 map too long")
+                out.append(s)
+                state["parts"] += 1  # F452: per mapped item
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+            items = out
+        elif hname == "drop":
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, "(")
+            k = _js_skip_ws(stmts, k)
+            d0 = k
+            while k < n and stmts[k] in "0123456789":
+                k += 1
+            if k == d0:
+                raise _JSExprFail("F793 drop not an integer")
+            if k - d0 > _JS_EXPR_MAX_INT_DIGITS:
+                raise _JSExprFail("F793 drop too big")
+            cnt = int(stmts[d0:k])
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, ")")
+            # A negative literal cannot lex here (the `-` fails
+            # the digit scan) -- the engine's RangeError and the
+            # decoder's fail-closed agree.
+            items = items[cnt:]
+            state["parts"] += 1  # F452: the drop is
+            # obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        else:
+            raise _JSExprFail("F793 not map/drop")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "]")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, ".")
+        jname, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+        if jname != "join":
+            raise _JSExprFail("F793 not join")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "(")
+        k = _js_skip_ws(stmts, k)
+        sep, k = _js_parse_string(stmts, k)
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, ")")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, ";")
+        k = _js_skip_ws(stmts, k)
+        if k != n:
+            raise _JSExprFail("F793 trailing junk")
+        val = sep.join(items)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F793 too long")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
 def _js_parse_f753_spread_source(text, j, depth, state):
     """Parse `...SRC` at text[j] (F753).
 
@@ -51827,6 +52050,60 @@ def _js_parse_f697_object(text, i, depth, state):
         raise _JSExprFail("F697 bad object literal")
 
 
+def _js_f794_parse_primitive_literal(add_text):
+    """Parse a bare primitive-literal coercion body for F794.
+
+    add_text is the raw text between `return` and `;` in a
+    coercion-method body. Returns ("num", int_value) for a
+    decimal integer literal within the float64-exact bound
+    (node: String(120) === "120"), or ("bool", True/False) for
+    `true`/`false`. Returns None for anything else -- strings,
+    floats, hex/octal/binary spellings, legacy-octal-looking
+    digits (sloppy-mode `0120` is octal 80 in the engine, so a
+    decimal read would mis-decode), expressions, or empty text.
+    The caller fails closed on None. Never evals.
+    """
+    s = add_text.strip()
+    if s == "true":
+        return ("bool", True)
+    if s == "false":
+        return ("bool", False)
+    if s and all(c in "0123456789" for c in s):
+        if len(s) > 1 and s[0] == "0":
+            return None  # legacy-octal spelling -- fail closed
+        if len(s) > _JS_EXPR_MAX_INT_DIGITS:
+            return None  # int() digit-limit safety
+        val = int(s)
+        if val > 2 ** 53:
+            return None  # not float64-exact -- fail closed
+        return ("num", val)
+    return None
+
+
+def _js_f794_toprimitive_number(props, depth, state):
+    """Resolve an own @@toPrimitive body to a JS number (F794).
+
+    For the `String.fromCharCode(o)` term: the engine's ToNumber
+    calls ToPrimitive with hint "number", so a numeric/boolean
+    literal body yields its value (bool -> 1/0, the engine's
+    ToNumber). Returns the int value. Raises _JSExprFail when
+    there is no own callable @@toPrimitive, when its body is not
+    a bare numeric/boolean literal, or when the value is out of
+    the codepoint range (the engine throws -- fail closed, never
+    mis-decoded). valueOf/toString number bodies are a documented
+    residual (the filed shapes use @@toPrimitive only). Never
+    evals.
+    """
+    tp = props.get(("symbol", "toPrimitive"))
+    if not isinstance(tp, _JSF67xBody):
+        raise _JSExprFail("F794 no toPrimitive body")
+    prim = _js_f794_parse_primitive_literal(tp.add_text)
+    if prim is None:
+        raise _JSExprFail("F794 body not a primitive literal")
+    kind, pval = prim
+    return (1 if pval else 0) if kind == "bool" else pval
+
+
 def _js_f697_toprimitive(props, depth, state):
     """Evaluate ToPrimitive(props, default hint) for an F697 object.
 
@@ -51850,10 +52127,15 @@ def _js_f697_toprimitive(props, depth, state):
     as absent. Rationale (node v24.20.0): a body returning an
     Object makes the engine throw (valueOf/toString fall through
     to the next method; @@toPrimitive propagates the throw) --
-    correctly refused; but a body returning a non-string PRIMITIVE
-    (number/boolean) does NOT throw -- the engine String()-coerces
-    it -- so this fail-closed is a genuine decoder miss on a live
-    channel, filed as F794 (fail-safe direction). The documented
+    correctly refused; but an own @@toPrimitive body returning a
+    non-string PRIMITIVE (number/boolean literal) does NOT throw --
+    the engine String()-coerces it (@@toPrimitive is hint-independent,
+    node v24.20.0) -- CLOSED as F794 (wave-385 lane 16):
+    numeric/boolean literal @@toPrimitive bodies now decode
+    node-exactly. valueOf/toString numeric/boolean bodies stay
+    fail-closed: their method order is hint-dependent ("string"
+    tries toString first) and the hint is not threaded here -- a
+    documented residual, never mis-decoded. The documented
     residual is
     the `this.missing` (undefined-returning) body, which the engine
     would continue past but the decoder fails closed on. Never
@@ -51869,6 +52151,13 @@ def _js_f697_toprimitive(props, depth, state):
     if isinstance(tp, _JSF67xBody):
         # No fallback in the engine: a throwing [Symbol.toPrimitive]
         # propagates -- an unevaluable body fails closed.
+        # F794: a numeric/boolean literal body does NOT throw --
+        # the engine String()-coerces the primitive (node v24.20.0).
+        prim = _js_f794_parse_primitive_literal(tp.add_text)
+        if prim is not None:
+            kind, pval = prim
+            return ("true" if pval else "false") if kind == "bool" \
+                else str(pval)
         val = _js_f67x_eval_body(tp, recv, depth, state)
         if not isinstance(val, str):
             raise _JSExprFail("F697 toPrimitive not a string")
@@ -51965,6 +52254,32 @@ def _js_parse_f697_toprimitive_iife(text, i, depth, state):
             sj = _js_skip_ws(text, sj)
             if sj < n and text[sj] in "'\"":
                 term, sj = _js_parse_string(text, sj)
+            elif (text.startswith("String.fromCharCode", sj)
+                    and (sj + 19 >= n
+                         or text[sj + 19] not in _JS_IDENT_CONT)):
+                # F794: `String.fromCharCode(o)` -- the engine's
+                # ToNumber calls ToPrimitive (hint "number") on the
+                # bound object (node v24.20.0). Parallel to F743's
+                # term; disjoint from F674 (which owns the bound
+                # object's own members, not String's).
+                q = _js_skip_ws(text, sj + 19)
+                q = _js_expect(text, q, "(")
+                q = _js_skip_ws(text, q)
+                nm2, q = _js_parse_ident(text, q)
+                if nm2 != oname:
+                    raise _JSExprFail("F794 fromCharCode of unbound")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, ")")
+                cp = _js_f794_toprimitive_number(props, depth, state)
+                ch = _safe_chr(cp)
+                if ch is None:
+                    raise _JSExprFail("F794 bad codepoint")
+                term = ch
+                saw_coerce = True
+                state["parts"] += 1  # F452: obfuscation-shaped
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                sj = q
             else:
                 name, k = _js_parse_ident(text, sj)
                 if name != oname:
@@ -52137,7 +52452,9 @@ def _js_parse_f743_toprimitive_assign_iife(text, i, depth, state):
         if not saw_assign:
             return None  # no assignment -- F697's shapes
         # `return ADD;` -- string literals, the bare bound ident,
-        # and `String(o)` terms coerce via _js_f697_toprimitive.
+        # `String(o)` terms coerce via _js_f697_toprimitive, and
+        # `String.fromCharCode(o)` terms via F794's ToNumber
+        # coercion.
         m2 = _js_match_kw(text, sj, "return")
         sj = _js_skip_ws(text, m2)
         total = None
@@ -52146,6 +52463,37 @@ def _js_parse_f743_toprimitive_assign_iife(text, i, depth, state):
             sj = _js_skip_ws(text, sj)
             if sj < n and text[sj] in "'\"":
                 term, sj = _js_parse_string(text, sj)
+            elif (text.startswith("String.fromCharCode", sj)
+                    and (sj + 19 >= n
+                         or text[sj + 19] not in _JS_IDENT_CONT)):
+                # F794: `String.fromCharCode(o)` -- the engine's
+                # ToNumber calls ToPrimitive (hint "number") on the
+                # bound object; a numeric/boolean literal
+                # toPrimitive body yields its value (bool -> 1/0)
+                # and fromCharCode maps it to the char
+                # (node v24.20.0). Disjoint from the `String(o)`
+                # term below (which requires `(` right after
+                # `String`). A second argument, a non-bound
+                # receiver, or a non-literal body fails closed.
+                q = _js_skip_ws(text, sj + 19)
+                q = _js_expect(text, q, "(")
+                q = _js_skip_ws(text, q)
+                nm2, q = _js_parse_ident(text, q)
+                if nm2 != oname:
+                    raise _JSExprFail("F794 fromCharCode of unbound")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, ")")
+                cp = _js_f794_toprimitive_number(props, depth, state)
+                ch = _safe_chr(cp)
+                if ch is None:
+                    raise _JSExprFail("F794 bad codepoint")
+                term = ch
+                saw_coerce = True
+                state["parts"] += 1  # F452: the fromCharCode term
+                # is obfuscation-shaped
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                sj = q
             elif (text.startswith("String", sj)
                     and (sj + 6 >= n
                          or text[sj + 6] not in _JS_IDENT_CONT)):
@@ -70923,6 +71271,23 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f752_saved_parts; state['ops'] = _f752_saved_ops
         if _f752 is not None:
             val, i = _f752
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F793: (function(){return [...SRC.map(f)|.drop(n)]
+        #   .join('SEP');})() -- ES2025 Iterator helpers on
+        #   builtin-iterator sources (F752's residual). Tried after
+        #   F752: F752's grammar requires an iterator-source
+        #   DECLARATION and fails closed on a bare `return`; this
+        #   requires the bare-return spread-join shape with no
+        #   declarations, so no previously-decoded input changes
+        #   behavior. None falls through to F663 like F752.
+        #   F752's hook and its trailing `return` are untouched
+        #   (wave-379 lesson).
+        _f793_saved_parts = state['parts']; _f793_saved_ops = state['ops']
+        _f793 = _js_parse_f793_iter_helper_iife(text, i, depth, state)
+        if _f793 is None:
+            state['parts'] = _f793_saved_parts; state['ops'] = _f793_saved_ops
+        if _f793 is not None:
+            val, i = _f793
             return _js_parse_postfix(text, i, val, depth, state)
         # F753: (function(){function NAME(P1..Pn){return ADD;}
         #   return NAME(lit|...SRC, ...)[+'LIT'...];})() and the
