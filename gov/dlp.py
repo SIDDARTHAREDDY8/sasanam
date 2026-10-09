@@ -5620,6 +5620,59 @@ def _js_parse_f712_map_iter_iife(text, i, depth, state):
     return elements, j
 
 
+def _js_parse_f659_yield_star_array(text, j, state):
+    """Parse `['LIT',...]` (optionally parenthesized) at text[j] (F659).
+
+    Fills the gap left when `_js_parse_f6xx_fixed_yield_body` started
+    calling this helper: the call site (which already validates the
+    `[`/`(` head) never had a definition, so every
+    `yield* ['LIT',...];` shape escaped `find_credential` as a
+    NameError (F889 -- the exception is not a _JSExprFail, so no
+    boundary caught it). Node-exact desugar (v24.20.0): `yield* ARR`
+    delegates to the array's iterator, yielding each element in
+    order; the empty array yields nothing. Plain string literals
+    only (the F494 discipline -- the _JSNumStr discipline excludes
+    numeric markers); duplicate keys are kept (order is what
+    matters). Parts are charged per yielded element by the CALLER
+    (F452) -- this helper charges nothing itself, so elements are
+    never double-counted. Returns (elements, next_index). Never
+    evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    paren = False
+    if j < n and text[j] == "(":
+        paren = True
+        j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F659 yield* not an array")
+    elems = []
+    j += 1
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "]":
+            j += 1
+            break
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F659 yield* element not a string")
+        e, j = _js_parse_string(text, j)
+        if not isinstance(e, str) or isinstance(e, _JSNumStr):
+            raise _JSExprFail("F659 yield* element not a plain string")
+        elems.append(e)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j += 1
+            continue
+        if j < n and text[j] == "]":
+            j += 1
+            break
+        raise _JSExprFail("F659 yield* array malformed")
+    if paren:
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+    return elems, j
+
+
 def _js_parse_f6xx_fixed_yield_body(text, j, state,
                                    _allow_trailing_return,
                                    _gen_env=None):
@@ -14211,6 +14264,25 @@ class _JSThisMember:
 
     def __init__(self, key):
         self.key = key
+
+
+class _JSBoundMethod:
+    """A zero-param shorthand method with a pure-literal additive body
+    (F891).
+
+    Produced only by `_js_parse_f891_method_literal`: wraps the
+    method's already-evaluated return string (node-exact v24.20.0 --
+    the body has no params, no `this`, no idents, so the return
+    additive is fully determined at parse time). The engine yields
+    the function object on a member READ, so reads of this prop
+    fail closed everywhere (it is not a str); only zero-arg CALLS
+    decode, and only inside `_js_parse_f891_sealed_method_iife`,
+    the sole consumer. Never evals.
+    """
+    __slots__ = ("value",)
+
+    def __init__(self, value):
+        self.value = value
 
 
 def _js_resolve_this_member(receiver, key, _depth=0):
@@ -64678,6 +64750,318 @@ def _js_parse_f811_computed_method_iife(text, i, depth, state):
 
 
 
+def _js_parse_f891_method_literal(text, i, depth, state):
+    """Parse `{k:'LIT', m(){return 'LIT';}, ...}` at text[i] (F891).
+
+    Object literals containing shorthand METHODS. The F535 grammar
+    (and therefore the F539 identity builtins and the F812 sealed
+    IIFE) fails closed on any method, so even a pure data read on
+    `{k:'f1',m(){return 'z';}}` misses, and a method call on a
+    sealed object misses (F891 filed 2026-10-09 05:50 UTC).
+
+    Node-exact desugar (v24.20.0): seal/freeze/preventExtensions
+    return their argument unchanged, so the literal's props are
+    resolved directly. Data props hold plain string literals;
+    each zero-param shorthand method `m(){return ADD;}` is
+    evaluated at parse time to its pure-literal additive value and
+    stored as a _JSBoundMethod (a member READ of it fails closed
+    everywhere -- the engine yields the function object -- while a
+    zero-arg CALL decodes inside the F891 IIFE). Duplicate keys:
+    later wins (engine-exact).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - fewer than one method (method-free literals stay F535's/
+      F812's -- this production requires >=1 method, keeping it
+      disjoint);
+    - getters/setters, async/generator methods, methods with
+      params, computed keys, spreads, `__proto__` keys, non-literal
+      data values, a directive prologue, or any extra statement in
+      a method body;
+    - any ident operand in a method body (no params and no `this`
+      are modeled -- `this`-dependent bodies like
+      `m(){return this.k;}` stay a documented residual; the engine
+      binds `this` to the receiver, which the static model cannot
+      reproduce without a receiver -- fail closed, never decode).
+    Each property charges the parts budget (F452); the decoded
+    method value is bounded by _MAX_DECODE_BYTES. Returns (props,
+    next_index) with props mapping key -> str | _JSBoundMethod.
+    Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    j = _js_skip_ws(text, i + 1)
+    props = {}
+    nmethods = 0
+    if j < n and text[j] == "}":
+        raise _JSExprFail("F891 empty literal")
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("F891 unterminated literal")
+        c = text[j]
+        if c in "'\"":
+            key, j = _js_parse_string(text, j)
+        elif c in _ASCII_DIGITS:
+            k = j + 1
+            while k < n and text[k] in _ASCII_DIGITS:
+                k += 1
+            key, j = text[j:k], k
+        elif c in _JS_IDENT_START:
+            key, j = _js_parse_ident(text, j)
+        else:
+            raise _JSExprFail("F891 bad key")
+        if key == "__proto__":
+            raise _JSExprFail("F891 __proto__ key fails closed")
+        k = _js_skip_ws(text, j)
+        if k < n and text[k] == ":":
+            # Data property: string-literal value only (narrow --
+            # nested values stay F535's).
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] not in "'\"":
+                raise _JSExprFail("F891 data value not a string")
+            val, k = _js_parse_string(text, k)
+            if not isinstance(val, str) or isinstance(val, _JSNumStr):
+                raise _JSExprFail("F891 data value not a plain string")
+            props[key] = val
+            j = k
+        elif k < n and text[k] == "(":
+            # Shorthand method: zero params, `{return ADD;}` body.
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] != ")":
+                raise _JSExprFail("F891 method takes params")
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] != "{":
+                raise _JSExprFail("F891 method needs a body")
+            k = _js_skip_ws(text, k + 1)
+            if not text.startswith("return", k) or (
+                    k + 6 < n and text[k + 6] in _JS_IDENT_CONT):
+                raise _JSExprFail("F891 method body not a return")
+            operands, k = _js_parse_f795_additive_operands(
+                text, _js_skip_ws(text, k + 6))
+            parts = []
+            for _kind, _val in operands:
+                if _kind != "lit":
+                    # No params, no `this`: any ident is unbound in
+                    # the engine too (ReferenceError) -- fail closed.
+                    raise _JSExprFail("F891 method body not literal")
+                parts.append(_val)
+            mval = "".join(parts)
+            if len(mval) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F891 method value too long")
+            props[key] = _JSBoundMethod(mval)
+            nmethods += 1
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ";":
+                k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] != "}":
+                raise _JSExprFail("F891 method body not closed")
+            j = k + 1
+        else:
+            # Getters (`get x(){...}`), setters, and anything else.
+            raise _JSExprFail("F891 not a data/method prop")
+        state["parts"] += 1  # the property is shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "}":
+                raise _JSExprFail("F891 trailing comma")
+            continue
+        if j < n and text[j] == "}":
+            if nmethods == 0:
+                raise _JSExprFail("F891 no method in literal")
+            return props, j + 1
+        raise _JSExprFail("F891 literal malformed")
+
+
+def _js_parse_f891_return_term(text, j, env, state):
+    """Parse one F891 return-additive term at text[j].
+
+    A term is a string literal, a member read on the bound sealed
+    object (`o.k` / `o?.k` / `o['k']` / `o?.['k']`), or a zero-arg
+    method call (`o.m()`). Member reads resolve data props via
+    _jsobj_lookup; reading a _JSBoundMethod fails closed (the
+    engine yields the function object, never a string). A call on
+    a _JSBoundMethod decodes its already-evaluated body value;
+    calling anything else fails closed (the engine throws
+    TypeError). Only a single member step is modeled (the F891
+    literal is flat -- nested values fail closed at literal parse).
+    Returns (string, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        return _js_parse_string(text, j)
+    name, j = _js_parse_ident(text, j)
+    if name not in env:
+        raise _JSExprFail("F891 unbound receiver")
+    recv = env[name]
+    j = _js_skip_ws(text, j)
+    if j + 1 < n and text[j] == "?" and text[j + 1] == ".":
+        j = _js_skip_ws(text, j + 2)
+        if j < n and text[j] == "[":
+            mname, j = _js_parse_bracket_member(text, j)
+        else:
+            mname, j = _js_parse_ident(text, j)
+    elif j < n and text[j] == ".":
+        j = _js_skip_ws(text, j + 1)
+        mname, j = _js_parse_ident(text, j)
+    elif j < n and text[j] == "[":
+        mname, j = _js_parse_bracket_member(text, j)
+    else:
+        raise _JSExprFail("F891 term without member")
+    val = _jsobj_lookup(recv, mname)
+    if val is None:
+        raise _JSExprFail("F891 missing key")
+    k = _js_skip_ws(text, j)
+    if k < n and text[k] == "(":
+        if not isinstance(val, _JSBoundMethod):
+            raise _JSExprFail("F891 call of non-method")
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            raise _JSExprFail("F891 method takes no args")
+        state["ops"] += 1  # the method call is obfuscation-shaped
+        return val.value, k + 1
+    if isinstance(val, _JSBoundMethod):
+        raise _JSExprFail("F891 read of method")
+    if not isinstance(val, str):
+        raise _JSExprFail("F891 member not a string")
+    state["ops"] += 1  # the member read is obfuscation-shaped
+    return val, j
+
+
+def _js_parse_f891_sealed_method_iife(text, i, depth, state):
+    """Parse `(function(){DECL o=Object.seal(OBJLIT);return ADD;})()`
+    (F891; the freeze/preventExtensions twins decode identically).
+
+    The F812 sealed IIFE fails closed on any object literal
+    containing a shorthand method, so even a pure data read on
+    `Object.seal({k:'f1',m(){return 'z';}})` misses, and a method
+    call `o.m()` on a sealed object misses (the F812 return
+    grammar has no call term). Node-exact desugar (v24.20.0):
+    seal/freeze/preventExtensions return their argument unchanged,
+    so o binds the F891 method literal and the return is a
+    `+`-joined additive of string literals, member reads, and
+    zero-arg method calls on o.
+
+    Disjoint from F812a: the F891 literal grammar requires >=1
+    method, which F812a's F539 initializer rejects, so F812a
+    returns None on every shape this accepts; method-free
+    literals fail the F891 literal parse, so this returns None on
+    every shape F812a accepts. Tried after F812a. None falls
+    through like F812a. Budget: parts/ops are snapshotted on entry
+    and restored on miss (F452 / wave-383 lesson); on success the
+    IIFE wrapper charges one op. Returns (value, next_index), or
+    None when text[i] is not this shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts = state["parts"]
+    saved_ops = state["ops"]
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None  # named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            return None  # not our shape
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            raise _JSExprFail("F891 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if not (text.startswith("Object", sj)
+                and (sj + 6 >= n
+                     or text[sj + 6] not in _JS_IDENT_CONT)):
+            return None  # not our shape
+        sj = _js_skip_ws(text, sj + len("Object"))
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != ".":
+            return None  # not our shape
+        sj = _js_skip_ws(text, sj + 1)
+        _bname = None
+        for _cand in ("seal", "freeze", "preventExtensions"):
+            if text.startswith(_cand, sj) and (
+                    sj + len(_cand) >= n
+                    or text[sj + len(_cand)] not in _JS_IDENT_CONT):
+                _bname = _cand
+                break
+        if _bname is None:
+            return None  # not an identity builtin -- not our shape
+        sj = _js_skip_ws(text, sj + len(_bname))
+        sj = _js_expect(text, sj, "(")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "{":
+            raise _JSExprFail("F891 seal arg not an object")
+        props, sj = _js_parse_f891_method_literal(text, sj, depth,
+                                                 state)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ")")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F891 no return")
+        sj = _js_skip_ws(text, m)
+        env = {oname: _JSObj(props)}
+        total = None
+        while True:
+            term, sj = _js_parse_f891_return_term(text, sj, env,
+                                                 state)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F891 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        state["parts"] = saved_parts
+        state["ops"] = saved_ops
+        return None
+
+
 def _js_parse_f812_sealed_iife(text, i, depth, state):
     """Parse `(function(){DECL o=Object.seal(OBJLIT);return ADD;})()`
     (F812; the freeze/preventExtensions twins decode identically).
@@ -67070,7 +67454,8 @@ def _js_parse_f795_param_iife(text, i, depth, state):
       params/args (node allows them), parenthesized operands
       (`(a)`/`await('x')` -- node-exact but unmodeled), the
       unparenthesized single-param arrow twin (`(a=>a)('x')` --
-      filed as F829) (the F795 production rejects all of these;
+      filed as F890, now modeled by the arrow twin below) (the F795
+      production rejects all of these;
       `.call`/`.apply` twins are decoded node-exactly by the
       pre-existing F614/F636 routes, so they are not a residual of
       this production -- documented for clarity).
@@ -67126,12 +67511,16 @@ def _js_parse_f795_param_iife(text, i, depth, state):
 
 
 def _js_parse_f795_param_arrow_iife(text, i, depth, state):
-    """Parse `((PARAMS)=>ADD)(ARGS)` at text[i] (F795).
+    """Parse `((PARAMS)=>ADD)(ARGS)` and `(a=>ADD)(ARGS)` at text[i]
+    (F795; the bare-ident form is F890).
 
     The arrow twin of the parameterized IIFE: the same positional
     binding as the function form (node-exact, v24.20.0) with an
     expression body instead of `{return ...;}`. Block bodies
-    (`=>{...}`) fail closed.
+    (`=>{...}`) fail closed. F890: node allows exactly one bare
+    Identifier param (`(a=>a)('x')` -- defaults and `async` fail
+    closed, matching the engine's grammar and the decoder's async
+    discipline).
 
     Disjoint from F608 (which requires >=1 Set/Map spread arg --
     this requires pure string-literal args, which F608 rejects as
@@ -67153,9 +67542,31 @@ def _js_parse_f795_param_arrow_iife(text, i, depth, state):
         if j >= n or text[j] != "(":
             return None
         k = _js_skip_ws(text, j + 1)
-        if k >= n or text[k] != "(":
+        if k < n and text[k] == "(":
+            names, defaults, k = _js_parse_f795_simple_params(
+                text, k, state)
+        elif k < n and text[k] in _JS_IDENT_START:
+            # F890: the unparenthesized single-param arrow twin
+            # `(a=>ADD)(ARGS)`. Node allows exactly one bare
+            # Identifier as the param (v24.20.0 verified):
+            # defaults (`(a='x'=>a)`) are a SyntaxError bare, and
+            # `async a=>a` never reaches here (the `async` head is
+            # parsed as the param name and then fails closed at the
+            # `=>` check -- async arrows stay unmodeled, a safe
+            # residual). The rest of the grammar is identical to the
+            # parenthesized form (expression body, literal args).
+            _bname, _bk = _js_parse_ident(text, k)
+            if _bname == "arguments":
+                raise _JSExprFail("F890 param named arguments")
+            _bk = _js_skip_ws(text, _bk)
+            if not text.startswith("=>", _bk):
+                raise _JSExprFail("F890 bare param without =>")
+            names, defaults, k = [_bname], {}, _bk
+            state["parts"] += 1  # the bare param is shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        else:
             return None
-        names, defaults, k = _js_parse_f795_simple_params(text, k, state)
         k = _js_skip_ws(text, k)
         if not text.startswith("=>", k):
             raise _JSExprFail("F795 arrow without =>")
@@ -77210,6 +77621,47 @@ def _js_parse_f513_bind_dispatch(text, i, outer, paren, depth, state):
     return _js_parse_postfix(text, j + 1, _JSArr(elements), depth, state)
 
 
+def _js_parse_opt_full_method_ref(text, j, value):
+    """Parse `?.METHOD` / `?.['METHOD']` at text[j] == '?' (F892).
+
+    The full-table twin of `_js_parse_opt_member_ref`: where the
+    F478 table (14 methods) gates the bare method-reference form
+    (F490/F822), the DIRECT CALL `?.method(args)` on a
+    provably-non-null receiver is engine-identical to the dot form
+    (node v24.20.0 verified -- the `?.` never short-circuits), so
+    it validates against the full dot-form method grammar
+    (_JS_POSTFIX_METHOD_NAMES, 39 methods) instead. *value* is the
+    already-parsed receiver; kind pairing is NOT done here --
+    `_js_apply_method` enforces per-method kind requirements
+    internally (join/map/reduce/... require _JSArr; repeat/split/
+    ... require str), exactly like the dot form it mirrors, so a
+    kind-mismatched `?.` fails closed through the same path as the
+    dot twin. Returns (method, next_index) or None on no-match
+    (pure lookahead -- no state is charged, and None leaves the
+    `?` unconsumed). The `?.` must be adjacent (`? .` is a
+    SyntaxError in the engine). Never evals.
+    """
+    n = len(text)
+    if j + 1 >= n or text[j + 1] != ".":
+        return None
+    k = _js_skip_ws(text, j + 2)
+    if k < n and text[k] == "[":
+        try:
+            method, k = _js_parse_bracket_member(text, k)
+        except _JSExprFail:
+            return None
+    elif k < n and text[k] in _JS_IDENT_START:
+        m = k + 1
+        while m < n and text[m] in _JS_IDENT_CONT:
+            m += 1
+        method, k = text[k:m], m
+    else:
+        return None
+    if method not in _JS_POSTFIX_METHOD_NAMES:
+        return None
+    return method, k
+
+
 def _js_parse_opt_member_ref(text, j, value):
     """Parse `?.METHOD` / `?['METHOD']` at text[j] == '?' (F490).
 
@@ -82399,6 +82851,41 @@ def _js_parse_postfix(text, i, value, depth, state):
         # reference form. None leaves the `?` unconsumed (upstream
         # fails closed, as before).
         if text[j] == "?":
+            # F892: `?.METHOD(args)` for the 26 methods outside the
+            # F478 dispatch table -- validated against the full
+            # dot-form method grammar and dispatched through
+            # `_js_apply_method` exactly like the dot form (node
+            # v24.20.0 verified: `?.` is engine-identical to `.` on
+            # the provably-non-null receivers that reach this
+            # branch, so the kind requirements `_js_apply_method`
+            # enforces internally are the same fail-closed classes
+            # as the dot twin). The 14 F478-table methods ALWAYS
+            # keep the F822 path below (exact (base-kind, method)
+            # pairing, silent chain-end on a kind-mismatched `?.`)
+            # -- even on non-(array|str) receivers, where the old
+            # path ends the chain but `_js_apply_method`'s concat
+            # fall-through would over-decode (node throws
+            # TypeError there; HARD-1, wave-387 lane 16 spec
+            # review). Pure lookahead for the new shapes: anything
+            # else falls through to the F490/F822 ref as before.
+            _f892 = _js_parse_opt_full_method_ref(text, j, value)
+            if _f892 is not None:
+                _fm, _fk = _f892
+                # F478-table methods ALWAYS keep the F822 path below
+                # (exact (base-kind, method) pairing, silent
+                # chain-end on a kind-mismatched `?.`) -- even on
+                # non-(array|str) receivers, where the old path ends
+                # the chain but _js_apply_method's concat
+                # fall-through would over-decode (node throws
+                # TypeError there). Only the 26 non-table methods
+                # take the new full-table dispatch (HARD-1,
+                # wave-387 lane 16 spec review).
+                if _fm not in _F478_DISPATCH_METHODS:
+                    _fp = _js_skip_ws(text, _fk)
+                    if _fp < len(text) and text[_fp] == "(":
+                        value, i = _js_apply_method(
+                            text, _fp, _fm, value, depth, state)
+                        continue
             ref = _js_parse_opt_member_ref(text, j, value)
             if ref is None:
                 return value, i
@@ -90467,6 +90954,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f812a_saved_parts; state['ops'] = _f812a_saved_ops
         if _f812a is not None:
             val, i = _f812a
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F891: (function(){DECL o=Object.seal(OBJLIT_WITH_METHOD);
+        #   return ADD;})() (freeze/preventExtensions twins) --
+        #   sealed literal containing shorthand methods. Tried after
+        #   F812a: the F891 literal grammar requires >=1 method,
+        #   which F812a's F539 initializer rejects, so the two are
+        #   disjoint; None falls through like F812a. F812a's hook
+        #   and its trailing `return` are untouched (wave-379
+        #   lesson).
+        _f891_saved_parts = state['parts']; _f891_saved_ops = state['ops']
+        _f891 = _js_parse_f891_sealed_method_iife(text, i, depth,
+                                                 state)
+        if _f891 is None:
+            state['parts'] = _f891_saved_parts; state['ops'] = _f891_saved_ops
+        if _f891 is not None:
+            val, i = _f891
             return _js_parse_postfix(text, i, val, depth, state)
         # F812b: (function(){DECL o=Object.create(PROTO[,PROPS]);
         #   o.K='LIT';...;return ADD;})() -- create result mutated by
