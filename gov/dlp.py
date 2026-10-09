@@ -56898,6 +56898,1245 @@ def _js_parse_f875_keymap_iife(text, i, depth, state):
         return None
 
 
+# ---------------------------------------------------------------- F893
+
+def _js_f893_prog_value(prog):
+    """Decode an eval program string that is exactly one string
+    literal (F893).
+
+    `eval('PROG')` evaluates PROG as a program; when PROG is exactly
+    one string literal the engine returns that literal's value
+    (node-exact, v24.20.0 -- verified for direct, indirect,
+    aliased, .call/.apply, and globalThis.eval forms). Anything
+    else fails closed (the engine would throw or compute something
+    the static model cannot see). Never evals.
+    """
+    k = _js_skip_ws(prog, 0)
+    if k >= len(prog) or prog[k] not in "'\"":
+        raise _JSExprFail("F893 prog not a literal")
+    inner, k = _js_parse_string(prog, k)
+    k = _js_skip_ws(prog, k)
+    if k != len(prog):
+        raise _JSExprFail("F893 prog trailing junk")
+    return inner
+
+
+def _js_f893_fn_body_value(body):
+    """Decode a Function-constructor body string (F893).
+
+    The body must be exactly `return 'LIT';` (ws-tolerant, the
+    trailing semicolon optional): `new Function('return \\'LIT\\';')()`
+    is then node-exactly LIT's value (v24.20.0 -- verified for the
+    plain, new-, multi-param, alias, and .constructor forms).
+    Anything else fails closed. Never evals.
+    """
+    k = _js_skip_ws(body, 0)
+    rk = _js_match_kw(body, k, "return")
+    if rk is None:
+        raise _JSExprFail("F893 fn body not return")
+    k = _js_skip_ws(body, rk)
+    if k >= len(body) or body[k] not in "'\"":
+        raise _JSExprFail("F893 fn body not literal")
+    lit, k = _js_parse_string(body, k)
+    k = _js_skip_ws(body, k)
+    if k < len(body) and body[k] == ";":
+        k = _js_skip_ws(body, k + 1)
+    if k != len(body):
+        raise _JSExprFail("F893 fn body trailing junk")
+    return lit
+
+
+def _js_f893_parse_danger_call(text, j, aliases, depth, state):
+    """Parse one eval / Function-constructor call at text[j] (F893).
+
+    Narrow node-exact productions (v24.20.0):
+    - eval: `eval('PROG')`, `(0,eval)('PROG')` (indirect),
+      `G('PROG')` (G var-bound to eval), `globalThis.eval('PROG')`,
+      `eval.call(null,'PROG')`, `eval.apply(null,['PROG'])` --
+      value = the string-literal program's value.
+    - Function: `Function('P1',...,'return \\'LIT\\';')()`,
+      `new Function(...)(...)`, `F(...)(...)` (F var-bound to
+      Function), `G.constructor(...)(...)` (G a tracked alias --
+      in the engine a function's .constructor is Function) --
+      value = the return-literal body's value. Earlier args must
+      be string literals (parameter names, ignored by the
+      return-literal body).
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    non-literal args (the engine would read a live binding --
+    `eval(x)` is the canonical miss), template-literal args (the
+    IIFE span helper rejects backticks; documented boundary),
+    non-`return 'LIT';` bodies, a missing trailing `()` on the
+    Function forms (the bare constructor yields a function object,
+    not a string), non-null .call/.apply thisArgs, and
+    `.constructor` on untracked idents (e.g. `({}).constructor`
+    is Object -- node-verified TypeError on call).
+    Returns (value, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+
+    def _one_lit_arg(k):
+        """Parse `(LIT)` at text[k] (F893). The arg may be a string
+        literal or a template literal (same-class variant; F457's
+        _js_parse_template is node-exact and fails closed on
+        non-literal interpolations). Returns (program_value,
+        next_index)."""
+        k = _js_expect(text, _js_skip_ws(text, k), "(")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == "`":
+            prog, k = _js_parse_template(text, k, depth, state)
+        elif k < n and text[k] in "'\"":
+            prog, k = _js_parse_string(text, k)
+        else:
+            raise _JSExprFail("F893 arg not literal")
+        k = _js_expect(text, _js_skip_ws(text, k), ")")
+        state["parts"] += 1  # the eval arg is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        return _js_f893_prog_value(prog), k
+
+    def _fn_call(k):
+        k = _js_expect(text, _js_skip_ws(text, k), "(")
+        args = []
+        while True:
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] not in "'\"":
+                raise _JSExprFail("F893 fn arg not literal")
+            lit, k = _js_parse_string(text, k)
+            args.append(lit)
+            state["parts"] += 1  # each ctor arg is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ",":
+                k += 1
+                continue
+            if k < n and text[k] == ")":
+                k += 1
+                break
+            raise _JSExprFail("F893 fn bad args")
+        if not args:
+            raise _JSExprFail("F893 fn no args")
+        val = _js_f893_fn_body_value(args[-1])
+        k = _js_expect(text, _js_skip_ws(text, k), "(")
+        k = _js_expect(text, _js_skip_ws(text, k), ")")
+        return val, k
+
+    if j < n and text[j] == "(":
+        # (0,eval)(...) -- the indirect-eval form.
+        k = _js_skip_ws(text, j + 1)
+        if k < n and text[k] == "0":
+            k = _js_skip_ws(text, k + 1)
+            if k < n and text[k] == ",":
+                k = _js_skip_ws(text, k + 1)
+                nm, k = _js_parse_ident(text, k)
+                if nm == "eval":
+                    k = _js_expect(text, _js_skip_ws(text, k), ")")
+                    return _one_lit_arg(k)
+        raise _JSExprFail("F893 bad indirect")
+    nk = _js_match_kw(text, j, "new")
+    if nk is not None:
+        k = _js_skip_ws(text, nk)
+        nm, k = _js_parse_ident(text, k)
+        if nm != "Function" and not (nm in aliases
+                                     and aliases[nm] == "Function"):
+            raise _JSExprFail("F893 new not Function")
+        return _fn_call(k)
+    nm, k = _js_parse_ident(text, j)
+    k2 = _js_skip_ws(text, k)
+    if k2 < n and text[k2] == ".":
+        k3 = _js_skip_ws(text, k2 + 1)
+        cn, k3 = _js_parse_ident(text, k3)
+        if cn == "constructor" and nm in aliases:
+            # A tracked alias's .constructor is Function
+            # (node-exact: eval.constructor === Function). Checked
+            # before the plain alias-call dispatch below.
+            return _fn_call(k3)
+    if nm in aliases:
+        if aliases[nm] == "eval":
+            return _one_lit_arg(k)
+        return _fn_call(k)
+    if nm == "eval":
+        k2 = _js_skip_ws(text, k)
+        if k2 < n and text[k2] == ".":
+            k2 = _js_skip_ws(text, k2 + 1)
+            mn, k2 = _js_parse_ident(text, k2)
+            if mn == "call":
+                k2 = _js_expect(text, _js_skip_ws(text, k2), "(")
+                nn = _js_match_kw(text, _js_skip_ws(text, k2), "null")
+                if nn is None:
+                    raise _JSExprFail("F893 call thisarg")
+                k2 = _js_expect(text, _js_skip_ws(text, nn), ",")
+                k2 = _js_skip_ws(text, k2)
+                if k2 >= n or text[k2] not in "'\"":
+                    raise _JSExprFail("F893 call arg")
+                prog, k2 = _js_parse_string(text, k2)
+                k2 = _js_expect(text, _js_skip_ws(text, k2), ")")
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                return _js_f893_prog_value(prog), k2
+            if mn == "apply":
+                k2 = _js_expect(text, _js_skip_ws(text, k2), "(")
+                nn = _js_match_kw(text, _js_skip_ws(text, k2), "null")
+                if nn is None:
+                    raise _JSExprFail("F893 apply thisarg")
+                k2 = _js_expect(text, _js_skip_ws(text, nn), ",")
+                k2 = _js_expect(text, _js_skip_ws(text, k2), "[")
+                k2 = _js_skip_ws(text, k2)
+                if k2 >= n or text[k2] not in "'\"":
+                    raise _JSExprFail("F893 apply arg")
+                prog, k2 = _js_parse_string(text, k2)
+                k2 = _js_expect(text, _js_skip_ws(text, k2), "]")
+                k2 = _js_expect(text, _js_skip_ws(text, k2), ")")
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                return _js_f893_prog_value(prog), k2
+            raise _JSExprFail("F893 eval member")
+        return _one_lit_arg(k)
+    if nm == "Function":
+        return _fn_call(k)
+    if nm == "globalThis":
+        k = _js_expect(text, _js_skip_ws(text, k), ".")
+        k = _js_skip_ws(text, k)
+        en, k = _js_parse_ident(text, k)
+        if en != "eval":
+            raise _JSExprFail("F893 globalThis not eval")
+        return _one_lit_arg(k)
+    raise _JSExprFail("F893 not a danger call")
+
+
+def _js_f893_span_braced(text, brace, depth, state):
+    """Span `{ ... }` at text[brace] for the F893 hook.
+
+    Mirrors _js_span_braced (F509) but skips template-literal spans
+    via _js_parse_template instead of failing closed: the F893
+    grammar admits template-literal eval args (node-exact; the
+    template tokenizer handles escapes and ${...} nesting exactly
+    as the engine does). `/` still fails closed (outside the F893
+    grammar), as does an unterminated body. Returns
+    (inner_start, inner_end, after_close). Never evals.
+    """
+    n = len(text)
+    d = 0
+    k = brace
+    while k < n:
+        c = text[k]
+        if c in "'\"":
+            k = _js_skip_quoted(text, k)
+            continue
+        if c == "`":
+            _, k = _js_parse_template(text, k, depth, state)
+            continue
+        if c == "/":
+            raise _JSExprFail("F893 slash in iife body")
+        if c == "{":
+            d += 1
+        elif c == "}":
+            d -= 1
+            if d == 0:
+                return brace + 1, k, k + 1
+        k += 1
+    raise _JSExprFail("F893 unterminated iife body")
+
+
+def _js_parse_f893_eval_iife(text, i, depth, state):
+    """Parse the eval / Function-constructor IIFEs (F893).
+
+    `(function(){[var|let|const G=eval; | var|let|const F=Function;]
+    return DANGERCALL(+ 'LIT')*;})()` where DANGERCALL is one of the
+    `_js_f893_parse_danger_call` productions. The decoder models no
+    eval production at all today (the 1300+ "eval" mentions are
+    "never evals" safety comments); these shapes resolve
+    node-exactly while the decoder produces zero variants.
+
+    Node-exact on the admitted narrow grammar (v24.20.0): an eval
+    whose single argument is a string literal evaluates that
+    literal program, and a literal program that is itself one
+    string literal yields the literal's value; a Function
+    constructor whose body is exactly `return 'LIT';` yields LIT's
+    value however many parameter names precede it.
+
+    Tried after F875: every accepted shape carries an `eval` /
+    `Function` / `globalThis.eval` / `.constructor(` call head in
+    the return position, which no earlier route accepts (red-first
+    verified: 4 BREAK on the open tree), so no previously-decoded
+    input changes behavior. Budget snapshot/restore on miss
+    (wave-383 lesson). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            raise _JSExprFail("F893 not our head")
+        # F893-local span: template literals are admissible here
+        # (template-literal eval args), so the shared
+        # _js_span_braced template fail-closed does not apply.
+        inner_start, inner_end, j = _js_f893_span_braced(
+            text, j, depth, state)
+        sj = _js_skip_ws(text, inner_start)
+        aliases = {}
+        kw, m = _js_match_decl_kw(text, sj)
+        if kw is not None:
+            m = _js_skip_ws(text, m)
+            name, m = _js_parse_ident(text, m)
+            if name in _F611_RESERVED or name == "arguments":
+                raise _JSExprFail("F893 reserved binding name")
+            m = _js_expect(text, _js_skip_ws(text, m), "=")
+            m = _js_skip_ws(text, m)
+            tgt, m = _js_parse_ident(text, m)
+            if tgt == "eval":
+                aliases[name] = "eval"
+            elif tgt == "Function":
+                aliases[name] = "Function"
+            else:
+                raise _JSExprFail("F893 decl not eval/Function")
+            m = _js_expect(text, _js_skip_ws(text, m), ";")
+            state["parts"] += 1  # the alias decl is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(text, m)
+        rk = _js_match_kw(text, sj, "return")
+        if rk is None:
+            raise _JSExprFail("F893 no return")
+        sj = _js_skip_ws(text, rk)
+        val, sj = _js_f893_parse_danger_call(text, sj, aliases, depth,
+                                             state)
+        state["ops"] += 1  # the danger call is obfuscation-shaped
+        val, sj = _js_f857_return_tail(text, sj, val, state, "F893")
+        if sj != inner_end:
+            raise _JSExprFail("F893 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
+# ---------------------------------------------------------------- F894
+
+def _js_f894_string_members(props):
+    """Filter F535 object props to plain string members (F894).
+
+    Same filter as F667/F678: string values only, no _JSNumStr, no
+    unsafe ints (F699: >2^53 int literals mis-decode under float64).
+    """
+    return {
+        k: v for k, v in props.items()
+        if isinstance(k, str) and isinstance(v, str)
+        and not isinstance(v, _JSNumStr)
+        and not _js_str_is_unsafe_int(v)
+    }
+
+
+def _js_parse_f894_withdecl_iife(text, i, depth, state):
+    """Parse with-statement IIFEs with body declarations / compound
+    assignments (F894).
+
+    `(function(){[DECL S='LIT';]*[DECL S={LITOBJ};]
+    with(S|{LITOBJ}){ STMT* } return ADD;})()` where each STMT is
+    - `var X = ADD;` (var only -- let/const would be block-scoped
+      to the with body and invisible to the tail; the engine throws
+      ReferenceError there, so they fail closed), or
+    - `X = ADD;` / `X += ADD;` with X a bound name,
+    and ADD is the F645 string-only additive over the current
+    bindings.
+
+    Scope resolution is node-exact (v24.20.0): with-body identifier
+    reads resolve through the scope object's string members FIRST,
+    then the IIFE/body string bindings (a scope member shadows an
+    outer binding of the same name -- verified). Node-exact write
+    semantics (F678-D precedent): an assignment target naming a
+    scope-object member writes the SCOPE OBJECT (the outer binding
+    keeps its old value) -- that shape fails closed; an undeclared
+    target fails closed (the engine would create a sloppy-mode
+    global, which the static model never tracks); a body decl
+    redeclaring any visible name fails closed.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): nested
+    `with`, method calls, member reads other than bare idents,
+    non-string scope members, non-empty call args on the IIFE,
+    `let`/`const` body decls.
+
+    Tried after F875 (F667/F678 are earlier in the chain): F667
+    owns the single-`with(...){return` shape and fails closed on
+    every shape this accepts (a body statement before the return);
+    F678-D owns `with(S){IDENT=RHS;}*` with single-literal/ident
+    RHS -- this hook computes the identical value on that overlap
+    (same resolution order, same F645 additive; verified by the
+    lane battery), and F678 wins there by chain order; no earlier
+    route decodes declarations inside the with body or compound
+    RHS (red-first verified: 4 BREAK on the open tree), so no
+    previously-decoded input changes behavior. Budget
+    snapshot/restore on miss (wave-383 lesson). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            raise _JSExprFail("F894 not our head")
+        j = _js_skip_ws(text, brace + 1)
+        bindings = {}
+        scope_name = None
+        scope_members = None
+        while True:
+            kw, q = _js_match_decl_kw(text, j)
+            if kw is None:
+                break
+            q = _js_skip_ws(text, q)
+            name, q = _js_parse_ident(text, q)
+            if name in _F611_RESERVED or name == "arguments":
+                raise _JSExprFail("F894 reserved binding name")
+            if name in bindings or name == scope_name:
+                raise _JSExprFail("F894 duplicate binding")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != "=":
+                raise _JSExprFail("F894 bad decl")
+            q = _js_skip_ws(text, q + 1)
+            if q < n and text[q] in "'\"":
+                val, q = _js_parse_string(text, q)
+                bindings[name] = val
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+            elif q < n and text[q] == "{":
+                props, q = _js_parse_f535_object(text, q, depth, state)
+                if scope_name is not None:
+                    raise _JSExprFail("F894 two scope objects")
+                scope_name = name
+                scope_members = _js_f894_string_members(props)
+            else:
+                raise _JSExprFail("F894 bad decl init")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ";":
+                raise _JSExprFail("F894 decl without semicolon")
+            j = _js_skip_ws(text, q + 1)
+        wk = _js_match_kw(text, j, "with")
+        if wk is None:
+            raise _JSExprFail("F894 no with")
+        j = _js_expect(text, _js_skip_ws(text, wk), "(")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "{":
+            props, j = _js_parse_f535_object(text, j, depth, state)
+            scope_members = _js_f894_string_members(props)
+        else:
+            sname, j = _js_parse_ident(text, j)
+            if sname != scope_name or scope_members is None:
+                raise _JSExprFail("F894 with unbound scope")
+        if not scope_members:
+            raise _JSExprFail("F894 empty scope")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+
+        # Body statements. Scope members shadow outer/body bindings.
+        cur = dict(bindings)
+        cur.update(scope_members)
+        saw_stmt = False
+        while True:
+            q = _js_skip_ws(text, j)
+            if q < n and text[q] == "}":
+                j = q + 1
+                break
+            dkw, dq = _js_match_decl_kw(text, q)
+            if dkw is not None:
+                if dkw != "var":
+                    raise _JSExprFail("F894 let/const body decl")
+                dq = _js_skip_ws(text, dq)
+                name, dq = _js_parse_ident(text, dq)
+                if (name in _F611_RESERVED or name == "arguments"
+                        or name in cur or name == scope_name):
+                    raise _JSExprFail("F894 body duplicate binding")
+                dq = _js_expect(text, _js_skip_ws(text, dq), "=")
+                rhs, dq = _js_parse_f645_bound_additive(
+                    text, _js_skip_ws(text, dq), depth, state, cur)
+                dq = _js_expect(text, _js_skip_ws(text, dq), ";")
+                cur[name] = rhs
+                state["parts"] += 1  # the body decl is obfuscation-shaped
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                j = dq
+                saw_stmt = True
+                continue
+            name, dq = _js_parse_ident(text, q)
+            if name in scope_members:
+                raise _JSExprFail("F894 scope-member write")
+            if name not in cur:
+                raise _JSExprFail("F894 unbound assign target")
+            dq = _js_skip_ws(text, dq)
+            if dq < n and text[dq] == "=":
+                aug = False
+                dq = dq + 1
+            elif text[dq:dq + 2] == "+=":
+                aug = True
+                dq = dq + 2
+            else:
+                raise _JSExprFail("F894 bad assign")
+            rhs, dq = _js_parse_f645_bound_additive(
+                text, _js_skip_ws(text, dq), depth, state, cur)
+            dq = _js_expect(text, _js_skip_ws(text, dq), ";")
+            cur[name] = rhs if not aug else cur[name] + rhs
+            if len(cur[name]) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F894 concat too long")
+            state["parts"] += 1  # the assignment is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            j = dq
+            saw_stmt = True
+        if not saw_stmt:
+            raise _JSExprFail("F894 empty with body")
+        j = _js_skip_ws(text, j)
+        rk = _js_match_kw(text, j, "return")
+        if rk is None:
+            raise _JSExprFail("F894 no return")
+        rval, j = _js_parse_f645_bound_additive(
+            text, _js_skip_ws(text, rk), depth, state,
+            cur)
+        val, j = _js_f857_return_tail(text, j, rval, state, "F894")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the with-scope wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+# ---------------------------------------------------------------- F895
+
+def _js_f895_parse_spread_ret(text, j, state):
+    """Parse the F895 function-body return form at text[j].
+
+    Admits `[...arguments].join('SEP')`,
+    `Array.from(arguments).join('SEP')`, and
+    `'SEP'.concat(...arguments)`. Returns (("join"|"concat", sep),
+    next_index). Node-exact (v24.20.0): spread/array-from over the
+    call's arguments, joined/concatenated with the literal
+    separator. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        k = _js_skip_ws(text, j + 1)
+        if text[k:k + 3] != "...":
+            raise _JSExprFail("F895 bad spread")
+        k = _js_skip_ws(text, k + 3)
+        an, k = _js_parse_ident(text, k)
+        if an != "arguments":
+            raise _JSExprFail("F895 spread not arguments")
+        k = _js_expect(text, _js_skip_ws(text, k), "]")
+        k = _js_expect(text, _js_skip_ws(text, k), ".")
+        k = _js_skip_ws(text, k)
+        jn, k = _js_parse_ident(text, k)
+        if jn != "join":
+            raise _JSExprFail("F895 not join")
+        k = _js_expect(text, _js_skip_ws(text, k), "(")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] not in "'\"":
+            raise _JSExprFail("F895 join sep not literal")
+        sep, k = _js_parse_string(text, k)
+        k = _js_expect(text, _js_skip_ws(text, k), ")")
+        return ("join", sep), k
+    if j < n and text[j] in "'\"":
+        sep, k = _js_parse_string(text, j)
+        k = _js_expect(text, _js_skip_ws(text, k), ".")
+        k = _js_skip_ws(text, k)
+        cn, k = _js_parse_ident(text, k)
+        if cn != "concat":
+            raise _JSExprFail("F895 not concat")
+        k = _js_expect(text, _js_skip_ws(text, k), "(")
+        k = _js_skip_ws(text, k)
+        if text[k:k + 3] != "...":
+            raise _JSExprFail("F895 concat not spread")
+        k = _js_skip_ws(text, k + 3)
+        an, k = _js_parse_ident(text, k)
+        if an != "arguments":
+            raise _JSExprFail("F895 concat not arguments")
+        k = _js_expect(text, _js_skip_ws(text, k), ")")
+        return ("concat", sep), k
+    ak = _js_match_kw(text, j, "Array")
+    if ak is None:
+        raise _JSExprFail("F895 bad return form")
+    k = _js_expect(text, _js_skip_ws(text, ak), ".")
+    k = _js_skip_ws(text, k)
+    fk, k = _js_parse_ident(text, k)
+    if fk != "from":
+        raise _JSExprFail("F895 not Array.from")
+    k = _js_expect(text, _js_skip_ws(text, k), "(")
+    k = _js_skip_ws(text, k)
+    an, k = _js_parse_ident(text, k)
+    if an != "arguments":
+        raise _JSExprFail("F895 from not arguments")
+    k = _js_expect(text, _js_skip_ws(text, k), ")")
+    k = _js_expect(text, _js_skip_ws(text, k), ".")
+    k = _js_skip_ws(text, k)
+    jn, k = _js_parse_ident(text, k)
+    if jn != "join":
+        raise _JSExprFail("F895 not join")
+    k = _js_expect(text, _js_skip_ws(text, k), "(")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] not in "'\"":
+        raise _JSExprFail("F895 join sep not literal")
+    sep, k = _js_parse_string(text, k)
+    k = _js_expect(text, _js_skip_ws(text, k), ")")
+    return ("join", sep), k
+
+
+def _js_parse_f895_args_spread_iife(text, i, depth, state):
+    """Parse the arguments-spread IIFEs (F895).
+
+    `(function(){function F(){return RET;}return F('L1',...,'Ln');})()`
+    and the twin
+    `(function(){function F(){var o={...arguments};return IDXADD;}return
+    F('L1',...,'Ln');})()` where RET is one of the
+    `_js_f895_parse_spread_ret` forms and IDXADD is an additive of
+    string literals and `o[INT]` indexed reads.
+
+    Node-exact (v24.20.0): `[...arguments]` / `Array.from(arguments)`
+    over the call's argument list; `''.concat(...arguments)`; the
+    `{...arguments}` spread builds own string-keyed properties
+    "0".."n-1" read back by canonical index. The `function`
+    keyword is required (arrow functions capture the OUTER
+    arguments -- a different value -- so they fail closed);
+    parameters must be absent (narrow; a param shadow named
+    `arguments` would change the meaning). Call args must all be
+    string literals; n >= 1.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    non-literal call args, out-of-range indexes, non-canonical
+    index text, extra body statements, a named/arrow/async
+    function, `new`/method calls of F.
+
+    Tried after F875: no earlier route models `...arguments`
+    spreads (F809 models indexed `arguments[i]` reads only; F866
+    models apply-with-arguments; F471's spread factories reject
+    `arguments` -- red-first verified: 4 BREAK on the open tree),
+    so no previously-decoded input changes behavior. Budget
+    snapshot/restore on miss (wave-383 lesson). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            raise _JSExprFail("F895 not our head")
+        inner_start, inner_end, j = _js_span_braced(text, j)
+        sj = _js_skip_ws(text, inner_start)
+        fk = _js_match_kw(text, sj, "function")
+        if fk is None:
+            raise _JSExprFail("F895 no function decl")
+        sj = _js_skip_ws(text, fk)
+        fname, sj = _js_parse_ident(text, sj)
+        if fname in _F611_RESERVED or fname == "arguments":
+            raise _JSExprFail("F895 reserved function name")
+        sj = _js_expect(text, _js_skip_ws(text, sj), "(")
+        sj = _js_expect(text, _js_skip_ws(text, sj), ")")
+        sj = _js_expect(text, _js_skip_ws(text, sj), "{")
+        sj = _js_skip_ws(text, sj)
+        oname = None
+        kw, m = _js_match_decl_kw(text, sj)
+        if kw is not None:
+            # var o={...arguments};
+            m = _js_skip_ws(text, m)
+            oname, m = _js_parse_ident(text, m)
+            if oname in _F611_RESERVED or oname == "arguments":
+                raise _JSExprFail("F895 reserved object name")
+            m = _js_expect(text, _js_skip_ws(text, m), "=")
+            m = _js_expect(text, _js_skip_ws(text, m), "{")
+            m = _js_skip_ws(text, m)
+            if text[m:m + 3] != "...":
+                raise _JSExprFail("F895 object not spread")
+            m = _js_skip_ws(text, m + 3)
+            an, m = _js_parse_ident(text, m)
+            if an != "arguments":
+                raise _JSExprFail("F895 object spread not arguments")
+            m = _js_expect(text, _js_skip_ws(text, m), "}")
+            m = _js_expect(text, _js_skip_ws(text, m), ";")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(text, m)
+        rk = _js_match_kw(text, sj, "return")
+        if rk is None:
+            raise _JSExprFail("F895 no return")
+        sj = _js_skip_ws(text, rk)
+        spec = None
+        terms = None
+        if oname is None:
+            spec, sj = _js_f895_parse_spread_ret(text, sj, state)
+        else:
+            # Indexed additive over o[INT] / 'LIT'.
+            terms = []
+            k = _js_skip_ws(text, sj)
+            while True:
+                k = _js_skip_ws(text, k)
+                if k < n and text[k] in "'\"":
+                    lit, k = _js_parse_string(text, k)
+                    terms.append(("lit", lit))
+                else:
+                    on2, k = _js_parse_ident(text, k)
+                    if on2 != oname:
+                        raise _JSExprFail("F895 bad indexed read")
+                    k = _js_expect(text, _js_skip_ws(text, k), "[")
+                    k = _js_skip_ws(text, k)
+                    num, k = _js_parse_canonical_int(text, k, "F895")
+                    k = _js_expect(text, _js_skip_ws(text, k), "]")
+                    terms.append(("idx", int(num)))
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                k = _js_skip_ws(text, k)
+                if k < n and text[k] == "+":
+                    k += 1
+                    continue
+                break
+            sj = k
+        sj = _js_expect(text, _js_skip_ws(text, sj), ";")
+        sj = _js_expect(text, _js_skip_ws(text, sj), "}")
+        sj = _js_skip_ws(text, sj)
+        rk = _js_match_kw(text, sj, "return")
+        if rk is None:
+            raise _JSExprFail("F895 no call return")
+        sj = _js_skip_ws(text, rk)
+        cn, sj = _js_parse_ident(text, sj)
+        if cn != fname:
+            raise _JSExprFail("F895 calls other function")
+        sj = _js_expect(text, _js_skip_ws(text, sj), "(")
+        args = []
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj >= n or text[sj] not in "'\"":
+                raise _JSExprFail("F895 call arg not literal")
+            lit, sj = _js_parse_string(text, sj)
+            args.append(lit)
+            if len(args) > 64:
+                raise _JSExprFail("F895 too many call args")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == ",":
+                sj = _js_skip_ws(text, sj + 1)
+                continue
+            if sj < n and text[sj] == ")":
+                sj += 1
+                break
+            raise _JSExprFail("F895 bad call args")
+        if not args:
+            raise _JSExprFail("F895 no call args")
+        if spec is not None:
+            kind, sep = spec
+            val = sep.join(args) if kind == "join" else sep + "".join(args)
+        else:
+            out = []
+            for tkind, t in terms:
+                if tkind == "lit":
+                    out.append(t)
+                else:
+                    if t >= len(args):
+                        raise _JSExprFail("F895 index out of range")
+                    out.append(args[t])
+            val = "".join(out)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F895 value too long")
+        state["ops"] += 1  # the arguments spread is obfuscation-shaped
+        val, sj = _js_f857_return_tail(text, sj, val, state, "F895")
+        if sj != inner_end:
+            raise _JSExprFail("F895 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
+# ---------------------------------------------------------------- F896
+
+_F896_WIDTHS = {"Uint8": 1, "Int8": 1, "Uint16": 2, "Int16": 2,
+                "Uint32": 4, "Int32": 4}
+
+
+def _js_f896_parse_width(text, j, prefix):
+    """Parse `{prefix}{Uint8|Int8|Uint16|Int16|Uint32|Int32}` at
+    text[j] (F896); returns (width_name, next_index). The full
+    member name is matched at once (the ident-boundary check would
+    reject a bare `set`/`get` prefix inside `setUint16`)."""
+    for w in ("Uint32", "Uint16", "Uint8", "Int32", "Int16", "Int8"):
+        wk = _js_match_kw(text, j, prefix + w)
+        if wk is not None:
+            return w, wk
+    raise _JSExprFail("F896 bad width")
+
+
+def _js_f896_parse_new_buffer(text, j):
+    """Parse `new ArrayBuffer(N)` at text[j] (F896); returns
+    (size, next_index). Size is bounded (1..65536)."""
+    nk = _js_match_kw(text, j, "new")
+    if nk is None:
+        raise _JSExprFail("F896 not new")
+    j = _js_skip_ws(text, nk)
+    nm, j = _js_parse_ident(text, j)
+    if nm != "ArrayBuffer":
+        raise _JSExprFail("F896 not ArrayBuffer")
+    j = _js_expect(text, _js_skip_ws(text, j), "(")
+    j = _js_skip_ws(text, j)
+    num, j = _js_parse_canonical_int(text, j, "F896")
+    size = int(num)
+    if size < 1 or size > 65536:
+        raise _JSExprFail("F896 bad buffer size")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    return size, j
+
+
+def _js_f896_parse_index(text, j, loopvar):
+    """Parse a DataView byte offset at text[j] (F896).
+
+    Either a canonical int literal, or -- when loopvar is not None
+    -- `LOOPVAR [* 2|4] [+ C]`. Returns ((a, b) with offset =
+    a*LOOPVAR + b, or ("lit", v), next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j].isdigit():
+        num, j = _js_parse_canonical_int(text, j, "F896")
+        return ("lit", int(num)), j
+    if loopvar is None:
+        raise _JSExprFail("F896 index needs loop var")
+    nm, j = _js_parse_ident(text, j)
+    if nm != loopvar:
+        raise _JSExprFail("F896 bad index ident")
+    a, b = 1, 0
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "*":
+        j = _js_skip_ws(text, j + 1)
+        num, j = _js_parse_canonical_int(text, j, "F896")
+        a = int(num)
+        if a not in (2, 4):
+            raise _JSExprFail("F896 bad stride")
+        j = _js_skip_ws(text, j)
+    if j < n and text[j] == "+":
+        j = _js_skip_ws(text, j + 1)
+        num, j = _js_parse_canonical_int(text, j, "F896")
+        b = int(num)
+    return (a, b), j
+
+
+def _js_f896_parse_setval(text, j, loopvar, arrays):
+    """Parse a set-width value at text[j] (F896): an int literal
+    (optional `-`), or -- when loopvar is not None --
+    `ARR[LOOPVAR]` over a var-bound int array. Returns
+    (("lit", v) | ("arr", name), next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and (text[j].isdigit() or text[j] == "-"):
+        neg = text[j] == "-"
+        if neg:
+            j += 1
+        num, j = _js_parse_canonical_int(text, j, "F896")
+        v = int(num)
+        return ("lit", -v if neg else v), j
+    if loopvar is None:
+        raise _JSExprFail("F896 setval needs loop var")
+    nm, j = _js_parse_ident(text, j)
+    if nm not in arrays:
+        raise _JSExprFail("F896 setval not int array")
+    j = _js_expect(text, _js_skip_ws(text, j), "[")
+    ix, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if ix != loopvar:
+        raise _JSExprFail("F896 setval bad index")
+    j = _js_expect(text, _js_skip_ws(text, j), "]")
+    return ("arr", nm), j
+
+
+def _js_f896_write(buf, off, width, v):
+    """Execute one DataView set (F896), big-endian default
+    (node-exact, v24.20.0 -- the littleEndian argument is not
+    admitted by the grammar). Out-of-range offsets fail closed
+    (the engine throws RangeError)."""
+    w = _F896_WIDTHS[width]
+    if off < 0 or off + w > len(buf):
+        raise _JSExprFail("F896 oob write")
+    v = v & 0xFFFFFFFF  # the engine's ToNumber-then-modulo wrap
+    if w == 1:
+        buf[off] = v & 0xFF
+    elif w == 2:
+        buf[off] = (v >> 8) & 0xFF
+        buf[off + 1] = v & 0xFF
+    else:
+        buf[off] = (v >> 24) & 0xFF
+        buf[off + 1] = (v >> 16) & 0xFF
+        buf[off + 2] = (v >> 8) & 0xFF
+        buf[off + 3] = v & 0xFF
+
+
+def _js_f896_read(buf, off, width):
+    """Execute one DataView get (F896); returns the engine's
+    numeric result (signed for Int widths). Out-of-range offsets
+    fail closed (RangeError in the engine)."""
+    w = _F896_WIDTHS[width]
+    if off < 0 or off + w > len(buf):
+        raise _JSExprFail("F896 oob read")
+    if width == "Uint8":
+        return buf[off]
+    if width == "Int8":
+        b = buf[off]
+        return b - 256 if b >= 128 else b
+    if width == "Uint16":
+        return (buf[off] << 8) | buf[off + 1]
+    if width == "Int16":
+        v = (buf[off] << 8) | buf[off + 1]
+        return v - 65536 if v >= 32768 else v
+    v = ((buf[off] << 24) | (buf[off + 1] << 16)
+         | (buf[off + 2] << 8) | buf[off + 3])
+    if width == "Uint32":
+        return v
+    return v - 4294967296 if v >= 2147483648 else v
+
+
+def _js_f896_parse_for_header(text, j):
+    """Parse `for(var|let|const I=0;I<K;I++)` at text[j] (F896).
+
+    The counted-loop discipline: zero-based, `<` a canonical int
+    literal bound (1..65536), `I++` step. Returns (ivar, bound,
+    next_index past `)`). Never evals.
+    """
+    n = len(text)
+    fk = _js_match_kw(text, j, "for")
+    if fk is None:
+        raise _JSExprFail("F896 not for")
+    j = _js_expect(text, _js_skip_ws(text, fk), "(")
+    j = _js_skip_ws(text, j)
+    dk, j = _js_match_decl_kw(text, j)
+    if dk is None:
+        raise _JSExprFail("F896 loop no decl")
+    j = _js_skip_ws(text, j)
+    ivar, j = _js_parse_ident(text, j)
+    if ivar in _F611_RESERVED or ivar == "arguments":
+        raise _JSExprFail("F896 reserved loop var")
+    j = _js_expect(text, _js_skip_ws(text, j), "=")
+    j = _js_skip_ws(text, j)
+    num, j = _js_parse_canonical_int(text, j, "F896")
+    if int(num) != 0:
+        raise _JSExprFail("F896 loop not zero-based")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    j = _js_skip_ws(text, j)
+    iv2, j = _js_parse_ident(text, j)
+    if iv2 != ivar:
+        raise _JSExprFail("F896 loop var mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), "<")
+    j = _js_skip_ws(text, j)
+    num, j = _js_parse_canonical_int(text, j, "F896")
+    bound = int(num)
+    if bound < 1 or bound > 65536:
+        raise _JSExprFail("F896 bad loop bound")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    j = _js_skip_ws(text, j)
+    iv3, j = _js_parse_ident(text, j)
+    if iv3 != ivar:
+        raise _JSExprFail("F896 loop var mismatch")
+    j = _js_skip_ws(text, j)
+    if j + 1 >= n or text[j] != "+" or text[j + 1] != "+":
+        raise _JSExprFail("F896 loop no ++")
+    j = _js_expect(text, _js_skip_ws(text, j + 2), ")")
+    return ivar, bound, j
+
+
+def _js_f896_exec_write_loop(text, j, views, arrays, state):
+    """Parse and execute `for(... )V.set{W}(IDX,VAL);` (F896).
+
+    The write loop stores literal/array bytes into the view's
+    buffer, node-exactly (big-endian default). Returns next_index.
+    Never evals.
+    """
+    ivar, bound, j = _js_f896_parse_for_header(text, j)
+    if ivar in views or ivar in arrays:
+        raise _JSExprFail("F896 loop var shadows binding")
+    vn, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if vn not in views:
+        raise _JSExprFail("F896 write unknown view")
+    buf = views[vn]
+    j = _js_expect(text, _js_skip_ws(text, j), ".")
+    width, j = _js_f896_parse_width(text, j, "set")
+    j = _js_expect(text, _js_skip_ws(text, j), "(")
+    idx, j = _js_f896_parse_index(text, j, ivar)
+    j = _js_expect(text, _js_skip_ws(text, j), ",")
+    sval, j = _js_f896_parse_setval(text, j, ivar, arrays)
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    for t in range(bound):
+        off = idx[0] * t + idx[1] if idx[0] != "lit" else idx[1]
+        if sval[0] == "lit":
+            v = sval[1]
+        else:
+            arr = arrays[sval[1]]
+            if t >= len(arr):
+                raise _JSExprFail("F896 arr oob")
+            v = arr[t]
+        _js_f896_write(buf, off, width, v)
+    state["parts"] += 1  # the write loop is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    state["ops"] += 1
+    return j
+
+
+def _js_f896_exec_single_write(text, j, views, state):
+    """Parse and execute `V.set{W}(LITIDX,LITVAL);` (F896)."""
+    vn, j = _js_parse_ident(text, j)
+    if vn not in views:
+        raise _JSExprFail("F896 write unknown view")
+    buf = views[vn]
+    j = _js_expect(text, _js_skip_ws(text, j), ".")
+    width, j = _js_f896_parse_width(text, j, "set")
+    j = _js_expect(text, _js_skip_ws(text, j), "(")
+    idx, j = _js_f896_parse_index(text, j, None)
+    j = _js_expect(text, _js_skip_ws(text, j), ",")
+    sval, j = _js_f896_parse_setval(text, j, None, {})
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    _js_f896_write(buf, idx[1], width, sval[1])
+    state["parts"] += 1  # the single write is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    state["ops"] += 1
+    return j
+
+
+def _js_f896_exec_read_loop(text, j, views, acc_name, state):
+    """Parse and execute
+    `for(var J=0;J<M;J++)R+=String.fromCharCode(V.get{W}(JDX));`
+    (F896); returns (accumulated_string, next_index).
+
+    Node-exact (v24.20.0): the get-width read followed by
+    String.fromCharCode's ToUint16 wrap (verified: fromCharCode(-1)
+    === '\\uffff'). The accumulator must be the `''`-initialized
+    binding. Never evals.
+    """
+    jvar, bound, j = _js_f896_parse_for_header(text, j)
+    if jvar in views:
+        raise _JSExprFail("F896 loop var shadows binding")
+    rn, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if rn != acc_name:
+        raise _JSExprFail("F896 read loop other accumulator")
+    j = _js_skip_ws(text, j)
+    n = len(text)
+    if j + 1 >= n or text[j] != "+" or text[j + 1] != "=":
+        raise _JSExprFail("F896 read loop not +=")
+    j = _js_skip_ws(text, j + 2)
+    sk = _js_match_kw(text, j, "String")
+    if sk is None:
+        raise _JSExprFail("F896 not String.fromCharCode")
+    j = _js_expect(text, _js_skip_ws(text, sk), ".")
+    j = _js_skip_ws(text, j)
+    fn, j = _js_parse_ident(text, j)
+    if fn != "fromCharCode":
+        raise _JSExprFail("F896 not fromCharCode")
+    j = _js_expect(text, _js_skip_ws(text, j), "(")
+    vn, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if vn not in views:
+        raise _JSExprFail("F896 read unknown view")
+    buf = views[vn]
+    j = _js_expect(text, _js_skip_ws(text, j), ".")
+    width, j = _js_f896_parse_width(text, j, "get")
+    j = _js_expect(text, _js_skip_ws(text, j), "(")
+    jdx, j = _js_f896_parse_index(text, j, jvar)
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    out = []
+    for t in range(bound):
+        off = jdx[0] * t + jdx[1] if jdx[0] != "lit" else jdx[1]
+        out.append(chr(_js_f896_read(buf, off, width) & 0xFFFF))
+        if len(out) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F896 read too long")
+    state["parts"] += 1  # the read loop is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    state["ops"] += 1
+    return "".join(out), j
+
+
+def _js_parse_f896_dataview_iife(text, i, depth, state):
+    """Parse the DataView non-Uint8-width IIFEs (F896).
+
+    `(function(){[var B=new ArrayBuffer(N);]
+    var V=new DataView(B|new ArrayBuffer(N));[var A=[INT,...];]*
+    WRITE* var R=''; for(var J=0;J<M;J++)
+    R+=String.fromCharCode(V.get{W}(JDX)); return R(+ 'LIT')*;})()`
+    where each WRITE is `V.set{W}(IDX,VAL);` or
+    `for(var I=0;I<K;I++)V.set{W}(IDX,VAL);`, W a DataView width,
+    IDX a literal or `I[*2|*4][+C]`, and VAL a literal or `A[I]`.
+
+    F742 (CLOSED) models setUint8/getUint8; the other widths
+    silently miss there. This production models every width
+    node-exactly (v24.20.0): big-endian default (the littleEndian
+    argument is not admitted), ToNumber-then-modulo value wrap,
+    signed Int reads, RangeError on out-of-range offsets (fail
+    closed), and String.fromCharCode's ToUint16 wrap on the read
+    path.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    non-literal buffer sizes/loop bounds/indexes/values (except
+    the admitted `A[I]` form), non-zero-based or non-`I++` loops,
+    strides other than 1/2/4, braced loop bodies, writes after the
+    accumulator decl, a non-`''` accumulator init, extra
+    statements, non-empty call args on the IIFE.
+
+    Tried after F875 (F742 is earlier in the chain): F742 owns the
+    pure setUint8/getUint8 shapes and fails closed on every shape
+    this accepts that carries a non-Uint8 width (red-first
+    verified: 4 BREAK on the open tree); on any pure-Uint8
+    overlap this hook computes the identical node-exact value, and
+    F742 wins there by chain order -- so no previously-decoded
+    input changes behavior. Budget snapshot/restore on miss
+    (wave-383 lesson). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            raise _JSExprFail("F896 not our head")
+        inner_start, inner_end, j = _js_span_braced(text, j)
+        sj = _js_skip_ws(text, inner_start)
+        bufs = {}
+        views = {}
+        arrays = {}
+        # Phase A: buffer / view / int-array decls.
+        while True:
+            kw, m = _js_match_decl_kw(text, sj)
+            if kw is None:
+                break
+            m0 = m
+            m = _js_skip_ws(text, m)
+            name, m = _js_parse_ident(text, m)
+            if (name in _F611_RESERVED or name == "arguments"
+                    or name in bufs or name in views
+                    or name in arrays):
+                raise _JSExprFail("F896 duplicate binding")
+            m = _js_skip_ws(text, m)
+            if m >= n or text[m] != "=":
+                # Not a decl we handle (e.g. the accumulator) --
+                # leave it for its phase.
+                break
+            m = _js_skip_ws(text, m + 1)
+            if m < n and text[m] == "[":
+                vals = []
+                m = _js_skip_ws(text, m + 1)
+                while True:
+                    m = _js_skip_ws(text, m)
+                    if m < n and text[m] == "]":
+                        m += 1
+                        break
+                    neg = m < n and text[m] == "-"
+                    if neg:
+                        m += 1
+                    num, m = _js_parse_canonical_int(text, m, "F896")
+                    v = int(num)
+                    vals.append(-v if neg else v)
+                    if len(vals) > 65536:
+                        raise _JSExprFail("F896 array too long")
+                    m = _js_skip_ws(text, m)
+                    if m < n and text[m] == ",":
+                        m += 1
+                        continue
+                    if m < n and text[m] == "]":
+                        m += 1
+                        break
+                    raise _JSExprFail("F896 bad array")
+                arrays[name] = vals
+            elif _js_match_kw(text, m, "new") is not None:
+                nk = _js_match_kw(text, m, "new")
+                m2 = _js_skip_ws(text, nk)
+                cn, m2 = _js_parse_ident(text, m2)
+                if cn == "ArrayBuffer":
+                    size, m = _js_f896_parse_new_buffer(text, m)
+                    bufs[name] = bytearray(size)
+                elif cn == "DataView":
+                    m = _js_expect(text, _js_skip_ws(text, m2), "(")
+                    m = _js_skip_ws(text, m)
+                    if _js_match_kw(text, m, "new") is not None:
+                        size, m = _js_f896_parse_new_buffer(text, m)
+                        views[name] = bytearray(size)
+                    else:
+                        bn, m = _js_parse_ident(text, m)
+                        if bn not in bufs:
+                            raise _JSExprFail(
+                                "F896 view of unknown buffer")
+                        views[name] = bufs[bn]
+                    m = _js_expect(text, _js_skip_ws(text, m), ")")
+                else:
+                    raise _JSExprFail("F896 bad new")
+            else:
+                # Not a decl we handle -- leave it for its phase.
+                break
+            m = _js_expect(text, _js_skip_ws(text, m), ";")
+            state["parts"] += 1  # each decl is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(text, m)
+        if not views:
+            raise _JSExprFail("F896 no DataView")
+        # Phase B: writes (single sets and counted write loops).
+        while True:
+            q = _js_skip_ws(text, sj)
+            if _js_match_kw(text, q, "for") is not None:
+                sj = _js_f896_exec_write_loop(text, q, views, arrays,
+                                              state)
+                continue
+            try:
+                vn, q2 = _js_parse_ident(text, q)
+            except _JSExprFail:
+                break
+            q2 = _js_skip_ws(text, q2)
+            if vn in views and q2 < n and text[q2] == ".":
+                sj = _js_f896_exec_single_write(text, q, views, state)
+                continue
+            break
+        # Phase C: the ''-initialized accumulator.
+        kw, m = _js_match_decl_kw(text, sj)
+        if kw is None:
+            raise _JSExprFail("F896 no accumulator")
+        m = _js_skip_ws(text, m)
+        rname, m = _js_parse_ident(text, m)
+        if (rname in _F611_RESERVED or rname == "arguments"
+                or rname in bufs or rname in views
+                or rname in arrays):
+            raise _JSExprFail("F896 bad accumulator name")
+        m = _js_expect(text, _js_skip_ws(text, m), "=")
+        m = _js_skip_ws(text, m)
+        if m >= n or text[m] not in "'\"":
+            raise _JSExprFail("F896 acc not a literal")
+        init, m = _js_parse_string(text, m)
+        if init != "":
+            raise _JSExprFail("F896 acc not empty")
+        m = _js_expect(text, _js_skip_ws(text, m), ";")
+        sj = _js_skip_ws(text, m)
+        # Phase D: the fromCharCode read loop.
+        acc, sj = _js_f896_exec_read_loop(text, sj, views, rname,
+                                          state)
+        # Phase E: return the accumulator (+ literals).
+        sj = _js_skip_ws(text, sj)
+        rk = _js_match_kw(text, sj, "return")
+        if rk is None:
+            raise _JSExprFail("F896 no return")
+        rval, sj = _js_parse_f645_bound_additive(
+            text, _js_skip_ws(text, rk), depth, state,
+            {rname: acc})
+        val, sj = _js_f857_return_tail(text, sj, rval, state, "F896")
+        if sj != inner_end:
+            raise _JSExprFail("F896 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f769_at_varbound_iife(text, i, depth, state):
     """Parse `(function(){DECL a=ARRLIT;return ADD;})()` with
     `a.at(INT)` read terms (F769).
@@ -92327,6 +93566,82 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f875 is not None:
             val, i = _f875
             return _js_parse_postfix(text, i, val, depth, state)
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F893: (function(){[var|let|const G=eval;|var|let|const
+        #   F=Function;]return DANGERCALL(+ 'LIT')*;})() -- eval /
+        #   Function-constructor laundering (DANGERCALL: eval,
+        #   (0,eval), G(...), globalThis.eval, eval.call/apply,
+        #   Function(...), new Function(...), F(...), G.constructor
+        #   with string-literal args). Tried after F875: every
+        #   accepted shape carries an eval/Function call head in
+        #   the return position, which no earlier route accepts
+        #   (red-first verified: 4 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior. Budget
+        #   snapshot/restore on miss (wave-383 lesson).
+        _f893_saved_parts = state['parts']; _f893_saved_ops = state['ops']
+        _f893 = _js_parse_f893_eval_iife(text, i, depth, state)
+        if _f893 is None:
+            state['parts'] = _f893_saved_parts; state['ops'] = _f893_saved_ops
+        if _f893 is not None:
+            val, i = _f893
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F894: (function(){[DECL S='LIT';]*[DECL S={LITOBJ};]
+        #   with(S|{LITOBJ}){ STMT* } return ADD;})() -- with-body
+        #   declarations (var X=...;) and compound assignments
+        #   (X=ADD; / X+=ADD;) beyond F667/F678. Tried after F893:
+        #   F667 owns the single-`with(...){return` shape; F678-D
+        #   owns single-literal/ident-RHS assignments (this hook
+        #   computes the identical value there and F678 wins by
+        #   chain order); no earlier route decodes body
+        #   declarations or compound RHS (red-first verified: 4
+        #   BREAK on the open tree), so no previously-decoded
+        #   input changes behavior. Budget snapshot/restore on
+        #   miss (wave-383 lesson).
+        _f894_saved_parts = state['parts']; _f894_saved_ops = state['ops']
+        _f894 = _js_parse_f894_withdecl_iife(text, i, depth, state)
+        if _f894 is None:
+            state['parts'] = _f894_saved_parts; state['ops'] = _f894_saved_ops
+        if _f894 is not None:
+            val, i = _f894
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F895: (function(){function F(){return RET;}return
+        #   F('L1',...,'Ln');})() -- arguments-object spreads
+        #   ([...arguments].join, Array.from(arguments).join,
+        #   'SEP'.concat(...arguments), and the
+        #   var o={...arguments}; indexed-read twin). Tried after
+        #   F894: no earlier route models `...arguments` spreads
+        #   (F809: indexed reads; F866: apply-with-arguments;
+        #   F471's spread factories reject `arguments` -- red-first
+        #   verified: 4 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior. Budget
+        #   snapshot/restore on miss (wave-383 lesson).
+        _f895_saved_parts = state['parts']; _f895_saved_ops = state['ops']
+        _f895 = _js_parse_f895_args_spread_iife(text, i, depth, state)
+        if _f895 is None:
+            state['parts'] = _f895_saved_parts; state['ops'] = _f895_saved_ops
+        if _f895 is not None:
+            val, i = _f895
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F896: (function(){[var B=new ArrayBuffer(N);]var
+        #   V=new DataView(B|new ArrayBuffer(N));[var A=[INT,...];]*
+        #   WRITE* var R='';for(var J=0;J<M;J++)
+        #   R+=String.fromCharCode(V.get{W}(JDX));return
+        #   R(+ 'LIT')*;})() -- DataView non-Uint8 widths
+        #   (setUint16/setInt8/... write loops + typed reads).
+        #   Tried after F895: F742 owns the pure setUint8/getUint8
+        #   shapes and fails closed on every non-Uint8 width this
+        #   accepts (red-first verified: 4 BREAK on the open tree);
+        #   on any pure-Uint8 overlap this hook computes the
+        #   identical node-exact value and F742 wins by chain
+        #   order, so no previously-decoded input changes
+        #   behavior. Budget snapshot/restore on miss (wave-383
+        #   lesson).
+        _f896_saved_parts = state['parts']; _f896_saved_ops = state['ops']
+        _f896 = _js_parse_f896_dataview_iife(text, i, depth, state)
+        if _f896 is None:
+            state['parts'] = _f896_saved_parts; state['ops'] = _f896_saved_ops
+        if _f896 is not None:
+            val, i = _f896
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
