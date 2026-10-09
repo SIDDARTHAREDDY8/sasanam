@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Red-first for F829: undefined helper escapes find_credential as NameError.
+"""Red-first for F890: undefined helper escapes find_credential as NameError.
 
-F829 (filed 2026-10-09 05:41 UTC, wave-386 lane 2 spec-axis review catch):
+F890 (filed 2026-10-09 05:41 UTC, wave-386 lane 2 spec-axis review catch):
 _js_parse_f659_yield_star_array is CALLED at gov/dlp.py:5015 but never
 DEFINED -- find_credential raises NameError on yield*-array shapes instead
 of failing closed. Pre-existing on the wave-385 base, not a lane
@@ -33,14 +33,14 @@ def main():
     try:
         r = find_credential(SHAPE)
     except NameError as e:
-        print("f829-shape: RAISED NameError (%s)" % e)
+        print("f890-shape: RAISED NameError (%s)" % e)
         print("tally: 1 RAISED / 0 HELD")
         return 0
     except Exception as e:  # noqa: BLE001 -- loud, never silent
-        print("f829-shape: RAISED %r" % e)
+        print("f890-shape: RAISED %r" % e)
         print("tally: 1 RAISED / 0 HELD")
         return 0
-    print("f829-shape: HELD (returned %r, no exception)" % (r,))
+    print("f890-shape: HELD (returned %r, no exception)" % (r,))
     print("tally: 0 RAISED / 1 HELD")
     return 0
 
