@@ -22105,6 +22105,19 @@ def _js_parse_f611_varbound_iife(text, i, depth, state):
                 state['ops'] = _f744vb_saved_ops
                 return None
             init_val, k = _f744v
+        elif k < n and text[k] == "{":
+            # F863: `{...toJSON:function...}` object literal whose
+            # toJSON resolves to a plain string -- the
+            # stringify/parse round trip in the return expression
+            # then desugars through the F571 string-literal path
+            # after substitution. Only plain-string results
+            # substitute (F744 precedent); the toJSON parser is
+            # pure on failure (restores parts/ops), so a miss
+            # falls through cleanly.
+            _f863iv = _js_parse_f863_tojson_value(text, k, depth, state)
+            if _f863iv is None or not isinstance(_f863iv[0], str):
+                return None
+            init_val, k = _f863iv
         else:
             return None
         k = _js_skip_ws(text, k)
@@ -81015,11 +81028,19 @@ def _js_parse_f571_stringify_call(text, j, depth, state):
             # was previously fail-closed here.
             val, k = _js_parse_f595_json_array(text, k, depth, state)
     elif c == "{":
-        # F595: object values may be JSON-literal arrays
-        # (nested_arrays=True, stringify VALUE position only).
-        props, k = _js_parse_f535_object(text, k, depth, state,
-                                         nested_arrays=True)
-        val = _JSObj(props)
+        # F863: toJSON -- the engine serializes the toJSON RESULT,
+        # not the object. Tried before the F595 path: that path
+        # fails closed on function-valued props, so no
+        # previously-decoded input changes behavior.
+        _f863v = _js_parse_f863_tojson_value(text, k, depth, state)
+        if _f863v is not None:
+            val, k = _f863v
+        else:
+            # F595: object values may be JSON-literal arrays
+            # (nested_arrays=True, stringify VALUE position only).
+            props, k = _js_parse_f535_object(text, k, depth, state,
+                                             nested_arrays=True)
+            val = _JSObj(props)
     elif text.startswith("Array", k):
         # F598: Array.from(new Set([...])) /
         # Array.from(new Map([[k,v],...]).values()) (F508/F494) --
@@ -83559,6 +83580,821 @@ def _js_parse_f860_formdata_iife(text, i, depth, state):
         if q != inner_end:
             raise _JSExprFail("F860 trailing statements")
         return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
+_F861_HEADER_TOKEN_CHARS = frozenset(
+    "!#$%&'*+-.^_`|~"
+    "0123456789"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "abcdefghijklmnopqrstuvwxyz")
+
+
+def _js_f861_norm_name(name):
+    """Validate + lowercase a Headers name (F861). Returns lower or None.
+
+    Node-exact (v24.20.0): the engine byte-lowercases ASCII names and
+    throws TypeError on empty/non-token names (whitespace, controls,
+    separators all throw). Anything invalid fails closed here.
+    """
+    if not name:
+        return None
+    for ch in name:
+        if ch not in _F861_HEADER_TOKEN_CHARS:
+            return None
+    return name.lower()
+
+
+def _js_f861_norm_value(val):
+    """Normalize a Headers value (F861). Returns trimmed or None.
+
+    Node-exact (v24.20.0): leading/trailing HTTP whitespace (SP/TAB)
+    is stripped; a value containing CR/LF throws TypeError. Anything
+    unmodelable fails closed here.
+    """
+    if "\r" in val or "\n" in val:
+        return None
+    return val.strip(" \t")
+
+
+def _js_f861_member_name(stmts, q):
+    """Parse `.name` / `['name']` / `["name"]` at stmts[q] (F861).
+
+    Returns (name, next_index). Pure (no state). Anything else raises
+    _JSExprFail.
+    """
+    n = len(stmts)
+    if q < n and stmts[q] == ".":
+        name, q = _js_parse_ident(stmts, _js_skip_ws(stmts, q + 1))
+        return name, q
+    if q < n and stmts[q] == "[":
+        q = _js_skip_ws(stmts, q + 1)
+        if q >= n or stmts[q] not in "'\"":
+            raise _JSExprFail("F861 member not a string")
+        name, q = _js_parse_string(stmts, q)
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, "]")
+        return name, q
+    raise _JSExprFail("F861 not a member read")
+
+
+def _js_parse_f861_headers_iife(text, i, depth, state):
+    """Parse `(function(){DECL h=new Headers(INIT);[MUT;]*return h.get('K')(+ADD)*;})()` (F861).
+
+    F861 (LOW, filed 2026-10-09 by wave-386 attack round 54): the
+    decoder has no Headers production -- `h.set('x-k','f1');` /
+    `h.get('x-k')` and the `new Headers({'x-k':'f1'})` constructor
+    twin resolve node-exactly while the decoder produces zero
+    variants:
+      `(function(){var h=new Headers();h.set('x-k','f1');
+        return h.get('x-k')+'f2';})()`
+      `(function(){var h=new Headers({'x-k':'f1'});
+        return h.get('x-k')+'f2';})()`
+    Node-exact desugar (v24.20.0): the constructor binds an empty
+    header list (no-arg), an object-literal init (string/ident keys,
+    string-literal values; the engine fills Headers from the JS
+    record key-by-key, so dedupe is on the case-sensitive JS key
+    with later-wins, then each surviving pair is lowercased and
+    appended in order -- case-differing duplicates are all kept),
+    or a sequence init (`[['k','v'],...]`, every pair appended,
+    duplicates kept);
+    names are ASCII-lowercased and validated as tokens (anything
+    else throws in the engine); values are OWS-trimmed and CR/LF
+    throws; `set` replaces all values for the name, `append` adds
+    (get joins multiples with ", "); `get` of a missing name is
+    null. Only `set`/`append` mutations and a `get` terminal are
+    modeled; the return additive is string literals only.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a non-empty/non-literal constructor arg (string init throws
+      in the engine), non-literal mutation names/values, extra
+      mutation args, mutation members other than set/append
+      (has/delete/getSetCookie/... -- documented residuals),
+      a receiver other than the bare bound ident, a missing `;`;
+    - a `get` of a missing name (the engine yields null --
+      unmodeled, documented residual), a non-literal get key,
+      non-literal additive terms, reassignment of the binding,
+      extra statements, call args on the IIFE.
+    Disjoint from every earlier IIFE route: none accepts a `var
+    h=new Headers(` binding head (red-first verified: 2 BREAK on
+    the open tree), so no previously-decoded input changes
+    behavior. On miss the F452 budgets are restored (wave-383
+    lesson). Returns (value, next_index), or None. Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            return None
+        # Cheap necessary-prefix check BEFORE the O(n) brace span:
+        # the `DECL h=new Headers(` binding must open the body.
+        # Without it this cannot be an F861 shape -- fail fast so
+        # pathological nested IIFEs do not pay a brace span per
+        # level (DoS hygiene; the full parse below re-verifies).
+        _pj = _js_skip_ws(text, j + 1)
+        _pkw, _pm = _js_match_decl_kw(text, _pj)
+        if _pkw is None:
+            return None
+        _pj = _js_skip_ws(text, _pm)
+        try:
+            _pname, _pj = _js_parse_ident(text, _pj)
+        except _JSExprFail:
+            return None
+        _pj = _js_skip_ws(text, _pj)
+        if _pj >= len(text) or text[_pj] != "=":
+            return None
+        _pj = _js_skip_ws(text, _pj + 1)
+        _pnk = _js_match_kw(text, _pj, "new")
+        if _pnk is None:
+            return None
+        _phk = _js_match_kw(text, _js_skip_ws(text, _pnk), "Headers")
+        if _phk is None:
+            return None
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        _kw, m = _js_match_decl_kw(stmts, sj)
+        if _kw is None:
+            raise _JSExprFail("F861 decl not var/const/let")
+        sj = _js_skip_ws(stmts, m)
+        hname, sj = _js_parse_ident(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "=")
+        sj = _js_skip_ws(stmts, sj)
+        _nk = _js_match_kw(stmts, sj, "new")
+        if _nk is None:
+            raise _JSExprFail("F861 binding not new")
+        _nk = _js_skip_ws(stmts, _nk)
+        _hk = _js_match_kw(stmts, _nk, "Headers")
+        if _hk is None:
+            raise _JSExprFail("F861 binding not Headers")
+        _hk = _js_skip_ws(stmts, _hk)
+        if _hk >= n or stmts[_hk] != "(":
+            raise _JSExprFail("F861 ctor without paren")
+        _hk = _js_skip_ws(stmts, _hk + 1)
+        pairs = []
+        if _hk < n and stmts[_hk] == ")":
+            _hk += 1
+        elif _hk < n and stmts[_hk] == "{":
+            # Object-literal init: later-wins on duplicate keys.
+            _hk += 1
+            _seen = {}
+            _hk = _js_skip_ws(stmts, _hk)
+            if _hk < n and stmts[_hk] == "}":
+                _hk += 1
+            else:
+                while True:
+                    _hk = _js_skip_ws(stmts, _hk)
+                    if _hk < n and stmts[_hk] in "'\"":
+                        _ik, _hk = _js_parse_string(stmts, _hk)
+                    elif _hk < n and stmts[_hk] in _JS_IDENT_START:
+                        _ik, _hk = _js_parse_ident(stmts, _hk)
+                    else:
+                        raise _JSExprFail("F861 init key not literal")
+                    _hk = _js_skip_ws(stmts, _hk)
+                    _hk = _js_expect(stmts, _hk, ":")
+                    _hk = _js_skip_ws(stmts, _hk)
+                    if _hk >= n or stmts[_hk] not in "'\"":
+                        raise _JSExprFail("F861 init value not literal")
+                    _iv, _hk = _js_parse_string(stmts, _hk)
+                    _nl = _js_f861_norm_name(_ik)
+                    _nv = _js_f861_norm_value(_iv)
+                    if _nl is None or _nv is None:
+                        raise _JSExprFail("F861 init pair not modelable")
+                    # Dedupe on the ORIGINAL JS key (case-sensitive,
+                    # engine-exact later-wins): the engine fills
+                    # Headers from the JS record key-by-key, so
+                    # case-differing duplicates ('X-K' vs 'x-k') are
+                    # BOTH appended, lowercased, in order (F861
+                    # HARD-1, spec review).
+                    _seen[_ik] = (_nl, _nv)
+                    state["parts"] += 1
+                    if state["parts"] > _JS_EXPR_MAX_PARTS:
+                        raise _JSExprFail("too many parts")
+                    _hk = _js_skip_ws(stmts, _hk)
+                    if _hk < n and stmts[_hk] == ",":
+                        _hk += 1
+                        continue
+                    if _hk < n and stmts[_hk] == "}":
+                        _hk += 1
+                        break
+                    raise _JSExprFail("F861 init object unterminated")
+            pairs = [[nl, nv] for nl, nv in _seen.values()]
+            _hk = _js_skip_ws(stmts, _hk)
+            if _hk >= n or stmts[_hk] != ")":
+                raise _JSExprFail("F861 ctor unterminated")
+            _hk += 1
+        elif _hk < n and stmts[_hk] == "[":
+            # Sequence init: every pair appended, duplicates kept.
+            _hk += 1
+            _hk = _js_skip_ws(stmts, _hk)
+            if _hk < n and stmts[_hk] == "]":
+                _hk += 1
+            else:
+                while True:
+                    _hk = _js_skip_ws(stmts, _hk)
+                    if _hk >= n or stmts[_hk] != "[":
+                        raise _JSExprFail("F861 seq pair not a list")
+                    _hk = _js_skip_ws(stmts, _hk + 1)
+                    if _hk >= n or stmts[_hk] not in "'\"":
+                        raise _JSExprFail("F861 seq name not literal")
+                    _ik, _hk = _js_parse_string(stmts, _hk)
+                    _hk = _js_skip_ws(stmts, _hk)
+                    _hk = _js_expect(stmts, _hk, ",")
+                    _hk = _js_skip_ws(stmts, _hk)
+                    if _hk >= n or stmts[_hk] not in "'\"":
+                        raise _JSExprFail("F861 seq value not literal")
+                    _iv, _hk = _js_parse_string(stmts, _hk)
+                    _hk = _js_skip_ws(stmts, _hk)
+                    _hk = _js_expect(stmts, _hk, "]")
+                    _nl = _js_f861_norm_name(_ik)
+                    _nv = _js_f861_norm_value(_iv)
+                    if _nl is None or _nv is None:
+                        raise _JSExprFail("F861 seq pair not modelable")
+                    pairs.append([_nl, _nv])
+                    state["parts"] += 1
+                    if state["parts"] > _JS_EXPR_MAX_PARTS:
+                        raise _JSExprFail("too many parts")
+                    _hk = _js_skip_ws(stmts, _hk)
+                    if _hk < n and stmts[_hk] == ",":
+                        _hk += 1
+                        continue
+                    if _hk < n and stmts[_hk] == "]":
+                        _hk += 1
+                        break
+                    raise _JSExprFail("F861 init sequence unterminated")
+            _hk = _js_skip_ws(stmts, _hk)
+            if _hk >= n or stmts[_hk] != ")":
+                raise _JSExprFail("F861 ctor unterminated")
+            _hk += 1
+        else:
+            raise _JSExprFail("F861 ctor init not empty/object/sequence")
+        state["parts"] += 1  # the binding is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        sj = _js_skip_ws(stmts, _hk)
+        sj = _js_expect(stmts, sj, ";")
+        # Zero or more `h.set('K','V');` / `h.append('K','V');`.
+        while True:
+            _save = sj
+            _q = _js_skip_ws(stmts, sj)
+            try:
+                _rname, _q = _js_parse_ident(stmts, _q)
+            except _JSExprFail:
+                break
+            if _rname != hname:
+                break
+            _q = _js_skip_ws(stmts, _q)
+            if _q >= n or stmts[_q] not in ".[":
+                break
+            try:
+                _mname, _q = _js_f861_member_name(stmts, _q)
+            except _JSExprFail:
+                break
+            if _mname not in ("set", "append"):
+                # has/delete/getSetCookie/... are unmodeled --
+                # fail the whole shape closed rather than
+                # mis-decode (F648 precedent, documented residual).
+                raise _JSExprFail("F861 member not set/append")
+            _q = _js_skip_ws(stmts, _q)
+            if _q >= n or stmts[_q] != "(":
+                raise _JSExprFail("F861 mutation without paren")
+            _q = _js_skip_ws(stmts, _q + 1)
+            if _q >= n or stmts[_q] not in "'\"":
+                raise _JSExprFail("F861 mutation name not a literal")
+            _mn, _q = _js_parse_string(stmts, _q)
+            _q = _js_skip_ws(stmts, _q)
+            if _q >= n or stmts[_q] != ",":
+                raise _JSExprFail("F861 mutation arity")
+            _q = _js_skip_ws(stmts, _q + 1)
+            if _q >= n or stmts[_q] not in "'\"":
+                raise _JSExprFail("F861 mutation value not a literal")
+            _mv, _q = _js_parse_string(stmts, _q)
+            _q = _js_skip_ws(stmts, _q)
+            if _q >= n or stmts[_q] != ")":
+                raise _JSExprFail("F861 mutation unterminated")
+            _q = _js_skip_ws(stmts, _q + 1)
+            if _q >= n or stmts[_q] != ";":
+                raise _JSExprFail("F861 mutation without semicolon")
+            _nl = _js_f861_norm_name(_mn)
+            _nv = _js_f861_norm_value(_mv)
+            if _nl is None or _nv is None:
+                raise _JSExprFail("F861 mutation pair not modelable")
+            if _mname == "set":
+                pairs = [p for p in pairs if p[0] != _nl]
+                pairs.append([_nl, _nv])
+            else:
+                pairs.append([_nl, _nv])
+            state["parts"] += 1  # the mutation is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _q + 1
+        # return h.get('K') (+ 'LIT')* ;
+        _q = _js_skip_ws(stmts, sj)
+        _rk = _js_match_kw(stmts, _q, "return")
+        if _rk is None:
+            raise _JSExprFail("F861 body not return")
+        _q = _js_skip_ws(stmts, _rk)
+        _rname, _q = _js_parse_ident(stmts, _q)
+        if _rname != hname:
+            raise _JSExprFail("F861 returns another ident")
+        _q = _js_skip_ws(stmts, _q)
+        _mname, _q = _js_f861_member_name(stmts, _q)
+        if _mname != "get":
+            raise _JSExprFail("F861 terminal not get")
+        _q = _js_skip_ws(stmts, _q)
+        if _q >= n or stmts[_q] != "(":
+            raise _JSExprFail("F861 get without paren")
+        _q = _js_skip_ws(stmts, _q + 1)
+        if _q >= n or stmts[_q] not in "'\"":
+            raise _JSExprFail("F861 get key not a literal")
+        _gk, _q = _js_parse_string(stmts, _q)
+        _q = _js_skip_ws(stmts, _q)
+        if _q >= n or stmts[_q] != ")":
+            raise _JSExprFail("F861 get unterminated")
+        _q += 1
+        _nl = _js_f861_norm_name(_gk)
+        if _nl is None:
+            raise _JSExprFail("F861 get key not modelable")
+        _vals = [p[1] for p in pairs if p[0] == _nl]
+        if not _vals:
+            # The engine yields null -- unmodeled (documented
+            # residual); fail closed, never mis-decoded.
+            raise _JSExprFail("F861 get of missing name")
+        val = ", ".join(_vals)
+        while True:
+            _q = _js_skip_ws(stmts, _q)
+            if _q >= n or stmts[_q] != "+":
+                break
+            _q = _js_skip_ws(stmts, _q + 1)
+            if _q >= n or stmts[_q] not in "'\"":
+                raise _JSExprFail("F861 additive term not a literal")
+            _s, _q = _js_parse_string(stmts, _q)
+            val += _s
+            if len(val) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("concat too long")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        _q = _js_skip_ws(stmts, _q)
+        _q = _js_expect(stmts, _q, ";")
+        _q = _js_skip_ws(stmts, _q)
+        if _q != n:
+            raise _JSExprFail("F861 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+_F862_ERROR_CTORS = ("Error", "EvalError", "RangeError", "ReferenceError",
+                     "SyntaxError", "TypeError", "URIError")
+
+
+def _js_parse_f862_error_message_iife(text, i, depth, state):
+    """Parse `(function(){return [new] CTOR('LIT').message(+ADD)*;})()` (F862).
+
+    F862 (LOW, filed 2026-10-09 by wave-386 attack round 54): the
+    decoder models `new Error('f1').message` through the try/catch
+    routes (F750/F787) but not direct subclass message reads --
+    `new TypeError('f1').message` and `new DOMException('f1').message`
+    resolve node-exactly while the decoder produces zero variants:
+      `(function(){return new TypeError('f1').message+'f2';})()`
+      `(function(){return new DOMException('f1').message+'f2';})()`
+    Node-exact desugar (v24.20.0): `[new] CTOR('LIT')` yields an
+    error whose `.message` is the literal; `new CTOR()` yields '';
+    the no-new call form is identical for the Error family but
+    throws TypeError for DOMException (fail closed there); the
+    bracket-string `['message']` twin is engine-identical.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a non-literal message argument (the engine coerces:
+      `new TypeError(123)` -> '123'), extra constructor args, a
+      non-Error constructor, `.name`/`.cause`/other member reads,
+      a bare `new CTOR('LIT')` return term (the engine stringifies
+      the error -- unmodeled), non-literal additive terms,
+      reassignment, extra statements, call args on the IIFE.
+    Disjoint from every earlier IIFE route: none accepts a bare
+    `return new <ErrorCtor>(...)` head (red-first verified: 2 BREAK
+    on the open tree), so no previously-decoded input changes
+    behavior. On miss the F452 budgets are restored (wave-383
+    lesson). Returns (value, next_index), or None. Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            return None
+        # Cheap necessary-prefix check BEFORE the O(n) brace span:
+        # the body must open with `return [new] <ErrorCtor>(`.
+        # Without it this cannot be an F862 shape -- fail fast so
+        # pathological nested IIFEs do not pay a brace span per
+        # level (DoS hygiene; the full parse below re-verifies).
+        _pj = _js_skip_ws(text, j + 1)
+        _prk = _js_match_kw(text, _pj, "return")
+        if _prk is None:
+            return None
+        _pj = _js_skip_ws(text, _prk)
+        _pnk = _js_match_kw(text, _pj, "new")
+        if _pnk is not None:
+            _pj = _js_skip_ws(text, _pnk)
+        try:
+            _pcname, _pj = _js_parse_ident(text, _pj)
+        except _JSExprFail:
+            return None
+        if _pcname != "DOMException" and _pcname not in _F862_ERROR_CTORS:
+            return None
+        _pj = _js_skip_ws(text, _pj)
+        if _pj >= len(text) or text[_pj] != "(":
+            return None
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        _rk = _js_match_kw(stmts, sj, "return")
+        if _rk is None:
+            raise _JSExprFail("F862 body not return")
+        sj = _js_skip_ws(stmts, _rk)
+        _nk = _js_match_kw(stmts, sj, "new")
+        _is_new = _nk is not None
+        if _is_new:
+            sj = _js_skip_ws(stmts, _nk)
+        _cname, sj = _js_parse_ident(stmts, sj)
+        if _cname == "DOMException":
+            if not _is_new:
+                # The engine throws TypeError on a no-new
+                # DOMException call -- fail closed (never decode a
+                # throwing shape).
+                raise _JSExprFail("F862 DOMException without new")
+        elif _cname not in _F862_ERROR_CTORS:
+            raise _JSExprFail("F862 not an Error constructor")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "(")
+        sj = _js_skip_ws(stmts, sj)
+        if sj < n and stmts[sj] == ")":
+            msg = ""
+            sj += 1
+        else:
+            if sj >= n or stmts[sj] not in "'\"":
+                raise _JSExprFail("F862 message not a literal")
+            msg, sj = _js_parse_string(stmts, sj)
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, ")")
+        sj = _js_skip_ws(stmts, sj)
+        if sj < n and stmts[sj] == ".":
+            _mname, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj + 1))
+            if _mname != "message":
+                raise _JSExprFail("F862 not .message")
+        elif sj < n and stmts[sj] == "[":
+            sj = _js_skip_ws(stmts, sj + 1)
+            if sj >= n or stmts[sj] not in "'\"":
+                raise _JSExprFail("F862 member not a string")
+            _ms, sj = _js_parse_string(stmts, sj)
+            if _ms != "message":
+                raise _JSExprFail("F862 not ['message']")
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, "]")
+        else:
+            raise _JSExprFail("F862 no message read")
+        val = msg
+        state["parts"] += 1  # the construction is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        while True:
+            sj = _js_skip_ws(stmts, sj)
+            if sj >= n or stmts[sj] != "+":
+                break
+            sj = _js_skip_ws(stmts, sj + 1)
+            if sj >= n or stmts[sj] not in "'\"":
+                raise _JSExprFail("F862 additive term not a literal")
+            _s, sj = _js_parse_string(stmts, sj)
+            val += _s
+            if len(val) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("concat too long")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        sj = _js_skip_ws(stmts, sj)
+        if sj != n:
+            raise _JSExprFail("F862 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+def _js_parse_f863_tojson_fn(text, j):
+    """Parse a toJSON function value at text[j] (F863). Pure (no state).
+
+    Accepts `function(){return 'LIT';}`,
+    `function(){return this.K;}` (zero params), and the arrow twin
+    `()=>'LIT'`. Returns (("lit", s) | ("this", K), next_index).
+    Anything else raises _JSExprFail. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if text.startswith("function", j) and (j + 8 >= n or
+                                           text[j + 8]
+                                           not in _JS_IDENT_CONT):
+        j = _js_skip_ws(text, j + 8)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "{")
+        j = _js_skip_ws(text, j)
+        _rk = _js_match_kw(text, j, "return")
+        if _rk is None:
+            raise _JSExprFail("F863 toJSON body not a return")
+        j = _js_skip_ws(text, _rk)
+        if j < n and text[j] in "'\"":
+            lit, j = _js_parse_string(text, j)
+            spec = ("lit", lit)
+        elif text.startswith("this", j) and (j + 4 >= n or
+                                             text[j + 4]
+                                             not in _JS_IDENT_CONT):
+            j = _js_skip_ws(text, j + 4)
+            if j >= n or text[j] != ".":
+                raise _JSExprFail("F863 toJSON this not a member")
+            kname, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+            spec = ("this", kname)
+        else:
+            raise _JSExprFail("F863 toJSON return not literal/this.K")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ";")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "}")
+        return spec, j
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F863 toJSON not function/arrow")
+    j = _js_skip_ws(text, j + 2)
+    if j >= n or text[j] not in "'\"":
+        # An arrow with a `this` body would read the LEXICAL this,
+        # not the holder -- fail closed (never mis-decoded).
+        raise _JSExprFail("F863 arrow toJSON not a literal")
+    lit, j = _js_parse_string(text, j)
+    return ("lit", lit), j
+
+
+def _js_parse_f863_tojson_value(text, j, depth, state):
+    """Parse `{PROPS}` with a toJSON function prop at text[j] (F863).
+
+    Returns (resolved_string, next_index) when a toJSON function
+    prop is present and resolves to a plain string, else None.
+    Pure on failure (restores parts/ops). Node-exact (v24.20.0):
+    JSON.stringify calls the root toJSON with the holder as `this`
+    and serializes the RESULT; `function(){return 'LIT';}` and
+    `function(){return this.K;}` (K a sibling string-literal prop)
+    and the `()=>'LIT'` arrow twin are modeled. A non-function
+    toJSON is ignored by the engine (returns None here so the
+    normal object path serializes it); parameterized toJSON,
+    non-string resolutions, and nested toJSON fail closed
+    (documented residuals). Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        n = len(text)
+        k = _js_skip_ws(text, j)
+        if k >= n or text[k] != "{":
+            return None
+        k += 1
+        props = {}
+        tojson = None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == "}":
+            return None
+        while True:
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] in "'\"":
+                key, k = _js_parse_string(text, k)
+            elif k < n and text[k] in _JS_IDENT_START:
+                key, k = _js_parse_ident(text, k)
+            elif k < n and text[k] in _ASCII_DIGITS:
+                _e = k + 1
+                while _e < n and text[_e] in _ASCII_DIGITS:
+                    _e += 1
+                key, k = text[k:_e], _e
+            else:
+                raise _JSExprFail("F863 bad object key")
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, ":")
+            k = _js_skip_ws(text, k)
+            if key == "toJSON":
+                _fk = _js_skip_ws(text, k)
+                if (text.startswith("function", _fk) or
+                        (_fk < n and text[_fk] == "(")):
+                    tojson, k = _js_parse_f863_tojson_fn(text, k)
+                else:
+                    # A non-function toJSON is ignored by the
+                    # engine -- leave it to the normal object path.
+                    # Raised (not returned) so the parts charged for
+                    # earlier props are restored (wave-383 lesson).
+                    raise _JSExprFail("F863 toJSON not a function")
+            elif k < n and text[k] in "'\"":
+                _v, k = _js_parse_string(text, k)
+                props[key] = _v
+            else:
+                _v, k = _js_parse_f535_value(text, k, depth, state)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ",":
+                k += 1
+                continue
+            if k < n and text[k] == "}":
+                k += 1
+                break
+            raise _JSExprFail("F863 object unterminated")
+        if tojson is None:
+            # Raised (not returned) so the per-prop parts charges
+            # are restored (wave-383 lesson).
+            raise _JSExprFail("F863 no toJSON prop")
+        _kind, _payload = tojson
+        if _kind == "lit":
+            resolved = _payload
+        else:
+            resolved = props.get(_payload)
+            if not isinstance(resolved, str):
+                raise _JSExprFail("F863 this.K not a string prop")
+        return resolved, k
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+def _js_f864_identity_return(text, j, kname, vname):
+    """Parse the identity reviver return at text[j] (F864). Pure.
+
+    Accepts `v` and `k===''?v:v` (== admitted, either quote form):
+    both branches return the value argument and the guard cannot
+    throw (k is always a string), so the reviver is exactly the
+    identity. Returns next_index. Anything else raises
+    _JSExprFail. Never evals.
+    """
+    n = len(text)
+    try:
+        name, k = _js_parse_ident(text, j)
+    except _JSExprFail:
+        raise _JSExprFail("F864 reviver return not an ident")
+    if name == vname:
+        return k
+    if name == kname:
+        k = _js_skip_ws(text, k)
+        k = _js_parse_f683_eq(text, k)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] not in "'\"":
+            raise _JSExprFail("F864 guard not a literal")
+        _gs, k = _js_parse_string(text, k)
+        if _gs != "":
+            raise _JSExprFail("F864 guard not the empty key")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "?")
+        k = _js_skip_ws(text, k)
+        _vn2, k = _js_parse_ident(text, k)
+        if _vn2 != vname:
+            raise _JSExprFail("F864 consequent not v")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ":")
+        k = _js_skip_ws(text, k)
+        _vn3, k = _js_parse_ident(text, k)
+        if _vn3 != vname:
+            raise _JSExprFail("F864 alternate not v")
+        return k
+    raise _JSExprFail("F864 reviver return not identity")
+
+
+def _js_parse_f864_identity_reviver(text, i, depth, state):
+    """Parse `JSON.parse('LIT'|JSON.stringify(VALUE), REVIVER)` (F864).
+
+    F864 (LOW, filed 2026-10-09 by wave-386 attack round 54): the
+    decoder models plain JSON.parse (F541) and guarded revivers
+    (F683 append-style, F744 replacement-style) but not IDENTITY
+    revivers -- `JSON.parse('{"k":"f1"}',function(k,v){return v;})`
+    and `(k,v)=>v` resolve node-exactly while the decoder produces
+    zero variants:
+      `(function(){return JSON.parse('{"k":"f1"}',
+        function(k,v){return v;}).k+'f2';})()`
+      `(function(){return JSON.parse(JSON.stringify({k:'f1'}),
+        function(k,v){return k===''?v:v;}).k+'f2';})()`
+    Node-exact desugar (v24.20.0): the reviver returns its value
+    argument unchanged at every node (children before holders, the
+    root called with key ""), so the result is exactly the parsed
+    JSON value; the F541 value graph + postfix member reads apply
+    unchanged. The JSON text is a string literal or the
+    JSON.stringify(VALUE) round trip (F571).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a non-identity reviver body (F683/F744 own the guarded
+      forms), a named reviver, non-return bodies, params other
+      than two distinct idents, a guard that is not the empty-key
+      comparison;
+    - invalid JSON text, a non-stringify/non-literal JSON arg,
+      extra parse args.
+    Disjoint from F683/F744/F541: F683 requires the `v+'APP'`
+    consequent, F744 the literal consequent -- both fail closed on
+    a bare `v`; F541 fails closed on the reviver comma. Tried after
+    F744: no previously-decoded input changes behavior. Returns
+    (value, next_index) with the closing paren consumed, or None.
+    Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = i + len("JSON")
+        if j < n and text[j] in _JS_IDENT_CONT:
+            return None  # JSONx -- the F541 branch fails it closed
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ".")
+        j = _js_skip_ws(text, j)
+        _pk = _js_match_kw(text, j, "parse")
+        if _pk is None:
+            return None
+        j = _js_skip_ws(text, _pk)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] in "'\"":
+            _jstr, j = _js_parse_string(text, j)
+        else:
+            # F571: JSON.parse(JSON.stringify(VALUE), REVIVER).
+            _jstr, j = _js_parse_f571_stringify_call(text, j, depth,
+                                                     state)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ",":
+            return None  # single-arg: F541 owns it
+        j = _js_skip_ws(text, j + 1)
+        _fk = _js_match_kw(text, j, "function")
+        if _fk is not None:
+            j = _js_skip_ws(text, _fk)
+            if j < n and text[j] in _JS_IDENT_START:
+                raise _JSExprFail("F864 named reviver")
+            j = _js_expect(text, j, "(")
+            j = _js_skip_ws(text, j)
+            _kname, j = _js_parse_ident(text, j)
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, ",")
+            j = _js_skip_ws(text, j)
+            _vname, j = _js_parse_ident(text, j)
+            if _kname == _vname:
+                raise _JSExprFail("F864 duplicate reviver params")
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, ")")
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, "{")
+            j = _js_skip_ws(text, j)
+            _rk = _js_match_kw(text, j, "return")
+            if _rk is None:
+                raise _JSExprFail("F864 reviver body not a return")
+            j = _js_skip_ws(text, _rk)
+            j = _js_f864_identity_return(text, j, _kname, _vname)
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, ";")
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, "}")
+        else:
+            # Arrow twin: (k,v)=>v / (k,v)=>k===''?v:v.
+            j = _js_expect(text, j, "(")
+            j = _js_skip_ws(text, j)
+            _kname, j = _js_parse_ident(text, j)
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, ",")
+            j = _js_skip_ws(text, j)
+            _vname, j = _js_parse_ident(text, j)
+            if _kname == _vname:
+                raise _JSExprFail("F864 duplicate reviver params")
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, ")")
+            j = _js_skip_ws(text, j)
+            if not text.startswith("=>", j):
+                raise _JSExprFail("F864 reviver not function/arrow")
+            j = _js_skip_ws(text, j + 2)
+            j = _js_f864_identity_return(text, j, _kname, _vname)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        try:
+            _jval = json.loads(_jstr)
+        except (ValueError, RecursionError):
+            raise _JSExprFail("F864 JSON.parse arg not valid JSON")
+        _val = _js_f541_json_value(_jval, state)
+        state["ops"] += 1  # the reviver parse is obfuscation-shaped
+        return _val, j
     except _JSExprFail:
         return None
 
@@ -87327,6 +88163,40 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f860 is not None:
             val, i = _f860
             return _js_parse_postfix(text, i, val, depth, state)
+        # F861: (function(){DECL h=new Headers(INIT);[MUT;]*
+        #   return h.get('K')(+ADD)*;})() -- Headers set/append/get
+        #   laundering. Tried after F810: every earlier route
+        #   requires its own binding family or statement head and
+        #   fails closed on a `var h=new Headers(` binding
+        #   (red-first verified: 2 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior. The F810
+        #   hook and its trailing `return` are untouched
+        #   (wave-379 lesson). Budget snapshot/restore on miss
+        #   (wave-383 lesson).
+        _f861_saved_parts = state['parts']; _f861_saved_ops = state['ops']
+        _f861 = _js_parse_f861_headers_iife(text, i, depth, state)
+        if _f861 is None:
+            state['parts'] = _f861_saved_parts; state['ops'] = _f861_saved_ops
+        if _f861 is not None:
+            val, i = _f861
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F862: (function(){return [new] CTOR('LIT').message
+        #   (+ADD)*;})() -- direct Error-subclass .message reads.
+        #   Tried after F861: F861 requires a Headers binding head
+        #   and fails closed on a bare `return new` head
+        #   (red-first verified: 2 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior. The F861
+        #   hook and its trailing `return` are untouched
+        #   (wave-379 lesson). Budget snapshot/restore on miss
+        #   (wave-383 lesson).
+        _f862_saved_parts = state['parts']; _f862_saved_ops = state['ops']
+        _f862 = _js_parse_f862_error_message_iife(text, i, depth, state)
+        if _f862 is None:
+            state['parts'] = _f862_saved_parts; state['ops'] = _f862_saved_ops
+        if _f862 is not None:
+            val, i = _f862
+            return _js_parse_postfix(text, i, val, depth, state)
+            return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
         val, i = _js_parse_additive(text, i + 1, depth + 1, state,
@@ -87575,6 +88445,21 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['ops'] = _f744_saved_ops
         if _f744 is not None:
             val, i = _f744
+            return _js_parse_postfix(text, i, val, depth, state)
+    if text.startswith("JSON", i):
+        # F864: JSON.parse('LIT',function(k,v){return v;}) /
+        # (k,v)=>v -- IDENTITY revivers. Tried after F744: F744
+        # requires the literal consequent and fails closed on a
+        # bare `v`; F683 requires `v+'APP'`; F541 fails closed on
+        # the reviver comma -- so no previously-decoded input
+        # changes behavior. Budget snapshot/restore on miss (F452
+        # / wave-383 lesson).
+        _f864_saved_parts = state['parts']; _f864_saved_ops = state['ops']
+        _f864 = _js_parse_f864_identity_reviver(text, i, depth, state)
+        if _f864 is None:
+            state['parts'] = _f864_saved_parts; state['ops'] = _f864_saved_ops
+        if _f864 is not None:
+            val, i = _f864
             return _js_parse_postfix(text, i, val, depth, state)
     if text.startswith("JSON", i):
         # F541: JSON.parse('LITERAL') -- deserializing-builtin
