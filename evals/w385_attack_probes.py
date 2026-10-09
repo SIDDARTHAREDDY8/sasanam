@@ -433,28 +433,39 @@ def test_r53_f819_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f820_s1_open():
-    """F820 OPEN: miss reproduces."""
-    miss = _misses("(function(){var a=['%s','z','%s'];a.copyWithin(1,0,1);return a[0]+a[2];})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f820_s1_closed():
+    """F820 CLOSED (wave-386 lane 13): copyWithin statement blocks."""
+    hit = _blocked("(function(){var a=['%s','z','%s'];a.copyWithin(1,0,1);return a[0]+a[2];})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r53_f820_s2_open():
-    """F820 OPEN: miss reproduces."""
-    miss = _misses("(function(){var a=['%s','%s'];a.reverse();return a.join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f820_s2_closed():
+    """F820 CLOSED (wave-386 lane 13): reverse statement blocks.
+
+    Shape corrected: the filed order ['xoxb-0123','456789abcdef']
+    never recovers the credential (node yields the reversed
+    concatenation); the corrected order recovers and now blocks.
+    """
+    hit = _blocked("(function(){var a=['%s','%s'];a.reverse();return a.join('');})()" % (_B, _A))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r53_f821_s1_open():
-    """F821 OPEN: miss reproduces."""
-    miss = _misses("(function(){var f=(a='%s')=>a;return f()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f821_s1_closed():
+    """F821 CLOSED (wave-386 lane 13): arrow default blocks."""
+    hit = _blocked("(function(){var f=(a='%s')=>a;return f()+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r53_f821_s2_open():
-    """F821 OPEN: miss reproduces."""
-    miss = _misses("(function(){var f=(a,b='%s')=>a+b;return f('%s');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f821_s2_closed():
+    """F821 CLOSED (wave-386 lane 13): second-param default blocks.
+
+    Shape corrected: the filed `(a,b='xoxb-0123')=>a+b` called as
+    `f('456789abcdef')` never recovers the credential (a/b
+    swapped at runtime); the corrected default/call-arg order
+    recovers and now blocks.
+    """
+    hit = _blocked("(function(){var f=(a,b='%s')=>a+b;return f('%s');})()" % (_B, _A))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 def _green_check():

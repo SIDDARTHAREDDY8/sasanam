@@ -2,6 +2,12 @@
 """Red-first for F821: arrow function default parameters.
 
 the decoder models function-declaration defaults, but arrow-function defaults (a='f1')=>a have no production: they resolve node-exactly while the decoder produces zero variants.
+
+CORRECTION (2026-10-09, wave-386 lane 13): the s2 shape as filed
+(`(a,b='xoxb-0123')=>a+b` called as `f('456789abcdef')`) does NOT
+recover the credential at runtime -- node v24.20.0 yields
+'456789abcdefxoxb-0123' (a/b swapped). Corrected to
+`(a,b='456789abcdef')=>a+b` called as `f('xoxb-0123')`.
 Filed 2026-10-09 03:25 UTC wave-385 lane 13 (attack round 53).
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
 (node v24.20.0 verified.)
@@ -23,7 +29,7 @@ SHAPES = [
      "(function(){var f=(a='%s')=>a;return f()+'%s';})()" % (_A, _B),
      True),
     ("s2",
-     "(function(){var f=(a,b='%s')=>a+b;return f('%s');})()" % (_A, _B),
+     "(function(){var f=(a,b='%s')=>a+b;return f('%s');})()" % (_B, _A),
      True),
 ]
 
